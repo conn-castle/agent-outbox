@@ -4,8 +4,8 @@
 
 Use the official Clerk CLI: `clerk`.
 
-Run `clerk --help` first, then run command-specific help before using flags
-that are not already proven in this repository.
+Run `clerk --help` first, then run command-specific help before using flags that
+are not already proven in this repository.
 
 ## Owns
 

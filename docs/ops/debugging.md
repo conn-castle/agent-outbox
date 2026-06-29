@@ -61,8 +61,8 @@ Check whether:
 
 ## File Upload Or Download Failure
 
-Hosted-free accounts cannot submit input items containing a `file_upload`
-popup. The API returns a dedicated upgrade-required error with an upgrade URL.
+Hosted-free accounts cannot submit input items containing a `file_upload` popup.
+The API returns a dedicated upgrade-required error with an upgrade URL.
 
 Output reads return file metadata only. File bytes are served only through the
 dedicated file-download endpoint. That endpoint validates account/caller
@@ -98,8 +98,8 @@ Use [services/clerk.md](services/clerk.md) to check:
 - Cloudflare logs for protected route failures.
 
 Do not add a separate app-owned CAPTCHA in front of Clerk signup unless the
-owner deliberately changes the signup design. Clerk owns hosted account
-creation controls.
+owner deliberately changes the signup design. Clerk owns hosted account creation
+controls.
 
 ## Billing Failure
 
@@ -125,8 +125,8 @@ Likely causes:
 - database storage growth from uploaded file bytes;
 - migration drift or failed migration.
 
-Use [services/supabase.md](services/supabase.md) for Supabase CLI checks and logs
-first. Do not repair schema with raw SQL.
+Use [services/supabase.md](services/supabase.md) for Supabase CLI checks and
+logs first. Do not repair schema with raw SQL.
 
 ## Observability Missing
 

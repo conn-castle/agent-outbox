@@ -1,19 +1,19 @@
 # Monitoring
 
-Use this runbook to find new issues before or without a direct user report.
-Use [debugging.md](debugging.md) once a specific failure is identified. Use
-the service docs under [services/](services/) for service-specific official CLI
+Use this runbook to find new issues before or without a direct user report. Use
+[debugging.md](debugging.md) once a specific failure is identified. Use the
+service docs under [services/](services/) for service-specific official CLI
 guidance.
 
 ## Signals
 
-| Signal | Service | Purpose |
-| --- | --- | --- |
-| Application exceptions | Sentry | Error grouping, release health, source maps |
-| Server structured logs | Cloudflare Workers logs | Request and operational forensics |
-| Database platform logs | Supabase logs | Database connectivity, query, and service diagnostics |
-| Public traffic analytics | Cloudflare Web Analytics | Basic page and performance analytics |
-| Frontend app events | Worker endpoint, if implemented | Sanitized browser error and UI consistency events |
+| Signal                   | Service                         | Purpose                                               |
+| ------------------------ | ------------------------------- | ----------------------------------------------------- |
+| Application exceptions   | Sentry                          | Error grouping, release health, source maps           |
+| Server structured logs   | Cloudflare Workers logs         | Request and operational forensics                     |
+| Database platform logs   | Supabase logs                   | Database connectivity, query, and service diagnostics |
+| Public traffic analytics | Cloudflare Web Analytics        | Basic page and performance analytics                  |
+| Frontend app events      | Worker endpoint, if implemented | Sanitized browser error and UI consistency events     |
 
 ## Regular Checks
 
@@ -100,6 +100,6 @@ If the app adds a frontend event endpoint, it must be intentionally narrow:
 - no form values, review content, or uploaded file metadata beyond coarse
   failure category.
 
-Use this for client errors, hydration failures, failed human-action
-submissions, upload failures, and major UI state inconsistencies. Do not turn it
-into a general product analytics firehose.
+Use this for client errors, hydration failures, failed human-action submissions,
+upload failures, and major UI state inconsistencies. Do not turn it into a
+general product analytics firehose.

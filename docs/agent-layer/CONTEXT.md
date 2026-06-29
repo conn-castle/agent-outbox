@@ -25,3 +25,11 @@ Do not duplicate information that belongs in other memory files:
 - Insert all content below `<!-- ENTRIES START -->`.
 
 <!-- ENTRIES START -->
+
+## Supabase Setup
+
+- The currently logged-in local Supabase CLI account is not the Agent Outbox
+  project account.
+- Treat Supabase provider readiness as incomplete until the dedicated Agent
+  Outbox Supabase account/project exists and `SUPABASE_PROJECT_REF` identifies
+  that project.

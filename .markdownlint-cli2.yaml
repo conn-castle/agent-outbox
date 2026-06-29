@@ -1,0 +1,21 @@
+config:
+  MD013: false
+  MD024:
+    siblings_only: true
+  MD033: false
+  MD041: false
+globs:
+  - "**/*.md"
+ignores:
+  - ".agent-layer/**"
+  - ".agents/**"
+  - ".codex/**"
+  - ".copilot/**"
+  - ".claude/**"
+  - ".claude-config/**"
+  - ".agy/**"
+  - "node_modules/**"
+  - "AGENTS.md"
+  - "CLAUDE.md"
+  - "docs/agent-layer/**"
+  - ".github/copilot-instructions.md"

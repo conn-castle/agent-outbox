@@ -22,14 +22,14 @@ admin control table, or partial operation-disable system.
 
 Use these controls when the app is unhealthy or abused:
 
-| Incident type | Control |
-| --- | --- |
-| Request flood or abusive unauthenticated path | Cloudflare WAF, rate-limit, challenge rule, or route-level block. |
-| Signup abuse | Clerk Bot sign-up protection, disposable-email blocking, restricted access, or temporary signup gating. |
-| Caller API abuse | Revoke caller keys, add Cloudflare edge controls, adjust product limits, or block abusive accounts/callers in app data after investigation. |
-| Database exhaustion | Supabase service controls, cleanup jobs, account/caller revocation, or app deploy to reduce write pressure. |
-| Bad deploy | Cloudflare deployment rollback or config rollback after checking migration compatibility. |
-| Secret exposure | Rotate at source service, update Systems Manager Parameter Store and runtime stores, redeploy/restart as required. |
+| Incident type                                 | Control                                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request flood or abusive unauthenticated path | Cloudflare WAF, rate-limit, challenge rule, or route-level block.                                                                           |
+| Signup abuse                                  | Clerk Bot sign-up protection, disposable-email blocking, restricted access, or temporary signup gating.                                     |
+| Caller API abuse                              | Revoke caller keys, add Cloudflare edge controls, adjust product limits, or block abusive accounts/callers in app data after investigation. |
+| Database exhaustion                           | Supabase service controls, cleanup jobs, account/caller revocation, or app deploy to reduce write pressure.                                 |
+| Bad deploy                                    | Cloudflare deployment rollback or config rollback after checking migration compatibility.                                                   |
+| Secret exposure                               | Rotate at source service, update Systems Manager Parameter Store and runtime stores, redeploy/restart as required.                          |
 
 `output ack` is conceptually a cleanup operation, but the product does not build
 custom partial-degradation machinery just to keep ack available during every
@@ -50,8 +50,8 @@ service incident.
 
 - Check Clerk status, instance config, domains, and email delivery using
   [services/clerk.md](services/clerk.md).
-- Confirm bot protection and disposable-email blocking are enabled before
-  broad public signup.
+- Confirm bot protection and disposable-email blocking are enabled before broad
+  public signup.
 - For abuse, prefer Clerk controls before adding app-owned signup code.
 - Do not block plus-addressed emails by default unless the owner approves it as
   an abuse response.
@@ -60,8 +60,8 @@ service incident.
 
 - Use quota counters, limit blocks, audit events, and structured logs to
   identify account and caller patterns.
-- Cleanup operations `input delete` and `output ack` are exempt from the
-  monthly caller API request quota but still may have narrow burst controls.
+- Cleanup operations `input delete` and `output ack` are exempt from the monthly
+  caller API request quota but still may have narrow burst controls.
 - Revoke abusive caller keys through the product/API path.
 
 ### Database storage or connection incident
@@ -75,12 +75,12 @@ service incident.
 
 ### Billing incident
 
-- Use Stripe webhook delivery logs through [services/stripe.md](services/stripe.md)
-  first.
+- Use Stripe webhook delivery logs through
+  [services/stripe.md](services/stripe.md) first.
 - Check app logs for webhook signature or handler failures.
 - Stripe billing state is account-scoped, not seat- or caller-scoped.
-- Apply the grace behavior documented in [../architecture.md](../architecture.md)
-  before enforcing lower-tier limits.
+- Apply the grace behavior documented in
+  [../architecture.md](../architecture.md) before enforcing lower-tier limits.
 
 ### Sensitive data in logs or audit events
 

@@ -1,6 +1,7 @@
 # Agent Outbox
 
-> Status: Agent Outbox is under active development and has not been publicly released yet.
+> Status: Agent Outbox is under active development and has not been publicly
+> released yet.
 
 Agent Outbox is a hosted, source-available review queue for agent-prepared work.
 
@@ -291,10 +292,10 @@ service-native logs cover observability.
 
 ## Self-Hosting
 
-Agent Outbox is source-available and can be self-hosted from this repository
-for noncommercial uses. The same application boundary supports local
-development and production operation with configured Cloudflare, Supabase,
-Clerk, Stripe, Sentry, and secret-store resources.
+Agent Outbox is source-available and can be self-hosted from this repository for
+noncommercial uses. The same application boundary supports local development and
+production operation with configured Cloudflare, Supabase, Clerk, Stripe,
+Sentry, and secret-store resources.
 
 ## Contributing
 

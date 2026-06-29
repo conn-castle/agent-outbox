@@ -29,9 +29,8 @@ Hosted Agent Outbox has one deployable app boundary:
   caller routes.
 - **Caller contract:** raw HTTP is canonical; the Go `agent-outbox` CLI is the
   first client and must map directly to the HTTP contract.
-- **Database:** Supabase Postgres stores product state, queue rows, output
-  rows, uploaded file bytes, quota windows, active limit blocks, and audit
-  events.
+- **Database:** Supabase Postgres stores product state, queue rows, output rows,
+  uploaded file bytes, quota windows, active limit blocks, and audit events.
 - **Human auth:** Clerk.
 - **Billing:** Stripe, scoped to Agent Outbox accounts.
 - **Observability:** Sentry, Cloudflare native logs, Supabase native logs, and
@@ -54,8 +53,7 @@ product ships owner-level access, but authorization must flow through account
 membership so future roles can reuse the same model.
 
 Caller routes use only Agent Outbox caller API keys. Caller endpoints must not
-trust Clerk session state. Browser code must not access product tables
-directly.
+trust Clerk session state. Browser code must not access product tables directly.
 
 Canonical product ids:
 
@@ -199,12 +197,13 @@ Limit enforcement:
 
 Billing grace, downgrade cleanup, retention cleanup, output-timeout cleanup, and
 acknowledgement cleanup use the same queue/file deletion path. Cleanup deletes
-whole queue items, output results, and files; it does not partially trim content.
+whole queue items, output results, and files; it does not partially trim
+content.
 
 ## Human Review Surface
 
-The web UI is a generic renderer over the typed input model and queue state.
-It may provide list/detail loading, search, filters, sorting, bounded rendering,
+The web UI is a generic renderer over the typed input model and queue state. It
+may provide list/detail loading, search, filters, sorting, bounded rendering,
 primary/overflow actions, narrow bulk actions, and front-end-only skipped
 ordering.
 

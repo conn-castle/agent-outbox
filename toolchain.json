@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "verifiedAsOf": "2026-06-29",
+  "node": {
+    "version": "24.18.0",
+    "lts": "Krypton",
+    "npm": "11.16.0",
+    "source": "https://nodejs.org/dist/index.json"
+  },
+  "go": {
+    "version": "1.26.4",
+    "source": "https://go.dev/dl/?mode=json"
+  },
+  "packageManager": {
+    "name": "pnpm",
+    "version": "11.9.0",
+    "source": "npm view pnpm version engines --json"
+  },
+  "phase1Tools": {
+    "prettier": {
+      "version": "3.9.3",
+      "package": "prettier",
+      "source": "npm view prettier version engines --json"
+    },
+    "markdownlint": {
+      "version": "0.22.1",
+      "package": "markdownlint-cli2",
+      "source": "npm view markdownlint-cli2 version engines --json"
+    },
+    "typescript": {
+      "version": "6.0.3",
+      "package": "typescript",
+      "source": "npm view typescript version engines --json"
+    },
+    "nodeTypes": {
+      "version": "24.13.2",
+      "package": "@types/node",
+      "source": "corepack pnpm view @types/node@24 version --json"
+    },
+    "testRunner": {
+      "name": "node --test",
+      "version": "24.18.0",
+      "source": "Pinned by the Node runtime."
+    },
+    "buildTooling": {
+      "name": "tsc plus scripts/foundation.mjs",
+      "version": "6.0.3",
+      "source": "Pinned by TypeScript and this repository."
+    }
+  },
+  "runtimePins": {
+    "next": {
+      "version": "16.2.9",
+      "package": "next",
+      "source": "npm view next version engines peerDependencies --json"
+    },
+    "react": {
+      "version": "19.2.7",
+      "package": "react",
+      "source": "npm view react version --json"
+    },
+    "reactDom": {
+      "version": "19.2.7",
+      "package": "react-dom",
+      "source": "npm view react-dom version --json"
+    },
+    "opennextCloudflare": {
+      "version": "1.20.1",
+      "package": "@opennextjs/cloudflare",
+      "source": "npm view @opennextjs/cloudflare version engines peerDependencies --json"
+    },
+    "clerkNextjs": {
+      "version": "7.5.10",
+      "package": "@clerk/nextjs",
+      "source": "npm view @clerk/nextjs version engines peerDependencies --json"
+    },
+    "supabaseJs": {
+      "version": "2.108.2",
+      "package": "@supabase/supabase-js",
+      "source": "npm view @supabase/supabase-js version engines --json"
+    },
+    "stripeNode": {
+      "version": "22.3.0",
+      "package": "stripe",
+      "source": "npm view stripe version engines --json"
+    },
+    "sentryNextjs": {
+      "version": "10.62.0",
+      "package": "@sentry/nextjs",
+      "source": "npm view @sentry/nextjs version engines peerDependencies --json"
+    }
+  },
+  "providerCli": {
+    "wrangler": {
+      "version": "4.105.0",
+      "package": "wrangler",
+      "source": "npm view wrangler version engines --json",
+      "authCheck": ["wrangler", "whoami"]
+    },
+    "clerk": {
+      "version": "1.5.0",
+      "package": "clerk",
+      "source": "npm view clerk name version description bin homepage repository engines --json",
+      "authCheck": ["clerk", "whoami", "--json"]
+    },
+    "supabase": {
+      "version": "2.108.0",
+      "package": "supabase",
+      "source": "npm view supabase version --json",
+      "authCheck": ["supabase", "projects", "list", "--output", "json"]
+    },
+    "stripe": {
+      "version": "1.43.2",
+      "package": null,
+      "source": "https://api.github.com/repos/stripe/stripe-cli/releases/latest",
+      "authCheck": ["stripe", "whoami", "--format", "json"]
+    },
+    "sentry": {
+      "version": "3.6.0",
+      "package": "@sentry/cli",
+      "source": "npm view @sentry/cli version engines --json",
+      "authCheck": ["sentry-cli", "info", "--no-defaults"]
+    }
+  }
+}

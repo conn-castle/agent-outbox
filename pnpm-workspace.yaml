@@ -1,0 +1,9 @@
+packages:
+  - "."
+allowBuilds:
+  "@sentry/cli": true
+  esbuild: true
+  sharp: true
+  workerd: true
+minimumReleaseAgeExclude:
+  - prettier@3.9.3

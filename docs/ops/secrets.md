@@ -37,15 +37,15 @@ explicitly chooses that account for Agent Outbox.
 
 ## Ownership Matrix
 
-| Secret class | Runtime owner | Durable recovery owner | Notes |
-| --- | --- | --- | --- |
-| Cloudflare Worker runtime secrets | Cloudflare Workers | Systems Manager Parameter Store | Exact variable names are listed in [../../.env.example](../../.env.example) and enforced by the app environment schema. |
-| Deploy credentials | GitHub Actions secrets | Systems Manager Parameter Store when not trivially re-mintable | Use least-scoped Cloudflare tokens for configured resources. |
-| Supabase database URLs and role passwords | Supabase plus Cloudflare runtime/GitHub migration environment | Systems Manager Parameter Store | Use migration tooling for schema changes. |
-| Clerk secret keys | Clerk plus Cloudflare runtime | Systems Manager Parameter Store | Publishable keys may be GitHub/Cloudflare environment config, mirrored if needed for recovery. |
-| Stripe secret key, webhook secret, price ids, portal config | Stripe plus Cloudflare runtime | Systems Manager Parameter Store | Test and live values are separate. Production uses live mode. |
-| Sentry data source names and auth token | Sentry plus Cloudflare/GitHub as needed | Systems Manager Parameter Store | Runtime uses data source names only. Auth token is for source maps/operator tooling. |
-| Caller API keys | Agent Outbox database hash plus local caller secure store | Not Systems Manager Parameter Store | Plaintext caller keys are display-once and never recovered. Rotate instead. |
+| Secret class                                                | Runtime owner                                                 | Durable recovery owner                                         | Notes                                                                                                                   |
+| ----------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Cloudflare Worker runtime secrets                           | Cloudflare Workers                                            | Systems Manager Parameter Store                                | Exact variable names are listed in [../../.env.example](../../.env.example) and enforced by the app environment schema. |
+| Deploy credentials                                          | GitHub Actions secrets                                        | Systems Manager Parameter Store when not trivially re-mintable | Use least-scoped Cloudflare tokens for configured resources.                                                            |
+| Supabase database URLs and role passwords                   | Supabase plus Cloudflare runtime/GitHub migration environment | Systems Manager Parameter Store                                | Use migration tooling for schema changes.                                                                               |
+| Clerk secret keys                                           | Clerk plus Cloudflare runtime                                 | Systems Manager Parameter Store                                | Publishable keys may be GitHub/Cloudflare environment config, mirrored if needed for recovery.                          |
+| Stripe secret key, webhook secret, price ids, portal config | Stripe plus Cloudflare runtime                                | Systems Manager Parameter Store                                | Test and live values are separate. Production uses live mode.                                                           |
+| Sentry data source names and auth token                     | Sentry plus Cloudflare/GitHub as needed                       | Systems Manager Parameter Store                                | Runtime uses data source names only. Auth token is for source maps/operator tooling.                                    |
+| Caller API keys                                             | Agent Outbox database hash plus local caller secure store     | Not Systems Manager Parameter Store                            | Plaintext caller keys are display-once and never recovered. Rotate instead.                                             |
 
 ## Environment Variables
 
