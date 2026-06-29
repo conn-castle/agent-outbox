@@ -21,7 +21,7 @@
     "node": ">=22.13.0 <25"
   },
   "scripts": {
-    "setup": "corepack install && pnpm install --frozen-lockfile",
+    "setup": "corepack install && corepack pnpm install --frozen-lockfile",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "markdownlint-cli2",
@@ -30,8 +30,8 @@
     "build": "node scripts/foundation.mjs build",
     "smoke": "node scripts/foundation.mjs smoke",
     "doctor": "node scripts/foundation.mjs doctor",
-    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run smoke",
-    "release-check": "pnpm run check",
+    "check": "corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test && corepack pnpm run build && corepack pnpm run smoke",
+    "release-check": "corepack pnpm run check",
     "clean": "node scripts/foundation.mjs clean"
   },
   "devDependencies": {
