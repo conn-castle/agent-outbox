@@ -14,6 +14,8 @@ messaging systems, or any other source system. Callers own source-system reads,
 writes, retries, reconciliation, and downstream execution. Agent Outbox owns the
 review lifecycle, the human decision surface, and typed output delivery.
 
+For repository navigation, see [TOC.md](TOC.md).
+
 ## Hosted Service
 
 Use the public hosted service at:
@@ -240,7 +242,7 @@ Important behavior:
 - `output read` returns full output payloads and marks returned results as read.
 - `output ack` is idempotent after caller-side durable handling.
 
-Delivery is asynchronous and at least once. Callers should deduplicate by
+Delivery is asynchronous and at least once. Callers deduplicate by
 `output_result_id`.
 
 ## Caller Integration
@@ -285,10 +287,7 @@ The hosted product runs as one Next.js application on Cloudflare Workers through
 OpenNext. Supabase Postgres stores accounts, callers, live queues, output
 results, uploaded file bytes, quotas, active limit blocks, and audit events.
 Clerk provides human authentication, Stripe provides billing, and Sentry plus
-provider-native logs cover observability.
-
-See [docs/architecture.md](docs/architecture.md) for the system model and
-[docs/ops/README.md](docs/ops/README.md) for operator runbooks.
+service-native logs cover observability.
 
 ## Self-Hosting
 
@@ -296,13 +295,6 @@ Agent Outbox is source-available and can be self-hosted from this repository
 for noncommercial uses. The same application boundary supports local
 development and production operation with configured Cloudflare, Supabase,
 Clerk, Stripe, Sentry, and secret-store resources.
-
-Start with:
-
-- [docs/ops/LOCAL-SETUP.md](docs/ops/LOCAL-SETUP.md)
-- [docs/ops/DEPLOYMENT.md](docs/ops/DEPLOYMENT.md)
-- [docs/ops/SECRETS.md](docs/ops/SECRETS.md)
-- [docs/ops/DATA-LIMITS-PRIVACY.md](docs/ops/DATA-LIMITS-PRIVACY.md)
 
 ## Contributing
 
