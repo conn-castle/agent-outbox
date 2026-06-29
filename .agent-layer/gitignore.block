@@ -1,0 +1,30 @@
+# Optional: keep uncommented to ignore .agent-layer/ config.
+# /.agent-layer/
+# Optional: uncomment to ignore docs/agent-layer/ project memory.
+# Edit .agent-layer/gitignore.block (not .gitignore) to change this entry.
+# /docs/agent-layer/
+
+# Agent Layer-generated instruction shims
+/AGENTS.md
+/CLAUDE.md
+/.github/copilot-instructions.md
+
+# Agent Layer-generated client configs + artifacts
+# These may contain resolved secrets from .agent-layer/.env — keep gitignored.
+/.agent/
+/.agents/
+/.mcp.json
+/.codex/
+/.copilot/
+/.gemini/
+
+# Antigravity workspace marker (auto-created by agy; symlinks store per-user paths)
+/.antigravitycli/
+
+# Antigravity repo-local data dir (al sync regenerates managed files)
+/.agy/
+/.claude/
+/.claude-config/
+/.vscode/mcp.json
+# Optional: keep uncommented to ignore VS Code settings.
+/.vscode/settings.json

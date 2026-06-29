@@ -1,0 +1,125 @@
+# Everyday setup:
+# - Use `al wizard` for most changes.
+# - Usually you only need to toggle agent/server `enabled` values.
+# - Leave advanced fields as-is unless you have a specific need.
+
+[approvals]
+# one of: "all", "mcp", "commands", "none", "yolo"
+# yolo skips ALL permission prompts; use only in sandboxed/ephemeral environments
+mode = "yolo"
+
+[agents.antigravity]
+enabled = true
+# The agy CLI does not accept model or reasoning_effort flags, so Agent Layer
+# does not surface those keys for Antigravity. Use agent_specific to inject
+# arbitrary JSON keys into .agy/antigravity-cli/settings.json (deep-merged with
+# Agent Layer-managed permissions).
+# Optional default target when `al dispatch` is invoked from Antigravity without --agent.
+# [agents.antigravity.dispatch]
+# default_agent = "random" # random | codex | claude | antigravity
+[agents.antigravity.agent_specific]
+model = "Gemini 3.5 Flash (High)"
+
+[agents.claude]
+enabled = true
+# model is optional; when omitted, Agent Layer does not pass a model flag and the client uses its default.
+model = "opus"
+# reasoning_effort is optional; Claude Code applies it where the active model supports it.
+reasoning_effort = "xhigh" # low | medium | high | xhigh | max (custom values pass through with a warning)
+# Note: "max" is session-only (passed via --effort CLI flag) and is not written to .claude/settings.json.
+# local_config_dir isolates Claude Code settings and caches per repo.
+# When true, al claude sets CLAUDE_CONFIG_DIR=<repo>/.claude-config.
+# For al vscode, CLAUDE_CONFIG_DIR is set when both this and agents.claude_vscode
+# are enabled. Otherwise, al vscode clears only stale repo-local values and
+# preserves user-defined non-repo values.
+# Note: auth credentials are stored globally by Claude Code in the OS credential store
+# (macOS Keychain service "Claude Code-credentials"; Linux libsecret/gnome-keyring)
+# regardless of this setting (upstream limitation).
+local_config_dir = true
+# disable_question_tool blocks Claude Code's structured clarification-question (AskUserQuestion) tool.
+# When true, al sync injects permissions.deny + a PreToolUse hook into .claude/settings.json (merged
+# with any agent_specific entries). The hook also enforces the block under YOLO/bypassPermissions,
+# where permissions.deny is skipped. Run `al wizard` to set it.
+disable_question_tool = true
+# statusline writes a Claude Code status line. Run `al wizard` to enable it and
+# seed .agent-layer/claude-statusline.sh once; on sync that source is copied to
+# .claude/claude-statusline.sh and statusLine is wired into .claude/settings.json.
+# Absent means disabled. Requires jq on PATH at runtime.
+statusline = true
+# Optional agent-specific passthrough config for Claude (arbitrary JSON keys).
+# Object values are deep-merged into .claude/settings.json; arrays and scalar values are replaced at their key.
+# Overlapping managed keys, such as permissions.allow, override Agent Layer-managed
+# values and trigger a sync warning. permissions.deny is additive and does not warn.
+# Optional "disable" toggles (run `al wizard` to set these). Each keeps Claude
+# Code's native default until enabled; uncomment to opt in.
+agent_specific.env.CLAUDE_CODE_AUTO_CONNECT_IDE = "false" # stop reading files open in the IDE
+agent_specific.env.ENABLE_CLAUDEAI_MCP_SERVERS = "false" # disable claude.ai app connectors
+agent_specific.autoMemoryEnabled = false # disable auto-memory (does not affect CLAUDE.md)
+# Optional default target when `al dispatch` is invoked from Claude without --agent.
+# [agents.claude.dispatch]
+# default_agent = "random" # random | codex | claude | antigravity
+# [agents.claude.agent_specific]
+
+[agents.claude_vscode]
+enabled = true
+
+[agents.codex]
+enabled = true
+# model is optional; when omitted, Agent Layer does not pass a model setting and the client uses its default.
+# model = "gpt-5.3-codex"
+# reasoning_effort is optional; when omitted, the client uses its default.
+reasoning_effort = "xhigh" # codex only
+# statusline writes Codex's native status line from the editable
+# .agent-layer/codex-statusline.toml fragment. Run `al wizard` to enable it and
+# seed the source once. Absent means disabled. For provider-native overrides, define
+# agents.codex.agent_specific.tui.status_line directly.
+statusline = true
+# Optional agent-specific passthrough config for Codex (arbitrary TOML tables/keys).
+# These are appended to .codex/config.toml and can override top-level managed keys.
+# Agent Layer already writes [projects."<repo root>"] trust_level = "trusted".
+# Overlapping keys override Agent Layer-managed values and trigger a sync warning.
+# Optional default target when `al dispatch` is invoked from Codex without --agent.
+# [agents.codex.dispatch]
+# default_agent = "random" # random | codex | claude | antigravity
+# [agents.codex.agent_specific]
+# [agents.codex.agent_specific.features]
+# apps = false              # disable built-in Codex apps (Github, Gmail, etc.) to reduce tool surface
+# browser_use = false       # disable Codex browser/computer-use tools
+# in_app_browser = false    # disable the in-app browser
+# computer_use = false      # disable screen/computer control
+# multi_agent = true
+# prevent_idle_sleep = true
+
+[agents.codex.agent_specific.features]
+computer_use = false
+in_app_browser = false
+browser_use = false
+apps = false
+
+[agents.vscode]
+enabled = true
+
+[agents.copilot_cli]
+enabled = true
+# model is optional; when omitted, Agent Layer does not pass a model flag and the client uses its default.
+# model = "..."
+# reasoning_effort is not currently supported for Copilot CLI in Agent Layer.
+
+[mcp]
+# To add an MCP server, run `al wizard` or see https://agent-layer.dev/docs/reference#mcp-servers
+
+[warnings]
+# Optional warning defaults.
+# Wizard now uses these defaults directly when warnings are enabled.
+version_update_on_sync = true
+# warning noise mode: default | reduce | quiet
+# quiet suppresses agent-layer informational output (warnings, update checks, dispatch banners),
+# but configured quiet does not affect `al doctor`; use `al --quiet doctor`
+# to suppress warning-only doctor output.
+noise_mode = "default"
+instruction_token_threshold = 10000
+mcp_server_threshold = 15
+mcp_tools_total_threshold = 60
+mcp_server_tools_threshold = 25
+mcp_schema_tokens_total_threshold = 30000
+mcp_schema_tokens_server_threshold = 20000
