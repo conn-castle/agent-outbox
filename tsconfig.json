@@ -29,7 +29,6 @@
     "instrumentation.ts",
     "types/**/*.d.ts",
     "next.config.ts",
-    "open-next.config.ts",
     "middleware.ts",
     "scripts/**/*.mjs",
     "sentry.edge.config.ts",

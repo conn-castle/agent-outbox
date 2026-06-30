@@ -5,7 +5,35 @@
 Use the official Cloudflare CLI: `wrangler`.
 
 Run `wrangler --help` first, then run command-specific help before using flags
-that are not already proven in this repository.
+that are not already proven in this repository. Wrangler is platform/operations
+tooling and must not be required by normal app CI or app tests.
+
+Cloudflare's documented recommendation is to install Wrangler locally in a
+project and invoke that project-local binary. This repository intentionally does
+not install Wrangler in normal app setup because app CI must test the app, not
+the Cloudflare deployment platform.
+
+For occasional local Cloudflare debugging before deployment tooling exists, use
+the pinned on-demand CLI:
+
+```bash
+corepack pnpm dlx wrangler@4.105.0 <command>
+```
+
+Known-safe read-only checks:
+
+```bash
+corepack pnpm dlx wrangler@4.105.0 whoami --env-file /dev/null
+corepack pnpm dlx wrangler@4.105.0 deployments status --name agent-outbox --json --env-file /dev/null
+```
+
+`--env-file /dev/null` forces Wrangler to ignore repo-local `.env` values and
+use the cached Wrangler OAuth login. Before the first Worker deployment,
+`deployments status` should reach Cloudflare auth and may report that the Worker
+does not exist yet.
+
+Do not install Wrangler globally for this repository. A global install is easy
+to drift from the version deployment tooling will eventually pin.
 
 ## Owns
 

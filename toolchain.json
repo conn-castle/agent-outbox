@@ -64,12 +64,6 @@
       "package": "react-dom",
       "source": "npm view react-dom version --json"
     },
-    "opennextCloudflare": {
-      "version": "1.20.1",
-      "package": "@opennextjs/cloudflare",
-      "dependencyType": "devDependencies",
-      "source": "npm view @opennextjs/cloudflare version engines peerDependencies --json"
-    },
     "clerkNextjs": {
       "version": "7.5.10",
       "package": "@clerk/nextjs",
@@ -114,12 +108,6 @@
     }
   },
   "providerCli": {
-    "wrangler": {
-      "version": "4.105.0",
-      "package": "wrangler",
-      "source": "npm view wrangler version engines --json",
-      "authCheck": ["wrangler", "whoami"]
-    },
     "clerk": {
       "version": "1.5.0",
       "package": "clerk",

@@ -11,7 +11,6 @@ import {
   validateRequiredEnvExample,
   validateRuntimeProofScope,
   validateToolchainPackage,
-  validateWorkerCronProofConfig,
   validateWorkflowVersionPins
 } from "../scripts/foundation.mjs";
 import { validateCallerBearer } from "../src/server/caller-auth.ts";
@@ -108,12 +107,7 @@ test("validateToolchainPackage accepts runtime dependencies only when toolchain-
       prettier: { package: "prettier", version: "3.9.3" }
     },
     runtimePins: {
-      next: { package: "next", version: "16.2.9" },
-      opennext: {
-        package: "@opennextjs/cloudflare",
-        version: "1.20.1",
-        dependencyType: /** @type {"devDependencies"} */ ("devDependencies")
-      }
+      next: { package: "next", version: "16.2.9" }
     },
     runtimeDevTools: {
       pgTypes: { package: "@types/pg", version: "8.20.0" }
@@ -128,7 +122,6 @@ test("validateToolchainPackage accepts runtime dependencies only when toolchain-
     },
     dependencies: { next: "16.2.9" },
     devDependencies: {
-      "@opennextjs/cloudflare": "1.20.1",
       "@types/pg": "8.20.0",
       prettier: "3.9.3"
     }
@@ -319,23 +312,6 @@ test("validateRuntimeProofScope allows explicit Phase 2 boundary markers", () =>
     }),
     []
   );
-});
-
-test("validateWorkerCronProofConfig rejects a route-only scheduled canary", () => {
-  const failures = validateWorkerCronProofConfig({
-    wranglerConfig: {
-      main: ".open-next/worker.js",
-      triggers: { crons: [] }
-    },
-    workerEntryContent: "export default { async fetch() {} };"
-  });
-
-  assert.deepEqual(failures, [
-    "wrangler.jsonc must use worker/entry.mjs as the Worker entrypoint",
-    "wrangler.jsonc must configure the runtime cron schedule 17 * * * *",
-    "worker/entry.mjs must export a scheduled handler",
-    "worker/entry.mjs must execute the scheduled canary"
-  ]);
 });
 
 test("validateCallerBearer accepts only the configured smoke token", () => {

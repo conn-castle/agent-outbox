@@ -135,19 +135,16 @@ Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs the
 pinned Node built-in test runner. Tests should cover behavior that matters,
 including toolchain/package consistency and secret-safe diagnostics.
 
-- Build or structural verification
+- Build the app
 
 ```bash
 make build
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs
-foundation consistency checks and an OpenNext Cloudflare build against the
-checked-in Wrangler configuration. OpenNext invokes the repository's
-`next:build` script internally. Fails when package metadata, lockfile state,
-pinned toolchain data, or runtime build output drift from the canonical
-manifest. Stop `make dev` before running this command because Next dev and
-OpenNext production builds share generated `.next` output.
+foundation consistency checks and a normal Next.js app build. This is an
+app-level gate and must not require Wrangler, OpenNext Cloudflare, provider
+credentials, deployment artifacts, or platform-specific runtime emulation.
 
 - Smoke check
 
@@ -157,21 +154,10 @@ make smoke
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs
 bounded structural smoke checks only. This credential-free check verifies the
-runtime proof file surface, Worker scheduled trigger wiring, environment
-template, workflow safety, and out-of-scope product guard. It must not require
-provider credentials, create runtime resources, deploy, or publish artifacts.
-
-- Worker scheduled-event smoke check
-
-```bash
-make smoke-worker-scheduled
-```
-
-Run from: repo root Prerequisites: `make setup` and `make build` have completed.
-Notes: Starts a local Wrangler `workerd` server with `--test-scheduled`, calls
-the `/__scheduled` test endpoint, and verifies the scheduled canary log is
-emitted through the Worker `scheduled` handler. This is credential-free and must
-not deploy or mutate Cloudflare resources.
+runtime proof file surface, environment template, workflow safety, and
+out-of-scope product guard. It must not require provider credentials, Wrangler,
+OpenNext Cloudflare, platform emulators, deployment artifacts, or external
+resource mutation.
 
 - Provider-backed runtime smoke check
 
@@ -184,11 +170,9 @@ local app server is serving `APP_BASE_URL`, and `.env` contains real
 development Clerk, Supabase/Postgres, and smoke-token values. Notes:
 Calls the runtime canary routes for app load, caller bearer auth acceptance and
 rejection, database transaction context, restricted app role posture, scheduled
-trigger, structured log, and Sentry suppression. This command can run against
-`make dev`, but that proves only the local Next.js server path; Phase 2 still
-requires a Workers/OpenNext runtime smoke proof before completion. Runtime smoke
-must not emit Sentry events. Fails loudly with missing variable names when
-`.env` is incomplete and must not print secret values.
+trigger, structured log, and Sentry suppression. Runtime smoke must not emit
+Sentry events. Fails loudly with missing variable names when `.env` is
+incomplete and must not print secret values.
 
 - Single local and CI verification gate
 
@@ -198,11 +182,10 @@ make check
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Canonical
 credential-free verification gate for local development and CI. It runs the
-configured format, lint, typecheck, test, OpenNext build, local Worker
-scheduled-event smoke, and structural smoke checks. Fails on any check failure
-or on missing toolchain/package/runtime proof configuration. Stop `make dev`
-before running this command because the OpenNext build writes the same generated
-output tree as local Next dev.
+configured format, lint, typecheck, test, app build, and structural smoke
+checks. It tests the app, not deployment platforms: it must not require
+Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, or
+platform runtime emulation.
 
 - Release verification gate
 

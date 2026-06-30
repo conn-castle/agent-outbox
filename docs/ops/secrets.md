@@ -91,7 +91,7 @@ When a runtime secret is lost:
    operation window.
 
 Use the configured Cloudflare secret import/set commands for the Worker project
-and installed Wrangler version.
+and the Wrangler version pinned by deployment/release tooling.
 
 ## Rotation Rules
 

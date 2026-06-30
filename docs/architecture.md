@@ -232,8 +232,9 @@ Architecture-level responsibilities:
 
 The hosted runtime must support these integration boundaries:
 
-- Next.js, Clerk, and OpenNext in the deployed Workers runtime, with Wrangler
-  and `workerd` used to build and prove the local Worker path.
+- Next.js and provider-backed app routes in the app test/runtime path.
+- OpenNext, Wrangler, and `workerd` only in explicit Cloudflare deployment or
+  platform verification paths, not in the normal app CI gate.
 - Clerk sign-in, sign-out, server-side user lookup, and protected routes.
 - Caller bearer authentication and human-approved caller registration.
 - Direct Postgres access through the restricted non-bypass role with explicit
@@ -246,5 +247,5 @@ The hosted runtime must support these integration boundaries:
 
 The project uses a tracked Worker wrapper entrypoint for Cloudflare Workers.
 HTTP requests delegate to OpenNext's generated Worker output; scheduled events
-run through the project-owned Worker `scheduled` handler so cron behavior is
-testable without replacing the Next.js app/API origin.
+run through the project-owned Worker `scheduled` handler. That platform wiring
+is verified by explicit Cloudflare checks, separate from app tests.

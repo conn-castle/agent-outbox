@@ -59,22 +59,11 @@ Incomplete:
 - Added fail-loud local/provider diagnostics for pinned tools, `.env` required names, read-only provider CLI authentication, command timeouts, and the dedicated Agent Outbox Supabase project reference.
 - Audited and updated pre-product docs for the new command/setup truth, including README, NORTH_STAR, architecture, ops docs, ROADMAP, COMMANDS, and Supabase setup context.
 
-## Phase 2 — Runtime App Shell Proof
-
-### Goal
-- Prove the single Next.js/OpenNext Cloudflare Workers app boundary before product queue, billing, file, or cleanup behavior is built.
-- Keep the proof limited to runtime integration, protected canary routes, provider wiring, safe logs/errors, and scheduled execution.
-
-### Tasks
-- [x] Establish the app boundary with public, auth-adjacent, protected human, caller-auth, database, structured-log, structured-error, Sentry, and scheduled canary routes.
-- [x] Add pinned Next.js, Clerk, OpenNext, Wrangler, Supabase/Postgres, Sentry, logging, and runtime toolchain dependencies to local gates.
-- [x] Add a real Worker `scheduled` handler through the tracked wrapper entrypoint, configure the Wrangler cron trigger, and prove it with local `workerd` scheduled-event smoke.
-- [x] Keep queue lifecycle, product tables, file workflows, billing behavior, cleanup implementation, and Steward-specific behavior out of the runtime proof.
-- [ ] Prove the provider-backed runtime canaries against the OpenNext Worker runtime with real development Clerk, Supabase/Postgres, Sentry, and smoke-token values.
-
-### Exit criteria
-- `make check`, `make doctor`, and `make smoke-worker-scheduled` pass with the configured local environment.
-- `make smoke-runtime` passes against the OpenNext Worker runtime, not only `make dev`, with provider-backed app/API canaries and without emitting Sentry events during smoke.
+## Phase 2 ✅ — App Runtime Shell Proof
+- Established the single Next.js app/API boundary with public, auth-adjacent, protected human, caller-auth, database, structured-log, structured-error, Sentry, and scheduled canary routes.
+- Added pinned Next.js, Clerk, Supabase/Postgres, Sentry, logging, and runtime tooling to app gates while keeping queue lifecycle, product tables, file workflows, billing, cleanup implementation, and Steward-specific behavior out of scope.
+- Kept normal app CI and `make check` independent of Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, and platform runtime emulation.
+- Verified the provider-backed runtime proof with `make doctor` and `make smoke-runtime` against the local app using real development Clerk, Supabase/Postgres, Sentry, and smoke-token values.
 
 ## Phase 3 — Accounts, Authorization, Limits, And Cleanup Foundation
 

@@ -30,18 +30,15 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
     "next:build": "next build",
-    "workers:build": "opennextjs-cloudflare build",
-    "build": "node scripts/foundation.mjs build && corepack pnpm run workers:build",
     "smoke": "node scripts/foundation.mjs smoke",
-    "smoke-worker-scheduled": "node scripts/worker-scheduled-smoke.mjs",
     "smoke-runtime": "node scripts/runtime-smoke.mjs",
+    "build": "node scripts/foundation.mjs build && corepack pnpm run next:build",
     "doctor": "node scripts/foundation.mjs doctor",
-    "check": "corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test && corepack pnpm run build && corepack pnpm run smoke-worker-scheduled && corepack pnpm run smoke",
+    "check": "corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test && corepack pnpm run build && corepack pnpm run smoke",
     "release-check": "corepack pnpm run check",
     "clean": "node scripts/foundation.mjs clean"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.20.1",
     "@sentry/cli": "3.6.0",
     "@types/node": "24.13.2",
     "@types/pg": "8.20.0",
@@ -51,8 +48,7 @@
     "markdownlint-cli2": "0.22.1",
     "prettier": "3.9.3",
     "supabase": "2.108.0",
-    "typescript": "6.0.3",
-    "wrangler": "4.105.0"
+    "typescript": "6.0.3"
   },
   "dependencies": {
     "@clerk/nextjs": "7.5.10",

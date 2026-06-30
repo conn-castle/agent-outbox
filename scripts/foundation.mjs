@@ -4,8 +4,6 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { RUNTIME_CRON_SCHEDULE } from "../src/server/scheduled.ts";
-
 /**
  * @typedef {{
  *   package?: string | null,
@@ -61,12 +59,9 @@ const REQUIRED_FILES = [
   "tsconfig.json",
   "scripts/foundation.mjs",
   "scripts/runtime-smoke.mjs",
-  "scripts/worker-scheduled-smoke.mjs",
   "tests/foundation.test.mjs",
   ".env.example",
   "next.config.ts",
-  "open-next.config.ts",
-  "wrangler.jsonc",
   "middleware.ts",
   "instrumentation.ts",
   "app/layout.tsx",
@@ -76,7 +71,6 @@ const REQUIRED_FILES = [
   "src/server/database.ts",
   "src/server/logging.ts",
   "src/server/scheduled.ts",
-  "worker/entry.mjs",
   "docs/agent-layer/COMMANDS.md",
   ".github/workflows/ci.yml",
   ".github/workflows/release-check.yml"
@@ -126,7 +120,7 @@ const OPTIONAL_LOCAL_ENV_NAMES = [
 
 const COMMAND_TIMEOUT_MS = 30_000;
 
-const RUNTIME_PROOF_SOURCE_DIRS = ["app", "src", "worker"];
+const RUNTIME_PROOF_SOURCE_DIRS = ["app", "src"];
 const RUNTIME_PROOF_SOURCE_FILES = ["instrumentation.ts", "middleware.ts"];
 
 const FORBIDDEN_RUNTIME_PROOF_TOKENS = [
@@ -376,40 +370,6 @@ export function validateRuntimeProofScope(sourceContentsByPath) {
         failures.push(`${relativePath} contains out-of-scope token: ${token}`);
       }
     }
-  }
-
-  return failures;
-}
-
-/**
- * @param {{
- *   wranglerConfig: { main?: unknown, triggers?: { crons?: unknown } },
- *   workerEntryContent: string
- * }} input
- * @returns {string[]}
- */
-export function validateWorkerCronProofConfig(input) {
-  const failures = [];
-
-  if (input.wranglerConfig.main !== "worker/entry.mjs") {
-    failures.push(
-      "wrangler.jsonc must use worker/entry.mjs as the Worker entrypoint"
-    );
-  }
-
-  const crons = input.wranglerConfig.triggers?.crons;
-  if (!Array.isArray(crons) || !crons.includes(RUNTIME_CRON_SCHEDULE)) {
-    failures.push(
-      `wrangler.jsonc must configure the runtime cron schedule ${RUNTIME_CRON_SCHEDULE}`
-    );
-  }
-
-  if (!input.workerEntryContent.includes("async scheduled(")) {
-    failures.push("worker/entry.mjs must export a scheduled handler");
-  }
-
-  if (!input.workerEntryContent.includes("runScheduledCanary")) {
-    failures.push("worker/entry.mjs must execute the scheduled canary");
   }
 
   return failures;
@@ -677,7 +637,6 @@ function checkMakefileSurface() {
     "test",
     "build",
     "smoke",
-    "smoke-worker-scheduled",
     "smoke-runtime",
     "check",
     "release-check",
@@ -800,18 +759,6 @@ function smoke() {
     readRuntimeProofSourceContents()
   );
   assert.deepEqual(scopeFailures, [], scopeFailures.join("\n"));
-
-  const workerCronFailures = validateWorkerCronProofConfig({
-    wranglerConfig:
-      /** @type {{ main?: unknown, triggers?: { crons?: unknown } }} */ (
-        readJson("wrangler.jsonc")
-      ),
-    workerEntryContent: readFileSync(
-      path.join(ROOT, "worker/entry.mjs"),
-      "utf8"
-    )
-  });
-  assert.deepEqual(workerCronFailures, [], workerCronFailures.join("\n"));
 
   console.log("Structural smoke checks passed.");
 }
