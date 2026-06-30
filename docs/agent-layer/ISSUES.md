@@ -26,23 +26,62 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-06-30 output-cursor-answered-at-precision: Keyset pagination assumes millisecond-precision answered_at
+    Priority: Medium. Area: Output queue/pagination
+    Description: `src/server/output-queue.ts` keyset pagination compares `(answered_at, output_result_id) > ($3::timestamptz, $4::uuid)` but `cursorFromOutputRow` encodes `answered_at` via JS `Date.toISOString()` (millisecond precision) while the column is microsecond-capable `timestamptz` (default `now()`). Currently safe only because the sole writer `human-answer.ts` stores millisecond ISO; a sub-millisecond `answered_at` (column default or any future writer) would make the cursor always strictly-less, never advancing past the first page — the exact "must not silently leave unread pages behind" failure in `docs/spec/output-schema.md`.
+    Next step: PRODUCT/DESIGN DECISION — either make the cursor precision-exact against the raw column (e.g. render `answered_at::text` / `to_jsonb`) or contractually enforce+document millisecond precision on every `answered_at` write.
+    Notes: Latent (Low current reachability), Medium mechanism. Surfaced by Phase 4 audit review-scope.
+
+- Issue 2026-06-30 stored-byte-math-duplication: Two encodings of stored-byte totals (enforcement vs reporting)
+    Priority: Low. Area: Limits/Accounting
+    Description: Stored-byte math (`non_file = input+output`, `overall = input+output+file`) is encoded twice: the SQL function `agent_outbox_account_stock_usage` (migration, used by `caller-api-limits.ts` enforcement) and an inline CTE in `src/server/status.ts` `storageStatusStatement` (reporting). They can silently drift, violating single-source-of-truth, so reported figures could disagree with enforced limits.
+    Next step: Have `status.ts` call `agent_outbox_account_stock_usage(...)` so enforcement and reporting share one calculation.
+    Notes: Surfaced by Phase 4 audit review-scope.
+
+- Issue 2026-06-30 caller-quota-before-validation: Invalid input send/replace still debits monthly request quota
+    Priority: Low. Area: Limits/Accounting
+    Description: In `src/server/input-queue.ts`, send/replace increment the monthly caller-API request window before `parseInputSubmission` runs, and the transaction commits on an `ok:false` return (only thrown errors roll back), so a malformed/rejected submission permanently debits a monthly request. Delete is correctly exempt. Counting invalid requests deters spam but penalizes client bugs/retries; the spec does not pin this down.
+    Next step: PRODUCT DECISION — confirm whether rejected/invalid requests should debit the monthly quota; defensible as-is.
+    Notes: Surfaced by Phase 4 audit review-scope.
+
+- Issue 2026-06-30 caller-auth-notfound-timing: Key-id enumeration timing side-channel on not-found path
+    Priority: Low. Area: Security/Caller-auth
+    Description: `src/server/caller-api-auth.ts` returns before computing the HMAC + `timingSafeEqual` when the credential lookup is null, while a found-but-wrong-secret request does both, making "unknown key_id" timing-distinguishable from "known key_id, wrong secret." Impact is minimal — 128-bit random key_ids make enumeration infeasible and the DB round-trip dominates — but it deviates from "compare runs unconditionally."
+    Next step: Optionally perform a dummy HMAC + `timingSafeEqual` against a fixed sentinel on the not-found branch.
+
+- Issue 2026-06-30 legacy-oracle-verifier-dead: Legacy verifyCallerApiKeyAgainstCredential is dead but still oracle-shaped
+    Priority: Low. Area: Security/Caller-auth
+    Description: `src/server/caller-auth.ts::verifyCallerApiKeyAgainstCredential` is now called only by tests; the production path uses `authenticateCallerApiRequest`. It still returns distinct lifecycle codes (revoked/expired/not_active/invalid_secret), so leaving it in the tree invites future reuse that would reintroduce the resolved credential-lifecycle oracle at a client boundary.
+    Next step: Delete it and migrate its tests onto `authenticateCallerApiRequest`, or annotate it as non-client-facing internal/legacy only.
+    Notes: Surfaced by Phase 4 audit review-scope.
+
+- Issue 2026-06-30 undocumented-phase7-error-codes: ApiErrorCode lists codes absent from errors.md catalog
+    Priority: Low. Area: Docs/API contract
+    Description: `retention_limit_exceeded` and `billing_grace_expired` are in the `ApiErrorCode` union and wired into limit definitions in `limits.ts`, but are not in the `docs/spec/errors.md` catalog. They are Phase 7 (billing/retention) forward declarations not yet emittable to callers, so the type/limits surface and the public error catalog have drifted.
+    Next step: When Phase 7 builds billing/retention, add these codes to `errors.md`; until then keep the divergence intentional and tracked here.
+
+- Issue 2026-06-30 json-body-buffered-before-cap: Request body fully buffered before 128 KB size check
+    Priority: Low. Area: Input/Reliability
+    Description: `src/server/input-schema.ts` `readJsonBodyWithLimit` calls `await request.arrayBuffer()` (materializing the whole body) before checking `bytes > INPUT_REQUEST_BODY_BYTE_LIMIT`, so the 128 KB cap bounds only what reaches `JSON.parse`, not peak memory. The effective memory ceiling is whatever the deploy platform's edge request-size limit is — an undocumented external assumption.
+    Next step: Document and rely on the platform/edge body-size limit explicitly, or short-circuit on `Content-Length` before buffering.
+
+- Issue 2026-06-30 output-read-path-hardening: check over-fetch and read-all single-row poison-pill
+    Priority: Low. Area: Output queue
+    Description: Two output read-path items in `src/server/output-queue.ts`: (1) `check` reuses `outputPageStatement` and pulls full `response_payload` JSON from the DB though `outputCheckItemFromRow` projects to metadata only (extra DB I/O, not a leak); (2) `read-all` returns `{ok:false}`/`temporary_unavailable` for the whole page if any single row fails materialization, which would block a page and everything after it. Both are currently low-impact (read-all poison-pill is unreachable until file-upload results become creatable in Phase 7).
+    Next step: Give `check` a metadata-only SELECT; when file-upload results become creatable, degrade a single unmaterializable read-all row rather than failing the whole page.
+    Notes: Surfaced by Phase 4 audit review-scope.
+
+- Issue 2026-06-30 input-send-answered-live-output-branch: Inert answered-item branch may mask intended distinction
+    Priority: Medium. Area: Input queue semantics
+    Description: In `src/server/input-queue.ts` `sendResultForExisting`, the `existing.status === "answered" && existing.has_live_output` branch returns the same `answered_unacknowledged` error as the following plain `existing.status === "answered"` branch, so the `has_live_output` check is currently inert. The spec (`docs/spec/errors.md`, `docs/spec/http-api.md`) ties `answered_unacknowledged` specifically to an answered item whose output is still unacknowledged, suggesting an answered item with no live output may warrant different handling.
+    Next step: Confirm intended behavior for an answered item without a live output, then implement the distinct response or collapse the redundant branch.
+    Notes: Left intact during simplify-new-code pass to avoid erasing a possibly half-finished spec distinction.
+
 - Issue 2026-06-30 account-bootstrap-security-flow: Account bootstrap path depends on auth design
     Priority: High. Area: Security/Auth
     Description: Initial account and owner membership creation under `agent_outbox_app` needs a narrow bootstrap path, but implementing it before the Clerk-to-internal-user flow and related security decisions are defined would bake in the wrong trust boundary.
     Next step: Define the Clerk-to-internal-user provisioning flow and all other security-related account bootstrap decisions, then implement a dedicated bootstrap function or equivalent narrow policy.
     Notes: Deferred from PR #2 review; regular Row Level Security membership policies intentionally remain unchanged in Phase 3.
-
-- Issue 2026-06-30 caller-quota-consume-source: Two encodings of "consumes monthly caller API quota"
-    Priority: Low. Area: Limits/Accounting
-    Description: `consumesMonthlyCallerApiRequestQuota` (deny-list in accounting.ts) and the `authenticated_caller_api_requests_per_calendar_month` limit `operationKinds` allow-list (limits.ts) can drift on which operations debit the quota; they currently encode different semantics.
-    Next step: Product decision needed — define one canonical set of operation kinds that debit the monthly caller API quota, then derive both call sites from it.
-    Notes: Deferred from review M-LM2; unifying changes runtime debit behavior, so it is a product/architecture call, not a mechanical fix.
-
-- Issue 2026-06-30 caller-credential-lifecycle-oracle: Verifier leaks credential lifecycle state before secret check
-    Priority: Low. Area: Security/Caller-auth
-    Description: `verifyCallerApiKeyAgainstCredential` returns distinct codes (caller_key_revoked/not_active) before the timing-safe secret compare, so a holder of a valid 128-bit key_id can learn lifecycle state without the secret. Exploitability is gated by key_id entropy.
-    Next step: When the caller route is built, return a generic client error (keep granular codes for internal logging) and run the secret comparison unconditionally.
-    Notes: Deferred from review L1; the client-facing genericization belongs in the not-yet-existent caller route handler.
 
 - Issue 2026-06-30 next-middleware-proxy-convention: Next.js middleware file convention is deprecated
     Priority: Low. Area: Runtime/Next.js

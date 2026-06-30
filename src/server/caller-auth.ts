@@ -263,18 +263,6 @@ export function verifyCallerApiKeyAgainstCredential(
     return { ok: false, code: "caller_key_mismatch" };
   }
 
-  if (credential.revokedAt || credential.status === "revoked") {
-    return { ok: false, code: "caller_key_revoked" };
-  }
-
-  if (credential.status === "expired" || credentialExpired(credential)) {
-    return { ok: false, code: "caller_key_expired" };
-  }
-
-  if (credential.status !== "active") {
-    return { ok: false, code: "caller_key_not_active" };
-  }
-
   if (!/^[a-fA-F0-9]{64}$/.test(credential.secretDigest)) {
     return { ok: false, code: "invalid_stored_digest" };
   }
@@ -285,6 +273,18 @@ export function verifyCallerApiKeyAgainstCredential(
 
   if (!timingSafeEqual(secretDigestBuffer, expectedDigestBuffer)) {
     return { ok: false, code: "invalid_caller_key_secret" };
+  }
+
+  if (credential.revokedAt || credential.status === "revoked") {
+    return { ok: false, code: "caller_key_revoked" };
+  }
+
+  if (credential.status === "expired" || credentialExpired(credential)) {
+    return { ok: false, code: "caller_key_expired" };
+  }
+
+  if (credential.status !== "active") {
+    return { ok: false, code: "caller_key_not_active" };
   }
 
   return {

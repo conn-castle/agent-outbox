@@ -14,6 +14,9 @@ When documentation and code disagree, the code wins.
 - [`docs/architecture.md`](docs/architecture.md) —> System boundaries, runtime
   topology, trust boundaries, data authority, queue/delivery model, limit
   enforcement, and runtime proofs
+- [`docs/spec/`](docs/spec/README.md) —> Canonical caller HTTP contract, input
+  and output schemas, pagination, file download, status, registration, and API
+  error envelopes
 - [`.env.example`](.env.example) —> Tracked template and variable list for
   repo-root `.env`
 

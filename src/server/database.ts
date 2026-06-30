@@ -5,7 +5,7 @@ const DATABASE_CANARY_TIMEOUT_MS = 5_000;
 
 export type TransactionContextStatement = {
   sql: string;
-  values?: (string | number | null)[];
+  values?: (string | number | boolean | null)[];
 };
 
 export type TransactionContextAuthSurface = "human" | "caller" | "cleanup";

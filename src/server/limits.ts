@@ -21,6 +21,7 @@ export const LIMIT_NAMES = [
 
 export type LimitName = (typeof LIMIT_NAMES)[number];
 
+export type AccountTier = "hosted_free" | "hosted_paid" | "self_hosted";
 export type LimitProfileId = "hosted-free" | "hosted-paid" | "self-hosted";
 export type LimitProfileSelector = LimitProfileId;
 
@@ -45,12 +46,22 @@ export type LimitOperationKind =
   | "input_delete"
   | "human_answer_submission"
   | "output_check_read"
+  | "output_file_download"
   | "output_ack"
   | "file_upload"
   | "storage_write"
   | "status"
   | "cleanup"
   | "billing";
+
+export const MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS = [
+  "caller_api_request",
+  "input_submission",
+  "output_check_read",
+  "output_file_download",
+  "status"
+] as const satisfies readonly LimitOperationKind[];
+
 export type LimitReasonCode =
   | "monthly_input_submission_quota_exceeded"
   | "daily_input_submission_quota_exceeded"
@@ -208,7 +219,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     name: "authenticated_caller_api_requests_per_calendar_month",
     category: "product",
     unit: "requests",
-    operationKinds: ["caller_api_request", "status"],
+    operationKinds: MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS,
     windowKind: "calendar_month",
     resetRule: "fixed_window_end",
     reason:
@@ -310,7 +321,11 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     name: "stored_non_file_queue_payload_bytes",
     category: "product",
     unit: "bytes",
-    operationKinds: ["storage_write"],
+    operationKinds: [
+      "storage_write",
+      "input_submission",
+      "human_answer_submission"
+    ],
     resetRule: "cleanup_or_storage_free",
     reason:
       "Stored non-file queue payload byte limit reached; delete or acknowledge queue data to free storage.",
@@ -323,7 +338,12 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     name: "overall_stored_account_data_bytes",
     category: "product",
     unit: "bytes",
-    operationKinds: ["storage_write", "file_upload"],
+    operationKinds: [
+      "storage_write",
+      "input_submission",
+      "human_answer_submission",
+      "file_upload"
+    ],
     resetRule: "cleanup_or_storage_free",
     reason:
       "Stored account data byte limit reached; delete or acknowledge data to free storage.",
@@ -501,6 +521,21 @@ export function getLimitProfile(selector: LimitProfileSelector): LimitProfile {
 
 export function getLimitDefinition(limitName: LimitName) {
   return LIMIT_DEFINITIONS[limitName];
+}
+
+export function limitProfileSelectorForAccountTier(
+  tier: AccountTier | null | undefined
+): LimitProfileSelector | null {
+  if (tier === "hosted_paid") {
+    return "hosted-paid";
+  }
+  if (tier === "self_hosted") {
+    return "self-hosted";
+  }
+  if (tier === "hosted_free") {
+    return "hosted-free";
+  }
+  return null;
 }
 
 export function accountLimitStatusMetadata(

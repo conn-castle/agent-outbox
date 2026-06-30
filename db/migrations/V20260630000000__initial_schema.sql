@@ -444,6 +444,49 @@ create table public.agent_outbox_output_files (
 create index agent_outbox_output_files_account_idx
   on public.agent_outbox_output_files(account_id, caller_id, output_result_id);
 
+create or replace function public.agent_outbox_account_stock_usage(p_account_id uuid)
+returns table(
+  queued_input_items bigint,
+  non_file_stored_bytes bigint,
+  overall_stored_bytes bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not public.agent_outbox_context_allows_account(p_account_id) then
+    raise exception 'agent_outbox_account_stock_usage forbidden'
+      using errcode = '42501';
+  end if;
+
+  return query
+    with input_usage as (
+      select
+        count(*)::bigint as item_count,
+        coalesce(sum(non_file_payload_bytes), 0)::bigint as bytes
+      from public.agent_outbox_input_items
+      where account_id = p_account_id
+    ),
+    output_usage as (
+      select coalesce(sum(response_payload_bytes), 0)::bigint as bytes
+      from public.agent_outbox_output_results
+      where account_id = p_account_id
+    ),
+    file_usage as (
+      select coalesce(sum(size_bytes), 0)::bigint as bytes
+      from public.agent_outbox_output_files
+      where account_id = p_account_id
+    )
+    select
+      input_usage.item_count,
+      input_usage.bytes + output_usage.bytes,
+      input_usage.bytes + output_usage.bytes + file_usage.bytes
+    from input_usage, output_usage, file_usage;
+end
+$$;
+
 create table public.agent_outbox_audit_events (
   audit_event_id uuid primary key default extensions.gen_random_uuid(),
   event_type text not null,
@@ -1388,6 +1431,7 @@ revoke execute on function public.agent_outbox_context_allows_account(uuid) from
 revoke execute on function public.agent_outbox_context_allows_caller(uuid) from public;
 revoke execute on function public.agent_outbox_context_allows_caller_audit_id(uuid) from public;
 revoke execute on function public.agent_outbox_lookup_caller_credential(text) from public;
+revoke execute on function public.agent_outbox_account_stock_usage(uuid) from public;
 revoke execute on function public.agent_outbox_reject_account_audit_id_mutation() from public;
 revoke execute on function public.agent_outbox_reject_caller_audit_id_mutation() from public;
 revoke execute on function public.agent_outbox_reject_audit_mutation() from public;
@@ -1409,6 +1453,7 @@ grant execute on function public.agent_outbox_context_allows_account(uuid) to ag
 grant execute on function public.agent_outbox_context_allows_caller(uuid) to agent_outbox_app;
 grant execute on function public.agent_outbox_context_allows_caller_audit_id(uuid) to agent_outbox_app;
 grant execute on function public.agent_outbox_lookup_caller_credential(text) to agent_outbox_app;
+grant execute on function public.agent_outbox_account_stock_usage(uuid) to agent_outbox_app;
 grant execute on function public.agent_outbox_reject_account_audit_id_mutation() to agent_outbox_app;
 grant execute on function public.agent_outbox_reject_caller_audit_id_mutation() to agent_outbox_app;
 grant execute on function public.agent_outbox_reject_audit_mutation() to agent_outbox_app;
@@ -1455,6 +1500,7 @@ declare
     public.agent_outbox_context_allows_caller(uuid),
     public.agent_outbox_context_allows_caller_audit_id(uuid),
     public.agent_outbox_lookup_caller_credential(text),
+    public.agent_outbox_account_stock_usage(uuid),
     public.agent_outbox_reject_account_audit_id_mutation(),
     public.agent_outbox_reject_caller_audit_id_mutation(),
     public.agent_outbox_reject_audit_mutation(),

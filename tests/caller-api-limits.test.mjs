@@ -1,0 +1,195 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  activeLimitBlockStatement,
+  enforceAcceptedInputSubmissionLimits,
+  enforceCallerRequestLimits,
+  incrementQuotaWindowStatement
+} from "../src/server/caller-api-limits.ts";
+
+/**
+ * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
+ * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
+ * @typedef {import("pg").QueryResultRow} QueryResultRow
+ * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
+ */
+
+const identity = {
+  accountId: "00000000-0000-4000-8000-000000000001",
+  callerId: "00000000-0000-4000-8000-000000000002"
+};
+
+/**
+ * @param {QueryResultRow[][]} rowsByCall
+ * @returns {MockProductTransactionQuery}
+ */
+function fakeQuery(rowsByCall) {
+  /** @type {TransactionContextStatement[]} */
+  const calls = [];
+  /**
+   * @param {TransactionContextStatement} statement
+   * @returns {Promise<import("pg").QueryResult<QueryResultRow>>}
+   */
+  const query = async (statement) => {
+    calls.push(statement);
+    const rows = rowsByCall[calls.length - 1] ?? [];
+    return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
+  };
+  const typed = /** @type {MockProductTransactionQuery} */ (
+    /** @type {unknown} */ (query)
+  );
+  typed.calls = calls;
+  return typed;
+}
+
+test("caller request limits short-circuit active blocks without incrementing quota windows", async () => {
+  const query = fakeQuery([
+    [
+      {
+        account_id: identity.accountId,
+        operation_kind: "output_check_read",
+        limit_name: "output_check_read_requests_per_account_per_minute",
+        limit_reason_code: "output_check_read_rate_limited",
+        limit_reason:
+          "Output check/read requests are temporarily rate limited.",
+        limit_resets_at: "2026-06-30T12:01:00.000Z",
+        used_units: "121",
+        limit_units: "120"
+      }
+    ]
+  ]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "output_check_read"
+  );
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.error.limit, {
+    account_id: identity.accountId,
+    operation_kind: "output_check_read",
+    limit_name: "output_check_read_requests_per_account_per_minute",
+    limit_reason_code: "output_check_read_rate_limited",
+    limit_reason: "Output check/read requests are temporarily rate limited.",
+    limit_resets_at: "2026-06-30T12:01:00.000Z",
+    used_units: 121,
+    limit_units: 120
+  });
+  assert.equal(query.calls.length, 1);
+});
+
+test("caller request limits persist an active block when a quota window overflows", async () => {
+  const query = fakeQuery([[], [{ used_units: "100001" }], []]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "status"
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "quota_limit_exceeded");
+  assert.equal(
+    result.error.limit && "limit_name" in result.error.limit
+      ? result.error.limit.limit_name
+      : null,
+    "authenticated_caller_api_requests_per_calendar_month"
+  );
+  assert.match(query.calls[2].sql, /agent_outbox_account_limit_blocks/);
+});
+
+test("accepted input submission limits block stock overflow before incrementing submission windows", async () => {
+  const query = fakeQuery([
+    [],
+    [{ acquired: true }],
+    [],
+    [],
+    [],
+    [],
+    [
+      {
+        queued_input_items: "1000",
+        non_file_stored_bytes: "0",
+        overall_stored_bytes: "0"
+      }
+    ],
+    []
+  ]);
+
+  const result = await enforceAcceptedInputSubmissionLimits(
+    query,
+    identity,
+    "hosted-free",
+    {
+      queuedItemDelta: 1,
+      nonFilePayloadByteDelta: 100
+    }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "storage_limit_exceeded");
+  assert.equal(
+    result.error.limit && "limit_name" in result.error.limit
+      ? result.error.limit.limit_name
+      : null,
+    "queued_input_items"
+  );
+  assert.equal(
+    query.calls.some(
+      (call) =>
+        call.sql.includes("agent_outbox_account_quota_windows") &&
+        call.sql.includes("insert")
+    ),
+    false
+  );
+});
+
+test("quota statement builders scope rows to account metric and window", () => {
+  assert.deepEqual(
+    activeLimitBlockStatement(identity, "output_file_download").values,
+    [
+      identity.accountId,
+      "output_file_download",
+      true,
+      "authenticated_caller_api_requests_per_calendar_month",
+      false
+    ]
+  );
+  assert.deepEqual(activeLimitBlockStatement(identity, "output_ack").values, [
+    identity.accountId,
+    "output_ack",
+    false,
+    "authenticated_caller_api_requests_per_calendar_month",
+    false
+  ]);
+  assert.deepEqual(
+    activeLimitBlockStatement(identity, "input_submission", {
+      fixedWindowOnly: true
+    }).values,
+    [
+      identity.accountId,
+      "input_submission",
+      true,
+      "authenticated_caller_api_requests_per_calendar_month",
+      true
+    ]
+  );
+  assert.deepEqual(
+    incrementQuotaWindowStatement({
+      identity,
+      limitName: "authenticated_caller_api_requests_per_calendar_month",
+      windowKind: "calendar_month",
+      windowStartUtc: "2026-06-01T00:00:00.000Z"
+    }).values,
+    [
+      identity.accountId,
+      "authenticated_caller_api_requests_per_calendar_month",
+      "calendar_month",
+      "2026-06-01T00:00:00.000Z"
+    ]
+  );
+});

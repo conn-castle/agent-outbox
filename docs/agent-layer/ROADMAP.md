@@ -72,27 +72,13 @@ Incomplete:
 - Added cleanup statement builders and database functions for acknowledgement, pre-read undo, output timeout, pending retention, downgrade grace expiry, quota-window pruning, and active-limit maintenance.
 - Verified local migration replay, app-role posture, app-only function privileges, Row Level Security isolation, parent ownership constraints, audit safety, file deletion, quota/limit cleanup, and no duplicate mutable usage gauge.
 
-## Phase 4 — Core Caller HTTP API And Queue Semantics
-
-### Goal
-- Ship the canonical raw HTTP contract for callers before relying on the CLI as a wrapper.
-- Implement the typed async input/output queue lifecycle without adding workflow-engine, source-system, realtime, or task-management semantics.
-- Source map: [README.md](../../README.md) "Input Items", "Output Results", "Queue Semantics", and "Caller Integration", [architecture.md](../architecture.md) "Queue And Delivery" and "File Handling", and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for input queue, output queue, output delivery, and API definition order.
-
-### Tasks
-- [ ] Define and document implementation-owned HTTP routes, request/response envelopes, pagination envelopes, and stable error codes for input, output, caller registration, and status contracts.
-- [ ] Implement input submission validation, HTML/color/icon safety, request-size/list caps, retry-safe `send`, explicit pending-only `replace`, and pending-only `delete`.
-- [ ] Implement human-answer creation as exactly one output result for the originating caller, including stale-answer protection and pre-read undo support.
-- [ ] Implement non-mutating output checks, output reads that mark returned results as read, auto-pageable bulk reads, idempotent acknowledgement, and at-least-once delivery until acknowledgement or timeout cleanup.
-- [ ] Implement authorized file metadata and dedicated raw-byte file download behavior without returning file bytes from output check/read; complete paid file-upload workflows in Phase 7.
-- [ ] Implement the shared API/CLI error model, including distinct validation, auth, authorization, conflict, stale, not found, already-acknowledged, quota/rate-limit, upgrade-required, temporary, and internal failures.
-
-### Exit criteria
-- HTTP contract docs exist and the CLI roadmap has no hidden behavior not expressible through documented HTTP endpoints.
-- API tests cover duplicate input send, pending conflict, explicit replace, pending delete, answered-unacknowledged conflict, output check/read/read-all/ack, pre-read undo, stale answer rejection, and timeout/ack deletion invariants.
-- Pagination verification proves `check` and `read --all` cannot silently leave unread pages behind when the server reports more results.
-- File verification proves output reads return metadata only and raw bytes require the dedicated caller-authorized file endpoint.
-- Error responses and logs include correlation identifiers and safe machine-readable codes without leaking user content or secrets.
+## Phase 4 ✅ — Core Caller HTTP API And Queue Semantics
+- Added canonical caller HTTP contract docs for input, output, status, files, caller-registration control-plane shape, response envelopes, pagination, and stable error codes, with route-guard smoke checks keeping later-phase API drift out.
+- Added caller bearer API authentication, shared response/error envelopes, route handlers for input send/replace/delete, output check/read/read-all/ack, raw file download, caller status, and account status.
+- Implemented typed input validation, supported-icon enforcement, safe HTML/color/URL checks, request/cardinality caps, retry-safe send, pending-only replace/delete, and loud `file_upload` deferral until the paid upload workflow in Phase 7.
+- Implemented server-only human answer creation, stale-answer protection, pre-read undo, output reads that mark returned results read, idempotent acknowledgement through the shared deletion path, and metadata-only file reads with dedicated raw-byte downloads.
+- Added caller API quota/rate enforcement through canonical limits, quota windows, active limit blocks, account-scoped stock checks, and cleanup exemptions for input delete and output ack.
+- Verified the phase with focused behavior tests plus `make check` covering formatting, Markdown lint, TypeScript, 94 tests, build, and structural smoke.
 
 ## Phase 5 — Human Review Web UI
 
