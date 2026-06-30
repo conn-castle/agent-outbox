@@ -8,6 +8,6 @@
 
 - **Documentation upkeep:** Public/project documentation should contain durable information only. Non-durable information belong only in `docs/agent-layer` memory files. When you learn durable project behavior or find a docs gap/mistake, update the relevant `docs/` Markdown file(s). Skip ephemeral debugging notes and generic best practices.
 
-- **Single-topic documentation:** Document a single topic in exactly one Markdown file. Other files may link to that canonical file or briefly mention it only when needed for context. Do not duplicate information across multiple files unless the user explicitly approves the duplication.
+- **Single-topic documentation:** Document each durable topic in one canonical Markdown file. Related files may link to that source or include a brief pointer when needed for context. Avoid duplicating the same guidance across multiple files unless the user explicitly approves the duplication.
 
 - **No system Python:** Never use system Python. Always prefer the project virtual environment Python, and if no virtual environment exists, ask the user if you should create one.

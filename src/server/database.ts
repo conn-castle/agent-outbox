@@ -1,6 +1,7 @@
 import { Client } from "pg";
 
 const APP_DATABASE_ROLE = "agent_outbox_app";
+const DATABASE_CANARY_TIMEOUT_MS = 5_000;
 
 type TransactionContextStatement = {
   sql: string;
@@ -40,7 +41,10 @@ export async function runTransactionContextCanary(connectionString: string) {
     transactionContextCanaryStatements(requestId);
   const client = new Client({
     application_name: "agent-outbox-runtime-canary",
-    connectionString
+    connectionString,
+    connectionTimeoutMillis: DATABASE_CANARY_TIMEOUT_MS,
+    query_timeout: DATABASE_CANARY_TIMEOUT_MS,
+    statement_timeout: DATABASE_CANARY_TIMEOUT_MS
   });
 
   await client.connect();
@@ -64,8 +68,8 @@ export async function runTransactionContextCanary(connectionString: string) {
       transactionContextMatched: result.rows[0]?.request_id === requestId,
       restrictedRoleMatched:
         role?.role_name === APP_DATABASE_ROLE &&
-        role.rolbypassrls === false &&
-        role.rolinherit === false
+        role?.rolbypassrls === false &&
+        role?.rolinherit === false
     };
   } finally {
     await client.end();

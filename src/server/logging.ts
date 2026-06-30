@@ -3,6 +3,7 @@ export type LogLevel = "info" | "warn" | "error";
 export type RuntimeLogEvent = {
   level: LogLevel;
   error_id?: string;
+  error_name?: string;
   request_id?: string;
   environment?: string | null;
   release?: string | null;
@@ -17,6 +18,7 @@ export type RuntimeLogEvent = {
 const SAFE_LOG_KEYS = new Set([
   "level",
   "error_id",
+  "error_name",
   "request_id",
   "environment",
   "release",

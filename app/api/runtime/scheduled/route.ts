@@ -11,8 +11,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     route_trigger_available: true,
-    cron_trigger_configured: true,
-    cron_schedule: RUNTIME_CRON_SCHEDULE
+    expected_cron_schedule: RUNTIME_CRON_SCHEDULE
   });
 }
 

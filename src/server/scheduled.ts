@@ -14,6 +14,11 @@ type ScheduledCanaryInput = {
 export function runScheduledCanary(input: ScheduledCanaryInput) {
   const errorId = createCorrelationId("sched");
   const recordedAt = new Date().toISOString();
+  const scheduledTime =
+    typeof input.scheduledTime === "number" &&
+    Number.isFinite(input.scheduledTime)
+      ? new Date(input.scheduledTime).toISOString()
+      : null;
   const log = emitRuntimeLog({
     level: "info",
     error_id: errorId,
@@ -32,10 +37,7 @@ export function runScheduledCanary(input: ScheduledCanaryInput) {
     configured_cron: RUNTIME_CRON_SCHEDULE,
     error_id: errorId,
     recorded_at: recordedAt,
-    scheduled_time:
-      typeof input.scheduledTime === "number"
-        ? new Date(input.scheduledTime).toISOString()
-        : null,
+    scheduled_time: scheduledTime,
     log
   };
 }

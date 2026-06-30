@@ -19,6 +19,7 @@ const REQUIRED_RUNTIME_VALUES = [
 const RUNTIME_SMOKE_HEADERS = {
   "x-agent-outbox-runtime-smoke": "1"
 };
+const REQUEST_TIMEOUT_MS = 10_000;
 
 function readLocalEnv() {
   const envPath = path.join(ROOT, ".env");
@@ -34,7 +35,10 @@ function readLocalEnv() {
  * @param {RequestInit} [init]
  */
 async function expectCanaryOk(url, init) {
-  const response = await fetch(url, init);
+  const response = await fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  });
   assert.equal(response.ok, true, `${url} returned ${response.status}`);
   const body = await response.json();
   assert.equal(body.ok, true, `${url} returned ok=${String(body.ok)}`);
@@ -47,7 +51,10 @@ async function expectCanaryOk(url, init) {
  * @param {RequestInit} [init]
  */
 async function expectJsonStatus(url, expectedStatus, init) {
-  const response = await fetch(url, init);
+  const response = await fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  });
   assert.equal(
     response.status,
     expectedStatus,
@@ -73,7 +80,10 @@ async function expectErrorCode(url, expectedStatus, expectedCode, init) {
  * @param {URL} url
  */
 async function expectReachablePage(url) {
-  const response = await fetch(url, { redirect: "manual" });
+  const response = await fetch(url, {
+    redirect: "manual",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  });
   assert.ok(
     response.status >= 200 && response.status < 400,
     `${url} returned ${response.status}`

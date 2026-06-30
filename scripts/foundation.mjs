@@ -127,7 +127,8 @@ const OPTIONAL_LOCAL_ENV_NAMES = [
 
 const COMMAND_TIMEOUT_MS = 30_000;
 
-const RUNTIME_PROOF_SOURCE_DIRS = ["app", "src"];
+const RUNTIME_PROOF_SOURCE_DIRS = ["app", "src", "worker"];
+const RUNTIME_PROOF_SOURCE_FILES = ["instrumentation.ts", "middleware.ts"];
 
 const FORBIDDEN_RUNTIME_PROOF_TOKENS = [
   "create table",
@@ -742,6 +743,13 @@ function readRuntimeProofSourceContents() {
   for (const relativePath of RUNTIME_PROOF_SOURCE_DIRS.flatMap(
     listSourceFiles
   )) {
+    contents[relativePath] = readFileSync(
+      path.join(ROOT, relativePath),
+      "utf8"
+    );
+  }
+
+  for (const relativePath of RUNTIME_PROOF_SOURCE_FILES) {
     contents[relativePath] = readFileSync(
       path.join(ROOT, relativePath),
       "utf8"

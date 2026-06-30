@@ -232,8 +232,8 @@ Architecture-level responsibilities:
 
 The hosted runtime must support these integration boundaries:
 
-- Next.js, Clerk, OpenNext, Wrangler, and `workerd` together in the deployed
-  Workers runtime.
+- Next.js, Clerk, and OpenNext in the deployed Workers runtime, with Wrangler
+  and `workerd` used to build and prove the local Worker path.
 - Clerk sign-in, sign-out, server-side user lookup, and protected routes.
 - Caller bearer authentication and human-approved caller registration.
 - Direct Postgres access through the restricted non-bypass role with explicit

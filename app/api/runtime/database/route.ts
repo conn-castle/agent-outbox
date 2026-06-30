@@ -1,8 +1,10 @@
+import { createCorrelationId } from "../../../../src/server/correlation";
 import { runTransactionContextCanary } from "../../../../src/server/database";
 import {
   missingConfigurationResponse,
   smokeBearerFailureResponse
 } from "../../../../src/server/http";
+import { emitRuntimeLog } from "../../../../src/server/logging";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -34,10 +36,26 @@ export async function GET(request: Request) {
       },
       { status: ok ? 200 : 502 }
     );
-  } catch {
+  } catch (error) {
+    const errorId = createCorrelationId("db");
+    emitRuntimeLog({
+      level: "error",
+      error_id: errorId,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+      environment: process.env.APP_ENV ?? null,
+      release: process.env.CF_VERSION_METADATA ?? null,
+      surface: "api",
+      route: "/api/runtime/database",
+      method: "GET",
+      status_code: 502,
+      operation: "runtime.database.canary",
+      message: "database canary failed"
+    });
+
     return NextResponse.json(
       {
         ok: false,
+        error_id: errorId,
         code: "database_canary_failed"
       },
       { status: 502 }

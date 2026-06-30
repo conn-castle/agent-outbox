@@ -18,6 +18,7 @@ import { validateCallerBearer } from "../src/server/caller-auth.ts";
 import { transactionContextCanaryStatements as databaseCanaryStatements } from "../src/server/database.ts";
 import { runtimeConfigStatus } from "../src/server/env.ts";
 import { safeLogEvent } from "../src/server/logging.ts";
+import { runScheduledCanary } from "../src/server/scheduled.ts";
 import { sentryCaptureEnabled } from "../src/server/sentry.ts";
 
 /**
@@ -364,6 +365,7 @@ test("safeLogEvent strips request bodies and arbitrary caller-controlled fields"
   const unsafeEvent = {
     level: "error",
     error_id: "err_123",
+    error_name: "DatabaseConnectionError",
     surface: "api",
     route: "/api/runtime/error",
     method: "GET",
@@ -378,6 +380,7 @@ test("safeLogEvent strips request bodies and arbitrary caller-controlled fields"
   assert.deepEqual(event, {
     level: "error",
     error_id: "err_123",
+    error_name: "DatabaseConnectionError",
     surface: "api",
     route: "/api/runtime/error",
     method: "GET",
@@ -475,4 +478,21 @@ test("database canary statements keep transaction context scoped to one transact
     },
     { sql: "rollback" }
   ]);
+});
+
+test("scheduled canary ignores invalid scheduled timestamps", () => {
+  const originalLog = console.log;
+  console.log = () => {};
+
+  try {
+    const canary = runScheduledCanary({
+      trigger: "cron",
+      cron: "17 * * * *",
+      scheduledTime: Number.NaN
+    });
+
+    assert.equal(canary.scheduled_time, null);
+  } finally {
+    console.log = originalLog;
+  }
 });

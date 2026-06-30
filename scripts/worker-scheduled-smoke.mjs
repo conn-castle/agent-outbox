@@ -10,6 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WORKER_SMOKE_PORT = 38_001;
 const READY_TIMEOUT_MS = 60_000;
 const LOG_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 2_000;
 
 /**
  * @param {number} ms
@@ -26,7 +27,9 @@ async function waitForScheduledEndpoint() {
 
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      });
       if (response.ok) {
         const body = await response.text();
         assert.match(body, /Ran scheduled event/);
@@ -104,6 +107,11 @@ async function main() {
     await waitForScheduledEndpoint();
     await waitForScheduledLog(() => output);
     console.log("Worker scheduled smoke canary passed.");
+  } catch (error) {
+    if (output) {
+      console.error(output);
+    }
+    throw error;
   } finally {
     worker.kill("SIGTERM");
   }
