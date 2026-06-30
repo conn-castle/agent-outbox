@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "verifiedAsOf": "2026-06-29",
+  "verifiedAsOf": "2026-06-30",
   "node": {
     "version": "24.18.0",
     "lts": "Krypton",
@@ -15,6 +15,11 @@
     "name": "pnpm",
     "version": "11.9.0",
     "source": "npm view pnpm version engines --json"
+  },
+  "flyway": {
+    "version": "12.10.0",
+    "image": "flyway/flyway",
+    "source": "https://documentation.red-gate.com/fd/command-line-277579359.html"
   },
   "phase1Tools": {
     "prettier": {

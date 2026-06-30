@@ -1,4 +1,4 @@
-.PHONY: help bootstrap setup doctor dev fix format lint typecheck test build smoke smoke-runtime check release-check clean
+.PHONY: help bootstrap setup doctor dev fix format lint typecheck test build smoke smoke-runtime migration-validate migration-migrate migration-replay check release-check clean
 
 help:
 	@printf '%s\n' 'Agent Outbox command surface'
@@ -16,6 +16,9 @@ help:
 	@printf '%s\n' '  make build          Build the app with Next.js.'
 	@printf '%s\n' '  make smoke          Run structural smoke checks.'
 	@printf '%s\n' '  make smoke-runtime  Run provider-backed runtime canary smoke checks.'
+	@printf '%s\n' '  make migration-validate Validate Flyway migration history.'
+	@printf '%s\n' '  make migration-migrate  Apply pending Flyway migrations.'
+	@printf '%s\n' '  make migration-replay   Validate and apply migrations to an empty database.'
 	@printf '%s\n' '  make check          Run the single local/CI verification gate.'
 	@printf '%s\n' '  make release-check  Run the non-deploying release/package gate.'
 	@printf '%s\n' '  make clean          Remove bounded reproducible generated artifacts.'
@@ -54,6 +57,15 @@ smoke:
 
 smoke-runtime:
 	corepack pnpm run smoke-runtime
+
+migration-validate:
+	corepack pnpm run migration:validate
+
+migration-migrate:
+	corepack pnpm run migration:migrate
+
+migration-replay:
+	corepack pnpm run migration:replay
 
 check:
 	corepack pnpm run check

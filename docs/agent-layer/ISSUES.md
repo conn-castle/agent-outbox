@@ -26,11 +26,24 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-06-30 cloudflare-workers-deploy-token: Cloudflare Worker deployment token missing
-    Priority: Medium. Area: Operations/Cloudflare
-    Description: Local Wrangler OAuth can inspect/deploy Workers, but the stored Cloudflare token is DNS-scoped and must not be used as Wrangler's `CLOUDFLARE_API_TOKEN`.
-    Next step: Before the first hosted Worker deployment, mint a least-scoped Worker deploy/inspection token, store it in Systems Manager Parameter Store and the deployment environment, and keep it separate from the DNS-management token.
-    Notes: DNS token canonical path is `/agent-outbox/shared/cloudflare-dns-api-token`; legacy `/agent-outbox/shared/cloudflare-api-token` remains until explicit cleanup.
+- Issue 2026-06-30 account-bootstrap-security-flow: Account bootstrap path depends on auth design
+    Priority: High. Area: Security/Auth
+    Description: Initial account and owner membership creation under `agent_outbox_app` needs a narrow bootstrap path, but implementing it before the Clerk-to-internal-user flow and related security decisions are defined would bake in the wrong trust boundary.
+    Next step: Define the Clerk-to-internal-user provisioning flow and all other security-related account bootstrap decisions, then implement a dedicated bootstrap function or equivalent narrow policy.
+    Notes: Deferred from PR #2 review; regular Row Level Security membership policies intentionally remain unchanged in Phase 3.
+
+- Issue 2026-06-30 caller-quota-consume-source: Two encodings of "consumes monthly caller API quota"
+    Priority: Low. Area: Limits/Accounting
+    Description: `consumesMonthlyCallerApiRequestQuota` (deny-list in accounting.ts) and the `authenticated_caller_api_requests_per_calendar_month` limit `operationKinds` allow-list (limits.ts) can drift on which operations debit the quota; they currently encode different semantics.
+    Next step: Product decision needed — define one canonical set of operation kinds that debit the monthly caller API quota, then derive both call sites from it.
+    Notes: Deferred from review M-LM2; unifying changes runtime debit behavior, so it is a product/architecture call, not a mechanical fix.
+
+- Issue 2026-06-30 caller-credential-lifecycle-oracle: Verifier leaks credential lifecycle state before secret check
+    Priority: Low. Area: Security/Caller-auth
+    Description: `verifyCallerApiKeyAgainstCredential` returns distinct codes (caller_key_revoked/not_active) before the timing-safe secret compare, so a holder of a valid 128-bit key_id can learn lifecycle state without the secret. Exploitability is gated by key_id entropy.
+    Next step: When the caller route is built, return a generic client error (keep granular codes for internal logging) and run the secret comparison unconditionally.
+    Notes: Deferred from review L1; the client-facing genericization belongs in the not-yet-existent caller route handler.
+
 - Issue 2026-06-30 next-middleware-proxy-convention: Next.js middleware file convention is deprecated
     Priority: Low. Area: Runtime/Next.js
     Description: `next build` on Next.js 16.2.9 warns that the `middleware` file convention is deprecated in favor of `proxy`.

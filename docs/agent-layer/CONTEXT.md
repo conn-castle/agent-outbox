@@ -28,14 +28,16 @@ Do not duplicate information that belongs in other memory files:
 
 ## Provider Setup
 
-- Stripe CLI access has been verified for the Agent Outbox billing account.
-  Store exact Stripe account metadata in Systems Manager Parameter Store under
-  `/agent-outbox/environments/production/stripe-*`; keep tracked docs free of
-  provider account ids. Billing products, prices, portal configuration,
-  webhook endpoints, and application secret keys remain deferred until the
-  billing phase.
-- Sentry is configured for the Agent Outbox JavaScript Next.js project in the
-  Conn Castle organization. Store DSNs, auth token, organization slug, project
-  slug, and project id under `/agent-outbox/environments/production/sentry-*`;
-  the installed Sentry CLI auth check works, but organization/project listing
-  may require the Sentry HTTP API when the CLI cannot parse the org response.
+- Exact provider inventory values belong in approved operator-controlled secret
+  stores; tracked docs should keep provider ids, account ids, project refs,
+  database hosts, secret-store paths, current environment posture, and secret
+  values out of public Markdown.
+- GitHub uses `conn-castle/agent-outbox`.
+- Cloudflare setup separates local Wrangler OAuth, DNS management tokens,
+  Worker deploy tokens, and token-management credentials by purpose.
+- Stripe billing products, prices, portal configuration, webhook endpoints, and
+  application secret keys remain deferred until the billing phase. Keep tracked
+  docs free of provider account ids.
+- Sentry is the error-monitoring provider for the Next.js app. Organization and
+  project metadata belongs in approved operator-controlled systems, not tracked
+  docs.

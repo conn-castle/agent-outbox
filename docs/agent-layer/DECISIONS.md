@@ -35,3 +35,13 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: `make check` and app tests verify the Next.js app only; Cloudflare/OpenNext/Wrangler verification belongs in later deployment/release work.
     Reason: App CI should fail for app defects, not deployment adapter installation, local Worker emulation, or Cloudflare credential/tooling issues.
     Tradeoffs: Platform regressions require a separate release/ops check, but normal development and CI stay provider-credential-free and platform-independent.
+
+- Decision 2026-06-30 self-hosted-paid-profile-limits: Reuse paid limits profile for self-hosted mode
+    Decision: Self-hosted/non-hosted operation maps to the hosted paid limits profile without Stripe billing state instead of adding a separate self-hosted limits surface.
+    Reason: Self-hosting is a byproduct of the public repository, not a product goal, and a dedicated self-hosting limits model would add confusing code paths before real need exists.
+    Tradeoffs: Self-hosted defaults inherit paid-tier storage/runtime behavior rather than removing product caps entirely, but the codebase stays simpler and hosted behavior remains canonical.
+
+- Decision 2026-06-30 host-agnostic-flyway-migrations: Use Flyway for Postgres migrations
+    Decision: `db/migrations/` is the canonical schema source and Flyway runs hand-authored PostgreSQL SQL against normal Postgres URLs; provider CLIs are not migration authorities.
+    Reason: The schema must run on raw Postgres containers, Supabase, Neon, Aurora, and similar providers without binding migration history to one host.
+    Tradeoffs: This adds a Dockerized Flyway tool boundary, but gives provider portability, checksum validation, and raw Postgres CI replay.

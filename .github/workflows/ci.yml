@@ -28,3 +28,43 @@ jobs:
 
       - name: Run verification gate
         run: make check
+
+  migration-replay:
+    name: make migration-replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: agent_outbox_ci
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agent_outbox_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"
+      DATABASE_MIGRATION_URL: postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci
+      FLYWAY_DOCKER_NETWORK: host
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Set up dependencies
+        run: make setup
+
+      - name: Replay migrations from scratch
+        run: make migration-replay
+
+      - name: Run database policy verification
+        run: >-
+          corepack pnpm exec node --test --test-name-pattern "phase 3 local
+          database" tests/foundation.test.mjs

@@ -200,6 +200,74 @@ packages, mutate provider state, or require private provider credentials.
 
 ## Maintenance
 
+- Validate Flyway migration history
+
+```bash
+make migration-validate
+```
+
+Run from: repo root Prerequisites: `make setup` has completed and Docker is
+running. `DATABASE_MIGRATION_URL` must point at the target Postgres database.
+Notes: Runs pinned Flyway `12.10.0` in Docker against `db/migrations/` and
+validates the schema history/checksums without applying new migrations. When
+the target database listens on the host, either set `FLYWAY_DOCKER_NETWORK=host`
+where Docker supports host networking or use a Docker-reachable host such as
+`host.docker.internal` in `DATABASE_MIGRATION_URL`.
+
+- Apply pending Flyway migrations
+
+```bash
+make migration-migrate
+```
+
+Run from: repo root Prerequisites: `make setup` has completed and Docker is
+running. `DATABASE_MIGRATION_URL` must point at the target Postgres database.
+Notes: Applies pending host-agnostic Flyway migrations from `db/migrations/`.
+Do not use provider dashboards or provider-specific migration commands for
+schema changes. When the target database listens on the host, either set
+`FLYWAY_DOCKER_NETWORK=host` where Docker supports host networking or use a
+Docker-reachable host such as `host.docker.internal` in
+`DATABASE_MIGRATION_URL`.
+
+- Replay Flyway migrations from scratch
+
+```bash
+make migration-replay
+```
+
+Run from: repo root Prerequisites: `make setup` has completed, Docker is
+running, and `DATABASE_MIGRATION_URL` points at an empty disposable Postgres
+database. Notes: Runs Flyway pre-migrate validate with pending migrations
+ignored, then migrate, then strict validate again. CI runs this against a raw
+`postgres:17` service; do not point it at shared or durable data. When the
+target database listens on the host, either set
+`FLYWAY_DOCKER_NETWORK=host` where Docker supports host networking or use a
+Docker-reachable host such as `host.docker.internal` in
+`DATABASE_MIGRATION_URL`.
+
+- Create a new Flyway migration file
+
+```bash
+touch db/migrations/VYYYYMMDDHHMMSS__lower_snake_description.sql
+```
+
+Run from: repo root Prerequisites: None. Notes: Use UTC timestamps and
+lower-snake descriptive names. Flyway migration commands and CI migration
+replay validate migration filenames; `make test` unit-tests the filename
+parser.
+
+- Verify database policies and cleanup against migrated Postgres
+
+```bash
+AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 DATABASE_MIGRATION_URL='postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci' corepack pnpm exec node --test --test-name-pattern 'phase 3 local database' tests/foundation.test.mjs
+```
+
+Run from: repo root Prerequisites: `make setup` has completed and Flyway
+migrations have been applied to the target database. Notes: Runs the opt-in
+database-backed test that proves restricted app-role posture, transaction-local
+Row Level Security isolation, and shared cleanup deletion behavior. Normal
+`make test` skips this test unless `AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1`.
+
 - Remove reproducible generated artifacts
 
 ```bash
@@ -267,7 +335,9 @@ make check
 Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
 `24.18.0` before running commands. Notes: `.github/workflows/ci.yml` runs these
 commands with read-only repository permissions and no provider credentials by
-default.
+default. The same workflow also runs a separate `make migration-replay` job
+against a raw `postgres:17` service and then runs the opt-in database policy
+test.
 
 - GitHub Actions release-check gate
 
@@ -279,4 +349,6 @@ make release-check
 Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
 `24.18.0` before running commands. Notes: `.github/workflows/release-check.yml`
 runs these commands with read-only repository permissions. The workflow is
-verification-only and has no deployment or package publication step.
+verification-only and has no deployment or package publication step. The same
+workflow also runs `make migration-replay` against a raw `postgres:17` service
+and then runs the opt-in database policy test.

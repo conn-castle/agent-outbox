@@ -125,8 +125,9 @@ Likely causes:
 - database storage growth from uploaded file bytes;
 - migration drift or failed migration.
 
-Use [services/supabase.md](services/supabase.md) for Supabase CLI checks and
-logs first. Do not repair schema with raw SQL.
+Use [services/supabase.md](services/supabase.md) for Supabase project checks and
+logs first. Use [migrations.md](migrations.md) for schema change rules; do not
+repair schema with raw SQL.
 
 ## Observability Missing
 

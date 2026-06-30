@@ -69,7 +69,8 @@ service incident.
 - Supabase Postgres owns queue rows, output rows, uploaded file bytes, quota
   windows, limit blocks, and audit events.
 - Watch storage closely because paid file bytes are stored in Postgres.
-- Do not use raw SQL to modify schema. Use migrations.
+- Do not use raw SQL to modify schema. Use the Flyway rules in
+  [migrations.md](migrations.md).
 - Do not delete live data manually unless the owner approves the exact scope and
   backup/export posture.
 

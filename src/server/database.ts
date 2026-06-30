@@ -1,11 +1,21 @@
-import { Client } from "pg";
+import { Client, type QueryResult, type QueryResultRow } from "pg";
 
 const APP_DATABASE_ROLE = "agent_outbox_app";
 const DATABASE_CANARY_TIMEOUT_MS = 5_000;
 
-type TransactionContextStatement = {
+export type TransactionContextStatement = {
   sql: string;
-  values?: string[];
+  values?: (string | number | null)[];
+};
+
+export type TransactionContextAuthSurface = "human" | "caller" | "cleanup";
+
+export type ProductTransactionContext = {
+  requestId: string;
+  authSurface: TransactionContextAuthSurface;
+  accountId?: string;
+  callerId?: string;
+  userId?: string;
 };
 
 export function postgresDriverImportProof() {
@@ -13,6 +23,70 @@ export function postgresDriverImportProof() {
     package: "pg",
     client: typeof Client
   };
+}
+
+export type ProductTransactionQuery = <
+  TResult extends QueryResultRow = QueryResultRow
+>(
+  statement: TransactionContextStatement
+) => Promise<QueryResult<TResult>>;
+
+export async function runProductTransaction<TResult>(
+  connectionString: string,
+  context: ProductTransactionContext,
+  callback: (query: ProductTransactionQuery) => Promise<TResult>
+) {
+  const client = new Client({
+    application_name: "agent-outbox-product-transaction",
+    connectionString,
+    connectionTimeoutMillis: DATABASE_CANARY_TIMEOUT_MS,
+    query_timeout: DATABASE_CANARY_TIMEOUT_MS,
+    statement_timeout: DATABASE_CANARY_TIMEOUT_MS
+  });
+
+  await client.connect();
+
+  try {
+    await client.query("begin");
+    await client.query("select set_config($1, $2, true)", [
+      "agent_outbox.request_id",
+      context.requestId
+    ]);
+    await client.query("select set_config($1, $2, true)", [
+      "agent_outbox.auth_surface",
+      context.authSurface
+    ]);
+    if (context.accountId) {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        context.accountId
+      ]);
+    }
+    if (context.callerId) {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.caller_id",
+        context.callerId
+      ]);
+    }
+    if (context.userId) {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.user_id",
+        context.userId
+      ]);
+    }
+
+    const result = await callback((statement) => {
+      return client.query(statement.sql, statement.values);
+    });
+
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    await client.end();
+  }
 }
 
 export function transactionContextCanaryStatements(

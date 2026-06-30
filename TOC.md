@@ -29,6 +29,8 @@ When documentation and code disagree, the code wins.
   service-level controls, escalation
 - [`docs/ops/secrets.md`](docs/ops/secrets.md) —> Secret ownership, recovery,
   rotation, safe inspection
+- [`docs/ops/migrations.md`](docs/ops/migrations.md) —> Flyway migration rules,
+  migration source, and CI enforcement
 
 ## Hosted Services (`docs/ops/services/`)
 

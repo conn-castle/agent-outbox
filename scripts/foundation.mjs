@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
  *   node: { version: string, npm: string },
  *   go: { version: string },
  *   packageManager: { name: string, version: string },
+ *   flyway: { version: string, image: string, source: string },
  *   phase1Tools: Record<string, ToolPin>,
  *   runtimePins: Record<string, ToolPin>,
  *   runtimeDevTools: Record<string, ToolPin>,
@@ -67,11 +68,18 @@ const REQUIRED_FILES = [
   "app/layout.tsx",
   "app/page.tsx",
   "app/api/runtime/canary/route.ts",
+  "src/server/accounting.ts",
+  "src/server/authorization.ts",
   "src/server/caller-auth.ts",
+  "src/server/cleanup.ts",
   "src/server/database.ts",
+  "src/server/limits.ts",
   "src/server/logging.ts",
   "src/server/scheduled.ts",
+  "db/migrations/V20260630000000__initial_schema.sql",
   "docs/agent-layer/COMMANDS.md",
+  "docs/ops/migrations.md",
+  "scripts/flyway.mjs",
   ".github/workflows/ci.yml",
   ".github/workflows/release-check.yml"
 ];
@@ -83,7 +91,9 @@ const FORBIDDEN_WORKFLOW_TOKENS = [
   "gh release create",
   "stripe trigger",
   "stripe fixtures",
-  "supabase db push"
+  "supabase db push",
+  "supabase db reset",
+  "supabase migration"
 ];
 
 const REQUIRED_ENV_NAMES = [
@@ -123,15 +133,63 @@ const COMMAND_TIMEOUT_MS = 30_000;
 const RUNTIME_PROOF_SOURCE_DIRS = ["app", "src"];
 const RUNTIME_PROOF_SOURCE_FILES = ["instrumentation.ts", "middleware.ts"];
 
+const FORBIDDEN_RUNTIME_PROOF_PATH_PATTERNS = [
+  /^app\/api\/input\//,
+  /^app\/api\/output\//,
+  /^app\/api\/caller\//,
+  /^app\/api\/account\//,
+  /^app\/api\/files?\//,
+  /^app\/human\/(?:queue|review|items?)\//,
+  /^src\/components\/human\//,
+  /^src\/cli\//,
+  /^src\/.*steward/i,
+  /^cli\//,
+  /^cmd\//
+];
+
 const FORBIDDEN_RUNTIME_PROOF_TOKENS = [
   "create table",
-  "input_items",
-  "output_results",
   "stripe.checkout",
   "checkout.sessions",
   "uploadthing",
-  "supabase.storage"
+  "supabase.storage",
+  "gmail",
+  "classifier"
 ];
+
+const PHASE3_FOUNDATION_MARKERS_BY_FILE = {
+  "src/server/accounting.ts": [
+    "auditSafeLifecycleEvent",
+    "storedByteAccounting",
+    "quotaWindowKey"
+  ],
+  "src/server/authorization.ts": [
+    "authorizeAccountMembership",
+    "authorizeCallerAccount"
+  ],
+  "src/server/caller-auth.ts": [
+    "generateCallerApiKeyMaterial",
+    "verifyCallerApiKeyAgainstCredential"
+  ],
+  "src/server/cleanup.ts": [
+    "terminalOutputDeletionStatement",
+    "downgradeGraceExpiryStatement",
+    "agent_outbox_cleanup_downgrade_grace_expiry"
+  ],
+  "src/server/database.ts": ["runProductTransaction"],
+  "src/server/limits.ts": [
+    "authenticated_caller_api_requests_per_calendar_month",
+    "self_hosted"
+  ],
+  "db/migrations/V20260630000000__initial_schema.sql": [
+    "agent_outbox_context_allows_caller",
+    "enable row level security",
+    "agent_outbox_delete_output_result",
+    "agent_outbox_cleanup_downgrade_grace_expiry",
+    "agent_outbox_app",
+    "nobypassrls"
+  ]
+};
 
 /**
  * @param {string} relativePath
@@ -364,10 +422,48 @@ export function validateRuntimeProofScope(sourceContentsByPath) {
   const failures = [];
 
   for (const [relativePath, content] of Object.entries(sourceContentsByPath)) {
+    for (const pattern of FORBIDDEN_RUNTIME_PROOF_PATH_PATTERNS) {
+      if (pattern.test(relativePath)) {
+        failures.push(
+          `${relativePath} is later-phase implementation scope, not Phase 3 foundation scope`
+        );
+      }
+    }
+
     const lowered = content.toLowerCase();
     for (const token of FORBIDDEN_RUNTIME_PROOF_TOKENS) {
       if (lowered.includes(token)) {
         failures.push(`${relativePath} contains out-of-scope token: ${token}`);
+      }
+    }
+  }
+
+  return failures;
+}
+
+/**
+ * @param {Record<string, string>} sourceContentsByPath
+ * @returns {string[]}
+ */
+export function validatePhase3FoundationSourceContents(sourceContentsByPath) {
+  const failures = [];
+
+  for (const [relativePath, markers] of Object.entries(
+    PHASE3_FOUNDATION_MARKERS_BY_FILE
+  )) {
+    const content = sourceContentsByPath[relativePath];
+    if (content === undefined) {
+      failures.push(
+        `${relativePath} is missing from Phase 3 foundation source`
+      );
+      continue;
+    }
+
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        failures.push(
+          `${relativePath} is missing Phase 3 foundation marker: ${marker}`
+        );
       }
     }
   }
@@ -422,6 +518,38 @@ export function validateWorkflowVersionPins(toolchain, workflowContentsByPath) {
 }
 
 /**
+ * @param {Record<string, string>} workflowContentsByPath
+ * @returns {string[]}
+ */
+export function validateMigrationReplayWorkflow(workflowContentsByPath) {
+  const failures = [];
+
+  for (const workflowPath of [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release-check.yml"
+  ]) {
+    const content = workflowContentsByPath[workflowPath] ?? "";
+    for (const requiredToken of [
+      "postgres:17",
+      "DATABASE_MIGRATION_URL",
+      "FLYWAY_DOCKER_NETWORK: host",
+      "make migration-replay",
+      'node --test --test-name-pattern "phase 3 local',
+      'database" tests/foundation.test.mjs',
+      'AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"'
+    ]) {
+      if (!content.includes(requiredToken)) {
+        failures.push(
+          `${workflowPath} must include migration replay token: ${requiredToken}`
+        );
+      }
+    }
+  }
+
+  return failures;
+}
+
+/**
  * @param {Toolchain} toolchain
  * @param {string} commandsContent
  * @returns {string[]}
@@ -432,6 +560,9 @@ export function validateCommandsVersionPins(toolchain, commandsContent) {
     ...commandsContent.matchAll(/(?:CI provisions|pinned) Node `([^`]+)`/g)
   ].map((match) => match[1]);
   const pnpmVersions = [...commandsContent.matchAll(/pnpm `([^`]+)`/g)].map(
+    (match) => match[1]
+  );
+  const flywayVersions = [...commandsContent.matchAll(/Flyway `([^`]+)`/g)].map(
     (match) => match[1]
   );
 
@@ -453,6 +584,17 @@ export function validateCommandsVersionPins(toolchain, commandsContent) {
     if (version !== toolchain.packageManager.version) {
       errors.push(
         `COMMANDS.md pnpm ${version} must match toolchain.json ${toolchain.packageManager.version}`
+      );
+    }
+  }
+
+  if (flywayVersions.length === 0) {
+    errors.push("COMMANDS.md must reference the pinned Flyway version");
+  }
+  for (const version of flywayVersions) {
+    if (version !== toolchain.flyway.version) {
+      errors.push(
+        `COMMANDS.md Flyway ${version} must match toolchain.json ${toolchain.flyway.version}`
       );
     }
   }
@@ -638,6 +780,9 @@ function checkMakefileSurface() {
     "build",
     "smoke",
     "smoke-runtime",
+    "migration-validate",
+    "migration-migrate",
+    "migration-replay",
     "check",
     "release-check",
     "clean"
@@ -717,6 +862,23 @@ function readRuntimeProofSourceContents() {
   return contents;
 }
 
+/**
+ * @returns {Record<string, string>}
+ */
+function readPhase3FoundationSourceContents() {
+  /** @type {Record<string, string>} */
+  const contents = {};
+
+  for (const relativePath of Object.keys(PHASE3_FOUNDATION_MARKERS_BY_FILE)) {
+    contents[relativePath] = readFileSync(
+      path.join(ROOT, relativePath),
+      "utf8"
+    );
+  }
+
+  return contents;
+}
+
 function build() {
   checkRequiredFiles();
   checkMakefileSurface();
@@ -754,11 +916,28 @@ function smoke() {
     readWorkflowContents()
   );
   assert.deepEqual(workflowFailures, [], workflowFailures.join("\n"));
+  const migrationWorkflowFailures = validateMigrationReplayWorkflow(
+    readWorkflowContents()
+  );
+  assert.deepEqual(
+    migrationWorkflowFailures,
+    [],
+    migrationWorkflowFailures.join("\n")
+  );
 
   const scopeFailures = validateRuntimeProofScope(
     readRuntimeProofSourceContents()
   );
   assert.deepEqual(scopeFailures, [], scopeFailures.join("\n"));
+
+  const phase3FoundationFailures = validatePhase3FoundationSourceContents(
+    readPhase3FoundationSourceContents()
+  );
+  assert.deepEqual(
+    phase3FoundationFailures,
+    [],
+    phase3FoundationFailures.join("\n")
+  );
 
   console.log("Structural smoke checks passed.");
 }
