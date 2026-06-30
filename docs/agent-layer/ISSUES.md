@@ -26,6 +26,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-06-30 account-bootstrap-security-flow: Account bootstrap path depends on auth design
+    Priority: High. Area: Security/Auth
+    Description: Initial account and owner membership creation under `agent_outbox_app` needs a narrow bootstrap path, but implementing it before the Clerk-to-internal-user flow and related security decisions are defined would bake in the wrong trust boundary.
+    Next step: Define the Clerk-to-internal-user provisioning flow and all other security-related account bootstrap decisions, then implement a dedicated bootstrap function or equivalent narrow policy.
+    Notes: Deferred from PR #2 review; regular Row Level Security membership policies intentionally remain unchanged in Phase 3.
+
 - Issue 2026-06-30 caller-quota-consume-source: Two encodings of "consumes monthly caller API quota"
     Priority: Low. Area: Limits/Accounting
     Description: `consumesMonthlyCallerApiRequestQuota` (deny-list in accounting.ts) and the `authenticated_caller_api_requests_per_calendar_month` limit `operationKinds` allow-list (limits.ts) can drift on which operations debit the quota; they currently encode different semantics.

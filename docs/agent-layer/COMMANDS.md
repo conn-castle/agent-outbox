@@ -237,9 +237,10 @@ make migration-replay
 
 Run from: repo root Prerequisites: `make setup` has completed, Docker is
 running, and `DATABASE_MIGRATION_URL` points at an empty disposable Postgres
-database. Notes: Runs Flyway validate, migrate, then validate again. CI runs
-this against a raw `postgres:17` service; do not point it at shared or durable
-data. When the target database listens on the host, either set
+database. Notes: Runs Flyway pre-migrate validate with pending migrations
+ignored, then migrate, then strict validate again. CI runs this against a raw
+`postgres:17` service; do not point it at shared or durable data. When the
+target database listens on the host, either set
 `FLYWAY_DOCKER_NETWORK=host` where Docker supports host networking or use a
 Docker-reachable host such as `host.docker.internal` in
 `DATABASE_MIGRATION_URL`.

@@ -121,6 +121,14 @@ const SAFE_AUDIT_METADATA_KEYS = new Set([
   "revision"
 ]);
 
+function validByteCount(value: number, name: string) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative safe integer`);
+  }
+
+  return value;
+}
+
 export function auditSafeLifecycleEvent(
   input: AuditSafeLifecycleInput
 ): AuditSafeLifecycleEvent {
@@ -149,10 +157,10 @@ export function auditSafeLifecycleEvent(
     event.response_kind = input.responseKind;
   }
   if (input.nonFileBytes != null) {
-    event.non_file_bytes = input.nonFileBytes;
+    event.non_file_bytes = validByteCount(input.nonFileBytes, "nonFileBytes");
   }
   if (input.fileBytes != null) {
-    event.file_bytes = input.fileBytes;
+    event.file_bytes = validByteCount(input.fileBytes, "fileBytes");
   }
   if (input.quotaMetric != null) {
     event.quota_metric = input.quotaMetric;
@@ -241,14 +249,27 @@ export function activeLimitBlockMetadata(
 export function storedByteAccounting(
   input: StoredByteAccountingInput
 ): StoredByteAccounting {
-  const nonFileQueuePayloadBytes =
-    (input.inputPayloadBytes ?? 0) + (input.outputPayloadBytes ?? 0);
-  const fileBytes = input.fileBytes ?? 0;
+  const inputPayloadBytes = validByteCount(
+    input.inputPayloadBytes ?? 0,
+    "inputPayloadBytes"
+  );
+  const outputPayloadBytes = validByteCount(
+    input.outputPayloadBytes ?? 0,
+    "outputPayloadBytes"
+  );
+  const nonFileQueuePayloadBytes = validByteCount(
+    inputPayloadBytes + outputPayloadBytes,
+    "nonFileQueuePayloadBytes"
+  );
+  const fileBytes = validByteCount(input.fileBytes ?? 0, "fileBytes");
 
   return {
     nonFileQueuePayloadBytes,
     fileBytes,
-    overallStoredAccountDataBytes: nonFileQueuePayloadBytes + fileBytes
+    overallStoredAccountDataBytes: validByteCount(
+      nonFileQueuePayloadBytes + fileBytes,
+      "overallStoredAccountDataBytes"
+    )
   };
 }
 

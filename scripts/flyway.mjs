@@ -10,6 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(ROOT, "db", "migrations");
 const MIGRATION_FILE_PATTERN = /^V(\d{14})__[a-z0-9]+(?:_[a-z0-9]+)*\.sql$/;
 const ALLOWED_COMMANDS = new Set(["validate", "migrate"]);
+const PENDING_MIGRATION_IGNORE_PATTERN = "*:pending";
 
 export const FLYWAY_DOCKER_IMAGE = `${toolchain.flyway.image}:${toolchain.flyway.version}`;
 
@@ -76,12 +77,68 @@ function assertMigrationFilenames() {
 }
 
 /**
+ * @param {{ ignorePendingMigrations?: boolean }} [options]
+ * @returns {string[]}
+ */
+export function flywayDockerEnvironmentNames(options = {}) {
+  const environmentNames = [
+    "FLYWAY_URL",
+    "FLYWAY_LOCATIONS",
+    "FLYWAY_CONNECT_RETRIES",
+    "FLYWAY_USER",
+    "FLYWAY_PASSWORD"
+  ];
+
+  if (options.ignorePendingMigrations) {
+    environmentNames.push("FLYWAY_IGNORE_MIGRATION_PATTERNS");
+  }
+
+  return environmentNames;
+}
+
+/**
+ * @param {{ jdbcUrl: string, user?: string, password?: string }} connection
+ * @param {{ ignorePendingMigrations?: boolean }} [options]
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function flywayEnvironmentFromConnection(connection, options = {}) {
+  /** @type {NodeJS.ProcessEnv} */
+  const environment = {
+    ...process.env,
+    FLYWAY_CONNECT_RETRIES: process.env.FLYWAY_CONNECT_RETRIES ?? "60",
+    FLYWAY_LOCATIONS: "filesystem:/flyway/sql",
+    FLYWAY_PASSWORD: connection.password ?? "",
+    FLYWAY_URL: connection.jdbcUrl,
+    FLYWAY_USER: connection.user
+  };
+
+  delete environment.FLYWAY_IGNORE_MIGRATION_PATTERNS;
+  if (options.ignorePendingMigrations) {
+    environment.FLYWAY_IGNORE_MIGRATION_PATTERNS =
+      process.env.FLYWAY_IGNORE_MIGRATION_PATTERNS ??
+      PENDING_MIGRATION_IGNORE_PATTERN;
+  }
+
+  return environment;
+}
+
+function printUsage() {
+  console.error(
+    "Usage: node scripts/flyway.mjs <validate|migrate> [--ignore-pending]"
+  );
+}
+
+/**
  * @param {string} command
+ * @param {{ ignorePendingMigrations?: boolean }} [options]
  * @returns {number}
  */
-function runFlyway(command) {
-  if (!ALLOWED_COMMANDS.has(command)) {
-    console.error("Usage: node scripts/flyway.mjs <validate|migrate>");
+function runFlyway(command, options = {}) {
+  if (
+    !ALLOWED_COMMANDS.has(command) ||
+    (options.ignorePendingMigrations && command !== "validate")
+  ) {
+    printUsage();
     return 2;
   }
 
@@ -96,19 +153,11 @@ function runFlyway(command) {
     dockerArgs.push("--network", process.env.FLYWAY_DOCKER_NETWORK);
   }
 
+  for (const name of flywayDockerEnvironmentNames(options)) {
+    dockerArgs.push("-e", name);
+  }
+
   dockerArgs.push(
-    "-e",
-    "FLYWAY_URL",
-    "-e",
-    "FLYWAY_LOCATIONS",
-    "-e",
-    "FLYWAY_CONNECT_RETRIES",
-    "-e",
-    "FLYWAY_IGNORE_MIGRATION_PATTERNS",
-    "-e",
-    "FLYWAY_USER",
-    "-e",
-    "FLYWAY_PASSWORD",
     "-v",
     `${MIGRATIONS_DIR}:/flyway/sql:ro`,
     FLYWAY_DOCKER_IMAGE,
@@ -117,16 +166,7 @@ function runFlyway(command) {
 
   const result = spawnSync("docker", dockerArgs, {
     cwd: ROOT,
-    env: {
-      ...process.env,
-      FLYWAY_CONNECT_RETRIES: process.env.FLYWAY_CONNECT_RETRIES ?? "60",
-      FLYWAY_IGNORE_MIGRATION_PATTERNS:
-        process.env.FLYWAY_IGNORE_MIGRATION_PATTERNS ?? "*:pending",
-      FLYWAY_LOCATIONS: "filesystem:/flyway/sql",
-      FLYWAY_PASSWORD: connection.password ?? "",
-      FLYWAY_URL: connection.jdbcUrl,
-      FLYWAY_USER: connection.user
-    },
+    env: flywayEnvironmentFromConnection(connection, options),
     stdio: "inherit"
   });
 
@@ -139,5 +179,14 @@ function runFlyway(command) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exitCode = runFlyway(process.argv[2] ?? "");
+  const flags = process.argv.slice(3);
+  const unknownFlag = flags.find((flag) => flag !== "--ignore-pending");
+  if (unknownFlag) {
+    printUsage();
+    process.exitCode = 2;
+  } else {
+    process.exitCode = runFlyway(process.argv[2] ?? "", {
+      ignorePendingMigrations: flags.includes("--ignore-pending")
+    });
+  }
 }

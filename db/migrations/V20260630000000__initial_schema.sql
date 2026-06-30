@@ -844,6 +844,7 @@ begin
     where account_id = public.agent_outbox_context_account_id()
       and expires_at <= p_now
     order by expires_at, output_result_id
+    for update skip locked
   loop
     perform *
     from public.agent_outbox_delete_output_result(
@@ -884,6 +885,7 @@ begin
     where i.account_id = public.agent_outbox_context_account_id()
       and i.status = 'pending'
       and i.updated_at < p_retention_before
+    for update of i skip locked
   ),
   audit_insert as (
     insert into public.agent_outbox_audit_events (
@@ -911,7 +913,9 @@ begin
   )
   delete from public.agent_outbox_input_items i
   using pending_targets t
-  where i.input_item_id = t.input_item_id;
+  where i.input_item_id = t.input_item_id
+    and i.status = 'pending'
+    and i.updated_at < p_retention_before;
 
   get diagnostics deleted_count = row_count;
   return deleted_count;
@@ -950,6 +954,7 @@ begin
         where f.output_result_id = o.output_result_id
       )
     order by o.answered_at, o.output_result_id
+    for update of o skip locked
   loop
     perform *
     from public.agent_outbox_delete_output_result(
@@ -981,6 +986,7 @@ begin
         where action.input_item_id = i.input_item_id
           and action.popup_kind = 'file_upload'
       )
+    for update of i skip locked
   ),
   audit_insert as (
     insert into public.agent_outbox_audit_events (
@@ -1006,7 +1012,14 @@ begin
   )
   delete from public.agent_outbox_input_items i
   using file_input_targets t
-  where i.input_item_id = t.input_item_id;
+  where i.input_item_id = t.input_item_id
+    and i.status = 'pending'
+    and exists (
+      select 1
+      from public.agent_outbox_input_actions action
+      where action.input_item_id = i.input_item_id
+        and action.popup_kind = 'file_upload'
+    );
 
   get diagnostics file_inputs_deleted = row_count;
 
@@ -1031,6 +1044,7 @@ begin
       on o.input_item_id = i.input_item_id
     where i.account_id = public.agent_outbox_context_account_id()
     order by coalesce(i.answered_at, i.updated_at), i.input_item_id
+    for update of i skip locked
   loop
     exit when current_non_file_bytes <= p_non_file_payload_limit_bytes;
 

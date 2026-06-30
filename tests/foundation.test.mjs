@@ -18,6 +18,8 @@ import {
   validateWorkflowVersionPins
 } from "../scripts/foundation.mjs";
 import {
+  flywayDockerEnvironmentNames,
+  flywayEnvironmentFromConnection,
   flywayConnectionFromDatabaseUrl,
   validateMigrationFilenames
 } from "../scripts/flyway.mjs";
@@ -649,6 +651,52 @@ test("flywayConnectionFromDatabaseUrl converts PostgreSQL URLs without leaking c
   });
 });
 
+test("flyway validation scopes pending migration ignores to pre-migrate replay", () => {
+  const connection = {
+    jdbcUrl: "jdbc:postgresql://example.test:5432/agent_outbox",
+    user: "migration_user",
+    password: "secret"
+  };
+
+  withProcessEnv(
+    {
+      FLYWAY_CONNECT_RETRIES: undefined,
+      FLYWAY_IGNORE_MIGRATION_PATTERNS: "*:pending"
+    },
+    () => {
+      assert.deepEqual(flywayDockerEnvironmentNames(), [
+        "FLYWAY_URL",
+        "FLYWAY_LOCATIONS",
+        "FLYWAY_CONNECT_RETRIES",
+        "FLYWAY_USER",
+        "FLYWAY_PASSWORD"
+      ]);
+      assert.equal(
+        flywayEnvironmentFromConnection(connection)
+          .FLYWAY_IGNORE_MIGRATION_PATTERNS,
+        undefined
+      );
+      assert.deepEqual(
+        flywayDockerEnvironmentNames({ ignorePendingMigrations: true }),
+        [
+          "FLYWAY_URL",
+          "FLYWAY_LOCATIONS",
+          "FLYWAY_CONNECT_RETRIES",
+          "FLYWAY_USER",
+          "FLYWAY_PASSWORD",
+          "FLYWAY_IGNORE_MIGRATION_PATTERNS"
+        ]
+      );
+      assert.equal(
+        flywayEnvironmentFromConnection(connection, {
+          ignorePendingMigrations: true
+        }).FLYWAY_IGNORE_MIGRATION_PATTERNS,
+        "*:pending"
+      );
+    }
+  );
+});
+
 test("validateCallerBearer accepts only the configured smoke token", () => {
   assert.deepEqual(validateCallerBearer(null, "smoke-token"), {
     ok: false,
@@ -1025,6 +1073,41 @@ test("accounting helpers keep audit data content-safe and use quota windows for 
       overallStoredAccountDataBytes: 1025
     }
   );
+  assert.throws(
+    () =>
+      auditSafeLifecycleEvent({
+        eventType: "input_deleted",
+        accountAuditId: "account_audit",
+        nonFileBytes: -1
+      }),
+    /nonFileBytes must be a non-negative safe integer/
+  );
+  assert.throws(
+    () =>
+      auditSafeLifecycleEvent({
+        eventType: "file_deleted",
+        accountAuditId: "account_audit",
+        fileBytes: Number.NaN
+      }),
+    /fileBytes must be a non-negative safe integer/
+  );
+  assert.throws(
+    () =>
+      storedByteAccounting({
+        inputPayloadBytes: Number.MAX_SAFE_INTEGER,
+        outputPayloadBytes: 1
+      }),
+    /nonFileQueuePayloadBytes must be a non-negative safe integer/
+  );
+  assert.throws(
+    () =>
+      storedByteAccounting({
+        inputPayloadBytes: 1,
+        outputPayloadBytes: 1,
+        fileBytes: 0.5
+      }),
+    /fileBytes must be a non-negative safe integer/
+  );
 });
 
 test("cleanup statement builders target account-scoped database functions", () => {
@@ -1299,6 +1382,22 @@ test("phase 3 migration defines account-scoped cleanup primitives", () => {
     initialMigration,
     /from public\.agent_outbox_delete_output_result\(\s*target_output_id,\s*'downgrade_grace_non_file_payload_limit'/s
   );
+  assert.match(
+    initialMigration,
+    /create or replace function public\.agent_outbox_delete_expired_outputs[\s\S]*for update skip locked[\s\S]*create or replace function public\.agent_outbox_delete_retained_pending_inputs/
+  );
+  assert.match(
+    initialMigration,
+    /create or replace function public\.agent_outbox_delete_retained_pending_inputs[\s\S]*for update of i skip locked[\s\S]*create or replace function public\.agent_outbox_cleanup_downgrade_grace_expiry/
+  );
+  assert.match(
+    initialMigration,
+    /create or replace function public\.agent_outbox_cleanup_downgrade_grace_expiry[\s\S]*for update of o skip locked[\s\S]*with file_input_targets/
+  );
+  assert.match(
+    initialMigration,
+    /with file_input_targets as \([\s\S]*for update of i skip locked/
+  );
 });
 
 test("phase 3 migration keeps representative policies tied to transaction context", () => {
@@ -1460,6 +1559,7 @@ test(
     const accountLabelB = `phase3-b-${runId}`;
     /** @type {{ accountA?: string, accountB?: string, accountAuditA?: string, accountAuditB?: string, userA?: string, callerA?: string, callerA2?: string, callerB?: string, answeredInput?: string, fileOutputInput?: string, fileUploadInput?: string, output?: string, fileOutput?: string }} */
     const ids = {};
+    let grantedAppRoleForTest = false;
 
     await client.connect();
 
@@ -1567,15 +1667,21 @@ test(
           providerFunctionPrivileges.rows.map(() => false)
         );
       }
-      await client.query(
-        `
-          do $$
-          begin
-            execute format('grant agent_outbox_app to %I', current_user);
-          end
-          $$;
-        `
+      const hadAppRoleBeforeGrant = await client.query(
+        "select pg_has_role(current_user, 'agent_outbox_app', 'member') as is_member"
       );
+      if (hadAppRoleBeforeGrant.rows[0]?.is_member !== true) {
+        await client.query(
+          `
+            do $$
+            begin
+              execute format('grant agent_outbox_app to %I', current_user);
+            end
+            $$;
+          `
+        );
+        grantedAppRoleForTest = true;
+      }
 
       await client.query("begin");
 
@@ -2483,7 +2589,9 @@ test(
     } finally {
       await resetRoleAndRollback(client);
       await cleanupPhase3DatabaseVerificationRows(client, ids);
-      await revokeCurrentUserAppRoleGrant(client);
+      if (grantedAppRoleForTest) {
+        await revokeCurrentUserAppRoleGrant(client);
+      }
       await client.end();
     }
   }
