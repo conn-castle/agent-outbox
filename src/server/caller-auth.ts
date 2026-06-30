@@ -15,12 +15,6 @@ function tokenDigest(value: string) {
   return createHash("sha256").update(value).digest();
 }
 
-function safeTokenEquals(actual: string, expected: string) {
-  const actualDigest = tokenDigest(actual);
-  const expectedDigest = tokenDigest(expected);
-  return timingSafeEqual(actualDigest, expectedDigest);
-}
-
 export function validateCallerBearer(
   authorizationHeader: string | null,
   expectedToken: string
@@ -33,8 +27,7 @@ export function validateCallerBearer(
     };
   }
 
-  const normalizedAuthorizationHeader = authorizationHeader.trim();
-  const [scheme, token, extra] = normalizedAuthorizationHeader.split(/\s+/);
+  const [scheme, token, extra] = authorizationHeader.trim().split(/\s+/);
   if (scheme !== "Bearer" || !token || extra) {
     return {
       ok: false,
@@ -43,7 +36,11 @@ export function validateCallerBearer(
     };
   }
 
-  if (!safeTokenEquals(token, expectedToken)) {
+  const tokenMatches = timingSafeEqual(
+    tokenDigest(token),
+    tokenDigest(expectedToken)
+  );
+  if (!tokenMatches) {
     return {
       ok: false,
       status: 403,
