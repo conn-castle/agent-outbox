@@ -41,7 +41,7 @@ explicitly chooses that account for Agent Outbox.
 | ----------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | Cloudflare Worker runtime secrets                           | Cloudflare Workers                                            | Systems Manager Parameter Store                                | Exact variable names are listed in [../../.env.example](../../.env.example) and enforced by the app environment schema. |
 | Deploy credentials                                          | GitHub Actions secrets                                        | Systems Manager Parameter Store when not trivially re-mintable | Use least-scoped Cloudflare tokens for configured resources.                                                            |
-| Supabase database URLs and role passwords                   | Supabase plus Cloudflare runtime/GitHub migration environment | Systems Manager Parameter Store                                | Use migration tooling for schema changes.                                                                               |
+| Supabase database URLs and role passwords                   | Supabase plus Cloudflare runtime/Flyway migration environment | Systems Manager Parameter Store                                | Use [migrations.md](migrations.md) for schema changes.                                                                  |
 | Clerk secret keys                                           | Clerk plus Cloudflare runtime                                 | Systems Manager Parameter Store                                | Publishable keys may be GitHub/Cloudflare environment config, mirrored if needed for recovery.                          |
 | Stripe secret key, webhook secret, price ids, portal config | Stripe plus Cloudflare runtime                                | Systems Manager Parameter Store                                | Test and live values are separate. Production uses live mode.                                                           |
 | Sentry data source names and auth token                     | Sentry plus Cloudflare/GitHub as needed                       | Systems Manager Parameter Store                                | Runtime uses data source names only. Auth token is for source maps/operator tooling.                                    |
@@ -91,7 +91,8 @@ When a runtime secret is lost:
    operation window.
 
 Use the configured Cloudflare secret import/set commands for the Worker project
-and the Wrangler version pinned by deployment/release tooling.
+and the Wrangler invocation documented in
+[services/cloudflare.md](services/cloudflare.md).
 
 ## Rotation Rules
 

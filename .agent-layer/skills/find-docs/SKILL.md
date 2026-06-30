@@ -1,22 +1,21 @@
 ---
 name: find-docs
 description: >-
-  Use `npx ctx7` to fetch current documentation, API references, and code
-  examples for libraries, frameworks, and APIs when the answer is
-  version-dependent or post-cutoff, or local sources (README, docs/, CLI
-  help) can't answer it. Trigger for API syntax, configuration, setup,
-  migration, or "how do I use <technology>" questions. Do not use for generic
-  web research, local file reading, browser automation, or package
-  installation.
-compatibility: Requires `npx ctx7` to run successfully and network access. Context7 authentication is strongly recommended for reliable access; failed authentication must be surfaced to the user.
-allowed-tools: Bash(npx:*)
+  Use `corepack pnpm dlx ctx7` to fetch current documentation, API references,
+  and code examples for libraries, frameworks, and APIs when the answer is
+  version-dependent or post-cutoff, or local sources (README, docs/, CLI help)
+  can't answer it. Trigger for API syntax, configuration, setup, migration, or
+  "how do I use <technology>" questions. Do not use for generic web research,
+  local file reading, browser automation, or package installation.
+compatibility: Requires `corepack pnpm dlx ctx7` to run successfully and network access. Context7 authentication is strongly recommended for reliable access; failed authentication must be surfaced to the user.
+allowed-tools: Bash(corepack:*)
 ---
 
 # Context7 Documentation Lookup
 
-Use `npx ctx7` as the documentation lookup surface. This skill provides
-routing, safety, and workflow rules; installed CLI help provides command
-syntax.
+Use `corepack pnpm dlx ctx7` as the documentation lookup surface. This skill
+provides routing, safety, and workflow rules; installed CLI help provides
+command syntax.
 
 ## Defaults
 
@@ -36,15 +35,16 @@ syntax.
 
 ## Global constraints
 
-- Run `npx ctx7 --help` before the first Context7 command in a session.
-- Run `npx ctx7 <command> --help` before using a non-obvious subcommand or
-  flag.
+- Run `corepack pnpm dlx ctx7 --help` before the first Context7 command in a
+  session.
+- Run `corepack pnpm dlx ctx7 <command> --help` before using a non-obvious
+  subcommand or flag.
 - Treat installed CLI help as the source of truth for commands, arguments,
   flags, output modes, and defaults.
-- If `npx ctx7` is missing, prompts for package installation, or cannot run,
-  stop and report the missing setup requirement. Do not install, upgrade,
-  authenticate, set up, remove, or reconfigure Context7 unless the user asked
-  for setup work.
+- If `corepack pnpm dlx ctx7` is missing, prompts unexpectedly, or cannot run,
+  stop and report the missing setup requirement. Do not globally install,
+  upgrade, authenticate, set up, remove, or reconfigure Context7 unless the user
+  asked for setup work.
 - Do not pin the `ctx7` package version unless the user explicitly selected
   that package version.
 - Do not pass secrets, credentials, proprietary code, personal data, or private

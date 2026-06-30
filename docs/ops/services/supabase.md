@@ -13,7 +13,7 @@ repository.
 - Postgres database.
 - Queue rows, output rows, uploaded file bytes, quota windows, active limit
   blocks, audit events, and cleanup state.
-- Migration execution through the project migration system.
+- A hosted Postgres target for the Flyway migration system.
 - Supabase database logs.
 
 ## Configuration To Verify
@@ -40,13 +40,15 @@ values to Markdown.
 
 - Verify the configured organization, project ref, database host, app role, and
   migration role before inspecting production.
-- Use the Supabase CLI for project inspection and database workflows.
+- Use the Supabase CLI for project inspection.
+- Use Flyway for schema migrations.
 - Use read-only inspection first when debugging connection, storage, migration,
   or Row Level Security failures.
 
 ## Guardrails
 
-- Never repair schema with raw SQL or direct service edits. Use migrations.
+- Never repair schema with raw SQL, direct service edits, or Supabase migration
+  commands. Use the Flyway migrations in `db/migrations/`.
 - Do not select review content unless the investigation explicitly requires it.
 - Do not manually delete live data unless the owner approves the exact scope and
   backup/export posture.

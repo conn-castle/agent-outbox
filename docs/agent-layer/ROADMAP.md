@@ -65,27 +65,12 @@ Incomplete:
 - Kept normal app CI and `make check` independent of Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, and platform runtime emulation.
 - Verified the provider-backed runtime proof with `make doctor` and `make smoke-runtime` against the local app using real development Clerk, Supabase/Postgres, Sentry, and smoke-token values.
 
-## Phase 3 — Accounts, Authorization, Limits, And Cleanup Foundation
-
-### Goal
-- Create the account-scoped foundation for humans, callers, authorization, limits, audit, and lifecycle cleanup.
-- Keep one source of truth for tier/limit behavior so API errors, status output, cleanup, and UI copy cannot drift.
-- Source map: [architecture.md](../architecture.md) "Trust Boundaries", "Data Authority", and "Limits, Billing, And Cleanup", [ops/secrets.md](../ops/secrets.md), and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for account, reviewer, caller credential, database authorization, hosted-tier limit, audit, quota, and analytics decisions.
-
-### Tasks
-- [ ] Implement Agent Outbox-owned accounts, users, owner-level membership, callers, caller credential metadata, and display-once bearer-key handling.
-- [ ] Add product migrations and data-access boundaries for queue state, output references, file metadata/byte ownership, content-safe audit, quota windows, active limit blocks, and cleanup state without making Agent Outbox a durable storage platform.
-- [ ] Enforce app-layer authorization and database row-policy protection for human and caller paths, with identity derived from sessions or credentials rather than request bodies.
-- [ ] Implement one tier-aware limits source for free, paid, self-hosted, retention, timeout, rate-limit, and file-availability behavior.
-- [ ] Implement shared quota/accounting/audit helpers for accepted writes, denials, lifecycle transitions, file byte accounting, and cleanup.
-- [ ] Implement idempotent cleanup primitives for acknowledgement, output timeout, retention, downgrade grace expiry, quota-window pruning, and active-limit maintenance.
-
-### Exit criteria
-- Migrations apply cleanly in local development and representative tests prove cross-account denial at both app-layer and database-policy boundaries.
-- Limit enforcement, account/caller status, doctor metadata, cleanup, active limit blocks, and error metadata all derive from the same tier-aware limits source.
-- Current queue/storage state is derived from live rows; historical flow usage is derived from quota windows and audit events, with no duplicate mutable usage gauge.
-- Audit/log output is content-safe and excludes review HTML, free-text answers, file bytes, caller keys, full request bodies, and raw caller-controlled display strings.
-- Cleanup verification proves terminal output deletion removes the matching visible input item and attached file bytes, while pre-read undo is the only restore-to-pending exception.
+## Phase 3 ✅ — Accounts, Authorization, Limits, And Cleanup Foundation
+- Added Agent Outbox-owned account, user, membership, caller, caller credential, queue-state, output, file metadata, audit, quota, active limit, and cleanup-run schema with forced Row Level Security.
+- Added transaction-context database helpers and app-layer authorization/caller-key helpers that prove cross-account denial, caller credential bootstrap, human membership enforcement, and caller scoping without trusting request-body identity.
+- Added canonical tier-aware limits for hosted free, hosted paid, and self-hosted-as-paid behavior, with shared limit/error/status metadata, quota windows, active limit blocks, and content-safe accounting/audit helpers.
+- Added cleanup statement builders and database functions for acknowledgement, pre-read undo, output timeout, pending retention, downgrade grace expiry, quota-window pruning, and active-limit maintenance.
+- Verified local migration replay, app-role posture, app-only function privileges, Row Level Security isolation, parent ownership constraints, audit safety, file deletion, quota/limit cleanup, and no duplicate mutable usage gauge.
 
 ## Phase 4 — Core Caller HTTP API And Queue Semantics
 
@@ -185,12 +170,14 @@ Incomplete:
 - [ ] Populate production resource inventory, deployment smoke checklist, debugging, incident, monitoring, and secret recovery instructions with exact Agent Outbox resources as they are created.
 - [ ] Build the agent-run hosted health inspection workflow so an agent can check app, auth, caller API, database connectivity, cleanup, quota enforcement, file path, logs, audit events, and obvious abuse/cost signals on demand.
 - [ ] Prepare release verification that covers local gates, CI gates, package artifacts, hosted smoke, rollback expectations, and owner acceptance.
+- [ ] Define and enable GitHub `main` branch protection after CI and release gate names settle, including required checks and production release protections.
 - [ ] Prepare legal/business launch materials for owner review, including privacy policy, terms, abuse/contact path, retention disclosure, support boundaries, and public/open-source license presentation matching Agent Layer's license.
 
 ### Exit criteria
 - Observability canaries and logs correlate app, API, cleanup, and file-path failures by safe identifiers without leaking content or secrets.
 - Production smoke coverage is documented for Clerk sign-in/out, protected queue load, caller auth, CLI browser callback, CLI device-code fallback, cleanup execution, observability canary, and paid file upload/download.
 - The health inspection workflow can be run by an agent and reports actionable pass/fail status without requiring dashboard spelunking.
+- The `main` branch protection policy is enabled and matches the final CI/release gate design.
 - Public launch materials are accepted by the project owner before public signup opens.
 - Any unresolved launch, legal, provider, or runtime blocker is explicitly accepted by the project owner or public launch does not proceed.
 
