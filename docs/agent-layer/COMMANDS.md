@@ -34,7 +34,7 @@ make help
 ```
 
 Run from: repo root Prerequisites: `make` must be available. Notes: Lists the
-canonical root targets maintained for Phase 1 and later work.
+canonical root targets maintained for current and future work.
 
 - Install pinned project dependencies
 
@@ -44,9 +44,10 @@ make setup
 
 Run from: repo root Prerequisites: Node `22.13.0` or newer with Corepack
 available; CI provisions Node `24.18.0` before running this command. Notes: Uses
-Corepack, pnpm `11.9.0`, `devEngines.runtime`, and the lockfile. Project scripts
-run on pinned Node `24.18.0`. Fails when Corepack cannot activate pnpm, package
-metadata is missing, or the lockfile cannot be installed exactly.
+Corepack to cache pnpm `11.9.0`, then installs from the lockfile using
+`corepack pnpm`. Project scripts run on pinned Node `24.18.0`. Fails when
+Corepack cannot activate pnpm, package metadata is missing, or the lockfile
+cannot be installed exactly.
 
 - Bootstrap the repo
 
@@ -77,10 +78,10 @@ secret values or provider account output.
 make dev
 ```
 
-Run from: repo root Prerequisites: `make setup` has completed. Notes: Phase 1
-does not include a runtime app server. Until Phase 2 creates the app boundary,
-this command is expected to fail loudly instead of starting a placeholder
-runtime.
+Run from: repo root Prerequisites: `make setup` has completed. Notes: Starts
+the Next.js development server for the single app/API origin on `.env` `PORT`
+(default local template: `38000`). Provider-backed routes still fail loudly
+when the matching `.env` values are absent.
 
 - Apply safe automatic fixes
 
@@ -101,7 +102,7 @@ make format
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Applies
-the pinned formatter to tracked source and documentation covered by the Phase 1
+the pinned formatter to tracked source and documentation covered by the
 formatter config.
 
 - Lint check
@@ -121,7 +122,7 @@ make typecheck
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs the
-pinned TypeScript compiler for Phase 1 tooling code. Fails on type errors,
+pinned TypeScript compiler for repository code. Fails on type errors,
 missing TypeScript configuration, or package/toolchain drift.
 
 - Test
@@ -140,9 +141,13 @@ including toolchain/package consistency and secret-safe diagnostics.
 make build
 ```
 
-Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs Phase
-1 build or structural consistency checks. Fails when package metadata, lockfile
-state, or pinned toolchain data drift from the canonical manifest.
+Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs
+foundation consistency checks and an OpenNext Cloudflare build against the
+checked-in Wrangler configuration. OpenNext invokes the repository's
+`next:build` script internally. Fails when package metadata, lockfile state,
+pinned toolchain data, or runtime build output drift from the canonical
+manifest. Stop `make dev` before running this command because Next dev and
+OpenNext production builds share generated `.next` output.
 
 - Smoke check
 
@@ -151,8 +156,39 @@ make smoke
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs
-bounded structural smoke checks only. Phase 1 smoke checks must not require
+bounded structural smoke checks only. This credential-free check verifies the
+runtime proof file surface, Worker scheduled trigger wiring, environment
+template, workflow safety, and out-of-scope product guard. It must not require
 provider credentials, create runtime resources, deploy, or publish artifacts.
+
+- Worker scheduled-event smoke check
+
+```bash
+make smoke-worker-scheduled
+```
+
+Run from: repo root Prerequisites: `make setup` and `make build` have completed.
+Notes: Starts a local Wrangler `workerd` server with `--test-scheduled`, calls
+the `/__scheduled` test endpoint, and verifies the scheduled canary log is
+emitted through the Worker `scheduled` handler. This is credential-free and must
+not deploy or mutate Cloudflare resources.
+
+- Provider-backed runtime smoke check
+
+```bash
+make smoke-runtime
+```
+
+Run from: repo root Prerequisites: `make setup` has completed, a compatible
+local app server is serving `APP_BASE_URL`, and `.env` contains real
+development Clerk, Supabase/Postgres, and smoke-token values. Notes:
+Calls the runtime canary routes for app load, caller bearer auth acceptance and
+rejection, database transaction context, restricted app role posture, scheduled
+trigger, structured log, and Sentry suppression. This command can run against
+`make dev`, but that proves only the local Next.js server path; Phase 2 still
+requires a Workers/OpenNext runtime smoke proof before completion. Runtime smoke
+must not emit Sentry events. Fails loudly with missing variable names when
+`.env` is incomplete and must not print secret values.
 
 - Single local and CI verification gate
 
@@ -162,8 +198,11 @@ make check
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Canonical
 credential-free verification gate for local development and CI. It runs the
-configured format, lint, typecheck, test, build, and smoke checks. Fails on any
-check failure or on missing Phase 1 toolchain/package configuration.
+configured format, lint, typecheck, test, OpenNext build, local Worker
+scheduled-event smoke, and structural smoke checks. Fails on any check failure
+or on missing toolchain/package/runtime proof configuration. Stop `make dev`
+before running this command because the OpenNext build writes the same generated
+output tree as local Next dev.
 
 - Release verification gate
 
@@ -206,6 +245,7 @@ when validating local/provider readiness.
 
 ```text
 APP_ENV
+PORT
 APP_BASE_URL
 PUBLIC_APP_BASE_URL
 DATABASE_URL
@@ -214,16 +254,19 @@ DATABASE_MIGRATION_URL
 SUPABASE_PROJECT_REF
 CLERK_SECRET_KEY
 CLERK_PUBLISHABLE_KEY
-STRIPE_SECRET_KEY
-STRIPE_WEBHOOK_SECRET
-STRIPE_PAID_MONTHLY_PRICE_ID
-STRIPE_BILLING_PORTAL_CONFIGURATION_ID
+STRIPE_ACCOUNT_ID
 SENTRY_DSN
 SENTRY_BROWSER_DSN
 SENTRY_AUTH_TOKEN
 CALLER_KEY_HASH_SECRET
 SMOKE_OR_CLEANUP_TOKEN
 ```
+
+Notes: Stripe billing variables (`STRIPE_SECRET_KEY`,
+`STRIPE_WEBHOOK_SECRET`, `STRIPE_PAID_MONTHLY_PRICE_ID`, and
+`STRIPE_BILLING_PORTAL_CONFIGURATION_ID`) are present in `.env.example` but are
+not required until the billing phase creates products, prices, portal
+configuration, and webhooks.
 
 Run from: repo root Prerequisites: Use `.env.example` as the source for required
 names. Notes: Diagnostics may print missing names but must not print configured

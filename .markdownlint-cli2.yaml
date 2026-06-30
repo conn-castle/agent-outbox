@@ -14,6 +14,8 @@ ignores:
   - ".claude/**"
   - ".claude-config/**"
   - ".agy/**"
+  - ".next/**"
+  - ".open-next/**"
   - "node_modules/**"
   - "AGENTS.md"
   - "CLAUDE.md"
