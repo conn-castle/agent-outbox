@@ -29,7 +29,7 @@ export function transactionContextCanaryStatements(
       values: ["agent_outbox.request_id"]
     },
     {
-      sql: "select current_user as role_name, r.rolbypassrls, r.rolinherit from pg_catalog.pg_roles r where r.rolname = current_user"
+      sql: "select current_user as role_name, r.rolsuper, r.rolcreatedb, r.rolcreaterole, r.rolreplication, r.rolbypassrls, r.rolinherit from pg_catalog.pg_roles r where r.rolname = current_user"
     },
     { sql: "rollback" }
   ];
@@ -58,6 +58,10 @@ export async function runTransactionContextCanary(connectionString: string) {
     );
     const roleResult = await client.query<{
       role_name: string;
+      rolsuper: boolean;
+      rolcreatedb: boolean;
+      rolcreaterole: boolean;
+      rolreplication: boolean;
       rolbypassrls: boolean;
       rolinherit: boolean;
     }>(readRole.sql, readRole.values);
@@ -68,6 +72,10 @@ export async function runTransactionContextCanary(connectionString: string) {
       transactionContextMatched: result.rows[0]?.request_id === requestId,
       restrictedRoleMatched:
         role?.role_name === APP_DATABASE_ROLE &&
+        role?.rolsuper === false &&
+        role?.rolcreatedb === false &&
+        role?.rolcreaterole === false &&
+        role?.rolreplication === false &&
         role?.rolbypassrls === false &&
         role?.rolinherit === false
     };

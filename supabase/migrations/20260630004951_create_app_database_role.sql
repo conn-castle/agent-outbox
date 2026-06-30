@@ -7,6 +7,10 @@ begin
   ) then
     create role agent_outbox_app
       login
+      nosuperuser
+      nocreatedb
+      nocreaterole
+      noreplication
       noinherit
       nobypassrls;
   end if;
@@ -15,6 +19,10 @@ $$;
 
 alter role agent_outbox_app
   with login
+  nosuperuser
+  nocreatedb
+  nocreaterole
+  noreplication
   noinherit
   nobypassrls;
 

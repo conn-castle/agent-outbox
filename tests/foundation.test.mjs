@@ -282,7 +282,7 @@ test("validateCommandsVersionPins allows lower-bound Node prerequisites", () => 
 
 test("validateRequiredEnvExample allows optional local development names", () => {
   const template =
-    "APP_ENV=development\nPORT=38000\nAPP_BASE_URL=http://localhost:38000\nPUBLIC_APP_BASE_URL=http://localhost:38000\nSUPABASE_PROJECT_REF=\nDATABASE_URL=\nDATABASE_APP_ROLE_URL=\nDATABASE_MIGRATION_URL=\nCLERK_SECRET_KEY=\nCLERK_PUBLISHABLE_KEY=\nSTRIPE_ACCOUNT_ID=\nSTRIPE_SECRET_KEY=\nSTRIPE_WEBHOOK_SECRET=\nSTRIPE_PAID_MONTHLY_PRICE_ID=\nSTRIPE_BILLING_PORTAL_CONFIGURATION_ID=\nSENTRY_DSN=\nSENTRY_BROWSER_DSN=\nSENTRY_AUTH_TOKEN=\nCALLER_KEY_HASH_SECRET=\nSMOKE_OR_CLEANUP_TOKEN=\nAWS_PROFILE=\nCLOUDFLARE_API_TOKEN=\n";
+    "APP_ENV=development\nPORT=38000\nAPP_BASE_URL=http://localhost:38000\nPUBLIC_APP_BASE_URL=http://localhost:38000\nSUPABASE_PROJECT_REF=\nDATABASE_URL=\nDATABASE_APP_ROLE_URL=\nDATABASE_MIGRATION_URL=\nCLERK_SECRET_KEY=\nCLERK_PUBLISHABLE_KEY=\nSTRIPE_ACCOUNT_ID=\nSTRIPE_SECRET_KEY=\nSTRIPE_WEBHOOK_SECRET=\nSTRIPE_PAID_MONTHLY_PRICE_ID=\nSTRIPE_BILLING_PORTAL_CONFIGURATION_ID=\nSENTRY_DSN=\nSENTRY_BROWSER_DSN=\nSENTRY_AUTH_TOKEN=\nCALLER_KEY_HASH_SECRET=\nSMOKE_OR_CLEANUP_TOKEN=\nAWS_PROFILE=\nCLOUDFLARE_DNS_API_TOKEN=\n";
 
   assert.deepEqual(validateRequiredEnvExample(template), []);
 });
@@ -354,10 +354,13 @@ test("validateCallerBearer accepts only the configured smoke token", () => {
     status: 403,
     code: "invalid_bearer_token"
   });
-  assert.deepEqual(validateCallerBearer("Bearer smoke-token", "smoke-token"), {
-    ok: true,
-    callerId: "runtime-smoke-caller"
-  });
+  assert.deepEqual(
+    validateCallerBearer(" Bearer smoke-token ", "smoke-token"),
+    {
+      ok: true,
+      callerId: "runtime-smoke-caller"
+    }
+  );
 });
 
 test("safeLogEvent strips request bodies and arbitrary caller-controlled fields", () => {
@@ -399,6 +402,7 @@ test("runtimeConfigStatus reports missing provider values without exposing value
       CLERK_SECRET_KEY: "sk_test_secret",
       CLERK_PUBLISHABLE_KEY: undefined,
       DATABASE_APP_ROLE_URL: undefined,
+      SENTRY_DSN: undefined,
       SMOKE_OR_CLEANUP_TOKEN: undefined
     },
     () => {
@@ -408,6 +412,7 @@ test("runtimeConfigStatus reports missing provider values without exposing value
       assert.deepEqual(status.missing, [
         "CLERK_PUBLISHABLE_KEY",
         "DATABASE_APP_ROLE_URL",
+        "SENTRY_DSN",
         "SMOKE_OR_CLEANUP_TOKEN"
       ]);
     }
@@ -474,7 +479,7 @@ test("database canary statements keep transaction context scoped to one transact
       values: ["agent_outbox.request_id"]
     },
     {
-      sql: "select current_user as role_name, r.rolbypassrls, r.rolinherit from pg_catalog.pg_roles r where r.rolname = current_user"
+      sql: "select current_user as role_name, r.rolsuper, r.rolcreatedb, r.rolcreaterole, r.rolreplication, r.rolbypassrls, r.rolinherit from pg_catalog.pg_roles r where r.rolname = current_user"
     },
     { sql: "rollback" }
   ]);

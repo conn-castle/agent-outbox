@@ -31,7 +31,7 @@ export function validateCallerBearer(
     };
   }
 
-  const [scheme, token, extra] = authorizationHeader.split(/\s+/);
+  const [scheme, token, extra] = authorizationHeader.trim().split(/\s+/);
   if (scheme !== "Bearer" || !token || extra) {
     return {
       ok: false,
