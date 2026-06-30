@@ -1426,6 +1426,10 @@ test("initial migration keeps the app role restricted before schema access", () 
     initialMigration,
     /raise exception 'agent_outbox_app must not be a member of any role before migrations run'/
   );
+  assert.match(
+    initialMigration,
+    /grant usage on schema extensions to agent_outbox_app;/
+  );
   assert.doesNotMatch(initialMigration, /timezone\('utc', now\(\)\)/);
   assert.match(
     initialMigration,
@@ -1485,6 +1489,10 @@ test(
         `
       );
       assert.deepEqual(appRoleMemberships.rows, []);
+      const extensionSchemaUsage = await client.query(
+        "select has_schema_privilege('agent_outbox_app', 'extensions', 'usage') as app_usage"
+      );
+      assert.deepEqual(extensionSchemaUsage.rows[0], { app_usage: true });
       const functionPrivileges = await client.query(
         `
           select
@@ -2395,6 +2403,60 @@ test(
         {
           event_type: "output_undone",
           deletion_reason: "pre_read_undo"
+        }
+      ]);
+
+      const terminalOutputByteAuditRows = await client.query(
+        `
+          select event_type, deletion_reason, non_file_bytes::int as non_file_bytes
+          from public.agent_outbox_audit_events
+          where output_result_id = any($1::uuid[])
+            and event_type in ('output_acknowledged', 'output_deleted')
+          order by deletion_reason, event_type
+        `,
+        [[ids.output, ackOutputId, timeoutOutputId, ids.fileOutput]]
+      );
+      assert.deepEqual(terminalOutputByteAuditRows.rows, [
+        {
+          event_type: "output_acknowledged",
+          deletion_reason: "acknowledgement",
+          non_file_bytes: 35
+        },
+        {
+          event_type: "output_deleted",
+          deletion_reason: "downgrade_grace_file_output",
+          non_file_bytes: 35
+        },
+        {
+          event_type: "output_deleted",
+          deletion_reason: "downgrade_grace_non_file_payload_limit",
+          non_file_bytes: 125
+        },
+        {
+          event_type: "output_deleted",
+          deletion_reason: "output_timeout",
+          non_file_bytes: 35
+        }
+      ]);
+
+      const retentionAuditRows = await client.query(
+        `
+          select
+            event_type,
+            deletion_reason,
+            caller_item_id_hash,
+            non_file_bytes::int as non_file_bytes
+          from public.agent_outbox_audit_events
+          where input_item_id = $1
+        `,
+        [inputIdsByCallerItemId.get("retained-pending")]
+      );
+      assert.deepEqual(retentionAuditRows.rows, [
+        {
+          event_type: "input_deleted",
+          deletion_reason: "input_retention",
+          caller_item_id_hash: `hash-retained-${runId}`,
+          non_file_bytes: 10
         }
       ]);
 

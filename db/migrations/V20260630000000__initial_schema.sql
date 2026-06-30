@@ -59,6 +59,8 @@ comment on role agent_outbox_app is
   'Restricted Agent Outbox application role. Password is provisioned outside migrations.';
 
 create schema if not exists extensions;
+revoke all privileges on schema extensions from agent_outbox_app;
+grant usage on schema extensions to agent_outbox_app;
 create extension if not exists pgcrypto with schema extensions;
 
 create or replace function public.agent_outbox_context_account_id()
@@ -612,6 +614,7 @@ begin
     o.response_kind,
     o.response_payload_bytes,
     o.caller_item_id,
+    i.non_file_payload_bytes,
     i.caller_item_id_hash,
     a.account_audit_id,
     c.caller_audit_id
@@ -688,7 +691,7 @@ begin
     target_output.output_result_id,
     'answered',
     target_output.response_kind,
-    target_output.response_payload_bytes,
+    target_output.non_file_payload_bytes + target_output.response_payload_bytes,
     p_deletion_reason,
     p_request_id,
     target_output.caller_item_id_hash
@@ -869,6 +872,7 @@ begin
   with pending_targets as (
     select
       i.input_item_id,
+      i.non_file_payload_bytes,
       i.caller_item_id_hash,
       a.account_audit_id,
       c.caller_audit_id
@@ -889,6 +893,7 @@ begin
       input_item_id,
       item_status,
       deletion_reason,
+      non_file_bytes,
       request_id,
       caller_item_id_hash
     )
@@ -899,6 +904,7 @@ begin
       input_item_id,
       'pending',
       'input_retention',
+      non_file_payload_bytes,
       p_request_id,
       caller_item_id_hash
     from pending_targets
@@ -954,17 +960,29 @@ begin
     file_outputs_deleted := file_outputs_deleted + 1;
   end loop;
 
-  for input_id in
-    select i.input_item_id
+  with file_input_targets as (
+    select
+      i.input_item_id,
+      i.non_file_payload_bytes,
+      i.caller_item_id_hash,
+      i.status,
+      a.account_audit_id,
+      c.caller_audit_id
     from public.agent_outbox_input_items i
-    join public.agent_outbox_input_actions action
-      on action.input_item_id = i.input_item_id
+    join public.agent_outbox_accounts a
+      on a.account_id = i.account_id
+    join public.agent_outbox_callers c
+      on c.caller_id = i.caller_id
     where i.account_id = public.agent_outbox_context_account_id()
       and i.status = 'pending'
-      and action.popup_kind = 'file_upload'
-    group by i.input_item_id, i.updated_at
-    order by i.updated_at, i.input_item_id
-  loop
+      and exists (
+        select 1
+        from public.agent_outbox_input_actions action
+        where action.input_item_id = i.input_item_id
+          and action.popup_kind = 'file_upload'
+      )
+  ),
+  audit_insert as (
     insert into public.agent_outbox_audit_events (
       event_type,
       account_audit_id,
@@ -977,25 +995,20 @@ begin
     )
     select
       'input_deleted',
-      a.account_audit_id,
-      c.caller_audit_id,
-      i.input_item_id,
-      i.status,
+      account_audit_id,
+      caller_audit_id,
+      input_item_id,
+      status,
       'downgrade_grace_file_input',
-      i.non_file_payload_bytes,
-      i.caller_item_id_hash
-    from public.agent_outbox_input_items i
-    join public.agent_outbox_accounts a
-      on a.account_id = i.account_id
-    join public.agent_outbox_callers c
-      on c.caller_id = i.caller_id
-    where i.input_item_id = input_id;
+      non_file_payload_bytes,
+      caller_item_id_hash
+    from file_input_targets
+  )
+  delete from public.agent_outbox_input_items i
+  using file_input_targets t
+  where i.input_item_id = t.input_item_id;
 
-    delete from public.agent_outbox_input_items
-    where input_item_id = input_id;
-
-    file_inputs_deleted := file_inputs_deleted + 1;
-  end loop;
+  get diagnostics file_inputs_deleted = row_count;
 
   select coalesce(sum(non_file_payload_bytes), 0)
     + coalesce((
@@ -1007,11 +1020,12 @@ begin
   from public.agent_outbox_input_items
   where account_id = public.agent_outbox_context_account_id();
 
-  for input_id, input_status, target_output_id in
+  for input_id, input_status, target_output_id, input_total_bytes in
     select
       i.input_item_id,
       i.status,
-      o.output_result_id
+      o.output_result_id,
+      i.non_file_payload_bytes + coalesce(o.response_payload_bytes, 0)
     from public.agent_outbox_input_items i
     left join public.agent_outbox_output_results o
       on o.input_item_id = i.input_item_id
@@ -1019,15 +1033,6 @@ begin
     order by coalesce(i.answered_at, i.updated_at), i.input_item_id
   loop
     exit when current_non_file_bytes <= p_non_file_payload_limit_bytes;
-
-    select
-      i.non_file_payload_bytes + coalesce(sum(o.response_payload_bytes), 0)
-    into input_total_bytes
-    from public.agent_outbox_input_items i
-    left join public.agent_outbox_output_results o
-      on o.input_item_id = i.input_item_id
-    where i.input_item_id = input_id
-    group by i.non_file_payload_bytes;
 
     if input_status = 'answered' and target_output_id is not null then
       select case when od.output_deleted then 1 else 0 end
