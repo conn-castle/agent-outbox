@@ -67,17 +67,19 @@ export async function runTransactionContextCanary(connectionString: string) {
     }>(readRole.sql, readRole.values);
     await client.query(rollback.sql, rollback.values);
     const role = roleResult.rows[0];
+    const transactionContextMatched = result.rows[0]?.request_id === requestId;
+    const restrictedRoleMatched =
+      role?.role_name === APP_DATABASE_ROLE &&
+      role?.rolsuper === false &&
+      role?.rolcreatedb === false &&
+      role?.rolcreaterole === false &&
+      role?.rolreplication === false &&
+      role?.rolbypassrls === false &&
+      role?.rolinherit === false;
 
     return {
-      transactionContextMatched: result.rows[0]?.request_id === requestId,
-      restrictedRoleMatched:
-        role?.role_name === APP_DATABASE_ROLE &&
-        role?.rolsuper === false &&
-        role?.rolcreatedb === false &&
-        role?.rolcreaterole === false &&
-        role?.rolreplication === false &&
-        role?.rolbypassrls === false &&
-        role?.rolinherit === false
+      transactionContextMatched,
+      restrictedRoleMatched
     };
   } finally {
     await client.end();

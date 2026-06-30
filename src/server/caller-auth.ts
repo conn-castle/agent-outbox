@@ -16,7 +16,9 @@ function tokenDigest(value: string) {
 }
 
 function safeTokenEquals(actual: string, expected: string) {
-  return timingSafeEqual(tokenDigest(actual), tokenDigest(expected));
+  const actualDigest = tokenDigest(actual);
+  const expectedDigest = tokenDigest(expected);
+  return timingSafeEqual(actualDigest, expectedDigest);
 }
 
 export function validateCallerBearer(
@@ -31,7 +33,8 @@ export function validateCallerBearer(
     };
   }
 
-  const [scheme, token, extra] = authorizationHeader.trim().split(/\s+/);
+  const normalizedAuthorizationHeader = authorizationHeader.trim();
+  const [scheme, token, extra] = normalizedAuthorizationHeader.split(/\s+/);
   if (scheme !== "Bearer" || !token || extra) {
     return {
       ok: false,
