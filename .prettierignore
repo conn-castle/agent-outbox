@@ -11,6 +11,10 @@ coverage/
 dist/
 build/
 .next/
+next-env.d.ts
+.open-next/
+tsconfig.tsbuildinfo
+.wrangler/
 pnpm-lock.yaml
 AGENTS.md
 CLAUDE.md

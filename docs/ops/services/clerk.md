@@ -15,6 +15,18 @@ are not already proven in this repository.
 - Bot sign-up protection and disposable-email blocking.
 - Clerk application and instance configuration.
 
+## Configuration To Verify
+
+- The selected Clerk application belongs to Agent Outbox.
+- Development and production instances are distinct.
+- Production domains, mail sender records, and OAuth providers match the hosted
+  service domains.
+- Local `.env` values come from approved secret stores.
+
+Store Clerk application ids, instance ids, secret keys, and OAuth credential
+values only in approved operator-controlled systems. Do not commit those values
+to Markdown.
+
 ## Safe Checks
 
 - Use the Clerk CLI for application listing, config inspection, deployment

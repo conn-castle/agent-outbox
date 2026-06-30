@@ -26,3 +26,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-06-30 cloudflare-workers-deploy-token: Cloudflare Worker deployment token missing
+    Priority: Medium. Area: Operations/Cloudflare
+    Description: The current `CLOUDFLARE_API_TOKEN` authenticates and supports local/dry-run Wrangler checks, but `wrangler deployments status --name agent-outbox` fails with Cloudflare authentication code `10000`.
+    Next step: Before the first hosted Worker deployment, mint a least-scoped Worker deploy/inspection token, store it in Systems Manager Parameter Store and the deployment environment, and keep it separate from the DNS-management token.
+- Issue 2026-06-30 next-middleware-proxy-convention: Next.js middleware file convention is deprecated
+    Priority: Low. Area: Runtime/Next.js
+    Description: `next build` on Next.js 16.2.9 warns that the `middleware` file convention is deprecated in favor of `proxy`.
+    Next step: Rename the Clerk route-protection entrypoint to the supported proxy convention after verifying Clerk and OpenNext behavior.

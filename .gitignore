@@ -7,7 +7,15 @@
 /dist/
 /build/
 /.next/
+next-env.d.ts
+/.open-next/
+/tsconfig.tsbuildinfo
 /.turbo/
+/.wrangler/
+/.watchman-cookie-*
+
+# Provider CLI local state
+/supabase/.temp/
 
 # >>> agent-layer
 # Template hash: 8eb52be5a6dc589d6b71d995e79d26d3bd4dde0007612b004cb68ac489565002

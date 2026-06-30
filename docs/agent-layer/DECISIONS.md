@@ -26,3 +26,7 @@ A rolling log of important, non-obvious decisions that materially affect future 
 ## Decision Log
 
 <!-- ENTRIES START -->
+- Decision 2026-06-30 worker-scheduled-wrapper: Use a Worker wrapper for cron events
+    Decision: `wrangler.jsonc` points at `worker/entry.mjs`, which delegates HTTP traffic to OpenNext's generated `.open-next/worker.js` and owns the Worker `scheduled` handler.
+    Reason: The OpenNext Cloudflare template generates a `fetch` entrypoint but no project-owned `scheduled` export, while Phase 2 requires a real Workers cron proof.
+    Tradeoffs: The wrapper adds one maintained file around generated output, but preserves OpenNext HTTP behavior and makes cron handling durable and testable.

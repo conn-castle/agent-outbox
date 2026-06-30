@@ -26,10 +26,16 @@ Do not duplicate information that belongs in other memory files:
 
 <!-- ENTRIES START -->
 
-## Supabase Setup
+## Provider Setup
 
-- The currently logged-in local Supabase CLI account is not the Agent Outbox
-  project account.
-- Treat Supabase provider readiness as incomplete until the dedicated Agent
-  Outbox Supabase account/project exists and `SUPABASE_PROJECT_REF` identifies
-  that project.
+- Stripe CLI access has been verified for the Agent Outbox billing account.
+  Store exact Stripe account metadata in Systems Manager Parameter Store under
+  `/agent-outbox/environments/production/stripe-*`; keep tracked docs free of
+  provider account ids. Billing products, prices, portal configuration,
+  webhook endpoints, and application secret keys remain deferred until the
+  billing phase.
+- Sentry is configured for the Agent Outbox JavaScript Next.js project in the
+  Conn Castle organization. Store DSNs, auth token, organization slug, project
+  slug, and project id under `/agent-outbox/environments/production/sentry-*`;
+  the installed Sentry CLI auth check works, but organization/project listing
+  may require the Sentry HTTP API when the CLI cannot parse the org response.

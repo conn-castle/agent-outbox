@@ -62,24 +62,19 @@ Incomplete:
 ## Phase 2 — Runtime App Shell Proof
 
 ### Goal
-- Prove the single hosted Next.js/OpenNext Workers app shell before deep queue behavior.
-- Validate the minimum runtime integrations needed for human UI, caller API, scheduled jobs, database access, and logs.
-- Source map: [README.md](../../README.md) "Hosted Service" and "Architecture", [architecture.md](../architecture.md) "Runtime Shape" and "Runtime Proofs", [ops/secrets.md](../ops/secrets.md), [ops/monitoring.md](../ops/monitoring.md), and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for API runtime, web hosting, deployment environment, and package-manager decisions.
+- Prove the single Next.js/OpenNext Cloudflare Workers app boundary before product queue, billing, file, or cleanup behavior is built.
+- Keep the proof limited to runtime integration, protected canary routes, provider wiring, safe logs/errors, and scheduled execution.
 
 ### Tasks
-- [ ] Establish the pnpm Next.js app boundary for the public surface, protected human placeholder, `/api/...` caller-route placeholder, and scheduled-job canary inside one deployable app.
-- [ ] Verify the exact Next.js, Clerk, OpenNext, Wrangler, Workers, Supabase, and logging/runtime versions selected in Phase 1 against a minimal integration.
-- [ ] Prove Clerk sign-in/sign-out and protected server-side human user lookup in the Workers runtime.
-- [ ] Prove caller bearer-auth acceptance and rejection on a non-product API route.
-- [ ] Prove restricted Supabase connectivity and a transaction-context canary, deferring account policies and product tables to Phase 3.
-- [ ] Prove scheduled-job, structured-error, and structured-log canaries with correlation identifiers.
-- [ ] Keep queue lifecycle, file workflows, billing, cleanup semantics, and Steward-specific behavior out of the runtime proof except as explicit no-op placeholders.
+- [x] Establish the app boundary with public, auth-adjacent, protected human, caller-auth, database, structured-log, structured-error, Sentry, and scheduled canary routes.
+- [x] Add pinned Next.js, Clerk, OpenNext, Wrangler, Supabase/Postgres, Sentry, logging, and runtime toolchain dependencies to local gates.
+- [x] Add a real Worker `scheduled` handler through the tracked wrapper entrypoint, configure the Wrangler cron trigger, and prove it with local `workerd` scheduled-event smoke.
+- [x] Keep queue lifecycle, product tables, file workflows, billing behavior, cleanup implementation, and Steward-specific behavior out of the runtime proof.
+- [ ] Prove the provider-backed runtime canaries against the OpenNext Worker runtime with real development Clerk, Supabase/Postgres, Sentry, and smoke-token values.
 
 ### Exit criteria
-- Local development and Workers-runtime smoke checks pass for app load, protected human route, caller-auth canary, database canary, scheduled canary, and structured error/log canaries.
-- The pinned runtime versions are recorded in the canonical command/docs surface and any incompatibility blocks the phase.
-- The app boundary matches [architecture.md](../architecture.md): no separate API origin, no Steward-private host dependency, and no browser-direct product table access.
-- No product queue implementation, file upload/download workflow, billing behavior, or cleanup semantics are required to complete this phase.
+- `make check`, `make doctor`, and `make smoke-worker-scheduled` pass with the configured local environment.
+- `make smoke-runtime` passes against the OpenNext Worker runtime, not only `make dev`, with provider-backed app/API canaries and without emitting Sentry events during smoke.
 
 ## Phase 3 — Accounts, Authorization, Limits, And Cleanup Foundation
 
@@ -197,7 +192,7 @@ Incomplete:
 - Source map: [ops/resources.md](../ops/resources.md), [ops/monitoring.md](../ops/monitoring.md), [ops/debugging.md](../ops/debugging.md), [ops/incidents.md](../ops/incidents.md), [ops/secrets.md](../ops/secrets.md), and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for observability, secrets source, emergency shutdown, and launch-readiness decisions.
 
 ### Tasks
-- [ ] Implement Sentry, Cloudflare structured logs, Supabase log usage, Cloudflare Web Analytics, narrow frontend client-event logging, and canary records with shared `error_id` correlation.
+- [ ] Decide the launch analytics and product-tooling stack, then implement Sentry, Cloudflare structured logs, Supabase log usage, Cloudflare Web Analytics or the chosen web analytics tool, narrow frontend client-event logging, and canary records with shared `error_id` correlation.
 - [ ] Populate production resource inventory, deployment smoke checklist, debugging, incident, monitoring, and secret recovery instructions with exact Agent Outbox resources as they are created.
 - [ ] Build the agent-run hosted health inspection workflow so an agent can check app, auth, caller API, database connectivity, cleanup, quota enforcement, file path, logs, audit events, and obvious abuse/cost signals on demand.
 - [ ] Prepare release verification that covers local gates, CI gates, package artifacts, hosted smoke, rollback expectations, and owner acceptance.

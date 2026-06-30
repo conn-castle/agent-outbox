@@ -67,6 +67,7 @@
     "opennextCloudflare": {
       "version": "1.20.1",
       "package": "@opennextjs/cloudflare",
+      "dependencyType": "devDependencies",
       "source": "npm view @opennextjs/cloudflare version engines peerDependencies --json"
     },
     "clerkNextjs": {
@@ -79,15 +80,37 @@
       "package": "@supabase/supabase-js",
       "source": "npm view @supabase/supabase-js version engines --json"
     },
-    "stripeNode": {
-      "version": "22.3.0",
-      "package": "stripe",
-      "source": "npm view stripe version engines --json"
-    },
     "sentryNextjs": {
       "version": "10.62.0",
       "package": "@sentry/nextjs",
       "source": "npm view @sentry/nextjs version engines peerDependencies --json"
+    },
+    "postgresNode": {
+      "version": "8.22.0",
+      "package": "pg",
+      "source": "npm view pg version engines --json"
+    },
+    "postgresCloudflare": {
+      "version": "1.4.0",
+      "package": "pg-cloudflare",
+      "source": "corepack pnpm view pg-cloudflare version --json"
+    }
+  },
+  "runtimeDevTools": {
+    "reactTypes": {
+      "version": "19.2.17",
+      "package": "@types/react",
+      "source": "corepack pnpm view @types/react@19 version --json"
+    },
+    "reactDomTypes": {
+      "version": "19.2.3",
+      "package": "@types/react-dom",
+      "source": "corepack pnpm view @types/react-dom@19 version --json"
+    },
+    "postgresTypes": {
+      "version": "8.20.0",
+      "package": "@types/pg",
+      "source": "corepack pnpm view @types/pg@8 version --json"
     }
   },
   "providerCli": {

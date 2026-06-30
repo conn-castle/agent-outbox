@@ -7,3 +7,7 @@ allowBuilds:
   workerd: true
 minimumReleaseAgeExclude:
   - prettier@3.9.3
+  - "@clerk/backend@3.8.5"
+  - "@clerk/nextjs@7.5.10"
+  - "@clerk/react@6.11.2"
+  - "@clerk/shared@4.22.1"

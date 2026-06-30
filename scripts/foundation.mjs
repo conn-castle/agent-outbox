@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { RUNTIME_CRON_SCHEDULE } from "../src/server/scheduled.ts";
 
 /**
  * @typedef {{
  *   package?: string | null,
- *   version: string
+ *   version: string,
+ *   dependencyType?: "dependencies" | "devDependencies"
  * }} ToolPin
  *
  * @typedef {ToolPin & { authCheck: string[] }} ProviderCliPin
@@ -17,6 +20,8 @@ import { fileURLToPath } from "node:url";
  *   go: { version: string },
  *   packageManager: { name: string, version: string },
  *   phase1Tools: Record<string, ToolPin>,
+ *   runtimePins: Record<string, ToolPin>,
+ *   runtimeDevTools: Record<string, ToolPin>,
  *   providerCli: Record<string, ProviderCliPin>
  * }} Toolchain
  *
@@ -55,8 +60,23 @@ const REQUIRED_FILES = [
   ".markdownlint-cli2.yaml",
   "tsconfig.json",
   "scripts/foundation.mjs",
+  "scripts/runtime-smoke.mjs",
+  "scripts/worker-scheduled-smoke.mjs",
   "tests/foundation.test.mjs",
   ".env.example",
+  "next.config.ts",
+  "open-next.config.ts",
+  "wrangler.jsonc",
+  "middleware.ts",
+  "instrumentation.ts",
+  "app/layout.tsx",
+  "app/page.tsx",
+  "app/api/runtime/canary/route.ts",
+  "src/server/caller-auth.ts",
+  "src/server/database.ts",
+  "src/server/logging.ts",
+  "src/server/scheduled.ts",
+  "worker/entry.mjs",
   "docs/agent-layer/COMMANDS.md",
   ".github/workflows/ci.yml",
   ".github/workflows/release-check.yml"
@@ -74,6 +94,7 @@ const FORBIDDEN_WORKFLOW_TOKENS = [
 
 const REQUIRED_ENV_NAMES = [
   "APP_ENV",
+  "PORT",
   "APP_BASE_URL",
   "PUBLIC_APP_BASE_URL",
   "SUPABASE_PROJECT_REF",
@@ -82,10 +103,7 @@ const REQUIRED_ENV_NAMES = [
   "DATABASE_MIGRATION_URL",
   "CLERK_SECRET_KEY",
   "CLERK_PUBLISHABLE_KEY",
-  "STRIPE_SECRET_KEY",
-  "STRIPE_WEBHOOK_SECRET",
-  "STRIPE_PAID_MONTHLY_PRICE_ID",
-  "STRIPE_BILLING_PORTAL_CONFIGURATION_ID",
+  "STRIPE_ACCOUNT_ID",
   "SENTRY_DSN",
   "SENTRY_BROWSER_DSN",
   "SENTRY_AUTH_TOKEN",
@@ -100,10 +118,26 @@ const OPTIONAL_LOCAL_ENV_NAMES = [
   "CLOUDFLARE_ZONE_NAME",
   "CLOUDFLARE_NAMESERVERS",
   "CLOUDFLARE_API_TOKEN",
-  "CLOUDFLARE_API_TOKEN_ID"
+  "CLOUDFLARE_API_TOKEN_ID",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_PAID_MONTHLY_PRICE_ID",
+  "STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
 ];
 
 const COMMAND_TIMEOUT_MS = 30_000;
+
+const RUNTIME_PROOF_SOURCE_DIRS = ["app", "src"];
+
+const FORBIDDEN_RUNTIME_PROOF_TOKENS = [
+  "create table",
+  "input_items",
+  "output_results",
+  "stripe.checkout",
+  "checkout.sessions",
+  "uploadthing",
+  "supabase.storage"
+];
 
 /**
  * @param {string} relativePath
@@ -258,12 +292,37 @@ export function validateToolchainPackage(toolchain, packageJson) {
     );
   }
 
+  const expectedDependencies = new Map();
   const expectedDevDependencies = new Map();
   for (const section of /** @type {const} */ (["phase1Tools", "providerCli"])) {
     for (const tool of Object.values(toolchain[section])) {
       if (tool.package) {
         expectedDevDependencies.set(tool.package, tool.version);
       }
+    }
+  }
+
+  for (const tool of Object.values(toolchain.runtimeDevTools)) {
+    if (tool.package) {
+      expectedDevDependencies.set(tool.package, tool.version);
+    }
+  }
+
+  for (const tool of Object.values(toolchain.runtimePins)) {
+    if (!tool.package) {
+      continue;
+    }
+
+    if (tool.dependencyType === "devDependencies") {
+      expectedDevDependencies.set(tool.package, tool.version);
+    } else {
+      expectedDependencies.set(tool.package, tool.version);
+    }
+  }
+
+  for (const [dependency, version] of expectedDependencies) {
+    if (packageJson.dependencies?.[dependency] !== version) {
+      errors.push(`dependency ${dependency} must be pinned to ${version}`);
     }
   }
 
@@ -284,11 +343,76 @@ export function validateToolchainPackage(toolchain, packageJson) {
     }
   }
 
+  const allowedDependencies = new Set(expectedDependencies.keys());
   for (const dependency of Object.keys(packageJson.dependencies ?? {})) {
-    errors.push(`runtime dependency ${dependency} is out of Phase 1 scope`);
+    if (!allowedDependencies.has(dependency)) {
+      errors.push(`dependency ${dependency} is not pinned in toolchain.json`);
+    }
+  }
+
+  const allowedDevDependencies = new Set(expectedDevDependencies.keys());
+  for (const dependency of Object.keys(packageJson.devDependencies ?? {})) {
+    if (!allowedDevDependencies.has(dependency)) {
+      errors.push(
+        `devDependency ${dependency} is not pinned in toolchain.json`
+      );
+    }
   }
 
   return errors;
+}
+
+/**
+ * @param {Record<string, string>} sourceContentsByPath
+ * @returns {string[]}
+ */
+export function validateRuntimeProofScope(sourceContentsByPath) {
+  const failures = [];
+
+  for (const [relativePath, content] of Object.entries(sourceContentsByPath)) {
+    const lowered = content.toLowerCase();
+    for (const token of FORBIDDEN_RUNTIME_PROOF_TOKENS) {
+      if (lowered.includes(token)) {
+        failures.push(`${relativePath} contains out-of-scope token: ${token}`);
+      }
+    }
+  }
+
+  return failures;
+}
+
+/**
+ * @param {{
+ *   wranglerConfig: { main?: unknown, triggers?: { crons?: unknown } },
+ *   workerEntryContent: string
+ * }} input
+ * @returns {string[]}
+ */
+export function validateWorkerCronProofConfig(input) {
+  const failures = [];
+
+  if (input.wranglerConfig.main !== "worker/entry.mjs") {
+    failures.push(
+      "wrangler.jsonc must use worker/entry.mjs as the Worker entrypoint"
+    );
+  }
+
+  const crons = input.wranglerConfig.triggers?.crons;
+  if (!Array.isArray(crons) || !crons.includes(RUNTIME_CRON_SCHEDULE)) {
+    failures.push(
+      `wrangler.jsonc must configure the runtime cron schedule ${RUNTIME_CRON_SCHEDULE}`
+    );
+  }
+
+  if (!input.workerEntryContent.includes("async scheduled(")) {
+    failures.push("worker/entry.mjs must export a scheduled handler");
+  }
+
+  if (!input.workerEntryContent.includes("runScheduledCanary")) {
+    failures.push("worker/entry.mjs must execute the scheduled canary");
+  }
+
+  return failures;
 }
 
 /**
@@ -553,6 +677,8 @@ function checkMakefileSurface() {
     "test",
     "build",
     "smoke",
+    "smoke-worker-scheduled",
+    "smoke-runtime",
     "check",
     "release-check",
     "clean"
@@ -583,6 +709,46 @@ function checkLockfileState() {
     0,
     `pnpm-lock.yaml is missing or stale (${JSON.stringify(redactCommandResult(result))})`
   );
+}
+
+/**
+ * @param {string} relativeDir
+ * @returns {string[]}
+ */
+function listSourceFiles(relativeDir) {
+  const absoluteDir = path.join(ROOT, relativeDir);
+  const entries = readdirSync(absoluteDir, { withFileTypes: true });
+  return entries.flatMap((entry) => {
+    const relativePath = path.join(relativeDir, entry.name);
+    if (entry.isDirectory()) {
+      return listSourceFiles(relativePath);
+    }
+
+    if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(entry.name)) {
+      return [relativePath];
+    }
+
+    return [];
+  });
+}
+
+/**
+ * @returns {Record<string, string>}
+ */
+function readRuntimeProofSourceContents() {
+  /** @type {Record<string, string>} */
+  const contents = {};
+
+  for (const relativePath of RUNTIME_PROOF_SOURCE_DIRS.flatMap(
+    listSourceFiles
+  )) {
+    contents[relativePath] = readFileSync(
+      path.join(ROOT, relativePath),
+      "utf8"
+    );
+  }
+
+  return contents;
 }
 
 function build() {
@@ -623,6 +789,23 @@ function smoke() {
   );
   assert.deepEqual(workflowFailures, [], workflowFailures.join("\n"));
 
+  const scopeFailures = validateRuntimeProofScope(
+    readRuntimeProofSourceContents()
+  );
+  assert.deepEqual(scopeFailures, [], scopeFailures.join("\n"));
+
+  const workerCronFailures = validateWorkerCronProofConfig({
+    wranglerConfig:
+      /** @type {{ main?: unknown, triggers?: { crons?: unknown } }} */ (
+        readJson("wrangler.jsonc")
+      ),
+    workerEntryContent: readFileSync(
+      path.join(ROOT, "worker/entry.mjs"),
+      "utf8"
+    )
+  });
+  assert.deepEqual(workerCronFailures, [], workerCronFailures.join("\n"));
+
   console.log("Structural smoke checks passed.");
 }
 
@@ -635,14 +818,6 @@ function doctor() {
       "node",
       ["--version"],
       `v${toolchain.node.version}`,
-      (output) => output.split(/\s+/)[0]
-    )
-  );
-  checks.push(
-    versionResult(
-      "npm",
-      ["--version"],
-      toolchain.node.npm,
       (output) => output.split(/\s+/)[0]
     )
   );
@@ -726,7 +901,16 @@ function doctor() {
 }
 
 function clean() {
-  const generated = ["coverage", "dist", "build", ".next", ".turbo"];
+  const generated = [
+    "coverage",
+    "dist",
+    "build",
+    ".next",
+    ".open-next",
+    ".turbo",
+    ".wrangler",
+    "tsconfig.tsbuildinfo"
+  ];
   for (const relativePath of generated) {
     rmSync(path.join(ROOT, relativePath), { force: true, recursive: true });
   }
