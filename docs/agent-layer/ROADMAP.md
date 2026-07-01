@@ -80,26 +80,13 @@ Incomplete:
 - Added caller API quota/rate enforcement through canonical limits, quota windows, active limit blocks, account-scoped stock checks, and cleanup exemptions for input delete and output ack.
 - Verified the phase with focused behavior tests plus `make check` covering formatting, Markdown lint, TypeScript, 96 tests, build, and structural smoke.
 
-## Phase 5 — Human Review Web UI
-
-### Goal
-- Build the calm, generic human review surface over the typed queue model.
-- Keep the human as the sole UI user; callers and agents remain API/CLI users.
-- Source map: [NORTH_STAR.md](../../NORTH_STAR.md), [README.md](../../README.md) "How It Works" and "Product Boundaries", [architecture.md](../architecture.md) "Human Review Surface", and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for MVP human web UI scope.
-
-### Tasks
-- [ ] Implement authenticated list/detail review with lightweight rows, lazy details, bounded rendering, search, generic filters, priority/timestamp sorting, and caller/status affordances.
-- [ ] Render typed input content safely, including sanitized HTML text, links, row accent colors, numeric bars, pills, progress rings, primary actions, overflow actions, and supported popup kinds.
-- [ ] Implement human answers for no-popup, free-text, single-select, multi-select, and date/datetime actions using server-only writes.
-- [ ] Implement pre-read undo, answered-state display, billing/downgrade grace banner behavior, and front-end-only skipped ordering without adding backend skip lifecycle state.
-- [ ] Implement narrow bulk actions only when selected pending rows expose the same complete no-popup action.
-- [ ] Keep caller-specific source semantics, downstream execution, saved views, due dates, snooze/scheduling, grouping keys, task-manager behavior, and caller-management dashboards out of the UI.
-
-### Exit criteria
-- Browser-level verification covers desktop and mobile list/detail review, supported popup kinds, bulk action compatibility, skipped ordering, search/filter/sort, undo before read, and no undo after caller read.
-- Security verification proves unsafe HTML, unsafe colors, arbitrary SVG/media/forms/scripts, and caller-supplied UI components are rejected or sanitized before rendering.
-- UI tests or review fixtures include at least one Steward-shaped item without hardcoding email classifier, Gmail, route-label, or downstream execution concepts into Agent Outbox.
-- The human UI does not expose caller API keys, manual key creation, source-system execution controls, or any caller/agent-only workflow.
+## Phase 5 ✅ — Human Review Web UI
+- Added Clerk-backed self-serve sign-up/sign-in entrypoints, first-time human account bootstrap through a narrow database function, idempotent Clerk-to-Agent-Outbox user/account/member provisioning, and human account context resolution.
+- Added server-only human review list/detail/status query helpers and replaced the protected placeholder with the responsive review workspace over lightweight rows, lazy detail loading, search, status filter, priority/updated sorting, caller/status affordances, account banner metadata, and front-end-only skipped ordering.
+- Added safe typed rendering for sanitized HTML, safe links, accent colors, numeric bars, pills, progress rings, supported icons, primary/overflow actions, popup metadata, and disabled file-upload action display until the Phase 7 paid file workflow exists.
+- Added server-only human answer submission for no-popup, free-text, single-select, multi-select, date, and datetime responses; answered-state display; pre-read undo; no-undo-after-caller-read behavior; and narrow compatible bulk actions for selected pending rows with the same no-popup action.
+- Kept caller-specific source semantics, downstream execution, saved views, due dates, snooze/scheduling, grouping keys, task-manager behavior, caller-management dashboards, caller API keys, and manual key creation out of the human UI.
+- Verified the phase with focused Node tests, `make browser` desktop/mobile coverage for the review and security matrix, and `make check` covering format, Markdown lint, TypeScript, the Node test suite, build, and structural smoke.
 
 ## Phase 6 — Go CLI And Agent Integration Surface
 

@@ -4,6 +4,8 @@
 # JavaScript dependencies and generated artifacts
 /node_modules/
 /coverage/
+/test-results/
+/playwright-report/
 /dist/
 /build/
 /.next/

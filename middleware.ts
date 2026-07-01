@@ -2,6 +2,8 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import { humanBrowserFixtureEnabled } from "./src/server/human-review-fixture-gate";
+
 // OpenNext Cloudflare 1.20 rejects Next 16's Node.js proxy build output.
 // Keep middleware.ts until this pinned adapter supports proxy.ts.
 const isProtectedRoute = createRouteMatcher(["/human(.*)"]);
@@ -18,6 +20,10 @@ export default function middleware(
   request: NextRequest,
   event: NextFetchEvent
 ) {
+  if (humanBrowserFixtureEnabled()) {
+    return NextResponse.next();
+  }
+
   if (!process.env.CLERK_SECRET_KEY || !process.env.CLERK_PUBLISHABLE_KEY) {
     return NextResponse.next();
   }

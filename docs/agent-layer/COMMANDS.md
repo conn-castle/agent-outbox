@@ -135,6 +135,24 @@ Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs the
 pinned Node built-in test runner. Tests should cover behavior that matters,
 including toolchain/package consistency and secret-safe diagnostics.
 
+- Browser smoke test
+
+```bash
+make browser
+```
+
+Run from: repo root Prerequisites: `make setup` has completed and Playwright
+Chromium has been installed with `corepack pnpm exec playwright install
+chromium` if it is not already present. Notes: Runs deterministic desktop and
+mobile browser coverage through the test-only human review fixture, including
+signup handoff, list/detail review, popup controls, skipped ordering,
+search/filter/sort, narrow bulk compatibility, pre-read undo, no-undo-after-read
+state, and hostile-content rendering. It starts a local Next.js server with
+`APP_ENV=test` and `AGENT_OUTBOX_BROWSER_FIXTURE=1`; it must not require real
+Clerk, database, or provider credentials. The fixture bypasses the production
+Clerk/database path only when both gate variables are set by the Playwright web
+server.
+
 - Build the app
 
 ```bash
@@ -336,9 +354,10 @@ make check
 Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
 `24.18.0` before running commands. Notes: `.github/workflows/ci.yml` runs these
 commands with read-only repository permissions and no provider credentials by
-default. The same workflow also runs a separate `make migration-replay` job
-against a raw `postgres:17` service and then runs the opt-in database policy
-test.
+default. The same workflow also installs Playwright Chromium and runs a
+separate `make browser` job, plus a separate `make migration-replay` job against
+a raw `postgres:17` service followed by the opt-in database policy and human
+bootstrap database tests.
 
 - GitHub Actions release-check gate
 
@@ -351,5 +370,6 @@ Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
 `24.18.0` before running commands. Notes: `.github/workflows/release-check.yml`
 runs these commands with read-only repository permissions. The workflow is
 verification-only and has no deployment or package publication step. The same
-workflow also runs `make migration-replay` against a raw `postgres:17` service
-and then runs the opt-in database policy test.
+workflow also installs Playwright Chromium and runs a separate `make browser`
+job, plus `make migration-replay` against a raw `postgres:17` service followed
+by the opt-in database policy and human bootstrap database tests.

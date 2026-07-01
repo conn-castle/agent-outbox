@@ -77,7 +77,10 @@ Database authorization is hybrid:
 - normal product requests use a restricted non-bypass Postgres role;
 - server-only code sets transaction-local request context before touching rows;
 - bypass credentials are reserved for migrations, repair, cleanup, and narrow
-  internal operations.
+  internal operations;
+- security-definer bootstrap functions that create initial account membership
+  are owned by the bypass-capable migration owner under forced Row Level
+  Security, while the restricted application role only receives execute.
 
 ## Data Authority
 
@@ -209,9 +212,17 @@ ordering.
 
 Rules:
 
+- Humans authenticate through Clerk and resolve to Agent Outbox-owned user,
+  account, and membership ids before any queue reads or writes.
 - Do not hardcode caller-specific source semantics or downstream execution.
 - Skipped state is presentation-only; it is not backend lifecycle state and does
   not create output.
+- Browser rendering trusts only already-sanitized typed fields from server-only
+  queue reads. Unsafe colors are ignored at render time, unsupported icons use a
+  fixed fallback, unsafe links are omitted, and caller-provided component,
+  script, arbitrary SVG/media, or form attempts remain data instead of UI code.
+- Human answers, pre-read undo, and narrow compatible bulk actions use
+  server-only writes. Undo is unavailable after a caller read marks the output.
 - Business rules, authorization, quota checks, queue writes, output delivery,
   and file handling belong in server-only code and the database.
 

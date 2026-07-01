@@ -176,6 +176,73 @@ test("input parser rejects caller identity, unsafe HTML, unsafe colors, and inva
   ]);
 });
 
+test("input parser rejects embedded active content and caller component attempts", () => {
+  const cases = [
+    {
+      name: "script",
+      input: baseInput({ details: "<script>fixtureUnsafeScript()</script>" }),
+      path: "details",
+      code: "unsafe_html"
+    },
+    {
+      name: "arbitrary svg",
+      input: baseInput({ summary: "<svg><circle /></svg>" }),
+      path: "summary",
+      code: "unsafe_html"
+    },
+    {
+      name: "media",
+      input: baseInput({ details: '<video src="https://example.com/x.mp4">' }),
+      path: "details",
+      code: "unsafe_html"
+    },
+    {
+      name: "form",
+      input: baseInput({ title: '<form action="/x"><input name="x"></form>' }),
+      path: "title",
+      code: "unsafe_html"
+    },
+    {
+      name: "unsafe visual color",
+      input: baseInput({
+        card_visual: {
+          kind: "pill",
+          text: "Needs review",
+          icon: "check",
+          color: "var(--caller-color)"
+        }
+      }),
+      path: "card_visual.color",
+      code: "unsafe_color"
+    },
+    {
+      name: "caller component",
+      input: baseInput({
+        card_visual: {
+          kind: "caller_component",
+          component: "CallerInjectedWidget",
+          props: { src: "https://example.com/widget.js" }
+        }
+      }),
+      path: "card_visual.kind",
+      code: "invalid_enum"
+    }
+  ];
+
+  for (const { name, input, path, code } of cases) {
+    const result = parseInputSubmission(input, { limitProfile: "hosted-paid" });
+    assert.equal(result.ok, false, name);
+    assert.equal(
+      result.error.fields?.some((field) => field.path === path),
+      true
+    );
+    assert.equal(
+      result.error.fields?.some((field) => field.code === code),
+      true
+    );
+  }
+});
+
 test("input parser accepts anchor href with multi-parameter query strings", () => {
   // Query strings with more than one parameter (?a=1&b=2) are ordinary URLs and
   // pass the http/https/mailto protocol allow-list; the ampersand must not be

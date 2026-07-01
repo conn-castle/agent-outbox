@@ -26,6 +26,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-01 output-file-single-row-invariant: Output files table permits multiple rows per result
+    Priority: Medium. Area: Database/File uploads
+    Description: The MVP file-upload contract permits exactly one output-file row per file-upload response, but `agent_outbox_output_files` only enforces unique `(output_result_id, display_order)`, so multiple file rows can exist for one output result with different display orders.
+    Next step: Before enabling paid file uploads, enforce the invariant with a unique `output_result_id` constraint or equivalent migration and add database coverage.
+    Notes: Current Phase 4 API cannot create file-upload outputs yet; this becomes launch-blocking in Phase 7.
+
 - Issue 2026-06-30 caller-last-used-hot-row-write: Caller credential last-used writes run on every valid request
     Priority: Low. Area: Reliability/Caller-auth
     Description: `authenticateCallerApiRequestWithDatabase` records `last_used_at` after every valid caller auth, including polling/status reads, which adds a transaction and can repeatedly update one hot credential row.
@@ -100,12 +106,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: In `src/server/input-queue.ts` `sendResultForExisting`, the `existing.status === "answered" && existing.has_live_output` branch returns the same `answered_unacknowledged` error as the following plain `existing.status === "answered"` branch, so the `has_live_output` check is currently inert. The spec (`docs/spec/errors.md`, `docs/spec/http-api.md`) ties `answered_unacknowledged` specifically to an answered item whose output is still unacknowledged, suggesting an answered item with no live output may warrant different handling.
     Next step: Confirm intended behavior for an answered item without a live output, then implement the distinct response or collapse the redundant branch.
     Notes: Left intact during simplify-new-code pass to avoid erasing a possibly half-finished spec distinction.
-
-- Issue 2026-06-30 account-bootstrap-security-flow: Account bootstrap path depends on auth design
-    Priority: High. Area: Security/Auth
-    Description: Initial account and owner membership creation under `agent_outbox_app` needs a narrow bootstrap path, but implementing it before the Clerk-to-internal-user flow and related security decisions are defined would bake in the wrong trust boundary.
-    Next step: Define the Clerk-to-internal-user provisioning flow and all other security-related account bootstrap decisions, then implement a dedicated bootstrap function or equivalent narrow policy.
-    Notes: Deferred from PR #2 review; regular Row Level Security membership policies intentionally remain unchanged in Phase 3.
 
 - Issue 2026-06-30 next-middleware-proxy-convention: Next.js middleware file convention is deprecated
     Priority: Low. Area: Runtime/Next.js

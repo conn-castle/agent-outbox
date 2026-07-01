@@ -27,3 +27,8 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
 ## Features and tasks (not scheduled)
 
 <!-- ENTRIES START -->
+- Backlog 2026-07-01 server-backed-review-list-controls: Server-backed review list controls for large queues
+    Priority: Medium. Area: Human review UI
+    Description: Humans should be able to search, filter, sort, and page through the full review queue instead of only the first bounded list slice.
+    Acceptance criteria: Review list controls are URL-backed, applied in `humanReviewListStatement`, and expose pagination or load-more behavior with browser coverage for results beyond the initial slice.
+    Notes: Deferred from Phase 5 PR audit; current UI intentionally keeps a bounded first-page client workspace.

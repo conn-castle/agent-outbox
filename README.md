@@ -27,7 +27,7 @@ will use:
 
 The current repository implements:
 
-- Clerk-backed sign-in, sign-out, and a protected human placeholder route
+- Clerk-backed sign-up, sign-in, sign-out, and a protected human review queue UI
 - Account-scoped callers and display-once API credentials
 - Caller-authenticated raw HTTP status, input, output, acknowledgement, and
   output-file download routes
@@ -35,9 +35,8 @@ The current repository implements:
   and runtime canaries
 - Sentry, Cloudflare, and Supabase/Postgres-backed observability foundations
 
-The installable CLI, full human review queue UI, human-approved caller
-registration/rotation/revocation, Stripe billing, and paid file-upload workflow
-are later roadmap items.
+The installable CLI, human-approved caller registration/rotation/revocation,
+Stripe billing, and paid file-upload workflow are later roadmap items.
 
 The hosted service has one app/API origin. Caller API routes live under
 `https://app.agent-outbox.dev/api/...`.

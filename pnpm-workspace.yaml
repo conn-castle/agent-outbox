@@ -11,3 +11,4 @@ minimumReleaseAgeExclude:
   - "@clerk/nextjs@7.5.10"
   - "@clerk/react@6.11.2"
   - "@clerk/shared@4.22.1"
+  - lucide-react@1.23.0

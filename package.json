@@ -29,6 +29,7 @@
     "lint": "markdownlint-cli2",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
+    "browser": "playwright test",
     "next:build": "next build",
     "smoke": "node scripts/foundation.mjs smoke",
     "smoke-runtime": "node scripts/runtime-smoke.mjs",
@@ -43,6 +44,7 @@
     "clean": "node scripts/foundation.mjs clean"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@sentry/cli": "3.6.0",
     "@types/node": "24.13.2",
     "@types/pg": "8.20.0",
@@ -58,6 +60,7 @@
     "@clerk/nextjs": "7.5.10",
     "@sentry/nextjs": "10.62.0",
     "@supabase/supabase-js": "2.108.2",
+    "lucide-react": "1.23.0",
     "next": "16.2.9",
     "pg": "8.22.0",
     "pg-cloudflare": "1.4.0",

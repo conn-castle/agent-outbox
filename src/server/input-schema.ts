@@ -10,6 +10,10 @@ import {
   limitErrorMetadata,
   type LimitProfileSelector
 } from "./limits.ts";
+import {
+  isSafeColor,
+  SUPPORTED_LUCIDE_ICON_NAMES
+} from "../shared/input-schema-rules.ts";
 
 export const INPUT_REQUEST_BODY_BYTE_LIMIT = 128_000;
 
@@ -133,23 +137,7 @@ const MIME_PATTERN = /^[A-Za-z0-9!#$&^_.+-]+\/(?:[A-Za-z0-9!#$&^_.+-]+|\*)$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const UTC_DATETIME_PATTERN =
   /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/;
-export const SUPPORTED_LUCIDE_ICON_NAMES = [
-  "archive",
-  "calendar",
-  "check",
-  "chevron-down",
-  "clock",
-  "download",
-  "external-link",
-  "file",
-  "inbox",
-  "mail",
-  "paperclip",
-  "send",
-  "trash",
-  "upload",
-  "x"
-] as const;
+export { isSafeColor, SUPPORTED_LUCIDE_ICON_NAMES };
 
 const SUPPORTED_LUCIDE_ICONS = new Set<string>(SUPPORTED_LUCIDE_ICON_NAMES);
 
@@ -179,43 +167,6 @@ const ALLOWED_HTML_ELEMENTS = new Set([
   "td",
   "span",
   "a"
-]);
-
-const DISALLOWED_COLOR_TOKENS = [
-  "url(",
-  "var(",
-  "calc(",
-  "expression",
-  "@",
-  "{",
-  "}",
-  ";",
-  "<",
-  ">"
-];
-
-const SAFE_NAMED_COLORS = new Set([
-  "black",
-  "white",
-  "gray",
-  "grey",
-  "red",
-  "green",
-  "blue",
-  "yellow",
-  "orange",
-  "purple",
-  "pink",
-  "brown",
-  "cyan",
-  "magenta",
-  "lime",
-  "navy",
-  "teal",
-  "olive",
-  "maroon",
-  "silver",
-  "transparent"
 ]);
 
 export async function readJsonBodyWithLimit(
@@ -1425,29 +1376,6 @@ function optionalColor(value: unknown, fields: ApiFieldError[], path: string) {
     return null;
   }
   return value;
-}
-
-function isSafeColor(value: string) {
-  const normalized = value.trim().toLowerCase();
-  if (
-    !normalized ||
-    DISALLOWED_COLOR_TOKENS.some((token) => normalized.includes(token))
-  ) {
-    return false;
-  }
-
-  return (
-    SAFE_NAMED_COLORS.has(normalized) ||
-    /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(
-      normalized
-    ) ||
-    /^rgba?\(\s*(?:25[0-5]|2[0-4]\d|1?\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1?\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/.test(
-      normalized
-    ) ||
-    /^hsla?\(\s*(?:360|3[0-5]\d|[12]?\d?\d)\s*,\s*(?:100|[1-9]?\d)%\s*,\s*(?:100|[1-9]?\d)%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/.test(
-      normalized
-    )
-  );
 }
 
 function optionalDatePickerValue(

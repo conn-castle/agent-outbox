@@ -29,6 +29,28 @@ jobs:
       - name: Run verification gate
         run: make check
 
+  browser:
+    name: make browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Set up dependencies
+        run: make setup
+
+      - name: Install Playwright Chromium
+        run: corepack pnpm exec playwright install --with-deps chromium
+
+      - name: Run browser smoke tests
+        run: make browser
+
   migration-replay:
     name: make migration-replay
     runs-on: ubuntu-latest
@@ -68,3 +90,6 @@ jobs:
         run: >-
           corepack pnpm exec node --test --test-name-pattern "phase 3 local
           database" tests/foundation.test.mjs
+
+      - name: Run human bootstrap database verification
+        run: corepack pnpm exec node --test tests/human-session.test.mjs

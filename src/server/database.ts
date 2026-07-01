@@ -15,6 +15,7 @@ export type ProductTransactionContext = {
   authSurface: TransactionContextAuthSurface;
   accountId?: string;
   callerId?: string;
+  clerkUserId?: string;
   userId?: string;
 };
 
@@ -66,6 +67,12 @@ export async function runProductTransaction<TResult>(
       await client.query("select set_config($1, $2, true)", [
         "agent_outbox.caller_id",
         context.callerId
+      ]);
+    }
+    if (context.clerkUserId) {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.clerk_user_id",
+        context.clerkUserId
       ]);
     }
     if (context.userId) {
