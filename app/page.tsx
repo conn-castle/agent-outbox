@@ -3,12 +3,12 @@ import Link from "next/link";
 export default function HomePage() {
   return (
     <main className="main">
-      <p className="eyebrow">Runtime app shell proof</p>
+      <p className="eyebrow">Runtime app shell</p>
       <h1 className="title">Agent Outbox</h1>
       <p className="lede">
-        A single hosted Next.js and Cloudflare Workers app for human review UI,
-        caller API routes, scheduled canaries, database canaries, and correlated
-        runtime logs.
+        A single hosted Next.js and Cloudflare Workers app for a protected human
+        review surface, caller API routes, scheduled canaries, database
+        canaries, and correlated runtime logs.
       </p>
       <div className="actions">
         <Link className="button" href="/human">
@@ -18,12 +18,14 @@ export default function HomePage() {
           Runtime canary
         </Link>
       </div>
-      <section className="panel" aria-labelledby="phase-boundary">
-        <h2 id="phase-boundary">Phase 2 boundary</h2>
+      <section className="panel" aria-labelledby="current-surface">
+        <h2 id="current-surface">Current app surface</h2>
         <p>
-          This app shell intentionally contains no product queue lifecycle, file
-          workflow, billing behavior, cleanup semantics, or Steward-specific
-          behavior.
+          This repository currently includes caller-authenticated status, input,
+          output, acknowledgement, and output-file download routes plus a
+          protected human placeholder. Full review queue UI, caller
+          registration, billing, paid file-upload workflows, and
+          Steward-specific integrations are scheduled for later phases.
         </p>
       </section>
     </main>

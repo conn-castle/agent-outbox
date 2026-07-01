@@ -3,7 +3,8 @@ import test from "node:test";
 
 import {
   accountStatusInTransaction,
-  callerStatusInTransaction
+  callerStatusInTransaction,
+  storageStatusStatement
 } from "../src/server/status.ts";
 
 /**
@@ -131,6 +132,13 @@ test("account status reports paid-tier overall storage cap", async () => {
   assert.equal(result.data.effective_tier, "paid");
   assert.equal(result.data.file_upload_enabled, true);
   assert.equal(result.data.grace_ends_at, "2026-07-07T00:00:00.000Z");
+});
+
+test("account status storage reads use the canonical stock usage function", () => {
+  const statement = storageStatusStatement(identity);
+
+  assert.match(statement.sql, /agent_outbox_account_stock_usage\(\$1\)/);
+  assert.deepEqual(statement.values, [identity.accountId]);
 });
 
 test("caller status is scoped to the authenticated caller and key metadata only", async () => {

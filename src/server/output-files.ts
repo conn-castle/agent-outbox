@@ -223,6 +223,7 @@ export function outputFileDownloadStatement(
         and f.output_result_id::text = $3
         and f.output_file_id::text = $4
       limit 1
+      for update of f, o
     `,
     values: [
       identity.accountId,
@@ -301,6 +302,7 @@ export function outputFileDownloadHeaders(
   const headers = apiResponseHeaders(context);
 
   headers.set("Content-Type", safeContentType(input.mimeType));
+  headers.set("Cache-Control", "no-store");
   headers.set(
     "Content-Disposition",
     `attachment; filename="${safeAttachmentFilename(input.filename)}"`

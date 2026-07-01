@@ -982,6 +982,11 @@ declare
   input_total_bytes bigint;
   deleted_rows integer;
 begin
+  if p_non_file_payload_limit_bytes is null or p_non_file_payload_limit_bytes < 0 then
+    raise exception 'non_file_payload_limit_bytes must be non-negative'
+      using errcode = '22023';
+  end if;
+
   expired_outputs_deleted := public.agent_outbox_delete_expired_outputs(p_now);
   file_outputs_deleted := 0;
   file_inputs_deleted := 0;

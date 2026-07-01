@@ -19,26 +19,30 @@ For repository navigation, see [TOC.md](TOC.md).
 
 ## Hosted Service
 
-Use the public hosted service at:
+Agent Outbox is not publicly released yet. The planned public hosted service
+will use:
 
 - `https://agent-outbox.dev` for product documentation
-- `https://app.agent-outbox.dev` for the review app, caller registration, and
-  caller API
+- `https://app.agent-outbox.dev` for the human app and caller API
 
-Hosted Agent Outbox includes:
+The current repository implements:
 
-- Clerk-backed human sign-in
-- Account-scoped callers and API credentials
-- A free hosted tier for capped queue usage
-- A paid hosted tier for file-upload workflows
-- Stripe billing and account status
-- Sentry, Cloudflare, and Supabase-backed observability
-- Strict limits, retention, and abuse controls for public use
+- Clerk-backed sign-in, sign-out, and a protected human placeholder route
+- Account-scoped callers and display-once API credentials
+- Caller-authenticated raw HTTP status, input, output, acknowledgement, and
+  output-file download routes
+- Free-tier queue caps, caller limits, retention primitives, cleanup primitives,
+  and runtime canaries
+- Sentry, Cloudflare, and Supabase/Postgres-backed observability foundations
+
+The installable CLI, full human review queue UI, human-approved caller
+registration/rotation/revocation, Stripe billing, and paid file-upload workflow
+are later roadmap items.
 
 The hosted service has one app/API origin. Caller API routes live under
 `https://app.agent-outbox.dev/api/...`.
 
-## How It Works
+## Target Product Flow
 
 1. A caller connects to an Agent Outbox account.
 2. The caller submits a typed input item describing what the human should
@@ -66,55 +70,30 @@ item.
 
 ## Quickstart
 
-Install the CLI:
+Set up the current repository:
 
 ```bash
-brew install agent-outbox
+make setup
+make check
 ```
 
-Connect a caller:
+Start the local Next.js app/API origin:
 
 ```bash
-agent-outbox caller connect steward-email
+make dev
 ```
 
-Submit a review item:
+Provider-backed runtime canaries are available when `.env` contains real local
+development Clerk, Postgres/Supabase, Sentry, caller-key hash, and smoke-token
+values:
 
 ```bash
-agent-outbox input send --file review-item.json --caller steward-email
+make smoke-runtime
 ```
 
-Check for completed human decisions:
-
-```bash
-agent-outbox output check --caller steward-email
-```
-
-Read completed output:
-
-```bash
-agent-outbox output read --all --caller steward-email --json
-```
-
-Acknowledge a handled result:
-
-```bash
-agent-outbox output ack <output_result_id> --caller steward-email
-```
-
-Run diagnostics:
-
-```bash
-agent-outbox doctor --caller steward-email
-```
-
-The CLI also includes terminal documentation:
-
-```bash
-agent-outbox docs
-agent-outbox docs input
-agent-outbox docs output
-```
+There is not yet an installable `agent-outbox` CLI or Homebrew package. Current
+caller integrations should use the raw HTTP contract in [docs/spec](docs/spec)
+with a provisioned caller API key.
 
 ## Input Items
 
@@ -128,7 +107,9 @@ Input items define the review surface. Each item includes:
 - Optional card visuals such as numeric bars, pills, and progress rings
 - One or more action buttons
 - Optional typed popups for free text, single select, multi select, date or
-  datetime input, and file upload
+  datetime input
+- Planned file-upload actions, which currently fail loud until the paid upload
+  workflow is implemented
 
 Example:
 
@@ -211,13 +192,13 @@ input item. A result includes:
 - The original `caller_item_id`
 - The selected caller-defined action value
 - The typed popup response, when the action required one
-- File metadata for uploaded files, when the action requested a file
+- File metadata for attached output files, when a file result exists
 - Delivery and read/acknowledgement metadata
 
-File bytes are fetched through a dedicated authorized download command:
+File bytes are fetched through a dedicated authorized download route:
 
-```bash
-agent-outbox output file get <output_result_id> <file_id> --output receipt.pdf
+```http
+GET /api/output/{output_result_id}/files/{file_id}
 ```
 
 Callers acknowledge results only after their own downstream handling is durable.
@@ -233,40 +214,40 @@ Agent Outbox uses two queues:
 
 Important behavior:
 
-- `input send` is retry-safe create.
-- `input replace` explicitly updates a pending item.
-- `input delete` removes only pending items.
+- `POST /api/input/send` is retry-safe create.
+- `POST /api/input/replace` explicitly updates a pending item.
+- `POST /api/input/delete` removes only pending items.
 - Answered items stay visible until the caller acknowledges the matching output
   result or retention cleanup resolves it.
 - Human undo is available before the caller reads the output result.
-- `output check` is non-mutating readiness metadata.
-- `output read` returns full output payloads and marks returned results as read.
-- `output ack` is idempotent after caller-side durable handling.
+- `GET /api/output/check` is non-mutating readiness metadata.
+- Output read routes return full output payloads and mark returned results as
+  read.
+- `POST /api/output/{output_result_id}/ack` is idempotent after caller-side
+  durable handling.
 
 Delivery is asynchronous and at least once. Callers deduplicate by
 `output_result_id`.
 
 ## Caller Integration
 
-Raw HTTP is the canonical integration contract. The `agent-outbox` CLI maps
-directly to the HTTP API and is the recommended integration surface for agents,
-local services, and scripts.
+Raw HTTP is the canonical integration contract. The future `agent-outbox` CLI
+must map directly to the HTTP API; it does not exist in the current repository.
 
-Core CLI areas:
+Implemented caller-authenticated HTTP areas:
 
-- `agent-outbox caller ...` for connection, listing, status, rotation,
-  revocation, and disconnect
-- `agent-outbox account status` for account, billing, tier, quota, and storage
-  state
-- `agent-outbox input ...` for sending, replacing, and deleting input items
-- `agent-outbox output ...` for checking, reading, downloading files, and
-  acknowledging results
-- `agent-outbox doctor` for local config, auth, account, limit, and runtime
-  diagnostics
-- `agent-outbox docs`, `agent-outbox upgrade`, and `agent-outbox version`
+- `GET /api/caller/status` for caller health and account limit metadata
+- `GET /api/account/status` for account status using existing caller credentials
+- `POST /api/input/send`, `POST /api/input/replace`, and
+  `POST /api/input/delete`
+- `GET /api/output/check`, `POST /api/output/{output_result_id}/read`,
+  `POST /api/output/read-all`,
+  `GET /api/output/{output_result_id}/files/{file_id}`, and
+  `POST /api/output/{output_result_id}/ack`
 
-Every noninteractive command supports `--json` for stable machine-readable
-output. Data-plane commands are noninteractive by default.
+Human-approved caller registration, caller rotation/revocation, upgrade/billing
+flows, CLI diagnostics, and CLI documentation commands are planned but not
+implemented.
 
 ## Product Boundaries
 
@@ -284,10 +265,11 @@ triage, messaging workflows, local automations, and future agent systems.
 
 ## Architecture
 
-The hosted product runs as one Next.js application on Cloudflare Workers through
-OpenNext. Supabase Postgres stores accounts, callers, live queues, output
-results, uploaded file bytes, quotas, active limit blocks, and audit events.
-Clerk provides human authentication, Stripe provides billing, and Sentry plus
+The target hosted product runs as one Next.js application on Cloudflare Workers
+through OpenNext. Supabase Postgres stores accounts, callers, live queues,
+output results, file bytes when file workflows exist, quotas, active limit
+blocks, and audit events. Clerk provides human authentication. Stripe billing
+and paid file workflows are scheduled for later phases. Sentry plus
 service-native logs cover observability.
 
 ## Self-Hosting

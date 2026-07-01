@@ -6,7 +6,7 @@ export const CALLER_KEY_HASH_SECRET_ENV_NAME = "CALLER_KEY_HASH_SECRET";
 // floor on the configured value.
 export const CALLER_KEY_HASH_SECRET_MIN_LENGTH = 32;
 
-const RUNTIME_SMOKE_ENV_NAMES = [
+export const RUNTIME_SMOKE_ENV_NAMES = [
   "APP_ENV",
   "APP_BASE_URL",
   "PUBLIC_APP_BASE_URL",

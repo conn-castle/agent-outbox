@@ -11,8 +11,8 @@ or error states that are unavailable through HTTP.
 ## Contract Index
 
 - [http-api.md](http-api.md) - routes, authentication, request headers, response
-  envelopes, caller registration, status, data-plane commands, and file
-  downloads.
+  envelopes, status, data-plane commands, file downloads, and future
+  human-approved caller registration flows.
 - [input-schema.md](input-schema.md) - typed input submission model, validation
   rules, normalization, and input send/replace/delete semantics.
 - [output-schema.md](output-schema.md) - typed output result model, readiness
@@ -37,13 +37,19 @@ or error states that are unavailable through HTTP.
   Raw bytes are available only from the dedicated file-download endpoint.
 - Times are UTC ISO-8601 strings unless a schema field explicitly says it is a
   civil date or displayed IANA timezone.
-- CLI commands that talk to the hosted app must map to the HTTP contract below.
+- Future CLI commands that talk to the hosted app must map to the HTTP contract
+  below.
 
 ## CLI To HTTP Map
 
+The current repository does not ship an installable CLI. This map constrains the
+future CLI so it remains a wrapper over raw HTTP rather than becoming a second
+product contract. Rows marked future are not implemented in the current app/API
+phase.
+
 | CLI command                                    | Canonical HTTP contract                                                                                                                             |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `caller connect <caller>`                      | Human-approved caller registration flow in [http-api.md](http-api.md#caller-registration-contract).                                                 |
+| `caller connect <caller>`                      | Future human-approved caller registration flow in [http-api.md](http-api.md#future-caller-registration-contract-not-implemented).                   |
 | `caller status`                                | `GET /api/caller/status`.                                                                                                                           |
 | `account status`                               | `GET /api/account/status` when caller credentials are available. Human-approved fallback is a control-plane flow, not a caller-key data-plane call. |
 | `input send --file <input.json>`               | `POST /api/input/send`.                                                                                                                             |
@@ -55,4 +61,4 @@ or error states that are unavailable through HTTP.
 | `output file get <output_result_id> <file_id>` | `GET /api/output/{output_result_id}/files/{file_id}`.                                                                                               |
 | `output ack <output_result_id>`                | `POST /api/output/{output_result_id}/ack`.                                                                                                          |
 | `upgrade`                                      | Opens the hosted upgrade URL returned by status or `upgrade_required`; it is not a data-plane mutation.                                             |
-| `docs`, `doctor`, `version`                    | Local CLI behavior plus documented status/error contracts where remote checks are needed.                                                           |
+| `docs`, `doctor`, `version`                    | Future local CLI behavior plus documented status/error contracts where remote checks are needed.                                                    |

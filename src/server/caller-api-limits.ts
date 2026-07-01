@@ -74,7 +74,12 @@ export async function enforceCallerRequestLimits(
   profile: LimitProfileSelector,
   operationKind: LimitOperationKind
 ): Promise<CallerLimitGuardResult> {
-  const activeBlock = await activeLimitBlock(query, identity, operationKind);
+  const activeBlock = await activeLimitBlock(
+    query,
+    identity,
+    profile,
+    operationKind
+  );
   if (activeBlock) {
     return limitBlockedError(profile, activeBlock);
   }
@@ -100,6 +105,7 @@ export async function enforceAcceptedInputSubmissionLimits(
   const activeBlock = await activeLimitBlock(
     query,
     identity,
+    profile,
     "input_submission",
     {
       fixedWindowOnly: true
@@ -195,7 +201,6 @@ export function activeLimitBlockStatement(
           else 2
         end,
         updated_at desc
-      limit 1
     `,
     values: [
       identity.accountId,
@@ -320,30 +325,37 @@ export function accountWriteLockStatement(
 
 export function concurrencySlotStatement(input: {
   identity: CallerLimitIdentity;
+  limitName: LimitName;
   limitUnits: number;
 }): TransactionContextStatement {
   return {
     sql: `
       select true as acquired
       from generate_series(1, $2::integer) slot(slot_number)
-      where pg_try_advisory_xact_lock(hashtext($1), slot.slot_number)
+      where pg_try_advisory_xact_lock(
+        ('x' || substr(md5($1 || ':' || $3 || ':' || slot.slot_number::text), 1, 16))::bit(64)::bigint
+      )
       limit 1
     `,
-    values: [input.identity.accountId, input.limitUnits]
+    values: [input.identity.accountId, input.limitUnits, input.limitName]
   };
 }
 
 async function activeLimitBlock(
   query: ProductTransactionQuery,
   identity: CallerLimitIdentity,
+  profile: LimitProfileSelector,
   operationKind: LimitOperationKind,
   options: { fixedWindowOnly?: boolean } = {}
 ) {
   const result = await query<ActiveLimitBlockRow>(
     activeLimitBlockStatement(identity, operationKind, options)
   );
-  const row = result.rows[0];
-  return row ? activeLimitBlockFromRow(row) : null;
+  return (
+    result.rows
+      .map(activeLimitBlockFromRow)
+      .find((block) => activeLimitBlockAppliesToProfile(profile, block)) ?? null
+  );
 }
 
 async function acquireConcurrencySlot(
@@ -364,6 +376,7 @@ async function acquireConcurrencySlot(
   const result = await query<AdvisoryLockRow>(
     concurrencySlotStatement({
       identity,
+      limitName: limit.limitName,
       limitUnits: limit.setting.value
     })
   );
@@ -679,6 +692,17 @@ function activeLimitBlockFromRow(
     used_units: nullableNonNegativeInteger(row.used_units),
     limit_units: nullableNonNegativeInteger(row.limit_units)
   };
+}
+
+function activeLimitBlockAppliesToProfile(
+  profile: LimitProfileSelector,
+  block: ActiveLimitBlockMetadata
+) {
+  return (
+    accountLimitStatusMetadata(profile).limits.find((limit) => {
+      return limit.limitName === block.limit_name;
+    })?.setting.mode === "enabled"
+  );
 }
 
 function nullableTimestamp(value: string | Date | null) {

@@ -93,6 +93,7 @@ test("output file download lookup scopes by account caller output and file ids",
   // instead of a Postgres 22P02 uuid cast error swallowed into a 503.
   assert.match(statement.sql, /f\.output_result_id::text = \$3/);
   assert.match(statement.sql, /f\.output_file_id::text = \$4/);
+  assert.match(statement.sql, /for update of f, o/i);
 });
 
 test("output file download returns raw bytes and writes content-safe byte audit", async () => {
@@ -162,6 +163,7 @@ test("file download headers force attachment nosniff and safe content metadata",
   assert.equal(headers.get("X-Request-ID"), "req-file-test");
   assert.equal(headers.get("X-Correlation-ID"), "corr-file-test");
   assert.equal(headers.get("Content-Type"), "application/octet-stream");
+  assert.equal(headers.get("Cache-Control"), "no-store");
   assert.equal(headers.get("X-Content-Type-Options"), "nosniff");
   assert.equal(headers.get("Content-Length"), "123");
   assert.equal(

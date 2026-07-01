@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   activeLimitBlockStatement,
+  concurrencySlotStatement,
   enforceAcceptedInputSubmissionLimits,
   enforceCallerRequestLimits,
   incrementQuotaWindowStatement
@@ -102,6 +103,59 @@ test("caller request limits persist an active block when a quota window overflow
   assert.match(query.calls[2].sql, /agent_outbox_account_limit_blocks/);
 });
 
+test("caller request limits ignore disabled-profile blocks but still enforce enabled blocks", async () => {
+  const monthlyBlock = {
+    account_id: identity.accountId,
+    operation_kind: "caller_api_request",
+    limit_name: "authenticated_caller_api_requests_per_calendar_month",
+    limit_reason_code: "monthly_caller_api_quota_exceeded",
+    limit_reason: "Monthly caller API request limit reached.",
+    limit_resets_at: "2026-07-01T00:00:00.000Z",
+    used_units: "100001",
+    limit_units: "100000"
+  };
+  const minuteBlock = {
+    account_id: identity.accountId,
+    operation_kind: "output_check_read",
+    limit_name: "output_check_read_requests_per_account_per_minute",
+    limit_reason_code: "output_check_read_rate_limited",
+    limit_reason: "Output check/read requests are temporarily rate limited.",
+    limit_resets_at: "2026-06-30T12:01:00.000Z",
+    used_units: "121",
+    limit_units: "120"
+  };
+  const paidStatusQuery = fakeQuery([[monthlyBlock]]);
+  const paidOutputQuery = fakeQuery([[monthlyBlock, minuteBlock]]);
+
+  const paidStatus = await enforceCallerRequestLimits(
+    paidStatusQuery,
+    identity,
+    "hosted-paid",
+    "status"
+  );
+  const paidOutput = await enforceCallerRequestLimits(
+    paidOutputQuery,
+    identity,
+    "hosted-paid",
+    "output_check_read"
+  );
+
+  assert.equal(paidStatus.ok, true);
+  assert.equal(paidOutput.ok, false);
+  if (paidOutput.ok) {
+    assert.fail("expected output check/read to remain rate limited");
+  }
+  assert.ok(paidOutput.error.limit && "limit_name" in paidOutput.error.limit);
+  assert.equal(
+    paidOutput.error.limit.limit_name,
+    "output_check_read_requests_per_account_per_minute"
+  );
+  assert.doesNotMatch(
+    activeLimitBlockStatement(identity, "output_check_read").sql,
+    /limit\s+1/i
+  );
+});
+
 test("accepted input submission limits block stock overflow before incrementing submission windows", async () => {
   const query = fakeQuery([
     [],
@@ -192,4 +246,15 @@ test("quota statement builders scope rows to account metric and window", () => {
       "2026-06-01T00:00:00.000Z"
     ]
   );
+  const concurrency = concurrencySlotStatement({
+    identity,
+    limitName: "concurrent_write_requests_per_account",
+    limitUnits: 20
+  });
+  assert.match(concurrency.sql, /md5\(\$1 \|\| ':' \|\| \$3/);
+  assert.deepEqual(concurrency.values, [
+    identity.accountId,
+    20,
+    "concurrent_write_requests_per_account"
+  ]);
 });

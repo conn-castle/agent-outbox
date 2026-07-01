@@ -4,19 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseEnv } from "./foundation.mjs";
+import { RUNTIME_SMOKE_ENV_NAMES } from "../src/server/env.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const REQUIRED_RUNTIME_VALUES = [
-  "APP_ENV",
-  "APP_BASE_URL",
-  "PUBLIC_APP_BASE_URL",
-  "CLERK_SECRET_KEY",
-  "CLERK_PUBLISHABLE_KEY",
-  "DATABASE_APP_ROLE_URL",
-  "SENTRY_DSN",
-  "SMOKE_OR_CLEANUP_TOKEN"
-];
-
 const RUNTIME_SMOKE_HEADERS = {
   "x-agent-outbox-runtime-smoke": "1"
 };
@@ -93,7 +83,7 @@ async function expectReachablePage(url) {
 
 async function main() {
   const env = readLocalEnv();
-  const missing = REQUIRED_RUNTIME_VALUES.filter((name) => !env.get(name));
+  const missing = RUNTIME_SMOKE_ENV_NAMES.filter((name) => !env.get(name));
 
   if (missing.length > 0) {
     console.error(

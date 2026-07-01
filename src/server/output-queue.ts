@@ -9,6 +9,7 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import type { JsonValue, OutputResponseKind } from "./human-answer.ts";
+import { isValidUtcDateTime } from "./input-schema.ts";
 import {
   accountLimitProfileForAccount,
   enforceCallerRequestLimits
@@ -769,7 +770,7 @@ function parseCursor(value: unknown) {
       isRecord(parsed) &&
       typeof parsed.answered_at === "string" &&
       typeof parsed.output_result_id === "string" &&
-      Number.isFinite(new Date(parsed.answered_at).getTime()) &&
+      isValidUtcDateTime(parsed.answered_at) &&
       UUID_PATTERN.test(parsed.output_result_id)
     ) {
       return {

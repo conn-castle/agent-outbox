@@ -54,6 +54,15 @@ export function downgradeGraceExpiryStatement(
   nonFilePayloadLimitBytes: number,
   now: Date
 ): TransactionContextStatement {
+  if (
+    !Number.isSafeInteger(nonFilePayloadLimitBytes) ||
+    nonFilePayloadLimitBytes < 0
+  ) {
+    throw new RangeError(
+      "nonFilePayloadLimitBytes must be a non-negative safe integer"
+    );
+  }
+
   return {
     sql: "select * from public.agent_outbox_cleanup_downgrade_grace_expiry($1, $2)",
     values: [nonFilePayloadLimitBytes, timestampValue(now)]
