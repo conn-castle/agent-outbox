@@ -147,7 +147,6 @@ const FORBIDDEN_RUNTIME_PROOF_PATH_PATTERNS = [
   /^app\/api\/input\/\[/,
   /^app\/api\/human\//,
   /^app\/human\/(?:queue|review|items?)\//,
-  /^src\/components\/human\//,
   /^src\/cli\//,
   /^src\/.*(?:steward|email)/i,
   /^cli\//,
@@ -1056,6 +1055,7 @@ function checkMakefileSurface() {
     "lint",
     "typecheck",
     "test",
+    "browser",
     "build",
     "smoke",
     "smoke-runtime",
@@ -1374,6 +1374,8 @@ function clean() {
     ".open-next",
     ".turbo",
     ".wrangler",
+    "test-results",
+    "playwright-report",
     "tsconfig.tsbuildinfo"
   ];
   for (const relativePath of generated) {

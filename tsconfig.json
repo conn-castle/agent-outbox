@@ -27,6 +27,7 @@
     "app/**/*.ts",
     "app/**/*.tsx",
     "instrumentation.ts",
+    "playwright.config.ts",
     "types/**/*.d.ts",
     "next.config.ts",
     "middleware.ts",
@@ -36,6 +37,7 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "tests/**/*.mjs",
+    "tests/**/*.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],

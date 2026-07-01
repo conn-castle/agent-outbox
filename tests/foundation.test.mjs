@@ -660,7 +660,6 @@ test("validateRuntimeProofScope rejects later-phase billing and storage drift", 
     "app/api/caller/revoke/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
     "app/api/input/[caller_item_id]/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
     "app/api/human/answer/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "src/components/human/Queue.tsx is unrelated later-phase implementation scope, not Phase 4 caller API scope",
     "src/cli/main.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
     "src/server/steward-email.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
     "src/server/email-source.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
@@ -676,7 +675,7 @@ test("validateRuntimeProofScope allows current app boundary copy", () => {
   assert.deepEqual(
     validateRuntimeProofScope({
       "app/page.tsx":
-        "Full review queue UI, caller registration, billing, paid file-upload workflows, and Steward behavior are scheduled for later phases."
+        "A protected human review queue UI is current functionality. Caller registration, billing, paid file-upload workflows, and Steward behavior are scheduled for later phases."
     }),
     []
   );

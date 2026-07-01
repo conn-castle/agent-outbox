@@ -12,7 +12,7 @@ export default function HomePage() {
       </p>
       <div className="actions">
         <Link className="button" href="/human">
-          Open human placeholder
+          Open review queue
         </Link>
         <Link className="button secondary" href="/api/runtime/canary">
           Runtime canary
@@ -23,9 +23,9 @@ export default function HomePage() {
         <p>
           This repository currently includes caller-authenticated status, input,
           output, acknowledgement, and output-file download routes plus a
-          protected human placeholder. Full review queue UI, caller
-          registration, billing, paid file-upload workflows, and
-          Steward-specific integrations are scheduled for later phases.
+          protected human review queue UI. Caller registration, billing, paid
+          file-upload workflows, and Steward-specific integrations are scheduled
+          for later phases.
         </p>
       </section>
     </main>

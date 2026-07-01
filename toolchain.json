@@ -84,6 +84,11 @@
       "package": "@sentry/nextjs",
       "source": "npm view @sentry/nextjs version engines peerDependencies --json"
     },
+    "lucideReact": {
+      "version": "1.23.0",
+      "package": "lucide-react",
+      "source": "corepack pnpm view lucide-react version"
+    },
     "postgresNode": {
       "version": "8.22.0",
       "package": "pg",
@@ -110,6 +115,11 @@
       "version": "8.20.0",
       "package": "@types/pg",
       "source": "corepack pnpm view @types/pg@8 version --json"
+    },
+    "playwrightTest": {
+      "version": "1.61.1",
+      "package": "@playwright/test",
+      "source": "corepack pnpm view @playwright/test version"
     }
   },
   "providerCli": {
