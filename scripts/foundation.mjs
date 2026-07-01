@@ -77,6 +77,11 @@ const REQUIRED_FILES = [
   "src/server/logging.ts",
   "src/server/scheduled.ts",
   "db/migrations/V20260630000000__initial_schema.sql",
+  "docs/spec/README.md",
+  "docs/spec/http-api.md",
+  "docs/spec/input-schema.md",
+  "docs/spec/output-schema.md",
+  "docs/spec/errors.md",
   "docs/agent-layer/COMMANDS.md",
   "docs/ops/migrations.md",
   "scripts/flyway.mjs",
@@ -134,21 +139,24 @@ const RUNTIME_PROOF_SOURCE_DIRS = ["app", "src"];
 const RUNTIME_PROOF_SOURCE_FILES = ["instrumentation.ts", "middleware.ts"];
 
 const FORBIDDEN_RUNTIME_PROOF_PATH_PATTERNS = [
-  /^app\/api\/input\//,
-  /^app\/api\/output\//,
-  /^app\/api\/caller\//,
-  /^app\/api\/account\//,
-  /^app\/api\/files?\//,
+  /^app\/api\/(?:billing|checkout|stripe)\//,
+  /^app\/api\/account\/(?!status(?:\/|$))/,
+  /^app\/api\/caller\/(?!status(?:\/|$))/,
+  /^app\/api\/input\/\[/,
+  /^app\/api\/human\//,
   /^app\/human\/(?:queue|review|items?)\//,
   /^src\/components\/human\//,
   /^src\/cli\//,
-  /^src\/.*steward/i,
+  /^src\/.*(?:steward|email)/i,
   /^cli\//,
   /^cmd\//
 ];
 
 const FORBIDDEN_RUNTIME_PROOF_TOKENS = [
   "create table",
+  "alter table",
+  "drop table",
+  "create index",
   "stripe.checkout",
   "checkout.sessions",
   "uploadthing",
@@ -188,6 +196,31 @@ const PHASE3_FOUNDATION_MARKERS_BY_FILE = {
     "agent_outbox_cleanup_downgrade_grace_expiry",
     "agent_outbox_app",
     "nobypassrls"
+  ]
+};
+
+const PHASE4_CONTRACT_DOC_MARKERS_BY_FILE = {
+  "docs/spec/README.md": ["Raw HTTP is canonical", "CLI To HTTP Map"],
+  "docs/spec/http-api.md": [
+    "POST /api/input/send",
+    "GET /api/output/check",
+    "GET /api/caller/status",
+    "Human Answer Boundary"
+  ],
+  "docs/spec/input-schema.md": [
+    "ActionButton.value",
+    "date_picker",
+    "Input Semantics"
+  ],
+  "docs/spec/output-schema.md": [
+    "Output Check Page",
+    "Pagination",
+    "File Download"
+  ],
+  "docs/spec/errors.md": [
+    "Error Envelope",
+    "rate_limit_exceeded",
+    "invalid_caller_credentials"
   ]
 };
 
@@ -425,7 +458,7 @@ export function validateRuntimeProofScope(sourceContentsByPath) {
     for (const pattern of FORBIDDEN_RUNTIME_PROOF_PATH_PATTERNS) {
       if (pattern.test(relativePath)) {
         failures.push(
-          `${relativePath} is later-phase implementation scope, not Phase 3 foundation scope`
+          `${relativePath} is unrelated later-phase implementation scope, not Phase 4 caller API scope`
         );
       }
     }
@@ -463,6 +496,34 @@ export function validatePhase3FoundationSourceContents(sourceContentsByPath) {
       if (!content.includes(marker)) {
         failures.push(
           `${relativePath} is missing Phase 3 foundation marker: ${marker}`
+        );
+      }
+    }
+  }
+
+  return failures;
+}
+
+/**
+ * @param {Record<string, string>} sourceContentsByPath
+ * @returns {string[]}
+ */
+export function validatePhase4ContractDocContents(sourceContentsByPath) {
+  const failures = [];
+
+  for (const [relativePath, markers] of Object.entries(
+    PHASE4_CONTRACT_DOC_MARKERS_BY_FILE
+  )) {
+    const content = sourceContentsByPath[relativePath];
+    if (content === undefined) {
+      failures.push(`${relativePath} is missing from Phase 4 contract docs`);
+      continue;
+    }
+
+    for (const marker of markers) {
+      if (!content.includes(marker)) {
+        failures.push(
+          `${relativePath} is missing Phase 4 contract marker: ${marker}`
         );
       }
     }
@@ -879,6 +940,23 @@ function readPhase3FoundationSourceContents() {
   return contents;
 }
 
+/**
+ * @returns {Record<string, string>}
+ */
+function readPhase4ContractDocContents() {
+  /** @type {Record<string, string>} */
+  const contents = {};
+
+  for (const relativePath of Object.keys(PHASE4_CONTRACT_DOC_MARKERS_BY_FILE)) {
+    contents[relativePath] = readFileSync(
+      path.join(ROOT, relativePath),
+      "utf8"
+    );
+  }
+
+  return contents;
+}
+
 function build() {
   checkRequiredFiles();
   checkMakefileSurface();
@@ -937,6 +1015,15 @@ function smoke() {
     phase3FoundationFailures,
     [],
     phase3FoundationFailures.join("\n")
+  );
+
+  const phase4ContractDocFailures = validatePhase4ContractDocContents(
+    readPhase4ContractDocContents()
+  );
+  assert.deepEqual(
+    phase4ContractDocFailures,
+    [],
+    phase4ContractDocFailures.join("\n")
   );
 
   console.log("Structural smoke checks passed.");

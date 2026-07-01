@@ -1,6 +1,7 @@
 import {
   getLimitDefinition,
   limitErrorMetadata,
+  MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS,
   type LimitName,
   type LimitOperationKind,
   type LimitProfileSelector,
@@ -110,6 +111,9 @@ export type StoredByteAccounting = {
   fileBytes: number;
   overallStoredAccountDataBytes: number;
 };
+
+const MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KIND_SET =
+  new Set<LimitOperationKind>(MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS);
 
 const SAFE_AUDIT_METADATA_KEYS = new Set([
   "attempt",
@@ -276,7 +280,7 @@ export function storedByteAccounting(
 export function consumesMonthlyCallerApiRequestQuota(
   operationKind: LimitOperationKind
 ) {
-  return !["input_delete", "output_ack", "cleanup"].includes(operationKind);
+  return MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KIND_SET.has(operationKind);
 }
 
 function quotaWindowStartUtc(at: Date, windowKind: LimitWindowKind) {

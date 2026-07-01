@@ -12,6 +12,7 @@ import {
   validateCommandsVersionPins,
   validateMigrationReplayWorkflow,
   validatePhase3FoundationSourceContents,
+  validatePhase4ContractDocContents,
   validateRequiredEnvExample,
   validateRuntimeProofScope,
   validateToolchainPackage,
@@ -26,6 +27,7 @@ import {
 import {
   callerApiKeySecretDigest,
   callerCredentialLookupStatement,
+  formatCallerApiKey,
   generateCallerApiKeyMaterial,
   parseCallerApiKey,
   parseCallerBearerApiKey,
@@ -216,6 +218,19 @@ const phase3FoundationSourceContents = Object.fromEntries(
     "src/server/database.ts",
     "src/server/limits.ts",
     "db/migrations/V20260630000000__initial_schema.sql"
+  ].map((relativePath) => [
+    relativePath,
+    readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8")
+  ])
+);
+
+const phase4ContractDocContents = Object.fromEntries(
+  [
+    "docs/spec/README.md",
+    "docs/spec/http-api.md",
+    "docs/spec/input-schema.md",
+    "docs/spec/output-schema.md",
+    "docs/spec/errors.md"
   ].map((relativePath) => [
     relativePath,
     readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8")
@@ -550,15 +565,32 @@ test("validateRequiredEnvExample rejects missing and unknown names", () => {
 
 test("validateRuntimeProofScope rejects runtime schema mutation and later-phase routes", () => {
   const failures = validateRuntimeProofScope({
-    "app/api/input/route.ts": "export async function POST() {}",
+    "app/human/queue/page.tsx": "export default function Queue() {}",
     "src/server/schema.ts":
       "await sql`create table agent_outbox_input_items ();`"
   });
 
   assert.deepEqual(failures, [
-    "app/api/input/route.ts is later-phase implementation scope, not Phase 3 foundation scope",
+    "app/human/queue/page.tsx is unrelated later-phase implementation scope, not Phase 4 caller API scope",
     "src/server/schema.ts contains out-of-scope token: create table"
   ]);
+});
+
+test("validateRuntimeProofScope allows Phase 4 caller API route paths", () => {
+  const failures = validateRuntimeProofScope({
+    "app/api/input/send/route.ts": "export async function POST() {}",
+    "app/api/input/replace/route.ts": "export async function POST() {}",
+    "app/api/input/delete/route.ts": "export async function POST() {}",
+    "app/api/output/check/route.ts": "export async function GET() {}",
+    "app/api/output/[output_result_id]/read/route.ts":
+      "export async function POST() {}",
+    "app/api/output/[output_result_id]/files/[file_id]/route.ts":
+      "export async function GET() {}",
+    "app/api/caller/status/route.ts": "export async function GET() {}",
+    "app/api/account/status/route.ts": "export async function GET() {}"
+  });
+
+  assert.deepEqual(failures, []);
 });
 
 test("validateRuntimeProofScope allows Phase 3 product foundation identifiers", () => {
@@ -572,18 +604,38 @@ test("validateRuntimeProofScope allows Phase 3 product foundation identifiers", 
 
 test("validateRuntimeProofScope rejects later-phase billing and storage drift", () => {
   const failures = validateRuntimeProofScope({
+    "app/api/billing/checkout/route.ts": "export async function POST() {}",
+    "app/api/account/portal/route.ts": "export async function POST() {}",
+    "app/api/account/delete/route.ts": "export async function POST() {}",
+    "app/api/caller/connect/browser/start/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/rotate/route.ts": "export async function POST() {}",
+    "app/api/caller/revoke/route.ts": "export async function POST() {}",
+    "app/api/input/[caller_item_id]/route.ts":
+      "export async function DELETE() {}",
+    "app/api/human/answer/route.ts": "export async function POST() {}",
     "src/components/human/Queue.tsx": "export function Queue() {}",
     "src/cli/main.ts": "export function main() {}",
     "src/server/steward-email.ts": "export const source = 'email';",
+    "src/server/email-source.ts": "export const source = 'email';",
     "src/server/billing.ts": "await stripe.checkout.sessions.create({});",
     "src/server/files.ts": "await supabase.storage.from('files');",
     "src/server/source.ts": "const source = 'gmail classifier';"
   });
 
   assert.deepEqual(failures, [
-    "src/components/human/Queue.tsx is later-phase implementation scope, not Phase 3 foundation scope",
-    "src/cli/main.ts is later-phase implementation scope, not Phase 3 foundation scope",
-    "src/server/steward-email.ts is later-phase implementation scope, not Phase 3 foundation scope",
+    "app/api/billing/checkout/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "app/api/account/portal/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "app/api/account/delete/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "app/api/caller/connect/browser/start/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "app/api/caller/rotate/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "app/api/caller/revoke/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "app/api/input/[caller_item_id]/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "app/api/human/answer/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "src/components/human/Queue.tsx is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "src/cli/main.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "src/server/steward-email.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "src/server/email-source.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
     "src/server/billing.ts contains out-of-scope token: stripe.checkout",
     "src/server/billing.ts contains out-of-scope token: checkout.sessions",
     "src/server/files.ts contains out-of-scope token: supabase.storage",
@@ -610,6 +662,26 @@ test("validatePhase3FoundationSourceContents requires Phase 3 modules and marker
   assert.ok(
     validatePhase3FoundationSourceContents({}).includes(
       "src/server/accounting.ts is missing from Phase 3 foundation source"
+    )
+  );
+});
+
+test("validatePhase4ContractDocContents requires contract docs and markers", () => {
+  assert.deepEqual(
+    validatePhase4ContractDocContents(phase4ContractDocContents),
+    []
+  );
+  assert.ok(
+    validatePhase4ContractDocContents({}).includes(
+      "docs/spec/README.md is missing from Phase 4 contract docs"
+    )
+  );
+  assert.ok(
+    validatePhase4ContractDocContents({
+      ...phase4ContractDocContents,
+      "docs/spec/errors.md": "# API Errors\n"
+    }).includes(
+      "docs/spec/errors.md is missing Phase 4 contract marker: Error Envelope"
     )
   );
 });
@@ -725,9 +797,19 @@ test("validateCallerBearer accepts only the configured smoke token", () => {
 test("caller API key helpers create display-once material and verify only active matching credentials", () => {
   withProcessEnv({ CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE }, () => {
     const material = generateCallerApiKeyMaterial();
+    const otherMaterial = generateCallerApiKeyMaterial();
     const parsed = parseCallerApiKey(material.plaintextApiKey);
+    const otherParsed = parseCallerApiKey(otherMaterial.plaintextApiKey);
+    const wrongSecretApiKey =
+      otherParsed.ok && parsed.ok
+        ? formatCallerApiKey({
+            keyId: parsed.keyId,
+            secret: otherParsed.secret
+          })
+        : "";
 
     assert.equal(parsed.ok, true);
+    assert.equal(otherParsed.ok, true);
     assert.equal(material.keyId, parsed.ok ? parsed.keyId : null);
     assert.match(material.plaintextApiKey, /^aob_live_[a-z2-7]+_[a-z2-7]+$/);
     assert.notEqual(material.secretDigest, material.plaintextApiKey);
@@ -773,6 +855,16 @@ test("caller API key helpers create display-once material and verify only active
         status: "revoked"
       }),
       { ok: false, code: "caller_key_revoked" }
+    );
+    assert.deepEqual(
+      verifyCallerApiKeyAgainstCredential(wrongSecretApiKey, {
+        accountId: "account-123",
+        callerId: "caller-123",
+        keyId: material.keyId,
+        secretDigest: material.secretDigest,
+        status: "revoked"
+      }),
+      { ok: false, code: "invalid_caller_key_secret" }
     );
     assert.deepEqual(
       verifyCallerApiKeyAgainstCredential(material.plaintextApiKey, {
