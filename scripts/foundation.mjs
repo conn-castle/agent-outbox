@@ -227,7 +227,7 @@ const PHASE4_CONTRACT_DOC_MARKERS_BY_FILE = {
 };
 
 const HTTP_ROUTE_METHOD_PATTERN =
-  /export\s+async\s+function\s+(GET|POST|PUT|PATCH|DELETE)\b/g;
+  /^\s*export\s+async\s+function\s+(GET|POST|PUT|PATCH|DELETE)\b/gm;
 const HTTP_DOC_ROUTE_LINE_PATTERN =
   /^```http\s*\n(GET|POST|PUT|PATCH|DELETE)\s+([^\s\n]+)(?:[^\n]*)\n```/gm;
 

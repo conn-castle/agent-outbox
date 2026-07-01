@@ -767,10 +767,16 @@ test("implemented HTTP route markers derive from caller-facing route files", () 
       "app/api/output/read-all/route.ts": "export async function POST() {}",
       "app/api/output/[output_result_id]/files/[file_id]/route.ts":
         "export async function GET() {}",
+      "app/api/output/commented/route.ts": `
+        // export async function GET() {}
+        const sample = "export async function DELETE";
+        export async function POST() {}
+      `,
       "app/api/runtime/canary/route.ts": "export async function GET() {}"
     }),
     [
       "GET /api/output/{output_result_id}/files/{file_id}",
+      "POST /api/output/commented",
       "POST /api/output/read-all"
     ]
   );
