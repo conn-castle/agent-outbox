@@ -204,7 +204,7 @@ export async function authenticateCallerApiRequestWithDatabase(
   context: ApiRequestContext,
   connectionString: string
 ): Promise<CallerApiAuthResult> {
-  return authenticateCallerApiRequest(
+  const auth = await authenticateCallerApiRequest(
     request,
     async (keyId) => {
       const row = await runProductTransaction(
@@ -223,8 +223,57 @@ export async function authenticateCallerApiRequestWithDatabase(
 
       return row ? storedCallerCredentialDigestFromLookupRow(row) : null;
     },
-    { requestId: context.requestId }
+    {
+      requestId: context.requestId
+    }
   );
+
+  if (!auth.ok) {
+    return auth;
+  }
+
+  try {
+    await runProductTransaction(
+      connectionString,
+      {
+        requestId: context.requestId,
+        authSurface: "caller",
+        accountId: auth.accountId,
+        callerId: auth.callerId
+      },
+      async (query) => {
+        await query(callerCredentialLastUsedStatement(auth));
+      }
+    );
+  } catch (error) {
+    emitRuntimeLog({
+      level: "warn",
+      surface: "api",
+      operation: "caller_api_auth",
+      message: "Caller credential last-used update failed.",
+      error_name: error instanceof Error ? error.name : "UnknownError",
+      request_id: context.requestId
+    });
+  }
+
+  return auth;
+}
+
+export function callerCredentialLastUsedStatement(input: {
+  accountId: string;
+  callerId: string;
+  keyId: string;
+}): TransactionContextStatement {
+  return {
+    sql: `
+      update public.agent_outbox_caller_credentials
+      set last_used_at = now()
+      where account_id = $1
+        and caller_id = $2
+        and key_id = $3
+    `,
+    values: [input.accountId, input.callerId, input.keyId]
+  };
 }
 
 export async function sendInputItem(

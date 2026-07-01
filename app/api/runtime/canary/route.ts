@@ -14,10 +14,10 @@ export async function GET(request: Request) {
     environment: runtimeConfigStatus(),
     postgres_driver: postgresDriverImportProof(),
     out_of_scope: [
-      "queue_lifecycle",
-      "file_workflows",
+      "full_human_review_queue_ui",
+      "caller_registration",
+      "paid_file_upload_workflows",
       "billing_behavior",
-      "cleanup_semantics",
       "steward_behavior"
     ]
   });

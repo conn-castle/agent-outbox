@@ -132,7 +132,7 @@ const PROTOCOL_VALUE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const MIME_PATTERN = /^[A-Za-z0-9!#$&^_.+-]+\/(?:[A-Za-z0-9!#$&^_.+-]+|\*)$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const UTC_DATETIME_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+  /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/;
 export const SUPPORTED_LUCIDE_ICON_NAMES = [
   "archive",
   "calendar",
@@ -1489,15 +1489,22 @@ function isValidCivilDate(value: string) {
     return false;
   }
   const date = new Date(`${value}T00:00:00.000Z`);
-  return date.toISOString().slice(0, 10) === value;
+  return (
+    Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
+  );
 }
 
-function isValidUtcDateTime(value: string) {
-  if (!UTC_DATETIME_PATTERN.test(value)) {
-    return false;
+export function isValidUtcDateTime(value: string) {
+  return utcDateTimeSortKey(value) != null;
+}
+
+export function compareUtcDateTimeValues(left: string, right: string) {
+  const leftKey = utcDateTimeSortKey(left);
+  const rightKey = utcDateTimeSortKey(right);
+  if (leftKey == null || rightKey == null) {
+    throw new Error("UTC datetime values must be validated before compare");
   }
-  const date = new Date(value);
-  return Number.isFinite(date.getTime());
+  return leftKey.localeCompare(rightKey);
 }
 
 function compareDatePickerValues(
@@ -1508,7 +1515,26 @@ function compareDatePickerValues(
   if (mode === "date") {
     return left.localeCompare(right);
   }
-  return new Date(left).getTime() - new Date(right).getTime();
+  return compareUtcDateTimeValues(left, right);
+}
+
+function utcDateTimeSortKey(value: string) {
+  const match = value.match(UTC_DATETIME_PATTERN);
+  if (!match) {
+    return null;
+  }
+
+  const [, date, hours, minutes, seconds, fraction = ""] = match;
+  if (
+    !isValidCivilDate(date) ||
+    Number(hours) > 23 ||
+    Number(minutes) > 59 ||
+    Number(seconds) > 59
+  ) {
+    return null;
+  }
+
+  return `${date}T${hours}:${minutes}:${seconds}.${fraction.padEnd(9, "0")}Z`;
 }
 
 export function isIanaTimeZone(value: string) {

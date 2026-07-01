@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   accountLimitProfile,
+  callerCredentialLastUsedStatement,
   deleteInputItem,
   insertInputItemStatement,
   replaceInputItem,
@@ -192,6 +193,61 @@ test("input parser accepts anchor href with multi-parameter query strings", () =
     assert.fail("expected multi-parameter href to be accepted");
   }
   assert.match(result.submission.detailsHtml ?? "", /a=1&b=2/);
+});
+
+test("input parser rejects impossible and inverted datetime picker bounds", () => {
+  const invalidCalendarDate = parseInputSubmission(
+    baseInput({
+      actions: [
+        {
+          display: "Schedule",
+          icon: "calendar",
+          value: "schedule",
+          overflow: false,
+          popup: {
+            kind: "date_picker",
+            label: "Send at",
+            mode: "datetime",
+            min_value: "2026-02-30T00:00:00Z"
+          }
+        }
+      ]
+    }),
+    { limitProfile: "hosted-paid" }
+  );
+  const invertedSubMillisecondBounds = parseInputSubmission(
+    baseInput({
+      actions: [
+        {
+          display: "Schedule",
+          icon: "calendar",
+          value: "schedule",
+          overflow: false,
+          popup: {
+            kind: "date_picker",
+            label: "Send at",
+            mode: "datetime",
+            min_value: "2026-01-01T00:00:00.000000001Z",
+            max_value: "2026-01-01T00:00:00.000000000Z"
+          }
+        }
+      ]
+    }),
+    { limitProfile: "hosted-paid" }
+  );
+
+  assert.equal(invalidCalendarDate.ok, false);
+  assert.equal(
+    invalidCalendarDate.ok ? null : invalidCalendarDate.error.fields?.[0]?.code,
+    "invalid_datetime"
+  );
+  assert.equal(invertedSubMillisecondBounds.ok, false);
+  assert.equal(
+    invertedSubMillisecondBounds.ok
+      ? null
+      : invertedSubMillisecondBounds.error.fields?.[0]?.code,
+    "invalid_range"
+  );
 });
 
 test("input parser rejects safe-shaped but unsupported icon names", () => {
@@ -575,6 +631,26 @@ test("insert statement never accepts caller identity from request bodies", () =>
     identity.callerId,
     "email:thread_123"
   ]);
+});
+
+test("caller credential last-used update is scoped to authenticated account caller and key", () => {
+  assert.deepEqual(
+    callerCredentialLastUsedStatement({
+      accountId: identity.accountId,
+      callerId: identity.callerId,
+      keyId: "key_123"
+    }),
+    {
+      sql: `
+      update public.agent_outbox_caller_credentials
+      set last_used_at = now()
+      where account_id = $1
+        and caller_id = $2
+        and key_id = $3
+    `,
+      values: [identity.accountId, identity.callerId, "key_123"]
+    }
+  );
 });
 
 test("account limit profile fails loud when the authenticated account row is missing", async () => {

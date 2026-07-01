@@ -4,6 +4,8 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { RUNTIME_CRON_SCHEDULE } from "../src/server/scheduled.ts";
+
 /**
  * @typedef {{
  *   package?: string | null,
@@ -223,6 +225,11 @@ const PHASE4_CONTRACT_DOC_MARKERS_BY_FILE = {
     "invalid_caller_credentials"
   ]
 };
+
+const HTTP_ROUTE_METHOD_PATTERN =
+  /^\s*export\s+async\s+function\s+(GET|POST|PUT|PATCH|DELETE)\b/gm;
+const HTTP_DOC_ROUTE_LINE_PATTERN =
+  /^```http\s*\n(GET|POST|PUT|PATCH|DELETE)\s+([^\s\n]+)(?:[^\n]*)\n```/gm;
 
 /**
  * @param {string} relativePath
@@ -529,7 +536,218 @@ export function validatePhase4ContractDocContents(sourceContentsByPath) {
     }
   }
 
+  const httpApiContent = sourceContentsByPath["docs/spec/http-api.md"];
+  if (httpApiContent !== undefined) {
+    const documentedRouteMarkers =
+      extractDocumentedHttpContractRouteMarkers(httpApiContent);
+    const markers =
+      extractImplementedHttpContractRouteMarkers(sourceContentsByPath);
+
+    for (const marker of markers) {
+      if (!documentedRouteMarkers.includes(marker)) {
+        failures.push(
+          `docs/spec/http-api.md is missing implemented HTTP route contract: ${marker}`
+        );
+      }
+    }
+  }
+
   return failures;
+}
+
+/**
+ * @param {Record<string, string>} sourceContentsByPath
+ * @returns {string[]}
+ */
+export function extractImplementedHttpContractRouteMarkers(
+  sourceContentsByPath
+) {
+  const markers = [];
+
+  for (const [relativePath, content] of Object.entries(sourceContentsByPath)) {
+    if (
+      !relativePath.startsWith("app/api/") ||
+      !relativePath.endsWith("/route.ts") ||
+      relativePath.startsWith("app/api/runtime/")
+    ) {
+      continue;
+    }
+
+    const routePath = `/${relativePath
+      .replace(/^app\//, "")
+      .replace(/\/route\.ts$/, "")
+      .replaceAll("[", "{")
+      .replaceAll("]", "}")}`;
+
+    for (const match of content.matchAll(HTTP_ROUTE_METHOD_PATTERN)) {
+      markers.push(`${match[1]} ${routePath}`);
+    }
+  }
+
+  return markers.sort();
+}
+
+/**
+ * @param {string} httpApiContent
+ * @returns {string[]}
+ */
+export function extractDocumentedHttpContractRouteMarkers(httpApiContent) {
+  return [...httpApiContent.matchAll(HTTP_DOC_ROUTE_LINE_PATTERN)]
+    .map((match) => `${match[1]} ${match[2].split("?")[0]}`)
+    .sort();
+}
+
+/**
+ * @param {string} wranglerConfigContent
+ * @param {string} runtimeCronSchedule
+ * @returns {string[]}
+ */
+export function validateWranglerCronSchedule(
+  wranglerConfigContent,
+  runtimeCronSchedule
+) {
+  let config;
+  try {
+    config = JSON.parse(jsoncToJson(wranglerConfigContent));
+  } catch {
+    return ["wrangler.jsonc must be parseable JSONC for cron drift checks"];
+  }
+
+  const crons = config?.triggers?.crons;
+  if (
+    !Array.isArray(crons) ||
+    !crons.every((cron) => typeof cron === "string")
+  ) {
+    return ["wrangler.jsonc triggers.crons must be a string array"];
+  }
+
+  const failures = [];
+  if (crons.length !== 1) {
+    failures.push(
+      "wrangler.jsonc must define exactly one cron while the runtime scheduled canary reports one configured schedule"
+    );
+  }
+
+  if (!crons.includes(runtimeCronSchedule)) {
+    failures.push(
+      `wrangler.jsonc triggers.crons must include runtime scheduled canary ${runtimeCronSchedule}`
+    );
+  }
+
+  return failures;
+}
+
+/**
+ * @param {string} input
+ * @returns {string}
+ */
+function jsoncToJson(input) {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1] ?? "";
+
+    if (inLineComment) {
+      if (char === "\n" || char === "\r") {
+        inLineComment = false;
+        output += char;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === "*" && next === "/") {
+        inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      output += char;
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      inLineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+
+    output += char;
+  }
+
+  return removeTrailingJsonCommas(output);
+}
+
+/**
+ * @param {string} input
+ * @returns {string}
+ */
+function removeTrailingJsonCommas(input) {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      output += char;
+      continue;
+    }
+
+    if (char === ",") {
+      const rest = input.slice(index + 1);
+      const match = rest.match(/^(\s*)([}\]])/);
+      if (match) {
+        output += match[1] + match[2];
+        index += match[0].length;
+        continue;
+      }
+    }
+
+    output += char;
+  }
+
+  return output;
 }
 
 /**
@@ -957,6 +1175,27 @@ function readPhase4ContractDocContents() {
   return contents;
 }
 
+/**
+ * @returns {Record<string, string>}
+ */
+function readImplementedHttpRouteContents() {
+  /** @type {Record<string, string>} */
+  const contents = {};
+
+  for (const relativePath of listSourceFiles("app/api")) {
+    if (!relativePath.endsWith("/route.ts")) {
+      continue;
+    }
+
+    contents[relativePath] = readFileSync(
+      path.join(ROOT, relativePath),
+      "utf8"
+    );
+  }
+
+  return contents;
+}
+
 function build() {
   checkRequiredFiles();
   checkMakefileSurface();
@@ -1017,14 +1256,20 @@ function smoke() {
     phase3FoundationFailures.join("\n")
   );
 
-  const phase4ContractDocFailures = validatePhase4ContractDocContents(
-    readPhase4ContractDocContents()
-  );
+  const phase4ContractDocFailures = validatePhase4ContractDocContents({
+    ...readPhase4ContractDocContents(),
+    ...readImplementedHttpRouteContents()
+  });
   assert.deepEqual(
     phase4ContractDocFailures,
     [],
     phase4ContractDocFailures.join("\n")
   );
+  const cronScheduleFailures = validateWranglerCronSchedule(
+    readFileSync(path.join(ROOT, "wrangler.jsonc"), "utf8"),
+    RUNTIME_CRON_SCHEDULE
+  );
+  assert.deepEqual(cronScheduleFailures, [], cronScheduleFailures.join("\n"));
 
   console.log("Structural smoke checks passed.");
 }

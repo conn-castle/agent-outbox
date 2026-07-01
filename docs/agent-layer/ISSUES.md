@@ -26,17 +26,47 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-06-30 stored-byte-math-duplication: Two encodings of stored-byte totals (enforcement vs reporting)
-    Priority: Low. Area: Limits/Accounting
-    Description: Stored-byte math (`non_file = input+output`, `overall = input+output+file`) is encoded twice: the SQL function `agent_outbox_account_stock_usage` (migration, used by `caller-api-limits.ts` enforcement) and an inline CTE in `src/server/status.ts` `storageStatusStatement` (reporting). They can silently drift, violating single-source-of-truth, so reported figures could disagree with enforced limits.
-    Next step: Have `status.ts` call `agent_outbox_account_stock_usage(...)` so enforcement and reporting share one calculation.
-    Notes: Surfaced by Phase 4 audit review-scope.
+- Issue 2026-06-30 caller-last-used-hot-row-write: Caller credential last-used writes run on every valid request
+    Priority: Low. Area: Reliability/Caller-auth
+    Description: `authenticateCallerApiRequestWithDatabase` records `last_used_at` after every valid caller auth, including polling/status reads, which adds a transaction and can repeatedly update one hot credential row.
+    Next step: Decide the required freshness for caller key last-used metadata, then coalesce or throttle updates without inventing an implicit interval.
+    Notes: The current write is best-effort and logs failures so bookkeeping does not fail valid requests.
+
+- Issue 2026-06-30 initial-schema-freeze-before-durable-apply: Freeze initial migration before shared database use
+    Priority: Low. Area: Database/Migrations
+    Description: The pre-release initial Flyway migration is still being edited in place; after any durable/shared database applies it, further edits will create checksum drift that fresh replay CI cannot catch.
+    Next step: Before the first durable or shared database apply, freeze `V20260630000000__initial_schema.sql` and put later schema changes in forward migrations.
+    Notes: Tracked during PR shipping after adding the downgrade-grace SQL guard to the initial schema.
+
+- Issue 2026-06-30 runtime-canary-public-config-detail: Public runtime canary exposes detailed configuration posture
+    Priority: Medium. Area: Security/Observability
+    Description: `GET /api/runtime/canary` is unauthenticated and returns exact missing/insecure runtime configuration names plus `APP_ENV`. Values are redacted, but the route still gives public operational reconnaissance.
+    Next step: Split public liveness from authenticated smoke diagnostics; keep coarse public canary data and require the smoke bearer token for configuration detail.
+    Notes: Deferred from improve-codebase Chunk 4 because it changes the public runtime diagnostic contract.
+
+- Issue 2026-06-30 protected-human-middleware-fail-open: Protected human middleware fails open on missing Clerk configuration
+    Priority: Medium. Area: Security/Auth
+    Description: `middleware.ts` skips Clerk protection when either Clerk env var is missing. The current `/human` page has its own missing-config guard, but future `/human/*` routes could rely on middleware and accidentally pass through during misconfiguration.
+    Next step: Decide the fail-closed behavior for protected routes when Clerk is incomplete, then centralize Clerk readiness checks across middleware and auth-adjacent pages.
+    Notes: Deferred from improve-codebase Chunk 4 because fail-closed middleware changes current missing-configuration routing behavior.
+
+- Issue 2026-06-30 cloudflare-opennext-platform-verification: Cloudflare/OpenNext deploy path lacks pinned verification
+    Priority: Medium. Area: Tooling/Deployment
+    Description: Tracked `open-next.config.ts`, `wrangler.jsonc`, and `worker/entry.mjs` cannot be fully verified from the pinned package install because OpenNext Cloudflare and Wrangler are intentionally outside the normal app toolchain.
+    Next step: In deployment/release work, pin the platform tools and add a dedicated Cloudflare/OpenNext verification command outside `make check`.
+    Notes: Matches the existing app-CI/platform split decision; not fixed in improve-codebase to avoid expanding package/deployment scope.
+
+- Issue 2026-06-30 output-sql-operation-auth-matrix: Delete/restore SQL primitives use broad context authorization
+    Priority: Medium. Area: Security/Database
+    Description: `agent_outbox_delete_output_result` and `agent_outbox_restore_unread_output` rely on the broad `agent_outbox_context_allows_caller` helper instead of enforcing an operation-specific surface/reason matrix at the SQL boundary before destructive delete or restore work.
+    Next step: Define and enforce the allowed surface/reason matrix in the SQL functions, then add denial coverage for wrong-surface calls.
+    Notes: Deferred from improve-codebase Chunk 3 pending owner approval because tightening this can change internal auth behavior.
 
 - Issue 2026-06-30 caller-request-rate-limit-and-quota-metering: Meter monthly quota on valid requests + add per-minute input request rate limit
     Priority: Medium. Area: Limits/Security
-    Description: Three coupled changes the owner approved as a post-merge follow-up (Phase 4 / PR #3 behavior intentionally unchanged). (1) Stop debiting `authenticated_caller_api_requests_per_calendar_month` for rejected/invalid send/replace: `enforceCallerRequestLimits("caller_api_request")` increments the monthly window before `parseInputSubmission`, and the transaction commits on `ok:false` (only thrown errors roll back), so invalid requests permanently consume the sticky monthly quota and a buggy/retrying client can self-lock for the rest of the month. (2) Abuse protection must come from a short-window rate limit, not the monthly quota: the monthly quota is currently the ONLY pre-validation per-request meter on the input path. The one per-minute input limit `burst_input_submissions_per_account_per_minute` (unit submissions, operationKinds [input_submission]) runs post-validation and counts accepted submissions only — invalid input requests hit no per-minute limit. Output already has pre-validation per-minute request limits (`output_check_read`/`output_ack` per minute, unit requests); input send/replace has none. (3) Submission windows are also over-counted on duplicates: `sendInputItem` runs `enforceAcceptedInputSubmissionLimits` in `beforeCreate` (which calls `incrementFixedWindowLimits`) before the insert / `ON CONFLICT DO NOTHING` resolves duplication. Ordinary sequential idempotent retries are short-circuited by the pre-metering `existingInput` check, but a concurrent-duplicate loser (the post-`beforeCreate` `concurrentExisting`/`ON CONFLICT` loser) still debits submission quota for an item it never creates.
-    Next step: (a) move the monthly quota increment to after validation (or roll back on `ok:false`) so only valid requests debit it; (b) add a per-minute caller-request rate limit on the input send/replace path (pre-validation, unit requests, counts every authenticated request valid-or-not), defined across the free/paid/self-hosted tier matrix with enforcement wiring and tests; (c) verify the existing output per-minute limits give the intended abuse coverage; (d) increment submission quota only when a row is actually created (check-before-insert, increment-after-create) so concurrent-duplicate losers do not consume quota. This is a cross-cutting limits-matrix change that warrants its own review.
-    Notes: Surfaced by Phase 4 audit review-scope; owner chose to keep current behavior in PR #3 and do this as a focused follow-up.
+    Description: Caller quota/rate metering has coupled drift cases: invalid send/replace debits monthly quota before validation; input send/replace lacks a pre-validation per-minute request limit; input delete has no request throttle; raw file downloads lack a fixed-window throttle when monthly quota is disabled; concurrent duplicate sends can debit accepted-submission windows for rows they do not create; multi-window fixed-limit checks can increment an earlier window before a later window denies the request.
+    Next step: Rework caller request and fixed-window metering as one focused limits-matrix change: add input and file-download request rate limits, make request/submission debits all-or-nothing and post-success where required, and verify output per-minute coverage.
+    Notes: Surfaced by Phase 4 and improve-codebase Chunk 1/2 audits; owner chose to keep Phase 4 behavior unchanged and do this as a focused follow-up.
 
 - Issue 2026-06-30 caller-auth-notfound-timing: Key-id enumeration timing side-channel on not-found path
     Priority: Low. Area: Security/Caller-auth

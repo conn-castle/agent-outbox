@@ -154,7 +154,8 @@ make smoke
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs
 bounded structural smoke checks only. This credential-free check verifies the
-runtime proof file surface, environment template, workflow safety, and
+runtime proof file surface, environment template, workflow safety,
+implemented-route contract coverage, Worker cron schedule alignment, and
 out-of-scope product guard. It must not require provider credentials, Wrangler,
 OpenNext Cloudflare, platform emulators, deployment artifacts, or external
 resource mutation.

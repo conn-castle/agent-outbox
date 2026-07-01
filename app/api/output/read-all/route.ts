@@ -20,5 +20,7 @@ export async function POST(request: Request) {
     return apiErrorResponse(context, result.error);
   }
 
-  return apiSuccessResponse(context, result.data);
+  return apiSuccessResponse(context, result.data, {
+    headers: { "Cache-Control": "no-store" }
+  });
 }

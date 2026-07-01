@@ -106,7 +106,6 @@ The CLI displays the message and may open the URL for `agent-outbox upgrade`.
 | `invalid_caller_credentials` |         401 | The bearer credential is invalid, wrong, revoked, expired, inactive, or otherwise unusable. The client response does not distinguish these states. |
 | `authorization_failed`       |         403 | The authenticated principal is not allowed to access the requested account, caller, output, or file.                                               |
 | `not_found`                  |         404 | The requested live resource is absent for the authenticated caller.                                                                                |
-| `already_acknowledged`       |         200 | Duplicate acknowledgement was recognized as a no-op success through retained audit metadata.                                                       |
 | `pending_content_conflict`   |         409 | `input send` repeated a live pending `caller_item_id` with different normalized content.                                                           |
 | `answered_unacknowledged`    |         409 | The live item is answered and the matching output result is still unacknowledged.                                                                  |
 | `input_not_pending`          |         409 | Replace or delete targeted an item that is not pending.                                                                                            |

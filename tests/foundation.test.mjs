@@ -5,6 +5,8 @@ import pg from "pg";
 
 import {
   assertNoForbiddenWorkflowCommands,
+  extractDocumentedHttpContractRouteMarkers,
+  extractImplementedHttpContractRouteMarkers,
   missingEnvNames,
   redactCommandResult,
   runQuiet,
@@ -16,6 +18,7 @@ import {
   validateRequiredEnvExample,
   validateRuntimeProofScope,
   validateToolchainPackage,
+  validateWranglerCronSchedule,
   validateWorkflowVersionPins
 } from "../scripts/foundation.mjs";
 import {
@@ -71,7 +74,10 @@ import {
   terminalOutputDeletionStatement
 } from "../src/server/cleanup.ts";
 import { safeLogEvent } from "../src/server/logging.ts";
-import { runScheduledCanary } from "../src/server/scheduled.ts";
+import {
+  RUNTIME_CRON_SCHEDULE,
+  runScheduledCanary
+} from "../src/server/scheduled.ts";
 import { sentryCaptureEnabled } from "../src/server/sentry.ts";
 
 const { Client } = pg;
@@ -231,6 +237,25 @@ const phase4ContractDocContents = Object.fromEntries(
     "docs/spec/input-schema.md",
     "docs/spec/output-schema.md",
     "docs/spec/errors.md"
+  ].map((relativePath) => [
+    relativePath,
+    readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8")
+  ])
+);
+
+const callerFacingRouteContents = Object.fromEntries(
+  [
+    "app/api/account/status/route.ts",
+    "app/api/caller/status/route.ts",
+    "app/api/input/delete/route.ts",
+    "app/api/input/replace/route.ts",
+    "app/api/input/send/route.ts",
+    "app/api/output/[output_result_id]/ack/route.ts",
+    "app/api/output/[output_result_id]/files/[file_id]/route.ts",
+    "app/api/output/[output_result_id]/read/route.ts",
+    "app/api/output/check/route.ts",
+    "app/api/output/read-all/route.ts",
+    "app/api/runtime/canary/route.ts"
   ].map((relativePath) => [
     relativePath,
     readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8")
@@ -584,6 +609,9 @@ test("validateRuntimeProofScope allows Phase 4 caller API route paths", () => {
     "app/api/output/check/route.ts": "export async function GET() {}",
     "app/api/output/[output_result_id]/read/route.ts":
       "export async function POST() {}",
+    "app/api/output/read-all/route.ts": "export async function POST() {}",
+    "app/api/output/[output_result_id]/ack/route.ts":
+      "export async function POST() {}",
     "app/api/output/[output_result_id]/files/[file_id]/route.ts":
       "export async function GET() {}",
     "app/api/caller/status/route.ts": "export async function GET() {}",
@@ -644,11 +672,11 @@ test("validateRuntimeProofScope rejects later-phase billing and storage drift", 
   ]);
 });
 
-test("validateRuntimeProofScope allows explicit Phase 2 boundary markers", () => {
+test("validateRuntimeProofScope allows current app boundary copy", () => {
   assert.deepEqual(
     validateRuntimeProofScope({
       "app/page.tsx":
-        "Queue lifecycle, file workflows, billing, cleanup, and Steward behavior are out of scope."
+        "Full review queue UI, caller registration, billing, paid file-upload workflows, and Steward behavior are scheduled for later phases."
     }),
     []
   );
@@ -668,7 +696,10 @@ test("validatePhase3FoundationSourceContents requires Phase 3 modules and marker
 
 test("validatePhase4ContractDocContents requires contract docs and markers", () => {
   assert.deepEqual(
-    validatePhase4ContractDocContents(phase4ContractDocContents),
+    validatePhase4ContractDocContents({
+      ...phase4ContractDocContents,
+      ...callerFacingRouteContents
+    }),
     []
   );
   assert.ok(
@@ -683,6 +714,105 @@ test("validatePhase4ContractDocContents requires contract docs and markers", () 
     }).includes(
       "docs/spec/errors.md is missing Phase 4 contract marker: Error Envelope"
     )
+  );
+  assert.ok(
+    validatePhase4ContractDocContents({
+      ...phase4ContractDocContents,
+      "app/api/output/read-all/route.ts": "export async function POST() {}",
+      "docs/spec/http-api.md":
+        "Human Answer Boundary\n```http\nPOST /api/input/send\n```\n```http\nGET /api/output/check\n```\n```http\nGET /api/caller/status\n```\n"
+    }).includes(
+      "docs/spec/http-api.md is missing implemented HTTP route contract: POST /api/output/read-all"
+    )
+  );
+  assert.ok(
+    validatePhase4ContractDocContents({
+      ...phase4ContractDocContents,
+      "app/api/output/custom/route.ts": "export async function POST() {}",
+      "app/api/runtime/custom/route.ts": "export async function GET() {}"
+    }).includes(
+      "docs/spec/http-api.md is missing implemented HTTP route contract: POST /api/output/custom"
+    )
+  );
+});
+
+test("documented HTTP route markers require exact http code-block method paths", () => {
+  assert.deepEqual(
+    extractDocumentedHttpContractRouteMarkers(`
+\`\`\`http
+GET /api/output/check?limit=25
+\`\`\`
+\`\`\`http
+POST /api/output/read-all
+\`\`\`
+GET /api/output/check
+`),
+    ["GET /api/output/check", "POST /api/output/read-all"]
+  );
+  assert.ok(
+    validatePhase4ContractDocContents({
+      ...phase4ContractDocContents,
+      "docs/spec/http-api.md":
+        "Human Answer Boundary\n```http\nPOST /api/output/read-all-extra\n```\n",
+      "app/api/output/read-all/route.ts": "export async function POST() {}"
+    }).includes(
+      "docs/spec/http-api.md is missing implemented HTTP route contract: POST /api/output/read-all"
+    )
+  );
+});
+
+test("implemented HTTP route markers derive from caller-facing route files", () => {
+  assert.deepEqual(
+    extractImplementedHttpContractRouteMarkers({
+      "app/api/output/read-all/route.ts": "export async function POST() {}",
+      "app/api/output/[output_result_id]/files/[file_id]/route.ts":
+        "export async function GET() {}",
+      "app/api/output/commented/route.ts": `
+        // export async function GET() {}
+        const sample = "export async function DELETE";
+        export async function POST() {}
+      `,
+      "app/api/runtime/canary/route.ts": "export async function GET() {}"
+    }),
+    [
+      "GET /api/output/{output_result_id}/files/{file_id}",
+      "POST /api/output/commented",
+      "POST /api/output/read-all"
+    ]
+  );
+});
+
+test("worker cron schedule stays aligned with runtime scheduled canary", () => {
+  const wranglerConfig = readFileSync(
+    new URL("../wrangler.jsonc", import.meta.url),
+    "utf8"
+  );
+
+  assert.deepEqual(
+    validateWranglerCronSchedule(wranglerConfig, RUNTIME_CRON_SCHEDULE),
+    []
+  );
+  assert.deepEqual(
+    validateWranglerCronSchedule(
+      `{
+        // Wrangler accepts JSONC comments.
+        "triggers": {
+          "crons": ["17 * * * *"],
+        },
+        "note": "commas inside strings, ] and } stay intact"
+      }`,
+      RUNTIME_CRON_SCHEDULE
+    ),
+    []
+  );
+  assert.deepEqual(
+    validateWranglerCronSchedule(
+      '{ "triggers": { "crons": ["42 * * * *"] } }',
+      RUNTIME_CRON_SCHEDULE
+    ),
+    [
+      "wrangler.jsonc triggers.crons must include runtime scheduled canary 17 * * * *"
+    ]
   );
 });
 
@@ -1238,6 +1368,11 @@ test("cleanup statement builders target account-scoped database functions", () =
       values: [32_000_000, "2026-06-30T00:00:00.000Z"]
     }
   );
+  assert.throws(
+    () =>
+      downgradeGraceExpiryStatement(-1, new Date("2026-06-30T00:00:00.000Z")),
+    /nonFilePayloadLimitBytes must be a non-negative safe integer/
+  );
   assert.deepEqual(
     quotaWindowPruningStatement(new Date("2026-06-01T00:00:00.000Z")),
     {
@@ -1473,6 +1608,10 @@ test("phase 3 migration defines account-scoped cleanup primitives", () => {
   assert.match(
     initialMigration,
     /from public\.agent_outbox_delete_output_result\(\s*target_output_id,\s*'downgrade_grace_non_file_payload_limit'/s
+  );
+  assert.match(
+    initialMigration,
+    /if p_non_file_payload_limit_bytes is null or p_non_file_payload_limit_bytes < 0 then[\s\S]*non_file_payload_limit_bytes must be non-negative/
   );
   assert.match(
     initialMigration,

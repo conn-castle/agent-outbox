@@ -282,6 +282,19 @@ test("output pagination parsing fails loudly on invalid limits and cursors", () 
     parseOutputReadAllBody({ limit: 25, cursor: "not-a-cursor" }).ok,
     false
   );
+  assert.equal(
+    parseOutputReadAllBody({
+      limit: 25,
+      cursor: Buffer.from(
+        JSON.stringify({
+          answered_at: "2026-02-30T00:00:00.000000Z",
+          output_result_id: outputOneId
+        }),
+        "utf8"
+      ).toString("base64url")
+    }).ok,
+    false
+  );
 });
 
 test("output query builders scope by authenticated caller and metadata-only file reads", () => {

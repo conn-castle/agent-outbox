@@ -74,17 +74,23 @@ system-owned ids, not file bytes or full user content.
 
 ## Health Checks
 
-The hosted health/doctor workflow should check:
+The implemented provider-backed runtime smoke check is `make smoke-runtime`. Run
+it from a configured checkout with the app serving `APP_BASE_URL` and `.env`
+containing local development Clerk, Postgres/Supabase, Sentry, caller-key hash,
+and smoke-token values. The command checks:
 
 - app runtime is serving;
-- Clerk-backed protected routes can resolve a user;
+- Clerk auth-adjacent pages and the protected human route are reachable or
+  redirect safely;
 - caller API bearer auth works;
 - Supabase connectivity works through the restricted app role;
-- cleanup has run recently;
-- quota and limit-block enforcement is active;
-- file upload/download path works for paid and rejects free or oversized cases;
 - Sentry and native logs receive canary records;
-- recent audit events exist for lifecycle operations.
+- scheduled-trigger handling responds through the route canary;
+- structured runtime error correlation returns a safe `error_id`.
+
+Later hosted health inspection should also check cleanup recency, quota and
+limit-block enforcement, paid file upload/download behavior after that workflow
+exists, and recent content-safe audit events for lifecycle operations.
 
 ## Frontend Events
 

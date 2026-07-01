@@ -1,8 +1,15 @@
 # HTTP API Contract
 
-This document defines the Phase 4 HTTP surface for caller integrations. Schema
-details live in [input-schema.md](input-schema.md),
-[output-schema.md](output-schema.md), and [errors.md](errors.md).
+This document defines the Phase 4 implemented HTTP surface for caller
+integrations: caller/account status, input writes, output reads, output
+acknowledgement, and output-file download. Schema details live in
+[input-schema.md](input-schema.md), [output-schema.md](output-schema.md), and
+[errors.md](errors.md).
+
+Human-approved caller registration, caller listing, rotation, revocation,
+disconnect-with-revoke, upgrade/billing, and CLI control-plane flows are future
+contracts. They are described only as planned boundaries and are not implemented
+in the current app/API phase.
 
 ## Base URL
 
@@ -179,6 +186,10 @@ membership, not caller API keys.
 
 ## Output Routes
 
+Successful output route responses include `Cache-Control: no-store`. Read
+responses can contain human-provided answers, file metadata, or raw file bytes
+and must not be cached.
+
 ### Check Output
 
 ```http
@@ -281,13 +292,15 @@ Required success headers:
 
 ```http
 Content-Disposition: attachment; filename="<sanitized filename>"
-Content-Type: application/octet-stream
+Content-Type: <safe stored MIME type or application/octet-stream>
+Cache-Control: no-store
 X-Content-Type-Options: nosniff
 X-Request-ID: req_...
 X-Correlation-ID: corr_...
 ```
 
-The stored MIME type is advisory. Missing or unsafe MIME types return
+The stored MIME type is advisory. Safe stored MIME types may be returned as the
+download `Content-Type`; missing or unsafe MIME types return
 `application/octet-stream`.
 
 ## Status Routes
@@ -354,11 +367,12 @@ If no local caller credential is available, the CLI may use a human-approved
 control-plane flow in a later package. That fallback is not a caller-bearer
 data-plane request.
 
-## Caller Registration Contract
+## Future Caller Registration Contract (Not Implemented)
 
 Caller registration is human-approved control plane, not unauthenticated
-self-service and not caller-key self-administration. Full CLI implementation is
-owned by the CLI phase, but the HTTP contract is:
+self-service and not caller-key self-administration. The current repository does
+not implement these routes. Full CLI implementation is owned by the CLI phase,
+and the planned HTTP contract is:
 
 ### Browser Connect Start
 

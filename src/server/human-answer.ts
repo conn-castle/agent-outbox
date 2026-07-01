@@ -11,7 +11,11 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import type { ApiErrorCode, ApiFieldError } from "./api-errors.ts";
-import { isIanaTimeZone } from "./input-schema.ts";
+import {
+  compareUtcDateTimeValues,
+  isIanaTimeZone,
+  isValidUtcDateTime
+} from "./input-schema.ts";
 
 export const HUMAN_ANSWER_RESPONSE_BYTE_LIMIT = 128_000;
 export const UNACKNOWLEDGED_OUTPUT_TIMEOUT_DAYS = 14;
@@ -887,10 +891,11 @@ function validateDateTimeRange(
   minValue: string | null,
   maxValue: string | null
 ): HumanAnswerFailure | null {
-  const valueMs = new Date(value).getTime();
   if (minValue) {
-    const minMs = new Date(minValue).getTime();
-    if (!validUtcDateTime(minValue) || valueMs < minMs) {
+    if (
+      !validUtcDateTime(minValue) ||
+      compareUtcDateTimeValues(value, minValue) < 0
+    ) {
       return invalidActionResponse(
         "response.value_utc",
         "Date-picker datetime response is before the selected action minimum."
@@ -898,8 +903,10 @@ function validateDateTimeRange(
     }
   }
   if (maxValue) {
-    const maxMs = new Date(maxValue).getTime();
-    if (!validUtcDateTime(maxValue) || valueMs > maxMs) {
+    if (
+      !validUtcDateTime(maxValue) ||
+      compareUtcDateTimeValues(value, maxValue) > 0
+    ) {
       return invalidActionResponse(
         "response.value_utc",
         "Date-picker datetime response is after the selected action maximum."
@@ -983,7 +990,7 @@ function validDateOnly(value: string) {
 }
 
 function validUtcDateTime(value: string) {
-  return value.endsWith("Z") && !Number.isNaN(new Date(value).getTime());
+  return isValidUtcDateTime(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

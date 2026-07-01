@@ -284,25 +284,8 @@ export function storageStatusStatement(
 ): TransactionContextStatement {
   return {
     sql: `
-      with input_bytes as (
-        select coalesce(sum(non_file_payload_bytes), 0) as bytes
-        from public.agent_outbox_input_items
-        where account_id = $1
-      ),
-      output_bytes as (
-        select coalesce(sum(response_payload_bytes), 0) as bytes
-        from public.agent_outbox_output_results
-        where account_id = $1
-      ),
-      file_bytes as (
-        select coalesce(sum(size_bytes), 0) as bytes
-        from public.agent_outbox_output_files
-        where account_id = $1
-      )
-      select
-        input_bytes.bytes + output_bytes.bytes as non_file_stored_bytes,
-        input_bytes.bytes + output_bytes.bytes + file_bytes.bytes as overall_stored_bytes
-      from input_bytes, output_bytes, file_bytes
+      select non_file_stored_bytes, overall_stored_bytes
+      from public.agent_outbox_account_stock_usage($1)
     `,
     values: [identity.accountId]
   };

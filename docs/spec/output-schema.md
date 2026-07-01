@@ -173,10 +173,10 @@ Output check and read-all are cursor-paginated.
 The cursor is not an authorization boundary. The server applies the account and
 caller derived from the bearer key to every request.
 
-The CLI auto-pages `output check` and `output read --all` by default until
-`has_more` is false. In JSON mode the CLI also reports `complete`, `page_count`,
-`request_count`, and aggregate `returned_count` so agents can detect incomplete
-bounded reads.
+A future CLI should auto-page `output check` and `output read --all` by default
+until `has_more` is false. In JSON mode the CLI should also report `complete`,
+`page_count`, `request_count`, and aggregate `returned_count` so agents can
+detect incomplete bounded reads.
 
 ## Delivery And Acknowledgement
 

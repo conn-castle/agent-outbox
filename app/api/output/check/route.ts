@@ -14,5 +14,7 @@ export async function GET(request: Request) {
     return apiErrorResponse(context, result.error);
   }
 
-  return apiSuccessResponse(context, result.data);
+  return apiSuccessResponse(context, result.data, {
+    headers: { "Cache-Control": "no-store" }
+  });
 }

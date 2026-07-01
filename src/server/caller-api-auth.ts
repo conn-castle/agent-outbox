@@ -176,7 +176,7 @@ export async function authenticateCallerApiRequest(
     secretDigest,
     keyPrefix: parsed.keyPrefix,
     keyLastCharacters: parsed.keyLastCharacters
-  };
+  } as const;
 }
 
 function callerAuthFailure(input: {

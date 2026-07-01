@@ -160,6 +160,53 @@ test("human answer response validation enforces selected popup options and bound
   assert.equal(oversizedText.code, "request_too_large");
 });
 
+test("human answer response validation rejects impossible and sub-millisecond datetime responses", () => {
+  const action = {
+    popupKind: /** @type {"date_picker"} */ ("date_picker"),
+    popupPayload: {
+      mode: "datetime",
+      min_value: "2026-01-01T00:00:00.000000001Z",
+      max_value: "2026-01-01T00:00:00.000000010Z"
+    },
+    optionValues: []
+  };
+
+  const invalidCalendarDate = validatedResponsePayload(action, {
+    kind: "date_picker",
+    mode: "datetime",
+    value_utc: "2026-02-30T00:00:00Z",
+    display_timezone: "UTC"
+  });
+  const belowMinimum = validatedResponsePayload(action, {
+    kind: "date_picker",
+    mode: "datetime",
+    value_utc: "2026-01-01T00:00:00.000000000Z",
+    display_timezone: "UTC"
+  });
+  const invalidMonth = validatedResponsePayload(action, {
+    kind: "date_picker",
+    mode: "datetime",
+    value_utc: "2026-13-01T00:00:00Z",
+    display_timezone: "UTC"
+  });
+
+  assert.equal(invalidCalendarDate.ok, false);
+  assert.equal(
+    invalidCalendarDate.ok ? null : invalidCalendarDate.fields?.[0]?.path,
+    "response.value_utc"
+  );
+  assert.equal(belowMinimum.ok, false);
+  assert.equal(
+    belowMinimum.ok ? null : belowMinimum.fields?.[0]?.message,
+    "Date-picker datetime response is before the selected action minimum."
+  );
+  assert.equal(invalidMonth.ok, false);
+  assert.equal(
+    invalidMonth.ok ? null : invalidMonth.fields?.[0]?.path,
+    "response.value_utc"
+  );
+});
+
 test("human answer service rejects stale revisions before creating output", async () => {
   /** @type {TransactionContextStatement[]} */
   const calls = [];
