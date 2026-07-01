@@ -1,8 +1,8 @@
 # Agent Outbox API Contract
 
 This directory is the durable HTTP contract for Agent Outbox caller
-integrations. The source product spec is
-`/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md`.
+integrations. The source product spec lives in the `castle-steward` repository
+at `project-ideas/agent-outbox/README.md`.
 
 Raw HTTP is canonical. The `agent-outbox` CLI must be a wrapper over these
 documented endpoints and must not add hidden product behavior, queue semantics,

@@ -78,7 +78,7 @@ Incomplete:
 - Implemented typed input validation, supported-icon enforcement, safe HTML/color/URL checks, request/cardinality caps, retry-safe send, pending-only replace/delete, and loud `file_upload` deferral until the paid upload workflow in Phase 7.
 - Implemented server-only human answer creation, stale-answer protection, pre-read undo, output reads that mark returned results read, idempotent acknowledgement through the shared deletion path, and metadata-only file reads with dedicated raw-byte downloads.
 - Added caller API quota/rate enforcement through canonical limits, quota windows, active limit blocks, account-scoped stock checks, and cleanup exemptions for input delete and output ack.
-- Verified the phase with focused behavior tests plus `make check` covering formatting, Markdown lint, TypeScript, 94 tests, build, and structural smoke.
+- Verified the phase with focused behavior tests plus `make check` covering formatting, Markdown lint, TypeScript, 96 tests, build, and structural smoke.
 
 ## Phase 5 — Human Review Web UI
 

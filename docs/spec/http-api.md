@@ -460,7 +460,7 @@ Success `data`:
   "account": {
     "account_id": "acct_123",
     "label": "Nick's Agent Outbox",
-    "effective_tier": "hosted_free"
+    "effective_tier": "free"
   },
   "credential": {
     "api_key": "aob_live_keyid_secret",

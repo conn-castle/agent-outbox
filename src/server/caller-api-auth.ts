@@ -89,7 +89,8 @@ export async function authenticateCallerApiRequest(
     return failure;
   };
 
-  const parsed = parseCallerBearerApiKey(request.headers.get("authorization"));
+  const authHeader = request.headers.get("authorization")?.trim() ?? null;
+  const parsed = parseCallerBearerApiKey(authHeader);
 
   if (!parsed.ok) {
     return failAndLog({

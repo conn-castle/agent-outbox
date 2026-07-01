@@ -5,6 +5,10 @@ import {
   acknowledgeOutputInTransaction,
   checkOutputPageInTransaction,
   cursorFromOutputRow,
+  handleOutputAckRequest,
+  handleOutputCheckRequest,
+  handleOutputReadAllRequest,
+  handleOutputReadRequest,
   outputFileMetadataStatement,
   outputPageStatement,
   outputResultByIdStatement,
@@ -117,6 +121,9 @@ test("output check returns cursor-paginated readiness metadata only", async () =
     query.calls.some((call) => call.sql.includes("first_read_at")),
     false
   );
+  // check is non-mutating and must never lock rows, so pages read concurrently
+  // stay available to the mutating read/read-all/ack paths.
+  assert.doesNotMatch(query.calls[1].sql, /for update/i);
 });
 
 test("read one returns payload and file metadata only, then marks the result read", async () => {
@@ -200,6 +207,11 @@ test("read all marks only returned output rows and exposes pagination", async ()
   assert.equal(result.data.has_more, true);
   assert.equal(query.calls[2].values?.length, 1);
   assert.deepEqual(query.calls[2].values, [outputOneId]);
+  // read-all must lock the page rows FOR UPDATE (like the single-read path) so a
+  // concurrent undo/ack/cleanup cannot delete or restore a returned row before
+  // the mark-read update runs, which would otherwise hand the caller an
+  // undone/deleted output without disabling undo.
+  assert.match(query.calls[0].sql, /for update/i);
 });
 
 test("ack deletes live output and recognizes duplicate acknowledgements", async () => {
@@ -326,6 +338,107 @@ test("output page cursor preserves microsecond precision across the keyset round
   assert.match(nextPage.sql, /\$3::timestamptz/);
   assert.ok(nextPage.values);
   assert.equal(nextPage.values[2], "2026-06-30T23:25:51.123456Z");
+});
+
+test("output request wrappers surface the caller-transaction config guard", async () => {
+  // With no app-role connection string configured, withAuthenticatedCallerTransaction
+  // must short-circuit before any auth/quota/DB work. Every exported wrapper has to
+  // route through it, so removing the guard (or bypassing the wrapper) changes the
+  // returned code/message and fails this test.
+  const previous = process.env.DATABASE_APP_ROLE_URL;
+  delete process.env.DATABASE_APP_ROLE_URL;
+  try {
+    const expected = {
+      ok: false,
+      error: {
+        status: 503,
+        code: "temporary_unavailable",
+        message: "Caller API database configuration is unavailable."
+      }
+    };
+
+    assert.deepEqual(
+      await handleOutputCheckRequest(
+        new Request("https://api.test/api/output/check"),
+        context
+      ),
+      expected
+    );
+    assert.deepEqual(
+      await handleOutputReadRequest(
+        new Request("https://api.test/api/output/read", { method: "POST" }),
+        context,
+        outputOneId
+      ),
+      expected
+    );
+    assert.deepEqual(
+      await handleOutputReadAllRequest(
+        new Request("https://api.test/api/output/read-all", { method: "POST" }),
+        context,
+        {}
+      ),
+      expected
+    );
+    assert.deepEqual(
+      await handleOutputAckRequest(
+        new Request("https://api.test/api/output/ack", { method: "POST" }),
+        context,
+        outputOneId
+      ),
+      expected
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previous;
+    }
+  }
+});
+
+test("output request wrappers reject malformed requests before the transaction", async () => {
+  // These request-shape guards run ahead of withAuthenticatedCallerTransaction, so a
+  // missing DATABASE_APP_ROLE_URL must not change the 400/422 outcome.
+  const previous = process.env.DATABASE_APP_ROLE_URL;
+  delete process.env.DATABASE_APP_ROLE_URL;
+  try {
+    const readMissingId = await handleOutputReadRequest(
+      new Request("https://api.test/api/output/read", { method: "POST" }),
+      context,
+      ""
+    );
+    assert.deepEqual(readMissingId, {
+      ok: false,
+      error: {
+        status: 400,
+        code: "invalid_request",
+        message: "output_result_id is required."
+      }
+    });
+
+    const ackMissingId = await handleOutputAckRequest(
+      new Request("https://api.test/api/output/ack", { method: "POST" }),
+      context,
+      ""
+    );
+    assert.equal(ackMissingId.ok, false);
+    assert.equal(ackMissingId.ok ? null : ackMissingId.error.status, 400);
+
+    const readAllBadBody = await handleOutputReadAllRequest(
+      new Request("https://api.test/api/output/read-all", { method: "POST" }),
+      context,
+      "not-an-object"
+    );
+    assert.equal(readAllBadBody.ok, false);
+    assert.equal(readAllBadBody.ok ? null : readAllBadBody.error.status, 422);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previous;
+    }
+  }
 });
 
 /**

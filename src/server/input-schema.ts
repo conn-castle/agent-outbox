@@ -221,6 +221,17 @@ const SAFE_NAMED_COLORS = new Set([
 export async function readJsonBodyWithLimit(
   request: Request
 ): Promise<JsonBodyParseResult> {
+  const declaredLength = Number(request.headers.get("content-length") ?? "");
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > INPUT_REQUEST_BODY_BYTE_LIMIT
+  ) {
+    return {
+      ok: false,
+      error: requestTooLargeError()
+    };
+  }
+
   const body = await request.arrayBuffer();
   const bytes = body.byteLength;
 
@@ -338,6 +349,10 @@ export function parseInputSubmission(
     (action) => action.popupKind === "file_upload"
   );
 
+  if (fields.length > 0) {
+    return { ok: false, error: validationError(fields) };
+  }
+
   if (
     containsFileUploadAction &&
     options.limitProfile &&
@@ -367,10 +382,6 @@ export function parseInputSubmission(
           "File upload actions require the paid file upload workflow, which is not available in this API phase."
       }
     };
-  }
-
-  if (fields.length > 0) {
-    return { ok: false, error: validationError(fields) };
   }
 
   const normalizedContent = {
@@ -1362,7 +1373,7 @@ function htmlAttributeAllowed(tagName: string, attr: string, value: string) {
     if (attr === "title") {
       return true;
     }
-    if (attr !== "href" || value.includes("&")) {
+    if (attr !== "href") {
       return false;
     }
     try {

@@ -175,6 +175,25 @@ test("input parser rejects caller identity, unsafe HTML, unsafe colors, and inva
   ]);
 });
 
+test("input parser accepts anchor href with multi-parameter query strings", () => {
+  // Query strings with more than one parameter (?a=1&b=2) are ordinary URLs and
+  // pass the http/https/mailto protocol allow-list; the ampersand must not be
+  // rejected on its own or the allowed <a href> feature is unusable.
+  const result = parseInputSubmission(
+    baseInput({
+      details:
+        '<p>See <a href="https://example.com/search?a=1&b=2">results</a>.</p>'
+    }),
+    { limitProfile: "hosted-paid" }
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    assert.fail("expected multi-parameter href to be accepted");
+  }
+  assert.match(result.submission.detailsHtml ?? "", /a=1&b=2/);
+});
+
 test("input parser rejects safe-shaped but unsupported icon names", () => {
   const result = parseInputSubmission(
     baseInput({

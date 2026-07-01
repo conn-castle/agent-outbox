@@ -266,7 +266,7 @@ export async function readAllOutputPageInTransaction(
   cursor: OutputCursor | null
 ): Promise<OutputQueueResult> {
   const pageRows = await query<OutputPageRow>(
-    outputPageStatement(identity, limit, cursor)
+    outputPageStatement(identity, limit, cursor, { lockRows: true })
   );
   const page = pageRows.rows.slice(0, limit);
   const hasMore = pageRows.rows.length > limit;
@@ -394,7 +394,8 @@ export function outputReadyCountStatement(
 export function outputPageStatement(
   identity: CallerIdentity,
   limit: number,
-  cursor: OutputCursor | null
+  cursor: OutputCursor | null,
+  options: { lockRows?: boolean } = {}
 ): TransactionContextStatement {
   const values: (string | number)[] = [identity.accountId, identity.callerId];
   const cursorClause = cursor
@@ -406,6 +407,11 @@ export function outputPageStatement(
   }
 
   values.push(limit + 1);
+
+  // read-all locks the page rows FOR UPDATE (like the single-read path) so a
+  // concurrent undo/ack/cleanup cannot delete or restore a row between the
+  // select and the mark-read update; the non-mutating check path never locks.
+  const lockClause = options.lockRows ? "\n      for update" : "";
 
   return {
     sql: `
@@ -424,7 +430,7 @@ export function outputPageStatement(
         and caller_id = $2
         ${cursorClause}
       order by answered_at, output_result_id
-      limit $${values.length}
+      limit $${values.length}${lockClause}
     `,
     values
   };
