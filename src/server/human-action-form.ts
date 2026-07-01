@@ -210,7 +210,9 @@ function utcFromLocalDateTime(
   value: string | null,
   timezone: string
 ): string | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value ?? "");
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(
+    value ?? ""
+  );
   if (!match) {
     return null;
   }
@@ -220,7 +222,8 @@ function utcFromLocalDateTime(
     month: Number(match[2]),
     day: Number(match[3]),
     hour: Number(match[4]),
-    minute: Number(match[5])
+    minute: Number(match[5]),
+    second: match[6] ? Number(match[6]) : 0
   };
   if (!validLocalDateTimeParts(desired)) {
     return null;
@@ -231,7 +234,8 @@ function utcFromLocalDateTime(
     desired.month - 1,
     desired.day,
     desired.hour,
-    desired.minute
+    desired.minute,
+    desired.second
   );
   let instant = desiredUtc;
 
@@ -243,7 +247,8 @@ function utcFromLocalDateTime(
         parts.month - 1,
         parts.day,
         parts.hour,
-        parts.minute
+        parts.minute,
+        parts.second
       );
       instant += desiredUtc - renderedUtc;
     }
@@ -264,6 +269,7 @@ type LocalDateTimeParts = {
   day: number;
   hour: number;
   minute: number;
+  second: number;
 };
 
 function validLocalDateTimeParts(parts: LocalDateTimeParts) {
@@ -273,13 +279,16 @@ function validLocalDateTimeParts(parts: LocalDateTimeParts) {
     !Number.isSafeInteger(parts.day) ||
     !Number.isSafeInteger(parts.hour) ||
     !Number.isSafeInteger(parts.minute) ||
+    !Number.isSafeInteger(parts.second) ||
     parts.month < 1 ||
     parts.month > 12 ||
     parts.day < 1 ||
     parts.hour < 0 ||
     parts.hour > 23 ||
     parts.minute < 0 ||
-    parts.minute > 59
+    parts.minute > 59 ||
+    parts.second < 0 ||
+    parts.second > 59
   ) {
     return false;
   }
@@ -301,7 +310,8 @@ function sameLocalDateTimeParts(
     left.month === right.month &&
     left.day === right.day &&
     left.hour === right.hour &&
-    left.minute === right.minute
+    left.minute === right.minute &&
+    left.second === right.second
   );
 }
 
@@ -313,6 +323,7 @@ function zonedParts(date: Date, timezone: string) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hourCycle: "h23"
   }).formatToParts(date);
   const part = (type: string) =>
@@ -322,7 +333,8 @@ function zonedParts(date: Date, timezone: string) {
     month: part("month"),
     day: part("day"),
     hour: part("hour"),
-    minute: part("minute")
+    minute: part("minute"),
+    second: part("second")
   };
 }
 
@@ -332,21 +344,29 @@ function parseBulkItem(value: FormDataEntryValue): BulkAnswerItem | null {
   }
 
   try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(value);
     if (
-      typeof parsed.inputItemId !== "string" ||
-      !UUID_PATTERN.test(parsed.inputItemId) ||
-      typeof parsed.callerId !== "string" ||
-      !UUID_PATTERN.test(parsed.callerId) ||
-      typeof parsed.expectedRevision !== "number" ||
-      !Number.isSafeInteger(parsed.expectedRevision)
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      return null;
+    }
+    const item = parsed as Record<string, unknown>;
+    if (
+      typeof item.inputItemId !== "string" ||
+      !UUID_PATTERN.test(item.inputItemId) ||
+      typeof item.callerId !== "string" ||
+      !UUID_PATTERN.test(item.callerId) ||
+      typeof item.expectedRevision !== "number" ||
+      !Number.isSafeInteger(item.expectedRevision)
     ) {
       return null;
     }
     return {
-      inputItemId: parsed.inputItemId,
-      callerId: parsed.callerId,
-      expectedRevision: parsed.expectedRevision
+      inputItemId: item.inputItemId,
+      callerId: item.callerId,
+      expectedRevision: item.expectedRevision
     };
   } catch {
     return null;

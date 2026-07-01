@@ -334,6 +334,26 @@ test("human action form parser rejects malformed hidden fields before database w
     }
   });
 
+  const localDateTimeWithSeconds = answerForm();
+  localDateTimeWithSeconds.set("actionValue", "pick_datetime");
+  localDateTimeWithSeconds.set("popupKind", "date_picker");
+  localDateTimeWithSeconds.set("response.mode", "datetime");
+  localDateTimeWithSeconds.set("response.display_timezone", "UTC");
+  localDateTimeWithSeconds.set("response.value_local", "2026-07-16T09:30:15");
+  assert.deepEqual(parseHumanAnswerForm(localDateTimeWithSeconds), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "pick_datetime",
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-07-16T09:30:15.000Z",
+      display_timezone: "UTC"
+    }
+  });
+
   const newYorkDateTime = answerForm();
   newYorkDateTime.set("actionValue", "pick_datetime");
   newYorkDateTime.set("popupKind", "date_picker");

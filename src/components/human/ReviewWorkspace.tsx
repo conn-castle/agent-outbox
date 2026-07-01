@@ -72,10 +72,6 @@ export function ReviewWorkspace({
     });
   }, [hydrated, search, skippedIds, sort, status]);
 
-  const selectedRows = useMemo(
-    () => rows.filter((row) => selectedIds.has(row.inputItemId)),
-    [rows, selectedIds]
-  );
   const visibleRows = useMemo(() => {
     const terms = search.trim().toLowerCase();
     const filtered = rows.filter((row) => {
@@ -114,6 +110,10 @@ export function ReviewWorkspace({
       );
     });
   }, [rows, search, skippedIds, sort, status]);
+  const selectedRows = useMemo(
+    () => visibleRows.filter((row) => selectedIds.has(row.inputItemId)),
+    [selectedIds, visibleRows]
+  );
 
   function setRowSelected(inputItemId: string, selected: boolean) {
     setSelectedIds((current) => {

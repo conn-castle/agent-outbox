@@ -178,6 +178,28 @@ test("human actions submit undo and narrow bulk actions through server actions",
   ).toBeDisabled();
 });
 
+test("bulk actions only submit selected rows visible in the current filter", async ({
+  page
+}) => {
+  await page.goto("/human");
+
+  const rows = page.locator(".review-row");
+  await rows.nth(0).getByRole("checkbox", { name: "Select review" }).check();
+  await rows.nth(1).getByRole("checkbox", { name: "Select review" }).check();
+  await expect(page.locator(".bulk-actions")).toContainText(
+    "2 selected pending rows"
+  );
+
+  await page.getByLabel("Search").fill("follow-up");
+  await expect(page.locator(".bulk-actions")).toContainText(
+    "1 selected pending row"
+  );
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Bulk action complete: 1 answered, 0 failed."
+  );
+});
+
 test("popup controls cover typed response kinds", async ({ page }) => {
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
