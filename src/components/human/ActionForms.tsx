@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { submitHumanAnswer, undoHumanAnswer } from "../../../app/human/actions";
@@ -156,14 +156,6 @@ function DatePickerFields({ action }: { action: HumanReviewAction }) {
   const payload = recordValue(action.popupPayload);
   const mode = payload.mode === "datetime" ? "datetime" : "date";
   const timezone = useDisplayTimezone(payload.display_timezone);
-  const [localDateTime, setLocalDateTime] = useState("");
-  const utcValue = useMemo(
-    () =>
-      mode === "datetime" && localDateTime
-        ? zonedDateTimeToUtc(localDateTime, timezone)
-        : "",
-    [localDateTime, mode, timezone]
-  );
 
   return (
     <div className="date-fields">
@@ -181,18 +173,10 @@ function DatePickerFields({ action }: { action: HumanReviewAction }) {
           />
         </label>
       ) : (
-        <>
-          <label className="action-field">
-            <span>{popupLabel(action)}</span>
-            <input
-              type="datetime-local"
-              value={localDateTime}
-              onChange={(event) => setLocalDateTime(event.target.value)}
-              required
-            />
-          </label>
-          <input type="hidden" name="response.value_utc" value={utcValue} />
-        </>
+        <label className="action-field">
+          <span>{popupLabel(action)}</span>
+          <input type="datetime-local" name="response.value_local" required />
+        </label>
       )}
       <p className="form-note">Displayed timezone: {timezone}</p>
     </div>
@@ -227,64 +211,6 @@ function useDisplayTimezone(configured: JsonValue | undefined) {
     }
   }, []);
   return configuredTimezone || browserTimezone;
-}
-
-function zonedDateTimeToUtc(value: string, timezone: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
-  if (!match) {
-    return "";
-  }
-
-  const desired = {
-    year: Number(match[1]),
-    month: Number(match[2]),
-    day: Number(match[3]),
-    hour: Number(match[4]),
-    minute: Number(match[5])
-  };
-  const desiredUtc = Date.UTC(
-    desired.year,
-    desired.month - 1,
-    desired.day,
-    desired.hour,
-    desired.minute
-  );
-  let instant = desiredUtc;
-
-  for (let index = 0; index < 3; index += 1) {
-    const parts = zonedParts(new Date(instant), timezone);
-    const renderedUtc = Date.UTC(
-      parts.year,
-      parts.month - 1,
-      parts.day,
-      parts.hour,
-      parts.minute
-    );
-    instant += desiredUtc - renderedUtc;
-  }
-
-  return new Date(instant).toISOString();
-}
-
-function zonedParts(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  const part = (type: string) =>
-    Number(parts.find((entry) => entry.type === type)?.value);
-  return {
-    year: part("year"),
-    month: part("month"),
-    day: part("day"),
-    hour: part("hour"),
-    minute: part("minute")
-  };
 }
 
 function popupLabel(action: HumanReviewAction) {

@@ -152,7 +152,10 @@ function responseFromForm(
           : null;
       }
       if (mode === "datetime") {
-        const valueUtc = stringField(formData, "response.value_utc");
+        const valueUtc = utcFromLocalDateTime(
+          stringField(formData, "response.value_local"),
+          displayTimezone
+        );
         return valueUtc
           ? {
               kind: "date_picker",
@@ -201,6 +204,126 @@ function integerField(formData: FormData, key: string) {
   }
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function utcFromLocalDateTime(
+  value: string | null,
+  timezone: string
+): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value ?? "");
+  if (!match) {
+    return null;
+  }
+
+  const desired = {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+    hour: Number(match[4]),
+    minute: Number(match[5])
+  };
+  if (!validLocalDateTimeParts(desired)) {
+    return null;
+  }
+
+  const desiredUtc = Date.UTC(
+    desired.year,
+    desired.month - 1,
+    desired.day,
+    desired.hour,
+    desired.minute
+  );
+  let instant = desiredUtc;
+
+  try {
+    for (let index = 0; index < 3; index += 1) {
+      const parts = zonedParts(new Date(instant), timezone);
+      const renderedUtc = Date.UTC(
+        parts.year,
+        parts.month - 1,
+        parts.day,
+        parts.hour,
+        parts.minute
+      );
+      instant += desiredUtc - renderedUtc;
+    }
+    const finalParts = zonedParts(new Date(instant), timezone);
+    if (!sameLocalDateTimeParts(desired, finalParts)) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return new Date(instant).toISOString();
+}
+
+type LocalDateTimeParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+};
+
+function validLocalDateTimeParts(parts: LocalDateTimeParts) {
+  if (
+    !Number.isSafeInteger(parts.year) ||
+    !Number.isSafeInteger(parts.month) ||
+    !Number.isSafeInteger(parts.day) ||
+    !Number.isSafeInteger(parts.hour) ||
+    !Number.isSafeInteger(parts.minute) ||
+    parts.month < 1 ||
+    parts.month > 12 ||
+    parts.day < 1 ||
+    parts.hour < 0 ||
+    parts.hour > 23 ||
+    parts.minute < 0 ||
+    parts.minute > 59
+  ) {
+    return false;
+  }
+
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  return (
+    date.getUTCFullYear() === parts.year &&
+    date.getUTCMonth() === parts.month - 1 &&
+    date.getUTCDate() === parts.day
+  );
+}
+
+function sameLocalDateTimeParts(
+  left: LocalDateTimeParts,
+  right: LocalDateTimeParts
+) {
+  return (
+    left.year === right.year &&
+    left.month === right.month &&
+    left.day === right.day &&
+    left.hour === right.hour &&
+    left.minute === right.minute
+  );
+}
+
+function zonedParts(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const part = (type: string) =>
+    Number(parts.find((entry) => entry.type === type)?.value);
+  return {
+    year: part("year"),
+    month: part("month"),
+    day: part("day"),
+    hour: part("hour"),
+    minute: part("minute")
+  };
 }
 
 function parseBulkItem(value: FormDataEntryValue): BulkAnswerItem | null {

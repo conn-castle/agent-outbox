@@ -312,8 +312,68 @@ test("human action form parser rejects malformed hidden fields before database w
   invalidDate.set("popupKind", "date_picker");
   invalidDate.set("response.mode", "datetime");
   invalidDate.set("response.display_timezone", "UTC");
-  invalidDate.delete("response.value_utc");
   assert.deepEqual(parseHumanAnswerForm(invalidDate), { ok: false });
+
+  const localDateTime = answerForm();
+  localDateTime.set("actionValue", "pick_datetime");
+  localDateTime.set("popupKind", "date_picker");
+  localDateTime.set("response.mode", "datetime");
+  localDateTime.set("response.display_timezone", "UTC");
+  localDateTime.set("response.value_local", "2026-07-16T09:30");
+  assert.deepEqual(parseHumanAnswerForm(localDateTime), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "pick_datetime",
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-07-16T09:30:00.000Z",
+      display_timezone: "UTC"
+    }
+  });
+
+  const newYorkDateTime = answerForm();
+  newYorkDateTime.set("actionValue", "pick_datetime");
+  newYorkDateTime.set("popupKind", "date_picker");
+  newYorkDateTime.set("response.mode", "datetime");
+  newYorkDateTime.set("response.display_timezone", "America/New_York");
+  newYorkDateTime.set("response.value_local", "2026-01-15T09:30");
+  assert.deepEqual(parseHumanAnswerForm(newYorkDateTime), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "pick_datetime",
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-01-15T14:30:00.000Z",
+      display_timezone: "America/New_York"
+    }
+  });
+
+  const impossibleDateTime = answerForm();
+  impossibleDateTime.set("popupKind", "date_picker");
+  impossibleDateTime.set("response.mode", "datetime");
+  impossibleDateTime.set("response.display_timezone", "UTC");
+  impossibleDateTime.set("response.value_local", "2026-02-30T09:30");
+  assert.deepEqual(parseHumanAnswerForm(impossibleDateTime), { ok: false });
+
+  const impossibleTimezone = answerForm();
+  impossibleTimezone.set("popupKind", "date_picker");
+  impossibleTimezone.set("response.mode", "datetime");
+  impossibleTimezone.set("response.display_timezone", "Not/AZone");
+  impossibleTimezone.set("response.value_local", "2026-07-16T09:30");
+  assert.deepEqual(parseHumanAnswerForm(impossibleTimezone), { ok: false });
+
+  const dstGap = answerForm();
+  dstGap.set("popupKind", "date_picker");
+  dstGap.set("response.mode", "datetime");
+  dstGap.set("response.display_timezone", "America/New_York");
+  dstGap.set("response.value_local", "2026-03-08T02:30");
+  assert.deepEqual(parseHumanAnswerForm(dstGap), { ok: false });
 
   const validBulk = new FormData();
   validBulk.set("bulkActionValue", "approve");
