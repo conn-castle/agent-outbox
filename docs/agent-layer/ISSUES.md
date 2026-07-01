@@ -38,11 +38,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Have `status.ts` call `agent_outbox_account_stock_usage(...)` so enforcement and reporting share one calculation.
     Notes: Surfaced by Phase 4 audit review-scope.
 
-- Issue 2026-06-30 caller-quota-before-validation: Invalid input send/replace still debits monthly request quota
-    Priority: Low. Area: Limits/Accounting
-    Description: In `src/server/input-queue.ts`, send/replace increment the monthly caller-API request window before `parseInputSubmission` runs, and the transaction commits on an `ok:false` return (only thrown errors roll back), so a malformed/rejected submission permanently debits a monthly request. Delete is correctly exempt. Counting invalid requests deters spam but penalizes client bugs/retries; the spec does not pin this down.
-    Next step: PRODUCT DECISION — confirm whether rejected/invalid requests should debit the monthly quota; defensible as-is.
-    Notes: Surfaced by Phase 4 audit review-scope.
+- Issue 2026-06-30 caller-request-rate-limit-and-quota-metering: Meter monthly quota on valid requests + add per-minute input request rate limit
+    Priority: Medium. Area: Limits/Security
+    Description: Two coupled changes the owner approved as a post-merge follow-up (Phase 4 / PR #3 behavior intentionally unchanged). (1) Stop debiting `authenticated_caller_api_requests_per_calendar_month` for rejected/invalid send/replace: `enforceCallerRequestLimits("caller_api_request")` increments the monthly window before `parseInputSubmission`, and the transaction commits on `ok:false` (only thrown errors roll back), so invalid requests permanently consume the sticky monthly quota and a buggy/retrying client can self-lock for the rest of the month. (2) Abuse protection must come from a short-window rate limit, not the monthly quota: the monthly quota is currently the ONLY pre-validation per-request meter on the input path. The one per-minute input limit `burst_input_submissions_per_account_per_minute` (unit submissions, operationKinds [input_submission]) runs post-validation and counts accepted submissions only — invalid input requests hit no per-minute limit. Output already has pre-validation per-minute request limits (`output_check_read`/`output_ack` per minute, unit requests); input send/replace has none.
+    Next step: (a) move the monthly quota increment to after validation (or roll back on `ok:false`) so only valid requests debit it; (b) add a per-minute caller-request rate limit on the input send/replace path (pre-validation, unit requests, counts every authenticated request valid-or-not), defined across the free/paid/self-hosted tier matrix with enforcement wiring and tests; (c) verify the existing output per-minute limits give the intended abuse coverage. This is a cross-cutting limits-matrix change that warrants its own review.
+    Notes: Surfaced by Phase 4 audit review-scope; owner chose to keep current behavior in PR #3 and do this as a focused follow-up.
 
 - Issue 2026-06-30 caller-auth-notfound-timing: Key-id enumeration timing side-channel on not-found path
     Priority: Low. Area: Security/Caller-auth

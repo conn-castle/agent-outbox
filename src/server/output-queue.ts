@@ -97,6 +97,11 @@ type OutputRow = {
   answered_by_user_id: string | null;
 };
 
+// Rows returned by outputPageStatement carry a full-precision string rendering
+// of answered_at so the keyset cursor matches the raw timestamptz column exactly
+// (node-postgres truncates timestamptz to millisecond-precision Date objects).
+type OutputPageRow = OutputRow & { answered_at_cursor: string };
+
 type OutputFileMetadataRow = {
   output_result_id: string;
   file_id: string;
@@ -210,7 +215,7 @@ export async function checkOutputPageInTransaction(
   const readyCount = await query<ReadyCountRow>(
     outputReadyCountStatement(identity)
   );
-  const pageRows = await query<OutputRow>(
+  const pageRows = await query<OutputPageRow>(
     outputPageStatement(identity, limit, cursor)
   );
   const page = pageRows.rows.slice(0, limit);
@@ -260,7 +265,7 @@ export async function readAllOutputPageInTransaction(
   limit: number,
   cursor: OutputCursor | null
 ): Promise<OutputQueueResult> {
-  const pageRows = await query<OutputRow>(
+  const pageRows = await query<OutputPageRow>(
     outputPageStatement(identity, limit, cursor)
   );
   const page = pageRows.rows.slice(0, limit);
@@ -412,6 +417,7 @@ export function outputPageStatement(
         response_kind,
         response_payload,
         answered_at,
+        to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor,
         answered_by_user_id::text as answered_by_user_id
       from public.agent_outbox_output_results
       where account_id = $1
@@ -784,10 +790,10 @@ function parseCursor(value: unknown) {
   };
 }
 
-function cursorFromOutputRow(row: OutputRow) {
+export function cursorFromOutputRow(row: OutputPageRow) {
   return Buffer.from(
     JSON.stringify({
-      answered_at: timestampValue(row.answered_at),
+      answered_at: row.answered_at_cursor,
       output_result_id: row.output_result_id
     }),
     "utf8"

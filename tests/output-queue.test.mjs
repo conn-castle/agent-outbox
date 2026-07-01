@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   acknowledgeOutputInTransaction,
   checkOutputPageInTransaction,
+  cursorFromOutputRow,
   outputFileMetadataStatement,
   outputPageStatement,
   outputResultByIdStatement,
@@ -46,6 +47,7 @@ function outputRow(overrides = {}) {
     response_kind: "free_text",
     response_payload: { text: "Approved response." },
     answered_at: "2026-06-30T12:00:00.000Z",
+    answered_at_cursor: "2026-06-30T12:00:00.000000Z",
     answered_by_user_id: "00000000-0000-4000-8000-0000000000ab",
     ...overrides
   };
@@ -105,7 +107,7 @@ test("output check returns cursor-paginated readiness metadata only", async () =
   assert.equal(result.data.ready_count, 3);
   assert.equal(result.data.has_more, true);
   assert.deepEqual(decodeCursor(result.data.next_cursor), {
-    answered_at: "2026-06-30T12:00:00.000Z",
+    answered_at: "2026-06-30T12:00:00.000000Z",
     output_result_id: outputOneId
   });
   assert.equal(result.data.returned_count, 1);
@@ -282,6 +284,48 @@ test("output query builders scope by authenticated caller and metadata-only file
   assert.match(fileMetadata.sql, /filename/);
   assert.match(fileMetadata.sql, /size_bytes/);
   assert.doesNotMatch(fileMetadata.sql, /file_bytes/);
+});
+
+test("output page cursor preserves microsecond precision across the keyset round-trip", () => {
+  // node-postgres parses timestamptz into a millisecond-precision Date, so the
+  // page query renders answered_at as a full-precision string that casts back to
+  // the exact stored instant. The keyset cursor must carry that string verbatim,
+  // otherwise a millisecond cursor stays strictly less than a microsecond column
+  // value and pagination repeats the boundary row forever.
+  assert.ok(
+    outputPageStatement(identity, 25, null).sql.includes(
+      `to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor`
+    )
+  );
+
+  const cursor = cursorFromOutputRow(
+    /** @type {any} */ ({
+      output_result_id: outputOneId,
+      // A Date that only carries millisecond precision; encoding this instead of
+      // answered_at_cursor would drop the microseconds below.
+      answered_at: new Date("2026-06-30T23:25:51.123Z"),
+      answered_at_cursor: "2026-06-30T23:25:51.123456Z"
+    })
+  );
+
+  assert.deepEqual(decodeCursor(cursor), {
+    answered_at: "2026-06-30T23:25:51.123456Z",
+    output_result_id: outputOneId
+  });
+
+  const parsed = parseOutputReadAllBody({ limit: 10, cursor });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok || !parsed.cursor) {
+    assert.fail("expected parsed cursor");
+  }
+  assert.equal(parsed.cursor.answeredAt, "2026-06-30T23:25:51.123456Z");
+
+  // The exact microsecond string flows through as the $3 keyset parameter so the
+  // next page compares against the precise stored instant.
+  const nextPage = outputPageStatement(identity, 10, parsed.cursor);
+  assert.match(nextPage.sql, /\$3::timestamptz/);
+  assert.ok(nextPage.values);
+  assert.equal(nextPage.values[2], "2026-06-30T23:25:51.123456Z");
 });
 
 /**
