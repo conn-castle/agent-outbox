@@ -143,7 +143,7 @@ const RUNTIME_PROOF_SOURCE_FILES = ["instrumentation.ts", "middleware.ts"];
 const FORBIDDEN_RUNTIME_PROOF_PATH_PATTERNS = [
   /^app\/api\/(?:billing|checkout|stripe)\//,
   /^app\/api\/account\/(?!status(?:\/|$))/,
-  /^app\/api\/caller\/(?!status(?:\/|$))/,
+  /^app\/api\/caller\/(?!(?:status\/route\.ts|connect\/(?:browser\/start|device\/start|device\/poll|exchange|activate|abort)\/route\.ts|rotate\/(?:browser\/start|device\/start|device\/poll|exchange|activate|abort)\/route\.ts|revoke\/(?:browser\/start|device\/start|device\/poll|confirm)\/route\.ts)$)/,
   /^app\/api\/input\/\[/,
   /^app\/api\/human\//,
   /^app\/human\/(?:queue|review|items?)\//,
@@ -464,7 +464,7 @@ export function validateRuntimeProofScope(sourceContentsByPath) {
     for (const pattern of FORBIDDEN_RUNTIME_PROOF_PATH_PATTERNS) {
       if (pattern.test(relativePath)) {
         failures.push(
-          `${relativePath} is unrelated later-phase implementation scope, not Phase 4 caller API scope`
+          `${relativePath} is unrelated later-phase implementation scope, not current caller API scope`
         );
       }
     }

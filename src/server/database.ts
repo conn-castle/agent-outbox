@@ -8,7 +8,8 @@ export type TransactionContextStatement = {
   values?: (string | number | boolean | null)[];
 };
 
-export type TransactionContextAuthSurface = "human" | "caller" | "cleanup";
+export type TransactionContextAuthSurface =
+  "human" | "caller" | "cleanup" | "control_plane";
 
 export type ProductTransactionContext = {
   requestId: string;

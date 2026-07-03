@@ -26,6 +26,17 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-03 caller-setup-prune-test-account-scoped: DB test can't catch a reverted prune preservation guard
+    Priority: Medium. Area: Testing/Database cleanup
+    Description: `agent_outbox_prune_caller_setup_requests` was made `security definer` so its `not exists (... caller_credentials ...)` preservation guard works under account-less global cleanup (`caller_credentials` has only account-scoped RLS). The opt-in DB test `phase 3 local database` (tests/foundation.test.mjs ~3077-3200) runs that prune with `auth_surface=cleanup` AND `account_id=accountA` set, so the guard sees accountA's credentials even under SECURITY INVOKER — the test passes whether the function is definer or invoker and cannot catch a regression that reverts the guard. No production executor runs this prune yet (the cron is a canary; the builder is test-only).
+    Next step: Add an assertion that runs the prune under cleanup surface with NO account_id and asserts the referenced pending-replacement setup request + credential are still preserved (would fail under security invoker).
+    Notes: Surfaced by audit-and-fix Round 1 while validating the F1 security-definer fix.
+
+- Issue 2026-07-03 orphaned-connect-caller-rows: Abandoned connect flows leak caller rows
+    Priority: Low. Area: Database/Data hygiene
+    Description: Each connect browser/device exchange inserts a new `agent_outbox_callers` row (`insertConnectCallerStatement`, src/server/caller-connect.ts ~1744-1764) before minting the pending credential. When a flow is abandoned, the setup-request prune cascade-cleans the pending credential, but the caller row is never removed and holds no active credential, so abandoned/retried connects accumulate orphaned caller rows indefinitely. Data hygiene, not a secret leak.
+    Next step: Add a bounded prune (new migration + cleanup function) removing callers with no non-terminal credential after a retention window.
+
 - Issue 2026-07-01 output-file-single-row-invariant: Output files table permits multiple rows per result
     Priority: Medium. Area: Database/File uploads
     Description: The MVP file-upload contract permits exactly one output-file row per file-upload response, but `agent_outbox_output_files` only enforces unique `(output_result_id, display_order)`, so multiple file rows can exist for one output result with different display orders.

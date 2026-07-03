@@ -45,3 +45,8 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: `db/migrations/` is the canonical schema source and Flyway runs hand-authored PostgreSQL SQL against normal Postgres URLs; provider CLIs are not migration authorities.
     Reason: The schema must run on raw Postgres containers, Supabase, Neon, Aurora, and similar providers without binding migration history to one host.
     Tradeoffs: This adds a Dockerized Flyway tool boundary, but gives provider portability, checksum validation, and raw Postgres CI replay.
+
+- Decision 2026-07-03 connect-deny-preview-unscoped: Connect deny/preview is bearer-capability, not account-scoped
+    Decision: Connect setup-request deny/preview (`denySetupRequestStatement`, `getConnect*ApprovalPreview` in src/server/caller-connect.ts) is authorized by possession of the unguessable UUIDv4 approval link, not by account ownership; rotate/revoke deny/preview stay account-scoped (`EXISTS (... callers WHERE caller.account_id = ...)`).
+    Reason: A new connect request has no owning account until approved, so authority follows possession of the link (device-flow bearer-capability norm), whereas rotate/revoke act on an existing account-owned caller.
+    Tradeoffs: Bounded exposure of an unclaimed ~10-minute request identified by a UUIDv4, in exchange for not forcing premature account ownership onto connect; the connect-vs-rotate/revoke asymmetry is intentional, not a missing scope check.
