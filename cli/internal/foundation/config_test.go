@@ -164,6 +164,32 @@ func TestResolveBaseURLRejectsNonOriginValues(t *testing.T) {
 	}
 }
 
+func TestResolveBaseURLRestrictsHTTPToLoopbackHosts(t *testing.T) {
+	for _, raw := range []string{
+		"http://localhost:38000",
+		"http://127.0.0.1:38000",
+		"http://[::1]:38000",
+	} {
+		if _, err := ResolveBaseURL(raw, nil, Config{}); err != nil {
+			t.Fatalf("ResolveBaseURL rejected loopback http origin %q: %v", raw, err)
+		}
+	}
+
+	for _, raw := range []string{
+		"http://example.com",
+		"http://192.168.1.10:38000",
+		"http://app.agent-outbox.dev",
+	} {
+		if _, err := ResolveBaseURL(raw, nil, Config{}); err == nil {
+			t.Fatalf("ResolveBaseURL accepted cleartext non-loopback origin %q", raw)
+		}
+	}
+
+	if _, err := ResolveBaseURL("https://example.com", nil, Config{}); err != nil {
+		t.Fatalf("ResolveBaseURL rejected https origin: %v", err)
+	}
+}
+
 func TestResolveConfigPathUsesFlagEnvDefaultOrder(t *testing.T) {
 	got, err := ResolveConfigPath(" flag-config.json ", Env{EnvConfigPath: "env-config.json"}, "default-config.json")
 	if err != nil {

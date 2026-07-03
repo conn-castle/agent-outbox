@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -163,10 +164,24 @@ func normalizeBaseURL(raw string) (string, error) {
 	if parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", NewAppError(CodeConfig, "Agent Outbox base URL must be an app origin.")
 	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return "", NewAppError(
+			CodeConfig,
+			"Agent Outbox base URL must use https for non-loopback hosts; http is allowed only for localhost, 127.0.0.1, or ::1.",
+		)
+	}
 	if parsed.Path != "" && parsed.Path != "/" {
 		return "", NewAppError(CodeConfig, "Agent Outbox base URL must not include a path.")
 	}
 	return parsed.Scheme + "://" + parsed.Host, nil
+}
+
+func isLoopbackHost(hostname string) bool {
+	if strings.EqualFold(hostname, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
 }
 
 func SelectCaller(flagValue string, env Env, cfg Config) (CallerConfig, error) {

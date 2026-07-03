@@ -49,8 +49,10 @@ control-plane, and diagnostic commands.
 Global flags:
 
 - `--base-url <origin>` selects the Agent Outbox app/API origin for the command.
-  The value must be an `http` or `https` origin with no path, query, userinfo,
-  or fragment.
+  The value must be an `https` origin — or an `http` origin whose host is
+  loopback (`localhost`, `127.0.0.1`, or `::1`) — with no path, query, userinfo,
+  or fragment. Cleartext `http` to non-loopback hosts is rejected so caller API
+  keys never travel unencrypted off the local machine.
 - `--config <path>` selects the local Agent Outbox config file for the command.
 - `--caller <caller>` selects a locally configured caller by the local caller
   name.
