@@ -37,28 +37,79 @@ or error states that are unavailable through HTTP.
   Raw bytes are available only from the dedicated file-download endpoint.
 - Times are UTC ISO-8601 strings unless a schema field explicitly says it is a
   civil date or displayed IANA timezone.
-- Future CLI commands that talk to the hosted app must map to the HTTP contract
-  below.
+- CLI commands that talk to the hosted app must map to the HTTP contract below.
+  Local utility commands such as `docs`, `doctor`, `upgrade`, and `version` do
+  not create additional HTTP route contracts.
+
+## CLI Foundation Contract
+
+The CLI foundation defines global selection inputs for data-plane,
+control-plane, and diagnostic commands.
+
+Global flags:
+
+- `--base-url <origin>` selects the Agent Outbox app/API origin for the command.
+  The value must be an `https` origin — or an `http` origin whose host is
+  loopback (`localhost`, `127.0.0.1`, or `::1`) — with no path, query, userinfo,
+  or fragment. Cleartext `http` to non-loopback hosts is rejected so caller API
+  keys never travel unencrypted off the local machine.
+- `--config <path>` selects the local Agent Outbox config file for the command.
+- `--caller <caller>` selects a locally configured caller by the local caller
+  name.
+
+Environment variables:
+
+- `AGENT_OUTBOX_BASE_URL` optionally selects the Agent Outbox app/API origin for
+  automation.
+- `AGENT_OUTBOX_CONFIG_PATH` optionally selects the local Agent Outbox config
+  file for automation.
+- `AGENT_OUTBOX_CALLER` optionally selects the local caller for commands that
+  operate on caller-owned data.
+
+Precedence:
+
+- Config path selection is `--config`, then `AGENT_OUTBOX_CONFIG_PATH`, then the
+  platform-standard Agent Outbox config path.
+- Base URL selection is `--base-url`, then `AGENT_OUTBOX_BASE_URL`, then local
+  CLI config `base_url` from the selected config file, then
+  `https://app.agent-outbox.dev`.
+- Caller selection is `--caller`, then `AGENT_OUTBOX_CALLER`, then the single
+  locally configured caller only when exactly one exists.
+- If `--caller` and `AGENT_OUTBOX_CALLER` are both set, the command fails with
+  `caller_selection_conflict` even when the values match.
+- If no explicit caller selector is set and multiple local callers exist, the
+  command fails with `ambiguous_caller`. If the selected caller name is not
+  present in local config, the command fails with `unknown_caller`.
+
+Caller API keys are not configured through environment variables. Plaintext
+caller credentials live only in local secure storage after human-approved caller
+connect or rotate.
 
 ## CLI To HTTP Map
 
-The current repository does not ship an installable CLI. This map constrains the
-future CLI so it remains a wrapper over raw HTTP rather than becoming a second
-product contract. Rows marked future are not implemented in the current app/API
-phase.
+The repository ships a Go `agent-outbox` CLI. This map constrains the CLI so it
+remains a wrapper over raw HTTP rather than becoming a second product contract.
+Rows for local utilities identify their local behavior and any HTTP contracts
+they inspect.
 
-| CLI command                                    | Canonical HTTP contract                                                                                                                             |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `caller connect <caller>`                      | Future human-approved caller registration flow in [http-api.md](http-api.md#future-caller-registration-contract-not-implemented).                   |
-| `caller status`                                | `GET /api/caller/status`.                                                                                                                           |
-| `account status`                               | `GET /api/account/status` when caller credentials are available. Human-approved fallback is a control-plane flow, not a caller-key data-plane call. |
-| `input send --file <input.json>`               | `POST /api/input/send`.                                                                                                                             |
-| `input replace --file <input.json>`            | `POST /api/input/replace`.                                                                                                                          |
-| `input delete <caller_item_id>`                | `POST /api/input/delete`.                                                                                                                           |
-| `output check`                                 | `GET /api/output/check`. The CLI auto-pages by default.                                                                                             |
-| `output read <output_result_id>`               | `POST /api/output/{output_result_id}/read`.                                                                                                         |
-| `output read --all`                            | `POST /api/output/read-all`. The CLI auto-pages by default.                                                                                         |
-| `output file get <output_result_id> <file_id>` | `GET /api/output/{output_result_id}/files/{file_id}`.                                                                                               |
-| `output ack <output_result_id>`                | `POST /api/output/{output_result_id}/ack`.                                                                                                          |
-| `upgrade`                                      | Opens the hosted upgrade URL returned by status or `upgrade_required`; it is not a data-plane mutation.                                             |
-| `docs`, `doctor`, `version`                    | Future local CLI behavior plus documented status/error contracts where remote checks are needed.                                                    |
+| CLI command                                    | Canonical HTTP contract                                                                                                          |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `caller connect <caller>`                      | Human-approved connect routes in [http-api.md](http-api.md#caller-connect-control-plane).                                        |
+| `caller rotate`                                | Human-approved rotate routes in [http-api.md](http-api.md#caller-credential-operations-control-plane).                           |
+| `caller revoke <caller>`                       | Human-approved revoke routes in [http-api.md](http-api.md#caller-credential-operations-control-plane).                           |
+| `caller disconnect [--revoke]`                 | Local config/secret removal, with optional human-approved revoke routes before removal.                                          |
+| `caller list`                                  | Local config only; there is no remote account caller-list route.                                                                 |
+| `caller status`                                | `GET /api/caller/status`.                                                                                                        |
+| `account status`                               | `GET /api/account/status` with an existing local caller credential; no browser/device-code fallback.                             |
+| `input send --file <input.json>`               | `POST /api/input/send`.                                                                                                          |
+| `input replace --file <input.json>`            | `POST /api/input/replace`.                                                                                                       |
+| `input delete <caller_item_id>`                | `POST /api/input/delete`.                                                                                                        |
+| `output check`                                 | `GET /api/output/check`. The CLI auto-pages by default.                                                                          |
+| `output read <output_result_id>`               | `POST /api/output/{output_result_id}/read`.                                                                                      |
+| `output read --all`                            | `POST /api/output/read-all`. The CLI auto-pages by default.                                                                      |
+| `output file get <output_result_id> <file_id>` | `GET /api/output/{output_result_id}/files/{file_id}`.                                                                            |
+| `output ack <output_result_id>`                | `POST /api/output/{output_result_id}/ack`.                                                                                       |
+| `upgrade`                                      | Local utility that opens the selected app origin plus `/upgrade`; it does not require a status-returned URL or mutate data.      |
+| `docs [topic]`                                 | Local built-in terminal docs with pointers to this spec.                                                                         |
+| `doctor [--caller]`                            | Local diagnostics plus `GET /api/caller/status` and `GET /api/account/status` when a selected local caller credential is loaded. |
+| `version`, `--version`                         | Local build metadata only.                                                                                                       |

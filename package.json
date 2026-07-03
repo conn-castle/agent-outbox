@@ -40,7 +40,7 @@
     "build": "node scripts/foundation.mjs build && corepack pnpm run next:build",
     "doctor": "node scripts/foundation.mjs doctor",
     "check": "corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test && corepack pnpm run build && corepack pnpm run smoke",
-    "release-check": "corepack pnpm run check",
+    "release-check": "make release-check",
     "clean": "node scripts/foundation.mjs clean"
   },
   "devDependencies": {

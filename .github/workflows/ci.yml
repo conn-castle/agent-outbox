@@ -29,6 +29,23 @@ jobs:
       - name: Run verification gate
         run: make check
 
+  go-check:
+    name: make go-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - name: Run Go CLI verification gate
+        run: make go-check
+
   browser:
     name: make browser
     runs-on: ubuntu-latest

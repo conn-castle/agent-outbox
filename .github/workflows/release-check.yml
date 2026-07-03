@@ -24,6 +24,12 @@ jobs:
         with:
           node-version: 24.18.0
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
       - name: Set up dependencies
         run: make setup
 

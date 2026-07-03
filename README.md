@@ -31,12 +31,15 @@ The current repository implements:
 - Account-scoped callers and display-once API credentials
 - Caller-authenticated raw HTTP status, input, output, acknowledgement, and
   output-file download routes
+- A Go `agent-outbox` CLI for caller setup, caller/account status, input,
+  output, diagnostics, terminal docs, upgrade URL opening, and version metadata
+- Non-publishing GoReleaser package verification that builds Homebrew cask
+  artifacts for the CLI
 - Free-tier queue caps, caller limits, retention primitives, cleanup primitives,
   and runtime canaries
 - Sentry, Cloudflare, and Supabase/Postgres-backed observability foundations
 
-The installable CLI, human-approved caller registration/rotation/revocation,
-Stripe billing, and paid file-upload workflow are later roadmap items.
+Stripe billing and the paid file-upload workflow are later roadmap items.
 
 The hosted service has one app/API origin. Caller API routes live under
 `https://app.agent-outbox.dev/api/...`.
@@ -90,9 +93,25 @@ values:
 make smoke-runtime
 ```
 
-There is not yet an installable `agent-outbox` CLI or Homebrew package. Current
-caller integrations should use the raw HTTP contract in [docs/spec](docs/spec)
-with a provisioned caller API key.
+Build the local `agent-outbox` CLI:
+
+```bash
+make go-build
+dist/agent-outbox --help
+```
+
+Connect a local caller through human approval, then submit and read work:
+
+```bash
+dist/agent-outbox caller connect steward-email
+dist/agent-outbox input send --file input.json
+dist/agent-outbox output check
+dist/agent-outbox output read --all
+```
+
+Raw HTTP remains the canonical integration contract in [docs/spec](docs/spec).
+The CLI maps to that HTTP contract and adds local-only utilities such as `docs`,
+`doctor`, `upgrade`, and `version`.
 
 ## Input Items
 
@@ -230,8 +249,9 @@ Delivery is asynchronous and at least once. Callers deduplicate by
 
 ## Caller Integration
 
-Raw HTTP is the canonical integration contract. The future `agent-outbox` CLI
-must map directly to the HTTP API; it does not exist in the current repository.
+Raw HTTP is the canonical integration contract. The `agent-outbox` CLI maps
+directly to the HTTP API for caller setup, status, input, output, and
+acknowledgement while keeping local utilities local-only.
 
 Implemented caller-authenticated HTTP areas:
 
@@ -244,9 +264,16 @@ Implemented caller-authenticated HTTP areas:
   `GET /api/output/{output_result_id}/files/{file_id}`, and
   `POST /api/output/{output_result_id}/ack`
 
-Human-approved caller registration, caller rotation/revocation, upgrade/billing
-flows, CLI diagnostics, and CLI documentation commands are planned but not
-implemented.
+Implemented CLI areas:
+
+- `caller connect/list/status/rotate/revoke/disconnect`
+- `account status`
+- `input send/replace/delete`
+- `output check/read/read --all/file get/ack`
+- `docs [topic]`, `doctor [--caller]`, `upgrade`, `version`, and `--version`
+
+Billing behind the hosted upgrade page and paid file uploads remain later
+roadmap work.
 
 ## Product Boundaries
 

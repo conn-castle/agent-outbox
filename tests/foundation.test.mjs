@@ -12,12 +12,15 @@ import {
   runQuiet,
   supabaseProjectsIncludeRef,
   validateCommandsVersionPins,
+  validateGoReleaserTooling,
+  validateGoModuleTooling,
   validateMigrationReplayWorkflow,
   validatePhase3FoundationSourceContents,
   validatePhase4ContractDocContents,
   validateRequiredEnvExample,
   validateRuntimeProofScope,
   validateToolchainPackage,
+  validateWorkflowGoChecks,
   validateWranglerCronSchedule,
   validateWorkflowVersionPins
 } from "../scripts/foundation.mjs";
@@ -581,9 +584,235 @@ test("validateCommandsVersionPins allows lower-bound Node prerequisites", () => 
   assert.deepEqual(failures, []);
 });
 
+test("validateGoModuleTooling requires pinned Go module directives and dependencies", () => {
+  const toolchain = {
+    node: { version: "24.18.0", npm: "11.16.0" },
+    go: { version: "1.26.4" },
+    goTooling: {
+      cobra: { module: "github.com/spf13/cobra", version: "1.10.2" },
+      goKeyring: { module: "github.com/zalando/go-keyring", version: "0.2.8" }
+    },
+    packageManager: { name: "pnpm", version: "11.9.0" },
+    flyway: FLYWAY_TOOLCHAIN_FIXTURE,
+    phase1Tools: {},
+    runtimePins: {},
+    runtimeDevTools: {},
+    providerCli: {}
+  };
+
+  assert.deepEqual(
+    validateGoModuleTooling(
+      toolchain,
+      `
+module agent-outbox
+
+go 1.26.4
+
+require (
+  github.com/spf13/cobra v1.10.2
+  github.com/zalando/go-keyring v0.2.8
+)
+`
+    ),
+    []
+  );
+
+  assert.deepEqual(
+    validateGoModuleTooling(
+      toolchain,
+      `
+module agent-outbox
+
+go 1.25.0
+
+toolchain go1.25.0
+
+require github.com/spf13/cobra v1.10.1
+`
+    ),
+    [
+      "cli/go.mod go directive must be 1.26.4",
+      "cli/go.mod toolchain directive must be go1.26.4 when present",
+      "cli/go.mod must require github.com/spf13/cobra v1.10.2",
+      "cli/go.mod must require github.com/zalando/go-keyring v0.2.8"
+    ]
+  );
+
+  assert.deepEqual(
+    validateGoModuleTooling(
+      { ...toolchain, goTooling: {} },
+      `
+module agent-outbox
+
+go 1.26.4
+
+require (
+  github.com/spf13/cobra v1.10.2
+  github.com/zalando/go-keyring v0.2.8
+)
+`
+    ),
+    [
+      "toolchain.json goTooling.cobra module/version is required",
+      "toolchain.json goTooling.goKeyring module/version is required"
+    ]
+  );
+});
+
+test("validateGoReleaserTooling requires pinned package verification module", () => {
+  const toolchain = {
+    node: { version: "24.18.0", npm: "11.16.0" },
+    go: { version: "1.26.4" },
+    goTooling: {
+      goreleaser: {
+        module: "github.com/goreleaser/goreleaser/v2",
+        version: "2.16.0"
+      }
+    },
+    packageManager: { name: "pnpm", version: "11.9.0" },
+    flyway: FLYWAY_TOOLCHAIN_FIXTURE,
+    phase1Tools: {},
+    runtimePins: {},
+    runtimeDevTools: {},
+    providerCli: {}
+  };
+  const makefile = `GORELEASER_MODULE := github.com/goreleaser/goreleaser/v2@v2.16.0
+
+package-check:
+\tgo run $(GORELEASER_MODULE) check .goreleaser.yaml
+\tgo run $(GORELEASER_MODULE) release --snapshot --clean
+
+release-check: check go-check package-check
+`;
+  const goreleaser = `homebrew_casks:
+  - name: agent-outbox
+    skip_upload: true
+
+release:
+  disable: true
+`;
+
+  assert.deepEqual(
+    validateGoReleaserTooling(toolchain, makefile, goreleaser),
+    []
+  );
+
+  assert.deepEqual(
+    validateGoReleaserTooling({ ...toolchain, goTooling: {} }, "", ""),
+    ["toolchain.json goTooling.goreleaser module/version is required"]
+  );
+
+  assert.deepEqual(
+    validateGoReleaserTooling(
+      toolchain,
+      "package-check:",
+      "homebrew_casks:\nrelease:\n"
+    ),
+    [
+      "Makefile package-check must use pinned GoReleaser github.com/goreleaser/goreleaser/v2@v2.16.0",
+      "Makefile package-check must validate .goreleaser.yaml",
+      "Makefile package-check must build a clean snapshot release",
+      "Makefile release-check must run check, go-check, and package-check",
+      ".goreleaser.yaml must disable release publishing",
+      ".goreleaser.yaml Homebrew cask config must set skip_upload: true"
+    ]
+  );
+});
+
+test("validateWorkflowGoChecks requires Go gate jobs in CI workflows", () => {
+  const toolchain = {
+    node: { version: "24.18.0", npm: "11.16.0" },
+    go: { version: "1.26.4" },
+    goTooling: {
+      githubActionsSetupGo: { version: "v6" }
+    },
+    packageManager: { name: "pnpm", version: "11.9.0" },
+    flyway: FLYWAY_TOOLCHAIN_FIXTURE,
+    phase1Tools: {},
+    runtimePins: {},
+    runtimeDevTools: {},
+    providerCli: {}
+  };
+  const validCiWorkflow = `
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - run: make go-check
+  `;
+  const validReleaseWorkflow = `
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - run: make release-check
+  `;
+
+  assert.deepEqual(
+    validateWorkflowGoChecks(toolchain, {
+      ".github/workflows/ci.yml": validCiWorkflow,
+      ".github/workflows/release-check.yml": validReleaseWorkflow
+    }),
+    []
+  );
+  assert.deepEqual(
+    validateWorkflowGoChecks(toolchain, {
+      ".github/workflows/ci.yml": "jobs: {}",
+      ".github/workflows/release-check.yml": validReleaseWorkflow
+    }),
+    [
+      ".github/workflows/ci.yml must include Go gate token: uses: actions/setup-go@v6",
+      ".github/workflows/ci.yml must include Go gate token: go-version-file: cli/go.mod",
+      ".github/workflows/ci.yml must include Go gate token: cache-dependency-path: cli/go.sum",
+      ".github/workflows/ci.yml must include Go gate token: run: make go-check"
+    ]
+  );
+  // A job merely named `make go-check` (no run step) must fail: the gate no
+  // longer executes even though the token string is present.
+  const ciWorkflowNamedButNotRun = `
+      name: make go-check
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+  `;
+  assert.deepEqual(
+    validateWorkflowGoChecks(toolchain, {
+      ".github/workflows/ci.yml": ciWorkflowNamedButNotRun,
+      ".github/workflows/release-check.yml": validReleaseWorkflow
+    }),
+    [".github/workflows/ci.yml must include Go gate token: run: make go-check"]
+  );
+  assert.deepEqual(
+    validateWorkflowGoChecks(toolchain, {
+      ".github/workflows/ci.yml": validCiWorkflow,
+      ".github/workflows/release-check.yml": validCiWorkflow
+    }),
+    [
+      ".github/workflows/release-check.yml must include Go gate token: run: make release-check"
+    ]
+  );
+  assert.deepEqual(
+    validateWorkflowGoChecks(toolchain, {
+      ".github/workflows/ci.yml": validCiWorkflow,
+      ".github/workflows/release-check.yml": "jobs: {}"
+    }),
+    [
+      ".github/workflows/release-check.yml must include Go gate token: uses: actions/setup-go@v6",
+      ".github/workflows/release-check.yml must include Go gate token: go-version-file: cli/go.mod",
+      ".github/workflows/release-check.yml must include Go gate token: cache-dependency-path: cli/go.sum",
+      ".github/workflows/release-check.yml must include Go gate token: run: make release-check"
+    ]
+  );
+  assert.deepEqual(
+    validateWorkflowGoChecks({ ...toolchain, goTooling: {} }, {}),
+    ["toolchain.json goTooling.githubActionsSetupGo.version is required"]
+  );
+});
+
 test("validateRequiredEnvExample allows optional local development names", () => {
   const template =
-    "APP_ENV=development\nPORT=38000\nAPP_BASE_URL=http://localhost:38000\nPUBLIC_APP_BASE_URL=http://localhost:38000\nSUPABASE_PROJECT_REF=\nDATABASE_URL=\nDATABASE_APP_ROLE_URL=\nDATABASE_MIGRATION_URL=\nCLERK_SECRET_KEY=\nCLERK_PUBLISHABLE_KEY=\nSTRIPE_ACCOUNT_ID=\nSTRIPE_SECRET_KEY=\nSTRIPE_WEBHOOK_SECRET=\nSTRIPE_PAID_MONTHLY_PRICE_ID=\nSTRIPE_BILLING_PORTAL_CONFIGURATION_ID=\nSENTRY_DSN=\nSENTRY_BROWSER_DSN=\nSENTRY_AUTH_TOKEN=\nCALLER_KEY_HASH_SECRET=\nSMOKE_OR_CLEANUP_TOKEN=\nAWS_PROFILE=\nCLOUDFLARE_DNS_API_TOKEN=\n";
+    "APP_ENV=development\nPORT=38000\nAPP_BASE_URL=http://localhost:38000\nPUBLIC_APP_BASE_URL=http://localhost:38000\nSUPABASE_PROJECT_REF=\nDATABASE_URL=\nDATABASE_APP_ROLE_URL=\nDATABASE_MIGRATION_URL=\nCLERK_SECRET_KEY=\nCLERK_PUBLISHABLE_KEY=\nSTRIPE_ACCOUNT_ID=\nSTRIPE_SECRET_KEY=\nSTRIPE_WEBHOOK_SECRET=\nSTRIPE_PAID_MONTHLY_PRICE_ID=\nSTRIPE_BILLING_PORTAL_CONFIGURATION_ID=\nSENTRY_DSN=\nSENTRY_BROWSER_DSN=\nSENTRY_AUTH_TOKEN=\nCALLER_KEY_HASH_SECRET=\nSMOKE_OR_CLEANUP_TOKEN=\nAWS_PROFILE=\nCLOUDFLARE_DNS_API_TOKEN=\nAGENT_OUTBOX_BASE_URL=\nAGENT_OUTBOX_CONFIG_PATH=\nAGENT_OUTBOX_CALLER=\n";
 
   assert.deepEqual(validateRequiredEnvExample(template), []);
 });
