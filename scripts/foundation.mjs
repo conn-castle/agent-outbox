@@ -18,6 +18,12 @@ import { RUNTIME_CRON_SCHEDULE } from "../src/server/scheduled.ts";
  * @typedef {{
  *   node: { version: string, npm: string },
  *   go: { version: string },
+ *   goTooling?: {
+ *     cobra?: { module: string, version: string },
+ *     goKeyring?: { module: string, version: string },
+ *     githubActionsSetupGo?: { version: string },
+ *     goreleaser?: { module: string, version: string }
+ *   },
  *   packageManager: { name: string, version: string },
  *   flyway: { version: string, image: string, source: string },
  *   phase1Tools: Record<string, ToolPin>,
@@ -51,8 +57,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const REQUIRED_FILES = [
   "Makefile",
+  ".goreleaser.yaml",
   "toolchain.json",
   "package.json",
+  "cli/go.mod",
+  "cli/go.sum",
+  "cli/cmd/agent-outbox/main.go",
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
   ".npmrc",
@@ -123,6 +133,9 @@ const REQUIRED_ENV_NAMES = [
 ];
 
 const OPTIONAL_LOCAL_ENV_NAMES = [
+  "AGENT_OUTBOX_BASE_URL",
+  "AGENT_OUTBOX_CONFIG_PATH",
+  "AGENT_OUTBOX_CALLER",
   "AWS_PROFILE",
   "CLOUDFLARE_ACCOUNT_ID",
   "CLOUDFLARE_ZONE_ID",
@@ -881,6 +894,169 @@ export function validateCommandsVersionPins(toolchain, commandsContent) {
 }
 
 /**
+ * @param {Toolchain} toolchain
+ * @param {string} goModContent
+ * @returns {string[]}
+ */
+export function validateGoModuleTooling(toolchain, goModContent) {
+  const errors = [];
+  const goVersion = toolchain.go.version;
+
+  if (!new RegExp(`^go ${escapeRegExp(goVersion)}$`, "m").test(goModContent)) {
+    errors.push(`cli/go.mod go directive must be ${goVersion}`);
+  }
+
+  const toolchainMatch = goModContent.match(/^toolchain\s+(\S+)$/m);
+  if (toolchainMatch && toolchainMatch[1] !== `go${goVersion}`) {
+    errors.push(
+      `cli/go.mod toolchain directive must be go${goVersion} when present`
+    );
+  }
+
+  validateGoModulePin(
+    errors,
+    goModContent,
+    "cobra",
+    toolchain.goTooling?.cobra
+  );
+  validateGoModulePin(
+    errors,
+    goModContent,
+    "goKeyring",
+    toolchain.goTooling?.goKeyring
+  );
+
+  return errors;
+}
+
+/**
+ * @param {Toolchain} toolchain
+ * @param {string} makefileContent
+ * @param {string} goreleaserContent
+ * @returns {string[]}
+ */
+export function validateGoReleaserTooling(
+  toolchain,
+  makefileContent,
+  goreleaserContent
+) {
+  const tool = toolchain.goTooling?.goreleaser;
+  if (!tool?.module || !tool?.version) {
+    return ["toolchain.json goTooling.goreleaser module/version is required"];
+  }
+
+  const errors = [];
+  const expected = `${tool.module}@v${tool.version}`;
+  if (!makefileContent.includes(expected)) {
+    errors.push(
+      `Makefile package-check must use pinned GoReleaser ${expected}`
+    );
+  }
+  if (
+    !makefileContent.includes(
+      "go run $(GORELEASER_MODULE) check .goreleaser.yaml"
+    )
+  ) {
+    errors.push("Makefile package-check must validate .goreleaser.yaml");
+  }
+  if (
+    !makefileContent.includes(
+      "go run $(GORELEASER_MODULE) release --snapshot --clean"
+    )
+  ) {
+    errors.push("Makefile package-check must build a clean snapshot release");
+  }
+  if (
+    !makefileContent.includes("release-check: check go-check package-check")
+  ) {
+    errors.push(
+      "Makefile release-check must run check, go-check, and package-check"
+    );
+  }
+  if (!/release:\s*\n\s*disable:\s*true/.test(goreleaserContent)) {
+    errors.push(".goreleaser.yaml must disable release publishing");
+  }
+  if (
+    !/homebrew_casks:\s*\n[\s\S]*skip_upload:\s*true/.test(goreleaserContent)
+  ) {
+    errors.push(
+      ".goreleaser.yaml Homebrew cask config must set skip_upload: true"
+    );
+  }
+  return errors;
+}
+
+/**
+ * @param {string[]} errors
+ * @param {string} goModContent
+ * @param {string} key
+ * @param {{ module?: string, version?: string } | undefined} tool
+ */
+function validateGoModulePin(errors, goModContent, key, tool) {
+  if (!tool?.module || !tool?.version) {
+    errors.push(`toolchain.json goTooling.${key} module/version is required`);
+    return;
+  }
+  const requirePattern = new RegExp(
+    `\\b${escapeRegExp(tool.module)}\\s+v${escapeRegExp(tool.version)}\\b`
+  );
+  if (!requirePattern.test(goModContent)) {
+    errors.push(`cli/go.mod must require ${tool.module} v${tool.version}`);
+  }
+}
+
+/**
+ * @param {Toolchain} toolchain
+ * @param {Record<string, string>} workflowContentsByPath
+ * @returns {string[]}
+ */
+export function validateWorkflowGoChecks(toolchain, workflowContentsByPath) {
+  const failures = [];
+  const setupGoVersion = toolchain.goTooling?.githubActionsSetupGo?.version;
+  if (!setupGoVersion) {
+    return [
+      "toolchain.json goTooling.githubActionsSetupGo.version is required"
+    ];
+  }
+
+  // release-check.yml runs the Go gate transitively through `make
+  // release-check`; validateGoReleaserTooling asserts that Makefile chain.
+  // Match the `run:` step form, not the bare token, so the check cannot pass on
+  // a workflow that only names the job `make go-check` but no longer runs it.
+  const gateTokenByWorkflowPath = {
+    ".github/workflows/ci.yml": "run: make go-check",
+    ".github/workflows/release-check.yml": "run: make release-check"
+  };
+  for (const [workflowPath, gateToken] of Object.entries(
+    gateTokenByWorkflowPath
+  )) {
+    const content = workflowContentsByPath[workflowPath] ?? "";
+    for (const requiredToken of [
+      `uses: actions/setup-go@${setupGoVersion}`,
+      "go-version-file: cli/go.mod",
+      "cache-dependency-path: cli/go.sum",
+      gateToken
+    ]) {
+      if (!content.includes(requiredToken)) {
+        failures.push(
+          `${workflowPath} must include Go gate token: ${requiredToken}`
+        );
+      }
+    }
+  }
+
+  return failures;
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * @returns {Record<string, string>}
  */
 function readWorkflowContents() {
@@ -1062,6 +1238,13 @@ function checkMakefileSurface() {
     "migration-validate",
     "migration-migrate",
     "migration-replay",
+    "go-build",
+    "go-test",
+    "go-lint",
+    "go-fmt",
+    "go-fmt-check",
+    "go-check",
+    "package-check",
     "check",
     "release-check",
     "clean"
@@ -1215,6 +1398,22 @@ function build() {
     readFileSync(path.join(ROOT, "docs/agent-layer/COMMANDS.md"), "utf8")
   );
   assert.deepEqual(commandsErrors, [], commandsErrors.join("\n"));
+  const goModuleErrors = validateGoModuleTooling(
+    toolchain,
+    readFileSync(path.join(ROOT, "cli/go.mod"), "utf8")
+  );
+  assert.deepEqual(goModuleErrors, [], goModuleErrors.join("\n"));
+  const goWorkflowErrors = validateWorkflowGoChecks(
+    toolchain,
+    readWorkflowContents()
+  );
+  assert.deepEqual(goWorkflowErrors, [], goWorkflowErrors.join("\n"));
+  const goreleaserErrors = validateGoReleaserTooling(
+    toolchain,
+    readFileSync(path.join(ROOT, "Makefile"), "utf8"),
+    readFileSync(path.join(ROOT, ".goreleaser.yaml"), "utf8")
+  );
+  assert.deepEqual(goreleaserErrors, [], goreleaserErrors.join("\n"));
 
   console.log("Build consistency checks passed.");
 }

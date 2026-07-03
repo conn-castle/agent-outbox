@@ -143,15 +143,17 @@ make browser
 
 Run from: repo root Prerequisites: `make setup` has completed and Playwright
 Chromium has been installed with `corepack pnpm exec playwright install
-chromium` if it is not already present. Notes: Runs deterministic desktop and
-mobile browser coverage through the test-only human review fixture, including
-signup handoff, list/detail review, popup controls, skipped ordering,
-search/filter/sort, narrow bulk compatibility, pre-read undo, no-undo-after-read
-state, and hostile-content rendering. It starts a local Next.js server with
-`APP_ENV=test` and `AGENT_OUTBOX_BROWSER_FIXTURE=1`; it must not require real
-Clerk, database, or provider credentials. The fixture bypasses the production
-Clerk/database path only when both gate variables are set by the Playwright web
-server.
+chromium` if it is not already present; Docker must be running. Notes: Runs
+deterministic desktop and mobile browser coverage through the test-only human
+review fixture and caller-connect Clerk fixture, including signup handoff,
+list/detail review, popup controls, skipped ordering, search/filter/sort,
+narrow bulk compatibility, pre-read undo, no-undo-after-read state,
+hostile-content rendering, and live caller-connect browser/device approval
+against a disposable migrated `postgres:17` database. It starts a local Next.js
+server with `APP_ENV=test`, `AGENT_OUTBOX_BROWSER_FIXTURE=1`, and
+`AGENT_OUTBOX_CONNECT_CLERK_FIXTURE=1`; it must not require real Clerk or
+provider credentials. The fixture bypasses the production Clerk path only when
+the gate variables are set by the Playwright web server.
 
 - Build the app
 
@@ -206,16 +208,84 @@ checks. It tests the app, not deployment platforms: it must not require
 Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, or
 platform runtime emulation.
 
+## Go CLI Foundation
+
+- Build the Go CLI binary
+
+```bash
+make go-build
+```
+
+Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Builds
+the `agent-outbox` binary to `dist/agent-outbox` with build-time version
+metadata and without requiring Node or Python at runtime.
+
+- Run Go CLI unit tests
+
+```bash
+make go-test
+```
+
+Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Runs
+`go test ./...` from `cli/` for config, caller selection, base URL, exit-code,
+deterministic/no-color output, secret-store, HTTP-client, caller control-plane,
+data-plane, utility command, terminal-docs, doctor, upgrade, version, and help
+behavior.
+
+- Run Go CLI lint checks
+
+```bash
+make go-lint
+```
+
+Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Runs
+`go vet ./...` from `cli/`.
+
+- Format Go CLI source
+
+```bash
+make go-fmt
+```
+
+Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Applies
+`gofmt` to Go source under `cli/`.
+
+- Run the Go CLI verification gate
+
+```bash
+make go-check
+```
+
+Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Runs a
+non-mutating Go format check, `go vet`, Go unit tests, and the binary build to
+`dist/agent-outbox`. CI and release-check workflows run this as a sibling gate;
+the credential-free Node `make check` remains separate.
+
+- Validate CLI package artifacts without publishing
+
+```bash
+make package-check
+```
+
+Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Runs
+pinned GoReleaser `github.com/goreleaser/goreleaser/v2@v2.16.0` through
+`go run`, validates `.goreleaser.yaml`, and builds a local
+`release --snapshot --clean` package set including Homebrew cask metadata under
+`dist/homebrew/Casks/`. The GoReleaser config also sets cask `skip_upload:
+true`. It must not publish, tag, upload, deploy, or require private provider
+credentials.
+
 - Release verification gate
 
 ```bash
 make release-check
 ```
 
-Run from: repo root Prerequisites: `make setup` has completed. Notes: Canonical
-non-publishing release/package verification gate. It may include stricter
-packaging checks than `make check`, but it must not deploy, publish, tag, upload
-packages, mutate provider state, or require private provider credentials.
+Run from: repo root Prerequisites: `make setup` has completed and Go `1.26.4`
+must be available. Notes: Canonical non-publishing release/package verification
+gate. It runs `make check`, `make go-check`, and `make package-check`. It must
+not deploy, publish, tag, upload packages, mutate provider state, or require
+private provider credentials.
 
 ## Maintenance
 
@@ -367,9 +437,10 @@ make release-check
 ```
 
 Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
-`24.18.0` before running commands. Notes: `.github/workflows/release-check.yml`
-runs these commands with read-only repository permissions. The workflow is
-verification-only and has no deployment or package publication step. The same
-workflow also installs Playwright Chromium and runs a separate `make browser`
-job, plus `make migration-replay` against a raw `postgres:17` service followed
-by the opt-in database policy and human bootstrap database tests.
+`24.18.0` and Go `1.26.4` before running commands. Notes:
+`.github/workflows/release-check.yml` runs these commands with read-only
+repository permissions. The workflow is verification-only and has no deployment
+or package publication step. The same workflow also installs Playwright
+Chromium and runs a separate `make browser` job, plus `make migration-replay`
+against a raw `postgres:17` service followed by the opt-in database policy and
+human bootstrap database tests.

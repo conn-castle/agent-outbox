@@ -88,27 +88,13 @@ Incomplete:
 - Kept caller-specific source semantics, downstream execution, saved views, due dates, snooze/scheduling, grouping keys, task-manager behavior, caller-management dashboards, caller API keys, and manual key creation out of the human UI.
 - Verified the phase with focused Node tests, `make browser` desktop/mobile coverage for the review and security matrix, and `make check` covering format, Markdown lint, TypeScript, the Node test suite, build, and structural smoke.
 
-## Phase 6 — Go CLI And Agent Integration Surface
-
-### Goal
-- Deliver the first agent-facing integration as a Go `agent-outbox` CLI that maps directly to the HTTP API.
-- Make agent automation predictable through crisp output, stable JSON, explicit exit codes, and local secure caller storage.
-- Source map: [README.md](../../README.md) "Quickstart" and "Caller Integration", [COMMANDS.md](COMMANDS.md), and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for caller integration surface, caller registration, caller credential operations, local caller selection, and error handling.
-
-### Tasks
-- [ ] Implement `caller connect`, browser callback, device-code fallback, local secure storage, caller selection, `caller list/status/rotate/revoke/disconnect`, and `account status`.
-- [ ] Implement `input send/replace/delete`, `output check`, `output read`, `output read --all`, `output file get`, and `output ack` as noninteractive data-plane commands.
-- [ ] Implement `docs`, `doctor`, `upgrade`, `version`, `--version`, global base-URL/config selection, `--json`, explicit exit codes, stdout/stderr separation, and no-color behavior.
-- [ ] Implement auto-pagination for output check/read-all by default, with explicit cursor/page-size/no-auto-page controls for debugging and raw API parity.
-- [ ] Package the CLI for Homebrew distribution without requiring Python or Node at runtime.
-- [ ] Keep local config to platform-standard Agent Outbox config locations and keep caller secrets out of non-secret config, logs, diagnostics, and JSON metadata.
-
-### Exit criteria
-- CLI integration tests pass against a local app for caller setup, caller selection conflicts, config/auth failures, input lifecycle, output check/read/ack, file download refusal-to-overwrite, and JSON/human output modes.
-- Every command has accurate help covering purpose, arguments, flags, environment variables, examples, exit codes, and related docs.
-- Data-plane commands are noninteractive by default and fail loud for missing config, revoked keys, invalid schemas, unsafe HTML, oversized payloads/uploads, stale output, and rate limits.
-- `--json` output is stable and complete enough for agents; human output is concise, line-oriented, and does not rely on color, spinners, or prose banners.
-- CLI behavior is demonstrably a wrapper over the documented HTTP API, not a second product contract.
+## Phase 6 ✅ — Go CLI And Agent Integration Surface
+- Added the Go `agent-outbox` CLI with caller connect/browser/device setup, two-phase connect and rotate activation, caller list/status/rotate/revoke/disconnect, account status, local config selection, and secure local caller credential storage.
+- Added noninteractive data-plane commands for input send/replace/delete and output check/read/read-all/file get/ack, including stable JSON, concise human output, explicit exit-code mapping, no secret leakage, safe file-download behavior, and default output auto-pagination with cursor/page-size/no-auto-page controls.
+- Added local utility commands `docs [topic]`, `doctor [--caller]`, `upgrade`, `version`, and `--version`; local-only commands bypass remote preflight where required, and `doctor` performs read-only diagnostics unless a remote status check is intentionally reachable.
+- Added Homebrew-oriented GoReleaser package verification through a non-publishing `make package-check`/`make release-check` path that builds snapshot archives and local cask metadata without requiring Python or Node at runtime.
+- Updated public/spec docs and command memory for the implemented CLI surface, package verification, local utility-command boundaries, and Phase 7 billing/file-upload deferrals.
+- Verified the phase with Go unit/vet/build gates, Node/app gates, direct binary smoke, Playwright browser/device approval coverage, non-publishing package checks, fresh plan verification, review-scope audits, prune/simplify passes, and recorded the local standalone migration replay environment gap while preserving CI/raw-Postgres migration coverage.
 
 ## Phase 7 — Billing, Files, And Retention
 

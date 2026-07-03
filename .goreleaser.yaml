@@ -1,0 +1,58 @@
+version: 2
+
+project_name: agent-outbox
+
+dist: dist
+
+builds:
+  - id: agent-outbox
+    dir: cli
+    main: ./cmd/agent-outbox
+    binary: agent-outbox
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X agent-outbox/internal/command.version={{ .Version }} -X
+        agent-outbox/internal/command.commit={{ .Commit }} -X
+        agent-outbox/internal/command.date={{ .Date }}
+
+archives:
+  - id: agent-outbox
+    ids:
+      - agent-outbox
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+homebrew_casks:
+  - name: agent-outbox
+    skip_upload: true
+    ids:
+      - agent-outbox
+    binaries:
+      - agent-outbox
+    repository:
+      owner: conn-castle
+      name: homebrew-tap
+    directory: Casks
+    url:
+      template:
+        https://github.com/conn-castle/agent-outbox/releases/download/{{ .Tag
+        }}/{{ .ArtifactName }}
+      verified: github.com/conn-castle/agent-outbox/
+    homepage: https://agent-outbox.dev
+    description: Agent Outbox command line client
+    license: PolyForm-Noncommercial-1.0.0
+
+release:
+  disable: true

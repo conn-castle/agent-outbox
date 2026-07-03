@@ -26,16 +26,53 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-03 cli-secret-store-no-cross-process-lock: Concurrent CLI invocations can lose credentials
+    Priority: Medium. Area: CLI/Reliability
+    Description: `cli/internal/foundation/secrets.go` (loadManifest/persistManifest) and `config.go` (saveConfig) do whole-file read-modify-write with no advisory lock spanning load→persist. Each write is atomic (temp+rename), but two concurrent invocations (e.g. two `connect`s) both read then both write, so the last writer clobbers the other's entry. The secret store and config are separate files updated in sequence, so a concurrent run can also leave them inconsistent (a config caller with no secret). Single-flow rollback does not protect against a second process.
+    Next step: Hold an advisory lock (flock or O_CREATE|O_EXCL lock file) across the load→persist window for both the manifest and config; decide stale-lock handling.
+    Notes: Deferred from audit-and-fix Round 1 (F4) as broader scope than a point fix.
+
+- Issue 2026-07-03 cli-browser-denial-waits-for-expiry: Denied browser approval hangs until the ~10-min deadline
+    Priority: Low. Area: CLI/Caller control-plane UX
+    Description: In `cli/internal/command/controlplane.go` runBrowserFlow, the /callback handler drops every non-approved result (returns without sending to the callbacks channel) and callbackResultFromRequest checks status before the setup_request_id match. If the hosted app redirects a denial to the loopback callback, the terminal waits out the setup-request expiry and then reports a misleading "Timed out waiting for browser approval callback" instead of failing fast on the denial.
+    Next step: Confirm the cross-repo contract (does the app redirect a denied approval to the loopback callback, and with what status?). If yes, validate setup_request_id first and deliver a matched denial on the channel while still dropping mismatched/spurious callbacks.
+    Notes: Deferred from audit-and-fix Round 1 (F2): unverifiable from the CLI diff alone, and the naive fix would break controlplane_test.go ~217, which asserts a matched-id-without-status callback is dropped.
+
+- Issue 2026-07-03 cli-device-poll-no-client-deadline: Device-code poll loops rely on the server for termination
+    Priority: Low. Area: CLI/Caller control-plane
+    Description: `runDeviceConnect` and `runDeviceSetupCodeFlow` in controlplane.go loop while the server returns authorization_pending, exiting only on a non-pending error or ctx cancellation. deviceStartData carries no expires_in, so the client cannot self-bound the poll; termination depends entirely on a conformant (RFC 8628) server returning a terminal expired_token. Bounded against a correct first-party server, unbounded against a misbehaving one.
+    Next step: Surface expires_in/expires_at from the device-start response and cap the poll loop, or add a decided client-side cap (no hidden magic default).
+    Notes: Deferred from audit-and-fix Round 1 (F10).
+
+- Issue 2026-07-03 goreleaser-validator-brittle-regex: .goreleaser.yaml validator regexes are adjacency/greedy-fragile
+    Priority: Low. Area: Tooling/Release validation
+    Description: In scripts/foundation.mjs validateGoReleaserTooling, `release:\s*\n\s*disable:\s*true` requires disable to be the line immediately after release: (false-negative on a valid config that adds a field first), and `homebrew_casks:\s*\n[\s\S]*skip_upload:\s*true` is unbounded/greedy so it would accept skip_upload: true appearing anywhere later in the file (false-positive). The current .goreleaser.yaml passes both by ordering.
+    Next step: Anchor the cask skip_upload check within the cask block and relax the release-disable adjacency without introducing new brittleness; keep the current file passing.
+    Notes: Deferred from audit-and-fix Round 1 (F14); fixing risks new brittleness, so left for a focused tooling pass.
+
 - Issue 2026-07-03 caller-setup-prune-test-account-scoped: DB test can't catch a reverted prune preservation guard
     Priority: Medium. Area: Testing/Database cleanup
     Description: `agent_outbox_prune_caller_setup_requests` was made `security definer` so its `not exists (... caller_credentials ...)` preservation guard works under account-less global cleanup (`caller_credentials` has only account-scoped RLS). The opt-in DB test `phase 3 local database` (tests/foundation.test.mjs ~3077-3200) runs that prune with `auth_surface=cleanup` AND `account_id=accountA` set, so the guard sees accountA's credentials even under SECURITY INVOKER — the test passes whether the function is definer or invoker and cannot catch a regression that reverts the guard. No production executor runs this prune yet (the cron is a canary; the builder is test-only).
     Next step: Add an assertion that runs the prune under cleanup surface with NO account_id and asserts the referenced pending-replacement setup request + credential are still preserved (would fail under security invoker).
     Notes: Surfaced by audit-and-fix Round 1 while validating the F1 security-definer fix.
 
-- Issue 2026-07-03 orphaned-connect-caller-rows: Abandoned connect flows leak caller rows
-    Priority: Low. Area: Database/Data hygiene
-    Description: Each connect browser/device exchange inserts a new `agent_outbox_callers` row (`insertConnectCallerStatement`, src/server/caller-connect.ts ~1744-1764) before minting the pending credential. When a flow is abandoned, the setup-request prune cascade-cleans the pending credential, but the caller row is never removed and holds no active credential, so abandoned/retried connects accumulate orphaned caller rows indefinitely. Data hygiene, not a secret leak.
-    Next step: Add a bounded prune (new migration + cleanup function) removing callers with no non-terminal credential after a retention window.
+- Issue 2026-07-03 quota-maintenance-unwired: Periodic quota/limit/retention cleanup has no production caller
+    Priority: Medium. Area: Reliability/Cleanup
+    Description: `quotaWindowMaintenanceStatements`, `activeLimitMaintenanceStatement`, and `pendingInputRetentionStatement` in `src/server/cleanup.ts` have no production caller (only tests), so account/IP quota windows, expired limit blocks, and retained pending inputs are never pruned.
+    Next step: Add a scheduled cleanup job running these statements under the `cleanup` auth surface.
+    Notes: Found during resolve-findings 20260703-133952-c85f (finding 8); the IP prune cutoff was already tightened to minute-anchored and an `updated_at` index on `agent_outbox_ip_quota_windows` was added in V20260702000000, but nothing prunes until the job exists.
+
+- Issue 2026-07-02 never-activated-connect-caller-name-burn: Abandoned connect leaves orphan caller rows and burns the name
+    Priority: Medium. Area: Caller control-plane
+    Description: Two-phase connect creates the `agent_outbox_callers` row (unique `caller_slug`) at approval but only activates the credential after CLI local persistence. A connect abandoned before activation leaves an orphan caller row plus an expired pending credential: re-connecting the same `local_caller_name` fails with `caller_already_exists` (name burned, no reclaim path), and because the setup-request prune cascade-cleans only the pending credential, abandoned/retried connects accumulate orphaned caller rows indefinitely (data hygiene, not a secret leak).
+    Next step: Owner decision on whether/how to reclaim or reuse a never-activated caller name; a bounded prune (new migration + cleanup function) removing callers with no non-terminal credential after a retention window would cover both consequences. Do not implement auto reuse/rename/reclaim without that decision.
+    Notes: Deferred from resolve-findings 20260702-195040-ac9d; the row-accumulation aspect was re-confirmed by audit-and-fix Round 1 (2026-07-03).
+
+- Issue 2026-07-02 connect-client-ip-trust-policy: Connect per-IP limits need an explicit proxy trust policy
+    Priority: Medium. Area: Caller control-plane/Security
+    Description: `trustedClientIpAddress` accepts `CF-Connecting-IP`, then falls back to the first `X-Forwarded-For` value. The repo documents Cloudflare Workers/OpenNext as the hosted runtime, but does not define when fallback proxy headers are trustworthy.
+    Next step: Decide and document the deployment/proxy trust policy, then update `trustedClientIpAddress` and route tests to enforce only the approved client-IP source(s).
+    Notes: Deferred from resolve-findings 20260702-031158-414f because inventing this policy would broaden WP-1.
 
 - Issue 2026-07-01 output-file-single-row-invariant: Output files table permits multiple rows per result
     Priority: Medium. Area: Database/File uploads
