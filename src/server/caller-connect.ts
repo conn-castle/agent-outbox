@@ -966,7 +966,7 @@ export async function denyConnectSetupRequest(
   };
 }
 
-export function createBrowserSetupRequestStatement(input: {
+function createBrowserSetupRequestStatement(input: {
   localCallerName: string;
   displayName: string;
   callbackUrl: string;
@@ -996,7 +996,7 @@ export function createBrowserSetupRequestStatement(input: {
   };
 }
 
-export function createDeviceSetupRequestStatement(input: {
+function createDeviceSetupRequestStatement(input: {
   localCallerName: string;
   displayName: string;
   deviceCodeHash: string;
@@ -1034,7 +1034,7 @@ export function callerSetupCodeDigest(value: string) {
     .digest("hex");
 }
 
-export function trustedClientIpAddress(request: Request) {
+function trustedClientIpAddress(request: Request) {
   const candidates = [
     request.headers.get("cf-connecting-ip")?.trim(),
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
@@ -1607,9 +1607,6 @@ function terminalSetupStateStatement(input: {
   accountId: string;
   statuses: readonly SetupTerminalStatus[];
 }): TransactionContextStatement {
-  if (input.statuses.length === 0) {
-    throw new Error("At least one terminal setup status is required.");
-  }
   const statusPlaceholders = input.statuses
     .map((_, index) => `$${index + 3}`)
     .join(", ");

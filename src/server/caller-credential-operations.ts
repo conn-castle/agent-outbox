@@ -101,14 +101,11 @@ type SetupRequestIdRow = {
   setup_request_id: string;
 };
 
-type StartSetupRequestRow = SetupRequestIdRow;
-
 type ApprovalTargetRow = {
   setup_request_id: string;
   operation: CredentialOperation;
   status: SetupRequestStatus;
   local_caller_name: string;
-  display_name: string;
   callback_url: string | null;
   expires_at: string | Date;
   caller_id: string;
@@ -923,9 +920,9 @@ async function handleOperationBrowserStartRequest(
         return limit;
       }
 
-      let result: { rows: StartSetupRequestRow[] };
+      let result: { rows: SetupRequestIdRow[] };
       try {
-        result = await query<StartSetupRequestRow>(
+        result = await query<SetupRequestIdRow>(
           createBrowserSetupRequestStatement(operation, {
             ...parsed.data,
             expiresAt
@@ -940,9 +937,6 @@ async function handleOperationBrowserStartRequest(
         throw error;
       }
       const setup = result.rows[0];
-      if (!setup) {
-        return notFoundError(`Caller ${operation} target was not found.`);
-      }
 
       const approvalUrl = new URL(`/caller/${operation}/approve`, baseUrl.data);
       approvalUrl.searchParams.set("setup_request_id", setup.setup_request_id);
@@ -1011,9 +1005,9 @@ async function handleOperationDeviceStartRequest(
         return limit;
       }
 
-      let result: { rows: StartSetupRequestRow[] };
+      let result: { rows: SetupRequestIdRow[] };
       try {
-        result = await query<StartSetupRequestRow>(
+        result = await query<SetupRequestIdRow>(
           createDeviceSetupRequestStatement(operation, {
             ...parsed.data,
             deviceCodeHash: setupCodeDigest(deviceCode),
@@ -1030,9 +1024,6 @@ async function handleOperationDeviceStartRequest(
         throw error;
       }
       const setup = result.rows[0];
-      if (!setup) {
-        return notFoundError(`Caller ${operation} target was not found.`);
-      }
 
       const verificationUri = new URL(
         `/caller/${operation}/device`,
@@ -1668,7 +1659,6 @@ function approvalTargetBySetupRequestIdStatement(input: {
         setup.operation,
         setup.status,
         setup.local_caller_name,
-        setup.display_name,
         setup.callback_url,
         setup.expires_at,
         caller.caller_id::text as caller_id,
@@ -1717,7 +1707,6 @@ function approvalTargetByUserCodeStatement(input: {
         setup.operation,
         setup.status,
         setup.local_caller_name,
-        setup.display_name,
         setup.callback_url,
         setup.expires_at,
         caller.caller_id::text as caller_id,
@@ -2321,16 +2310,18 @@ async function verifyPendingReplacementCredential(
     return invalidCallerCredentialsError();
   }
 
+  const expired =
+    !credential.expires_at ||
+    new Date(credential.expires_at).getTime() <= now.getTime();
   if (
     credential.status !== "pending_activation" ||
     credential.revoked_at ||
-    !credential.expires_at ||
-    new Date(credential.expires_at).getTime() <= now.getTime()
+    expired
   ) {
     if (
       credential.status === "pending_activation" &&
       credential.expires_at &&
-      new Date(credential.expires_at).getTime() <= now.getTime()
+      expired
     ) {
       await query(
         expirePendingCredentialStatement(credential.caller_credential_id)
@@ -2453,7 +2444,7 @@ function requiredText(
   record: Record<string, unknown>,
   key: string,
   fields: ApiFieldError[],
-  maxLength = MAX_TEXT_LENGTH
+  maxLength: number
 ) {
   const value = record[key];
   if (typeof value !== "string" || value.trim() === "") {
