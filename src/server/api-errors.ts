@@ -16,6 +16,7 @@ export type ApiErrorCode =
   | "invalid_caller_credentials"
   | "authorization_failed"
   | "not_found"
+  | "caller_already_exists"
   | "pending_content_conflict"
   | "answered_unacknowledged"
   | "input_not_pending"

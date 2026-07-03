@@ -89,34 +89,68 @@ generic validation or quota error.
 
 The CLI displays the message and may open the URL for `agent-outbox upgrade`.
 
+## CLI Exit Codes
+
+The CLI uses BSD `sysexits`-style numeric exits for stable agent branching. `0`
+means success. Unknown local failures use `1`. API error codes from the catalog
+below map as follows:
+
+| Exit code | Name              | Error codes                                                                                                                                         |
+| --------: | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+|        64 | usage             | `invalid_request`, `usage_error`, and local command-line usage errors.                                                                              |
+|        65 | data              | `invalid_json`, `request_too_large`, `validation_failed`, `unsupported_icon`, `unsafe_html`, `unsafe_color`, `invalid_action_response`.             |
+|        66 | not found         | `not_found`.                                                                                                                                        |
+|        69 | unavailable       | `upgrade_required`.                                                                                                                                 |
+|        70 | software          | `internal_error`.                                                                                                                                   |
+|        73 | conflict          | `caller_already_exists`, `pending_content_conflict`, `answered_unacknowledged`, `input_not_pending`, `stale_input_revision`, `output_already_read`. |
+|        74 | secret store      | `secret_store_error`.                                                                                                                               |
+|        75 | temporary failure | `rate_limit_exceeded`, `quota_limit_exceeded`, `storage_limit_exceeded`, `authorization_pending`, `temporary_unavailable`.                          |
+|        77 | permission        | `authentication_required`, `invalid_caller_credentials`, `authorization_failed`.                                                                    |
+|        78 | config            | Local CLI config and caller-selection errors such as `config_error`, `caller_selection_conflict`, `ambiguous_caller`, and `unknown_caller`.         |
+
+## Local CLI Error Codes
+
+These codes are emitted by the local CLI JSON error renderer and do not have an
+HTTP status. They use the same envelope shape as API errors.
+
+| Code                        | Exit code | Meaning                                                                                                                                                          |
+| --------------------------- | --------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `usage_error`               |        64 | The local command line is invalid, such as an unknown flag, unknown command, unsupported argument, or wrong argument count.                                      |
+| `config_error`              |        78 | Local CLI config, base URL, config path, or non-secret config file contents are missing, unreadable, invalid, or unsupported.                                    |
+| `caller_selection_conflict` |        78 | Both `--caller` and `AGENT_OUTBOX_CALLER` were set; the CLI refuses to choose one even when the values match.                                                    |
+| `ambiguous_caller`          |        78 | More than one local caller is configured and no explicit caller selector was supplied.                                                                           |
+| `unknown_caller`            |        78 | The selected local caller name is absent from the selected config file.                                                                                          |
+| `secret_store_error`        |        74 | The local OS credential store or encrypted caller-secret file is unavailable, missing required caller secret material, unreadable, unwritable, or undecryptable. |
+
 ## Error Catalog
 
-| Code                         | HTTP status | Meaning                                                                                                                                            |
-| ---------------------------- | ----------: | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_request`            |         400 | The request shape, query string, method, or headers are invalid before schema-specific validation.                                                 |
-| `invalid_json`               |         400 | The request body is not valid JSON.                                                                                                                |
-| `request_too_large`          |         413 | The non-file request body exceeds the 128,000-byte cap.                                                                                            |
-| `validation_failed`          |         422 | The typed input or output action response failed schema validation.                                                                                |
-| `unsupported_icon`           |         422 | A submitted icon is not a supported Lucide icon name.                                                                                              |
-| `unsafe_html`                |         422 | Submitted HTML contains disallowed elements, attributes, URLs, or embedded content.                                                                |
-| `unsafe_color`               |         422 | A submitted color contains unsupported or unsafe CSS syntax.                                                                                       |
-| `invalid_action_response`    |         422 | A human action response does not match the selected action popup schema.                                                                           |
-| `upgrade_required`           |         402 | A hosted-free account submitted an input item containing a `file_upload` popup.                                                                    |
-| `authentication_required`    |         401 | No usable bearer credential was supplied.                                                                                                          |
-| `invalid_caller_credentials` |         401 | The bearer credential is invalid, wrong, revoked, expired, inactive, or otherwise unusable. The client response does not distinguish these states. |
-| `authorization_failed`       |         403 | The authenticated principal is not allowed to access the requested account, caller, output, or file.                                               |
-| `not_found`                  |         404 | The requested live resource is absent for the authenticated caller.                                                                                |
-| `pending_content_conflict`   |         409 | `input send` repeated a live pending `caller_item_id` with different normalized content.                                                           |
-| `answered_unacknowledged`    |         409 | The live item is answered and the matching output result is still unacknowledged.                                                                  |
-| `input_not_pending`          |         409 | Replace or delete targeted an item that is not pending.                                                                                            |
-| `stale_input_revision`       |         409 | Human answer submission used an older revision than the current pending item.                                                                      |
-| `output_already_read`        |         409 | A pre-read human undo was attempted after caller read disabled undo.                                                                               |
-| `rate_limit_exceeded`        |         429 | A fixed-window or burst limit blocked the request.                                                                                                 |
-| `quota_limit_exceeded`       |         429 | An account quota or active limit block denied the request.                                                                                         |
-| `storage_limit_exceeded`     |         429 | A current queue or stored-byte stock limit denied a storage-producing operation.                                                                   |
-| `authorization_pending`      |         202 | Device-code caller connection has not been approved yet.                                                                                           |
-| `temporary_unavailable`      |         503 | A transient dependency or runtime failure prevented the operation.                                                                                 |
-| `internal_error`             |         500 | Unexpected server error. The response may include `error_id` for support correlation.                                                              |
+| Code                         | HTTP status | Meaning                                                                                                                                                                    |
+| ---------------------------- | ----------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_request`            |         400 | The request shape, query string, method, or headers are invalid before schema-specific validation.                                                                         |
+| `invalid_json`               |         400 | The request body is not valid JSON.                                                                                                                                        |
+| `request_too_large`          |         413 | The non-file request body exceeds the 128,000-byte cap.                                                                                                                    |
+| `validation_failed`          |         422 | The typed input or output action response failed schema validation.                                                                                                        |
+| `unsupported_icon`           |         422 | A submitted icon is not a supported Lucide icon name.                                                                                                                      |
+| `unsafe_html`                |         422 | Submitted HTML contains disallowed elements, attributes, URLs, or embedded content.                                                                                        |
+| `unsafe_color`               |         422 | A submitted color contains unsupported or unsafe CSS syntax.                                                                                                               |
+| `invalid_action_response`    |         422 | A human action response does not match the selected action popup schema.                                                                                                   |
+| `upgrade_required`           |         402 | A hosted-free account submitted an input item containing a `file_upload` popup.                                                                                            |
+| `authentication_required`    |         401 | No usable bearer credential was supplied.                                                                                                                                  |
+| `invalid_caller_credentials` |         401 | The bearer credential is invalid, wrong, revoked, expired, inactive, or otherwise unusable. The client response does not distinguish these states.                         |
+| `authorization_failed`       |         403 | The authenticated principal is not allowed to access the requested account, caller, output, or file.                                                                       |
+| `not_found`                  |         404 | The requested live resource is absent for the authenticated caller, or the Clerk approval page found no setup request for the signed-in account.                           |
+| `caller_already_exists`      |         409 | Caller connect approval targeted a name/slug already used by an existing caller in the account; use caller rotate or choose a different name.                              |
+| `pending_content_conflict`   |         409 | `input send` repeated a live pending `caller_item_id` with different normalized content.                                                                                   |
+| `answered_unacknowledged`    |         409 | The live item is answered and the matching output result is still unacknowledged.                                                                                          |
+| `input_not_pending`          |         409 | Replace or delete targeted an item that is not pending.                                                                                                                    |
+| `stale_input_revision`       |         409 | Human answer submission used an older revision than the current pending item.                                                                                              |
+| `output_already_read`        |         409 | A pre-read human undo was attempted after caller read disabled undo.                                                                                                       |
+| `rate_limit_exceeded`        |         429 | A fixed-window or burst limit blocked the request.                                                                                                                         |
+| `quota_limit_exceeded`       |         429 | An account quota or active limit block denied the request.                                                                                                                 |
+| `storage_limit_exceeded`     |         429 | A current queue or stored-byte stock limit denied a storage-producing operation.                                                                                           |
+| `authorization_pending`      |         202 | Device-code caller control-plane operation (connect, rotate, or revoke) has not been approved yet; retry after the response's `Retry-After` / `retry_after_seconds` value. |
+| `temporary_unavailable`      |         503 | A transient dependency or runtime failure prevented the operation.                                                                                                         |
+| `internal_error`             |         500 | Unexpected server error. The response may include `error_id` for support correlation.                                                                                      |
 
 ## Leakage Rules
 

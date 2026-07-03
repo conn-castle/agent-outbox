@@ -70,6 +70,8 @@ import {
   downgradeGraceExpiryStatement,
   pendingInputRetentionStatement,
   preReadUndoStatement,
+  quotaWindowMaintenanceStatements,
+  quotaWindowPruningCutoff,
   quotaWindowPruningStatement,
   terminalOutputDeletionStatement
 } from "../src/server/cleanup.ts";
@@ -149,7 +151,7 @@ async function revokeCurrentUserAppRoleGrant(client) {
 
 /**
  * @param {import("pg").Client} client
- * @param {{ accountA?: string, accountB?: string, accountAuditA?: string, accountAuditB?: string, userA?: string }} ids
+ * @param {{ accountA?: string, accountB?: string, accountAuditA?: string, accountAuditB?: string, userA?: string, ipQuotaAddress?: string }} ids
  */
 async function cleanupPhase3DatabaseVerificationRows(client, ids) {
   if (
@@ -157,7 +159,8 @@ async function cleanupPhase3DatabaseVerificationRows(client, ids) {
     !ids.accountB &&
     !ids.accountAuditA &&
     !ids.accountAuditB &&
-    !ids.userA
+    !ids.userA &&
+    !ids.ipQuotaAddress
   ) {
     return;
   }
@@ -177,6 +180,16 @@ async function cleanupPhase3DatabaseVerificationRows(client, ids) {
           where account_audit_id = any($1::uuid[])
         `,
         [[ids.accountAuditA, ids.accountAuditB].filter(Boolean)]
+      );
+    }
+
+    if (ids.ipQuotaAddress) {
+      await client.query(
+        `
+          delete from public.agent_outbox_ip_quota_windows
+          where ip_address = $1::inet
+        `,
+        [ids.ipQuotaAddress]
       );
     }
 
@@ -596,12 +609,12 @@ test("validateRuntimeProofScope rejects runtime schema mutation and later-phase 
   });
 
   assert.deepEqual(failures, [
-    "app/human/queue/page.tsx is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "app/human/queue/page.tsx is unrelated later-phase implementation scope, not current caller API scope",
     "src/server/schema.ts contains out-of-scope token: create table"
   ]);
 });
 
-test("validateRuntimeProofScope allows Phase 4 caller API route paths", () => {
+test("validateRuntimeProofScope allows implemented caller API route paths", () => {
   const failures = validateRuntimeProofScope({
     "app/api/input/send/route.ts": "export async function POST() {}",
     "app/api/input/replace/route.ts": "export async function POST() {}",
@@ -615,6 +628,35 @@ test("validateRuntimeProofScope allows Phase 4 caller API route paths", () => {
     "app/api/output/[output_result_id]/files/[file_id]/route.ts":
       "export async function GET() {}",
     "app/api/caller/status/route.ts": "export async function GET() {}",
+    "app/api/caller/connect/browser/start/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/connect/device/start/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/connect/device/poll/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/connect/exchange/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/connect/activate/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/connect/abort/route.ts": "export async function POST() {}",
+    "app/api/caller/rotate/browser/start/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/rotate/device/start/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/rotate/device/poll/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/rotate/exchange/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/rotate/activate/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/rotate/abort/route.ts": "export async function POST() {}",
+    "app/api/caller/revoke/browser/start/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/revoke/device/start/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/revoke/device/poll/route.ts":
+      "export async function POST() {}",
+    "app/api/caller/revoke/confirm/route.ts": "export async function POST() {}",
     "app/api/account/status/route.ts": "export async function GET() {}"
   });
 
@@ -635,10 +677,9 @@ test("validateRuntimeProofScope rejects later-phase billing and storage drift", 
     "app/api/billing/checkout/route.ts": "export async function POST() {}",
     "app/api/account/portal/route.ts": "export async function POST() {}",
     "app/api/account/delete/route.ts": "export async function POST() {}",
-    "app/api/caller/connect/browser/start/route.ts":
-      "export async function POST() {}",
     "app/api/caller/rotate/route.ts": "export async function POST() {}",
     "app/api/caller/revoke/route.ts": "export async function POST() {}",
+    "app/api/caller/list/route.ts": "export async function POST() {}",
     "app/api/input/[caller_item_id]/route.ts":
       "export async function DELETE() {}",
     "app/api/human/answer/route.ts": "export async function POST() {}",
@@ -652,17 +693,17 @@ test("validateRuntimeProofScope rejects later-phase billing and storage drift", 
   });
 
   assert.deepEqual(failures, [
-    "app/api/billing/checkout/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "app/api/account/portal/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "app/api/account/delete/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "app/api/caller/connect/browser/start/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "app/api/caller/rotate/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "app/api/caller/revoke/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "app/api/input/[caller_item_id]/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "app/api/human/answer/route.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "src/cli/main.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "src/server/steward-email.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
-    "src/server/email-source.ts is unrelated later-phase implementation scope, not Phase 4 caller API scope",
+    "app/api/billing/checkout/route.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "app/api/account/portal/route.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "app/api/account/delete/route.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "app/api/caller/rotate/route.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "app/api/caller/revoke/route.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "app/api/caller/list/route.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "app/api/input/[caller_item_id]/route.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "app/api/human/answer/route.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "src/cli/main.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "src/server/steward-email.ts is unrelated later-phase implementation scope, not current caller API scope",
+    "src/server/email-source.ts is unrelated later-phase implementation scope, not current caller API scope",
     "src/server/billing.ts contains out-of-scope token: stripe.checkout",
     "src/server/billing.ts contains out-of-scope token: checkout.sessions",
     "src/server/files.ts contains out-of-scope token: supabase.storage",
@@ -1331,7 +1372,7 @@ test("accounting helpers keep audit data content-safe and use quota windows for 
   );
 });
 
-test("cleanup statement builders target account-scoped database functions", () => {
+test("cleanup statement builders target lifecycle database functions", () => {
   assert.deepEqual(duplicateAcknowledgementLookupStatement("output-123"), {
     sql: "select public.agent_outbox_output_ack_already_recorded($1) as already_recorded",
     values: ["output-123"]
@@ -1372,13 +1413,40 @@ test("cleanup statement builders target account-scoped database functions", () =
       downgradeGraceExpiryStatement(-1, new Date("2026-06-30T00:00:00.000Z")),
     /nonFilePayloadLimitBytes must be a non-negative safe integer/
   );
+  const quotaPruneBefore = new Date("2026-06-01T00:00:00.000Z");
+  const accountQuotaPruning = {
+    sql: "select public.agent_outbox_prune_quota_windows($1) as deleted_count",
+    values: ["2026-06-01T00:00:00.000Z"]
+  };
   assert.deepEqual(
-    quotaWindowPruningStatement(new Date("2026-06-01T00:00:00.000Z")),
+    quotaWindowPruningStatement(quotaPruneBefore),
+    accountQuotaPruning
+  );
+  const quotaMaintenanceNow = new Date("2026-07-15T12:34:56.000Z");
+  assert.equal(
+    quotaWindowPruningCutoff(quotaMaintenanceNow).toISOString(),
+    "2026-07-01T00:00:00.000Z"
+  );
+  // IP quota rows are minute-only, so their prune uses a minute-anchored cutoff
+  // (start of the current minute) rather than the account month-anchored cutoff.
+  assert.equal(
+    quotaWindowPruningCutoff(quotaMaintenanceNow, ["minute"]).toISOString(),
+    "2026-07-15T12:34:00.000Z"
+  );
+  assert.deepEqual(quotaWindowMaintenanceStatements(quotaMaintenanceNow), [
     {
       sql: "select public.agent_outbox_prune_quota_windows($1) as deleted_count",
-      values: ["2026-06-01T00:00:00.000Z"]
+      values: ["2026-07-01T00:00:00.000Z"]
+    },
+    {
+      sql: "select public.agent_outbox_prune_ip_quota_windows($1) as deleted_count",
+      values: ["2026-07-15T12:34:00.000Z"]
+    },
+    {
+      sql: "select public.agent_outbox_prune_caller_setup_requests($1) as deleted_count",
+      values: ["2026-07-08T12:34:56.000Z"]
     }
-  );
+  ]);
   assert.deepEqual(
     activeLimitMaintenanceStatement(new Date("2026-06-30T00:00:00.000Z")),
     {
@@ -1787,8 +1855,10 @@ test(
     const runId = crypto.randomUUID();
     const accountLabelA = `phase3-a-${runId}`;
     const accountLabelB = `phase3-b-${runId}`;
-    /** @type {{ accountA?: string, accountB?: string, accountAuditA?: string, accountAuditB?: string, userA?: string, callerA?: string, callerA2?: string, callerB?: string, answeredInput?: string, fileOutputInput?: string, fileUploadInput?: string, output?: string, fileOutput?: string }} */
-    const ids = {};
+    const ipQuotaAddress = `2001:db8::${runId.slice(0, 4)}:${runId.slice(4, 8)}`;
+    const ipQuotaPolicyMetric = `phase3_policy_probe_${runId}`;
+    /** @type {{ accountA?: string, accountB?: string, accountAuditA?: string, accountAuditB?: string, userA?: string, callerA?: string, callerA2?: string, callerB?: string, answeredInput?: string, fileOutputInput?: string, fileUploadInput?: string, output?: string, fileOutput?: string, ipQuotaAddress?: string }} */
+    const ids = { ipQuotaAddress };
     let grantedAppRoleForTest = false;
 
     await client.connect();
@@ -1853,6 +1923,8 @@ test(
             "public.agent_outbox_delete_retained_pending_inputs(timestamptz, text)",
             "public.agent_outbox_cleanup_downgrade_grace_expiry(bigint, timestamptz)",
             "public.agent_outbox_prune_quota_windows(timestamptz)",
+            "public.agent_outbox_prune_ip_quota_windows(timestamptz)",
+            "public.agent_outbox_prune_caller_setup_requests(timestamptz)",
             "public.agent_outbox_prune_expired_limit_blocks(timestamptz)"
           ]
         ]
@@ -1979,8 +2051,9 @@ test(
       }
 
       const credentialKeyId = `key-${runId}`;
+      const credentialA2KeyId = `key-a2-${runId}`;
       const credentialDigest = "c".repeat(64);
-      await client.query(
+      const credentialRows = await client.query(
         `
           insert into public.agent_outbox_caller_credentials(
             account_id,
@@ -1992,9 +2065,136 @@ test(
             status,
             activated_at
           )
-          values ($1, $2, $3, 'aob_live_phase3_test', 'test', $4, 'active', '2026-06-30T12:00:00.000Z')
+          values
+            ($1, $2, $3, 'aob_live_phase3_test', 'test', $4, 'active', '2026-06-30T12:00:00.000Z'),
+            ($1, $5, $6, 'aob_live_phase3_a2', 'a2ky', $7, 'active', '2026-06-30T12:00:00.000Z')
+          returning caller_credential_id, key_id
         `,
-        [ids.accountA, ids.callerA, credentialKeyId, credentialDigest]
+        [
+          ids.accountA,
+          ids.callerA,
+          credentialKeyId,
+          credentialDigest,
+          ids.callerA2,
+          credentialA2KeyId,
+          "d".repeat(64)
+        ]
+      );
+      const credentialIdsByKeyId = new Map(
+        credentialRows.rows.map((row) => [row.key_id, row.caller_credential_id])
+      );
+      const activeCredentialAId = credentialIdsByKeyId.get(credentialKeyId);
+      const activeCredentialA2Id = credentialIdsByKeyId.get(credentialA2KeyId);
+      assert.ok(activeCredentialAId);
+      assert.ok(activeCredentialA2Id);
+
+      const setupPrunePrefix = `setup-prune-${runId}`;
+      const setupLabels = {
+        terminalStale: `${setupPrunePrefix}-terminal-stale`,
+        terminalFresh: `${setupPrunePrefix}-terminal-fresh`,
+        pendingExpired: `${setupPrunePrefix}-pending-expired`,
+        pendingLive: `${setupPrunePrefix}-pending-live`,
+        approvedExpired: `${setupPrunePrefix}-approved-expired`,
+        referencedPendingReplacement: `${setupPrunePrefix}-referenced-pending-replacement`,
+        cascadeProbe: `setup-cascade-${runId}`,
+        duplicatePendingProbe: `setup-duplicate-pending-${runId}`
+      };
+      const setupRows = await client.query(
+        `
+          insert into public.agent_outbox_caller_setup_requests(
+            operation,
+            flow,
+            local_caller_name,
+            display_name,
+            callback_url,
+            account_id,
+            caller_id,
+            approved_by_user_id,
+            status,
+            expires_at,
+            updated_at,
+            approved_at,
+            exchanged_at,
+            denied_at
+          )
+          values
+            ('connect', 'browser', $1, 'Terminal stale', 'http://127.0.0.1/callback', $9, $10, $12, 'exchanged', '2026-07-14T12:00:00.000Z', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', null),
+            ('connect', 'browser', $2, 'Terminal fresh', 'http://127.0.0.1/callback', $9, $10, $12, 'denied', '2026-06-01T00:00:00.000Z', '2026-06-20T00:00:00.000Z', null, null, '2026-06-20T00:00:00.000Z'),
+            ('connect', 'browser', $3, 'Pending expired', 'http://127.0.0.1/callback', $9, $10, null, 'pending', '2026-06-01T00:00:00.000Z', '2026-06-20T00:00:00.000Z', null, null, null),
+            ('connect', 'browser', $4, 'Pending live', 'http://127.0.0.1/callback', $9, $10, null, 'pending', '2026-06-20T00:00:00.000Z', '2026-06-01T00:00:00.000Z', null, null, null),
+            ('connect', 'browser', $5, 'Approved expired', 'http://127.0.0.1/callback', $9, $10, $12, 'approved', '2026-06-01T00:00:00.000Z', '2026-06-20T00:00:00.000Z', '2026-06-01T00:00:00.000Z', null, null),
+            ('rotate', 'browser', $6, 'Referenced pending replacement', 'http://127.0.0.1/callback', $9, $10, $12, 'approved', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', null, null),
+            ('rotate', 'browser', $7, 'Cascade probe', 'http://127.0.0.1/callback', $9, $11, $12, 'approved', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', null, null),
+            ('rotate', 'browser', $8, 'Duplicate pending probe', 'http://127.0.0.1/callback', $9, $10, $12, 'approved', '2026-06-20T00:00:00.000Z', '2026-06-20T00:00:00.000Z', '2026-06-20T00:00:00.000Z', null, null)
+          returning setup_request_id, local_caller_name
+        `,
+        [
+          setupLabels.terminalStale,
+          setupLabels.terminalFresh,
+          setupLabels.pendingExpired,
+          setupLabels.pendingLive,
+          setupLabels.approvedExpired,
+          setupLabels.referencedPendingReplacement,
+          setupLabels.cascadeProbe,
+          setupLabels.duplicatePendingProbe,
+          ids.accountA,
+          ids.callerA,
+          ids.callerA2,
+          ids.userA
+        ]
+      );
+      const setupRequestIdsByLabel = new Map(
+        setupRows.rows.map((row) => [
+          row.local_caller_name,
+          row.setup_request_id
+        ])
+      );
+      const referencedSetupRequestId = setupRequestIdsByLabel.get(
+        setupLabels.referencedPendingReplacement
+      );
+      const cascadeSetupRequestId = setupRequestIdsByLabel.get(
+        setupLabels.cascadeProbe
+      );
+      const duplicatePendingSetupRequestId = setupRequestIdsByLabel.get(
+        setupLabels.duplicatePendingProbe
+      );
+      assert.ok(referencedSetupRequestId);
+      assert.ok(cascadeSetupRequestId);
+      assert.ok(duplicatePendingSetupRequestId);
+
+      const pendingReplacementKeyId = `pending-${runId}`;
+      const cascadePendingReplacementKeyId = `pending-cascade-${runId}`;
+      await client.query(
+        `
+          insert into public.agent_outbox_caller_credentials(
+            account_id,
+            caller_id,
+            key_id,
+            key_prefix,
+            key_last_four,
+            secret_hmac_sha256,
+            status,
+            expires_at,
+            pending_replacement_for_credential_id,
+            pending_replacement_setup_request_id
+          )
+          values
+            ($1, $2, $3, 'aob_live_pending_a', 'pend', $4, 'pending_activation', '2026-07-01T00:00:00.000Z', $5, $6),
+            ($1, $7, $8, 'aob_live_pending_a2', 'pa2k', $9, 'pending_activation', '2026-07-01T00:00:00.000Z', $10, $11)
+        `,
+        [
+          ids.accountA,
+          ids.callerA,
+          pendingReplacementKeyId,
+          "e".repeat(64),
+          activeCredentialAId,
+          referencedSetupRequestId,
+          ids.callerA2,
+          cascadePendingReplacementKeyId,
+          "f".repeat(64),
+          activeCredentialA2Id,
+          cascadeSetupRequestId
+        ]
       );
 
       const inputRows = await client.query(
@@ -2198,6 +2398,28 @@ test(
 
       await client.query(
         `
+          insert into public.agent_outbox_ip_quota_windows(
+            ip_address,
+            metric,
+            window_kind,
+            window_start_utc,
+            used_units,
+            updated_at
+          )
+          values (
+            $1::inet,
+            'caller_connect_start_requests_per_ip_per_minute',
+            'minute',
+            '2026-06-01T00:00:00.000Z',
+            5,
+            '2026-06-01T00:00:00.000Z'
+          )
+        `,
+        [ids.ipQuotaAddress]
+      );
+
+      await client.query(
+        `
           insert into public.agent_outbox_account_limit_blocks(
             account_id,
             operation_kind,
@@ -2253,6 +2475,117 @@ test(
         revoked_at: null,
         expires_at: null
       });
+      await client.query("reset role");
+      await client.query("commit");
+
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "human"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.user_id",
+        ids.userA
+      ]);
+      try {
+        await assert.rejects(
+          client.query(
+            `
+              insert into public.agent_outbox_caller_credentials(
+                account_id,
+                caller_id,
+                key_id,
+                key_prefix,
+                key_last_four,
+                secret_hmac_sha256,
+                status,
+                expires_at,
+                pending_replacement_for_credential_id,
+                pending_replacement_setup_request_id
+              )
+              values (
+                $1,
+                $2,
+                $3,
+                'aob_live_pending_dup',
+                'pdup',
+                $4,
+                'pending_activation',
+                '2026-07-01T00:00:00.000Z',
+                $5,
+                $6
+              )
+            `,
+            [
+              ids.accountA,
+              ids.callerA,
+              `pending-duplicate-${runId}`,
+              "a".repeat(64),
+              activeCredentialAId,
+              duplicatePendingSetupRequestId
+            ]
+          ),
+          (error) => {
+            const databaseError =
+              /** @type {{ code?: string, constraint?: string }} */ (error);
+            assert.equal(databaseError.code, "23505");
+            assert.equal(
+              databaseError.constraint,
+              "agent_outbox_one_pending_replacement_per_caller"
+            );
+            return true;
+          }
+        );
+      } finally {
+        await resetRoleAndRollback(client);
+      }
+
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "human"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.user_id",
+        ids.userA
+      ]);
+      const cascadePendingBefore = await client.query(
+        `
+          select count(*)::int as credential_count
+          from public.agent_outbox_caller_credentials
+          where key_id = $1
+        `,
+        [cascadePendingReplacementKeyId]
+      );
+      assert.equal(cascadePendingBefore.rows[0].credential_count, 1);
+      const deletedCascadeSetup = await client.query(
+        `
+          delete from public.agent_outbox_caller_setup_requests
+          where setup_request_id = $1
+          returning setup_request_id
+        `,
+        [cascadeSetupRequestId]
+      );
+      assert.equal(deletedCascadeSetup.rows.length, 1);
+      const cascadePendingAfter = await client.query(
+        `
+          select count(*)::int as credential_count
+          from public.agent_outbox_caller_credentials
+          where key_id = $1
+        `,
+        [cascadePendingReplacementKeyId]
+      );
+      assert.equal(cascadePendingAfter.rows[0].credential_count, 0);
       await client.query("reset role");
       await client.query("commit");
 
@@ -2494,6 +2827,139 @@ test(
       await client.query("reset role");
       await client.query("commit");
 
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "control_plane"
+      ]);
+      const controlPlaneIpQuota = await client.query(
+        `
+          insert into public.agent_outbox_ip_quota_windows(
+            ip_address,
+            metric,
+            window_kind,
+            window_start_utc,
+            used_units,
+            updated_at
+          )
+          values (
+            $1::inet,
+            $2,
+            'minute',
+            '2026-06-20T00:00:00.000Z',
+            2,
+            '2026-06-20T00:00:00.000Z'
+          )
+          returning metric, window_kind, used_units::int as used_units
+        `,
+        [ids.ipQuotaAddress, ipQuotaPolicyMetric]
+      );
+      assert.deepEqual(controlPlaneIpQuota.rows, [
+        { metric: ipQuotaPolicyMetric, window_kind: "minute", used_units: 2 }
+      ]);
+      await client.query("reset role");
+      await client.query("commit");
+
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      try {
+        await assert.rejects(
+          client.query(
+            `
+              update public.agent_outbox_ip_quota_windows
+              set used_units = used_units + 1
+              where ip_address = $1::inet
+                and metric = $2
+            `,
+            [ids.ipQuotaAddress, ipQuotaPolicyMetric]
+          ),
+          (error) => {
+            const databaseError = /** @type {{ code?: string }} */ (error);
+            assert.equal(databaseError.code, "42501");
+            return true;
+          }
+        );
+      } finally {
+        await resetRoleAndRollback(client);
+      }
+
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      try {
+        await assert.rejects(
+          client.query(
+            `
+              insert into public.agent_outbox_ip_quota_windows(
+                ip_address,
+                metric,
+                window_kind,
+                window_start_utc,
+                used_units,
+                updated_at
+              )
+              values (
+                $1::inet,
+                $2,
+                'minute',
+                '2026-06-20T00:00:00.000Z',
+                1,
+                '2026-06-20T00:00:00.000Z'
+              )
+            `,
+            [ids.ipQuotaAddress, `${ipQuotaPolicyMetric}_cleanup_insert`]
+          ),
+          (error) => {
+            const databaseError = /** @type {{ code?: string }} */ (error);
+            assert.equal(databaseError.code, "42501");
+            return true;
+          }
+        );
+      } finally {
+        await resetRoleAndRollback(client);
+      }
+
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      const cleanupVisibleIpQuota = await client.query(
+        `
+          select metric, window_kind, used_units::int as used_units
+          from public.agent_outbox_ip_quota_windows
+          where ip_address = $1::inet
+            and metric = $2
+        `,
+        [ids.ipQuotaAddress, ipQuotaPolicyMetric]
+      );
+      assert.deepEqual(cleanupVisibleIpQuota.rows, [
+        { metric: ipQuotaPolicyMetric, window_kind: "minute", used_units: 2 }
+      ]);
+      const cleanupDeletedIpQuota = await client.query(
+        `
+          delete from public.agent_outbox_ip_quota_windows
+          where ip_address = $1::inet
+            and metric = $2
+          returning metric
+        `,
+        [ids.ipQuotaAddress, ipQuotaPolicyMetric]
+      );
+      assert.deepEqual(cleanupDeletedIpQuota.rows, [
+        { metric: ipQuotaPolicyMetric }
+      ]);
+      await client.query("reset role");
+      await client.query("commit");
+
       const productTransactionProbe = await runProductTransaction(
         databaseVerificationUrl,
         {
@@ -2624,6 +3090,14 @@ test(
         "select public.agent_outbox_prune_quota_windows('2026-06-15T00:00:00.000Z') as deleted_count"
       );
       assert.equal(prunedQuotaWindows.rows[0].deleted_count, 1);
+      const prunedIpQuotaWindows = await client.query(
+        "select public.agent_outbox_prune_ip_quota_windows('2026-06-15T00:00:00.000Z') as deleted_count"
+      );
+      assert.equal(prunedIpQuotaWindows.rows[0].deleted_count, 1);
+      const prunedSetupRequests = await client.query(
+        "select public.agent_outbox_prune_caller_setup_requests('2026-06-15T00:00:00.000Z') as deleted_count"
+      );
+      assert.equal(prunedSetupRequests.rows[0].deleted_count, 3);
       const prunedLimitBlocks = await client.query(
         "select public.agent_outbox_prune_expired_limit_blocks('2026-06-30T12:00:00.000Z') as deleted_count"
       );
@@ -2659,6 +3133,7 @@ test(
             (select count(*)::int from public.agent_outbox_input_items where input_item_id = $9) as file_input_count,
             (select count(*)::int from public.agent_outbox_input_items where input_item_id = $10) as file_upload_input_count,
             (select count(*)::int from public.agent_outbox_account_quota_windows where account_id = $7) as quota_window_count,
+            (select count(*)::int from public.agent_outbox_ip_quota_windows where ip_address = $11::inet) as ip_quota_window_count,
             (select count(*)::int from public.agent_outbox_account_limit_blocks where account_id = $7) as limit_block_count
         `,
         [
@@ -2671,7 +3146,8 @@ test(
           ids.accountA,
           ids.fileOutput,
           ids.fileOutputInput,
-          ids.fileUploadInput
+          ids.fileUploadInput,
+          ids.ipQuotaAddress
         ]
       );
       assert.deepEqual(deletedRows.rows[0], {
@@ -2687,8 +3163,41 @@ test(
         file_input_count: 0,
         file_upload_input_count: 0,
         quota_window_count: 0,
+        ip_quota_window_count: 0,
         limit_block_count: 0
       });
+
+      const remainingSetupRequests = await client.query(
+        `
+          select local_caller_name
+          from public.agent_outbox_caller_setup_requests
+          where local_caller_name like $1
+          order by local_caller_name
+        `,
+        [`${setupPrunePrefix}-%`]
+      );
+      assert.deepEqual(
+        remainingSetupRequests.rows.map((row) => row.local_caller_name),
+        [
+          setupLabels.pendingLive,
+          setupLabels.referencedPendingReplacement,
+          setupLabels.terminalFresh
+        ].sort()
+      );
+      const preservedPendingReplacement = await client.query(
+        `
+          select key_id, pending_replacement_setup_request_id::text as setup_request_id
+          from public.agent_outbox_caller_credentials
+          where key_id = $1
+        `,
+        [pendingReplacementKeyId]
+      );
+      assert.deepEqual(preservedPendingReplacement.rows, [
+        {
+          key_id: pendingReplacementKeyId,
+          setup_request_id: referencedSetupRequestId
+        }
+      ]);
 
       const auditRows = await client.query(
         `

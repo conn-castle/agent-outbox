@@ -20,8 +20,11 @@ import {
   type LimitWindowKind
 } from "./limits.ts";
 
-export type CallerLimitIdentity = {
+export type AccountLimitIdentity = {
   accountId: string;
+};
+
+export type CallerLimitIdentity = AccountLimitIdentity & {
   callerId: string;
 };
 
@@ -74,6 +77,15 @@ export async function enforceCallerRequestLimits(
   profile: LimitProfileSelector,
   operationKind: LimitOperationKind
 ): Promise<CallerLimitGuardResult> {
+  return enforceAccountRequestLimits(query, identity, profile, operationKind);
+}
+
+export async function enforceAccountRequestLimits(
+  query: ProductTransactionQuery,
+  identity: AccountLimitIdentity,
+  profile: LimitProfileSelector,
+  operationKind: LimitOperationKind
+): Promise<CallerLimitGuardResult> {
   const activeBlock = await activeLimitBlock(
     query,
     identity,
@@ -91,6 +103,165 @@ export async function enforceCallerRequestLimits(
     operationKind,
     "requests"
   );
+}
+
+export async function enforceIpConnectStartLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(query, ipAddress, "caller_connect_start");
+}
+
+export async function enforceIpConnectDevicePollLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(query, ipAddress, "caller_connect_poll");
+}
+
+export async function enforceIpConnectExchangeLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(
+    query,
+    ipAddress,
+    "caller_connect_exchange"
+  );
+}
+
+export async function enforceIpConnectActivationLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(
+    query,
+    ipAddress,
+    "caller_connect_activation"
+  );
+}
+
+export async function enforceIpRotateStartLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(query, ipAddress, "caller_rotate_start");
+}
+
+export async function enforceIpRotateDevicePollLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(query, ipAddress, "caller_rotate_poll");
+}
+
+export async function enforceIpRotateExchangeLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(query, ipAddress, "caller_rotate_exchange");
+}
+
+export async function enforceIpRotateActivationLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(
+    query,
+    ipAddress,
+    "caller_rotate_activation"
+  );
+}
+
+export async function enforceIpRevokeStartLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(query, ipAddress, "caller_revoke_start");
+}
+
+export async function enforceIpRevokeDevicePollLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(query, ipAddress, "caller_revoke_poll");
+}
+
+export async function enforceIpRevokeConfirmLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string
+): Promise<CallerLimitGuardResult> {
+  return enforceIpControlPlaneLimit(query, ipAddress, "caller_revoke_confirm");
+}
+
+async function enforceIpControlPlaneLimit(
+  query: ProductTransactionQuery,
+  ipAddress: string,
+  operationKind: Extract<
+    LimitOperationKind,
+    | "caller_connect_start"
+    | "caller_connect_poll"
+    | "caller_connect_exchange"
+    | "caller_connect_activation"
+    | "caller_rotate_start"
+    | "caller_rotate_poll"
+    | "caller_rotate_exchange"
+    | "caller_rotate_activation"
+    | "caller_revoke_start"
+    | "caller_revoke_poll"
+    | "caller_revoke_confirm"
+  >
+): Promise<CallerLimitGuardResult> {
+  const now = new Date();
+
+  for (const limit of fixedWindowLimits(
+    "hosted-free",
+    operationKind,
+    "requests"
+  )) {
+    const window = quotaWindow(limit, now);
+    const result = await query<QuotaWindowRow>({
+      sql: `
+        insert into public.agent_outbox_ip_quota_windows (
+          ip_address,
+          metric,
+          window_kind,
+          window_start_utc,
+          used_units
+        )
+        values ($1::inet, $2, $3, $4::timestamptz, 1)
+        on conflict (ip_address, metric, window_kind, window_start_utc)
+        do update set
+          used_units = public.agent_outbox_ip_quota_windows.used_units + 1,
+          updated_at = now()
+        returning used_units
+      `,
+      values: [
+        ipAddress,
+        limit.limitName,
+        window.windowKind,
+        window.windowStartUtc
+      ]
+    });
+    const usedUnits = nonNegativeInteger(result.rows[0].used_units);
+    if (usedUnits > limit.setting.value) {
+      const limitMetadata = limitErrorMetadata("hosted-free", limit.limitName, {
+        usedUnits,
+        limitResetsAt: new Date(window.windowEndUtc)
+      });
+      return {
+        ok: false,
+        error: {
+          status: limitMetadata.status,
+          code: limitMetadata.code,
+          message: limitMetadata.limitReason,
+          limit: limitMetadata
+        }
+      };
+    }
+  }
+
+  return { ok: true };
 }
 
 export async function enforceAcceptedInputSubmissionLimits(
@@ -166,7 +337,7 @@ export function accountTierStatement(
 }
 
 export function activeLimitBlockStatement(
-  identity: CallerLimitIdentity,
+  identity: AccountLimitIdentity,
   operationKind: LimitOperationKind,
   options: { fixedWindowOnly?: boolean } = {}
 ): TransactionContextStatement {
@@ -213,7 +384,7 @@ export function activeLimitBlockStatement(
 }
 
 export function quotaWindowUsageStatement(input: {
-  identity: CallerLimitIdentity;
+  identity: AccountLimitIdentity;
   limitName: LimitName;
   windowKind: LimitWindowKind;
   windowStartUtc: string;
@@ -237,7 +408,7 @@ export function quotaWindowUsageStatement(input: {
 }
 
 export function incrementQuotaWindowStatement(input: {
-  identity: CallerLimitIdentity;
+  identity: AccountLimitIdentity;
   limitName: LimitName;
   windowKind: LimitWindowKind;
   windowStartUtc: string;
@@ -343,7 +514,7 @@ export function concurrencySlotStatement(input: {
 
 async function activeLimitBlock(
   query: ProductTransactionQuery,
-  identity: CallerLimitIdentity,
+  identity: AccountLimitIdentity,
   profile: LimitProfileSelector,
   operationKind: LimitOperationKind,
   options: { fixedWindowOnly?: boolean } = {}
@@ -432,7 +603,7 @@ async function checkFixedWindowLimits(
 
 async function incrementFixedWindowLimits(
   query: ProductTransactionQuery,
-  identity: CallerLimitIdentity,
+  identity: AccountLimitIdentity,
   profile: LimitProfileSelector,
   operationKind: LimitOperationKind,
   unit: "requests" | "submissions"
@@ -536,7 +707,7 @@ async function checkInputStockLimits(
 
 async function persistAndReturnLimitError(
   query: ProductTransactionQuery,
-  identity: CallerLimitIdentity,
+  identity: AccountLimitIdentity,
   profile: LimitProfileSelector,
   operationKind: LimitOperationKind,
   input: {
@@ -647,7 +818,7 @@ function limitBlockedError(
 
 function limitError(
   profile: LimitProfileSelector,
-  identity: CallerLimitIdentity,
+  identity: AccountLimitIdentity,
   operationKind: LimitOperationKind,
   limitName: LimitName,
   input: {

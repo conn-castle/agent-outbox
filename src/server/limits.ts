@@ -16,7 +16,21 @@ export const LIMIT_NAMES = [
   "concurrent_write_requests_per_account",
   "concurrent_file_uploading_requests_per_account",
   "output_check_read_requests_per_account_per_minute",
-  "output_ack_requests_per_account_per_minute"
+  "output_ack_requests_per_account_per_minute",
+  "caller_connect_approvals_per_account_per_minute",
+  "caller_rotate_approvals_per_account_per_minute",
+  "caller_revoke_approvals_per_account_per_minute",
+  "caller_connect_start_requests_per_ip_per_minute",
+  "caller_connect_poll_requests_per_ip_per_minute",
+  "caller_connect_exchange_requests_per_ip_per_minute",
+  "caller_connect_activation_requests_per_ip_per_minute",
+  "caller_rotate_start_requests_per_ip_per_minute",
+  "caller_rotate_poll_requests_per_ip_per_minute",
+  "caller_rotate_exchange_requests_per_ip_per_minute",
+  "caller_rotate_activation_requests_per_ip_per_minute",
+  "caller_revoke_start_requests_per_ip_per_minute",
+  "caller_revoke_poll_requests_per_ip_per_minute",
+  "caller_revoke_confirm_requests_per_ip_per_minute"
 ] as const;
 
 export type LimitName = (typeof LIMIT_NAMES)[number];
@@ -48,6 +62,20 @@ export type LimitOperationKind =
   | "output_check_read"
   | "output_file_download"
   | "output_ack"
+  | "caller_connect_approval"
+  | "caller_rotate_approval"
+  | "caller_revoke_approval"
+  | "caller_connect_start"
+  | "caller_connect_poll"
+  | "caller_connect_exchange"
+  | "caller_connect_activation"
+  | "caller_rotate_start"
+  | "caller_rotate_poll"
+  | "caller_rotate_exchange"
+  | "caller_rotate_activation"
+  | "caller_revoke_start"
+  | "caller_revoke_poll"
+  | "caller_revoke_confirm"
   | "file_upload"
   | "storage_write"
   | "status"
@@ -80,7 +108,21 @@ export type LimitReasonCode =
   | "concurrent_write_limit_exceeded"
   | "concurrent_file_upload_limit_exceeded"
   | "output_check_read_rate_limited"
-  | "output_ack_rate_limited";
+  | "output_ack_rate_limited"
+  | "caller_connect_approval_rate_limited"
+  | "caller_rotate_approval_rate_limited"
+  | "caller_revoke_approval_rate_limited"
+  | "caller_connect_start_rate_limited"
+  | "caller_connect_poll_rate_limited"
+  | "caller_connect_exchange_rate_limited"
+  | "caller_connect_activation_rate_limited"
+  | "caller_rotate_start_rate_limited"
+  | "caller_rotate_poll_rate_limited"
+  | "caller_rotate_exchange_rate_limited"
+  | "caller_rotate_activation_rate_limited"
+  | "caller_revoke_start_rate_limited"
+  | "caller_revoke_poll_rate_limited"
+  | "caller_revoke_confirm_rate_limited";
 export type LimitErrorCode =
   | "quota_limit_exceeded"
   | "rate_limit_exceeded"
@@ -426,6 +468,188 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     errorCode: "rate_limit_exceeded",
     statusLabel: "Output acknowledgement request rate",
     doctorCheckName: "limits.output_ack.minute"
+  },
+  caller_connect_approvals_per_account_per_minute: {
+    name: "caller_connect_approvals_per_account_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_connect_approval"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller connect approvals are temporarily rate limited.",
+    reasonCode: "caller_connect_approval_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller connect approval request rate",
+    doctorCheckName: "limits.caller_connect_approval.minute"
+  },
+  caller_rotate_approvals_per_account_per_minute: {
+    name: "caller_rotate_approvals_per_account_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_rotate_approval"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller rotate approvals are temporarily rate limited.",
+    reasonCode: "caller_rotate_approval_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller rotate approval request rate",
+    doctorCheckName: "limits.caller_rotate_approval.minute"
+  },
+  caller_revoke_approvals_per_account_per_minute: {
+    name: "caller_revoke_approvals_per_account_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_revoke_approval"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller revoke approvals are temporarily rate limited.",
+    reasonCode: "caller_revoke_approval_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller revoke approval request rate",
+    doctorCheckName: "limits.caller_revoke_approval.minute"
+  },
+  caller_connect_start_requests_per_ip_per_minute: {
+    name: "caller_connect_start_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_connect_start"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller connect start requests are temporarily rate limited.",
+    reasonCode: "caller_connect_start_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller connect start request rate",
+    doctorCheckName: "limits.caller_connect_start.minute"
+  },
+  caller_connect_poll_requests_per_ip_per_minute: {
+    name: "caller_connect_poll_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_connect_poll"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller connect device polling is temporarily rate limited.",
+    reasonCode: "caller_connect_poll_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller connect poll request rate",
+    doctorCheckName: "limits.caller_connect_poll.minute"
+  },
+  caller_connect_exchange_requests_per_ip_per_minute: {
+    name: "caller_connect_exchange_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_connect_exchange"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller connect exchange requests are temporarily rate limited.",
+    reasonCode: "caller_connect_exchange_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller connect exchange request rate",
+    doctorCheckName: "limits.caller_connect_exchange.minute"
+  },
+  caller_connect_activation_requests_per_ip_per_minute: {
+    name: "caller_connect_activation_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_connect_activation"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller connect activation requests are temporarily rate limited.",
+    reasonCode: "caller_connect_activation_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller connect activation request rate",
+    doctorCheckName: "limits.caller_connect_activation.minute"
+  },
+  caller_rotate_start_requests_per_ip_per_minute: {
+    name: "caller_rotate_start_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_rotate_start"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller rotate start requests are temporarily rate limited.",
+    reasonCode: "caller_rotate_start_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller rotate start request rate",
+    doctorCheckName: "limits.caller_rotate_start.minute"
+  },
+  caller_rotate_poll_requests_per_ip_per_minute: {
+    name: "caller_rotate_poll_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_rotate_poll"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller rotate device polling is temporarily rate limited.",
+    reasonCode: "caller_rotate_poll_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller rotate poll request rate",
+    doctorCheckName: "limits.caller_rotate_poll.minute"
+  },
+  caller_rotate_exchange_requests_per_ip_per_minute: {
+    name: "caller_rotate_exchange_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_rotate_exchange"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller rotate exchange requests are temporarily rate limited.",
+    reasonCode: "caller_rotate_exchange_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller rotate exchange request rate",
+    doctorCheckName: "limits.caller_rotate_exchange.minute"
+  },
+  caller_rotate_activation_requests_per_ip_per_minute: {
+    name: "caller_rotate_activation_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_rotate_activation"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller rotate activation requests are temporarily rate limited.",
+    reasonCode: "caller_rotate_activation_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller rotate activation request rate",
+    doctorCheckName: "limits.caller_rotate_activation.minute"
+  },
+  caller_revoke_start_requests_per_ip_per_minute: {
+    name: "caller_revoke_start_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_revoke_start"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller revoke start requests are temporarily rate limited.",
+    reasonCode: "caller_revoke_start_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller revoke start request rate",
+    doctorCheckName: "limits.caller_revoke_start.minute"
+  },
+  caller_revoke_poll_requests_per_ip_per_minute: {
+    name: "caller_revoke_poll_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_revoke_poll"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller revoke device polling is temporarily rate limited.",
+    reasonCode: "caller_revoke_poll_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller revoke poll request rate",
+    doctorCheckName: "limits.caller_revoke_poll.minute"
+  },
+  caller_revoke_confirm_requests_per_ip_per_minute: {
+    name: "caller_revoke_confirm_requests_per_ip_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["caller_revoke_confirm"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Caller revoke confirmation requests are temporarily rate limited.",
+    reasonCode: "caller_revoke_confirm_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Caller revoke confirmation request rate",
+    doctorCheckName: "limits.caller_revoke_confirm.minute"
   }
 };
 
@@ -449,7 +673,21 @@ const HOSTED_FREE_LIMITS = {
   concurrent_write_requests_per_account: enabled(20),
   concurrent_file_uploading_requests_per_account: enabled(5),
   output_check_read_requests_per_account_per_minute: enabled(120),
-  output_ack_requests_per_account_per_minute: enabled(600)
+  output_ack_requests_per_account_per_minute: enabled(600),
+  caller_connect_approvals_per_account_per_minute: enabled(30),
+  caller_rotate_approvals_per_account_per_minute: enabled(30),
+  caller_revoke_approvals_per_account_per_minute: enabled(30),
+  caller_connect_start_requests_per_ip_per_minute: enabled(30),
+  caller_connect_poll_requests_per_ip_per_minute: enabled(30),
+  caller_connect_exchange_requests_per_ip_per_minute: enabled(30),
+  caller_connect_activation_requests_per_ip_per_minute: enabled(30),
+  caller_rotate_start_requests_per_ip_per_minute: enabled(30),
+  caller_rotate_poll_requests_per_ip_per_minute: enabled(30),
+  caller_rotate_exchange_requests_per_ip_per_minute: enabled(30),
+  caller_rotate_activation_requests_per_ip_per_minute: enabled(30),
+  caller_revoke_start_requests_per_ip_per_minute: enabled(30),
+  caller_revoke_poll_requests_per_ip_per_minute: enabled(30),
+  caller_revoke_confirm_requests_per_ip_per_minute: enabled(30)
 } satisfies Record<LimitName, LimitSetting>;
 
 const HOSTED_PAID_LIMITS = {
@@ -474,7 +712,21 @@ const HOSTED_PAID_LIMITS = {
   concurrent_write_requests_per_account: enabled(20),
   concurrent_file_uploading_requests_per_account: enabled(5),
   output_check_read_requests_per_account_per_minute: enabled(120),
-  output_ack_requests_per_account_per_minute: enabled(600)
+  output_ack_requests_per_account_per_minute: enabled(600),
+  caller_connect_approvals_per_account_per_minute: enabled(30),
+  caller_rotate_approvals_per_account_per_minute: enabled(30),
+  caller_revoke_approvals_per_account_per_minute: enabled(30),
+  caller_connect_start_requests_per_ip_per_minute: enabled(30),
+  caller_connect_poll_requests_per_ip_per_minute: enabled(30),
+  caller_connect_exchange_requests_per_ip_per_minute: enabled(30),
+  caller_connect_activation_requests_per_ip_per_minute: enabled(30),
+  caller_rotate_start_requests_per_ip_per_minute: enabled(30),
+  caller_rotate_poll_requests_per_ip_per_minute: enabled(30),
+  caller_rotate_exchange_requests_per_ip_per_minute: enabled(30),
+  caller_rotate_activation_requests_per_ip_per_minute: enabled(30),
+  caller_revoke_start_requests_per_ip_per_minute: enabled(30),
+  caller_revoke_poll_requests_per_ip_per_minute: enabled(30),
+  caller_revoke_confirm_requests_per_ip_per_minute: enabled(30)
 } satisfies Record<LimitName, LimitSetting>;
 
 const SELF_HOSTED_LIMITS = {

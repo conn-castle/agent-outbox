@@ -156,6 +156,89 @@ code {
   background: #eeece5;
 }
 
+.connect-main {
+  width: min(760px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 56px 0;
+}
+
+.connect-title {
+  max-width: 680px;
+  margin: 0 0 24px;
+  font-size: 42px;
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.connect-card {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 20px;
+  border: 1px solid #d6d9df;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.connect-card h2,
+.connect-card p {
+  margin: 0;
+}
+
+.connect-kv {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.connect-kv div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.connect-kv dt {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.connect-kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #0f172a;
+}
+
+.connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.form-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  color: #0f172a;
+  font-weight: 650;
+}
+
+.field input {
+  min-height: 44px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #b8bec8;
+  border-radius: 6px;
+  color: #0f172a;
+  font: inherit;
+}
+
 .human-workspace {
   width: min(1440px, calc(100% - 32px));
   margin: 0 auto;
@@ -786,8 +869,17 @@ code {
   }
 
   .main,
+  .connect-main,
   .human-workspace {
     width: min(100% - 24px, 1440px);
+  }
+
+  .connect-title {
+    font-size: 34px;
+  }
+
+  .connect-kv {
+    grid-template-columns: 1fr;
   }
 
   .review-row,

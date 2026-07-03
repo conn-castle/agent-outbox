@@ -1,15 +1,15 @@
 # HTTP API Contract
 
-This document defines the Phase 4 implemented HTTP surface for caller
-integrations: caller/account status, input writes, output reads, output
-acknowledgement, and output-file download. Schema details live in
+This document defines the implemented HTTP surface for caller integrations:
+caller/account status, input writes, output reads, output acknowledgement,
+output-file download, and human-approved caller connect, rotation, revocation,
+and disconnect-with-revoke control-plane contracts. Schema details live in
 [input-schema.md](input-schema.md), [output-schema.md](output-schema.md), and
 [errors.md](errors.md).
 
-Human-approved caller registration, caller listing, rotation, revocation,
-disconnect-with-revoke, upgrade/billing, and CLI control-plane flows are future
-contracts. They are described only as planned boundaries and are not implemented
-in the current app/API phase.
+Hosted upgrade billing and paid file-upload flows remain future HTTP contracts.
+The CLI `upgrade` command is local-only: it opens the selected app origin plus
+`/upgrade` and does not add a status-response upgrade URL.
 
 ## Base URL
 
@@ -363,18 +363,51 @@ status object for the bearer key's account. It exists so
 `agent-outbox account status` does not require callers to think in caller-scoped
 terms when local caller credentials are already available.
 
-If no local caller credential is available, the CLI may use a human-approved
-control-plane flow in a later package. That fallback is not a caller-bearer
-data-plane request.
+If no local caller credential is available, the CLI fails loudly with setup
+remediation such as `agent-outbox caller connect <caller>`. There is no
+browser/device-code fallback for `account status`.
 
-## Future Caller Registration Contract (Not Implemented)
+## Caller Connect Control Plane
 
-Caller registration is human-approved control plane, not unauthenticated
-self-service and not caller-key self-administration. The current repository does
-not implement these routes. Full CLI implementation is owned by the CLI phase,
-and the planned HTTP contract is:
+Caller connect is a human-approved control plane, not unauthenticated
+self-service and not caller-key self-administration. Connect start, device-poll,
+and exchange routes are unauthenticated so a new local caller can complete
+setup; connect activate and abort require the pending connect key returned by
+exchange as the bearer credential. All are protected by DB-backed per-IP
+fixed-window limits: `caller_connect_start_requests_per_ip_per_minute`,
+`caller_connect_poll_requests_per_ip_per_minute`,
+`caller_connect_exchange_requests_per_ip_per_minute`, and
+`caller_connect_activation_requests_per_ip_per_minute` each allow 30 requests
+per trusted client IP per UTC minute, with the activation limit shared by both
+the activate and abort routes. Human approval actions are protected by the
+account-scoped `caller_connect_approvals_per_account_per_minute` fixed window,
+allowing 30 connect approvals per account per UTC minute through the shared
+account quota and active limit-block tables.
+
+Connect uses standards-derived OAuth/device-flow timing:
+
+- Browser setup codes are single-use and expire after 10 minutes, matching RFC
+  6749's recommended maximum authorization-code lifetime.
+- Device codes and user codes expire after 10 minutes.
+- Device polling returns `poll_interval_seconds: 5`; pending poll responses
+  return `authorization_pending` with `Retry-After: 5`.
+
+Setup, device, user, and browser exchange codes are display-once or client-held
+values. The server stores keyed HMAC-SHA256 digests only, using the same server
+secret family as caller API key hashing. Setup request rows are transient:
+cleanup prunes terminal rows and long-expired pending or approved rows after 7
+days, while preserving rows referenced by pending replacement credentials.
+
+Approval rejects with `409 caller_already_exists` if the approving account
+already has a caller using the requested name/slug. Duplicate connect is not
+treated as rotate, does not reuse the existing caller, and does not auto-rename;
+the user should run caller rotate or choose a different name.
 
 ### Browser Connect Start
+
+Starts a browser approval flow. The human signs in with Clerk, approves the
+account binding, and the approval page returns a one-time `setup_code` to the
+local callback.
 
 ```http
 POST /api/caller/connect/browser/start
@@ -399,9 +432,6 @@ Success `data`:
   "expires_at": "2026-06-30T20:10:00Z"
 }
 ```
-
-The human signs in with Clerk, approves the account binding, and the browser
-returns a one-time `setup_code` to the local callback.
 
 ### Device Connect Start
 
@@ -446,9 +476,19 @@ Body:
 ```
 
 Pending approval returns `202` with `authorization_pending`. Successful approval
-returns the display-once credential response below.
+returns the display-once pending credential response documented under Connect
+Exchange below and marks the device code used. Repeating the same device-code
+poll after success does not replay the credential.
 
 ### Connect Exchange
+
+Connect uses a two-phase credential handoff mirroring caller rotation. Exchange
+creates a pending display-once credential with status `pending_activation`; the
+pending key cannot authenticate data-plane routes. The CLI stores the new key
+locally, then calls `activate` using the pending key as the bearer credential.
+Only activation marks the key active. If local storage fails, the CLI calls
+`abort` using the pending key as the bearer credential, leaving no active hosted
+key for the caller. Pending connect keys expire at the setup request expiry.
 
 ```http
 POST /api/caller/connect/exchange
@@ -466,6 +506,7 @@ Success `data`:
 
 ```json
 {
+  "setup_request_id": "setup_123",
   "caller": {
     "caller_id": "caller_123",
     "caller_slug": "steward-email",
@@ -481,72 +522,449 @@ Success `data`:
     "key_id": "key_123",
     "prefix": "aob_live",
     "last_chars": "abcd",
-    "created_at": "2026-06-30T20:00:00Z"
+    "created_at": "2026-06-30T20:00:00Z",
+    "expires_at": "2026-06-30T20:10:00Z"
   }
 }
 ```
 
 `credential.api_key` is display-once. The server stores only the non-secret key
-id, keyed hash, and non-secret metadata. Caller-authenticated API keys cannot
-rotate or revoke themselves; those operations must use human-approved control
-plane flows.
+id, keyed hash, and non-secret metadata. The returned key remains
+`pending_activation` and cannot authenticate normal caller API requests until
+`activate` succeeds. Callers pass `setup_request_id` back to the activate and
+abort routes. Caller-authenticated API keys cannot rotate or revoke themselves;
+those operations must use human-approved control plane flows.
 
-### Caller List Contract
+### Connect Activate
 
 ```http
-POST /api/caller/list
+POST /api/caller/connect/activate
 ```
 
-Caller listing is a human-approved control-plane operation used when local CLI
-config is insufficient. It returns non-secret caller records for the approved
-account:
+Requires `Authorization: Bearer aob_live_keyid_secret` using the pending
+credential returned by connect exchange.
+
+Body:
 
 ```json
 {
-  "callers": [
-    {
-      "caller_id": "caller_123",
-      "caller_slug": "steward-email",
-      "display_name": "steward-email",
-      "status": "active",
-      "created_at": "2026-06-30T20:00:00Z"
-    }
-  ]
+  "setup_request_id": "setup_123"
 }
 ```
+
+Success `data`:
+
+```json
+{
+  "caller_id": "caller_123",
+  "activated_key_id": "key_123",
+  "activated_at": "2026-06-30T20:01:00Z"
+}
+```
+
+Activation marks the pending key active. Unlike rotate, connect has no prior
+active key, so no key is revoked.
+
+### Connect Abort
+
+```http
+POST /api/caller/connect/abort
+```
+
+Requires `Authorization: Bearer aob_live_keyid_secret` using the pending
+credential returned by connect exchange.
+
+Body:
+
+```json
+{
+  "setup_request_id": "setup_123"
+}
+```
+
+Success `data`:
+
+```json
+{
+  "caller_id": "caller_123",
+  "aborted_key_id": "key_123",
+  "aborted_at": "2026-06-30T20:01:00Z"
+}
+```
+
+Abort expires the pending key. Because connect has no prior active key, no
+active hosted key remains for the caller.
+
+### Connect Errors
+
+Connect routes use the standard error envelope. Common errors:
+
+| Code                         | Status | Applies to                                                                                                                                 |
+| ---------------------------- | -----: | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `invalid_request`            |    400 | Malformed request body, invalid/expired/already-used setup or device code, or a non-pending approval target.                               |
+| `validation_failed`          |    422 | Missing or invalid fields such as `local_caller_name`, `display_name`, `callback_url`, `device_code`, `setup_code`, or `setup_request_id`. |
+| `authentication_required`    |    401 | Missing pending connect bearer key on connect activate/abort.                                                                              |
+| `invalid_caller_credentials` |    401 | Pending connect bearer key is invalid, expired, revoked, already active, or not the pending key bound to the supplied `setup_request_id`.  |
+| `caller_already_exists`      |    409 | Approval targeted a name/slug already used by a caller in the account; use caller rotate or choose a different name.                       |
+| `authorization_pending`      |    202 | Device poll before human approval; clients must honor `Retry-After`.                                                                       |
+| `not_found`                  |    404 | Approval page cannot find a connect setup request for the signed-in human's account.                                                       |
+| `rate_limit_exceeded`        |    429 | DB-backed per-IP or per-account fixed-window abuse controls deny the operation.                                                            |
+| `temporary_unavailable`      |    503 | Required configuration, database state, or transaction processing is unavailable.                                                          |
+
+## Caller Credential Operations Control Plane
+
+Caller rotation, revocation, and disconnect-with-revoke are human-approved
+control-plane operations. They are not caller-key data-plane requests, do not
+consume monthly caller API quota, and cannot be authorized by an existing active
+caller key alone. Browser/device start, device-poll, exchange, confirm,
+activate, and abort routes are protected by DB-backed fixed-window limits using
+the trusted client IP. Approval actions are protected by distinct account-scoped
+`caller_rotate_approvals_per_account_per_minute` and
+`caller_revoke_approvals_per_account_per_minute` fixed windows, each allowing 30
+approvals per account per UTC minute through the shared account quota and active
+limit-block tables. Approval pages are Clerk-authenticated and enforce account
+membership before binding the requested operation to an account.
+
+The CLI identifies the selected existing caller from local non-secret config and
+sends its opaque `caller_id` to the start route. The approval page loads caller
+metadata from the signed-in human's account; it does not trust caller display
+metadata from the unauthenticated start request. There is no
+`POST /api/caller/list`; `agent-outbox caller list` is local-only.
 
 ### Caller Rotate Contract
 
 Rotation uses the same human-approved browser or device-code setup pattern as
-connect. Caller API keys cannot rotate themselves.
+connect. Caller API keys cannot rotate themselves. Exchange creates a pending
+display-once replacement credential with status `pending_activation`; the
+pending key cannot authenticate data-plane routes. The CLI stores the new key
+locally, then calls `activate` using the pending key as the bearer credential.
+Only activation marks the new key active and revokes the previous active key. If
+local storage fails, the CLI calls `abort` using the pending key as the bearer
+credential; the old key stays active. Pending replacement keys expire at the
+setup request expiry.
+
+#### Browser Rotate Start
 
 ```http
 POST /api/caller/rotate/browser/start
+```
+
+Body:
+
+```json
+{
+  "caller_id": "caller_123",
+  "local_caller_name": "steward-email",
+  "callback_url": "http://127.0.0.1:49152/callback"
+}
+```
+
+Success `data`:
+
+```json
+{
+  "approval_url": "https://app.agent-outbox.dev/caller/rotate/approve?...",
+  "setup_request_id": "setup_123",
+  "expires_at": "2026-06-30T20:10:00Z"
+}
+```
+
+The approval page redirects to `callback_url` with `status=approved`,
+`setup_request_id`, and a display-once `setup_code`.
+
+#### Device Rotate Start
+
+```http
 POST /api/caller/rotate/device/start
+```
+
+Body:
+
+```json
+{
+  "caller_id": "caller_123",
+  "local_caller_name": "steward-email"
+}
+```
+
+Success `data`:
+
+```json
+{
+  "device_code": "dev_123",
+  "user_code": "ABCD-EFGH",
+  "verification_uri": "https://app.agent-outbox.dev/caller/rotate/device",
+  "verification_uri_complete": "https://app.agent-outbox.dev/caller/rotate/device?user_code=ABCD-EFGH",
+  "expires_at": "2026-06-30T20:10:00Z",
+  "poll_interval_seconds": 5
+}
+```
+
+#### Device Rotate Poll
+
+```http
 POST /api/caller/rotate/device/poll
+```
+
+Body:
+
+```json
+{
+  "device_code": "dev_123"
+}
+```
+
+Pending approval returns `202` with `authorization_pending` and
+`Retry-After: 5`. Successful approval returns:
+
+```json
+{
+  "setup_request_id": "setup_123",
+  "setup_code": "setup_code_123",
+  "expires_at": "2026-06-30T20:10:00Z"
+}
+```
+
+The device poll response does not create or activate a replacement credential.
+Repeating the same device poll after the setup code has been delivered does not
+replay the setup code.
+
+#### Rotate Exchange
+
+```http
 POST /api/caller/rotate/exchange
+```
+
+Body:
+
+```json
+{
+  "setup_code": "setup_code_123"
+}
+```
+
+Success `data`:
+
+```json
+{
+  "caller": {
+    "caller_id": "caller_123",
+    "caller_slug": "steward-email",
+    "display_name": "Steward Email"
+  },
+  "account": {
+    "account_id": "acct_123",
+    "label": "Nick's Agent Outbox",
+    "effective_tier": "free"
+  },
+  "replacement_credential": {
+    "api_key": "aob_live_newkeyid_secret",
+    "key_id": "newkeyid",
+    "prefix": "aob_live",
+    "last_chars": "wxyz",
+    "created_at": "2026-06-30T20:00:00Z",
+    "expires_at": "2026-06-30T20:10:00Z"
+  },
+  "replaces_credential": {
+    "key_id": "oldkeyid",
+    "last_chars": "abcd"
+  }
+}
+```
+
+`replacement_credential.api_key` is display-once. The server stores only the
+non-secret key id, keyed hash, and non-secret metadata. The returned key remains
+`pending_activation` until `activate` succeeds.
+
+#### Rotate Activate
+
+```http
 POST /api/caller/rotate/activate
+```
+
+Requires `Authorization: Bearer aob_live_newkeyid_secret` using the pending
+replacement key returned by rotate exchange.
+
+Body:
+
+```json
+{
+  "setup_request_id": "setup_123"
+}
+```
+
+Success `data`:
+
+```json
+{
+  "caller_id": "caller_123",
+  "activated_key_id": "newkeyid",
+  "revoked_key_id": "oldkeyid",
+  "activated_at": "2026-06-30T20:01:00Z"
+}
+```
+
+#### Rotate Abort
+
+```http
 POST /api/caller/rotate/abort
 ```
 
-The exchange response returns a pending display-once replacement credential. The
-CLI stores that secret locally, then calls `activate`. The server activates the
-new key and revokes the old key only after local storage succeeds. Pending
-replacement keys expire quickly and cannot authenticate caller data-plane
-requests before activation.
+Requires `Authorization: Bearer aob_live_newkeyid_secret` using the pending
+replacement key returned by rotate exchange.
+
+Body:
+
+```json
+{
+  "setup_request_id": "setup_123"
+}
+```
+
+Success `data`:
+
+```json
+{
+  "caller_id": "caller_123",
+  "aborted_key_id": "newkeyid",
+  "active_key_id": "oldkeyid",
+  "aborted_at": "2026-06-30T20:01:00Z"
+}
+```
 
 ### Caller Revoke Contract
-
-```http
-POST /api/caller/revoke/browser/start
-POST /api/caller/revoke/device/start
-POST /api/caller/revoke/device/poll
-POST /api/caller/revoke/confirm
-```
 
 Revocation is human-approved and revokes active hosted keys for the selected
 caller while preserving caller history, queue rows, logs, limits, and audit
 metadata. A stolen caller key cannot revoke itself or other keys.
+
+#### Browser Revoke Start
+
+```http
+POST /api/caller/revoke/browser/start
+```
+
+Body:
+
+```json
+{
+  "caller_id": "caller_123",
+  "local_caller_name": "steward-email",
+  "callback_url": "http://127.0.0.1:49152/callback"
+}
+```
+
+Success `data`:
+
+```json
+{
+  "approval_url": "https://app.agent-outbox.dev/caller/revoke/approve?...",
+  "setup_request_id": "setup_123",
+  "expires_at": "2026-06-30T20:10:00Z"
+}
+```
+
+The approval page redirects to `callback_url` with `status=approved`,
+`setup_request_id`, and a display-once `setup_code`.
+
+#### Device Revoke Start
+
+```http
+POST /api/caller/revoke/device/start
+```
+
+Body:
+
+```json
+{
+  "caller_id": "caller_123",
+  "local_caller_name": "steward-email"
+}
+```
+
+Success `data`:
+
+```json
+{
+  "device_code": "dev_123",
+  "user_code": "ABCD-EFGH",
+  "verification_uri": "https://app.agent-outbox.dev/caller/revoke/device",
+  "verification_uri_complete": "https://app.agent-outbox.dev/caller/revoke/device?user_code=ABCD-EFGH",
+  "expires_at": "2026-06-30T20:10:00Z",
+  "poll_interval_seconds": 5
+}
+```
+
+#### Device Revoke Poll
+
+```http
+POST /api/caller/revoke/device/poll
+```
+
+Body:
+
+```json
+{
+  "device_code": "dev_123"
+}
+```
+
+Pending approval returns `202` with `authorization_pending` and
+`Retry-After: 5`. Successful approval returns:
+
+```json
+{
+  "setup_request_id": "setup_123",
+  "setup_code": "setup_code_123",
+  "expires_at": "2026-06-30T20:10:00Z"
+}
+```
+
+The device poll response does not revoke credentials. Repeating the same device
+poll after the setup code has been delivered does not replay the setup code.
+
+#### Revoke Confirm
+
+```http
+POST /api/caller/revoke/confirm
+```
+
+Body:
+
+```json
+{
+  "setup_code": "setup_code_123"
+}
+```
+
+Success `data`:
+
+```json
+{
+  "caller_id": "caller_123",
+  "revoked_key_ids": ["keyid_1", "keyid_2"],
+  "revoked_at": "2026-06-30T20:01:00Z"
+}
+```
+
+`revoked_key_ids` includes active credentials revoked by this confirmation.
+Already-revoked, expired, and pending replacement credentials are not
+re-revoked.
+
+### Rotate/Revoke Errors
+
+Rotate and revoke routes use the standard error envelope. Common errors:
+
+| Code                         | Status | Applies to                                                                                                                                                                                 |
+| ---------------------------- | -----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `invalid_request`            |    400 | Malformed request body, invalid/expired setup or device code, non-pending approval, repeated device-poll setup-code delivery, or activation/abort for the wrong setup request.             |
+| `validation_failed`          |    422 | Missing or invalid fields such as `caller_id`, `local_caller_name`, `callback_url`, `device_code`, `setup_code`, or `setup_request_id`.                                                    |
+| `authentication_required`    |    401 | Missing pending replacement bearer key on rotate activate/abort.                                                                                                                           |
+| `invalid_caller_credentials` |    401 | Pending replacement bearer key is invalid, expired (including expired pending replacement activate/abort requests), revoked, already active, or not the key produced by the setup request. |
+| `authorization_pending`      |    202 | Device poll before human approval; clients must honor `Retry-After`.                                                                                                                       |
+| `not_found`                  |    404 | Approval page cannot find a setup request for the signed-in human's account.                                                                                                               |
+| `rate_limit_exceeded`        |    429 | DB-backed fixed-window abuse controls deny the operation.                                                                                                                                  |
+| `temporary_unavailable`      |    503 | Required configuration, database state, or transaction processing is unavailable.                                                                                                          |
 
 ### Caller Disconnect Contract
 
