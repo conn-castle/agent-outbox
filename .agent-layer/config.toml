@@ -19,7 +19,7 @@ reasoning_effort = "xhigh" # low | medium | high | xhigh | max (custom values pa
 statusline = true
 
 [agents.claude_vscode]
-enabled = false
+enabled = true
 
 [agents.codex]
 enabled = true
@@ -38,7 +38,7 @@ computer_use = false
 in_app_browser = false
 
 [agents.vscode]
-enabled = false
+enabled = true
 
 [agents.copilot_cli]
 enabled = true
