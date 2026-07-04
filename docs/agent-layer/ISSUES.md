@@ -38,12 +38,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Confirm the cross-repo contract (does the app redirect a denied approval to the loopback callback, and with what status?). If yes, validate setup_request_id first and deliver a matched denial on the channel while still dropping mismatched/spurious callbacks.
     Notes: Deferred from audit-and-fix Round 1 (F2): unverifiable from the CLI diff alone, and the naive fix would break controlplane_test.go ~217, which asserts a matched-id-without-status callback is dropped.
 
-- Issue 2026-07-03 cli-device-poll-no-client-deadline: Device-code poll loops rely on the server for termination
-    Priority: Low. Area: CLI/Caller control-plane
-    Description: `runDeviceConnect` and `runDeviceSetupCodeFlow` in controlplane.go loop while the server returns authorization_pending, exiting only on a non-pending error or ctx cancellation. deviceStartData carries no expires_in, so the client cannot self-bound the poll; termination depends entirely on a conformant (RFC 8628) server returning a terminal expired_token. Bounded against a correct first-party server, unbounded against a misbehaving one.
-    Next step: Surface expires_in/expires_at from the device-start response and cap the poll loop, or add a decided client-side cap (no hidden magic default).
-    Notes: Deferred from audit-and-fix Round 1 (F10).
-
 - Issue 2026-07-03 quota-maintenance-unwired: Periodic quota/limit/retention cleanup has no production caller
     Priority: Medium. Area: Reliability/Cleanup
     Description: `quotaWindowMaintenanceStatements`, `activeLimitMaintenanceStatement`, and `pendingInputRetentionStatement` in `src/server/cleanup.ts` have no production caller (only tests), so account/IP quota windows, expired limit blocks, and retained pending inputs are never pruned.

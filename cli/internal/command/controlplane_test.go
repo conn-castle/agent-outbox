@@ -19,6 +19,8 @@ import (
 	"agent-outbox/internal/foundation"
 )
 
+var testControlNow = time.Date(2026, 7, 2, 20, 0, 0, 0, time.UTC)
+
 type controlPlaneSecretStore struct {
 	keys         map[string]string
 	storeErr     error
@@ -337,6 +339,246 @@ func TestCallerConnectDevicePollHonorsRetryMetadata(t *testing.T) {
 		t.Fatalf("stored key = %q, want device credential", store.keys["caller_123"])
 	}
 	assertNoSecretLeak(t, apiKey, stdout, stderr, configPath)
+}
+
+func TestCallerConnectDevicePollStopsAtDeviceExpiry(t *testing.T) {
+	store := &controlPlaneSecretStore{}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	now := testControlNow
+	polls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/caller/connect/device/start":
+			writeEnvelope(w, fmt.Sprintf(`{"device_code":"dev_expiring","user_code":"EXP-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=EXP-1","expires_at":%q,"poll_interval_seconds":5}`, now.Add(time.Second).UTC().Format(time.RFC3339)))
+		case "/api/caller/connect/device/poll":
+			polls++
+			if polls > 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_after_expiry","error":{"code":"invalid_request","message":"Poll happened after expiry."}}`)
+				return
+			}
+			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var sleeps []time.Duration
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		baseURL:    server.URL,
+		store:      store,
+		args:       []string{"--json", "caller", "connect", "steward-email", "--device-code"},
+		now: func() time.Time {
+			return now
+		},
+		sleep: func(_ context.Context, d time.Duration) error {
+			sleeps = append(sleeps, d)
+			now = now.Add(d)
+			return nil
+		},
+	})
+	if code != foundation.ExitTemporary {
+		t.Fatalf("exit code = %d, want device expiry timeout; stdout: %s stderr: %s", code, stdout, stderr)
+	}
+	if polls != 1 {
+		t.Fatalf("poll count = %d, want one poll before expiry", polls)
+	}
+	if len(sleeps) != 1 || sleeps[0] != time.Second {
+		t.Fatalf("sleeps = %#v, want one 1s sleep capped by expiry", sleeps)
+	}
+	if !strings.Contains(stderr, "Timed out waiting for device approval.") {
+		t.Fatalf("stderr missing device timeout message: %s", stderr)
+	}
+}
+
+func TestCallerConnectDevicePollRequestStopsAtDeviceExpiry(t *testing.T) {
+	store := &controlPlaneSecretStore{}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	now := testControlNow
+	polls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/caller/connect/device/start":
+			writeEnvelope(w, fmt.Sprintf(`{"device_code":"dev_slow_pending","user_code":"SLOW-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=SLOW-1","expires_at":%q,"poll_interval_seconds":5}`, now.Add(10*time.Millisecond).UTC().Format(time.RFC3339Nano)))
+		case "/api/caller/connect/device/poll":
+			polls++
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(50 * time.Millisecond):
+				w.Header().Set("Retry-After", "5")
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
+			}
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	sleeps := 0
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		baseURL:    server.URL,
+		store:      store,
+		args:       []string{"--json", "caller", "connect", "steward-email", "--device-code"},
+		now: func() time.Time {
+			return now
+		},
+		sleep: func(context.Context, time.Duration) error {
+			sleeps++
+			return foundation.NewAppError(foundation.CodeTemporaryUnavailable, "test sleep should not run")
+		},
+	})
+	if code != foundation.ExitTemporary {
+		t.Fatalf("exit code = %d, want device expiry timeout; stdout: %s stderr: %s", code, stdout, stderr)
+	}
+	if polls != 1 {
+		t.Fatalf("poll count = %d, want one in-flight poll", polls)
+	}
+	if sleeps != 0 {
+		t.Fatalf("sleep count = %d, want request deadline before retry sleep", sleeps)
+	}
+	if !strings.Contains(stderr, "Timed out waiting for device approval.") {
+		t.Fatalf("stderr missing device timeout message: %s", stderr)
+	}
+}
+
+func TestCallerConnectDeviceStartRequiresValidExpiry(t *testing.T) {
+	tests := []struct {
+		name        string
+		startData   string
+		wantMessage string
+	}{
+		{
+			name:        "missing",
+			startData:   `{"device_code":"dev_missing","user_code":"EXP-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=EXP-1","poll_interval_seconds":5}`,
+			wantMessage: "Agent Outbox API did not return a device approval expiry.",
+		},
+		{
+			name:        "invalid",
+			startData:   `{"device_code":"dev_invalid","user_code":"EXP-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=EXP-1","expires_at":"not-a-timestamp","poll_interval_seconds":5}`,
+			wantMessage: "Agent Outbox API returned an invalid device approval expiry.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &controlPlaneSecretStore{}
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			polls := 0
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/caller/connect/device/start":
+					writeEnvelope(w, tt.startData)
+				case "/api/caller/connect/device/poll":
+					polls++
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_unexpected_poll","error":{"code":"invalid_request","message":"Unexpected poll."}}`)
+				default:
+					t.Fatalf("unexpected request: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+
+			stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+				configPath: configPath,
+				baseURL:    server.URL,
+				store:      store,
+				args:       []string{"--json", "caller", "connect", "steward-email", "--device-code"},
+			})
+			if code != foundation.ExitData {
+				t.Fatalf("exit code = %d, want data error; stdout: %s stderr: %s", code, stdout, stderr)
+			}
+			if polls != 0 {
+				t.Fatalf("poll count = %d, want no poll after %s expiry", polls, tt.name)
+			}
+			if !strings.Contains(stderr, tt.wantMessage) {
+				t.Fatalf("stderr missing expiry validation message %q: %s", tt.wantMessage, stderr)
+			}
+		})
+	}
+}
+
+func TestDeviceSetupCodeFlowStopsAtDeviceExpiry(t *testing.T) {
+	now := testControlNow
+	polls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/caller/rotate/device/start":
+			assertCallerOperationStart(t, r)
+			writeEnvelope(w, fmt.Sprintf(`{"device_code":"dev_rotate_expiring","user_code":"ROTATE-1","verification_uri":"https://app.example/caller/rotate/device","verification_uri_complete":"https://app.example/caller/rotate/device?user_code=ROTATE-1","expires_at":%q,"poll_interval_seconds":5}`, now.Add(time.Second).UTC().Format(time.RFC3339)))
+		case "/api/caller/rotate/device/poll":
+			polls++
+			if polls > 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_after_expiry","error":{"code":"invalid_request","message":"Poll happened after expiry."}}`)
+				return
+			}
+			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var stderr bytes.Buffer
+	var sleeps []time.Duration
+	runtime := &controlPlaneRuntime{
+		Client: foundation.APIClient{
+			BaseURL:      server.URL,
+			HTTPClient:   server.Client(),
+			NewRequestID: func() string { return "req_cli" },
+		},
+	}
+	_, err := runDeviceSetupCodeFlow(
+		context.Background(),
+		Options{
+			Stderr: &stderr,
+			Now: func() time.Time {
+				return now
+			},
+			Sleep: func(_ context.Context, d time.Duration) error {
+				sleeps = append(sleeps, d)
+				now = now.Add(d)
+				return nil
+			},
+		},
+		runtime,
+		foundation.CallerConfig{Name: "steward-email", CallerID: "caller_123"},
+		"rotate",
+		"/api/caller/rotate/device/start",
+		"/api/caller/rotate/device/poll",
+	)
+	if err == nil {
+		t.Fatalf("runDeviceSetupCodeFlow succeeded after device expiry")
+	}
+	appErr, ok := err.(*foundation.AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	if appErr.Code != foundation.CodeTemporaryUnavailable {
+		t.Fatalf("error code = %q, want %q", appErr.Code, foundation.CodeTemporaryUnavailable)
+	}
+	if polls != 1 {
+		t.Fatalf("poll count = %d, want one poll before expiry", polls)
+	}
+	if len(sleeps) != 1 || sleeps[0] != time.Second {
+		t.Fatalf("sleeps = %#v, want one 1s sleep capped by expiry", sleeps)
+	}
+	if !strings.Contains(stderr.String(), "user_code=ROTATE-1") {
+		t.Fatalf("device setup instructions omitted user code: %s", stderr.String())
+	}
 }
 
 func TestCallerConnectRejectsExistingLocalNameBeforeApproval(t *testing.T) {
@@ -1311,6 +1553,7 @@ type controlCommandOptions struct {
 	httpClient  *http.Client
 	openBrowser func(string) error
 	sleep       func(context.Context, time.Duration) error
+	now         func() time.Time
 }
 
 func executeControlCommand(t *testing.T, opts controlCommandOptions) (string, string, int) {
@@ -1332,6 +1575,12 @@ func executeControlCommand(t *testing.T, opts controlCommandOptions) (string, st
 		NewRequestID: func() string { return "req_cli" },
 		OpenBrowser:  opts.openBrowser,
 		Sleep:        opts.sleep,
+		Now: func() time.Time {
+			if opts.now != nil {
+				return opts.now()
+			}
+			return testControlNow
+		},
 	})
 	return stdout.String(), stderr.String(), code
 }

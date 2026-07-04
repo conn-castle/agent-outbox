@@ -35,6 +35,7 @@ type deviceStartData struct {
 	UserCode                string `json:"user_code"`
 	VerificationURI         string `json:"verification_uri"`
 	VerificationURIComplete string `json:"verification_uri_complete"`
+	ExpiresAt               string `json:"expires_at"`
 	PollIntervalSeconds     int    `json:"poll_interval_seconds"`
 }
 
@@ -513,9 +514,19 @@ func runDeviceConnect(ctx context.Context, opts Options, runtime *controlPlaneRu
 	if interval <= 0 {
 		interval = defaultDevicePollIntervalSeconds
 	}
+	deadline, err := deviceApprovalDeadline(started.ExpiresAt, nowForCommand(opts))
+	if err != nil {
+		return connectExchangeData{}, err
+	}
 	for {
+		pollCtx, cancelPoll, err := deviceApprovalPollContext(ctx, deadline, nowForCommand(opts))
+		if err != nil {
+			return connectExchangeData{}, err
+		}
 		var result connectExchangeData
-		_, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/device/poll", "", map[string]string{"device_code": started.DeviceCode}, &result)
+		_, err = runtime.Client.Do(pollCtx, http.MethodPost, "/api/caller/connect/device/poll", "", map[string]string{"device_code": started.DeviceCode}, &result)
+		err = deviceApprovalPollError(ctx, pollCtx, err)
+		cancelPoll()
 		if err == nil {
 			return result, nil
 		}
@@ -523,7 +534,11 @@ func runDeviceConnect(ctx context.Context, opts Options, runtime *controlPlaneRu
 		if !pending {
 			return connectExchangeData{}, err
 		}
-		if err := sleepForCommand(ctx, opts, time.Duration(delay)*time.Second); err != nil {
+		sleepDuration, err := deviceApprovalSleepDuration(deadline, nowForCommand(opts), time.Duration(delay)*time.Second)
+		if err != nil {
+			return connectExchangeData{}, err
+		}
+		if err := sleepForCommand(ctx, opts, sleepDuration); err != nil {
 			return connectExchangeData{}, err
 		}
 	}
@@ -561,9 +576,19 @@ func runDeviceSetupCodeFlow(ctx context.Context, opts Options, runtime *controlP
 	if interval <= 0 {
 		interval = defaultDevicePollIntervalSeconds
 	}
+	deadline, err := deviceApprovalDeadline(started.ExpiresAt, nowForCommand(opts))
+	if err != nil {
+		return deviceSetupCodeData{}, err
+	}
 	for {
+		pollCtx, cancelPoll, err := deviceApprovalPollContext(ctx, deadline, nowForCommand(opts))
+		if err != nil {
+			return deviceSetupCodeData{}, err
+		}
 		var result deviceSetupCodeData
-		_, err := runtime.Client.Do(ctx, http.MethodPost, pollPath, "", map[string]string{"device_code": started.DeviceCode}, &result)
+		_, err = runtime.Client.Do(pollCtx, http.MethodPost, pollPath, "", map[string]string{"device_code": started.DeviceCode}, &result)
+		err = deviceApprovalPollError(ctx, pollCtx, err)
+		cancelPoll()
 		if err == nil {
 			return result, nil
 		}
@@ -571,7 +596,11 @@ func runDeviceSetupCodeFlow(ctx context.Context, opts Options, runtime *controlP
 		if !pending {
 			return deviceSetupCodeData{}, err
 		}
-		if err := sleepForCommand(ctx, opts, time.Duration(delay)*time.Second); err != nil {
+		sleepDuration, err := deviceApprovalSleepDuration(deadline, nowForCommand(opts), time.Duration(delay)*time.Second)
+		if err != nil {
+			return deviceSetupCodeData{}, err
+		}
+		if err := sleepForCommand(ctx, opts, sleepDuration); err != nil {
 			return deviceSetupCodeData{}, err
 		}
 	}
@@ -705,7 +734,7 @@ func runBrowserFlow(ctx context.Context, opts Options, operation string, start f
 	if strings.TrimSpace(started.SetupRequestID) == "" {
 		return browserCallbackResult{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return a setup request id.")
 	}
-	deadline, err := browserApprovalDeadline(started.ExpiresAt, time.Now())
+	deadline, err := browserApprovalDeadline(started.ExpiresAt, nowForCommand(opts))
 	if err != nil {
 		return browserCallbackResult{}, err
 	}
@@ -774,6 +803,65 @@ func browserApprovalDeadline(expiresAt string, now time.Time) (time.Time, error)
 		return now, nil
 	}
 	return deadline, nil
+}
+
+func deviceApprovalDeadline(expiresAt string, now time.Time) (time.Time, error) {
+	expiresAt = strings.TrimSpace(expiresAt)
+	if expiresAt == "" {
+		return time.Time{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return a device approval expiry.")
+	}
+	expires, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		return time.Time{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned an invalid device approval expiry.")
+	}
+	if !expires.After(now) {
+		return now, nil
+	}
+	return expires, nil
+}
+
+func deviceApprovalStillOpen(deadline time.Time, now time.Time) error {
+	if deadline.After(now) {
+		return nil
+	}
+	return deviceApprovalTimeoutError()
+}
+
+func deviceApprovalSleepDuration(deadline time.Time, now time.Time, requested time.Duration) (time.Duration, error) {
+	if err := deviceApprovalStillOpen(deadline, now); err != nil {
+		return 0, err
+	}
+	remaining := deadline.Sub(now)
+	if requested <= 0 || requested > remaining {
+		return remaining, nil
+	}
+	return requested, nil
+}
+
+func deviceApprovalPollContext(ctx context.Context, deadline time.Time, now time.Time) (context.Context, context.CancelFunc, error) {
+	if err := deviceApprovalStillOpen(deadline, now); err != nil {
+		return nil, nil, err
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, deadline.Sub(now))
+	return pollCtx, cancel, nil
+}
+
+func deviceApprovalPollError(parent context.Context, poll context.Context, err error) error {
+	if err != nil && poll.Err() != nil && parent.Err() == nil {
+		return deviceApprovalTimeoutError()
+	}
+	return err
+}
+
+func deviceApprovalTimeoutError() error {
+	return foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Timed out waiting for device approval.")
+}
+
+func nowForCommand(opts Options) time.Time {
+	if opts.Now != nil {
+		return opts.Now()
+	}
+	return time.Now()
 }
 
 func openBrowserURL(rawURL string) error {
