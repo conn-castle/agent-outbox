@@ -259,6 +259,14 @@ const outputFileSingleRowInvariantMigration = readFileSync(
   "utf8"
 );
 
+const outputOperationAuthMatrixMigration = readFileSync(
+  new URL(
+    "../db/migrations/V20260704123900__output_operation_auth_matrix.sql",
+    import.meta.url
+  ),
+  "utf8"
+);
+
 const phase3FoundationSourceContents = Object.fromEntries(
   [
     "src/server/accounting.ts",
@@ -2219,6 +2227,29 @@ test("phase 3 migration defines account-scoped cleanup primitives", () => {
   );
 });
 
+test("output operation auth migration narrows destructive SQL functions", () => {
+  assert.match(
+    outputOperationAuthMatrixMigration,
+    /create or replace function public\.agent_outbox_delete_output_result\(\s*p_output_result_id uuid,\s*p_deletion_reason text,\s*p_request_id text default null\s*\)/s
+  );
+  assert.match(
+    outputOperationAuthMatrixMigration,
+    /p_deletion_reason = 'acknowledgement'[\s\S]*public\.agent_outbox_context_auth_surface\(\) = 'caller'[\s\S]*o\.caller_id = public\.agent_outbox_context_caller_id\(\)/s
+  );
+  assert.match(
+    outputOperationAuthMatrixMigration,
+    /p_deletion_reason in \([\s\S]*'output_timeout'[\s\S]*'downgrade_grace_file_output'[\s\S]*'downgrade_grace_non_file_payload_limit'[\s\S]*public\.agent_outbox_context_auth_surface\(\) = 'cleanup'/s
+  );
+  assert.match(
+    outputOperationAuthMatrixMigration,
+    /create or replace function public\.agent_outbox_restore_unread_output\(\s*p_output_result_id uuid,\s*p_request_id text default null\s*\)[\s\S]*public\.agent_outbox_context_auth_surface\(\) = 'human'[\s\S]*public\.agent_outbox_context_has_account_membership\(\)/s
+  );
+  assert.doesNotMatch(
+    outputOperationAuthMatrixMigration,
+    /agent_outbox_context_allows_caller\(o\.caller_id\)/
+  );
+});
+
 test("phase 3 migration keeps representative policies tied to transaction context", () => {
   assert.match(initialMigration, /agent_outbox_context_account_id\(\)/);
   assert.match(initialMigration, /agent_outbox_context_caller_id\(\)/);
@@ -2951,6 +2982,155 @@ test(
         `,
         [ackOutputId, ids.accountA, ids.callerA, undoOutputId, ids.fileOutput]
       );
+
+      /**
+       * @param {string} authSurface
+       * @param {{ accountId?: string, callerId?: string, userId?: string }} context
+       */
+      async function setOperationContext(authSurface, context = {}) {
+        const settings = {
+          "agent_outbox.auth_surface": authSurface,
+          "agent_outbox.account_id": context.accountId ?? "",
+          "agent_outbox.caller_id": context.callerId ?? "",
+          "agent_outbox.user_id": context.userId ?? ""
+        };
+
+        for (const [name, value] of Object.entries(settings)) {
+          await client.query("select set_config($1, $2, true)", [name, value]);
+        }
+      }
+
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+
+      await setOperationContext("human", {
+        accountId: ids.accountA,
+        userId: ids.userA
+      });
+      const humanAcknowledgementDeletion = await client.query(
+        `
+          select *
+          from public.agent_outbox_delete_output_result(
+            $1,
+            'acknowledgement',
+            'phase3-deny-human-ack'
+          )
+        `,
+        [ackOutputId]
+      );
+      assert.deepEqual(humanAcknowledgementDeletion.rows[0], {
+        output_deleted: false,
+        input_deleted: false,
+        files_deleted: 0
+      });
+
+      await setOperationContext("caller", {
+        accountId: ids.accountA,
+        callerId: ids.callerA
+      });
+      const callerTimeoutDeletion = await client.query(
+        `
+          select *
+          from public.agent_outbox_delete_output_result(
+            $1,
+            'output_timeout',
+            'phase3-deny-caller-timeout'
+          )
+        `,
+        [timeoutOutputId]
+      );
+      assert.deepEqual(callerTimeoutDeletion.rows[0], {
+        output_deleted: false,
+        input_deleted: false,
+        files_deleted: 0
+      });
+
+      await setOperationContext("cleanup", {
+        accountId: ids.accountA
+      });
+      const cleanupAcknowledgementDeletion = await client.query(
+        `
+          select *
+          from public.agent_outbox_delete_output_result(
+            $1,
+            'acknowledgement',
+            'phase3-deny-cleanup-ack'
+          )
+        `,
+        [ackOutputId]
+      );
+      assert.deepEqual(cleanupAcknowledgementDeletion.rows[0], {
+        output_deleted: false,
+        input_deleted: false,
+        files_deleted: 0
+      });
+
+      await setOperationContext("caller", {
+        accountId: ids.accountA,
+        callerId: ids.callerA2
+      });
+      const wrongCallerAcknowledgementDeletion = await client.query(
+        `
+          select *
+          from public.agent_outbox_delete_output_result(
+            $1,
+            'acknowledgement',
+            'phase3-deny-wrong-caller-ack'
+          )
+        `,
+        [ackOutputId]
+      );
+      assert.deepEqual(wrongCallerAcknowledgementDeletion.rows[0], {
+        output_deleted: false,
+        input_deleted: false,
+        files_deleted: 0
+      });
+
+      await setOperationContext("caller", {
+        accountId: ids.accountA,
+        callerId: ids.callerA
+      });
+      const callerUndoRestore = await client.query(
+        "select * from public.agent_outbox_restore_unread_output($1, 'phase3-deny-caller-undo')",
+        [undoOutputId]
+      );
+      assert.deepEqual(callerUndoRestore.rows[0], {
+        output_deleted: false,
+        input_restored: false,
+        files_deleted: 0
+      });
+
+      await setOperationContext("cleanup", {
+        accountId: ids.accountA
+      });
+      const cleanupUndoRestore = await client.query(
+        "select * from public.agent_outbox_restore_unread_output($1, 'phase3-deny-cleanup-undo')",
+        [undoOutputId]
+      );
+      assert.deepEqual(cleanupUndoRestore.rows[0], {
+        output_deleted: false,
+        input_restored: false,
+        files_deleted: 0
+      });
+
+      const operationAuthPreservation = await client.query(
+        `
+          select
+            (select count(*)::int from public.agent_outbox_output_results where output_result_id = $1) as ack_output_count,
+            (select count(*)::int from public.agent_outbox_output_results where output_result_id = $2) as timeout_output_count,
+            (select count(*)::int from public.agent_outbox_output_results where output_result_id = $3) as undo_output_count,
+            (select count(*)::int from public.agent_outbox_output_files where output_result_id in ($1, $3)) as file_count
+        `,
+        [ackOutputId, timeoutOutputId, undoOutputId]
+      );
+      assert.deepEqual(operationAuthPreservation.rows[0], {
+        ack_output_count: 1,
+        timeout_output_count: 1,
+        undo_output_count: 1,
+        file_count: 2
+      });
+      await client.query("reset role");
+      await client.query("commit");
 
       await client.query(
         `

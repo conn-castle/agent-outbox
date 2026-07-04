@@ -137,7 +137,43 @@ func NewEncryptedCallerSecretStore(path string, masterKey []byte) (*EncryptedCal
 	}, nil
 }
 
+func NewEncryptedCallerSecretStoreFromOSKeyring(path string, store OSKeyring, random io.Reader) (*EncryptedCallerSecretStore, error) {
+	lock, err := AcquireLocalStateLock(path)
+	if err != nil {
+		return nil, WrapSecretStoreError("Could not lock local encrypted secrets file.", err)
+	}
+	defer lock.Close()
+
+	masterKey, err := LoadOrCreateMasterKey(store, random)
+	if err != nil {
+		return nil, err
+	}
+	secretStore, err := NewEncryptedCallerSecretStore(path, masterKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := lock.Close(); err != nil {
+		return nil, WrapSecretStoreError("Could not unlock local encrypted secrets file.", err)
+	}
+	return secretStore, nil
+}
+
 func (s *EncryptedCallerSecretStore) StoreCallerKey(callerID string, callerAPIKey string) error {
+	lock, err := AcquireLocalStateLock(s.Path)
+	if err != nil {
+		return WrapSecretStoreError("Could not lock local encrypted secrets file.", err)
+	}
+	if err := s.StoreCallerKeyWithHeldLocalStateLock(callerID, callerAPIKey); err != nil {
+		_ = lock.Close()
+		return err
+	}
+	if err := lock.Close(); err != nil {
+		return WrapSecretStoreError("Could not unlock local encrypted secrets file.", err)
+	}
+	return nil
+}
+
+func (s *EncryptedCallerSecretStore) StoreCallerKeyWithHeldLocalStateLock(callerID string, callerAPIKey string) error {
 	if strings.TrimSpace(callerID) == "" {
 		return NewAppError(CodeConfig, "Caller id is required for local secret storage.")
 	}
@@ -182,6 +218,21 @@ func (s *EncryptedCallerSecretStore) LoadCallerKey(callerID string) (string, err
 }
 
 func (s *EncryptedCallerSecretStore) DeleteCallerKey(callerID string) error {
+	lock, err := AcquireLocalStateLock(s.Path)
+	if err != nil {
+		return WrapSecretStoreError("Could not lock local encrypted secrets file.", err)
+	}
+	if err := s.DeleteCallerKeyWithHeldLocalStateLock(callerID); err != nil {
+		_ = lock.Close()
+		return err
+	}
+	if err := lock.Close(); err != nil {
+		return WrapSecretStoreError("Could not unlock local encrypted secrets file.", err)
+	}
+	return nil
+}
+
+func (s *EncryptedCallerSecretStore) DeleteCallerKeyWithHeldLocalStateLock(callerID string) error {
 	manifest, err := s.loadManifest()
 	if err != nil {
 		return err
@@ -195,6 +246,10 @@ func (s *EncryptedCallerSecretStore) DeleteCallerKey(callerID string) error {
 	}
 	delete(manifest.Entries, entryKey)
 	return s.persistManifest(manifest)
+}
+
+func (s *EncryptedCallerSecretStore) LocalStateLockFiles() []string {
+	return []string{s.Path}
 }
 
 func (s *EncryptedCallerSecretStore) loadManifest() (*secretsManifest, error) {

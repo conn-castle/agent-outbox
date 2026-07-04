@@ -104,6 +104,7 @@ type controlPlaneRuntime struct {
 	Config          foundation.Config
 	Client          foundation.APIClient
 	Secrets         foundation.CallerSecretStore
+	stateLockHeld   bool
 }
 
 type browserCallbackResult struct {
@@ -476,11 +477,7 @@ func writableSecretStoreForCommand(opts Options) (foundation.CallerSecretStore, 
 	if err := foundation.EnsureOwnerOnlyAppDir(filepath.Dir(paths.SecretsPath)); err != nil {
 		return nil, foundation.WrapSecretStoreError("Could not prepare local Agent Outbox secret-store directory.", err)
 	}
-	masterKey, err := foundation.LoadOrCreateMasterKey(foundation.GoKeyring{}, nil)
-	if err != nil {
-		return nil, err
-	}
-	return foundation.NewEncryptedCallerSecretStore(paths.SecretsPath, masterKey)
+	return foundation.NewEncryptedCallerSecretStoreFromOSKeyring(paths.SecretsPath, foundation.GoKeyring{}, nil)
 }
 
 func runBrowserConnect(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string) (connectExchangeData, error) {
@@ -616,42 +613,62 @@ func exchangeStoreAndActivateRotate(ctx context.Context, runtime *controlPlaneRu
 		return rotateExchangeData{}, rotateActivateData{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return a replacement credential.")
 	}
 
-	oldKey, oldKeyErr := runtime.Secrets.LoadCallerKey(selected.CallerID)
-	if err := runtime.Secrets.StoreCallerKey(selected.CallerID, replacementKey); err != nil {
-		_, _ = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/abort", replacementKey, map[string]string{"setup_request_id": setup.SetupRequestID}, nil)
-		return rotateExchangeData{}, rotateActivateData{}, err
-	}
-
-	updatedConfig := cloneConfig(runtime.Config)
-	upsertCallerConfig(&updatedConfig, selected.Name, exchanged.Caller, exchanged.Account, exchanged.ReplacementCredential)
-	if err := saveRuntimeConfig(runtime, updatedConfig); err != nil {
-		restoreCallerSecret(runtime.Secrets, selected.CallerID, oldKey, oldKeyErr)
-		_, _ = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/abort", replacementKey, map[string]string{"setup_request_id": setup.SetupRequestID}, nil)
-		return rotateExchangeData{}, rotateActivateData{}, err
-	}
-
 	var activated rotateActivateData
-	if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/activate", replacementKey, map[string]string{"setup_request_id": setup.SetupRequestID}, &activated); err != nil {
-		if activateDefinitivelyDidNotCommit(err) {
-			restoreCallerSecret(runtime.Secrets, selected.CallerID, oldKey, oldKeyErr)
-			if saveErr := saveRuntimeConfig(runtime, runtime.Config); saveErr != nil {
-				return rotateExchangeData{}, rotateActivateData{}, rollbackSaveFailureError(err, saveErr)
-			}
-			return rotateExchangeData{}, rotateActivateData{}, err
+	activateAttempted := false
+	if err := withRuntimeLocalStateLock(runtime, func() error {
+		if err := reloadRuntimeConfig(runtime); err != nil {
+			return err
 		}
+		current, err := currentSelectedCaller(runtime.Config, selected)
+		if err != nil {
+			return err
+		}
+		previousConfig := cloneConfig(runtime.Config)
+
+		oldKey, oldKeyErr := runtime.Secrets.LoadCallerKey(current.CallerID)
+		if err := storeCallerSecret(runtime, current.CallerID, replacementKey); err != nil {
+			return err
+		}
+
+		updatedConfig := cloneConfig(runtime.Config)
+		upsertCallerConfig(&updatedConfig, current.Name, exchanged.Caller, exchanged.Account, exchanged.ReplacementCredential)
+		if err := saveRuntimeConfig(runtime, updatedConfig); err != nil {
+			restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr)
+			return err
+		}
+
+		activateAttempted = true
+		if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/activate", replacementKey, map[string]string{"setup_request_id": setup.SetupRequestID}, &activated); err != nil {
+			if activateDefinitivelyDidNotCommit(err) {
+				restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr)
+				if saveErr := saveRuntimeConfig(runtime, previousConfig); saveErr != nil {
+					return rollbackSaveFailureError(err, saveErr)
+				}
+				runtime.Config = previousConfig
+				return err
+			}
+
+			runtime.Config = updatedConfig
+			return activateMayBeActiveError(err, "The hosted rotate activation may already have committed; the new local key was kept so the rotation can be verified or reconciled.")
+		}
+
 		runtime.Config = updatedConfig
-		return rotateExchangeData{}, rotateActivateData{}, activateMayBeActiveError(err, "The hosted rotate activation may already have committed; the new local key was kept so the rotation can be verified or reconciled.")
+		return nil
+	}); err != nil {
+		if !activateAttempted {
+			_, _ = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/abort", replacementKey, map[string]string{"setup_request_id": setup.SetupRequestID}, nil)
+		}
+		return rotateExchangeData{}, rotateActivateData{}, err
 	}
-	runtime.Config = updatedConfig
 	return exchanged, activated, nil
 }
 
-func restoreCallerSecret(store foundation.CallerSecretStore, callerID string, oldKey string, oldKeyErr error) {
+func restoreCallerSecret(runtime *controlPlaneRuntime, callerID string, oldKey string, oldKeyErr error) {
 	if oldKeyErr == nil && oldKey != "" {
-		_ = store.StoreCallerKey(callerID, oldKey)
+		_ = storeCallerSecret(runtime, callerID, oldKey)
 		return
 	}
-	_ = store.DeleteCallerKey(callerID)
+	_ = deleteCallerSecret(runtime, callerID)
 }
 
 func activateDefinitivelyDidNotCommit(err error) bool {
@@ -928,32 +945,51 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 		return connectActivateData{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return a setup request id.")
 	}
 
-	if err := runtime.Secrets.StoreCallerKey(result.Caller.CallerID, pendingKey); err != nil {
-		abortConnectPendingCredential(ctx, runtime, pendingKey, result)
-		return connectActivateData{}, err
-	}
-
-	updatedConfig := cloneConfig(runtime.Config)
-	updatedConfig.BaseURL = runtime.Client.BaseURL
-	upsertCallerConfig(&updatedConfig, localName, result.Caller, result.Account, result.Credential)
-	if err := saveRuntimeConfig(runtime, updatedConfig); err != nil {
-		abortConnectPendingCredential(ctx, runtime, pendingKey, result)
-		return connectActivateData{}, err
-	}
-
 	var activated connectActivateData
-	if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/activate", pendingKey, map[string]string{"setup_request_id": result.SetupRequestID}, &activated); err != nil {
-		if activateDefinitivelyDidNotCommit(err) {
-			_ = runtime.Secrets.DeleteCallerKey(result.Caller.CallerID)
-			if saveErr := saveRuntimeConfig(runtime, runtime.Config); saveErr != nil {
-				return connectActivateData{}, rollbackSaveFailureError(err, saveErr)
-			}
-			return connectActivateData{}, err
+	activateAttempted := false
+	if err := withRuntimeLocalStateLock(runtime, func() error {
+		if err := reloadRuntimeConfig(runtime); err != nil {
+			return err
 		}
+		if err := ensureLocalCallerNameAvailable(runtime.Config, localName); err != nil {
+			return err
+		}
+		previousConfig := cloneConfig(runtime.Config)
+
+		if err := storeCallerSecret(runtime, result.Caller.CallerID, pendingKey); err != nil {
+			return err
+		}
+
+		updatedConfig := cloneConfig(runtime.Config)
+		updatedConfig.BaseURL = runtime.Client.BaseURL
+		upsertCallerConfig(&updatedConfig, localName, result.Caller, result.Account, result.Credential)
+		if err := saveRuntimeConfig(runtime, updatedConfig); err != nil {
+			_ = deleteCallerSecret(runtime, result.Caller.CallerID)
+			return err
+		}
+
+		activateAttempted = true
+		if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/activate", pendingKey, map[string]string{"setup_request_id": result.SetupRequestID}, &activated); err != nil {
+			if activateDefinitivelyDidNotCommit(err) {
+				_ = deleteCallerSecret(runtime, result.Caller.CallerID)
+				if saveErr := saveRuntimeConfig(runtime, previousConfig); saveErr != nil {
+					return rollbackSaveFailureError(err, saveErr)
+				}
+				runtime.Config = previousConfig
+				return err
+			}
+			runtime.Config = updatedConfig
+			return activateMayBeActiveError(err, "The hosted connect credential may already be active; the local caller was kept so the connection can be verified or reconciled.")
+		}
+
 		runtime.Config = updatedConfig
-		return connectActivateData{}, activateMayBeActiveError(err, "The hosted connect credential may already be active; the local caller was kept so the connection can be verified or reconciled.")
+		return nil
+	}); err != nil {
+		if !activateAttempted {
+			abortConnectPendingCredential(ctx, runtime, pendingKey, result)
+		}
+		return connectActivateData{}, err
 	}
-	runtime.Config = updatedConfig
 	return activated, nil
 }
 
@@ -1014,6 +1050,15 @@ type writablePreflightSecretStore interface {
 	PreflightWritable() error
 }
 
+type localStateLockFilesProvider interface {
+	LocalStateLockFiles() []string
+}
+
+type heldLocalStateSecretStore interface {
+	StoreCallerKeyWithHeldLocalStateLock(callerID string, callerAPIKey string) error
+	DeleteCallerKeyWithHeldLocalStateLock(callerID string) error
+}
+
 func preflightConnectLocalPersistence(runtime *controlPlaneRuntime) error {
 	if err := foundation.PreflightConfigWrite(runtime.ConfigPath, runtime.ConfigPathOwned); err != nil {
 		return err
@@ -1022,6 +1067,63 @@ func preflightConnectLocalPersistence(runtime *controlPlaneRuntime) error {
 		return checker.PreflightWritable()
 	}
 	return nil
+}
+
+func withRuntimeLocalStateLock(runtime *controlPlaneRuntime, fn func() error) error {
+	paths := []string{runtime.ConfigPath}
+	if provider, ok := runtime.Secrets.(localStateLockFilesProvider); ok {
+		paths = append(paths, provider.LocalStateLockFiles()...)
+	}
+
+	lock, err := foundation.AcquireLocalStateLock(paths...)
+	if err != nil {
+		return foundation.WrapConfigError("Could not lock local Agent Outbox state.", err)
+	}
+	defer lock.Close()
+
+	previous := runtime.stateLockHeld
+	runtime.stateLockHeld = true
+	defer func() {
+		runtime.stateLockHeld = previous
+	}()
+
+	runErr := fn()
+	closeErr := lock.Close()
+	if runErr != nil {
+		return runErr
+	}
+	if closeErr != nil {
+		return foundation.WrapConfigError("Could not unlock local Agent Outbox state.", closeErr)
+	}
+	return nil
+}
+
+func reloadRuntimeConfig(runtime *controlPlaneRuntime) error {
+	cfg, err := foundation.LoadConfig(runtime.ConfigPath)
+	if err != nil {
+		return err
+	}
+	runtime.Config = cfg
+	return nil
+}
+
+func currentSelectedCaller(cfg foundation.Config, selected foundation.CallerConfig) (foundation.CallerConfig, error) {
+	for _, caller := range cfg.Callers {
+		if caller.Name != selected.Name {
+			continue
+		}
+		if caller.CallerID != selected.CallerID {
+			return foundation.CallerConfig{}, foundation.NewAppError(
+				foundation.CodeConfig,
+				"Local caller changed while waiting for approval; retry the command with the current caller config.",
+			)
+		}
+		return caller, nil
+	}
+	return foundation.CallerConfig{}, foundation.NewAppError(
+		foundation.CodeUnknownCaller,
+		"Selected caller is no longer present in local config; run agent-outbox caller list or reconnect the caller.",
+	)
 }
 
 func cloneConfig(cfg foundation.Config) foundation.Config {
@@ -1092,30 +1194,64 @@ func validateLocalCallerRecords(callers []foundation.CallerConfig) error {
 }
 
 func removeLocalCaller(runtime *controlPlaneRuntime, selected foundation.CallerConfig) error {
-	updated := cloneConfig(runtime.Config)
-	next := make([]foundation.CallerConfig, 0, len(updated.Callers))
-	for _, caller := range updated.Callers {
-		if caller.Name == selected.Name {
-			continue
+	return withRuntimeLocalStateLock(runtime, func() error {
+		if err := reloadRuntimeConfig(runtime); err != nil {
+			return err
 		}
-		next = append(next, caller)
-	}
-	updated.Callers = next
-	if err := runtime.Secrets.DeleteCallerKey(selected.CallerID); err != nil && !errors.Is(err, foundation.ErrSecretNotFound) {
-		return err
-	}
-	if err := saveRuntimeConfig(runtime, updated); err != nil {
-		return err
-	}
-	runtime.Config = updated
-	return nil
+		current, err := currentSelectedCaller(runtime.Config, selected)
+		if err != nil {
+			return err
+		}
+
+		updated := cloneConfig(runtime.Config)
+		next := make([]foundation.CallerConfig, 0, len(updated.Callers))
+		for _, caller := range updated.Callers {
+			if caller.Name == current.Name {
+				continue
+			}
+			next = append(next, caller)
+		}
+		updated.Callers = next
+		if err := deleteCallerSecret(runtime, current.CallerID); err != nil && !errors.Is(err, foundation.ErrSecretNotFound) {
+			return err
+		}
+		if err := saveRuntimeConfig(runtime, updated); err != nil {
+			return err
+		}
+		runtime.Config = updated
+		return nil
+	})
 }
 
 func saveRuntimeConfig(runtime *controlPlaneRuntime, cfg foundation.Config) error {
 	if runtime.ConfigPathOwned {
+		if runtime.stateLockHeld {
+			return foundation.SaveConfigInOwnerOnlyDirWithHeldLocalStateLock(runtime.ConfigPath, cfg)
+		}
 		return foundation.SaveConfigInOwnerOnlyDir(runtime.ConfigPath, cfg)
 	}
+	if runtime.stateLockHeld {
+		return foundation.SaveConfigWithHeldLocalStateLock(runtime.ConfigPath, cfg)
+	}
 	return foundation.SaveConfig(runtime.ConfigPath, cfg)
+}
+
+func storeCallerSecret(runtime *controlPlaneRuntime, callerID string, callerAPIKey string) error {
+	if runtime.stateLockHeld {
+		if store, ok := runtime.Secrets.(heldLocalStateSecretStore); ok {
+			return store.StoreCallerKeyWithHeldLocalStateLock(callerID, callerAPIKey)
+		}
+	}
+	return runtime.Secrets.StoreCallerKey(callerID, callerAPIKey)
+}
+
+func deleteCallerSecret(runtime *controlPlaneRuntime, callerID string) error {
+	if runtime.stateLockHeld {
+		if store, ok := runtime.Secrets.(heldLocalStateSecretStore); ok {
+			return store.DeleteCallerKeyWithHeldLocalStateLock(callerID)
+		}
+	}
+	return runtime.Secrets.DeleteCallerKey(callerID)
 }
 
 func sanitizedConnectResult(localName string, result connectExchangeData, activated connectActivateData) map[string]any {

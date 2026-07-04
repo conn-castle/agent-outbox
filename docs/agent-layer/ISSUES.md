@@ -32,18 +32,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Decide the limit names, numeric thresholds, and affected operation surfaces, then add the corresponding limit definitions and route coverage.
     Notes: Split from `caller-request-rate-limit-and-quota-metering`; the mechanical monthly request over-debit, accepted-submission over-debit, and multi-window all-or-nothing debit defects were fixed.
 
-- Issue 2026-07-03 cli-secret-store-no-cross-process-lock: Concurrent CLI invocations can lose credentials
-    Priority: Medium. Area: CLI/Reliability
-    Description: `cli/internal/foundation/secrets.go` (loadManifest/persistManifest) and `config.go` (saveConfig) do whole-file read-modify-write with no advisory lock spanning load→persist. Each write is atomic (temp+rename), but two concurrent invocations (e.g. two `connect`s) both read then both write, so the last writer clobbers the other's entry. The secret store and config are separate files updated in sequence, so a concurrent run can also leave them inconsistent (a config caller with no secret). Single-flow rollback does not protect against a second process.
-    Next step: Hold an advisory lock (flock or O_CREATE|O_EXCL lock file) across the load→persist window for both the manifest and config; decide stale-lock handling.
-    Notes: Deferred from audit-and-fix Round 1 (F4) as broader scope than a point fix.
-
-- Issue 2026-07-03 cli-browser-denial-waits-for-expiry: Denied browser approval hangs until the ~10-min deadline
-    Priority: Low. Area: CLI/Caller control-plane UX
-    Description: In `cli/internal/command/controlplane.go` runBrowserFlow, the /callback handler drops every non-approved result (returns without sending to the callbacks channel) and callbackResultFromRequest checks status before the setup_request_id match. If the hosted app redirects a denial to the loopback callback, the terminal waits out the setup-request expiry and then reports a misleading "Timed out waiting for browser approval callback" instead of failing fast on the denial.
-    Next step: Confirm the cross-repo contract (does the app redirect a denied approval to the loopback callback, and with what status?). If yes, validate setup_request_id first and deliver a matched denial on the channel while still dropping mismatched/spurious callbacks.
-    Notes: Deferred from audit-and-fix Round 1 (F2): unverifiable from the CLI diff alone, and the naive fix would break controlplane_test.go ~217, which asserts a matched-id-without-status callback is dropped.
-
 - Issue 2026-07-02 never-activated-connect-caller-name-burn: Abandoned connect leaves orphan caller rows and burns the name
     Priority: Medium. Area: Caller control-plane
     Description: Two-phase connect creates the `agent_outbox_callers` row (unique `caller_slug`) at approval but only activates the credential after CLI local persistence. A connect abandoned before activation leaves an orphan caller row plus an expired pending credential: re-connecting the same `local_caller_name` fails with `caller_already_exists` (name burned, no reclaim path), and because the setup-request prune cascade-cleans only the pending credential, abandoned/retried connects accumulate orphaned caller rows indefinitely (data hygiene, not a secret leak).
@@ -62,12 +50,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Decide the required freshness for caller key last-used metadata, then coalesce or throttle updates without inventing an implicit interval.
     Notes: The current write is best-effort and logs failures so bookkeeping does not fail valid requests.
 
-- Issue 2026-06-30 initial-schema-freeze-before-durable-apply: Freeze initial migration before shared database use
-    Priority: Low. Area: Database/Migrations
-    Description: The pre-release initial Flyway migration is still being edited in place; after any durable/shared database applies it, further edits will create checksum drift that fresh replay CI cannot catch.
-    Next step: Before the first durable or shared database apply, freeze `V20260630000000__initial_schema.sql` and put later schema changes in forward migrations.
-    Notes: Tracked during PR shipping after adding the downgrade-grace SQL guard to the initial schema.
-
 - Issue 2026-06-30 protected-human-middleware-fail-open: Protected human middleware fails open on missing Clerk configuration
     Priority: Medium. Area: Security/Auth
     Description: `middleware.ts` skips Clerk protection when either Clerk env var is missing. The current `/human` page has its own missing-config guard, but future `/human/*` routes could rely on middleware and accidentally pass through during misconfiguration.
@@ -79,12 +61,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Tracked `open-next.config.ts`, `wrangler.jsonc`, and `worker/entry.mjs` cannot be fully verified from the pinned package install because OpenNext Cloudflare and Wrangler are intentionally outside the normal app toolchain.
     Next step: In deployment/release work, pin the platform tools and add a dedicated Cloudflare/OpenNext verification command outside `make check`.
     Notes: Matches the existing app-CI/platform split decision; not fixed in improve-codebase to avoid expanding package/deployment scope.
-
-- Issue 2026-06-30 output-sql-operation-auth-matrix: Delete/restore SQL primitives use broad context authorization
-    Priority: Medium. Area: Security/Database
-    Description: `agent_outbox_delete_output_result` and `agent_outbox_restore_unread_output` rely on the broad `agent_outbox_context_allows_caller` helper instead of enforcing an operation-specific surface/reason matrix at the SQL boundary before destructive delete or restore work.
-    Next step: Define and enforce the allowed surface/reason matrix in the SQL functions, then add denial coverage for wrong-surface calls.
-    Notes: Deferred from improve-codebase Chunk 3 pending owner approval because tightening this can change internal auth behavior.
 
 - Issue 2026-06-30 undocumented-phase7-error-codes: ApiErrorCode lists codes absent from errors.md catalog
     Priority: Low. Area: Docs/API contract
