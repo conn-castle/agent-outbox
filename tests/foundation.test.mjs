@@ -33,13 +33,11 @@ import {
 import {
   callerApiKeySecretDigest,
   callerCredentialLookupStatement,
-  formatCallerApiKey,
   generateCallerApiKeyMaterial,
   parseCallerApiKey,
   parseCallerBearerApiKey,
   storedCallerCredentialDigestFromLookupRow,
-  validateCallerBearer,
-  verifyCallerApiKeyAgainstCredential
+  validateCallerBearer
 } from "../src/server/caller-auth.ts";
 import {
   authorizeAccountMembership,
@@ -1232,22 +1230,12 @@ test("validateCallerBearer accepts only the configured smoke token", () => {
   );
 });
 
-test("caller API key helpers create display-once material and verify only active matching credentials", () => {
+test("caller API key helpers create display-once material and lookup metadata", () => {
   withProcessEnv({ CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE }, () => {
     const material = generateCallerApiKeyMaterial();
-    const otherMaterial = generateCallerApiKeyMaterial();
     const parsed = parseCallerApiKey(material.plaintextApiKey);
-    const otherParsed = parseCallerApiKey(otherMaterial.plaintextApiKey);
-    const wrongSecretApiKey =
-      otherParsed.ok && parsed.ok
-        ? formatCallerApiKey({
-            keyId: parsed.keyId,
-            secret: otherParsed.secret
-          })
-        : "";
 
     assert.equal(parsed.ok, true);
-    assert.equal(otherParsed.ok, true);
     assert.equal(material.keyId, parsed.ok ? parsed.keyId : null);
     assert.match(material.plaintextApiKey, /^aob_live_[a-z2-7]+_[a-z2-7]+$/);
     assert.notEqual(material.secretDigest, material.plaintextApiKey);
@@ -1265,76 +1253,6 @@ test("caller API key helpers create display-once material and verify only active
       /create or replace function public\.agent_outbox_lookup_caller_credential\(p_key_id text\)/
     );
 
-    assert.deepEqual(
-      verifyCallerApiKeyAgainstCredential(material.plaintextApiKey, {
-        accountId: "account-123",
-        callerId: "caller-123",
-        keyId: material.keyId,
-        secretDigest: material.secretDigest,
-        status: "active"
-      }),
-      {
-        ok: true,
-        accountId: "account-123",
-        callerId: "caller-123",
-        keyId: material.keyId,
-        secretDigest: material.secretDigest,
-        keyPrefix: material.keyPrefix,
-        keyLastCharacters: material.keyLastCharacters
-      }
-    );
-
-    assert.deepEqual(
-      verifyCallerApiKeyAgainstCredential(material.plaintextApiKey, {
-        accountId: "account-123",
-        callerId: "caller-123",
-        keyId: material.keyId,
-        secretDigest: material.secretDigest,
-        status: "revoked"
-      }),
-      { ok: false, code: "caller_key_revoked" }
-    );
-    assert.deepEqual(
-      verifyCallerApiKeyAgainstCredential(wrongSecretApiKey, {
-        accountId: "account-123",
-        callerId: "caller-123",
-        keyId: material.keyId,
-        secretDigest: material.secretDigest,
-        status: "revoked"
-      }),
-      { ok: false, code: "invalid_caller_key_secret" }
-    );
-    assert.deepEqual(
-      verifyCallerApiKeyAgainstCredential(material.plaintextApiKey, {
-        accountId: "account-123",
-        callerId: "caller-123",
-        keyId: material.keyId,
-        secretDigest: material.secretDigest,
-        status: "expired"
-      }),
-      { ok: false, code: "caller_key_expired" }
-    );
-    assert.deepEqual(
-      verifyCallerApiKeyAgainstCredential(material.plaintextApiKey, {
-        accountId: "account-123",
-        callerId: "caller-123",
-        keyId: material.keyId,
-        secretDigest: material.secretDigest,
-        status: "active",
-        expiresAt: "2000-01-01T00:00:00.000Z"
-      }),
-      { ok: false, code: "caller_key_expired" }
-    );
-    assert.deepEqual(
-      verifyCallerApiKeyAgainstCredential(
-        material.plaintextApiKey,
-        /** @type {any} */ ({
-          keyId: material.keyId,
-          secretDigest: material.secretDigest
-        })
-      ),
-      { ok: false, code: "caller_key_not_active" }
-    );
     assert.deepEqual(callerCredentialLookupStatement(material.keyId), {
       sql: "select * from public.agent_outbox_lookup_caller_credential($1)",
       values: [material.keyId]

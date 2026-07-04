@@ -100,26 +100,6 @@ export type CallerCredentialLookupRow = {
   expires_at: Date | string | null;
 };
 
-export type CallerApiKeyVerificationResult =
-  | ({
-      ok: true;
-      accountId: string;
-      callerId: string;
-      secretDigest: string;
-      keyId: CallerApiKeyId;
-    } & CallerApiKeyDisplayMetadata)
-  | {
-      ok: false;
-      code:
-        | "invalid_caller_api_key"
-        | "caller_key_mismatch"
-        | "caller_key_expired"
-        | "caller_key_not_active"
-        | "caller_key_revoked"
-        | "invalid_stored_digest"
-        | "invalid_caller_key_secret";
-    };
-
 function tokenDigest(value: string) {
   return createHash("sha256").update(value).digest();
 }
@@ -250,54 +230,6 @@ export function callerApiKeySecretDigest(secret: CallerApiKeySecret) {
   return createHmac("sha256", hashSecret).update(secret).digest("hex");
 }
 
-export function verifyCallerApiKeyAgainstCredential(
-  apiKey: CallerApiKey,
-  credential: StoredCallerCredentialDigest
-): CallerApiKeyVerificationResult {
-  const parsed = parseCallerApiKey(apiKey);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  if (parsed.keyId !== credential.keyId) {
-    return { ok: false, code: "caller_key_mismatch" };
-  }
-
-  if (!/^[a-fA-F0-9]{64}$/.test(credential.secretDigest)) {
-    return { ok: false, code: "invalid_stored_digest" };
-  }
-
-  const expectedDigestBuffer = Buffer.from(credential.secretDigest, "hex");
-  const secretDigest = callerApiKeySecretDigest(parsed.secret);
-  const secretDigestBuffer = Buffer.from(secretDigest, "hex");
-
-  if (!timingSafeEqual(secretDigestBuffer, expectedDigestBuffer)) {
-    return { ok: false, code: "invalid_caller_key_secret" };
-  }
-
-  if (credential.revokedAt || credential.status === "revoked") {
-    return { ok: false, code: "caller_key_revoked" };
-  }
-
-  if (credential.status === "expired" || credentialExpired(credential)) {
-    return { ok: false, code: "caller_key_expired" };
-  }
-
-  if (credential.status !== "active") {
-    return { ok: false, code: "caller_key_not_active" };
-  }
-
-  return {
-    ok: true,
-    accountId: credential.accountId,
-    callerId: credential.callerId,
-    keyId: parsed.keyId,
-    secretDigest,
-    keyPrefix: parsed.keyPrefix,
-    keyLastCharacters: parsed.keyLastCharacters
-  };
-}
-
 export function callerCredentialLookupStatement(
   keyId: CallerApiKeyId
 ): TransactionContextStatement {
@@ -363,13 +295,4 @@ function isExpectedCallerApiKeyPart(value: string, expectedLength: number) {
     value.length === expectedLength &&
     BASE32_LOWER_NO_PADDING_PATTERN.test(value)
   );
-}
-
-function credentialExpired(credential: StoredCallerCredentialDigest) {
-  if (!credential.expiresAt) {
-    return false;
-  }
-
-  const expiresAtMs = new Date(credential.expiresAt).getTime();
-  return Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
 }

@@ -192,7 +192,7 @@ const PHASE3_FOUNDATION_MARKERS_BY_FILE = {
   ],
   "src/server/caller-auth.ts": [
     "generateCallerApiKeyMaterial",
-    "verifyCallerApiKeyAgainstCredential"
+    "callerCredentialLookupStatement"
   ],
   "src/server/cleanup.ts": [
     "terminalOutputDeletionStatement",

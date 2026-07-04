@@ -84,6 +84,9 @@ const TEMPORARY_UNAVAILABLE_CLIENT_ERROR: ApiErrorInput = {
   message: "Caller authentication is temporarily unavailable."
 };
 
+const UNKNOWN_CALLER_SECRET_SENTINEL_DIGEST =
+  "0000000000000000000000000000000000000000000000000000000000000000";
+
 export async function authenticateCallerApiRequest(
   request: Request,
   lookupCredential: CallerCredentialLookup,
@@ -129,16 +132,23 @@ export async function authenticateCallerApiRequest(
     });
   }
 
+  const secretDigest = callerApiKeySecretDigest(parsed.secret);
+
   if (!credential) {
+    // Keep lookup misses on the same comparison path as wrong-secret matches;
+    // the result is intentionally discarded to avoid reintroducing a key-id oracle.
+    compareCallerSecretDigest(
+      secretDigest,
+      UNKNOWN_CALLER_SECRET_SENTINEL_DIGEST
+    );
     return failAndLog({
       keyId: parsed.keyId,
       reason: "credential_not_found",
-      secretDigestCompared: false,
-      secretMatched: null
+      secretDigestCompared: true,
+      secretMatched: false
     });
   }
 
-  const secretDigest = callerApiKeySecretDigest(parsed.secret);
   const digestComparison = compareCallerSecretDigest(
     secretDigest,
     credential.secretDigest
