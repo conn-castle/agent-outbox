@@ -135,6 +135,8 @@ export async function authenticateCallerApiRequest(
   const secretDigest = callerApiKeySecretDigest(parsed.secret);
 
   if (!credential) {
+    // Keep lookup misses on the same comparison path as wrong-secret matches;
+    // the result is intentionally discarded to avoid reintroducing a key-id oracle.
     compareCallerSecretDigest(
       secretDigest,
       UNKNOWN_CALLER_SECRET_SENTINEL_DIGEST

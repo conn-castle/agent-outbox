@@ -171,12 +171,26 @@ test("caller API auth masks invalid credentials and lifecycle failures from clie
           credential: {
             ...baseCredential,
             expiresAt: "2000-01-01T00:00:00.000Z"
+          },
+          expectedInternal: {
+            reason: "credential_expired",
+            keyId: material.keyId,
+            credentialStatus: "active",
+            secretDigestCompared: true,
+            secretMatched: true
           }
         },
         {
           name: "pending",
           apiKey: material.plaintextApiKey,
-          credential: { ...baseCredential, status: "pending_activation" }
+          credential: { ...baseCredential, status: "pending_activation" },
+          expectedInternal: {
+            reason: "credential_not_active",
+            keyId: material.keyId,
+            credentialStatus: "pending_activation",
+            secretDigestCompared: true,
+            secretMatched: true
+          }
         },
         {
           name: "key id mismatch",
