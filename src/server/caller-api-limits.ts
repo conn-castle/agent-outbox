@@ -101,7 +101,11 @@ export async function enforceAccountRequestLimits(
     return limitBlockedError(profile, activeBlock);
   }
 
-  if (fixedWindowLimits(profile, operationKind, "requests").length > 1) {
+  const requestWindows = fixedWindowLimits(profile, operationKind, "requests");
+  const shouldSerializeQuotaWindows =
+    requestWindows.length > 1 ||
+    requestWindows.some((limit) => limit.limitName === MONTHLY_CALLER_API_LIMIT);
+  if (shouldSerializeQuotaWindows) {
     await query(accountWriteLockStatement(identity));
   }
 
@@ -617,7 +621,7 @@ async function incrementFixedWindowLimits(
     })
   );
 
-  if (windows.length > 1) {
+  if (unit === "requests" && windows.length > 1) {
     for (const { limit, window } of windows) {
       const result = await query<QuotaWindowRow>(
         quotaWindowUsageStatement({

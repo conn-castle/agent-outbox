@@ -82,8 +82,8 @@ test("caller request limits short-circuit active blocks without incrementing quo
   assert.equal(query.calls.length, 1);
 });
 
-test("caller request limits persist an active block when a quota window overflows", async () => {
-  const query = fakeQuery([[], [{ used_units: "100001" }], []]);
+test("caller request limits lock and persist an active block when a quota window overflows", async () => {
+  const query = fakeQuery([[], [], [{ used_units: "100001" }], []]);
 
   const result = await enforceCallerRequestLimits(
     query,
@@ -100,7 +100,8 @@ test("caller request limits persist an active block when a quota window overflow
       : null,
     "authenticated_caller_api_requests_per_calendar_month"
   );
-  assert.match(query.calls[2].sql, /agent_outbox_account_limit_blocks/);
+  assert.match(query.calls[1].sql, /for update/);
+  assert.match(query.calls[3].sql, /agent_outbox_account_limit_blocks/);
 });
 
 test("caller request limits do not debit an earlier window when a later window overflows", async () => {
@@ -214,7 +215,7 @@ test("caller request limits ignore stale enabled blocks that no longer exceed th
     used_units: "100000",
     limit_units: "100000"
   };
-  const query = fakeQuery([[staleBlock], [{ used_units: "1" }]]);
+  const query = fakeQuery([[staleBlock], [], [{ used_units: "1" }]]);
 
   const result = await enforceCallerRequestLimits(
     query,
@@ -224,8 +225,9 @@ test("caller request limits ignore stale enabled blocks that no longer exceed th
   );
 
   assert.deepEqual(result, { ok: true });
-  assert.equal(query.calls.length, 2);
-  assert.match(query.calls[1].sql, /agent_outbox_account_quota_windows/);
+  assert.equal(query.calls.length, 3);
+  assert.match(query.calls[1].sql, /for update/);
+  assert.match(query.calls[2].sql, /agent_outbox_account_quota_windows/);
 });
 
 test("caller request limits ignore enabled blocks without usage evidence", async () => {
@@ -239,7 +241,7 @@ test("caller request limits ignore enabled blocks without usage evidence", async
     used_units: null,
     limit_units: "100000"
   };
-  const query = fakeQuery([[nullUsageBlock], [{ used_units: "1" }]]);
+  const query = fakeQuery([[nullUsageBlock], [], [{ used_units: "1" }]]);
 
   const result = await enforceCallerRequestLimits(
     query,
@@ -249,7 +251,8 @@ test("caller request limits ignore enabled blocks without usage evidence", async
   );
 
   assert.deepEqual(result, { ok: true });
-  assert.equal(query.calls.length, 2);
+  assert.equal(query.calls.length, 3);
+  assert.match(query.calls[1].sql, /for update/);
 });
 
 test("caller request limits ignore blocks whose limit no longer applies to the operation", async () => {
@@ -348,6 +351,49 @@ test("accepted input submission limits block stock overflow before incrementing 
     ),
     false
   );
+});
+
+test("accepted input submission limits pre-check quota windows once before incrementing", async () => {
+  const query = fakeQuery([
+    [],
+    [{ acquired: true }],
+    [],
+    [],
+    [],
+    [],
+    [
+      {
+        queued_input_items: "0",
+        non_file_stored_bytes: "0",
+        overall_stored_bytes: "0"
+      }
+    ],
+    [{ used_units: "1" }],
+    [{ used_units: "1" }],
+    [{ used_units: "1" }]
+  ]);
+
+  const result = await enforceAcceptedInputSubmissionLimits(
+    query,
+    identity,
+    "hosted-free",
+    {
+      queuedItemDelta: 1,
+      nonFilePayloadByteDelta: 100
+    }
+  );
+
+  assert.deepEqual(result, { ok: true });
+  const quotaUsageReads = query.calls.filter(
+    (call) =>
+      call.sql.includes("select used_units") &&
+      call.sql.includes("agent_outbox_account_quota_windows")
+  );
+  const quotaIncrements = query.calls.filter((call) =>
+    call.sql.includes("insert into public.agent_outbox_account_quota_windows")
+  );
+  assert.equal(quotaUsageReads.length, 3);
+  assert.equal(quotaIncrements.length, 3);
 });
 
 test("quota statement builders scope rows to account metric and window", () => {
