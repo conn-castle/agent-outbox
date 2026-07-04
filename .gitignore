@@ -20,12 +20,12 @@ next-env.d.ts
 /supabase/.temp/
 
 # >>> agent-layer
-# Template hash: 8eb52be5a6dc589d6b71d995e79d26d3bd4dde0007612b004cb68ac489565002
+# Template hash: 40e4d77df661e151efc12f8247e480ba241e3e04d9f56cc795b107d3259c76d2
 # Managed by Agent Layer. To customize, edit .agent-layer/gitignore.block
 # and re-run `al sync` to apply changes.
 
 # Optional: keep uncommented to ignore .agent-layer/ config.
-# /.agent-layer/
+/.agent-layer/
 # Optional: uncomment to ignore docs/agent-layer/ project memory.
 # Edit .agent-layer/gitignore.block (not .gitignore) to change this entry.
 # /docs/agent-layer/
