@@ -80,12 +80,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: In deployment/release work, pin the platform tools and add a dedicated Cloudflare/OpenNext verification command outside `make check`.
     Notes: Matches the existing app-CI/platform split decision; not fixed in improve-codebase to avoid expanding package/deployment scope.
 
-- Issue 2026-06-30 output-sql-operation-auth-matrix: Delete/restore SQL primitives use broad context authorization
-    Priority: Medium. Area: Security/Database
-    Description: `agent_outbox_delete_output_result` and `agent_outbox_restore_unread_output` rely on the broad `agent_outbox_context_allows_caller` helper instead of enforcing an operation-specific surface/reason matrix at the SQL boundary before destructive delete or restore work.
-    Next step: Define and enforce the allowed surface/reason matrix in the SQL functions, then add denial coverage for wrong-surface calls.
-    Notes: Deferred from improve-codebase Chunk 3 pending owner approval because tightening this can change internal auth behavior.
-
 - Issue 2026-06-30 undocumented-phase7-error-codes: ApiErrorCode lists codes absent from errors.md catalog
     Priority: Low. Area: Docs/API contract
     Description: `retention_limit_exceeded` and `billing_grace_expired` are in the `ApiErrorCode` union and wired into limit definitions in `limits.ts`, but are not in the `docs/spec/errors.md` catalog. They are Phase 7 (billing/retention) forward declarations not yet emittable to callers, so the type/limits surface and the public error catalog have drifted.
