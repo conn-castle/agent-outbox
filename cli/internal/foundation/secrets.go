@@ -137,6 +137,27 @@ func NewEncryptedCallerSecretStore(path string, masterKey []byte) (*EncryptedCal
 	}, nil
 }
 
+func NewEncryptedCallerSecretStoreFromOSKeyring(path string, store OSKeyring, random io.Reader) (*EncryptedCallerSecretStore, error) {
+	lock, err := AcquireLocalStateLock(path)
+	if err != nil {
+		return nil, WrapSecretStoreError("Could not lock local encrypted secrets file.", err)
+	}
+	defer lock.Close()
+
+	masterKey, err := LoadOrCreateMasterKey(store, random)
+	if err != nil {
+		return nil, err
+	}
+	secretStore, err := NewEncryptedCallerSecretStore(path, masterKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := lock.Close(); err != nil {
+		return nil, WrapSecretStoreError("Could not unlock local encrypted secrets file.", err)
+	}
+	return secretStore, nil
+}
+
 func (s *EncryptedCallerSecretStore) StoreCallerKey(callerID string, callerAPIKey string) error {
 	lock, err := AcquireLocalStateLock(s.Path)
 	if err != nil {

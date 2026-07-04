@@ -477,11 +477,7 @@ func writableSecretStoreForCommand(opts Options) (foundation.CallerSecretStore, 
 	if err := foundation.EnsureOwnerOnlyAppDir(filepath.Dir(paths.SecretsPath)); err != nil {
 		return nil, foundation.WrapSecretStoreError("Could not prepare local Agent Outbox secret-store directory.", err)
 	}
-	masterKey, err := foundation.LoadOrCreateMasterKey(foundation.GoKeyring{}, nil)
-	if err != nil {
-		return nil, err
-	}
-	return foundation.NewEncryptedCallerSecretStore(paths.SecretsPath, masterKey)
+	return foundation.NewEncryptedCallerSecretStoreFromOSKeyring(paths.SecretsPath, foundation.GoKeyring{}, nil)
 }
 
 func runBrowserConnect(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string) (connectExchangeData, error) {

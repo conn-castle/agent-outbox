@@ -14,9 +14,13 @@ type fakeOSKeyring struct {
 	values map[string]string
 	err    error
 	sets   int
+	onGet  func()
 }
 
 func (f *fakeOSKeyring) Get(service string, account string) (string, error) {
+	if f.onGet != nil {
+		f.onGet()
+	}
 	if f.err != nil {
 		return "", f.err
 	}
@@ -75,6 +79,52 @@ func TestLoadMasterKeyDoesNotCreateMissingKey(t *testing.T) {
 	}
 	if len(store.values) != 0 {
 		t.Fatalf("LoadMasterKey wrote keyring values: %#v", store.values)
+	}
+}
+
+func TestEncryptedCallerSecretStoreFromOSKeyringUsesLocalStateLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent-outbox", "secrets.v1.enc")
+	held, err := AcquireLocalStateLock(path)
+	if err != nil {
+		t.Fatalf("AcquireLocalStateLock failed: %v", err)
+	}
+
+	getStarted := make(chan struct{})
+	storeReady := make(chan error, 1)
+	store := &fakeOSKeyring{onGet: func() {
+		select {
+		case <-getStarted:
+		default:
+			close(getStarted)
+		}
+	}}
+	go func() {
+		_, err := NewEncryptedCallerSecretStoreFromOSKeyring(path, store, bytes.NewReader(bytes.Repeat([]byte{7}, masterKeyBytes)))
+		storeReady <- err
+	}()
+
+	select {
+	case <-getStarted:
+		t.Fatalf("OS keyring was read while local-state lock was held")
+	case err := <-storeReady:
+		t.Fatalf("secret store returned while local-state lock was held: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	if err := held.Close(); err != nil {
+		t.Fatalf("closing held lock: %v", err)
+	}
+
+	select {
+	case err := <-storeReady:
+		if err != nil {
+			t.Fatalf("NewEncryptedCallerSecretStoreFromOSKeyring failed after lock release: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("secret store did not finish after local-state lock release")
+	}
+	if store.sets != 1 {
+		t.Fatalf("keyring Set calls = %d, want 1", store.sets)
 	}
 }
 
