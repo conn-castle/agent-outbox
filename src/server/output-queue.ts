@@ -98,10 +98,20 @@ type OutputRow = {
   answered_by_user_id: string | null;
 };
 
-// Rows returned by outputPageStatement carry a full-precision string rendering
+type OutputPageCursorRow = {
+  output_result_id: string;
+  answered_at: string | Date;
+  answered_at_cursor: string;
+};
+
+type OutputCheckPageRow = OutputPageCursorRow & {
+  caller_item_id: string;
+};
+
+// Rows returned by paginated output statements carry a full-precision string rendering
 // of answered_at so the keyset cursor matches the raw timestamptz column exactly
 // (node-postgres truncates timestamptz to millisecond-precision Date objects).
-type OutputPageRow = OutputRow & { answered_at_cursor: string };
+type OutputPageRow = OutputRow & OutputPageCursorRow;
 
 type OutputFileMetadataRow = {
   output_result_id: string;
@@ -216,8 +226,8 @@ export async function checkOutputPageInTransaction(
   const readyCount = await query<ReadyCountRow>(
     outputReadyCountStatement(identity)
   );
-  const pageRows = await query<OutputPageRow>(
-    outputPageStatement(identity, limit, cursor)
+  const pageRows = await query<OutputCheckPageRow>(
+    outputCheckPageStatement(identity, limit, cursor)
   );
   const page = pageRows.rows.slice(0, limit);
   const hasMore = pageRows.rows.length > limit;
@@ -433,6 +443,40 @@ export function outputPageStatement(
         ${cursorClause}
       order by answered_at, output_result_id
       limit $${values.length}${lockClause}
+    `,
+    values
+  };
+}
+
+export function outputCheckPageStatement(
+  identity: CallerIdentity,
+  limit: number,
+  cursor: OutputCursor | null
+): TransactionContextStatement {
+  const values: (string | number)[] = [identity.accountId, identity.callerId];
+  const cursorClause = cursor
+    ? "and (answered_at, output_result_id) > ($3::timestamptz, $4::uuid)"
+    : "";
+
+  if (cursor) {
+    values.push(cursor.answeredAt, cursor.outputResultId);
+  }
+
+  values.push(limit + 1);
+
+  return {
+    sql: `
+      select
+        output_result_id::text as output_result_id,
+        caller_item_id,
+        answered_at,
+        to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor
+      from public.agent_outbox_output_results
+      where account_id = $1
+        and caller_id = $2
+        ${cursorClause}
+      order by answered_at, output_result_id
+      limit $${values.length}
     `,
     values
   };
@@ -702,7 +746,7 @@ function outputResponse(
   };
 }
 
-function outputCheckItemFromRow(row: OutputRow): OutputCheckItem {
+function outputCheckItemFromRow(row: OutputCheckPageRow): OutputCheckItem {
   return {
     output_result_id: row.output_result_id,
     caller_item_id: row.caller_item_id,
@@ -814,7 +858,7 @@ function parseCursor(value: unknown) {
   };
 }
 
-export function cursorFromOutputRow(row: OutputPageRow) {
+export function cursorFromOutputRow(row: OutputPageCursorRow) {
   return Buffer.from(
     JSON.stringify({
       answered_at: row.answered_at_cursor,

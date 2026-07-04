@@ -9,6 +9,7 @@ import {
   handleOutputCheckRequest,
   handleOutputReadAllRequest,
   handleOutputReadRequest,
+  outputCheckPageStatement,
   outputFileMetadataStatement,
   outputPageStatement,
   outputResultByIdStatement,
@@ -120,6 +121,10 @@ test("output check returns cursor-paginated readiness metadata only", async () =
   assert.equal(
     query.calls.some((call) => call.sql.includes("first_read_at")),
     false
+  );
+  assert.doesNotMatch(
+    query.calls[1].sql,
+    /action_value|response_kind|response_payload|answered_by_user_id/
   );
   // check is non-mutating and must never lock rows, so pages read concurrently
   // stay available to the mutating read/read-all/ack paths.
@@ -393,6 +398,14 @@ test("output query builders scope by authenticated caller and metadata-only file
     outputOneId
   ]);
   assert.match(outputPageStatement(identity, 25, null).sql, /caller_id = \$2/);
+  assert.doesNotMatch(
+    outputCheckPageStatement(identity, 25, null).sql,
+    /action_value|response_kind|response_payload|answered_by_user_id/
+  );
+  assert.match(
+    outputCheckPageStatement(identity, 25, null).sql,
+    /answered_at_cursor/
+  );
 
   const fileMetadata = outputFileMetadataStatement(identity, [outputOneId]);
   assert.match(fileMetadata.sql, /filename/);

@@ -115,11 +115,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: `retention_limit_exceeded` and `billing_grace_expired` are in the `ApiErrorCode` union and wired into limit definitions in `limits.ts`, but are not in the `docs/spec/errors.md` catalog. They are Phase 7 (billing/retention) forward declarations not yet emittable to callers, so the type/limits surface and the public error catalog have drifted.
     Next step: When Phase 7 builds billing/retention, add these codes to `errors.md`; until then keep the divergence intentional and tracked here.
 
-- Issue 2026-06-30 output-read-path-hardening: check over-fetch and read-all single-row poison-pill
+- Issue 2026-06-30 output-read-all-single-row-poison-pill: read-all page can fail on one unmaterializable row
     Priority: Low. Area: Output queue
-    Description: Two output read-path items in `src/server/output-queue.ts`: (1) `check` reuses `outputPageStatement` and pulls full `response_payload` JSON from the DB though `outputCheckItemFromRow` projects to metadata only (extra DB I/O, not a leak); (2) `read-all` returns `{ok:false}`/`temporary_unavailable` for the whole page if any single row fails materialization, which would block a page and everything after it. Both are currently low-impact (read-all poison-pill is unreachable until file-upload results become creatable in Phase 7).
-    Next step: Give `check` a metadata-only SELECT; when file-upload results become creatable, degrade a single unmaterializable read-all row rather than failing the whole page.
-    Notes: Surfaced by Phase 4 audit review-scope.
+    Description: In `src/server/output-queue.ts`, `read-all` returns `{ok:false}`/`temporary_unavailable` for the whole page if any single row fails materialization, which would block a page and everything after it. Currently unreachable until file-upload results become creatable in Phase 7.
+    Next step: When file-upload results become creatable, degrade a single unmaterializable read-all row rather than failing the whole page.
+    Notes: Surfaced by Phase 4 audit review-scope; split from `output-read-path-hardening` after the output `check` query was changed to metadata-only.
 
 - Issue 2026-06-30 input-send-answered-live-output-branch: Inert answered-item branch may mask intended distinction
     Priority: Medium. Area: Input queue semantics
