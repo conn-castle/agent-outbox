@@ -2028,8 +2028,13 @@ test("runtime canary keeps configuration detail behind smoke bearer auth", () =>
         "https://example.test/api/runtime/canary",
         "Bearer smoke-token"
       );
+      const trimmedSmokeBody = runtimeCanaryResponseBody(
+        "https://example.test/api/runtime/canary",
+        "  Bearer smoke-token  "
+      );
 
       assert("environment" in smokeBody);
+      assert("environment" in trimmedSmokeBody);
       assert("postgres_driver" in smokeBody);
       assert("out_of_scope" in smokeBody);
       assert.equal(smokeBody.environment.configured, true);
