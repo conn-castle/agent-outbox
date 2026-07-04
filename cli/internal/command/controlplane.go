@@ -1083,12 +1083,15 @@ func withRuntimeLocalStateLock(runtime *controlPlaneRuntime, fn func() error) er
 	if err != nil {
 		return foundation.WrapConfigError("Could not lock local Agent Outbox state.", err)
 	}
+	defer lock.Close()
 
 	previous := runtime.stateLockHeld
 	runtime.stateLockHeld = true
-	runErr := fn()
-	runtime.stateLockHeld = previous
+	defer func() {
+		runtime.stateLockHeld = previous
+	}()
 
+	runErr := fn()
 	closeErr := lock.Close()
 	if runErr != nil {
 		return runErr

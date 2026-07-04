@@ -281,6 +281,46 @@ func TestStoreAndActivateConnectPreservesConcurrentConfigUpdates(t *testing.T) {
 	}
 }
 
+func TestWithRuntimeLocalStateLockReleasesLockAfterPanic(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	runtime := &controlPlaneRuntime{ConfigPath: configPath}
+	const panicValue = "panic under local state lock"
+
+	func() {
+		defer func() {
+			got := recover()
+			if got != panicValue {
+				t.Fatalf("recover() = %#v, want %q", got, panicValue)
+			}
+		}()
+		_ = withRuntimeLocalStateLock(runtime, func() error {
+			panic(panicValue)
+		})
+	}()
+
+	if runtime.stateLockHeld {
+		t.Fatalf("runtime stateLockHeld stayed true after panic")
+	}
+
+	acquired := make(chan error, 1)
+	go func() {
+		lock, err := foundation.AcquireLocalStateLock(configPath)
+		if err == nil {
+			err = lock.Close()
+		}
+		acquired <- err
+	}()
+
+	select {
+	case err := <-acquired:
+		if err != nil {
+			t.Fatalf("AcquireLocalStateLock after panic failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("local state lock stayed held after panic")
+	}
+}
+
 func TestCallerConnectBrowserIgnoresMalformedCallbacksUntilValidCallback(t *testing.T) {
 	store := &controlPlaneSecretStore{}
 	configPath := filepath.Join(t.TempDir(), "config.json")

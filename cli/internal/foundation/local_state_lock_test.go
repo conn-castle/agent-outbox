@@ -49,6 +49,29 @@ func TestLocalStateLockSerializesSameProcessCriticalSection(t *testing.T) {
 	}
 }
 
+func TestLocalStateLockCloseIsIdempotent(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "config.json")
+
+	lock, err := AcquireLocalStateLock(statePath)
+	if err != nil {
+		t.Fatalf("AcquireLocalStateLock failed: %v", err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatalf("closing lock first time: %v", err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatalf("closing lock second time: %v", err)
+	}
+
+	reacquired, err := AcquireLocalStateLock(statePath)
+	if err != nil {
+		t.Fatalf("AcquireLocalStateLock after repeated close failed: %v", err)
+	}
+	if err := reacquired.Close(); err != nil {
+		t.Fatalf("closing reacquired lock: %v", err)
+	}
+}
+
 func TestLocalStateLockDeduplicatesSharedStateDirectory(t *testing.T) {
 	dir := t.TempDir()
 	lock, err := AcquireLocalStateLock(

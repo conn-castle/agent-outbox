@@ -16,6 +16,7 @@ var localStateLockGuards sync.Map
 
 type LocalStateLock struct {
 	locks []*localStateFileLock
+	once  sync.Once
 }
 
 type localStateFileLock struct {
@@ -46,7 +47,11 @@ func (l *LocalStateLock) Close() error {
 	if l == nil {
 		return nil
 	}
-	return releaseLocalStateFileLocks(l.locks)
+	var err error
+	l.once.Do(func() {
+		err = releaseLocalStateFileLocks(l.locks)
+	})
+	return err
 }
 
 func localStateLockPaths(paths ...string) ([]string, error) {
