@@ -180,29 +180,45 @@ export async function runScheduledCleanup(
     let statementsRun = globalResult.statementsRun;
     let rowsAffected = globalResult.rowsAffected;
     let accountsCleaned = 0;
+    const accountFailures: { accountId: string; error: unknown }[] = [];
 
     for (const account of globalResult.accounts) {
-      const accountResult = await runTransaction(
-        connectionString,
-        {
-          requestId,
-          authSurface: "cleanup",
-          accountId: account.accountId
-        },
-        (query) =>
-          runCleanupStatements(
-            query,
-            scheduledCleanupStatementsForAccount({
-              tier: account.tier,
-              now,
-              requestId
-            })
-          )
-      );
+      try {
+        const accountResult = await runTransaction(
+          connectionString,
+          {
+            requestId,
+            authSurface: "cleanup",
+            accountId: account.accountId
+          },
+          (query) =>
+            runCleanupStatements(
+              query,
+              scheduledCleanupStatementsForAccount({
+                tier: account.tier,
+                now,
+                requestId
+              })
+            )
+        );
 
-      statementsRun += accountResult.statementsRun;
-      rowsAffected += accountResult.rowsAffected;
-      accountsCleaned += 1;
+        statementsRun += accountResult.statementsRun;
+        rowsAffected += accountResult.rowsAffected;
+        accountsCleaned += 1;
+      } catch (error) {
+        emitScheduledCleanupFailure(requestId, error);
+        accountFailures.push({ accountId: account.accountId, error });
+      }
+    }
+
+    if (accountFailures.length > 0) {
+      const failedAccountIds = accountFailures
+        .map((failure) => failure.accountId)
+        .join(", ");
+      throw new AggregateError(
+        accountFailures.map((failure) => failure.error),
+        `Scheduled cleanup failed for ${accountFailures.length} account(s): ${failedAccountIds}`
+      );
     }
 
     emitRuntimeLog({

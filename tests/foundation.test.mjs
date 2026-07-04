@@ -1820,6 +1820,87 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
   );
 });
 
+test("scheduled cleanup continues account maintenance after one account fails", async () => {
+  /** @type {import("../src/server/database.ts").ProductTransactionContext[]} */
+  const contexts = [];
+  const now = new Date("2026-07-15T12:34:56.000Z");
+  const accountFailure = new Error("lock timeout");
+  /**
+   * @param {import("pg").QueryResultRow[]} rows
+   * @returns {import("pg").QueryResult<import("pg").QueryResultRow>}
+   */
+  function cleanupQueryResult(rows) {
+    return {
+      command: "SELECT",
+      rowCount: rows.length,
+      oid: 0,
+      fields: [],
+      rows
+    };
+  }
+
+  /** @type {unknown} */
+  let thrown;
+  try {
+    await runScheduledCleanup({
+      connectionString: "postgresql://cleanup-test",
+      now,
+      requestId: "cleanup-test-request",
+      async runTransaction(connectionString, context, callback) {
+        assert.equal(connectionString, "postgresql://cleanup-test");
+        contexts.push(context);
+
+        if (context.accountId === "account-free") {
+          throw accountFailure;
+        }
+
+        /**
+         * @param {import("../src/server/database.ts").TransactionContextStatement} statement
+         * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
+         */
+        const query = async (statement) => {
+          if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
+            return cleanupQueryResult([
+              { account_id: "account-free", tier: "hosted_free" },
+              { account_id: "account-paid", tier: "hosted_paid" }
+            ]);
+          }
+
+          return cleanupQueryResult([{ deleted_count: 1 }]);
+        };
+
+        return await callback(
+          /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
+            query
+          )
+        );
+      }
+    });
+  } catch (error) {
+    thrown = error;
+  }
+
+  assert(thrown instanceof AggregateError);
+  assert.match(
+    thrown.message,
+    /^Scheduled cleanup failed for 1 account\(s\): account-free$/
+  );
+  assert.deepEqual(thrown.errors, [accountFailure]);
+  assert.deepEqual(contexts, [
+    { requestId: "cleanup-test-request", authSurface: "cleanup" },
+    {
+      requestId: "cleanup-test-request",
+      authSurface: "cleanup",
+      accountId: "account-free"
+    },
+    {
+      requestId: "cleanup-test-request",
+      authSurface: "cleanup",
+      accountId: "account-paid"
+    }
+  ]);
+});
+
 test("safeLogEvent strips request bodies and arbitrary caller-controlled fields", () => {
   /** @type {import("../src/server/logging.ts").RuntimeLogEvent & { request_body: string, caller_display_name: string }} */
   const unsafeEvent = {
