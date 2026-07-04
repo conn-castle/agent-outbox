@@ -4,6 +4,8 @@ import type { PopupKind } from "./input-schema.ts";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+export const MAX_BULK_HUMAN_ANSWER_ITEMS = 100;
+
 export type ParsedHumanAnswerForm =
   | {
       ok: true;
@@ -80,16 +82,18 @@ export function parseBulkHumanAnswersForm(
   }
 
   const rawItems = formData.getAll("bulkItem");
-  if (rawItems.length === 0) {
+  if (rawItems.length === 0 || rawItems.length > MAX_BULK_HUMAN_ANSWER_ITEMS) {
     return { ok: false };
   }
 
   const items: BulkAnswerItem[] = [];
+  const inputItemIds = new Set<string>();
   for (const rawItem of rawItems) {
     const item = parseBulkItem(rawItem);
-    if (!item) {
+    if (!item || inputItemIds.has(item.inputItemId)) {
       return { ok: false };
     }
+    inputItemIds.add(item.inputItemId);
     items.push(item);
   }
 

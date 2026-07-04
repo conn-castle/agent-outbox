@@ -231,6 +231,14 @@ const initialMigration = readFileSync(
   "utf8"
 );
 
+const outputFileSizeInvariantMigration = readFileSync(
+  new URL(
+    "../db/migrations/V20260703223000__output_file_size_invariant.sql",
+    import.meta.url
+  ),
+  "utf8"
+);
+
 const phase3FoundationSourceContents = Object.fromEntries(
   [
     "src/server/accounting.ts",
@@ -697,6 +705,19 @@ release:
     []
   );
 
+  const reorderedRelease = `homebrew_casks:
+  - name: agent-outbox
+    skip_upload: true
+
+release:
+  prerelease: auto
+  disable: true
+`;
+  assert.deepEqual(
+    validateGoReleaserTooling(toolchain, makefile, reorderedRelease),
+    []
+  );
+
   assert.deepEqual(
     validateGoReleaserTooling({ ...toolchain, goTooling: {} }, "", ""),
     ["toolchain.json goTooling.goreleaser module/version is required"]
@@ -716,6 +737,24 @@ release:
       ".goreleaser.yaml must disable release publishing",
       ".goreleaser.yaml Homebrew cask config must set skip_upload: true"
     ]
+  );
+
+  assert.deepEqual(
+    validateGoReleaserTooling(
+      toolchain,
+      makefile,
+      `homebrew_casks:
+  - name: agent-outbox
+
+archives:
+  - id: agent-outbox
+    skip_upload: true
+
+release:
+  disable: true
+`
+    ),
+    [".goreleaser.yaml Homebrew cask config must set skip_upload: true"]
   );
 });
 
@@ -1602,10 +1641,22 @@ test("accounting helpers keep audit data content-safe and use quota windows for 
 });
 
 test("cleanup statement builders target lifecycle database functions", () => {
-  assert.deepEqual(duplicateAcknowledgementLookupStatement("output-123"), {
-    sql: "select public.agent_outbox_output_ack_already_recorded($1) as already_recorded",
-    values: ["output-123"]
-  });
+  const duplicateAck = duplicateAcknowledgementLookupStatement(
+    { accountId: "account-123", callerId: "caller-123" },
+    "output-123"
+  );
+  assert.match(duplicateAck.sql, /agent_outbox_audit_events/);
+  assert.match(duplicateAck.sql, /agent_outbox_callers/);
+  assert.match(duplicateAck.sql, /event\.output_result_id = \$3::uuid/);
+  assert.match(duplicateAck.sql, /caller\.account_id = \$1::uuid/);
+  assert.match(duplicateAck.sql, /caller\.caller_id = \$2::uuid/);
+  assert.match(duplicateAck.sql, /agent_outbox_context_account_id/);
+  assert.match(duplicateAck.sql, /agent_outbox_context_allows_caller/);
+  assert.deepEqual(duplicateAck.values, [
+    "account-123",
+    "caller-123",
+    "output-123"
+  ]);
   assert.deepEqual(
     terminalOutputDeletionStatement("output-123", "acknowledgement", "req-1"),
     {
@@ -1986,6 +2037,18 @@ test("phase 3 migration keeps output and file ownership tied to parents", () => 
   assert.match(
     initialMigration,
     /foreign key \(account_id, caller_id, output_result_id\)\s+references public\.agent_outbox_output_results\(account_id, caller_id, output_result_id\)/s
+  );
+  assert.match(
+    outputFileSizeInvariantMigration,
+    /constraint agent_outbox_output_files_size_matches_bytes/
+  );
+  assert.match(
+    outputFileSizeInvariantMigration,
+    /check \(size_bytes = octet_length\(file_bytes\)\) not valid/
+  );
+  assert.match(
+    outputFileSizeInvariantMigration,
+    /validate constraint agent_outbox_output_files_size_matches_bytes/
   );
 });
 

@@ -277,10 +277,7 @@ export async function enforceAcceptedInputSubmissionLimits(
     query,
     identity,
     profile,
-    "input_submission",
-    {
-      fixedWindowOnly: true
-    }
+    "input_submission"
   );
   if (activeBlock) {
     return limitBlockedError(profile, activeBlock);
@@ -338,12 +335,10 @@ export function accountTierStatement(
 
 export function activeLimitBlockStatement(
   identity: AccountLimitIdentity,
-  operationKind: LimitOperationKind,
-  options: { fixedWindowOnly?: boolean } = {}
+  operationKind: LimitOperationKind
 ): TransactionContextStatement {
   const includeMonthlyCallerApiBlock =
     consumesMonthlyCallerApiRequestQuota(operationKind);
-  const fixedWindowOnly = options.fixedWindowOnly === true;
 
   return {
     sql: `
@@ -358,8 +353,7 @@ export function activeLimitBlockStatement(
         limit_units
       from public.agent_outbox_account_limit_blocks
       where account_id = $1
-        and (limit_resets_at is null or limit_resets_at > now())
-        and (not $5 or limit_resets_at is not null)
+        and limit_resets_at > now()
         and (
           operation_kind = $2
           or ($3 and operation_kind = 'caller_api_request')
@@ -377,8 +371,7 @@ export function activeLimitBlockStatement(
       identity.accountId,
       operationKind,
       includeMonthlyCallerApiBlock,
-      MONTHLY_CALLER_API_LIMIT,
-      fixedWindowOnly
+      MONTHLY_CALLER_API_LIMIT
     ]
   };
 }
@@ -516,11 +509,10 @@ async function activeLimitBlock(
   query: ProductTransactionQuery,
   identity: AccountLimitIdentity,
   profile: LimitProfileSelector,
-  operationKind: LimitOperationKind,
-  options: { fixedWindowOnly?: boolean } = {}
+  operationKind: LimitOperationKind
 ) {
   const result = await query<ActiveLimitBlockRow>(
-    activeLimitBlockStatement(identity, operationKind, options)
+    activeLimitBlockStatement(identity, operationKind)
   );
   return (
     result.rows
@@ -810,8 +802,15 @@ function limitBlockedError(
     error: {
       status: error.status,
       code: error.code,
-      message: block.limit_reason,
-      limit: block
+      message: error.limitReason,
+      limit: {
+        ...block,
+        limit_reason_code: error.limitReasonCode,
+        limit_reason: error.limitReason,
+        limit_resets_at: error.limitResetsAt,
+        used_units: error.usedUnits,
+        limit_units: error.limitUnits
+      }
     }
   };
 }
@@ -869,11 +868,23 @@ function activeLimitBlockAppliesToProfile(
   profile: LimitProfileSelector,
   block: ActiveLimitBlockMetadata
 ) {
-  return (
-    accountLimitStatusMetadata(profile).limits.find((limit) => {
-      return limit.limitName === block.limit_name;
-    })?.setting.mode === "enabled"
-  );
+  const limit = accountLimitStatusMetadata(profile).limits.find((entry) => {
+    return entry.limitName === block.limit_name;
+  });
+
+  if (!limit || limit.setting.mode !== "enabled") {
+    return false;
+  }
+
+  if (!limit.operationKinds.includes(block.operation_kind)) {
+    return false;
+  }
+
+  if (limit.resetRule !== "fixed_window_end") {
+    return false;
+  }
+
+  return block.used_units != null && block.used_units > limit.setting.value;
 }
 
 function nullableTimestamp(value: string | Date | null) {

@@ -118,11 +118,11 @@ test("caller request limits ignore disabled-profile blocks but still enforce ena
     account_id: identity.accountId,
     operation_kind: "output_check_read",
     limit_name: "output_check_read_requests_per_account_per_minute",
-    limit_reason_code: "output_check_read_rate_limited",
-    limit_reason: "Output check/read requests are temporarily rate limited.",
+    limit_reason_code: "legacy_rate_limit_code",
+    limit_reason: "Legacy persisted rate limit reason.",
     limit_resets_at: "2026-06-30T12:01:00.000Z",
     used_units: "121",
-    limit_units: "120"
+    limit_units: "999"
   };
   const paidStatusQuery = fakeQuery([[monthlyBlock]]);
   const paidOutputQuery = fakeQuery([[monthlyBlock, minuteBlock]]);
@@ -145,15 +145,127 @@ test("caller request limits ignore disabled-profile blocks but still enforce ena
   if (paidOutput.ok) {
     assert.fail("expected output check/read to remain rate limited");
   }
-  assert.ok(paidOutput.error.limit && "limit_name" in paidOutput.error.limit);
+  const outputLimit = paidOutput.error.limit;
+  assert.ok(outputLimit && "limit_units" in outputLimit);
   assert.equal(
-    paidOutput.error.limit.limit_name,
+    outputLimit.limit_name,
     "output_check_read_requests_per_account_per_minute"
   );
+  assert.equal(
+    paidOutput.error.message,
+    "Output check/read requests are temporarily rate limited."
+  );
+  assert.equal(outputLimit.limit_reason_code, "output_check_read_rate_limited");
+  assert.equal(
+    outputLimit.limit_reason,
+    "Output check/read requests are temporarily rate limited."
+  );
+  assert.equal(outputLimit.limit_units, 120);
   assert.doesNotMatch(
     activeLimitBlockStatement(identity, "output_check_read").sql,
     /limit\s+1/i
   );
+});
+
+test("caller request limits ignore stale enabled blocks that no longer exceed the current limit", async () => {
+  const staleBlock = {
+    account_id: identity.accountId,
+    operation_kind: "status",
+    limit_name: "authenticated_caller_api_requests_per_calendar_month",
+    limit_reason_code: "monthly_caller_api_quota_exceeded",
+    limit_reason: "Monthly caller API request limit reached.",
+    limit_resets_at: "2026-07-01T00:00:00.000Z",
+    used_units: "100000",
+    limit_units: "100000"
+  };
+  const query = fakeQuery([[staleBlock], [{ used_units: "1" }]]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "status"
+  );
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(query.calls.length, 2);
+  assert.match(query.calls[1].sql, /agent_outbox_account_quota_windows/);
+});
+
+test("caller request limits ignore enabled blocks without usage evidence", async () => {
+  const nullUsageBlock = {
+    account_id: identity.accountId,
+    operation_kind: "status",
+    limit_name: "authenticated_caller_api_requests_per_calendar_month",
+    limit_reason_code: "monthly_caller_api_quota_exceeded",
+    limit_reason: "Monthly caller API request limit reached.",
+    limit_resets_at: "2026-07-01T00:00:00.000Z",
+    used_units: null,
+    limit_units: "100000"
+  };
+  const query = fakeQuery([[nullUsageBlock], [{ used_units: "1" }]]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "status"
+  );
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(query.calls.length, 2);
+});
+
+test("caller request limits ignore blocks whose limit no longer applies to the operation", async () => {
+  const mismatchedBlock = {
+    account_id: identity.accountId,
+    operation_kind: "output_ack",
+    limit_name: "output_check_read_requests_per_account_per_minute",
+    limit_reason_code: "output_check_read_rate_limited",
+    limit_reason: "Output check/read requests are temporarily rate limited.",
+    limit_resets_at: "2026-06-30T12:01:00.000Z",
+    used_units: "121",
+    limit_units: "120"
+  };
+  const query = fakeQuery([[mismatchedBlock], [{ used_units: "1" }]]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "output_ack"
+  );
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(query.calls.length, 2);
+  assert.match(query.calls[1].sql, /agent_outbox_account_quota_windows/);
+});
+
+test("caller request limits ignore cleanup-free blocks that require live revalidation", async () => {
+  const staleCleanupBlock = {
+    account_id: identity.accountId,
+    operation_kind: "output_ack",
+    limit_name: "unacknowledged_output_timeout_days",
+    limit_reason_code: "unacknowledged_output_timeout_expired",
+    limit_reason: "Unacknowledged output reached the timeout window.",
+    limit_resets_at: null,
+    used_units: "15",
+    limit_units: "14"
+  };
+  const query = fakeQuery([[staleCleanupBlock], [{ used_units: "1" }]]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "output_ack"
+  );
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(query.calls.length, 2);
+  const [blockLookup, quotaIncrement] = query.calls;
+  assert.match(blockLookup?.sql ?? "", /limit_resets_at > now\(\)/);
+  assert.match(quotaIncrement?.sql, /agent_outbox_account_quota_windows/);
 });
 
 test("accepted input submission limits block stock overflow before incrementing submission windows", async () => {
@@ -209,27 +321,22 @@ test("quota statement builders scope rows to account metric and window", () => {
       identity.accountId,
       "output_file_download",
       true,
-      "authenticated_caller_api_requests_per_calendar_month",
-      false
+      "authenticated_caller_api_requests_per_calendar_month"
     ]
   );
   assert.deepEqual(activeLimitBlockStatement(identity, "output_ack").values, [
     identity.accountId,
     "output_ack",
     false,
-    "authenticated_caller_api_requests_per_calendar_month",
-    false
+    "authenticated_caller_api_requests_per_calendar_month"
   ]);
   assert.deepEqual(
-    activeLimitBlockStatement(identity, "input_submission", {
-      fixedWindowOnly: true
-    }).values,
+    activeLimitBlockStatement(identity, "input_submission").values,
     [
       identity.accountId,
       "input_submission",
       true,
-      "authenticated_caller_api_requests_per_calendar_month",
-      true
+      "authenticated_caller_api_requests_per_calendar_month"
     ]
   );
   assert.deepEqual(

@@ -4,8 +4,8 @@ import {
 } from "./accounting.ts";
 import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
 import {
-  authenticateCallerApiRequest,
-  type CallerApiAuthResult
+  authenticateCallerApiRequestWithDatabase,
+  type CallerIdentity
 } from "./caller-api-auth.ts";
 import {
   accountLimitProfileForAccount,
@@ -13,11 +13,6 @@ import {
   enforceCallerRequestLimits,
   type CallerLimitGuardResult
 } from "./caller-api-limits.ts";
-import {
-  callerCredentialLookupStatement,
-  storedCallerCredentialDigestFromLookupRow,
-  type CallerCredentialLookupRow
-} from "./caller-auth.ts";
 import {
   runProductTransaction,
   type ProductTransactionQuery,
@@ -61,11 +56,6 @@ export type InputQueueSuccess =
 
 export type InputQueueResult =
   { ok: true; data: InputQueueSuccess } | { ok: false; error: ApiErrorInput };
-
-export type CallerIdentity = {
-  accountId: string;
-  callerId: string;
-};
 
 type ExistingInputRow = {
   input_item_id: string;
@@ -199,83 +189,6 @@ export async function handleInputQueueRequest(
   }
 }
 
-export async function authenticateCallerApiRequestWithDatabase(
-  request: Request,
-  context: ApiRequestContext,
-  connectionString: string
-): Promise<CallerApiAuthResult> {
-  const auth = await authenticateCallerApiRequest(
-    request,
-    async (keyId) => {
-      const row = await runProductTransaction(
-        connectionString,
-        {
-          requestId: context.requestId,
-          authSurface: "caller"
-        },
-        async (query) => {
-          const result = await query<CallerCredentialLookupRow>(
-            callerCredentialLookupStatement(keyId)
-          );
-          return result.rows[0] ?? null;
-        }
-      );
-
-      return row ? storedCallerCredentialDigestFromLookupRow(row) : null;
-    },
-    {
-      requestId: context.requestId
-    }
-  );
-
-  if (!auth.ok) {
-    return auth;
-  }
-
-  try {
-    await runProductTransaction(
-      connectionString,
-      {
-        requestId: context.requestId,
-        authSurface: "caller",
-        accountId: auth.accountId,
-        callerId: auth.callerId
-      },
-      async (query) => {
-        await query(callerCredentialLastUsedStatement(auth));
-      }
-    );
-  } catch (error) {
-    emitRuntimeLog({
-      level: "warn",
-      surface: "api",
-      operation: "caller_api_auth",
-      message: "Caller credential last-used update failed.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: context.requestId
-    });
-  }
-
-  return auth;
-}
-
-export function callerCredentialLastUsedStatement(input: {
-  accountId: string;
-  callerId: string;
-  keyId: string;
-}): TransactionContextStatement {
-  return {
-    sql: `
-      update public.agent_outbox_caller_credentials
-      set last_used_at = now()
-      where account_id = $1
-        and caller_id = $2
-        and key_id = $3
-    `,
-    values: [input.accountId, input.callerId, input.keyId]
-  };
-}
-
 export async function sendInputItem(
   query: ProductTransactionQuery,
   context: ApiRequestContext,
@@ -285,6 +198,10 @@ export async function sendInputItem(
     beforeCreate?: () => Promise<InputQueueResult | null>;
   } = {}
 ): Promise<InputQueueResult> {
+  if (options.beforeCreate) {
+    await query(serializedSendInputItemStatement(identity, submission));
+  }
+
   const existing = await existingInput(
     query,
     identity,
@@ -499,6 +416,20 @@ export function existingInputStatement(
       for update
     `,
     values: [identity.accountId, identity.callerId, callerItemId]
+  };
+}
+
+export function serializedSendInputItemStatement(
+  identity: CallerIdentity,
+  submission: NormalizedInputSubmission
+): TransactionContextStatement {
+  return {
+    sql: `
+      select pg_advisory_xact_lock(
+        ('x' || substr(md5($1 || ':' || $2 || ':' || $3), 1, 16))::bit(64)::bigint
+      ) as acquired
+    `,
+    values: [identity.accountId, identity.callerId, submission.callerItemId]
   };
 }
 

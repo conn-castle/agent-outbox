@@ -183,21 +183,19 @@ export async function readJsonBodyWithLimit(
     };
   }
 
-  const body = await request.arrayBuffer();
-  const bytes = body.byteLength;
-
-  if (bytes > INPUT_REQUEST_BODY_BYTE_LIMIT) {
+  const body = await readRequestBodyWithLimit(request);
+  if (!body.ok) {
     return {
       ok: false,
-      error: requestTooLargeError()
+      error: body.error
     };
   }
 
   try {
     return {
       ok: true,
-      bytes,
-      value: JSON.parse(Buffer.from(body).toString("utf8"))
+      bytes: body.bytes,
+      value: JSON.parse(body.buffer.toString("utf8"))
     };
   } catch {
     return {
@@ -208,6 +206,39 @@ export async function readJsonBodyWithLimit(
         message: "Request body must be valid JSON."
       }
     };
+  }
+}
+
+async function readRequestBodyWithLimit(
+  request: Request
+): Promise<
+  | { ok: true; bytes: number; buffer: Buffer }
+  | { ok: false; error: ApiErrorInput }
+> {
+  if (!request.body) {
+    return { ok: true, bytes: 0, buffer: Buffer.alloc(0) };
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+
+  while (true) {
+    const next = await reader.read();
+    if (next.done) {
+      return { ok: true, bytes, buffer: Buffer.concat(chunks, bytes) };
+    }
+
+    bytes += next.value.byteLength;
+    if (bytes > INPUT_REQUEST_BODY_BYTE_LIMIT) {
+      await reader.cancel();
+      return {
+        ok: false,
+        error: requestTooLargeError()
+      };
+    }
+
+    chunks.push(Buffer.from(next.value));
   }
 }
 

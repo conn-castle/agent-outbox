@@ -133,6 +133,28 @@ test("output file download returns raw bytes and writes content-safe byte audit"
   assert.doesNotMatch(JSON.stringify(query.calls[1]), /payload|receipt\.pdf/);
 });
 
+test("output file download fails loud when stored size metadata does not match bytes", async () => {
+  const query = fakeQuery([
+    [fileRow({ size_bytes: 8, file_bytes: Buffer.from("payload") })]
+  ]);
+  const result = await outputFileDownloadInTransaction(
+    query,
+    context,
+    identity,
+    path
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message: "Output file metadata is temporarily unavailable."
+    }
+  });
+  assert.equal(query.calls.length, 1);
+});
+
 test("output file download reports not found without audit when ids do not match", async () => {
   const query = fakeQuery([[]]);
   const result = await outputFileDownloadInTransaction(

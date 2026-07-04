@@ -179,6 +179,47 @@ test("read one returns payload and file metadata only, then marks the result rea
   assert.match(query.calls[2].sql, /first_read_at = coalesce/);
 });
 
+test("read one fails loud on invalid file metadata before marking output read", async () => {
+  const query = fakeQuery([
+    [
+      outputRow({
+        response_kind: "file_upload",
+        response_payload: {}
+      })
+    ],
+    [
+      {
+        output_result_id: outputOneId,
+        file_id: "00000000-0000-4000-8000-000000000201",
+        filename: "receipt.pdf",
+        mime_type: "application/pdf",
+        size_bytes: "-1",
+        sha256: "a".repeat(64)
+      }
+    ]
+  ]);
+
+  const result = await readOutputResultInTransaction(
+    query,
+    identity,
+    outputOneId
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message: "Output file metadata is temporarily unavailable."
+    }
+  });
+  assert.equal(query.calls.length, 2);
+  assert.equal(
+    query.calls.some((call) => call.sql.includes("first_read_at")),
+    false
+  );
+});
+
 test("read all marks only returned output rows and exposes pagination", async () => {
   const query = fakeQuery([
     [
@@ -205,13 +246,47 @@ test("read all marks only returned output rows and exposes pagination", async ()
     [outputOneId]
   );
   assert.equal(result.data.has_more, true);
-  assert.equal(query.calls[2].values?.length, 1);
-  assert.deepEqual(query.calls[2].values, [outputOneId]);
+  assert.equal(query.calls[2].values?.length, 3);
+  assert.deepEqual(query.calls[2].values, [
+    identity.accountId,
+    identity.callerId,
+    outputOneId
+  ]);
+  assert.match(query.calls[2].sql, /account_id = \$1/);
+  assert.match(query.calls[2].sql, /caller_id = \$2/);
   // read-all must lock the page rows FOR UPDATE (like the single-read path) so a
   // concurrent undo/ack/cleanup cannot delete or restore a returned row before
   // the mark-read update runs, which would otherwise hand the caller an
   // undone/deleted output without disabling undo.
   assert.match(query.calls[0].sql, /for update/i);
+});
+
+test("read one preserves authoritative response kind over payload keys", async () => {
+  const query = fakeQuery([
+    [
+      outputRow({
+        response_kind: "free_text",
+        response_payload: { kind: "multi_select", text: "Approved response." }
+      })
+    ],
+    [],
+    []
+  ]);
+
+  const result = await readOutputResultInTransaction(
+    query,
+    identity,
+    outputOneId
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok || !("response" in result.data)) {
+    assert.fail("expected output result");
+  }
+  assert.deepEqual(result.data.response, {
+    kind: "free_text",
+    text: "Approved response."
+  });
 });
 
 test("ack deletes live output and recognizes duplicate acknowledgements", async () => {
@@ -251,10 +326,24 @@ test("ack deletes live output and recognizes duplicate acknowledgements", async 
       already_acknowledged: true
     }
   });
+  assert.match(duplicateQuery.calls[1].sql, /agent_outbox_audit_events/);
+  assert.match(duplicateQuery.calls[1].sql, /agent_outbox_callers/);
   assert.match(
     duplicateQuery.calls[1].sql,
-    /agent_outbox_output_ack_already_recorded/
+    /event\.output_result_id = \$3::uuid/
   );
+  assert.match(duplicateQuery.calls[1].sql, /caller\.account_id = \$1::uuid/);
+  assert.match(duplicateQuery.calls[1].sql, /caller\.caller_id = \$2::uuid/);
+  assert.match(duplicateQuery.calls[1].sql, /agent_outbox_context_account_id/);
+  assert.match(
+    duplicateQuery.calls[1].sql,
+    /agent_outbox_context_allows_caller/
+  );
+  assert.deepEqual(duplicateQuery.calls[1].values, [
+    identity.accountId,
+    identity.callerId,
+    outputOneId
+  ]);
 });
 
 test("output pagination parsing fails loudly on invalid limits and cursors", () => {
@@ -305,10 +394,17 @@ test("output query builders scope by authenticated caller and metadata-only file
   ]);
   assert.match(outputPageStatement(identity, 25, null).sql, /caller_id = \$2/);
 
-  const fileMetadata = outputFileMetadataStatement([outputOneId]);
+  const fileMetadata = outputFileMetadataStatement(identity, [outputOneId]);
   assert.match(fileMetadata.sql, /filename/);
   assert.match(fileMetadata.sql, /size_bytes/);
   assert.doesNotMatch(fileMetadata.sql, /file_bytes/);
+  assert.match(fileMetadata.sql, /account_id = \$1/);
+  assert.match(fileMetadata.sql, /caller_id = \$2/);
+  assert.deepEqual(fileMetadata.values, [
+    identity.accountId,
+    identity.callerId,
+    outputOneId
+  ]);
 });
 
 test("output page cursor preserves microsecond precision across the keyset round-trip", () => {

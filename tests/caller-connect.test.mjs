@@ -784,6 +784,13 @@ test("device approval binds the account and moves the request pending -> approve
       // the plaintext code the human typed.
       assert.match(String(query.calls[0].values?.[0]), /^[a-f0-9]{64}$/);
       assert.doesNotMatch(JSON.stringify(query.calls), /abcd-2345/i);
+      assert.match(query.calls[0].sql, /status in \('pending', 'approved'\)/);
+      assert.match(query.calls[0].sql, /expires_at > now\(\)/);
+      assert.match(
+        query.calls[0].sql,
+        /order by expires_at desc, created_at desc/
+      );
+      assert.match(query.calls[0].sql, /limit 1/);
 
       // Approval binds account/caller/approver and transitions to approved.
       assert.match(
