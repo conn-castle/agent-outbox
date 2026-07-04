@@ -3,14 +3,14 @@ import { expect, test } from "@playwright/test";
 // Each Playwright worker runs in its own process, so this module is evaluated
 // once per worker with a distinct TEST_WORKER_INDEX (the documented equivalent
 // of testInfo.workerIndex, globally unique across projects). Deriving the
-// forwarded client IP from it keeps every worker in its own per-IP rate-limit
+// trusted Cloudflare client IP from it keeps every worker in its own per-IP rate-limit
 // window (30/min per operation kind), so concurrent projects/workers never
 // share a bucket and trip sporadic 429s. 203.0.113.0/24 is TEST-NET-3, reserved
 // for documentation/tests; the octet stays in 1..254 to remain a valid host.
 const workerIndex = Number.parseInt(process.env.TEST_WORKER_INDEX ?? "0", 10);
 const clientIpOctet = ((Number.isNaN(workerIndex) ? 0 : workerIndex) % 254) + 1;
 const connectRequestHeaders = {
-  "x-forwarded-for": `203.0.113.${clientIpOctet}`
+  "cf-connecting-ip": `203.0.113.${clientIpOctet}`
 };
 
 test.beforeEach(({ page }) => {

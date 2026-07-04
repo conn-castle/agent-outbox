@@ -276,6 +276,64 @@ test("malformed caller_id fails validation before rotate and revoke start transa
   }
 });
 
+test("credential operation start rejects X-Forwarded-For-only requests before transactions", async () => {
+  await withProcessEnv(
+    {
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
+      PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+    },
+    async () => {
+      const cases = [
+        {
+          operation: "rotate",
+          handler: handleRotateBrowserStartRequest,
+          path: "/api/caller/rotate/browser/start"
+        },
+        {
+          operation: "revoke",
+          handler: handleRevokeBrowserStartRequest,
+          path: "/api/caller/revoke/browser/start"
+        }
+      ];
+
+      for (const testCase of cases) {
+        const runner = fakeTransactionRunner([]);
+        const result = await testCase.handler(
+          controlRequest(testCase.path, {
+            headers: {
+              "cf-connecting-ip": "",
+              "x-forwarded-for": "198.51.100.55"
+            }
+          }),
+          {
+            requestId: `req-${testCase.operation}-start-untrusted-ip`,
+            correlationId: `corr-${testCase.operation}-start-untrusted-ip`
+          },
+          {
+            caller_id: CALLER_ID,
+            local_caller_name: "steward-email",
+            callback_url: "http://127.0.0.1:49152/callback"
+          },
+          {
+            now: new Date("2026-07-02T00:00:00.000Z"),
+            runProductTransaction: runner.runProductTransaction
+          }
+        );
+
+        assert.equal(result.ok, false, testCase.operation);
+        if (result.ok) {
+          assert.fail(
+            `expected X-Forwarded-For-only ${testCase.operation} start to fail`
+          );
+        }
+        assert.equal(result.error.status, 503, testCase.operation);
+        assert.equal(result.error.code, "temporary_unavailable");
+        assert.equal(runner.contexts.length, 0, testCase.operation);
+      }
+    }
+  );
+});
+
 test("malformed setup_request_id fails validation before rotate activate and abort transactions", async () => {
   const cases = [
     {

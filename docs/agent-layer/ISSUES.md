@@ -26,6 +26,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-04 human-signup-browser-fixture-timeout: Browser signup fixture hangs in Playwright gate
+    Priority: Medium. Area: Browser tests/Human auth fixture
+    Description: `make browser` reached tests and the caller connect/rotate/revoke flows passed, but `tests/browser/human-ui.spec.ts` first-time self-serve signup failed in both desktop and mobile by staying on `/sign-up` or aborting navigation to `/sign-up` until the 30s test timeout.
+    Next step: Diagnose the human signup fixture navigation under Next dev fixture mode and stabilize the test or fixture without weakening the protected-route security policy.
+    Notes: Observed during `hosted-security-fail-closed-cloudflare-ip` verification on 2026-07-04; no labeled browser Docker resources remained after the run.
+
 - Issue 2026-07-04 caller-request-limit-policy-gaps: Define remaining request-rate limit policy
     Priority: Medium. Area: Limits/Security
     Description: Input send/replace/delete and raw file download request throttles still need owner-approved per-minute numeric limits, including behavior when monthly caller API quota is disabled for paid/self-hosted profiles.
@@ -38,23 +44,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Owner decision on whether/how to reclaim or reuse a never-activated caller name; a bounded prune (new migration + cleanup function) removing callers with no non-terminal credential after a retention window would cover both consequences. Do not implement auto reuse/rename/reclaim without that decision.
     Notes: Deferred from resolve-findings 20260702-195040-ac9d; the row-accumulation aspect was re-confirmed by audit-and-fix Round 1 (2026-07-03).
 
-- Issue 2026-07-02 connect-client-ip-trust-policy: Connect per-IP limits need an explicit proxy trust policy
-    Priority: Medium. Area: Caller control-plane/Security
-    Description: `trustedClientIpAddress` accepts `CF-Connecting-IP`, then falls back to the first `X-Forwarded-For` value. The repo documents Cloudflare Workers/OpenNext as the hosted runtime, but does not define when fallback proxy headers are trustworthy.
-    Next step: Decide and document the deployment/proxy trust policy, then update `trustedClientIpAddress` and route tests to enforce only the approved client-IP source(s).
-    Notes: Deferred from resolve-findings 20260702-031158-414f because inventing this policy would broaden WP-1.
-
 - Issue 2026-06-30 caller-last-used-hot-row-write: Caller credential last-used writes run on every valid request
     Priority: Low. Area: Reliability/Caller-auth
     Description: `authenticateCallerApiRequestWithDatabase` records `last_used_at` after every valid caller auth, including polling/status reads, which adds a transaction and can repeatedly update one hot credential row.
     Next step: Decide the required freshness for caller key last-used metadata, then coalesce or throttle updates without inventing an implicit interval.
     Notes: The current write is best-effort and logs failures so bookkeeping does not fail valid requests.
-
-- Issue 2026-06-30 protected-human-middleware-fail-open: Protected human middleware fails open on missing Clerk configuration
-    Priority: Medium. Area: Security/Auth
-    Description: `middleware.ts` skips Clerk protection when either Clerk env var is missing. The current `/human` page has its own missing-config guard, but future `/human/*` routes could rely on middleware and accidentally pass through during misconfiguration.
-    Next step: Decide the fail-closed behavior for protected routes when Clerk is incomplete, then centralize Clerk readiness checks across middleware and auth-adjacent pages.
-    Notes: Deferred from improve-codebase Chunk 4 because fail-closed middleware changes current missing-configuration routing behavior.
 
 - Issue 2026-06-30 cloudflare-opennext-platform-verification: Cloudflare/OpenNext deploy path lacks pinned verification
     Priority: Medium. Area: Tooling/Deployment

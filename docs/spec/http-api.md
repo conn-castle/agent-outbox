@@ -384,6 +384,12 @@ account-scoped `caller_connect_approvals_per_account_per_minute` fixed window,
 allowing 30 connect approvals per account per UTC minute through the shared
 account quota and active limit-block tables.
 
+For the hosted Cloudflare/OpenNext path, trusted client IP means a valid
+`CF-Connecting-IP` header. `X-Forwarded-For` is not trusted for hosted per-IP
+control-plane limits; if `CF-Connecting-IP` is missing or invalid, the route
+fails loudly with `temporary_unavailable` before rate-limit accounting or setup
+state changes.
+
 Connect uses standards-derived OAuth/device-flow timing:
 
 - Browser setup codes are single-use and expire after 10 minutes, matching RFC
@@ -624,6 +630,10 @@ the trusted client IP. Approval actions are protected by distinct account-scoped
 approvals per account per UTC minute through the shared account quota and active
 limit-block tables. Approval pages are Clerk-authenticated and enforce account
 membership before binding the requested operation to an account.
+
+For hosted control-plane IP limits, trusted client IP uses the same
+Cloudflare-only policy as connect: a valid `CF-Connecting-IP` header is
+required, and `X-Forwarded-For` is not accepted as a fallback.
 
 The CLI identifies the selected existing caller from local non-secret config and
 sends its opaque `caller_id` to the start route. The approval page loads caller

@@ -166,7 +166,7 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 		Arguments:   "<caller> is the local caller name to store in Agent Outbox config.",
 		Flags:       "--device-code uses the terminal device-code approval flow instead of opening a browser. Global --config, --base-url, --json, and --no-color are available.",
 		Environment: globalEnvironmentHelp(),
-		Examples:    "agent-outbox caller connect steward-email\nagent-outbox --base-url http://localhost:38000 caller connect steward-email --device-code --json",
+		Examples:    "agent-outbox caller connect steward-email\nagent-outbox caller connect steward-email --device-code --json",
 		ExitCodes:   "0 success. 64 usage. 73 local or hosted caller name already exists. 74 secret-store failure. 75 temporary approval/API failure. 77 permission. 78 config.",
 		RelatedDocs: "docs/spec/http-api.md#caller-connect-control-plane, docs/spec/errors.md, and agent-outbox docs caller.",
 	})

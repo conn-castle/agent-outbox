@@ -2,6 +2,10 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import {
+  clerkMiddlewareConfigurationComplete,
+  shouldFailClosedForMissingClerkConfiguration
+} from "./src/server/middleware-clerk-readiness";
 import { middlewareFixtureBypassEnabled } from "./src/server/middleware-fixture-bypass";
 
 // OpenNext Cloudflare 1.20 rejects Next 16's Node.js proxy build output.
@@ -38,7 +42,20 @@ export default function middleware(
     return NextResponse.next();
   }
 
-  if (!process.env.CLERK_SECRET_KEY || !process.env.CLERK_PUBLISHABLE_KEY) {
+  if (!clerkMiddlewareConfigurationComplete()) {
+    if (
+      shouldFailClosedForMissingClerkConfiguration({
+        protectedRoute: isProtectedRoute(request)
+      })
+    ) {
+      return new NextResponse("Service unavailable.", {
+        status: 503,
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      });
+    }
+
     return NextResponse.next();
   }
 

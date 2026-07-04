@@ -4,7 +4,6 @@ import {
   randomInt,
   timingSafeEqual
 } from "node:crypto";
-import { isIP } from "node:net";
 
 import type {
   ApiErrorInput,
@@ -36,6 +35,7 @@ import {
 } from "./database.ts";
 import { requireCallerKeyHashSecret } from "./env.ts";
 import { emitRuntimeLog } from "./logging.ts";
+import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
 export const CONNECT_BROWSER_SETUP_CODE_EXPIRES_IN_SECONDS = 10 * 60;
 export const CONNECT_DEVICE_CODE_EXPIRES_IN_SECONDS = 10 * 60;
@@ -1032,21 +1032,6 @@ export function callerSetupCodeDigest(value: string) {
   return createHmac(TOKEN_HASH_ALGORITHM, requireCallerKeyHashSecret())
     .update(value)
     .digest("hex");
-}
-
-function trustedClientIpAddress(request: Request) {
-  const candidates = [
-    request.headers.get("cf-connecting-ip")?.trim(),
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-  ];
-
-  for (const candidate of candidates) {
-    if (candidate && isIP(candidate)) {
-      return candidate;
-    }
-  }
-
-  return null;
 }
 
 async function exchangeConnectSetupWithHumanContext(

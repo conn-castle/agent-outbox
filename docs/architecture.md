@@ -50,10 +50,16 @@ need a focused smoke checklist.
 
 Human routes use Clerk sessions and Agent Outbox account membership. The hosted
 product ships owner-level access, but authorization must flow through account
-membership so future roles can reuse the same model.
+membership so future roles can reuse the same model. Hosted production protected
+routes fail closed when Clerk configuration is incomplete; explicit test fixture
+bypasses are the only middleware bypass.
 
 Caller routes use only Agent Outbox caller API keys. Caller endpoints must not
 trust Clerk session state. Browser code must not access product tables directly.
+Hosted connect, rotate, and revoke per-IP control-plane limits trust only
+Cloudflare's `CF-Connecting-IP` header. `X-Forwarded-For` is not trusted on the
+hosted path; non-Cloudflare self-hosting needs an explicit future proxy policy
+before relying on forwarded client IP headers.
 
 Canonical product ids:
 
