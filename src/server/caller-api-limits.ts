@@ -104,7 +104,9 @@ export async function enforceAccountRequestLimits(
   const requestWindows = fixedWindowLimits(profile, operationKind, "requests");
   const shouldSerializeQuotaWindows =
     requestWindows.length > 1 ||
-    requestWindows.some((limit) => limit.limitName === MONTHLY_CALLER_API_LIMIT);
+    requestWindows.some(
+      (limit) => limit.limitName === MONTHLY_CALLER_API_LIMIT
+    );
   if (shouldSerializeQuotaWindows) {
     await query(accountWriteLockStatement(identity));
   }
