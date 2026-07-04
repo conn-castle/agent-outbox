@@ -113,19 +113,6 @@ export async function handleInputQueueRequest(
           return temporaryUnavailableError();
         }
 
-        if (operation !== "delete") {
-          const requestLimit = await enforceCallerRequestLimits(
-            query,
-            auth,
-            profile,
-            "caller_api_request"
-          );
-          const requestLimitResult = inputResultFromLimitGuard(requestLimit);
-          if (requestLimitResult) {
-            return requestLimitResult;
-          }
-        }
-
         if (operation === "delete") {
           const parsed = parseInputDeleteBody(jsonBody);
           if (!parsed.ok) {
@@ -139,6 +126,17 @@ export async function handleInputQueueRequest(
         });
         if (!parsed.ok) {
           return { ok: false, error: parsed.error };
+        }
+
+        const requestLimit = await enforceCallerRequestLimits(
+          query,
+          auth,
+          profile,
+          "caller_api_request"
+        );
+        const requestLimitResult = inputResultFromLimitGuard(requestLimit);
+        if (requestLimitResult) {
+          return requestLimitResult;
         }
 
         if (operation === "send") {
@@ -212,11 +210,6 @@ export async function sendInputItem(
   }
 
   if (options.beforeCreate) {
-    const limitResult = await options.beforeCreate();
-    if (limitResult) {
-      return limitResult;
-    }
-
     const concurrentExisting = await existingInput(
       query,
       identity,
@@ -224,6 +217,11 @@ export async function sendInputItem(
     );
     if (concurrentExisting) {
       return sendResultForExisting(concurrentExisting, submission);
+    }
+
+    const limitResult = await options.beforeCreate();
+    if (limitResult) {
+      return limitResult;
     }
   }
 
@@ -632,9 +630,6 @@ function sendResultForExisting(
   existing: ExistingInputRow,
   submission: NormalizedInputSubmission
 ): InputQueueResult {
-  if (existing.status === "answered" && existing.has_live_output) {
-    return answeredUnacknowledgedError();
-  }
   if (existing.status === "answered") {
     return answeredUnacknowledgedError();
   }

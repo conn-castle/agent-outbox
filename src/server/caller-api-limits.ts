@@ -50,6 +50,11 @@ type QuotaWindowRow = {
   used_units: string | number;
 };
 
+type FixedWindowLimit = LimitStatusMetadata & {
+  windowKind: LimitWindowKind;
+  setting: { mode: "enabled"; value: number };
+};
+
 type AccountStockUsageRow = {
   queued_input_items: string | number;
   non_file_stored_bytes: string | number;
@@ -94,6 +99,10 @@ export async function enforceAccountRequestLimits(
   );
   if (activeBlock) {
     return limitBlockedError(profile, activeBlock);
+  }
+
+  if (fixedWindowLimits(profile, operationKind, "requests").length > 1) {
+    await query(accountWriteLockStatement(identity));
   }
 
   return incrementFixedWindowLimits(
@@ -479,7 +488,7 @@ export function accountStockUsageStatement(
 }
 
 export function accountWriteLockStatement(
-  identity: CallerLimitIdentity
+  identity: AccountLimitIdentity
 ): TransactionContextStatement {
   return {
     sql: "select account_id::text from public.agent_outbox_accounts where account_id = $1 for update",
@@ -601,8 +610,41 @@ async function incrementFixedWindowLimits(
   unit: "requests" | "submissions"
 ): Promise<CallerLimitGuardResult> {
   const now = new Date();
-  for (const limit of fixedWindowLimits(profile, operationKind, unit)) {
-    const window = quotaWindow(limit, now);
+  const windows = fixedWindowLimits(profile, operationKind, unit).map(
+    (limit) => ({
+      limit,
+      window: quotaWindow(limit, now)
+    })
+  );
+
+  if (windows.length > 1) {
+    for (const { limit, window } of windows) {
+      const result = await query<QuotaWindowRow>(
+        quotaWindowUsageStatement({
+          identity,
+          limitName: limit.limitName,
+          windowKind: window.windowKind,
+          windowStartUtc: window.windowStartUtc
+        })
+      );
+      const usedUnits = nonNegativeInteger(result.rows[0]?.used_units ?? 0);
+      if (usedUnits + 1 > limit.setting.value) {
+        return persistAndReturnLimitError(
+          query,
+          identity,
+          profile,
+          operationKind,
+          {
+            limitName: limit.limitName,
+            usedUnits: usedUnits + 1,
+            limitResetsAt: window.windowEndUtc
+          }
+        );
+      }
+    }
+  }
+
+  for (const { limit, window } of windows) {
     const result = await query<QuotaWindowRow>(
       incrementQuotaWindowStatement({
         identity,
@@ -727,10 +769,7 @@ function fixedWindowLimits(
 ) {
   return limitForOperation(profile, operationKind, unit).filter(
     (limit) => limit.windowKind && limit.setting.mode === "enabled"
-  ) as (LimitStatusMetadata & {
-    windowKind: LimitWindowKind;
-    setting: { mode: "enabled"; value: number };
-  })[];
+  ) as FixedWindowLimit[];
 }
 
 function limitForOperation(

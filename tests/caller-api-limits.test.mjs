@@ -103,6 +103,42 @@ test("caller request limits persist an active block when a quota window overflow
   assert.match(query.calls[2].sql, /agent_outbox_account_limit_blocks/);
 });
 
+test("caller request limits do not debit an earlier window when a later window overflows", async () => {
+  const query = fakeQuery([
+    [],
+    [],
+    [{ used_units: "50" }],
+    [{ used_units: "120" }],
+    []
+  ]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "output_check_read"
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "rate_limit_exceeded");
+  assert.equal(
+    result.error.limit && "limit_name" in result.error.limit
+      ? result.error.limit.limit_name
+      : null,
+    "output_check_read_requests_per_account_per_minute"
+  );
+  assert.match(query.calls[1].sql, /for update/);
+  assert.match(query.calls[2].sql, /select used_units/);
+  assert.match(query.calls[3].sql, /select used_units/);
+  assert.equal(
+    query.calls.some((call) =>
+      call.sql.includes("insert into public.agent_outbox_account_quota_windows")
+    ),
+    false
+  );
+  assert.match(query.calls[4].sql, /agent_outbox_account_limit_blocks/);
+});
+
 test("caller request limits ignore disabled-profile blocks but still enforce enabled blocks", async () => {
   const monthlyBlock = {
     account_id: identity.accountId,
