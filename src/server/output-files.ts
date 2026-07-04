@@ -21,7 +21,7 @@ import {
 import {
   authenticateCallerApiRequestWithDatabase,
   type CallerIdentity
-} from "./input-queue.ts";
+} from "./caller-api-auth.ts";
 import { emitRuntimeLog } from "./logging.ts";
 
 export type OutputFileDownloadSuccess = {
@@ -173,15 +173,28 @@ export async function outputFileDownloadInTransaction(
     };
   }
 
-  await query(outputFileDownloadAuditStatement(row, context));
+  const bytes = normalizeFileBytes(row.file_bytes);
+  const sizeBytes = byteCount(row.size_bytes);
+  if (bytes.byteLength !== sizeBytes) {
+    return {
+      ok: false,
+      error: temporaryUnavailableError(
+        "Output file metadata is temporarily unavailable."
+      )
+    };
+  }
+
+  await query(
+    outputFileDownloadAuditStatement({ ...row, size_bytes: sizeBytes }, context)
+  );
 
   return {
     ok: true,
-    bytes: normalizeFileBytes(row.file_bytes),
+    bytes,
     headers: outputFileDownloadHeaders(context, {
       filename: row.filename,
       mimeType: row.mime_type,
-      sizeBytes: row.size_bytes
+      sizeBytes
     })
   };
 }

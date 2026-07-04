@@ -9,13 +9,15 @@ import {
   accountLimitProfileForAccount,
   enforceCallerRequestLimits
 } from "./caller-api-limits.ts";
-import { authenticateCallerApiRequestWithDatabase } from "./input-queue.ts";
+import { authenticateCallerApiRequestWithDatabase } from "./caller-api-auth.ts";
 import {
   accountLimitStatusMetadata,
+  limitErrorMetadata,
   limitProfileSelectorForAccountTier,
   limitStatusMetadata,
   type AccountTier,
   type LimitName,
+  type LimitOperationKind,
   type LimitProfileSelector
 } from "./limits.ts";
 
@@ -86,12 +88,13 @@ type CallerStatusRow = {
 };
 
 type StorageStatusRow = {
+  queued_input_items: string | number;
   non_file_stored_bytes: string | number;
   overall_stored_bytes: string | number;
 };
 
 type ActiveLimitBlockRow = {
-  operation_kind: string;
+  operation_kind: LimitOperationKind;
   limit_name: LimitName;
   limit_reason_code: string;
   limit_reason: string;
@@ -101,7 +104,7 @@ type ActiveLimitBlockRow = {
 };
 
 type ActiveLimitBlockData = {
-  operation_kind: string;
+  operation_kind: LimitOperationKind;
   limit_name: LimitName;
   limit_reason_code: string;
   limit_reason: string;
@@ -225,7 +228,12 @@ export async function accountStatusInTransaction(
       file_upload_enabled:
         accountLimitStatusMetadata(profile).fileUploadEnabled,
       storage,
-      active_limit_blocks: blocksResult.rows.map(activeLimitBlockFromRow)
+      active_limit_blocks: blocksResult.rows
+        .map(activeLimitBlockFromRow)
+        .map((block) =>
+          activeLimitBlockForStatus(profile, accountRow, storageRow, block)
+        )
+        .filter((block): block is ActiveLimitBlockData => block != null)
     }
   };
 }
@@ -284,7 +292,7 @@ export function storageStatusStatement(
 ): TransactionContextStatement {
   return {
     sql: `
-      select non_file_stored_bytes, overall_stored_bytes
+      select queued_input_items, non_file_stored_bytes, overall_stored_bytes
       from public.agent_outbox_account_stock_usage($1)
     `,
     values: [identity.accountId]
@@ -306,7 +314,6 @@ export function activeLimitBlocksStatement(
         limit_units
       from public.agent_outbox_account_limit_blocks
       where account_id = $1
-        and (limit_resets_at is null or limit_resets_at > now())
       order by operation_kind, limit_name
     `,
     values: [identity.accountId]
@@ -421,6 +428,98 @@ function activeLimitBlockFromRow(
     used_units: databaseNullableNonNegativeInteger(row.used_units),
     limit_units: databaseNullableNonNegativeInteger(row.limit_units)
   };
+}
+
+function activeLimitBlockForStatus(
+  profile: LimitProfileSelector,
+  accountRow: AccountStatusRow,
+  storageRow: StorageStatusRow,
+  block: ActiveLimitBlockData
+): ActiveLimitBlockData | null {
+  const limit = accountLimitStatusMetadata(profile).limits.find((entry) => {
+    return entry.limitName === block.limit_name;
+  });
+
+  if (!limit || limit.setting.mode !== "enabled") {
+    return null;
+  }
+
+  if (!limit.operationKinds.includes(block.operation_kind)) {
+    return null;
+  }
+
+  let limitResetsAt: string | null;
+  let usedUnits: number | null;
+  if (limit.resetRule === "fixed_window_end") {
+    if (
+      block.limit_resets_at == null ||
+      new Date(block.limit_resets_at).getTime() <= Date.now() ||
+      block.used_units == null ||
+      block.used_units <= limit.setting.value
+    ) {
+      return null;
+    }
+    limitResetsAt = block.limit_resets_at;
+    usedUnits = block.used_units;
+  } else if (limit.resetRule === "cleanup_or_storage_free") {
+    const currentUsage = currentCleanupFreeUsage(storageRow, block.limit_name);
+    if (currentUsage == null || currentUsage < limit.setting.value) {
+      return null;
+    }
+    limitResetsAt = null;
+    usedUnits = currentUsage;
+  } else if (limit.resetRule === "billing_grace_end") {
+    if (!billingGraceBlockApplies(accountRow)) {
+      return null;
+    }
+    limitResetsAt = nullableTimestampValue(accountRow.billing_grace_ends_at);
+    usedUnits = block.used_units;
+  } else {
+    return null;
+  }
+
+  const error = limitErrorMetadata(profile, block.limit_name, {
+    usedUnits,
+    limitResetsAt: limitResetsAt ? new Date(limitResetsAt) : null
+  });
+
+  return {
+    ...block,
+    limit_reason_code: error.limitReasonCode,
+    limit_reason: error.limitReason,
+    limit_resets_at: error.limitResetsAt,
+    used_units: error.usedUnits,
+    limit_units: error.limitUnits
+  };
+}
+
+function billingGraceBlockApplies(row: AccountStatusRow) {
+  if (
+    row.billing_status === "active" ||
+    row.billing_status === "not_applicable"
+  ) {
+    return false;
+  }
+  const graceEndsAt = nullableTimestampValue(row.billing_grace_ends_at);
+  if (!graceEndsAt) {
+    return false;
+  }
+
+  return new Date(graceEndsAt).getTime() <= Date.now();
+}
+
+function currentCleanupFreeUsage(row: StorageStatusRow, limitName: LimitName) {
+  if (limitName === "queued_input_items") {
+    return databaseNonNegativeInteger(row.queued_input_items);
+  }
+  if (limitName === "stored_non_file_queue_payload_bytes") {
+    return databaseNonNegativeInteger(row.non_file_stored_bytes);
+  }
+  if (limitName === "overall_stored_account_data_bytes") {
+    return databaseNonNegativeInteger(row.overall_stored_bytes);
+  }
+
+  return null;
 }
 
 function databaseNullableNonNegativeInteger(value: string | number | null) {

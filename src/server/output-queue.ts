@@ -14,8 +14,8 @@ import {
   accountLimitProfileForAccount,
   enforceCallerRequestLimits
 } from "./caller-api-limits.ts";
+import { authenticateCallerApiRequestWithDatabase } from "./caller-api-auth.ts";
 import { emitRuntimeLog } from "./logging.ts";
-import { authenticateCallerApiRequestWithDatabase } from "./input-queue.ts";
 import { safeContentType } from "./output-files.ts";
 
 export const OUTPUT_PAGE_DEFAULT_LIMIT = 25;
@@ -248,7 +248,7 @@ export async function readOutputResultInTransaction(
     return notFoundError();
   }
 
-  const filesByOutputId = await outputFileMetadataByResultId(query, [
+  const filesByOutputId = await outputFileMetadataByResultId(query, identity, [
     row.output_result_id
   ]);
   const output = outputResultFromRow(row, filesByOutputId);
@@ -256,7 +256,7 @@ export async function readOutputResultInTransaction(
     return output;
   }
 
-  await query(markOutputResultsReadStatement([row.output_result_id]));
+  await query(markOutputResultsReadStatement(identity, [row.output_result_id]));
   return { ok: true, data: output.data };
 }
 
@@ -274,6 +274,7 @@ export async function readAllOutputPageInTransaction(
   const outputResultIds = page.map((row) => row.output_result_id);
   const filesByOutputId = await outputFileMetadataByResultId(
     query,
+    identity,
     outputResultIds
   );
   const items: AgentOutboxOutputResult[] = [];
@@ -287,7 +288,7 @@ export async function readAllOutputPageInTransaction(
   }
 
   if (outputResultIds.length > 0) {
-    await query(markOutputResultsReadStatement(outputResultIds));
+    await query(markOutputResultsReadStatement(identity, outputResultIds));
   }
 
   return {
@@ -335,7 +336,7 @@ export async function acknowledgeOutputInTransaction(
 
   if (UUID_PATTERN.test(outputResultId)) {
     const duplicate = await query<DuplicateAckRow>(
-      duplicateAcknowledgementLookupStatement(outputResultId)
+      duplicateAcknowledgementLookupStatement(identity, outputResultId)
     );
     if (duplicate.rows[0]?.already_recorded) {
       return {
@@ -463,9 +464,10 @@ export function outputResultByIdStatement(
 }
 
 export function outputFileMetadataStatement(
+  identity: CallerIdentity,
   outputResultIds: readonly string[]
 ): TransactionContextStatement {
-  const placeholders = outputResultIds.map((_, index) => `$${index + 1}`);
+  const placeholders = outputResultIds.map((_, index) => `$${index + 3}`);
 
   return {
     sql: `
@@ -477,17 +479,20 @@ export function outputFileMetadataStatement(
         size_bytes,
         sha256
       from public.agent_outbox_output_files
-      where output_result_id in (${placeholders.join(", ")})
+      where account_id = $1
+        and caller_id = $2
+        and output_result_id in (${placeholders.join(", ")})
       order by output_result_id, display_order, output_file_id
     `,
-    values: [...outputResultIds]
+    values: [identity.accountId, identity.callerId, ...outputResultIds]
   };
 }
 
 export function markOutputResultsReadStatement(
+  identity: CallerIdentity,
   outputResultIds: readonly string[]
 ): TransactionContextStatement {
-  const placeholders = outputResultIds.map((_, index) => `$${index + 1}`);
+  const placeholders = outputResultIds.map((_, index) => `$${index + 3}`);
 
   return {
     sql: `
@@ -495,9 +500,11 @@ export function markOutputResultsReadStatement(
       set
         first_read_at = coalesce(first_read_at, now()),
         read_count = read_count + 1
-      where output_result_id in (${placeholders.join(", ")})
+      where account_id = $1
+        and caller_id = $2
+        and output_result_id in (${placeholders.join(", ")})
     `,
-    values: [...outputResultIds]
+    values: [identity.accountId, identity.callerId, ...outputResultIds]
   };
 }
 
@@ -593,6 +600,7 @@ async function withAuthenticatedCallerTransaction(
 
 async function outputFileMetadataByResultId(
   query: ProductTransactionQuery,
+  identity: CallerIdentity,
   outputResultIds: readonly string[]
 ) {
   const filesByOutputId = new Map<string, OutputFileMetadataRow[]>();
@@ -601,7 +609,7 @@ async function outputFileMetadataByResultId(
   }
 
   const result = await query<OutputFileMetadataRow>(
-    outputFileMetadataStatement(outputResultIds)
+    outputFileMetadataStatement(identity, outputResultIds)
   );
   for (const row of result.rows) {
     const rows = filesByOutputId.get(row.output_result_id) ?? [];
@@ -654,6 +662,15 @@ function outputResponse(
         "Output file metadata is temporarily unavailable."
       );
     }
+    const sizeBytes =
+      typeof file.size_bytes === "number"
+        ? file.size_bytes
+        : Number(file.size_bytes);
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+      return temporaryUnavailableError(
+        "Output file metadata is temporarily unavailable."
+      );
+    }
 
     return {
       ok: true,
@@ -663,7 +680,7 @@ function outputResponse(
           file_id: file.file_id,
           filename: file.filename,
           mime_type: safeContentType(file.mime_type),
-          size_bytes: Number(file.size_bytes),
+          size_bytes: sizeBytes,
           sha256: file.sha256
         }
       }
@@ -679,8 +696,8 @@ function outputResponse(
   return {
     ok: true,
     data: {
-      kind: row.response_kind,
-      ...row.response_payload
+      ...row.response_payload,
+      kind: row.response_kind
     } as JsonValue
   };
 }

@@ -439,7 +439,7 @@ test("rotate exchange creates only a pending replacement credential and does not
         ];
       });
       const humanQuery = fakeQuery((statement, callNumber) => {
-        if (callNumber === 1) {
+        if (callNumber === 1 || callNumber === 3) {
           return [
             {
               setup_request_id: SETUP_REQUEST_ID,
@@ -458,6 +458,11 @@ test("rotate exchange creates only a pending replacement credential and does not
           ];
         }
         if (callNumber === 2) {
+          assert.match(statement.sql, /pg_advisory_xact_lock/);
+          assert.deepEqual(statement.values, [ACCOUNT_ID, CALLER_ID]);
+          return [];
+        }
+        if (callNumber === 4) {
           assert.match(statement.sql, /status = 'expired'/);
           assert.match(statement.sql, /expires_at <= \$3::timestamptz/);
           assert.deepEqual(statement.values, [
@@ -467,7 +472,7 @@ test("rotate exchange creates only a pending replacement credential and does not
           ]);
           return [];
         }
-        if (callNumber === 3) {
+        if (callNumber === 5) {
           return [
             {
               caller_credential_id: PENDING_CREDENTIAL_ID,
@@ -564,7 +569,7 @@ test("rotate exchange expires abandoned expired pending replacements before crea
       });
       let sawExpiredPendingCleanup = false;
       const humanQuery = fakeQuery((statement, callNumber) => {
-        if (callNumber === 1) {
+        if (callNumber === 1 || callNumber === 3) {
           return [
             {
               setup_request_id: SETUP_REQUEST_ID,
@@ -581,6 +586,12 @@ test("rotate exchange expires abandoned expired pending replacements before crea
               active_key_last_four: "abcd"
             }
           ];
+        }
+
+        if (callNumber === 2) {
+          assert.match(statement.sql, /pg_advisory_xact_lock/);
+          assert.deepEqual(statement.values, [ACCOUNT_ID, CALLER_ID]);
+          return [];
         }
 
         if (
@@ -679,7 +690,7 @@ test("rotate exchange still rejects a live pending replacement after expired cle
         ];
       });
       const humanQuery = fakeQuery((statement, callNumber) => {
-        if (callNumber === 1) {
+        if (callNumber === 1 || callNumber === 3) {
           return [
             {
               setup_request_id: SETUP_REQUEST_ID,
@@ -696,6 +707,12 @@ test("rotate exchange still rejects a live pending replacement after expired cle
               active_key_last_four: "abcd"
             }
           ];
+        }
+
+        if (callNumber === 2) {
+          assert.match(statement.sql, /pg_advisory_xact_lock/);
+          assert.deepEqual(statement.values, [ACCOUNT_ID, CALLER_ID]);
+          return [];
         }
 
         if (/expires_at <= \$3::timestamptz/.test(statement.sql)) {
@@ -826,6 +843,18 @@ test("rotate and revoke approvals use distinct account-scoped limit buckets", as
           ACCOUNT_ID,
           approval.limitName
         ]);
+        if (approval.operation === "revoke") {
+          assert.match(
+            query.calls[0].sql,
+            /setup\.status in \('pending', 'approved'\)/
+          );
+          assert.match(query.calls[0].sql, /setup\.expires_at > now\(\)/);
+          assert.match(
+            query.calls[0].sql,
+            /order by setup\.expires_at desc, setup\.created_at desc/
+          );
+          assert.match(query.calls[0].sql, /limit 1/);
+        }
       }
     }
   );
@@ -934,13 +963,14 @@ test("rotate activate is the only step that activates the new key and revokes th
       assert.equal(controlQuery.calls.length, 2);
       assert.equal(runner.contexts[1]?.authSurface, "caller");
       assert.equal(runner.contexts[1]?.callerId, CALLER_ID);
-      assert.match(callerQuery.calls[1].sql, /status = 'revoked'/);
-      assert.match(callerQuery.calls[2].sql, /status = 'active'/);
+      assert.match(callerQuery.calls[1].sql, /pg_advisory_xact_lock/);
+      assert.match(callerQuery.calls[3].sql, /status = 'revoked'/);
+      assert.match(callerQuery.calls[4].sql, /status = 'active'/);
       // The activation UPDATE is guarded to the pending_activation state, so a
       // regression dropping the guard (letting a non-pending row be activated)
       // fails here.
-      assert.match(callerQuery.calls[2].sql, /status = 'pending_activation'/);
-      assert.match(callerQuery.calls[3].sql, /'caller_key_rotated'|\$3/);
+      assert.match(callerQuery.calls[4].sql, /status = 'pending_activation'/);
+      assert.match(callerQuery.calls[5].sql, /'caller_key_rotated'|\$3/);
     }
   );
 });
@@ -976,11 +1006,12 @@ test("rotate abort expires the pending replacement and leaves the old key active
           aborted_at: "2026-07-02T00:01:00.000Z"
         }
       });
-      assert.match(callerQuery.calls[1].sql, /status = 'expired'/);
+      assert.match(callerQuery.calls[1].sql, /pg_advisory_xact_lock/);
+      assert.match(callerQuery.calls[3].sql, /status = 'expired'/);
       // The expire UPDATE is guarded to the pending_activation state so abort
       // can never expire an already-active credential; dropping the guard fails
       // this assertion.
-      assert.match(callerQuery.calls[1].sql, /status = 'pending_activation'/);
+      assert.match(callerQuery.calls[3].sql, /status = 'pending_activation'/);
       assert.equal(
         callerQuery.calls.some((call) => /status = 'revoked'/.test(call.sql)),
         false
@@ -1035,9 +1066,9 @@ test("rotate activate and abort reject a pending replacement that is no longer p
         assert.equal(result.error.code, "invalid_caller_credentials", action);
         assert.equal(runner.contexts[1]?.authSurface, "caller", action);
         // The guard rejects the locked row before any revoke/activate/expire
-        // mutation runs, so only the SELECT executed inside the caller
-        // transaction.
-        assert.equal(callerQuery.calls.length, 1, action);
+        // mutation runs, after the scope lookup and lifecycle lock.
+        assert.equal(callerQuery.calls.length, 3, action);
+        assert.match(callerQuery.calls[1].sql, /pg_advisory_xact_lock/);
       }
     }
   );
@@ -1089,7 +1120,8 @@ test("rotate activate and abort reject a bearer whose secret does not match the 
         // The failure happens inside the caller transaction (past the matching
         // control-plane lookup), and before the SELECT-only transaction mutates.
         assert.equal(runner.contexts[1]?.authSurface, "caller", action);
-        assert.equal(callerQuery.calls.length, 1, action);
+        assert.equal(callerQuery.calls.length, 3, action);
+        assert.match(callerQuery.calls[1].sql, /pg_advisory_xact_lock/);
       }
     }
   );
@@ -1134,14 +1166,15 @@ test("expired pending replacement activate and abort requests fail and expire th
         assert.equal(result.error.status, 401);
         assert.equal(result.error.code, "invalid_caller_credentials");
         assert.equal(runner.contexts[1]?.authSurface, "caller");
-        assert.match(callerQuery.calls[1].sql, /status = 'expired'/);
+        assert.match(callerQuery.calls[1].sql, /pg_advisory_xact_lock/);
+        assert.match(callerQuery.calls[3].sql, /status = 'expired'/);
         assert.match(
-          callerQuery.calls[1].sql,
+          callerQuery.calls[3].sql,
           /pending_replacement_setup_request_id = null/
         );
 
         const mutationSql = callerQuery.calls
-          .slice(1)
+          .slice(3)
           .map((call) => call.sql)
           .join("\n");
         assert.doesNotMatch(mutationSql, /status = 'revoked'/);
@@ -1172,7 +1205,7 @@ test("revoke confirm revokes credentials without deleting caller history, queue 
           }
         ];
       });
-      const humanQuery = fakeQuery((_statement, callNumber) => {
+      const humanQuery = fakeQuery((statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -1185,6 +1218,11 @@ test("revoke confirm revokes credentials without deleting caller history, queue 
           ];
         }
         if (callNumber === 2) {
+          assert.match(statement.sql, /pg_advisory_xact_lock/);
+          assert.deepEqual(statement.values, [ACCOUNT_ID, CALLER_ID]);
+          return [];
+        }
+        if (callNumber === 3) {
           return [{ key_id: "old_key" }];
         }
         return [];
@@ -1212,8 +1250,9 @@ test("revoke confirm revokes credentials without deleting caller history, queue 
           revoked_at: "2026-07-02T00:01:00.000Z"
         }
       });
-      assert.match(humanQuery.calls[1].sql, /agent_outbox_caller_credentials/);
-      assert.match(humanQuery.calls[1].sql, /status = 'revoked'/);
+      assert.match(humanQuery.calls[1].sql, /pg_advisory_xact_lock/);
+      assert.match(humanQuery.calls[2].sql, /agent_outbox_caller_credentials/);
+      assert.match(humanQuery.calls[2].sql, /status = 'revoked'/);
       const serializedSql = humanQuery.calls.map((call) => call.sql).join("\n");
       assert.doesNotMatch(
         serializedSql,
@@ -1276,6 +1315,17 @@ function pendingRotateRunner(material, options = {}) {
   });
   const callerQuery = fakeQuery((_statement, callNumber) => {
     if (callNumber === 1) {
+      return [
+        {
+          account_id: ACCOUNT_ID,
+          caller_id: CALLER_ID
+        }
+      ];
+    }
+    if (callNumber === 2) {
+      return [];
+    }
+    if (callNumber === 3) {
       return [
         {
           caller_credential_id: PENDING_CREDENTIAL_ID,

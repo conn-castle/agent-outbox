@@ -15,12 +15,31 @@ export const TERMINAL_OUTPUT_DELETION_REASONS = [
 export type TerminalOutputDeletionReason =
   (typeof TERMINAL_OUTPUT_DELETION_REASONS)[number];
 
+export type CallerScope = {
+  accountId: string;
+  callerId: string;
+};
+
 export function duplicateAcknowledgementLookupStatement(
+  identity: CallerScope,
   outputResultId: string
 ): TransactionContextStatement {
   return {
-    sql: "select public.agent_outbox_output_ack_already_recorded($1) as already_recorded",
-    values: [outputResultId]
+    sql: `
+      select exists (
+        select 1
+        from public.agent_outbox_audit_events event
+        join public.agent_outbox_callers caller
+          on caller.caller_audit_id = event.caller_audit_id
+        where event.output_result_id = $3::uuid
+          and event.event_type = 'output_acknowledged'
+          and caller.account_id = $1::uuid
+          and caller.caller_id = $2::uuid
+          and public.agent_outbox_context_account_id() = $1::uuid
+          and public.agent_outbox_context_allows_caller($2::uuid)
+      ) as already_recorded
+    `,
+    values: [identity.accountId, identity.callerId, outputResultId]
   };
 }
 

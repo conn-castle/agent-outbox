@@ -44,12 +44,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Surface expires_in/expires_at from the device-start response and cap the poll loop, or add a decided client-side cap (no hidden magic default).
     Notes: Deferred from audit-and-fix Round 1 (F10).
 
-- Issue 2026-07-03 goreleaser-validator-brittle-regex: .goreleaser.yaml validator regexes are adjacency/greedy-fragile
-    Priority: Low. Area: Tooling/Release validation
-    Description: In scripts/foundation.mjs validateGoReleaserTooling, `release:\s*\n\s*disable:\s*true` requires disable to be the line immediately after release: (false-negative on a valid config that adds a field first), and `homebrew_casks:\s*\n[\s\S]*skip_upload:\s*true` is unbounded/greedy so it would accept skip_upload: true appearing anywhere later in the file (false-positive). The current .goreleaser.yaml passes both by ordering.
-    Next step: Anchor the cask skip_upload check within the cask block and relax the release-disable adjacency without introducing new brittleness; keep the current file passing.
-    Notes: Deferred from audit-and-fix Round 1 (F14); fixing risks new brittleness, so left for a focused tooling pass.
-
 - Issue 2026-07-03 caller-setup-prune-test-account-scoped: DB test can't catch a reverted prune preservation guard
     Priority: Medium. Area: Testing/Database cleanup
     Description: `agent_outbox_prune_caller_setup_requests` was made `security definer` so its `not exists (... caller_credentials ...)` preservation guard works under account-less global cleanup (`caller_credentials` has only account-scoped RLS). The opt-in DB test `phase 3 local database` (tests/foundation.test.mjs ~3077-3200) runs that prune with `auth_surface=cleanup` AND `account_id=accountA` set, so the guard sees accountA's credentials even under SECURITY INVOKER — the test passes whether the function is definer or invoker and cannot catch a regression that reverts the guard. No production executor runs this prune yet (the cron is a canary; the builder is test-only).
@@ -137,11 +131,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Low. Area: Docs/API contract
     Description: `retention_limit_exceeded` and `billing_grace_expired` are in the `ApiErrorCode` union and wired into limit definitions in `limits.ts`, but are not in the `docs/spec/errors.md` catalog. They are Phase 7 (billing/retention) forward declarations not yet emittable to callers, so the type/limits surface and the public error catalog have drifted.
     Next step: When Phase 7 builds billing/retention, add these codes to `errors.md`; until then keep the divergence intentional and tracked here.
-
-- Issue 2026-06-30 json-body-buffered-before-cap: Chunked/unstated-length bodies buffered before 128 KB size check
-    Priority: Low. Area: Input/Reliability
-    Description: `src/server/input-schema.ts` `readJsonBodyWithLimit` now short-circuits on a declared `Content-Length` over `INPUT_REQUEST_BODY_BYTE_LIMIT` before `request.arrayBuffer()`, closing the common case. The residual: a request that omits or understates `Content-Length` (chunked transfer-encoding or a lying header) is still fully materialized before the post-buffer byte check, so peak memory for those requests is bounded only by the deploy platform's edge request-size limit — an undocumented external backstop.
-    Next step: Document and rely on the platform/edge body-size limit explicitly (or stream-and-count) for the chunked/unstated-length residual.
 
 - Issue 2026-06-30 output-read-path-hardening: check over-fetch and read-all single-row poison-pill
     Priority: Low. Area: Output queue

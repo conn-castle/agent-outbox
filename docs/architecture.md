@@ -222,7 +222,9 @@ Rules:
   fixed fallback, unsafe links are omitted, and caller-provided component,
   script, arbitrary SVG/media, or form attempts remain data instead of UI code.
 - Human answers, pre-read undo, and narrow compatible bulk actions use
-  server-only writes. Undo is unavailable after a caller read marks the output.
+  server-only writes. Bulk answer forms are capped at 100 unique input items,
+  matching the maximum review list page size. Undo is unavailable after a caller
+  read marks the output.
 - Business rules, authorization, quota checks, queue writes, output delivery,
   and file handling belong in server-only code and the database.
 

@@ -176,6 +176,11 @@ type PendingReplacementCredentialRow = {
   old_key_id: string;
 };
 
+type PendingReplacementCredentialScopeRow = {
+  account_id: string;
+  caller_id: string;
+};
+
 type KeyIdRow = {
   key_id: string;
 };
@@ -1168,11 +1173,43 @@ async function exchangeRotateSetupRequest(
     return invalidRequestError("Caller rotate target has no active key.");
   }
 
+  await query(
+    callerCredentialLifecycleLockStatement({
+      accountId: target.account_id,
+      callerId: target.caller_id
+    })
+  );
+
+  const lockedTargetResult = await query<RotateExchangeTargetRow>(
+    rotateExchangeTargetStatement(setupCodeHash)
+  );
+  const lockedTarget = lockedTargetResult.rows[0];
+  if (
+    !lockedTarget ||
+    setupRequestExpired(lockedTarget, now) ||
+    lockedTarget.status !== "approved"
+  ) {
+    return invalidRequestError(
+      "Caller rotate code is invalid or already used."
+    );
+  }
+  if (
+    !lockedTarget.account_id ||
+    !lockedTarget.caller_id ||
+    !lockedTarget.caller_display_name ||
+    !lockedTarget.account_tier ||
+    !lockedTarget.active_credential_id ||
+    !lockedTarget.active_key_id ||
+    !lockedTarget.active_key_last_four
+  ) {
+    return invalidRequestError("Caller rotate target has no active key.");
+  }
+
   const material = generateCallerApiKeyMaterial();
   await query(
     expireExpiredPendingReplacementCredentialsForCallerStatement({
-      accountId: target.account_id,
-      callerId: target.caller_id,
+      accountId: lockedTarget.account_id,
+      callerId: lockedTarget.caller_id,
       now
     })
   );
@@ -1181,11 +1218,11 @@ async function exchangeRotateSetupRequest(
   try {
     const credentialResult = await query<InsertPendingReplacementCredentialRow>(
       insertPendingReplacementCredentialStatement({
-        accountId: target.account_id,
-        callerId: target.caller_id,
-        oldCredentialId: target.active_credential_id,
-        setupRequestId: target.setup_request_id,
-        expiresAt: new Date(target.expires_at),
+        accountId: lockedTarget.account_id,
+        callerId: lockedTarget.caller_id,
+        oldCredentialId: lockedTarget.active_credential_id,
+        setupRequestId: lockedTarget.setup_request_id,
+        expiresAt: new Date(lockedTarget.expires_at),
         material
       })
     );
@@ -1199,20 +1236,23 @@ async function exchangeRotateSetupRequest(
     throw error;
   }
 
-  await query(markSetupRequestExchangedStatement(target.setup_request_id));
+  await query(
+    markSetupRequestExchangedStatement(lockedTarget.setup_request_id)
+  );
 
   return {
     ok: true,
     data: {
       caller: {
-        caller_id: target.caller_id,
-        caller_slug: target.caller_slug,
-        display_name: target.caller_display_name
+        caller_id: lockedTarget.caller_id,
+        caller_slug: lockedTarget.caller_slug,
+        display_name: lockedTarget.caller_display_name
       },
       account: {
-        account_id: target.account_id,
-        label: target.account_label,
-        effective_tier: target.account_tier === "hosted_free" ? "free" : "paid"
+        account_id: lockedTarget.account_id,
+        label: lockedTarget.account_label,
+        effective_tier:
+          lockedTarget.account_tier === "hosted_free" ? "free" : "paid"
       },
       replacement_credential: {
         api_key: material.plaintextApiKey,
@@ -1220,11 +1260,11 @@ async function exchangeRotateSetupRequest(
         prefix: credential.key_prefix,
         last_chars: credential.key_last_four,
         created_at: new Date(credential.created_at).toISOString(),
-        expires_at: new Date(target.expires_at).toISOString()
+        expires_at: new Date(lockedTarget.expires_at).toISOString()
       },
       replaces_credential: {
-        key_id: target.active_key_id,
-        last_chars: target.active_key_last_four
+        key_id: lockedTarget.active_key_id,
+        last_chars: lockedTarget.active_key_last_four
       }
     }
   };
@@ -1238,6 +1278,8 @@ async function activatePendingReplacementCredential(
   },
   options: { requestId: string; now?: Date }
 ): Promise<OperationResult<RotateActivateResponseData>> {
+  await lockPendingReplacementCredentialLifecycle(query, input);
+
   const credentialResult = await query<PendingReplacementCredentialRow>(
     pendingReplacementCredentialStatement(input)
   );
@@ -1289,6 +1331,8 @@ async function abortPendingReplacementCredential(
   },
   options: { requestId: string; now?: Date }
 ): Promise<OperationResult<RotateAbortResponseData>> {
+  await lockPendingReplacementCredentialLifecycle(query, input);
+
   const credentialResult = await query<PendingReplacementCredentialRow>(
     pendingReplacementCredentialStatement(input)
   );
@@ -1317,6 +1361,27 @@ async function abortPendingReplacementCredential(
       aborted_at: abortedAt
     }
   };
+}
+
+async function lockPendingReplacementCredentialLifecycle(
+  query: ProductTransactionQuery,
+  input: {
+    setupRequestId: string;
+    pendingCredential: PendingCredentialBearer;
+  }
+) {
+  const scopeResult = await query<PendingReplacementCredentialScopeRow>(
+    pendingReplacementCredentialScopeStatement(input)
+  );
+  const scope = scopeResult.rows[0];
+  if (scope) {
+    await query(
+      callerCredentialLifecycleLockStatement({
+        accountId: scope.account_id,
+        callerId: scope.caller_id
+      })
+    );
+  }
 }
 
 async function confirmRevokeSetupRequest(
@@ -1350,6 +1415,12 @@ async function confirmRevokeSetupRequest(
   }
 
   const revokedAt = (options.now ?? new Date()).toISOString();
+  await query(
+    callerCredentialLifecycleLockStatement({
+      accountId: target.account_id,
+      callerId: target.caller_id
+    })
+  );
   const revoked = await query<KeyIdRow>(
     revokeActiveCredentialsStatement({
       accountId: target.account_id,
@@ -1737,6 +1808,10 @@ function approvalTargetByUserCodeStatement(input: {
       where setup.user_code_hash = $1
         and setup.flow = 'device'
         and setup.operation = $3
+        and setup.status in ('pending', 'approved')
+        and setup.expires_at > now()
+      order by setup.expires_at desc, setup.created_at desc
+      limit 1
       for update of setup
     `,
     values: [input.userCodeHash, input.accountId, input.operation]
@@ -1762,6 +1837,20 @@ function devicePollTargetStatement(
       for update
     `,
     values: [deviceCodeHash, operation]
+  };
+}
+
+function callerCredentialLifecycleLockStatement(input: {
+  accountId: string;
+  callerId: string;
+}): TransactionContextStatement {
+  return {
+    sql: `
+      select pg_advisory_xact_lock(
+        ('x' || substr(md5($1 || ':' || $2 || ':caller_credential_lifecycle'), 1, 16))::bit(64)::bigint
+      ) as acquired
+    `,
+    values: [input.accountId, input.callerId]
   };
 }
 
@@ -1849,6 +1938,24 @@ function setupExchangeContextStatement(
       limit 1
     `,
     values: [setupCodeHash, operation]
+  };
+}
+
+function pendingReplacementCredentialScopeStatement(input: {
+  setupRequestId: string;
+  pendingCredential: PendingCredentialBearer;
+}): TransactionContextStatement {
+  return {
+    sql: `
+      select
+        account_id::text as account_id,
+        caller_id::text as caller_id
+      from public.agent_outbox_caller_credentials
+      where key_id = $1
+        and pending_replacement_setup_request_id = $2
+      limit 1
+    `,
+    values: [input.pendingCredential.keyId, input.setupRequestId]
   };
 }
 

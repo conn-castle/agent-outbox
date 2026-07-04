@@ -680,10 +680,10 @@ function validateFreeTextResponse(
   popupPayload: unknown,
   response: Record<string, unknown>
 ): StoredPayload | HumanAnswerFailure {
-  if (typeof response.text !== "string") {
+  if (typeof response.text !== "string" || response.text.trim() === "") {
     return invalidActionResponse(
       "response.text",
-      "Free-text responses require text."
+      "Free-text responses require non-empty text."
     );
   }
 

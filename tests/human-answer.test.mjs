@@ -152,6 +152,25 @@ test("human answer response validation enforces selected popup options and bound
     }
   );
 
+  assert.deepEqual(
+    validatedResponsePayload(
+      { popupKind: "free_text", popupPayload: {}, optionValues: [] },
+      { kind: "free_text", text: "   " }
+    ),
+    {
+      ok: false,
+      code: "invalid_action_response",
+      message: "Action response does not match the selected action.",
+      fields: [
+        {
+          path: "response.text",
+          code: "invalid_action_response",
+          message: "Free-text responses require non-empty text."
+        }
+      ]
+    }
+  );
+
   const oversizedText = validatedResponsePayload(
     { popupKind: "free_text", popupPayload: {}, optionValues: [] },
     { kind: "free_text", text: "x".repeat(HUMAN_ANSWER_RESPONSE_BYTE_LIMIT) }

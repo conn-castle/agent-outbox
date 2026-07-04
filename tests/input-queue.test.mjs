@@ -3,13 +3,15 @@ import test from "node:test";
 
 import {
   accountLimitProfile,
-  callerCredentialLastUsedStatement,
   deleteInputItem,
   insertInputItemStatement,
   replaceInputItem,
+  serializedSendInputItemStatement,
   sendInputItem
 } from "../src/server/input-queue.ts";
+import { callerCredentialLastUsedStatement } from "../src/server/caller-api-auth.ts";
 import {
+  INPUT_REQUEST_BODY_BYTE_LIMIT,
   parseInputSubmission,
   readJsonBodyWithLimit
 } from "../src/server/input-schema.ts";
@@ -390,6 +392,36 @@ test("input request body parser rejects non-file JSON bodies over 128000 bytes",
   );
 });
 
+test("input request body parser stops reading unknown-length bodies past the byte limit", async () => {
+  let pullCount = 0;
+  let canceled = false;
+  const body = new ReadableStream({
+    pull(controller) {
+      pullCount += 1;
+      controller.enqueue(new Uint8Array(INPUT_REQUEST_BODY_BYTE_LIMIT + 1));
+    },
+    cancel() {
+      canceled = true;
+    }
+  });
+  const requestInit = /** @type {RequestInit} */ (
+    /** @type {unknown} */ ({
+      method: "POST",
+      body,
+      duplex: "half"
+    })
+  );
+  const response = await readJsonBodyWithLimit(
+    new Request("https://app.agent-outbox.dev/api/input/send", requestInit)
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error.status, 413);
+  assert.equal(response.error.code, "request_too_large");
+  assert.equal(pullCount, 1);
+  assert.equal(canceled, true);
+});
+
 test("send creates a pending item and stores normalized child rows", async () => {
   const submission = parseValidInput();
   const query = fakeQuery([
@@ -480,6 +512,7 @@ test("send no-ops only for equivalent pending content and conflicts on changed c
 test("duplicate send does not run accepted-submission limit guard", async () => {
   const submission = parseValidInput();
   const query = fakeQuery([
+    [{ acquired: true }],
     [
       {
         input_item_id: "input-1",
@@ -514,6 +547,8 @@ test("duplicate send does not run accepted-submission limit guard", async () => 
   assert.equal(result.data.duplicate, true);
   assert.equal(result.data.revision, 7);
   assert.equal(guardCalled, false);
+  assert.match(query.calls[0].sql, /pg_advisory_xact_lock/);
+  assert.match(query.calls[1].sql, /agent_outbox_input_items/);
 });
 
 test("send and replace reject answered items while output is unacknowledged", async () => {
@@ -697,6 +732,19 @@ test("insert statement never accepts caller identity from request bodies", () =>
     identity.accountId,
     identity.callerId,
     "email:thread_123"
+  ]);
+});
+
+test("send serialization lock scopes duplicate detection to the authenticated caller item", () => {
+  const submission = parseValidInput();
+  const statement = serializedSendInputItemStatement(identity, submission);
+
+  assert.match(statement.sql, /pg_advisory_xact_lock/);
+  assert.match(statement.sql, /md5/);
+  assert.deepEqual(statement.values, [
+    identity.accountId,
+    identity.callerId,
+    submission.callerItemId
   ]);
 });
 

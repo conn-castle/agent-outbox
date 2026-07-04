@@ -89,6 +89,7 @@ const REQUIRED_FILES = [
   "src/server/logging.ts",
   "src/server/scheduled.ts",
   "db/migrations/V20260630000000__initial_schema.sql",
+  "db/migrations/V20260703223000__output_file_size_invariant.sql",
   "docs/spec/README.md",
   "docs/spec/http-api.md",
   "docs/spec/input-schema.md",
@@ -973,17 +974,63 @@ export function validateGoReleaserTooling(
       "Makefile release-check must run check, go-check, and package-check"
     );
   }
-  if (!/release:\s*\n\s*disable:\s*true/.test(goreleaserContent)) {
+  if (
+    !yamlTopLevelBlockHasScalar(goreleaserContent, "release", "disable", "true")
+  ) {
     errors.push(".goreleaser.yaml must disable release publishing");
   }
   if (
-    !/homebrew_casks:\s*\n[\s\S]*skip_upload:\s*true/.test(goreleaserContent)
+    !yamlTopLevelBlockHasScalar(
+      goreleaserContent,
+      "homebrew_casks",
+      "skip_upload",
+      "true"
+    )
   ) {
     errors.push(
       ".goreleaser.yaml Homebrew cask config must set skip_upload: true"
     );
   }
   return errors;
+}
+
+/**
+ * @param {string} content
+ * @param {string} blockName
+ * @param {string} scalarName
+ * @param {string} value
+ */
+function yamlTopLevelBlockHasScalar(content, blockName, scalarName, value) {
+  const lines = content.split(/\r?\n/);
+  const startPattern = new RegExp(`^${escapeRegExp(blockName)}:\\s*(?:#.*)?$`);
+  const nextTopLevelPattern = /^[A-Za-z0-9_-]+:\s*/;
+  const scalarPattern = new RegExp(
+    `^\\s*(?:-\\s*)?${escapeRegExp(scalarName)}:\\s*${escapeRegExp(value)}\\s*(?:#.*)?$`
+  );
+  let startIndex = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (startPattern.test(lines[index])) {
+      startIndex = index;
+      break;
+    }
+  }
+
+  if (startIndex === -1) {
+    return false;
+  }
+
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (nextTopLevelPattern.test(line)) {
+      break;
+    }
+    if (scalarPattern.test(line)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

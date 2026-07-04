@@ -1596,6 +1596,10 @@ function deviceApprovalTargetStatement(
       where user_code_hash = $1
         and operation = 'connect'
         and flow = 'device'
+        and status in ('pending', 'approved')
+        and expires_at > now()
+      order by expires_at desc, created_at desc
+      limit 1
       for update
     `,
     values: [userCodeHash]

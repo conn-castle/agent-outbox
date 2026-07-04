@@ -2,12 +2,19 @@ import { timingSafeEqual } from "node:crypto";
 
 import {
   callerApiKeySecretDigest,
+  callerCredentialLookupStatement,
   parseCallerBearerApiKey,
+  storedCallerCredentialDigestFromLookupRow,
+  type CallerCredentialLookupRow,
   type CallerApiKeyDisplayMetadata,
   type CallerApiKeyId,
   type StoredCallerCredentialDigest
 } from "./caller-auth.ts";
-import type { ApiErrorInput } from "./api-errors.ts";
+import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
+import {
+  runProductTransaction,
+  type TransactionContextStatement
+} from "./database.ts";
 import { emitRuntimeLog } from "./logging.ts";
 
 export type CallerCredentialLookup = (
@@ -48,6 +55,11 @@ export type CallerApiAuthFailure = {
 };
 
 export type CallerApiAuthResult = CallerApiAuthSuccess | CallerApiAuthFailure;
+
+export type CallerIdentity = {
+  accountId: string;
+  callerId: string;
+};
 
 export type AuthenticateCallerApiRequestOptions = {
   now?: Date;
@@ -177,6 +189,83 @@ export async function authenticateCallerApiRequest(
     keyPrefix: parsed.keyPrefix,
     keyLastCharacters: parsed.keyLastCharacters
   } as const;
+}
+
+export async function authenticateCallerApiRequestWithDatabase(
+  request: Request,
+  context: ApiRequestContext,
+  connectionString: string
+): Promise<CallerApiAuthResult> {
+  const auth = await authenticateCallerApiRequest(
+    request,
+    async (keyId) => {
+      const row = await runProductTransaction(
+        connectionString,
+        {
+          requestId: context.requestId,
+          authSurface: "caller"
+        },
+        async (query) => {
+          const result = await query<CallerCredentialLookupRow>(
+            callerCredentialLookupStatement(keyId)
+          );
+          return result.rows[0] ?? null;
+        }
+      );
+
+      return row ? storedCallerCredentialDigestFromLookupRow(row) : null;
+    },
+    {
+      requestId: context.requestId
+    }
+  );
+
+  if (!auth.ok) {
+    return auth;
+  }
+
+  try {
+    await runProductTransaction(
+      connectionString,
+      {
+        requestId: context.requestId,
+        authSurface: "caller",
+        accountId: auth.accountId,
+        callerId: auth.callerId
+      },
+      async (query) => {
+        await query(callerCredentialLastUsedStatement(auth));
+      }
+    );
+  } catch (error) {
+    emitRuntimeLog({
+      level: "warn",
+      surface: "api",
+      operation: "caller_api_auth",
+      message: "Caller credential last-used update failed.",
+      error_name: error instanceof Error ? error.name : "UnknownError",
+      request_id: context.requestId
+    });
+  }
+
+  return auth;
+}
+
+export function callerCredentialLastUsedStatement(input: {
+  accountId: string;
+  callerId: string;
+  keyId: string;
+}): TransactionContextStatement {
+  return {
+    sql: `
+      update public.agent_outbox_caller_credentials
+      set last_used_at = now()
+      where account_id = $1
+        and caller_id = $2
+        and key_id = $3
+    `,
+    values: [input.accountId, input.callerId, input.keyId]
+  };
 }
 
 function callerAuthFailure(input: {

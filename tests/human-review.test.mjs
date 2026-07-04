@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MAX_BULK_HUMAN_ANSWER_ITEMS,
   parseBulkHumanAnswersForm,
   parseHumanAnswerForm,
   parseUndoHumanAnswerForm
@@ -414,6 +415,31 @@ test("human action form parser rejects malformed hidden fields before database w
   const invalidBulk = bulkForm();
   invalidBulk.append("bulkItem", JSON.stringify({ inputItemId: "bad" }));
   assert.deepEqual(parseBulkHumanAnswersForm(invalidBulk), { ok: false });
+
+  const duplicateBulk = bulkForm();
+  duplicateBulk.append(
+    "bulkItem",
+    JSON.stringify({
+      inputItemId,
+      callerId,
+      expectedRevision: 2
+    })
+  );
+  assert.deepEqual(parseBulkHumanAnswersForm(duplicateBulk), { ok: false });
+
+  const oversizedBulk = new FormData();
+  oversizedBulk.set("bulkActionValue", "approve");
+  for (let index = 0; index <= MAX_BULK_HUMAN_ANSWER_ITEMS; index += 1) {
+    oversizedBulk.append(
+      "bulkItem",
+      JSON.stringify({
+        inputItemId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        callerId,
+        expectedRevision: 2
+      })
+    );
+  }
+  assert.deepEqual(parseBulkHumanAnswersForm(oversizedBulk), { ok: false });
 
   const validUndo = new FormData();
   validUndo.set("inputItemId", inputItemId);

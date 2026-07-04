@@ -53,16 +53,22 @@ test("account status reports free-tier non-file storage and active limit blocks"
         billing_grace_ends_at: null
       }
     ],
-    [{ non_file_stored_bytes: "384", overall_stored_bytes: "8192" }],
+    [
+      {
+        queued_input_items: "1000",
+        non_file_stored_bytes: "384",
+        overall_stored_bytes: "8192"
+      }
+    ],
     [
       {
         operation_kind: "input_submission",
         limit_name: "queued_input_items",
-        limit_reason_code: "queued_input_item_limit_exceeded",
-        limit_reason: "Queued input item limit reached.",
-        limit_resets_at: null,
-        used_units: "100",
-        limit_units: "100"
+        limit_reason_code: "legacy_queued_input_code",
+        limit_reason: "Legacy persisted queued input reason.",
+        limit_resets_at: "2099-01-01T00:00:00.000Z",
+        used_units: "1200",
+        limit_units: "999"
       }
     ]
   ]);
@@ -89,10 +95,11 @@ test("account status reports free-tier non-file storage and active limit blocks"
           operation_kind: "input_submission",
           limit_name: "queued_input_items",
           limit_reason_code: "queued_input_item_limit_exceeded",
-          limit_reason: "Queued input item limit reached.",
+          limit_reason:
+            "Queued input item limit reached; delete pending items or acknowledge outputs to free queue space.",
           limit_resets_at: null,
-          used_units: 100,
-          limit_units: 100
+          used_units: 1000,
+          limit_units: 1000
         }
       ]
     }
@@ -114,7 +121,13 @@ test("account status reports paid-tier overall storage cap", async () => {
         billing_grace_ends_at: new Date("2026-07-07T00:00:00.000Z")
       }
     ],
-    [{ non_file_stored_bytes: "384", overall_stored_bytes: "8192" }],
+    [
+      {
+        queued_input_items: "0",
+        non_file_stored_bytes: "384",
+        overall_stored_bytes: "8192"
+      }
+    ],
     []
   ]);
 
@@ -132,6 +145,290 @@ test("account status reports paid-tier overall storage cap", async () => {
   assert.equal(result.data.effective_tier, "paid");
   assert.equal(result.data.file_upload_enabled, true);
   assert.equal(result.data.grace_ends_at, "2026-07-07T00:00:00.000Z");
+});
+
+test("account status reports expired billing grace blocks after current billing revalidation", async () => {
+  const query = fakeQuery([
+    [
+      {
+        account_id: identity.accountId,
+        label: null,
+        tier: "hosted_paid",
+        billing_status: "canceled",
+        billing_grace_ends_at: "2020-01-01T00:00:00.000Z"
+      }
+    ],
+    [
+      {
+        queued_input_items: "0",
+        non_file_stored_bytes: "0",
+        overall_stored_bytes: "0"
+      }
+    ],
+    [
+      {
+        operation_kind: "cleanup",
+        limit_name: "downgrade_grace_days",
+        limit_reason_code: "legacy_grace_code",
+        limit_reason: "Legacy grace reason.",
+        limit_resets_at: "2020-01-01T00:00:00.000Z",
+        used_units: "9",
+        limit_units: "999"
+      },
+      {
+        operation_kind: "status",
+        limit_name: "authenticated_caller_api_requests_per_calendar_month",
+        limit_reason_code: "monthly_caller_api_quota_exceeded",
+        limit_reason: "Monthly caller API request limit reached.",
+        limit_resets_at: "2020-01-01T00:00:00.000Z",
+        used_units: "100001",
+        limit_units: "100000"
+      }
+    ]
+  ]);
+
+  const result = await accountStatusInTransaction(query, identity);
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    assert.fail("expected account status success");
+  }
+  assert.deepEqual(result.data.active_limit_blocks, [
+    {
+      operation_kind: "cleanup",
+      limit_name: "downgrade_grace_days",
+      limit_reason_code: "downgrade_grace_expired",
+      limit_reason:
+        "Billing or downgrade grace expired; current tier limits now apply.",
+      limit_resets_at: "2020-01-01T00:00:00.000Z",
+      used_units: 9,
+      limit_units: 7
+    }
+  ]);
+});
+
+test("account status suppresses stale blocks that no longer apply to the current tier or usage", async () => {
+  const query = fakeQuery([
+    [
+      {
+        account_id: identity.accountId,
+        label: null,
+        tier: "hosted_paid",
+        billing_status: "active",
+        billing_grace_ends_at: null
+      }
+    ],
+    [
+      {
+        queued_input_items: "0",
+        non_file_stored_bytes: "0",
+        overall_stored_bytes: "8192"
+      }
+    ],
+    [
+      {
+        operation_kind: "input_submission",
+        limit_name: "queued_input_items",
+        limit_reason_code: "queued_input_item_limit_exceeded",
+        limit_reason: "Queued input item limit reached.",
+        limit_resets_at: null,
+        used_units: "1000",
+        limit_units: "1000"
+      },
+      {
+        operation_kind: "input_submission",
+        limit_name: "stored_non_file_queue_payload_bytes",
+        limit_reason_code: "stored_non_file_payload_limit_exceeded",
+        limit_reason: "Stored non-file queue payload byte limit reached.",
+        limit_resets_at: null,
+        used_units: "32000001",
+        limit_units: "32000000"
+      },
+      {
+        operation_kind: "status",
+        limit_name: "authenticated_caller_api_requests_per_calendar_month",
+        limit_reason_code: "monthly_caller_api_quota_exceeded",
+        limit_reason: "Monthly caller API request limit reached.",
+        limit_resets_at: "2099-01-01T00:00:00.000Z",
+        used_units: "100001",
+        limit_units: "100000"
+      },
+      {
+        operation_kind: "cleanup",
+        limit_name: "downgrade_grace_days",
+        limit_reason_code: "downgrade_grace_expired",
+        limit_reason: "Billing or downgrade grace expired.",
+        limit_resets_at: null,
+        used_units: "8",
+        limit_units: "7"
+      }
+    ]
+  ]);
+
+  const result = await accountStatusInTransaction(query, identity);
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    assert.fail("expected account status success");
+  }
+  assert.deepEqual(result.data.active_limit_blocks, []);
+});
+
+test("account status suppresses cleanup-or-storage-free blocks after usage is freed", async () => {
+  const query = fakeQuery([
+    [
+      {
+        account_id: identity.accountId,
+        label: null,
+        tier: "hosted_free",
+        billing_status: "not_applicable",
+        billing_grace_ends_at: null
+      }
+    ],
+    [
+      {
+        queued_input_items: "999",
+        non_file_stored_bytes: "31999999",
+        overall_stored_bytes: "8192"
+      }
+    ],
+    [
+      {
+        operation_kind: "input_submission",
+        limit_name: "queued_input_items",
+        limit_reason_code: "queued_input_item_limit_exceeded",
+        limit_reason: "Queued input item limit reached.",
+        limit_resets_at: null,
+        used_units: "1000",
+        limit_units: "1000"
+      },
+      {
+        operation_kind: "input_submission",
+        limit_name: "stored_non_file_queue_payload_bytes",
+        limit_reason_code: "stored_non_file_payload_limit_exceeded",
+        limit_reason: "Stored non-file queue payload byte limit reached.",
+        limit_resets_at: null,
+        used_units: "32000001",
+        limit_units: "32000000"
+      },
+      {
+        operation_kind: "cleanup",
+        limit_name: "input_retention_days",
+        limit_reason_code: "pending_input_retention_expired",
+        limit_reason: "Pending input reached the hosted-free retention window.",
+        limit_resets_at: null,
+        used_units: "60",
+        limit_units: "60"
+      }
+    ]
+  ]);
+
+  const result = await accountStatusInTransaction(query, identity);
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    assert.fail("expected account status success");
+  }
+  assert.deepEqual(result.data.active_limit_blocks, []);
+});
+
+test("account status suppresses fixed-window blocks that no longer exceed the current limit", async () => {
+  const query = fakeQuery([
+    [
+      {
+        account_id: identity.accountId,
+        label: null,
+        tier: "hosted_free",
+        billing_status: "not_applicable",
+        billing_grace_ends_at: null
+      }
+    ],
+    [
+      {
+        queued_input_items: "0",
+        non_file_stored_bytes: "0",
+        overall_stored_bytes: "0"
+      }
+    ],
+    [
+      {
+        operation_kind: "status",
+        limit_name: "authenticated_caller_api_requests_per_calendar_month",
+        limit_reason_code: "monthly_caller_api_quota_exceeded",
+        limit_reason: "Monthly caller API request limit reached.",
+        limit_resets_at: "2099-01-01T00:00:00.000Z",
+        used_units: "100000",
+        limit_units: "100000"
+      },
+      {
+        operation_kind: "output_ack",
+        limit_name: "output_check_read_requests_per_account_per_minute",
+        limit_reason_code: "output_check_read_rate_limited",
+        limit_reason:
+          "Output check/read requests are temporarily rate limited.",
+        limit_resets_at: "2026-06-30T12:01:00.000Z",
+        used_units: "121",
+        limit_units: "120"
+      },
+      {
+        operation_kind: "input_submission",
+        limit_name: "input_request_body_bytes_excluding_files",
+        limit_reason_code: "input_request_too_large",
+        limit_reason: "Input request body exceeds the accepted byte ceiling.",
+        limit_resets_at: null,
+        used_units: "128001",
+        limit_units: "128000"
+      }
+    ]
+  ]);
+
+  const result = await accountStatusInTransaction(query, identity);
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    assert.fail("expected account status success");
+  }
+  assert.deepEqual(result.data.active_limit_blocks, []);
+});
+
+test("account status suppresses fixed-window blocks without usage evidence", async () => {
+  const query = fakeQuery([
+    [
+      {
+        account_id: identity.accountId,
+        label: null,
+        tier: "hosted_free",
+        billing_status: "not_applicable",
+        billing_grace_ends_at: null
+      }
+    ],
+    [
+      {
+        queued_input_items: "0",
+        non_file_stored_bytes: "0",
+        overall_stored_bytes: "0"
+      }
+    ],
+    [
+      {
+        operation_kind: "status",
+        limit_name: "authenticated_caller_api_requests_per_calendar_month",
+        limit_reason_code: "monthly_caller_api_quota_exceeded",
+        limit_reason: "Monthly caller API request limit reached.",
+        limit_resets_at: "2099-01-01T00:00:00.000Z",
+        used_units: null,
+        limit_units: "100000"
+      }
+    ]
+  ]);
+
+  const result = await accountStatusInTransaction(query, identity);
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    assert.fail("expected account status success");
+  }
+  assert.deepEqual(result.data.active_limit_blocks, []);
 });
 
 test("account status storage reads use the canonical stock usage function", () => {
@@ -165,7 +462,13 @@ test("caller status is scoped to the authenticated caller and key metadata only"
         billing_grace_ends_at: null
       }
     ],
-    [{ non_file_stored_bytes: "0", overall_stored_bytes: "0" }],
+    [
+      {
+        queued_input_items: "0",
+        non_file_stored_bytes: "0",
+        overall_stored_bytes: "0"
+      }
+    ],
     []
   ]);
 
