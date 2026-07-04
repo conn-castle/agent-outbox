@@ -2014,6 +2014,16 @@ test("runtime canary keeps configuration detail behind smoke bearer auth", () =>
       );
       assert.equal(Object.hasOwn(rejectedBody, "environment"), false);
 
+      withProcessEnv({ SMOKE_OR_CLEANUP_TOKEN: undefined }, () => {
+        const unsetTokenBody = runtimeCanaryResponseBody(
+          "https://example.test/api/runtime/canary",
+          "Bearer smoke-token"
+        );
+        assert.equal(Object.hasOwn(unsetTokenBody, "environment"), false);
+        assert.equal(Object.hasOwn(unsetTokenBody, "postgres_driver"), false);
+        assert.equal(Object.hasOwn(unsetTokenBody, "out_of_scope"), false);
+      });
+
       const smokeBody = runtimeCanaryResponseBody(
         "https://example.test/api/runtime/canary",
         "Bearer smoke-token"
