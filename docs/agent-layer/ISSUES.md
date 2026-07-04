@@ -44,12 +44,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Surface expires_in/expires_at from the device-start response and cap the poll loop, or add a decided client-side cap (no hidden magic default).
     Notes: Deferred from audit-and-fix Round 1 (F10).
 
-- Issue 2026-07-03 caller-setup-prune-test-account-scoped: DB test can't catch a reverted prune preservation guard
-    Priority: Medium. Area: Testing/Database cleanup
-    Description: `agent_outbox_prune_caller_setup_requests` was made `security definer` so its `not exists (... caller_credentials ...)` preservation guard works under account-less global cleanup (`caller_credentials` has only account-scoped RLS). The opt-in DB test `phase 3 local database` (tests/foundation.test.mjs ~3077-3200) runs that prune with `auth_surface=cleanup` AND `account_id=accountA` set, so the guard sees accountA's credentials even under SECURITY INVOKER — the test passes whether the function is definer or invoker and cannot catch a regression that reverts the guard. No production executor runs this prune yet (the cron is a canary; the builder is test-only).
-    Next step: Add an assertion that runs the prune under cleanup surface with NO account_id and asserts the referenced pending-replacement setup request + credential are still preserved (would fail under security invoker).
-    Notes: Surfaced by audit-and-fix Round 1 while validating the F1 security-definer fix.
-
 - Issue 2026-07-03 quota-maintenance-unwired: Periodic quota/limit/retention cleanup has no production caller
     Priority: Medium. Area: Reliability/Cleanup
     Description: `quotaWindowMaintenanceStatements`, `activeLimitMaintenanceStatement`, and `pendingInputRetentionStatement` in `src/server/cleanup.ts` have no production caller (only tests), so account/IP quota windows, expired limit blocks, and retained pending inputs are never pruned.
