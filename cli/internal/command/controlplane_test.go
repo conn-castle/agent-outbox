@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -175,6 +176,108 @@ func TestCallerConnectBrowserUsesAllocatedCallbackPortAndStoresCredential(t *tes
 	activation := data["activation"].(map[string]any)
 	if activation["activated_key_id"] != "key_new" {
 		t.Fatalf("connect JSON missing activation result: %s", stdout)
+	}
+}
+
+func TestStoreAndActivateConnectPreservesConcurrentConfigUpdates(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := foundation.SaveConfig(configPath, foundation.Config{Version: foundation.ConfigVersion}); err != nil {
+		t.Fatalf("SaveConfig fixture failed: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/caller/connect/activate" {
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		var body map[string]string
+		decodeJSONBody(t, r, &body)
+		writeEnvelope(w, fmt.Sprintf(`{"caller_id":"%s","activated_key_id":"activated_%s","activated_at":"2026-07-02T20:01:00Z"}`, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), body["setup_request_id"]))
+	}))
+	defer server.Close()
+
+	runConnect := func(localName string, callerID string, keyID string, apiKey string) error {
+		runtime := &controlPlaneRuntime{
+			ConfigPath: configPath,
+			Config:     foundation.Config{Version: foundation.ConfigVersion},
+			Client: foundation.APIClient{
+				BaseURL:      server.URL,
+				HTTPClient:   server.Client(),
+				NewRequestID: func() string { return "req_" + localName },
+			},
+			Secrets: &controlPlaneSecretStore{},
+		}
+		_, err := storeAndActivateConnect(context.Background(), runtime, localName, connectExchangeData{
+			SetupRequestID: "setup_" + localName,
+			Caller: callerData{
+				CallerID:    callerID,
+				CallerSlug:  localName,
+				DisplayName: localName,
+			},
+			Account: accountData{
+				AccountID:     "acct_123",
+				Label:         "Test",
+				EffectiveTier: "free",
+			},
+			Credential: credentialData{
+				APIKey:    apiKey,
+				KeyID:     keyID,
+				Prefix:    "aob_live",
+				LastChars: "tail",
+				CreatedAt: "2026-07-02T20:00:00Z",
+			},
+		})
+		return err
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, item := range []struct {
+		name     string
+		callerID string
+		keyID    string
+		apiKey   string
+	}{
+		{name: "steward-email", callerID: "caller_steward", keyID: "key_steward", apiKey: "aob_live_steward_secret"},
+		{name: "ops-bot", callerID: "caller_ops", keyID: "key_ops", apiKey: "aob_live_ops_secret"},
+	} {
+		item := item
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- runConnect(item.name, item.callerID, item.keyID, item.apiKey)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("storeAndActivateConnect failed: %v", err)
+		}
+	}
+
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	got := map[string]foundation.CallerConfig{}
+	for _, caller := range cfg.Callers {
+		got[caller.Name] = caller
+	}
+	for name, want := range map[string]string{
+		"steward-email": "caller_steward",
+		"ops-bot":       "caller_ops",
+	} {
+		caller, ok := got[name]
+		if !ok {
+			t.Fatalf("caller %q missing from config after concurrent connect: %#v", name, cfg.Callers)
+		}
+		if caller.CallerID != want {
+			t.Fatalf("caller %q id = %q, want %q", name, caller.CallerID, want)
+		}
 	}
 }
 

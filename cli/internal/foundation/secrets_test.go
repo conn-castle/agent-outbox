@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeOSKeyring struct {
@@ -130,6 +131,52 @@ func TestEncryptedCallerSecretStoreKeepsPlaintextOutOfFile(t *testing.T) {
 	}
 	if _, err := store.LoadCallerKey(callerID); !errors.Is(err, ErrSecretNotFound) {
 		t.Fatalf("missing caller key error = %v", err)
+	}
+}
+
+func TestEncryptedCallerSecretStoreMutationsUseLocalStateLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent-outbox", "secrets.v1.enc")
+	lock, err := AcquireLocalStateLock(path)
+	if err != nil {
+		t.Fatalf("AcquireLocalStateLock failed: %v", err)
+	}
+
+	store, err := NewEncryptedCallerSecretStore(path, bytes.Repeat([]byte{3}, masterKeyBytes))
+	if err != nil {
+		t.Fatalf("NewEncryptedCallerSecretStore failed: %v", err)
+	}
+	store.Random = bytes.NewReader(bytes.Repeat([]byte{9}, 128))
+
+	done := make(chan error, 1)
+	go func() {
+		done <- store.StoreCallerKey("caller_123", "aob_live_secret_fixture")
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("StoreCallerKey completed while local-state lock was held: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	if err := lock.Close(); err != nil {
+		t.Fatalf("closing lock: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("StoreCallerKey failed after lock release: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("StoreCallerKey did not complete after lock release")
+	}
+
+	loaded, err := store.LoadCallerKey("caller_123")
+	if err != nil {
+		t.Fatalf("LoadCallerKey failed: %v", err)
+	}
+	if loaded != "aob_live_secret_fixture" {
+		t.Fatalf("loaded caller key = %q, want stored fixture", loaded)
 	}
 }
 

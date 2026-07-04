@@ -113,11 +113,34 @@ func ResolveConfigPath(flagValue string, env Env, defaultPath string) (string, e
 }
 
 func SaveConfig(path string, cfg Config) error {
-	return saveConfig(path, cfg, false)
+	return saveConfigWithLocalStateLock(path, cfg, false)
 }
 
 func SaveConfigInOwnerOnlyDir(path string, cfg Config) error {
+	return saveConfigWithLocalStateLock(path, cfg, true)
+}
+
+func SaveConfigWithHeldLocalStateLock(path string, cfg Config) error {
+	return saveConfig(path, cfg, false)
+}
+
+func SaveConfigInOwnerOnlyDirWithHeldLocalStateLock(path string, cfg Config) error {
 	return saveConfig(path, cfg, true)
+}
+
+func saveConfigWithLocalStateLock(path string, cfg Config, chmodExistingParent bool) error {
+	lock, err := AcquireLocalStateLock(path)
+	if err != nil {
+		return WrapConfigError("Could not lock local Agent Outbox config.", err)
+	}
+	if err := saveConfig(path, cfg, chmodExistingParent); err != nil {
+		_ = lock.Close()
+		return err
+	}
+	if err := lock.Close(); err != nil {
+		return WrapConfigError("Could not unlock local Agent Outbox config.", err)
+	}
+	return nil
 }
 
 func saveConfig(path string, cfg Config, chmodExistingParent bool) error {
