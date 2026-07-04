@@ -102,10 +102,16 @@ export function quotaWindowPruningStatement(
   };
 }
 
-export function quotaWindowMaintenanceStatements(
+export function accountQuotaWindowMaintenanceStatement(
+  now: Date
+): TransactionContextStatement {
+  const before = quotaWindowPruningCutoff(now);
+  return quotaWindowPruningStatement(before);
+}
+
+export function globalQuotaWindowMaintenanceStatements(
   now: Date
 ): TransactionContextStatement[] {
-  const before = quotaWindowPruningCutoff(now);
   // IP quota windows only ever store minute-window counters (every IP-scoped
   // control-plane limit is per-minute), so a row is dead at the next minute
   // boundary. Reusing the account cutoff would anchor pruning to the oldest
@@ -118,7 +124,6 @@ export function quotaWindowMaintenanceStatements(
   );
 
   return [
-    quotaWindowPruningStatement(before),
     {
       sql: "select public.agent_outbox_prune_ip_quota_windows($1) as deleted_count",
       values: [timestampValue(ipBefore)]
@@ -127,6 +132,15 @@ export function quotaWindowMaintenanceStatements(
       sql: "select public.agent_outbox_prune_caller_setup_requests($1) as deleted_count",
       values: [timestampValue(callerSetupBefore)]
     }
+  ];
+}
+
+export function quotaWindowMaintenanceStatements(
+  now: Date
+): TransactionContextStatement[] {
+  return [
+    accountQuotaWindowMaintenanceStatement(now),
+    ...globalQuotaWindowMaintenanceStatements(now)
   ];
 }
 

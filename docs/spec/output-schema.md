@@ -97,9 +97,10 @@ Date mode is a civil date and must not be converted to UTC.
 }
 ```
 
-`file_upload.file` is built from the canonical output-file row. The popup
-payload does not keep a second mutable copy of filename, MIME type, size,
-digest, or bytes.
+`file_upload.file` is built from the canonical output-file row. Exactly one
+output-file row may exist for a `file_upload` output result. The popup payload
+does not keep a second mutable copy of filename, MIME type, size, digest, or
+bytes.
 
 ## Output Check Page
 

@@ -38,12 +38,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Confirm the cross-repo contract (does the app redirect a denied approval to the loopback callback, and with what status?). If yes, validate setup_request_id first and deliver a matched denial on the channel while still dropping mismatched/spurious callbacks.
     Notes: Deferred from audit-and-fix Round 1 (F2): unverifiable from the CLI diff alone, and the naive fix would break controlplane_test.go ~217, which asserts a matched-id-without-status callback is dropped.
 
-- Issue 2026-07-03 quota-maintenance-unwired: Periodic quota/limit/retention cleanup has no production caller
-    Priority: Medium. Area: Reliability/Cleanup
-    Description: `quotaWindowMaintenanceStatements`, `activeLimitMaintenanceStatement`, and `pendingInputRetentionStatement` in `src/server/cleanup.ts` have no production caller (only tests), so account/IP quota windows, expired limit blocks, and retained pending inputs are never pruned.
-    Next step: Add a scheduled cleanup job running these statements under the `cleanup` auth surface.
-    Notes: Found during resolve-findings 20260703-133952-c85f (finding 8); the IP prune cutoff was already tightened to minute-anchored and an `updated_at` index on `agent_outbox_ip_quota_windows` was added in V20260702000000, but nothing prunes until the job exists.
-
 - Issue 2026-07-02 never-activated-connect-caller-name-burn: Abandoned connect leaves orphan caller rows and burns the name
     Priority: Medium. Area: Caller control-plane
     Description: Two-phase connect creates the `agent_outbox_callers` row (unique `caller_slug`) at approval but only activates the credential after CLI local persistence. A connect abandoned before activation leaves an orphan caller row plus an expired pending credential: re-connecting the same `local_caller_name` fails with `caller_already_exists` (name burned, no reclaim path), and because the setup-request prune cascade-cleans only the pending credential, abandoned/retried connects accumulate orphaned caller rows indefinitely (data hygiene, not a secret leak).
@@ -55,12 +49,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: `trustedClientIpAddress` accepts `CF-Connecting-IP`, then falls back to the first `X-Forwarded-For` value. The repo documents Cloudflare Workers/OpenNext as the hosted runtime, but does not define when fallback proxy headers are trustworthy.
     Next step: Decide and document the deployment/proxy trust policy, then update `trustedClientIpAddress` and route tests to enforce only the approved client-IP source(s).
     Notes: Deferred from resolve-findings 20260702-031158-414f because inventing this policy would broaden WP-1.
-
-- Issue 2026-07-01 output-file-single-row-invariant: Output files table permits multiple rows per result
-    Priority: Medium. Area: Database/File uploads
-    Description: The MVP file-upload contract permits exactly one output-file row per file-upload response, but `agent_outbox_output_files` only enforces unique `(output_result_id, display_order)`, so multiple file rows can exist for one output result with different display orders.
-    Next step: Before enabling paid file uploads, enforce the invariant with a unique `output_result_id` constraint or equivalent migration and add database coverage.
-    Notes: Current Phase 4 API cannot create file-upload outputs yet; this becomes launch-blocking in Phase 7.
 
 - Issue 2026-06-30 caller-last-used-hot-row-write: Caller credential last-used writes run on every valid request
     Priority: Low. Area: Reliability/Caller-auth
