@@ -116,17 +116,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Rework caller request and fixed-window metering as one focused limits-matrix change: add input and file-download request rate limits, make request/submission debits all-or-nothing and post-success where required, and verify output per-minute coverage.
     Notes: Surfaced by Phase 4 and improve-codebase Chunk 1/2 audits; owner chose to keep Phase 4 behavior unchanged and do this as a focused follow-up.
 
-- Issue 2026-06-30 caller-auth-notfound-timing: Key-id enumeration timing side-channel on not-found path
-    Priority: Low. Area: Security/Caller-auth
-    Description: `src/server/caller-api-auth.ts` returns before computing the HMAC + `timingSafeEqual` when the credential lookup is null, while a found-but-wrong-secret request does both, making "unknown key_id" timing-distinguishable from "known key_id, wrong secret." Impact is minimal — 128-bit random key_ids make enumeration infeasible and the DB round-trip dominates — but it deviates from "compare runs unconditionally."
-    Next step: Optionally perform a dummy HMAC + `timingSafeEqual` against a fixed sentinel on the not-found branch.
-
-- Issue 2026-06-30 legacy-oracle-verifier-dead: Legacy verifyCallerApiKeyAgainstCredential is dead but still oracle-shaped
-    Priority: Low. Area: Security/Caller-auth
-    Description: `src/server/caller-auth.ts::verifyCallerApiKeyAgainstCredential` is now called only by tests; the production path uses `authenticateCallerApiRequest`. It still returns distinct lifecycle codes (revoked/expired/not_active/invalid_secret), so leaving it in the tree invites future reuse that would reintroduce the resolved credential-lifecycle oracle at a client boundary.
-    Next step: Delete it and migrate its tests onto `authenticateCallerApiRequest`, or annotate it as non-client-facing internal/legacy only.
-    Notes: Surfaced by Phase 4 audit review-scope.
-
 - Issue 2026-06-30 undocumented-phase7-error-codes: ApiErrorCode lists codes absent from errors.md catalog
     Priority: Low. Area: Docs/API contract
     Description: `retention_limit_exceeded` and `billing_grace_expired` are in the `ApiErrorCode` union and wired into limit definitions in `limits.ts`, but are not in the `docs/spec/errors.md` catalog. They are Phase 7 (billing/retention) forward declarations not yet emittable to callers, so the type/limits surface and the public error catalog have drifted.

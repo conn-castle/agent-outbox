@@ -110,7 +110,7 @@ test("API response helpers emit documented envelopes and limit retry metadata", 
   });
 });
 
-test("caller API auth masks wrong secret and credential lifecycle failures from clients", async () => {
+test("caller API auth masks invalid credentials and lifecycle failures from clients", async () => {
   await withProcessEnv(
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
@@ -136,8 +136,20 @@ test("caller API auth masks wrong secret and credential lifecycle failures from 
         status: "active"
       };
 
-      /** @type {{ name: string, apiKey: string, credential: import("../src/server/caller-auth.ts").StoredCallerCredentialDigest }[]} */
+      /** @type {{ name: string, apiKey: string, credential: import("../src/server/caller-auth.ts").StoredCallerCredentialDigest | null, expectedInternal?: import("../src/server/caller-api-auth.ts").CallerApiAuthFailure["internal"] }[]} */
       const cases = [
+        {
+          name: "not found",
+          apiKey: material.plaintextApiKey,
+          credential: null,
+          expectedInternal: {
+            reason: "credential_not_found",
+            keyId: material.keyId,
+            credentialStatus: undefined,
+            secretDigestCompared: true,
+            secretMatched: false
+          }
+        },
         {
           name: "wrong secret",
           apiKey: wrongApiKey,
@@ -154,9 +166,41 @@ test("caller API auth masks wrong secret and credential lifecycle failures from 
           credential: { ...baseCredential, status: "expired" }
         },
         {
+          name: "expired by timestamp",
+          apiKey: material.plaintextApiKey,
+          credential: {
+            ...baseCredential,
+            expiresAt: "2000-01-01T00:00:00.000Z"
+          }
+        },
+        {
           name: "pending",
           apiKey: material.plaintextApiKey,
           credential: { ...baseCredential, status: "pending_activation" }
+        },
+        {
+          name: "key id mismatch",
+          apiKey: material.plaintextApiKey,
+          credential: { ...baseCredential, keyId: otherMaterial.keyId },
+          expectedInternal: {
+            reason: "credential_key_id_mismatch",
+            keyId: material.keyId,
+            credentialStatus: "active",
+            secretDigestCompared: true,
+            secretMatched: true
+          }
+        },
+        {
+          name: "invalid stored digest",
+          apiKey: material.plaintextApiKey,
+          credential: { ...baseCredential, secretDigest: "not-a-digest" },
+          expectedInternal: {
+            reason: "invalid_stored_digest",
+            keyId: material.keyId,
+            credentialStatus: "active",
+            secretDigestCompared: false,
+            secretMatched: null
+          }
         }
       ];
       const results = [];
@@ -170,15 +214,16 @@ test("caller API auth masks wrong secret and credential lifecycle failures from 
           }),
           async (keyId) => {
             lookedUpKeyIds.push(keyId);
-            return /** @type {import("../src/server/caller-auth.ts").StoredCallerCredentialDigest} */ (
-              authCase.credential
-            );
+            return authCase.credential;
           },
           { now: new Date("2026-06-30T12:00:00.000Z") }
         );
 
         assert.deepEqual(lookedUpKeyIds, [material.keyId], authCase.name);
         assert.equal(result.ok, false, authCase.name);
+        if (authCase.expectedInternal) {
+          assert.deepEqual(result.internal, authCase.expectedInternal);
+        }
         results.push(result);
       }
 
