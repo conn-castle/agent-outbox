@@ -25,6 +25,7 @@ type Options struct {
 	NewRequestID func() string
 	OpenBrowser  func(string) error
 	Sleep        func(context.Context, time.Duration) error
+	Now          func() time.Time
 }
 
 type rootFlags struct {
