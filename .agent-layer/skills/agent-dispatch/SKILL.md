@@ -1,6 +1,6 @@
 ---
 name: agent-dispatch
-description: Use `al dispatch` for focused headless second-agent work — another model, tool set, skill, or review perspective. Trigger when the user asks to run al dispatch, use a subagent or second agent, get a fresh-context review, or invoke a target agent with a skill. Do not use for ordinary shell commands, local test runs, web search, browser automation, or multi-agent orchestration.
+description: Use `al dispatch` only for human-requested focused headless second-agent work, or when another active skill's written workflow explicitly requires subagent/fresh-context delegation. Do not use for discretionary/background second opinions, ordinary shell commands, local test runs, web search, browser automation, or multi-agent orchestration.
 compatibility: Requires the Agent Layer CLI (`al`) from the project environment and at least one configured target for actual al dispatch runs.
 allowed-tools: Bash(al:*) Bash(cat:*)
 ---
@@ -39,28 +39,40 @@ command syntax and runtime contract details.
 
 ## Command routing
 
-Use `al dispatch` when the task benefits from a separate headless agent: a
-different model, a target-specific tool set, a target skill, or a fresh review
-perspective. Do not use it for work the current agent can perform directly with
-local shell commands.
+Use `al dispatch` only when the human explicitly asks for dispatch, subagent,
+second-agent, or fresh-context reviewer work, or when another active skill's
+written workflow explicitly requires delegation to a subagent or fresh-context
+reviewer. Do not use it for discretionary/background second opinions or for
+work the current agent can perform directly with local shell commands.
 
 ## Workflow
 
 1. Inspect `al dispatch --help`.
 2. Follow live help to inspect target metadata before a real run.
 3. Choose the smallest target path that matches the user's intent.
-4. Verify any requested skill exists in the current project's Agent Layer skill
+4. Before starting a real dispatch, choose an execution mode that will not kill
+   the command while the target agent is still working. Use a persistent or
+   long-running shell/tool session, and avoid command wrappers or tool settings
+   that enforce a hard timeout.
+5. Verify any requested skill exists in the current project's Agent Layer skill
    source, or let `al dispatch` validation fail clearly. Do not invent a skill name.
-5. Send the focused prompt to one target. Omit unrelated conversation
+6. Send the focused prompt to one target. Omit unrelated conversation
    history and information that could bias the target.
-6. If a prompt file is needed, write it under `.agent-layer/tmp/`.
+7. If a prompt file is needed, write it under `.agent-layer/tmp/`.
 
 ## Guardrails
 
 - Do not use `al dispatch` for ordinary local shell work, tests, web retrieval,
   browser automation, or API-only tasks.
+- Do not use `al dispatch` just because a second opinion might be nice.
 - Do not use `al dispatch` to bypass the caller's restrictions, approvals, or
   sandbox expectations.
+- After starting a dispatch, let the running `al dispatch` command finish.
+  If the host tool separates output wait/yield duration from process lifetime,
+  only the output wait/yield duration may be bounded; keep the same dispatch
+  session alive until the original process exits. Use progress and the final
+  result from that process, and do not inspect dispatch artifacts with separate
+  commands while it is active.
 - Do not retry failed target launches by guessing flags, targets, models, or
   reasoning-effort values. Re-check help and options, then report the mismatch
   if it remains unresolved.
