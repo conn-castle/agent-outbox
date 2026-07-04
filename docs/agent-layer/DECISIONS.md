@@ -70,3 +70,8 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: Connect setup-request deny/preview (`denySetupRequestStatement`, `getConnect*ApprovalPreview` in src/server/caller-connect.ts) is authorized by possession of the unguessable UUIDv4 approval link, not by account ownership; rotate/revoke deny/preview stay account-scoped (`EXISTS (... callers WHERE caller.account_id = ...)`).
     Reason: A new connect request has no owning account until approved, so authority follows possession of the link (device-flow bearer-capability norm), whereas rotate/revoke act on an existing account-owned caller.
     Tradeoffs: Bounded exposure of an unclaimed ~10-minute request identified by a UUIDv4, in exchange for not forcing premature account ownership onto connect; the connect-vs-rotate/revoke asymmetry is intentional, not a missing scope check.
+
+- Decision 2026-07-04 hosted-security-fail-closed-cloudflare-ip: Fail closed and trust Cloudflare client IPs
+    Decision: Hosted production protected routes fail closed when Clerk configuration is incomplete, except explicit test fixture bypasses; connect, rotate, and revoke per-IP rate limits trust only `CF-Connecting-IP`, and missing trusted IP fails loud instead of falling back to `X-Forwarded-For`.
+    Reason: Agent Outbox's hosted path is Cloudflare/OpenNext, so the security boundary should use Cloudflare's client-IP header and avoid accepting spoofable generic proxy headers or silently exposing protected routes during auth misconfiguration.
+    Tradeoffs: This is the smallest safe hosted policy and is easy to test, but non-Cloudflare self-hosters need an explicit future proxy policy before relying on forwarded headers.

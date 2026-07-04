@@ -426,6 +426,47 @@ test("connect start per-IP limiting blocks before setup insert", async () => {
   );
 });
 
+test("connect start rejects X-Forwarded-For-only requests before transactions", async () => {
+  await withProcessEnv(
+    {
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
+      PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+    },
+    async () => {
+      const runner = fakeTransactionRunner([]);
+      const result = await handleConnectBrowserStartRequest(
+        connectRequest("/api/caller/connect/browser/start", {
+          headers: {
+            "cf-connecting-ip": "",
+            "x-forwarded-for": "198.51.100.44"
+          }
+        }),
+        {
+          requestId: "req-browser-start-untrusted-ip",
+          correlationId: "corr-browser-start-untrusted-ip"
+        },
+        {
+          local_caller_name: "steward-email",
+          display_name: "Steward Email",
+          callback_url: "http://127.0.0.1:49152/callback"
+        },
+        {
+          now: new Date("2026-07-02T00:00:00.000Z"),
+          runProductTransaction: runner.runProductTransaction
+        }
+      );
+
+      assert.equal(result.ok, false);
+      if (result.ok) {
+        assert.fail("expected X-Forwarded-For-only connect start to fail");
+      }
+      assert.equal(result.error.status, 503);
+      assert.equal(result.error.code, "temporary_unavailable");
+      assert.equal(runner.contexts.length, 0);
+    }
+  );
+});
+
 test("browser approval preview exposes only pending setup metadata", async () => {
   await withProcessEnv(
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
