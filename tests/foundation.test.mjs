@@ -3328,6 +3328,41 @@ test(
       await client.query("reset role");
       await client.query("commit");
 
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      const accountlessPrunedSetupRequests = await client.query(
+        "select public.agent_outbox_prune_caller_setup_requests('2026-06-15T00:00:00.000Z') as deleted_count"
+      );
+      assert.equal(accountlessPrunedSetupRequests.rows[0].deleted_count, 0);
+      await client.query("reset role");
+      await client.query("commit");
+
+      const accountlessCleanupPreservation = await client.query(
+        `
+          select
+            (
+              select count(*)::int
+              from public.agent_outbox_caller_setup_requests
+              where setup_request_id = $1
+            ) as setup_request_count,
+            (
+              select count(*)::int
+              from public.agent_outbox_caller_credentials
+              where key_id = $2
+                and pending_replacement_setup_request_id = $1
+            ) as credential_count
+        `,
+        [referencedSetupRequestId, pendingReplacementKeyId]
+      );
+      assert.deepEqual(accountlessCleanupPreservation.rows[0], {
+        setup_request_count: 1,
+        credential_count: 1
+      });
+
       const deletedRows = await client.query(
         `
           select
