@@ -79,7 +79,8 @@ it from a configured checkout with the app serving `APP_BASE_URL` and `.env`
 containing local development Clerk, Postgres/Supabase, Sentry, caller-key hash,
 and smoke-token values. The command checks:
 
-- app runtime is serving;
+- app runtime is serving, with only coarse runtime canary data public and
+  detailed configuration posture available only through the smoke bearer token;
 - Clerk auth-adjacent pages and the protected human route are reachable or
   redirect safely;
 - caller API bearer auth works;

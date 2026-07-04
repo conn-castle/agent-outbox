@@ -95,12 +95,14 @@ async function main() {
 
   const baseUrl = env.get("APP_BASE_URL");
   const token = env.get("SMOKE_OR_CLEANUP_TOKEN");
+  const smokeAuth = { Authorization: `Bearer ${token}` };
 
   await expectReachablePage(new URL("/sign-in", baseUrl));
   await expectReachablePage(new URL("/sign-out", baseUrl));
   await expectReachablePage(new URL("/human", baseUrl));
   const runtimeCanary = await expectCanaryOk(
-    new URL("/api/runtime/canary", baseUrl)
+    new URL("/api/runtime/canary", baseUrl),
+    { headers: smokeAuth }
   );
   assert.equal(
     runtimeCanary.environment?.configured,
@@ -118,7 +120,6 @@ async function main() {
     "invalid_bearer_token",
     { headers: { Authorization: "Bearer wrong-token" } }
   );
-  const smokeAuth = { Authorization: `Bearer ${token}` };
   await expectCanaryOk(new URL("/api/runtime/caller-auth", baseUrl), {
     headers: smokeAuth
   });

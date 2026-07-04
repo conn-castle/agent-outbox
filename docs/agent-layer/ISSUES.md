@@ -62,12 +62,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Before the first durable or shared database apply, freeze `V20260630000000__initial_schema.sql` and put later schema changes in forward migrations.
     Notes: Tracked during PR shipping after adding the downgrade-grace SQL guard to the initial schema.
 
-- Issue 2026-06-30 runtime-canary-public-config-detail: Public runtime canary exposes detailed configuration posture
-    Priority: Medium. Area: Security/Observability
-    Description: `GET /api/runtime/canary` is unauthenticated and returns exact missing/insecure runtime configuration names plus `APP_ENV`. Values are redacted, but the route still gives public operational reconnaissance.
-    Next step: Split public liveness from authenticated smoke diagnostics; keep coarse public canary data and require the smoke bearer token for configuration detail.
-    Notes: Deferred from improve-codebase Chunk 4 because it changes the public runtime diagnostic contract.
-
 - Issue 2026-06-30 protected-human-middleware-fail-open: Protected human middleware fails open on missing Clerk configuration
     Priority: Medium. Area: Security/Auth
     Description: `middleware.ts` skips Clerk protection when either Clerk env var is missing. The current `/human` page has its own missing-config guard, but future `/human/*` routes could rely on middleware and accidentally pass through during misconfiguration.

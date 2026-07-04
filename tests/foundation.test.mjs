@@ -58,6 +58,7 @@ import {
   fileUploadEnabled,
   limitErrorMetadata
 } from "../src/server/limits.ts";
+import { runtimeCanaryResponseBody } from "../src/server/runtime-canary.ts";
 import {
   activeLimitBlockMetadata,
   auditSafeLifecycleEvent,
@@ -1976,6 +1977,66 @@ test("runtimeConfigStatus reports missing provider values without exposing value
       assert.equal(status.configured, false);
       assert.deepEqual(status.missing, []);
       assert.deepEqual(status.insecure, ["CALLER_KEY_HASH_SECRET"]);
+    }
+  );
+});
+
+test("runtime canary keeps configuration detail behind smoke bearer auth", () => {
+  withProcessEnv(
+    {
+      APP_ENV: "development",
+      APP_BASE_URL: "http://localhost:3000",
+      PUBLIC_APP_BASE_URL: "http://localhost:3000",
+      CLERK_SECRET_KEY: "sk_test_secret",
+      CLERK_PUBLISHABLE_KEY: "pk_test_secret",
+      DATABASE_APP_ROLE_URL: "postgresql://example",
+      SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+      SMOKE_OR_CLEANUP_TOKEN: "smoke-token",
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE
+    },
+    () => {
+      const publicBody = runtimeCanaryResponseBody(
+        "https://example.test/api/runtime/canary",
+        null
+      );
+
+      assert.equal(publicBody.ok, true);
+      assert.equal(publicBody.code, "runtime_canary_ok");
+      assert.equal(publicBody.origin, "https://example.test");
+      assert.equal(publicBody.one_app_api_origin, true);
+      assert.equal(Object.hasOwn(publicBody, "environment"), false);
+      assert.equal(Object.hasOwn(publicBody, "postgres_driver"), false);
+      assert.equal(Object.hasOwn(publicBody, "out_of_scope"), false);
+
+      const rejectedBody = runtimeCanaryResponseBody(
+        "https://example.test/api/runtime/canary",
+        "Bearer wrong-token"
+      );
+      assert.equal(Object.hasOwn(rejectedBody, "environment"), false);
+
+      const smokeBody = runtimeCanaryResponseBody(
+        "https://example.test/api/runtime/canary",
+        "Bearer smoke-token"
+      );
+
+      assert("environment" in smokeBody);
+      assert("postgres_driver" in smokeBody);
+      assert("out_of_scope" in smokeBody);
+      assert.equal(smokeBody.environment.configured, true);
+      assert.deepEqual(smokeBody.environment.missing, []);
+      assert.deepEqual(smokeBody.environment.insecure, []);
+      assert.equal(smokeBody.environment.appEnv, "development");
+      assert.deepEqual(smokeBody.postgres_driver, {
+        package: "pg",
+        client: "function"
+      });
+      assert.deepEqual(smokeBody.out_of_scope, [
+        "full_human_review_queue_ui",
+        "caller_registration",
+        "paid_file_upload_workflows",
+        "billing_behavior",
+        "steward_behavior"
+      ]);
     }
   );
 });
