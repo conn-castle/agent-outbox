@@ -551,6 +551,51 @@ test("duplicate send does not run accepted-submission limit guard", async () => 
   assert.match(query.calls[1].sql, /agent_outbox_input_items/);
 });
 
+test("raced duplicate send does not run accepted-submission limit guard", async () => {
+  const submission = parseValidInput();
+  const query = fakeQuery([
+    [{ acquired: true }],
+    [],
+    [
+      {
+        input_item_id: "input-1",
+        status: "pending",
+        current_revision: 8,
+        normalized_content_fingerprint: submission.normalizedContentFingerprint,
+        non_file_payload_bytes: submission.nonFilePayloadBytes,
+        has_live_output: false
+      }
+    ]
+  ]);
+  let guardCalled = false;
+
+  const result = await sendInputItem(query, context, identity, submission, {
+    beforeCreate: async () => {
+      guardCalled = true;
+      return {
+        ok: false,
+        error: {
+          status: 429,
+          code: "quota_limit_exceeded",
+          message: "Should not be returned for raced duplicate send."
+        }
+      };
+    }
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok || result.data.operation !== "send") {
+    assert.fail("expected raced duplicate send success");
+  }
+  assert.equal(result.data.duplicate, true);
+  assert.equal(result.data.revision, 8);
+  assert.equal(guardCalled, false);
+  assert.equal(query.calls.length, 3);
+  assert.match(query.calls[0].sql, /pg_advisory_xact_lock/);
+  assert.match(query.calls[1].sql, /agent_outbox_input_items/);
+  assert.match(query.calls[2].sql, /agent_outbox_input_items/);
+});
+
 test("send and replace reject answered items while output is unacknowledged", async () => {
   const submission = parseValidInput();
   const rows = [

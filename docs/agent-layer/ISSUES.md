@@ -26,6 +26,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-04 caller-request-limit-policy-gaps: Define remaining request-rate limit policy
+    Priority: Medium. Area: Limits/Security
+    Description: Input send/replace/delete and raw file download request throttles still need owner-approved per-minute numeric limits, including behavior when monthly caller API quota is disabled for paid/self-hosted profiles.
+    Next step: Decide the limit names, numeric thresholds, and affected operation surfaces, then add the corresponding limit definitions and route coverage.
+    Notes: Split from `caller-request-rate-limit-and-quota-metering`; the mechanical monthly request over-debit, accepted-submission over-debit, and multi-window all-or-nothing debit defects were fixed.
+
 - Issue 2026-07-03 cli-secret-store-no-cross-process-lock: Concurrent CLI invocations can lose credentials
     Priority: Medium. Area: CLI/Reliability
     Description: `cli/internal/foundation/secrets.go` (loadManifest/persistManifest) and `config.go` (saveConfig) do whole-file read-modify-write with no advisory lock spanning load→persist. Each write is atomic (temp+rename), but two concurrent invocations (e.g. two `connect`s) both read then both write, so the last writer clobbers the other's entry. The secret store and config are separate files updated in sequence, so a concurrent run can also leave them inconsistent (a config caller with no secret). Single-flow rollback does not protect against a second process.
@@ -80,12 +86,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Define and enforce the allowed surface/reason matrix in the SQL functions, then add denial coverage for wrong-surface calls.
     Notes: Deferred from improve-codebase Chunk 3 pending owner approval because tightening this can change internal auth behavior.
 
-- Issue 2026-06-30 caller-request-rate-limit-and-quota-metering: Meter monthly quota on valid requests + add per-minute input request rate limit
-    Priority: Medium. Area: Limits/Security
-    Description: Caller quota/rate metering has coupled drift cases: invalid send/replace debits monthly quota before validation; input send/replace lacks a pre-validation per-minute request limit; input delete has no request throttle; raw file downloads lack a fixed-window throttle when monthly quota is disabled; concurrent duplicate sends can debit accepted-submission windows for rows they do not create; multi-window fixed-limit checks can increment an earlier window before a later window denies the request.
-    Next step: Rework caller request and fixed-window metering as one focused limits-matrix change: add input and file-download request rate limits, make request/submission debits all-or-nothing and post-success where required, and verify output per-minute coverage.
-    Notes: Surfaced by Phase 4 and improve-codebase Chunk 1/2 audits; owner chose to keep Phase 4 behavior unchanged and do this as a focused follow-up.
-
 - Issue 2026-06-30 undocumented-phase7-error-codes: ApiErrorCode lists codes absent from errors.md catalog
     Priority: Low. Area: Docs/API contract
     Description: `retention_limit_exceeded` and `billing_grace_expired` are in the `ApiErrorCode` union and wired into limit definitions in `limits.ts`, but are not in the `docs/spec/errors.md` catalog. They are Phase 7 (billing/retention) forward declarations not yet emittable to callers, so the type/limits surface and the public error catalog have drifted.
@@ -96,12 +96,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: In `src/server/output-queue.ts`, `read-all` returns `{ok:false}`/`temporary_unavailable` for the whole page if any single row fails materialization, which would block a page and everything after it. Currently unreachable until file-upload results become creatable in Phase 7.
     Next step: When file-upload results become creatable, degrade a single unmaterializable read-all row rather than failing the whole page.
     Notes: Surfaced by Phase 4 audit review-scope; split from `output-read-path-hardening` after the output `check` query was changed to metadata-only.
-
-- Issue 2026-06-30 input-send-answered-live-output-branch: Inert answered-item branch may mask intended distinction
-    Priority: Medium. Area: Input queue semantics
-    Description: In `src/server/input-queue.ts` `sendResultForExisting`, the `existing.status === "answered" && existing.has_live_output` branch returns the same `answered_unacknowledged` error as the following plain `existing.status === "answered"` branch, so the `has_live_output` check is currently inert. The spec (`docs/spec/errors.md`, `docs/spec/http-api.md`) ties `answered_unacknowledged` specifically to an answered item whose output is still unacknowledged, suggesting an answered item with no live output may warrant different handling.
-    Next step: Confirm intended behavior for an answered item without a live output, then implement the distinct response or collapse the redundant branch.
-    Notes: Left intact during simplify-new-code pass to avoid erasing a possibly half-finished spec distinction.
 
 - Issue 2026-06-30 next-middleware-proxy-convention: Next.js middleware file convention is deprecated
     Priority: Low. Area: Runtime/Next.js
