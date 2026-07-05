@@ -123,7 +123,7 @@
     "stripeNode": {
       "version": "22.3.0",
       "package": "stripe",
-      "source": "npm view stripe version engines --json (verified 2026-07-05)"
+      "source": "npm view stripe version engines --json"
     }
   },
   "runtimeDevTools": {

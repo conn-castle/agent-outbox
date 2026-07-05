@@ -28,6 +28,7 @@ type BillingTransactionRunner = typeof runProductTransaction;
 type BillingAccountRow = {
   account_id: string;
   tier: string;
+  billing_status: BillingStatus;
   stripe_customer_id: string | null;
 };
 
@@ -103,7 +104,7 @@ export function billingRuntimeConfig(
       priceId: process.env.STRIPE_PAID_MONTHLY_PRICE_ID?.trim() ?? "",
       portalConfigurationId:
         process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID?.trim() ?? "",
-      publicAppBaseUrl: process.env.PUBLIC_APP_BASE_URL!.trim()
+      publicAppBaseUrl: process.env.PUBLIC_APP_BASE_URL?.trim() ?? ""
     }
   };
 }
@@ -148,6 +149,11 @@ export async function createCheckoutSessionForAccount(input: {
   }
   if (account.tier === "self_hosted") {
     return invalidBillingRequest("Self-hosted accounts do not use Stripe.");
+  }
+  if (hasLiveBillingState(account.billing_status)) {
+    return invalidBillingRequest(
+      "Active billing accounts must use the billing portal."
+    );
   }
 
   const session = await stripe.checkout.sessions.create({
@@ -296,6 +302,7 @@ export function billingAccountStatement(
       select
         account_id::text as account_id,
         tier,
+        billing_status,
         stripe_customer_id
       from public.agent_outbox_accounts
       where account_id = $1
@@ -382,6 +389,7 @@ export function subscriptionBillingUpdateStatement(input: {
   subscriptionId: string;
   customerId: string | null;
   priceId: string | null;
+  accountId: string | null;
   subscriptionStatus: string;
   billingStatus: BillingStatus;
   graceEndsAt: Date | null;
@@ -407,6 +415,7 @@ export function subscriptionBillingUpdateStatement(input: {
         and (
           stripe_subscription_id = $1
           or ($2 is not null and stripe_customer_id = $2)
+          or ($8 is not null and account_id = $8)
         )
       returning account_id::text as account_id
     `,
@@ -417,7 +426,8 @@ export function subscriptionBillingUpdateStatement(input: {
       input.subscriptionStatus,
       input.billingStatus,
       nullableTimestampValue(input.graceEndsAt),
-      nullableTimestampValue(input.currentPeriodEnd)
+      nullableTimestampValue(input.currentPeriodEnd),
+      input.accountId
     ]
   };
 }
@@ -488,6 +498,7 @@ async function applySubscriptionEvent(
       subscriptionId,
       customerId: stripeId(object.customer),
       priceId: subscriptionPriceId(object),
+      accountId: stringValue(recordValue(object.metadata, "account_id")),
       subscriptionStatus: status,
       billingStatus: transition.billingStatus,
       graceEndsAt: transition.graceEndsAt,
@@ -518,6 +529,7 @@ async function applyInvoicePaymentFailed(
       subscriptionId,
       customerId: stripeId(recordValue(object, "customer")),
       priceId: null,
+      accountId: null,
       subscriptionStatus: "payment_failed",
       billingStatus: "past_due",
       graceEndsAt: graceEndsAt(now),
@@ -559,6 +571,10 @@ function billingTransitionForSubscription(
 
 function stripeClient(config: BillingConfig): StripeClient {
   return new Stripe(config.secretKey);
+}
+
+function hasLiveBillingState(status: BillingStatus) {
+  return status === "active" || status === "grace" || status === "past_due";
 }
 
 function billingConfigurationError(missing: readonly string[]): ApiErrorInput {
@@ -622,7 +638,7 @@ function recordValue(record: unknown, key: string): unknown {
 }
 
 function isStripeRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringValue(value: unknown): string | null {

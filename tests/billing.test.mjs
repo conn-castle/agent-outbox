@@ -9,6 +9,7 @@ import {
   processStripeEventInTransaction,
   requiredBillingConfiguration
 } from "../src/server/billing.ts";
+import { billingHumanSessionFromClerkUser } from "../src/server/billing-session.ts";
 
 const config = {
   secretKey: "sk_test_placeholder",
@@ -71,6 +72,61 @@ test("portal billing configuration requires the explicit Stripe portal configura
       }
     }
   }
+});
+
+test("webhook billing configuration does not require the public app base URL", () => {
+  const previous = Object.fromEntries(
+    billingEnvironmentNames.map((name) => [name, process.env[name]])
+  );
+  try {
+    for (const name of billingEnvironmentNames) {
+      delete process.env[name];
+    }
+    process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_placeholder";
+
+    assert.deepEqual(billingRuntimeConfig("webhook"), {
+      ok: true,
+      data: {
+        secretKey: "sk_test_placeholder",
+        webhookSecret: "whsec_placeholder",
+        priceId: "",
+        portalConfigurationId: "",
+        publicAppBaseUrl: ""
+      }
+    });
+  } finally {
+    for (const name of billingEnvironmentNames) {
+      if (previous[name] === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = previous[name];
+      }
+    }
+  }
+});
+
+test("billing API session returns a JSON-envelope auth error when signed out", async () => {
+  let resolveCalls = 0;
+  const result = await billingHumanSessionFromClerkUser({
+    requestId: "req-billing-session",
+    clerkUserId: null,
+    connectionString: "postgresql://billing-test",
+    async resolveSession() {
+      resolveCalls += 1;
+      throw new Error("resolveSession should not run without a Clerk user.");
+    }
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 401,
+      code: "authentication_required",
+      message: "Authentication is required to manage billing."
+    }
+  });
+  assert.equal(resolveCalls, 0);
 });
 
 test("checkout creates an account-scoped subscription session without exposing Stripe ids", async () => {
@@ -145,6 +201,56 @@ test("checkout creates an account-scoped subscription session without exposing S
     subscription_data: { metadata: { account_id: accountId } }
   });
   assert.doesNotMatch(JSON.stringify(result), /cus_|sub_|sk_test|whsec/);
+});
+
+test("checkout rejects live billing accounts before creating another subscription", async () => {
+  const checkoutInputs = /** @type {any[]} */ ([]);
+  const result = await createCheckoutSessionForAccount({
+    connectionString: "postgresql://billing-test",
+    accountId,
+    userId,
+    requestId: "req-billing-checkout-live",
+    config,
+    stripe: /** @type {any} */ ({
+      checkout: {
+        sessions: {
+          /** @param {any} input */
+          async create(input) {
+            checkoutInputs.push(input);
+            return { url: "https://checkout.stripe.test/session" };
+          }
+        }
+      },
+      billingPortal: { sessions: { async create() {} } },
+      webhooks: { constructEvent() {} }
+    }),
+    async runTransaction(_connectionString, _context, callback) {
+      return callback(
+        /** @type {any} */ (
+          async () =>
+            queryResult([
+              {
+                account_id: accountId,
+                tier: "hosted_paid",
+                billing_status: "active",
+                stripe_customer_id: "cus_test"
+              }
+            ])
+        )
+      );
+    }
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    assert.fail("expected live billing checkout rejection");
+  }
+  assert.equal(result.error.status, 400);
+  assert.equal(
+    result.error.message,
+    "Active billing accounts must use the billing portal."
+  );
+  assert.equal(checkoutInputs.length, 0);
 });
 
 test("billing portal requires an existing Stripe customer", async () => {
@@ -363,6 +469,95 @@ test("webhook replay stops before applying the event a second time", async () =>
   assert.equal(statements.length, 1);
 });
 
+test("webhook processing rejects array-shaped Stripe event objects", async () => {
+  const statements = /** @type {any[]} */ ([]);
+  const arrayLikeSubscription = Object.assign([], {
+    id: "sub_array",
+    customer: "cus_array",
+    status: "active",
+    items: { data: [{ price: { id: "price_test_paid_monthly" } }] }
+  });
+  const processed = await processStripeEventInTransaction(
+    fakeTransitionQuery(statements),
+    /** @type {any} */ ({
+      id: "evt_array_subscription",
+      type: "customer.subscription.updated",
+      data: { object: arrayLikeSubscription }
+    }),
+    new Date("2026-07-05T00:00:00.000Z")
+  );
+
+  assert.equal(processed, true);
+  assert.equal(
+    statements.some((statement) =>
+      /update public\.agent_outbox_accounts/.test(statement.sql)
+    ),
+    false
+  );
+  assert.deepEqual(statements.at(-1).values, ["evt_array_subscription", null]);
+});
+
+test("subscription webhooks can update an account from Stripe metadata before checkout completion", async () => {
+  const statements = /** @type {any[]} */ ([]);
+  const event = {
+    id: "evt_subscription_before_checkout",
+    type: "customer.subscription.updated",
+    data: {
+      object: {
+        id: "sub_before_checkout",
+        customer: "cus_before_checkout",
+        status: "active",
+        current_period_end: 1783555200,
+        metadata: { account_id: accountId },
+        items: {
+          data: [{ price: { id: "price_test_paid_monthly" } }]
+        }
+      }
+    }
+  };
+
+  await processStripeEventInTransaction(
+    /** @type {any} */ (
+      async (/** @type {any} */ statement) => {
+        statements.push(statement);
+        if (
+          /insert into public\.agent_outbox_stripe_webhook_events/.test(
+            statement.sql
+          )
+        ) {
+          return queryResult([{ stripe_event_id: statement.values[0] }]);
+        }
+        if (/update public\.agent_outbox_accounts/.test(statement.sql)) {
+          assert.match(statement.sql, /account_id = \$8/);
+          assert.equal(statement.values[7], accountId);
+          return queryResult([{ account_id: accountId }]);
+        }
+        return queryResult([]);
+      }
+    ),
+    /** @type {any} */ (event),
+    new Date("2026-07-05T00:00:00.000Z")
+  );
+
+  const update = statements.find((statement) =>
+    /update public\.agent_outbox_accounts/.test(statement.sql)
+  );
+  assert.deepEqual(update.values, [
+    "sub_before_checkout",
+    "cus_before_checkout",
+    "price_test_paid_monthly",
+    "active",
+    "active",
+    null,
+    "2026-07-09T00:00:00.000Z",
+    accountId
+  ]);
+  assert.deepEqual(statements.at(-1).values, [
+    "evt_subscription_before_checkout",
+    accountId
+  ]);
+});
+
 test("subscription and failed-payment events update grace state without raw payload storage", async () => {
   const statements = /** @type {any[]} */ ([]);
   const now = new Date("2026-07-05T00:00:00.000Z");
@@ -414,7 +609,8 @@ test("subscription and failed-payment events update grace state without raw payl
     "active",
     "grace",
     "2026-07-09T00:00:00.000Z",
-    "2026-07-09T00:00:00.000Z"
+    "2026-07-09T00:00:00.000Z",
+    null
   ]);
   assert.deepEqual(updateStatements[1].values, [
     "sub_test",
@@ -423,6 +619,7 @@ test("subscription and failed-payment events update grace state without raw payl
     "payment_failed",
     "past_due",
     "2026-07-12T00:00:00.000Z",
+    null,
     null
   ]);
   assert.doesNotMatch(
