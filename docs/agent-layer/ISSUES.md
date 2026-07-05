@@ -48,8 +48,3 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: In `src/server/output-queue.ts`, `read-all` returns `{ok:false}`/`temporary_unavailable` for the whole page if any single row fails materialization, which would block a page and everything after it. Currently unreachable until file-upload results become creatable in Phase 7.
     Next step: When file-upload results become creatable, degrade a single unmaterializable read-all row rather than failing the whole page.
     Notes: Surfaced by Phase 4 audit review-scope; split from `output-read-path-hardening` after the output `check` query was changed to metadata-only.
-
-- Issue 2026-06-30 next-middleware-proxy-convention: Next.js middleware file convention is deprecated
-    Priority: Low. Area: Runtime/Next.js
-    Description: `next build` on Next.js 16.2.9 warns that the `middleware` file convention is deprecated in favor of `proxy`.
-    Next step: Rename the Clerk route-protection entrypoint to the supported proxy convention after verifying Clerk and OpenNext behavior.

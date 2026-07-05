@@ -26,11 +26,6 @@ A rolling log of important, non-obvious decisions that materially affect future 
 ## Decision Log
 
 <!-- ENTRIES START -->
-- Decision 2026-07-02 caller-connect-control-plane-lifecycle: Use standards-timed display-once connect codes with bounded transient state
-    Decision: Browser setup codes and device/user codes expire after 10 minutes; device polling uses a 5-second interval; setup/device/user codes are stored only as keyed HMAC-SHA256 digests; connect start, poll, and exchange routes are DB-rate-limited at 30 per trusted client IP per UTC minute; connect approvals are limited at 30 per account per UTC minute; cleanup prunes terminal and long-expired setup rows after 7 days, preserves rotate pending replacement setup rows, and reclaims connect callers that never activated and have no audit/input/output history after the same 7-day window.
-    Reason: RFC 6749 recommends short-lived single-use authorization codes with a 10-minute maximum, RFC 8628 defines device-code `expires_in` plus a 5-second default poll interval, and abandoned connect metadata needs bounded retention without deleting activated or audit-meaningful caller identity.
-    Tradeoffs: Setup remains simple and standards-aligned, and abandoned setup/caller metadata is bounded; a lost display-once credential response still requires a new human-approved connect/rotate flow rather than replaying plaintext secret material.
-
 - Decision 2026-06-30 worker-scheduled-wrapper: Use a Worker wrapper for cron events
     Decision: `wrangler.jsonc` points at `worker/entry.mjs`, which delegates HTTP traffic to OpenNext's generated `.open-next/worker.js` and owns the Worker `scheduled` handler.
     Reason: The OpenNext Cloudflare template generates a `fetch` entrypoint but no project-owned `scheduled` export, while hosted cleanup will need a durable Worker cron hook.
@@ -50,6 +45,11 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: `db/migrations/` is the canonical schema source and Flyway runs hand-authored PostgreSQL SQL against normal Postgres URLs; provider CLIs are not migration authorities.
     Reason: The schema must run on raw Postgres containers, Supabase, Neon, Aurora, and similar providers without binding migration history to one host.
     Tradeoffs: This adds a Dockerized Flyway tool boundary, but gives provider portability, checksum validation, and raw Postgres CI replay.
+
+- Decision 2026-07-02 caller-connect-control-plane-lifecycle: Use standards-timed display-once connect codes with bounded transient state
+    Decision: Browser setup codes and device/user codes expire after 10 minutes; device polling uses a 5-second interval; setup/device/user codes are stored only as keyed HMAC-SHA256 digests; connect start, poll, and exchange routes are DB-rate-limited at 30 per trusted client IP per UTC minute; connect approvals are limited at 30 per account per UTC minute; cleanup prunes terminal and long-expired setup rows after 7 days, preserves rotate pending replacement setup rows, and reclaims connect callers that never activated and have no audit/input/output history after the same 7-day window.
+    Reason: RFC 6749 recommends short-lived single-use authorization codes with a 10-minute maximum, RFC 8628 defines device-code `expires_in` plus a 5-second default poll interval, and abandoned connect metadata needs bounded retention without deleting activated or audit-meaningful caller identity.
+    Tradeoffs: Setup remains simple and standards-aligned, and abandoned setup/caller metadata is bounded; a lost display-once credential response still requires a new human-approved connect/rotate flow rather than replaying plaintext secret material.
 
 - Decision 2026-07-02 caller-rotate-two-phase-activation: Activate replacement keys only after local storage succeeds
     Decision: Human-approved rotate exchange creates a `pending_activation` replacement key that cannot authenticate data-plane requests; the old active key is revoked only after the CLI stores the replacement locally and calls rotate activate, while rotate abort expires the pending key and leaves the old key active.

@@ -3,7 +3,9 @@
 Agent-facing map of this repository. Use it to pick which file to open for a
 question or task. This is a router, not a product overview or a planning index.
 
-When documentation and code disagree, the code wins.
+Until the first release, documentation describes the intended final pre-release
+state and may be ahead of implementation. Verify current implemented behavior in
+code when the distinction matters.
 
 ## Start here
 

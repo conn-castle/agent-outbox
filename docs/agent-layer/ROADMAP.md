@@ -51,13 +51,8 @@ Incomplete:
 
 <!-- PHASES START -->
 
-## Phase 1 ✅ — Operating Foundation And Quality Gates
-- Added the root command surface in `Makefile` and documented canonical setup, verification, doctor, release-check, development, and maintenance commands in [COMMANDS.md](COMMANDS.md).
-- Added pinned Phase 1 tooling and future runtime compatibility metadata in `toolchain.json`, with package metadata, CI workflow Node versions, command docs, Node type definitions, and lockfile state validated by local gates.
-- Added credential-free local gates for formatting, Markdown lint, TypeScript typecheck, Node tests, build consistency, and structural smoke checks.
-- Added GitHub Actions CI and release-check skeletons that provision pinned Node, run setup before verification, use read-only repository permissions, and contain no deploy or publish commands.
-- Added fail-loud local/provider diagnostics for pinned tools, `.env` required names, read-only provider CLI authentication, command timeouts, and the dedicated Agent Outbox Supabase project reference.
-- Audited and updated pre-product docs for the new command/setup truth, including README, NORTH_STAR, architecture, ops docs, ROADMAP, COMMANDS, and Supabase setup context.
+## Archived phases (1)
+- Phase 1 — Operating Foundation And Quality Gates: Established the root command surface, pinned tooling, credential-free local gates, CI/release-check skeletons, diagnostics, and pre-product docs alignment.
 
 ## Phase 2 ✅ — App Runtime Shell Proof
 - Established the single Next.js app/API boundary with public, auth-adjacent, protected human, caller-auth, database, structured-log, structured-error, Sentry, and scheduled canary routes.

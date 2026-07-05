@@ -32,3 +32,9 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
     Description: Humans should be able to search, filter, sort, and page through the full review queue instead of only the first bounded list slice.
     Acceptance criteria: Review list controls are URL-backed, applied in `humanReviewListStatement`, and expose pagination or load-more behavior with browser coverage for results beyond the initial slice.
     Notes: Deferred from Phase 5 PR audit; current UI intentionally keeps a bounded first-page client workspace.
+
+- Backlog 2026-06-30 next-middleware-proxy-convention: Migrate middleware to proxy after upstream support
+    Priority: Low. Area: Runtime/Next.js
+    Description: Move the Clerk route-protection entrypoint from deprecated `middleware.ts` to `proxy.ts` after released OpenNext Cloudflare support exists.
+    Acceptance criteria: Upstream OpenNext Cloudflare supports Next 16 `proxy.ts`/Node middleware, the migration preserves protected-route behavior, and `make platform-check` passes.
+    Notes: User-approved reclassification; unscheduled because implementation waits on an upstream gate outside this repo's control.
