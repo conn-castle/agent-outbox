@@ -313,6 +313,8 @@ GET /api/caller/status
 
 Uses caller bearer authentication. Returns selected caller health plus
 non-sensitive account, tier, storage, quota, and active-limit status.
+`last_used_at` is coarse operational metadata and may lag a valid caller request
+by up to the database freshness window of 15 minutes.
 
 Success `data`:
 
@@ -402,7 +404,10 @@ Setup, device, user, and browser exchange codes are display-once or client-held
 values. The server stores keyed HMAC-SHA256 digests only, using the same server
 secret family as caller API key hashing. Setup request rows are transient:
 cleanup prunes terminal rows and long-expired pending or approved rows after 7
-days, while preserving rows referenced by pending replacement credentials.
+days, while preserving rotate rows referenced by pending replacement
+credentials. Never-activated connect callers with no audit, input, or output
+history are reclaimed after the same 7-day window, including their dependent
+setup and credential rows.
 
 Approval rejects with `409 caller_already_exists` if the approving account
 already has a caller using the requested name/slug. Duplicate connect is not

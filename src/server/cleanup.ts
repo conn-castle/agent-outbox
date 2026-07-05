@@ -119,9 +119,7 @@ export function globalQuotaWindowMaintenanceStatements(
   // and unlike the account table (bounded by account count) the IP table grows
   // per attacker IP. Prune it with a minute-anchored cutoff instead.
   const ipBefore = quotaWindowPruningCutoff(now, ["minute"]);
-  const callerSetupBefore = new Date(
-    now.getTime() - CALLER_SETUP_REQUEST_RETENTION_DAYS * ONE_DAY_MS
-  );
+  const callerSetupBefore = callerSetupCleanupCutoff(now);
 
   return [
     {
@@ -133,6 +131,21 @@ export function globalQuotaWindowMaintenanceStatements(
       values: [timestampValue(callerSetupBefore)]
     }
   ];
+}
+
+export function callerSetupCleanupCutoff(now: Date): Date {
+  return new Date(
+    now.getTime() - CALLER_SETUP_REQUEST_RETENTION_DAYS * ONE_DAY_MS
+  );
+}
+
+export function neverActivatedCallerPruningStatement(
+  before: Date
+): TransactionContextStatement {
+  return {
+    sql: "select public.agent_outbox_prune_never_activated_callers($1) as deleted_count",
+    values: [timestampValue(before)]
+  };
 }
 
 export function quotaWindowMaintenanceStatements(

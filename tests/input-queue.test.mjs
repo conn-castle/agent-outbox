@@ -1024,23 +1024,31 @@ test("send serialization lock scopes duplicate detection to the authenticated ca
 });
 
 test("caller credential last-used update is scoped to authenticated account caller and key", () => {
-  assert.deepEqual(
-    callerCredentialLastUsedStatement({
-      accountId: identity.accountId,
-      callerId: identity.callerId,
-      keyId: "key_123"
-    }),
-    {
-      sql: `
+  const statement = callerCredentialLastUsedStatement({
+    accountId: identity.accountId,
+    callerId: identity.callerId,
+    keyId: "key_123"
+  });
+
+  assert.deepEqual(statement, {
+    sql: `
       update public.agent_outbox_caller_credentials
       set last_used_at = now()
       where account_id = $1
         and caller_id = $2
         and key_id = $3
+        and (
+          last_used_at is null
+          or last_used_at < now() - interval '15 minutes'
+        )
     `,
-      values: [identity.accountId, identity.callerId, "key_123"]
-    }
-  );
+    values: [identity.accountId, identity.callerId, "key_123"]
+  });
+  assert.match(statement.sql, /account_id = \$1/);
+  assert.match(statement.sql, /caller_id = \$2/);
+  assert.match(statement.sql, /key_id = \$3/);
+  assert.match(statement.sql, /last_used_at is null/);
+  assert.match(statement.sql, /last_used_at < now\(\) - interval '15 minutes'/);
 });
 
 test("account limit profile fails loud when the authenticated account row is missing", async () => {
