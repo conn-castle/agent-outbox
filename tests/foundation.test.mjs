@@ -56,6 +56,7 @@ import {
   accountLimitStatusMetadata,
   doctorLimitMetadata,
   fileUploadEnabled,
+  getLimitDefinition,
   limitErrorMetadata
 } from "../src/server/limits.ts";
 import { runtimeCanaryResponseBody } from "../src/server/runtime-canary.ts";
@@ -1429,6 +1430,15 @@ test("limits metadata uses explicit disabled states and maps self-hosted to paid
   const freeStatus = accountLimitStatusMetadata("hosted-free");
   const paidStatus = accountLimitStatusMetadata("hosted-paid");
   const selfHostedStatus = accountLimitStatusMetadata("self-hosted");
+  /**
+   * @param {import("../src/server/limits.ts").AccountLimitStatusMetadata} status
+   * @param {import("../src/server/limits.ts").LimitName} limitName
+   */
+  const limitStatus = (status, limitName) => {
+    const limit = status.limits.find((entry) => entry.limitName === limitName);
+    assert.ok(limit, limitName);
+    return limit;
+  };
 
   assert.equal(fileUploadEnabled("hosted-free"), false);
   assert.equal(fileUploadEnabled("hosted-paid"), true);
@@ -1440,6 +1450,50 @@ test("limits metadata uses explicit disabled states and maps self-hosted to paid
   assert.equal(
     doctorLimitMetadata("hosted-free").length,
     freeStatus.limits.length
+  );
+
+  for (const status of [freeStatus, paidStatus, selfHostedStatus]) {
+    assert.deepEqual(
+      limitStatus(status, "input_send_replace_requests_per_account_per_minute")
+        .setting,
+      { mode: "enabled", value: 600 }
+    );
+    assert.deepEqual(
+      limitStatus(status, "input_delete_requests_per_account_per_minute")
+        .setting,
+      { mode: "enabled", value: 600 }
+    );
+    assert.deepEqual(
+      limitStatus(
+        status,
+        "output_file_download_requests_per_account_per_minute"
+      ).setting,
+      { mode: "enabled", value: 60 }
+    );
+    assert.equal(
+      limitStatus(
+        status,
+        "authenticated_caller_api_requests_per_calendar_month"
+      ).setting.mode,
+      status.profileId === "hosted-free" ? "enabled" : "disabled"
+    );
+  }
+
+  assert.deepEqual(
+    doctorLimitMetadata("hosted-free")
+      .filter((entry) =>
+        [
+          "input_send_replace_requests_per_account_per_minute",
+          "input_delete_requests_per_account_per_minute",
+          "output_file_download_requests_per_account_per_minute"
+        ].includes(entry.limitName)
+      )
+      .map((entry) => entry.checkName),
+    [
+      "limits.input_send_replace.minute",
+      "limits.input_delete.minute",
+      "limits.output_file_download.minute"
+    ]
   );
 });
 
@@ -1467,6 +1521,71 @@ test("limit error and active block metadata derive reason fields from the limits
   );
 
   assert.deepEqual(
+    [
+      limitErrorMetadata(
+        "hosted-free",
+        "input_send_replace_requests_per_account_per_minute",
+        {
+          usedUnits: 601,
+          limitResetsAt: new Date("2026-06-30T12:01:00.000Z")
+        }
+      ),
+      limitErrorMetadata(
+        "hosted-free",
+        "input_delete_requests_per_account_per_minute",
+        {
+          usedUnits: 601,
+          limitResetsAt: new Date("2026-06-30T12:01:00.000Z")
+        }
+      ),
+      limitErrorMetadata(
+        "hosted-free",
+        "output_file_download_requests_per_account_per_minute",
+        {
+          usedUnits: 61,
+          limitResetsAt: new Date("2026-06-30T12:01:00.000Z")
+        }
+      )
+    ],
+    [
+      {
+        status: 429,
+        code: "rate_limit_exceeded",
+        limitName: "input_send_replace_requests_per_account_per_minute",
+        limitReasonCode: "input_send_replace_rate_limited",
+        limitReason:
+          "Input send/replace requests are temporarily rate limited.",
+        limitResetsAt: "2026-06-30T12:01:00.000Z",
+        usedUnits: 601,
+        limitUnits: 600,
+        unit: "requests"
+      },
+      {
+        status: 429,
+        code: "rate_limit_exceeded",
+        limitName: "input_delete_requests_per_account_per_minute",
+        limitReasonCode: "input_delete_rate_limited",
+        limitReason: "Input delete requests are temporarily rate limited.",
+        limitResetsAt: "2026-06-30T12:01:00.000Z",
+        usedUnits: 601,
+        limitUnits: 600,
+        unit: "requests"
+      },
+      {
+        status: 429,
+        code: "rate_limit_exceeded",
+        limitName: "output_file_download_requests_per_account_per_minute",
+        limitReasonCode: "output_file_download_rate_limited",
+        limitReason: "Output file downloads are temporarily rate limited.",
+        limitResetsAt: "2026-06-30T12:01:00.000Z",
+        usedUnits: 61,
+        limitUnits: 60,
+        unit: "requests"
+      }
+    ]
+  );
+
+  assert.deepEqual(
     activeLimitBlockMetadata({
       selector: "hosted-free",
       accountId: "account_a",
@@ -1485,6 +1604,21 @@ test("limit error and active block metadata derive reason fields from the limits
       used_units: 121,
       limit_units: 120
     }
+  );
+  assert.deepEqual(
+    getLimitDefinition("input_send_replace_requests_per_account_per_minute")
+      .operationKinds,
+    ["input_send_replace"]
+  );
+  assert.deepEqual(
+    getLimitDefinition("input_delete_requests_per_account_per_minute")
+      .operationKinds,
+    ["input_delete"]
+  );
+  assert.deepEqual(
+    getLimitDefinition("output_file_download_requests_per_account_per_minute")
+      .operationKinds,
+    ["output_file_download"]
   );
   assert.throws(
     () =>
@@ -1544,7 +1678,16 @@ test("accounting helpers keep audit data content-safe and use quota windows for 
       windowStartUtc: "2026-06-01T00:00:00.000Z"
     }
   );
+  assert.equal(
+    consumesMonthlyCallerApiRequestQuota("input_send_replace"),
+    true
+  );
+  assert.equal(consumesMonthlyCallerApiRequestQuota("input_delete"), false);
   assert.equal(consumesMonthlyCallerApiRequestQuota("output_ack"), false);
+  assert.equal(
+    consumesMonthlyCallerApiRequestQuota("output_file_download"),
+    true
+  );
   assert.equal(consumesMonthlyCallerApiRequestQuota("output_check_read"), true);
   assert.deepEqual(
     storedByteAccounting({

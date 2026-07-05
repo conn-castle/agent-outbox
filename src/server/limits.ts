@@ -15,7 +15,10 @@ export const LIMIT_NAMES = [
   "burst_input_submissions_per_account_per_minute",
   "concurrent_write_requests_per_account",
   "concurrent_file_uploading_requests_per_account",
+  "input_send_replace_requests_per_account_per_minute",
+  "input_delete_requests_per_account_per_minute",
   "output_check_read_requests_per_account_per_minute",
+  "output_file_download_requests_per_account_per_minute",
   "output_ack_requests_per_account_per_minute",
   "caller_connect_approvals_per_account_per_minute",
   "caller_rotate_approvals_per_account_per_minute",
@@ -56,6 +59,7 @@ export type LimitResetRule =
   | "not_applicable";
 export type LimitOperationKind =
   | "caller_api_request"
+  | "input_send_replace"
   | "input_submission"
   | "input_delete"
   | "human_answer_submission"
@@ -84,6 +88,7 @@ export type LimitOperationKind =
 
 export const MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS = [
   "caller_api_request",
+  "input_send_replace",
   "input_submission",
   "output_check_read",
   "output_file_download",
@@ -107,7 +112,10 @@ export type LimitReasonCode =
   | "input_submission_rate_limited"
   | "concurrent_write_limit_exceeded"
   | "concurrent_file_upload_limit_exceeded"
+  | "input_send_replace_rate_limited"
+  | "input_delete_rate_limited"
   | "output_check_read_rate_limited"
+  | "output_file_download_rate_limited"
   | "output_ack_rate_limited"
   | "caller_connect_approval_rate_limited"
   | "caller_rotate_approval_rate_limited"
@@ -443,6 +451,32 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Concurrent file uploads",
     doctorCheckName: "limits.concurrent_file_uploads"
   },
+  input_send_replace_requests_per_account_per_minute: {
+    name: "input_send_replace_requests_per_account_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["input_send_replace"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Input send/replace requests are temporarily rate limited.",
+    reasonCode: "input_send_replace_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Input send/replace request rate",
+    doctorCheckName: "limits.input_send_replace.minute"
+  },
+  input_delete_requests_per_account_per_minute: {
+    name: "input_delete_requests_per_account_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["input_delete"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Input delete requests are temporarily rate limited.",
+    reasonCode: "input_delete_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Input delete request rate",
+    doctorCheckName: "limits.input_delete.minute"
+  },
   output_check_read_requests_per_account_per_minute: {
     name: "output_check_read_requests_per_account_per_minute",
     category: "runtime",
@@ -455,6 +489,19 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     errorCode: "rate_limit_exceeded",
     statusLabel: "Output check/read request rate",
     doctorCheckName: "limits.output_check_read.minute"
+  },
+  output_file_download_requests_per_account_per_minute: {
+    name: "output_file_download_requests_per_account_per_minute",
+    category: "runtime",
+    unit: "requests",
+    operationKinds: ["output_file_download"],
+    windowKind: "minute",
+    resetRule: "fixed_window_end",
+    reason: "Output file downloads are temporarily rate limited.",
+    reasonCode: "output_file_download_rate_limited",
+    errorCode: "rate_limit_exceeded",
+    statusLabel: "Output file download request rate",
+    doctorCheckName: "limits.output_file_download.minute"
   },
   output_ack_requests_per_account_per_minute: {
     name: "output_ack_requests_per_account_per_minute",
@@ -672,7 +719,10 @@ const HOSTED_FREE_LIMITS = {
   burst_input_submissions_per_account_per_minute: enabled(120),
   concurrent_write_requests_per_account: enabled(20),
   concurrent_file_uploading_requests_per_account: enabled(5),
+  input_send_replace_requests_per_account_per_minute: enabled(600),
+  input_delete_requests_per_account_per_minute: enabled(600),
   output_check_read_requests_per_account_per_minute: enabled(120),
+  output_file_download_requests_per_account_per_minute: enabled(60),
   output_ack_requests_per_account_per_minute: enabled(600),
   caller_connect_approvals_per_account_per_minute: enabled(30),
   caller_rotate_approvals_per_account_per_minute: enabled(30),
@@ -711,7 +761,10 @@ const HOSTED_PAID_LIMITS = {
   burst_input_submissions_per_account_per_minute: enabled(120),
   concurrent_write_requests_per_account: enabled(20),
   concurrent_file_uploading_requests_per_account: enabled(5),
+  input_send_replace_requests_per_account_per_minute: enabled(600),
+  input_delete_requests_per_account_per_minute: enabled(600),
   output_check_read_requests_per_account_per_minute: enabled(120),
+  output_file_download_requests_per_account_per_minute: enabled(60),
   output_ack_requests_per_account_per_minute: enabled(600),
   caller_connect_approvals_per_account_per_minute: enabled(30),
   caller_rotate_approvals_per_account_per_minute: enabled(30),

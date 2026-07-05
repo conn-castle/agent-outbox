@@ -140,6 +140,251 @@ test("caller request limits do not debit an earlier window when a later window o
   assert.match(query.calls[4].sql, /agent_outbox_account_limit_blocks/);
 });
 
+test("send/replace request limits co-apply monthly and minute windows without partial debit", async () => {
+  const query = fakeQuery([
+    [],
+    [],
+    [{ used_units: "25" }],
+    [{ used_units: "600" }],
+    []
+  ]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "input_send_replace"
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "rate_limit_exceeded");
+  assert.equal(
+    result.error.limit && "limit_name" in result.error.limit
+      ? result.error.limit.limit_name
+      : null,
+    "input_send_replace_requests_per_account_per_minute"
+  );
+  assert.match(query.calls[1].sql, /for update/);
+  assert.equal(
+    query.calls.some((call) =>
+      call.sql.includes("insert into public.agent_outbox_account_quota_windows")
+    ),
+    false
+  );
+  assert.deepEqual(query.calls[4].values?.slice(1, 4), [
+    "input_send_replace",
+    "input_send_replace_requests_per_account_per_minute",
+    "input_send_replace_rate_limited"
+  ]);
+});
+
+test("output file download request limits co-apply monthly and minute windows without partial debit", async () => {
+  const query = fakeQuery([
+    [],
+    [],
+    [{ used_units: "25" }],
+    [{ used_units: "60" }],
+    []
+  ]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "output_file_download"
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "rate_limit_exceeded");
+  assert.equal(
+    result.error.limit && "limit_name" in result.error.limit
+      ? result.error.limit.limit_name
+      : null,
+    "output_file_download_requests_per_account_per_minute"
+  );
+  assert.match(query.calls[1].sql, /for update/);
+  assert.equal(
+    query.calls.some((call) =>
+      call.sql.includes("insert into public.agent_outbox_account_quota_windows")
+    ),
+    false
+  );
+});
+
+test("paid and self-hosted profiles enforce send/replace minute limits while monthly quota is disabled", async () => {
+  for (const profile of ["hosted-paid", "self-hosted"]) {
+    const query = fakeQuery([[], [{ used_units: "601" }], []]);
+
+    const result = await enforceCallerRequestLimits(
+      query,
+      identity,
+      /** @type {import("../src/server/limits.ts").LimitProfileSelector} */ (
+        profile
+      ),
+      "input_send_replace"
+    );
+
+    assert.equal(result.ok, false, profile);
+    assert.equal(result.error.code, "rate_limit_exceeded", profile);
+    assert.equal(
+      result.error.limit && "limit_name" in result.error.limit
+        ? result.error.limit.limit_name
+        : null,
+      "input_send_replace_requests_per_account_per_minute",
+      profile
+    );
+    assert.equal(
+      query.calls.some((call) => call.sql.includes("for update")),
+      false,
+      profile
+    );
+    assert.equal(
+      query.calls.some(
+        (call) =>
+          call.sql.includes("agent_outbox_account_quota_windows") &&
+          call.values?.includes(
+            "authenticated_caller_api_requests_per_calendar_month"
+          )
+      ),
+      false,
+      profile
+    );
+  }
+});
+
+test("input delete request limits enforce the minute throttle without monthly quota", async () => {
+  const query = fakeQuery([[], [{ used_units: "601" }], []]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "input_delete"
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "rate_limit_exceeded");
+  assert.equal(
+    result.error.limit && "limit_name" in result.error.limit
+      ? result.error.limit.limit_name
+      : null,
+    "input_delete_requests_per_account_per_minute"
+  );
+  assert.deepEqual(activeLimitBlockStatement(identity, "input_delete").values, [
+    identity.accountId,
+    "input_delete",
+    false,
+    "authenticated_caller_api_requests_per_calendar_month"
+  ]);
+  assert.equal(
+    query.calls.some(
+      (call) =>
+        call.sql.includes("agent_outbox_account_quota_windows") &&
+        call.values?.includes(
+          "authenticated_caller_api_requests_per_calendar_month"
+        )
+    ),
+    false
+  );
+});
+
+test("paid output file downloads enforce the minute throttle with monthly quota disabled", async () => {
+  const query = fakeQuery([[], [{ used_units: "61" }], []]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-paid",
+    "output_file_download"
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "rate_limit_exceeded");
+  assert.equal(
+    result.error.limit && "limit_name" in result.error.limit
+      ? result.error.limit.limit_name
+      : null,
+    "output_file_download_requests_per_account_per_minute"
+  );
+  assert.equal(
+    query.calls.some(
+      (call) =>
+        call.sql.includes("agent_outbox_account_quota_windows") &&
+        call.values?.includes(
+          "authenticated_caller_api_requests_per_calendar_month"
+        )
+    ),
+    false
+  );
+});
+
+test("send/replace monthly quota uses the existing shared caller API request metric", async () => {
+  const query = fakeQuery([[], [], [{ used_units: "100000" }], []]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "input_send_replace"
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "quota_limit_exceeded");
+  assert.equal(
+    result.error.limit && "limit_name" in result.error.limit
+      ? result.error.limit.limit_name
+      : null,
+    "authenticated_caller_api_requests_per_calendar_month"
+  );
+  assert.equal(
+    query.calls[2].values?.[1],
+    "authenticated_caller_api_requests_per_calendar_month"
+  );
+  assert.deepEqual(
+    activeLimitBlockStatement(identity, "input_send_replace").values,
+    [
+      identity.accountId,
+      "input_send_replace",
+      true,
+      "authenticated_caller_api_requests_per_calendar_month"
+    ]
+  );
+});
+
+test("legacy generic monthly active blocks still block send/replace requests", async () => {
+  const query = fakeQuery([
+    [
+      {
+        account_id: identity.accountId,
+        operation_kind: "caller_api_request",
+        limit_name: "authenticated_caller_api_requests_per_calendar_month",
+        limit_reason_code: "monthly_caller_api_quota_exceeded",
+        limit_reason: "Legacy monthly caller API block.",
+        limit_resets_at: "2026-07-01T00:00:00.000Z",
+        used_units: "100001",
+        limit_units: "100000"
+      }
+    ]
+  ]);
+
+  const result = await enforceCallerRequestLimits(
+    query,
+    identity,
+    "hosted-free",
+    "input_send_replace"
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "quota_limit_exceeded");
+  assert.equal(
+    result.error.limit && "limit_name" in result.error.limit
+      ? result.error.limit.limit_name
+      : null,
+    "authenticated_caller_api_requests_per_calendar_month"
+  );
+  assert.equal(query.calls.length, 1);
+});
+
 test("caller request limits ignore disabled-profile blocks but still enforce enabled blocks", async () => {
   const monthlyBlock = {
     account_id: identity.accountId,

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   accountLimitProfile,
   deleteInputItem,
+  handleInputQueueRequestInTransaction,
   insertInputItemStatement,
   replaceInputItem,
   serializedSendInputItemStatement,
@@ -113,6 +114,17 @@ function fakeQuery(rowsByCall) {
  */
 function queryResult(rows) {
   return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
+}
+
+function pendingInputRow() {
+  return {
+    input_item_id: "input-1",
+    status: "pending",
+    current_revision: 2,
+    normalized_content_fingerprint: "fingerprint",
+    non_file_payload_bytes: 4096,
+    has_live_output: false
+  };
 }
 
 test("input parser normalizes safe submissions and computes stable fingerprints", () => {
@@ -705,16 +717,7 @@ test("replace increments revision only when pending content changes", async () =
 
 test("delete removes only pending input items", async () => {
   const deleteQuery = fakeQuery([
-    [
-      {
-        input_item_id: "input-1",
-        status: "pending",
-        current_revision: 2,
-        normalized_content_fingerprint: "fingerprint",
-        non_file_payload_bytes: 4096,
-        has_live_output: false
-      }
-    ],
+    [pendingInputRow()],
     [],
     [
       {
@@ -767,6 +770,286 @@ test("delete removes only pending input items", async () => {
   assert.equal(deleteQuery.calls[3].values?.[5], 4096);
   assert.equal(answered.ok, false);
   assert.equal(answered.ok ? null : answered.error.code, "input_not_pending");
+});
+
+test("input delete transaction blocks on the per-minute request throttle before deletion", async () => {
+  /** @type {TransactionContextStatement[]} */
+  const calls = [];
+  /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
+  const query =
+    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
+      async (statement) => {
+        calls.push(statement);
+        if (
+          /select tier from public\.agent_outbox_accounts/.test(statement.sql)
+        ) {
+          return queryResult([{ tier: "hosted_free" }]);
+        }
+        if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
+          return queryResult([]);
+        }
+        if (
+          /agent_outbox_account_quota_windows/.test(statement.sql) &&
+          /insert/.test(statement.sql) &&
+          statement.values?.[1] ===
+            "input_delete_requests_per_account_per_minute"
+        ) {
+          return queryResult([{ used_units: "601" }]);
+        }
+        if (/from public\.agent_outbox_input_items i/.test(statement.sql)) {
+          return queryResult([pendingInputRow()]);
+        }
+        if (/select a\.account_audit_id/.test(statement.sql)) {
+          return queryResult([
+            {
+              account_audit_id: "00000000-0000-0000-0000-0000000000a1",
+              caller_audit_id: "00000000-0000-0000-0000-0000000000c1"
+            }
+          ]);
+        }
+        return queryResult([]);
+      }
+    );
+  query.calls = calls;
+
+  const result = await handleInputQueueRequestInTransaction(
+    query,
+    context,
+    identity,
+    "delete",
+    { caller_item_id: "email:thread_123" }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? null : result.error.code, "rate_limit_exceeded");
+  assert.equal(
+    result.ok || !result.error.limit || !("limit_name" in result.error.limit)
+      ? null
+      : result.error.limit.limit_name,
+    "input_delete_requests_per_account_per_minute"
+  );
+  assert.equal(
+    query.calls.some((call) =>
+      call.sql.includes("delete from public.agent_outbox_input_items")
+    ),
+    false
+  );
+});
+
+test("input send and replace transactions block on the send/replace request throttle", async () => {
+  for (const operation of /** @type {const} */ (["send", "replace"])) {
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
+    const query =
+      /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
+        async (statement) => {
+          calls.push(statement);
+          if (
+            /select tier from public\.agent_outbox_accounts/.test(statement.sql)
+          ) {
+            return queryResult([{ tier: "hosted_free" }]);
+          }
+          if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
+            return queryResult([]);
+          }
+          if (
+            /select used_units/.test(statement.sql) &&
+            statement.values?.[1] ===
+              "authenticated_caller_api_requests_per_calendar_month"
+          ) {
+            return queryResult([{ used_units: "1" }]);
+          }
+          if (
+            /select used_units/.test(statement.sql) &&
+            statement.values?.[1] ===
+              "input_send_replace_requests_per_account_per_minute"
+          ) {
+            return queryResult([{ used_units: "600" }]);
+          }
+          return queryResult([]);
+        }
+      );
+    query.calls = calls;
+
+    const result = await handleInputQueueRequestInTransaction(
+      query,
+      context,
+      identity,
+      operation,
+      baseInput()
+    );
+
+    assert.equal(result.ok, false, operation);
+    assert.equal(
+      result.ok ? null : result.error.code,
+      "rate_limit_exceeded",
+      operation
+    );
+    assert.equal(
+      result.ok || !result.error.limit || !("limit_name" in result.error.limit)
+        ? null
+        : result.error.limit.limit_name,
+      "input_send_replace_requests_per_account_per_minute",
+      operation
+    );
+    assert.equal(
+      query.calls.some((call) =>
+        call.sql.includes("insert into public.agent_outbox_input_items")
+      ),
+      false,
+      operation
+    );
+  }
+});
+
+test("input delete transaction stays monthly-exempt while enforcing the minute throttle", async () => {
+  /** @type {TransactionContextStatement[]} */
+  const calls = [];
+  /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
+  const query =
+    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
+      async (statement) => {
+        calls.push(statement);
+        if (
+          /select tier from public\.agent_outbox_accounts/.test(statement.sql)
+        ) {
+          return queryResult([{ tier: "hosted_free" }]);
+        }
+        if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
+          return queryResult([]);
+        }
+        if (
+          /agent_outbox_account_quota_windows/.test(statement.sql) &&
+          statement.values?.[1] ===
+            "input_delete_requests_per_account_per_minute"
+        ) {
+          return queryResult([{ used_units: "1" }]);
+        }
+        if (/from public\.agent_outbox_input_items i/.test(statement.sql)) {
+          return queryResult([pendingInputRow()]);
+        }
+        if (/select a\.account_audit_id/.test(statement.sql)) {
+          return queryResult([
+            {
+              account_audit_id: "00000000-0000-0000-0000-0000000000a1",
+              caller_audit_id: "00000000-0000-0000-0000-0000000000c1"
+            }
+          ]);
+        }
+        return queryResult([]);
+      }
+    );
+  query.calls = calls;
+
+  const result = await handleInputQueueRequestInTransaction(
+    query,
+    context,
+    identity,
+    "delete",
+    { caller_item_id: "email:thread_123" }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.data.operation : null, "delete");
+  assert.equal(
+    query.calls.some(
+      (call) =>
+        call.sql.includes("agent_outbox_account_quota_windows") &&
+        call.values?.includes(
+          "authenticated_caller_api_requests_per_calendar_month"
+        )
+    ),
+    false
+  );
+});
+
+test("allowed input send still reaches accepted-submission checks before insertion", async () => {
+  /** @type {TransactionContextStatement[]} */
+  const calls = [];
+  /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
+  const query =
+    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
+      async (statement) => {
+        calls.push(statement);
+        if (
+          /select tier from public\.agent_outbox_accounts/.test(statement.sql)
+        ) {
+          return queryResult([{ tier: "hosted_free" }]);
+        }
+        if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
+          return queryResult([]);
+        }
+        if (
+          /select used_units/.test(statement.sql) ||
+          /insert into public\.agent_outbox_account_quota_windows/.test(
+            statement.sql
+          )
+        ) {
+          return queryResult([{ used_units: "1" }]);
+        }
+        if (/pg_(try_)?advisory_xact_lock/.test(statement.sql)) {
+          return queryResult([{ acquired: true }]);
+        }
+        if (/from public\.agent_outbox_input_items i/.test(statement.sql)) {
+          return queryResult([]);
+        }
+        if (/agent_outbox_account_stock_usage/.test(statement.sql)) {
+          return queryResult([
+            {
+              queued_input_items: "0",
+              non_file_stored_bytes: "0",
+              overall_stored_bytes: "0"
+            }
+          ]);
+        }
+        if (
+          /insert into public\.agent_outbox_input_items/.test(statement.sql)
+        ) {
+          return queryResult([
+            { input_item_id: "input-1", current_revision: 1 }
+          ]);
+        }
+        if (
+          /insert into public\.agent_outbox_input_actions/.test(statement.sql)
+        ) {
+          return queryResult([{ input_action_id: "action-1" }]);
+        }
+        if (/select a\.account_audit_id/.test(statement.sql)) {
+          return queryResult([
+            {
+              account_audit_id: "00000000-0000-0000-0000-0000000000a1",
+              caller_audit_id: "00000000-0000-0000-0000-0000000000c1"
+            }
+          ]);
+        }
+        return queryResult([]);
+      }
+    );
+  query.calls = calls;
+
+  const result = await handleInputQueueRequestInTransaction(
+    query,
+    context,
+    identity,
+    "send",
+    baseInput({ caller_item_id: "email:accepted_check" })
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.data.operation : null, "send");
+  assert.equal(
+    query.calls.some((call) =>
+      call.sql.includes("public.agent_outbox_account_stock_usage")
+    ),
+    true
+  );
+  assert.equal(
+    query.calls.some((call) =>
+      call.values?.includes("burst_input_submissions_per_account_per_minute")
+    ),
+    true
+  );
 });
 
 test("insert statement never accepts caller identity from request bodies", () => {

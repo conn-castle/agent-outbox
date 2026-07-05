@@ -32,12 +32,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Diagnose the human signup fixture navigation under Next dev fixture mode and stabilize the test or fixture without weakening the protected-route security policy.
     Notes: Observed during `hosted-security-fail-closed-cloudflare-ip` verification on 2026-07-04; no labeled browser Docker resources remained after the run.
 
-- Issue 2026-07-04 caller-request-limit-policy-gaps: Define remaining request-rate limit policy
-    Priority: Medium. Area: Limits/Security
-    Description: Input send/replace/delete and raw file download request throttles still need owner-approved per-minute numeric limits, including behavior when monthly caller API quota is disabled for paid/self-hosted profiles.
-    Next step: Decide the limit names, numeric thresholds, and affected operation surfaces, then add the corresponding limit definitions and route coverage.
-    Notes: Split from `caller-request-rate-limit-and-quota-metering`; the mechanical monthly request over-debit, accepted-submission over-debit, and multi-window all-or-nothing debit defects were fixed.
-
 - Issue 2026-07-02 never-activated-connect-caller-name-burn: Abandoned connect leaves orphan caller rows and burns the name
     Priority: Medium. Area: Caller control-plane
     Description: Two-phase connect creates the `agent_outbox_callers` row (unique `caller_slug`) at approval but only activates the credential after CLI local persistence. A connect abandoned before activation leaves an orphan caller row plus an expired pending credential: re-connecting the same `local_caller_name` fails with `caller_already_exists` (name burned, no reclaim path), and because the setup-request prune cascade-cleans only the pending credential, abandoned/retried connects accumulate orphaned caller rows indefinitely (data hygiene, not a secret leak).

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { consumesMonthlyCallerApiRequestQuota } from "../src/server/accounting.ts";
 import {
+  handleOutputFileDownloadAuthenticatedTransaction,
   outputFileDownloadAuditStatement,
   outputFileDownloadHeaders,
   outputFileDownloadInTransaction,
@@ -216,6 +217,180 @@ test("output file download counts as a monthly caller API request operation by c
   assert.equal(
     consumesMonthlyCallerApiRequestQuota("output_file_download"),
     true
+  );
+});
+
+test("output file download transaction blocks on the per-minute request throttle before file lookup", async () => {
+  /** @type {TransactionContextStatement[]} */
+  const calls = [];
+  /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
+  const query =
+    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
+      /** @type {unknown} */ (
+        /**
+         * @param {TransactionContextStatement} statement
+         */
+        async (statement) => {
+          calls.push(statement);
+          if (
+            /select tier from public\.agent_outbox_accounts/.test(statement.sql)
+          ) {
+            return {
+              rows: [{ tier: "hosted_free" }],
+              rowCount: 1,
+              command: "",
+              oid: 0,
+              fields: []
+            };
+          }
+          if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
+            return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+          }
+          if (
+            /select used_units/.test(statement.sql) &&
+            statement.values?.[1] ===
+              "authenticated_caller_api_requests_per_calendar_month"
+          ) {
+            return {
+              rows: [{ used_units: "50" }],
+              rowCount: 1,
+              command: "",
+              oid: 0,
+              fields: []
+            };
+          }
+          if (
+            /select used_units/.test(statement.sql) &&
+            statement.values?.[1] ===
+              "output_file_download_requests_per_account_per_minute"
+          ) {
+            return {
+              rows: [{ used_units: "60" }],
+              rowCount: 1,
+              command: "",
+              oid: 0,
+              fields: []
+            };
+          }
+          if (
+            /insert into public\.agent_outbox_account_quota_windows/.test(
+              statement.sql
+            )
+          ) {
+            return {
+              rows: [{ used_units: "50" }],
+              rowCount: 1,
+              command: "",
+              oid: 0,
+              fields: []
+            };
+          }
+          return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+        }
+      )
+    );
+  query.calls = calls;
+
+  const result = await handleOutputFileDownloadAuthenticatedTransaction(
+    query,
+    context,
+    identity,
+    path
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? null : result.error.code, "rate_limit_exceeded");
+  assert.equal(
+    result.ok || !result.error.limit || !("limit_name" in result.error.limit)
+      ? null
+      : result.error.limit.limit_name,
+    "output_file_download_requests_per_account_per_minute"
+  );
+  assert.equal(
+    query.calls.some((call) =>
+      call.sql.includes("from public.agent_outbox_output_files f")
+    ),
+    false
+  );
+});
+
+test("paid output file download transaction enforces the minute throttle without monthly quota", async () => {
+  /** @type {TransactionContextStatement[]} */
+  const calls = [];
+  /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
+  const query =
+    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
+      /** @type {unknown} */ (
+        /**
+         * @param {TransactionContextStatement} statement
+         */
+        async (statement) => {
+          calls.push(statement);
+          if (
+            /select tier from public\.agent_outbox_accounts/.test(statement.sql)
+          ) {
+            return {
+              rows: [{ tier: "hosted_paid" }],
+              rowCount: 1,
+              command: "",
+              oid: 0,
+              fields: []
+            };
+          }
+          if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
+            return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+          }
+          if (
+            /insert into public\.agent_outbox_account_quota_windows/.test(
+              statement.sql
+            ) &&
+            statement.values?.[1] ===
+              "output_file_download_requests_per_account_per_minute"
+          ) {
+            return {
+              rows: [{ used_units: "61" }],
+              rowCount: 1,
+              command: "",
+              oid: 0,
+              fields: []
+            };
+          }
+          return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+        }
+      )
+    );
+  query.calls = calls;
+
+  const result = await handleOutputFileDownloadAuthenticatedTransaction(
+    query,
+    context,
+    identity,
+    path
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? null : result.error.code, "rate_limit_exceeded");
+  assert.equal(
+    result.ok || !result.error.limit || !("limit_name" in result.error.limit)
+      ? null
+      : result.error.limit.limit_name,
+    "output_file_download_requests_per_account_per_minute"
+  );
+  assert.equal(
+    query.calls.some(
+      (call) =>
+        call.sql.includes("agent_outbox_account_quota_windows") &&
+        call.values?.includes(
+          "authenticated_caller_api_requests_per_calendar_month"
+        )
+    ),
+    false
+  );
+  assert.equal(
+    query.calls.some((call) =>
+      call.sql.includes("from public.agent_outbox_output_files f")
+    ),
+    false
   );
 });
 
