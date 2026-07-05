@@ -2,14 +2,14 @@
 
 This document defines the implemented HTTP surface for caller integrations:
 caller/account status, input writes, output reads, output acknowledgement,
-output-file download, and human-approved caller connect, rotation, revocation,
-and disconnect-with-revoke control-plane contracts. Schema details live in
+output-file download, human-approved caller connect, rotation, revocation,
+disconnect-with-revoke control-plane contracts, and account-scoped billing
+checkout/portal/webhook contracts. Schema details live in
 [input-schema.md](input-schema.md), [output-schema.md](output-schema.md), and
 [errors.md](errors.md).
 
-Hosted upgrade billing and paid file-upload flows remain future HTTP contracts.
-The CLI `upgrade` command is local-only: it opens the selected app origin plus
-`/upgrade` and does not add a status-response upgrade URL.
+Paid file-upload handling remains a future HTTP contract. The CLI `upgrade`
+command is local-only: it opens the selected app origin plus `/upgrade`.
 
 ## Base URL
 
@@ -80,6 +80,83 @@ All JSON success responses use the shared envelope:
 
 All JSON errors use the envelope in [errors.md](errors.md#error-envelope).
 File-download success responses return raw bytes instead of a JSON envelope.
+
+## Billing Routes
+
+Billing routes are account-scoped and use Clerk-backed human account membership
+except for Stripe webhooks. Responses and logs must not expose Stripe customer,
+subscription, price, payment method, invoice, or raw event payload data.
+
+### Create Checkout Session
+
+```http
+POST /api/billing/checkout
+```
+
+Behavior:
+
+- Requires a signed-in human with Agent Outbox account membership.
+- Creates a Stripe Checkout subscription session for the initial hosted paid
+  tier.
+- Uses the Agent Outbox account id as Stripe checkout metadata so webhook events
+  can synchronize app billing state.
+- Returns a hosted Stripe URL; callers and CLI commands do not receive Stripe
+  ids.
+
+Success `data`:
+
+```json
+{
+  "url": "https://checkout.stripe.com/..."
+}
+```
+
+### Create Billing Portal Session
+
+```http
+POST /api/billing/portal
+```
+
+Behavior:
+
+- Requires a signed-in human with Agent Outbox account membership.
+- Requires the account to already have a Stripe customer id from checkout or a
+  webhook-synchronized subscription.
+- Creates a Stripe Billing Portal session and returns only the hosted Stripe
+  URL.
+
+Success `data`:
+
+```json
+{
+  "url": "https://billing.stripe.com/..."
+}
+```
+
+### Stripe Webhook
+
+```http
+POST /api/billing/webhook
+```
+
+Behavior:
+
+- Verifies the raw request body with the configured Stripe webhook signing
+  secret.
+- Does not use Clerk or caller credentials.
+- Stores only webhook event id, event type, processing status, timestamps, and
+  optional account linkage for idempotency.
+- Synchronizes account tier, billing status, grace end, and Stripe lookup ids
+  from checkout, subscription, and payment-failure events.
+- Treats replayed event ids as already processed.
+
+Success `data`:
+
+```json
+{
+  "processed": true
+}
+```
 
 ## Input Routes
 

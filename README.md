@@ -37,9 +37,11 @@ The current repository implements:
   artifacts for the CLI
 - Free-tier queue caps, caller limits, retention primitives, cleanup primitives,
   and runtime canaries
+- Account-scoped Stripe checkout, billing portal, webhook idempotency, billing
+  grace state, and scheduled downgrade cleanup foundations
 - Sentry, Cloudflare, and Supabase/Postgres-backed observability foundations
 
-Stripe billing and the paid file-upload workflow are later roadmap items.
+The paid file-upload workflow is a later Phase 7 package item.
 
 The hosted service has one app/API origin. Caller API routes live under
 `https://app.agent-outbox.dev/api/...`.
@@ -126,8 +128,8 @@ Input items define the review surface. Each item includes:
 - One or more action buttons
 - Optional typed popups for free text, single select, multi select, date or
   datetime input
-- Planned file-upload actions, which currently fail loud until the paid upload
-  workflow is implemented
+- File-upload actions, which currently fail loud until the paid upload workflow
+  is implemented
 
 Example:
 
@@ -272,8 +274,9 @@ Implemented CLI areas:
 - `output check/read/read --all/file get/ack`
 - `docs [topic]`, `doctor [--caller]`, `upgrade`, `version`, and `--version`
 
-Billing behind the hosted upgrade page and paid file uploads remain later
-roadmap work.
+Billing behind the hosted upgrade page is implemented through Stripe checkout,
+portal sessions, and signed webhooks. Paid file uploads remain later roadmap
+work.
 
 ## Product Boundaries
 
@@ -294,9 +297,10 @@ triage, messaging workflows, local automations, and future agent systems.
 The target hosted product runs as one Next.js application on Cloudflare Workers
 through OpenNext. Supabase Postgres stores accounts, callers, live queues,
 output results, file bytes when file workflows exist, quotas, active limit
-blocks, and audit events. Clerk provides human authentication. Stripe billing
-and paid file workflows are scheduled for later phases. Sentry plus
-service-native logs cover observability.
+blocks, and audit events. Clerk provides human authentication. Stripe billing is
+account-scoped through checkout, portal sessions, and signed webhooks. Paid file
+workflows are scheduled for later Phase 7 work. Sentry plus service-native logs
+cover observability.
 
 ## Self-Hosting
 
