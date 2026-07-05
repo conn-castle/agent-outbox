@@ -1,0 +1,661 @@
+import Stripe from "stripe";
+
+import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
+import {
+  runProductTransaction,
+  type ProductTransactionQuery,
+  type TransactionContextStatement
+} from "./database.ts";
+import { emitRuntimeLog } from "./logging.ts";
+
+const BILLING_GRACE_DAYS = 7;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+type BillingStatus =
+  "not_applicable" | "active" | "grace" | "past_due" | "canceled";
+
+type BillingConfig = {
+  secretKey: string;
+  webhookSecret: string;
+  priceId: string;
+  portalConfigurationId: string;
+  publicAppBaseUrl: string;
+};
+
+type StripeClient = Pick<Stripe, "checkout" | "billingPortal" | "webhooks">;
+type BillingTransactionRunner = typeof runProductTransaction;
+
+type BillingAccountRow = {
+  account_id: string;
+  tier: string;
+  billing_status: BillingStatus;
+  stripe_customer_id: string | null;
+};
+
+type InsertWebhookEventRow = {
+  stripe_event_id: string;
+};
+
+type AccountIdRow = {
+  account_id: string;
+};
+
+export type BillingResult<TData> =
+  { ok: true; data: TData } | { ok: false; error: ApiErrorInput };
+
+export type BillingCheckoutData = {
+  url: string;
+};
+
+export type BillingPortalData = {
+  url: string;
+};
+
+export type BillingWebhookData = {
+  processed: boolean;
+};
+
+export function requiredBillingConfiguration(
+  surface: "checkout" | "portal" | "webhook"
+) {
+  const required = ["STRIPE_SECRET_KEY"];
+  if (surface === "checkout") {
+    required.push("STRIPE_PAID_MONTHLY_PRICE_ID", "PUBLIC_APP_BASE_URL");
+  }
+  if (surface === "portal") {
+    required.push(
+      "PUBLIC_APP_BASE_URL",
+      "STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
+    );
+  }
+  if (surface === "webhook") {
+    required.push("STRIPE_WEBHOOK_SECRET");
+  }
+
+  return required.filter((name) => !process.env[name]?.trim());
+}
+
+export function billingRuntimeConfig(
+  surface: "checkout" | "portal" | "webhook" | "all" = "all"
+): BillingResult<BillingConfig> {
+  const missing =
+    surface === "all"
+      ? [
+          "STRIPE_SECRET_KEY",
+          "STRIPE_WEBHOOK_SECRET",
+          "STRIPE_PAID_MONTHLY_PRICE_ID",
+          "STRIPE_BILLING_PORTAL_CONFIGURATION_ID",
+          "PUBLIC_APP_BASE_URL"
+        ].filter((name) => !process.env[name]?.trim())
+      : requiredBillingConfiguration(surface);
+
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: billingConfigurationError(missing)
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      secretKey: process.env.STRIPE_SECRET_KEY!.trim(),
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() ?? "",
+      priceId: process.env.STRIPE_PAID_MONTHLY_PRICE_ID?.trim() ?? "",
+      portalConfigurationId:
+        process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID?.trim() ?? "",
+      publicAppBaseUrl: process.env.PUBLIC_APP_BASE_URL?.trim() ?? ""
+    }
+  };
+}
+
+export async function createCheckoutSessionForAccount(input: {
+  connectionString: string;
+  accountId: string;
+  userId: string;
+  requestId: string;
+  config?: BillingConfig;
+  stripe?: StripeClient;
+  runTransaction?: BillingTransactionRunner;
+}): Promise<BillingResult<BillingCheckoutData>> {
+  const configResult = input.config
+    ? { ok: true as const, data: input.config }
+    : billingRuntimeConfig("checkout");
+  if (!configResult.ok) {
+    return configResult;
+  }
+  const config = configResult.data;
+  const stripe = input.stripe ?? stripeClient(config);
+  const runTransaction = input.runTransaction ?? runProductTransaction;
+
+  const account = await runTransaction(
+    input.connectionString,
+    {
+      requestId: input.requestId,
+      authSurface: "human",
+      accountId: input.accountId,
+      userId: input.userId
+    },
+    async (query) => {
+      const result = await query<BillingAccountRow>(
+        billingAccountStatement(input.accountId)
+      );
+      return result.rows[0] ?? null;
+    }
+  );
+
+  if (!account) {
+    return temporaryUnavailableError("Billing account is unavailable.");
+  }
+  if (account.tier === "self_hosted") {
+    return invalidBillingRequest("Self-hosted accounts do not use Stripe.");
+  }
+  if (hasLiveBillingState(account.billing_status)) {
+    return invalidBillingRequest(
+      "Active billing accounts must use the billing portal."
+    );
+  }
+
+  const session = await stripe.checkout.sessions.create({
+    mode: "subscription",
+    customer: account.stripe_customer_id ?? undefined,
+    client_reference_id: account.account_id,
+    line_items: [{ price: config.priceId, quantity: 1 }],
+    success_url: `${config.publicAppBaseUrl}/upgrade?checkout=success`,
+    cancel_url: `${config.publicAppBaseUrl}/upgrade?checkout=cancelled`,
+    metadata: { account_id: account.account_id },
+    subscription_data: { metadata: { account_id: account.account_id } }
+  });
+
+  if (!session.url) {
+    return temporaryUnavailableError("Checkout session is unavailable.");
+  }
+
+  return { ok: true, data: { url: session.url } };
+}
+
+export async function createBillingPortalSessionForAccount(input: {
+  connectionString: string;
+  accountId: string;
+  userId: string;
+  requestId: string;
+  config?: BillingConfig;
+  stripe?: StripeClient;
+  runTransaction?: BillingTransactionRunner;
+}): Promise<BillingResult<BillingPortalData>> {
+  const configResult = input.config
+    ? { ok: true as const, data: input.config }
+    : billingRuntimeConfig("portal");
+  if (!configResult.ok) {
+    return configResult;
+  }
+  const config = configResult.data;
+  const stripe = input.stripe ?? stripeClient(config);
+  const runTransaction = input.runTransaction ?? runProductTransaction;
+
+  const account = await runTransaction(
+    input.connectionString,
+    {
+      requestId: input.requestId,
+      authSurface: "human",
+      accountId: input.accountId,
+      userId: input.userId
+    },
+    async (query) => {
+      const result = await query<BillingAccountRow>(
+        billingAccountStatement(input.accountId)
+      );
+      return result.rows[0] ?? null;
+    }
+  );
+
+  if (!account?.stripe_customer_id) {
+    return invalidBillingRequest(
+      "Billing portal requires an active Stripe customer."
+    );
+  }
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: account.stripe_customer_id,
+    return_url: `${config.publicAppBaseUrl}/upgrade`,
+    configuration: config.portalConfigurationId
+  });
+
+  return { ok: true, data: { url: session.url } };
+}
+
+export async function handleStripeWebhookRequest(
+  request: Request,
+  context: ApiRequestContext,
+  input: {
+    connectionString: string;
+    config?: BillingConfig;
+    stripe?: StripeClient;
+    now?: Date;
+    runTransaction?: BillingTransactionRunner;
+  }
+): Promise<BillingResult<BillingWebhookData>> {
+  const configResult = input.config
+    ? { ok: true as const, data: input.config }
+    : billingRuntimeConfig("webhook");
+  if (!configResult.ok) {
+    return configResult;
+  }
+  const config = configResult.data;
+  const stripe = input.stripe ?? stripeClient(config);
+  const signature = request.headers.get("stripe-signature");
+  if (!signature) {
+    return invalidBillingRequest("Stripe signature is required.");
+  }
+
+  let event: Stripe.Event;
+  try {
+    event = stripe.webhooks.constructEvent(
+      await request.text(),
+      signature,
+      config.webhookSecret
+    );
+  } catch (error) {
+    emitRuntimeLog({
+      level: "warn",
+      surface: "api",
+      operation: "stripe_webhook_signature",
+      message: "Stripe webhook signature verification failed.",
+      error_name: error instanceof Error ? error.name : "UnknownError",
+      request_id: context.requestId
+    });
+    return invalidBillingRequest("Stripe signature verification failed.");
+  }
+
+  const runTransaction = input.runTransaction ?? runProductTransaction;
+  const processed = await runTransaction(
+    input.connectionString,
+    { requestId: context.requestId, authSurface: "control_plane" },
+    (query) => processStripeEventInTransaction(query, event, input.now)
+  );
+
+  return { ok: true, data: { processed } };
+}
+
+export async function processStripeEventInTransaction(
+  query: ProductTransactionQuery,
+  event: Stripe.Event,
+  now: Date = new Date()
+): Promise<boolean> {
+  const inserted = await query<InsertWebhookEventRow>(
+    insertStripeWebhookEventStatement(event.id, event.type)
+  );
+  if (!inserted.rows[0]) {
+    return false;
+  }
+
+  const accountId = await applyStripeEventInTransaction(query, event, now);
+  await query(markStripeWebhookEventProcessedStatement(event.id, accountId));
+  return true;
+}
+
+export function billingAccountStatement(
+  accountId: string
+): TransactionContextStatement {
+  return {
+    sql: `
+      select
+        account_id::text as account_id,
+        tier,
+        billing_status,
+        stripe_customer_id
+      from public.agent_outbox_accounts
+      where account_id = $1
+        and deleted_at is null
+      for update
+    `,
+    values: [accountId]
+  };
+}
+
+export function insertStripeWebhookEventStatement(
+  eventId: string,
+  eventType: string
+): TransactionContextStatement {
+  return {
+    sql: `
+      insert into public.agent_outbox_stripe_webhook_events(
+        stripe_event_id,
+        event_type,
+        processing_status
+      )
+      values ($1, $2, 'processing')
+      on conflict (stripe_event_id) do nothing
+      returning stripe_event_id
+    `,
+    values: [eventId, eventType]
+  };
+}
+
+export function markStripeWebhookEventProcessedStatement(
+  eventId: string,
+  accountId: string | null
+): TransactionContextStatement {
+  return {
+    sql: `
+      update public.agent_outbox_stripe_webhook_events
+      set
+        processing_status = 'processed',
+        processed_at = now(),
+        account_id = $2
+      where stripe_event_id = $1
+    `,
+    values: [eventId, accountId]
+  };
+}
+
+export function checkoutCompletedAccountUpdateStatement(input: {
+  accountId: string;
+  customerId: string | null;
+  subscriptionId: string | null;
+  priceId: string | null;
+  subscriptionStatus: string | null;
+  currentPeriodEnd: Date | null;
+}): TransactionContextStatement {
+  return {
+    sql: `
+      update public.agent_outbox_accounts
+      set
+        tier = 'hosted_paid',
+        billing_status = 'active',
+        billing_grace_ends_at = null,
+        stripe_customer_id = coalesce($2::text, stripe_customer_id),
+        stripe_subscription_id = coalesce($3, stripe_subscription_id),
+        stripe_price_id = coalesce($4, stripe_price_id),
+        stripe_subscription_status = coalesce($5, stripe_subscription_status),
+        stripe_current_period_end = $6,
+        updated_at = now()
+      where account_id = $1
+        and deleted_at is null
+      returning account_id::text as account_id
+    `,
+    values: [
+      input.accountId,
+      input.customerId,
+      input.subscriptionId,
+      input.priceId,
+      input.subscriptionStatus,
+      nullableTimestampValue(input.currentPeriodEnd)
+    ]
+  };
+}
+
+export function subscriptionBillingUpdateStatement(input: {
+  subscriptionId: string;
+  customerId: string | null;
+  priceId: string | null;
+  accountId: string | null;
+  subscriptionStatus: string;
+  billingStatus: BillingStatus;
+  graceEndsAt: Date | null;
+  currentPeriodEnd: Date | null;
+}): TransactionContextStatement {
+  return {
+    sql: `
+      update public.agent_outbox_accounts
+      set
+        tier = case
+          when $5 = 'active' then 'hosted_paid'
+          else tier
+        end,
+        billing_status = $5,
+        billing_grace_ends_at = $6,
+        stripe_customer_id = coalesce($2, stripe_customer_id),
+        stripe_subscription_id = $1,
+        stripe_price_id = coalesce($3, stripe_price_id),
+        stripe_subscription_status = $4,
+        stripe_current_period_end = $7,
+        updated_at = now()
+      where deleted_at is null
+        and (
+          stripe_subscription_id = $1
+          or ($2::text is not null and stripe_customer_id = $2::text)
+          or ($8::uuid is not null and account_id = $8::uuid)
+        )
+      returning account_id::text as account_id
+    `,
+    values: [
+      input.subscriptionId,
+      input.customerId,
+      input.priceId,
+      input.subscriptionStatus,
+      input.billingStatus,
+      nullableTimestampValue(input.graceEndsAt),
+      nullableTimestampValue(input.currentPeriodEnd),
+      input.accountId
+    ]
+  };
+}
+
+async function applyStripeEventInTransaction(
+  query: ProductTransactionQuery,
+  event: Stripe.Event,
+  now: Date
+): Promise<string | null> {
+  switch (event.type) {
+    case "checkout.session.completed":
+      return applyCheckoutCompleted(query, event.data.object);
+    case "customer.subscription.created":
+    case "customer.subscription.updated":
+    case "customer.subscription.deleted":
+      return applySubscriptionEvent(query, event.data.object, now);
+    case "invoice.payment_failed":
+      return applyInvoicePaymentFailed(query, event.data.object, now);
+    default:
+      return null;
+  }
+}
+
+async function applyCheckoutCompleted(
+  query: ProductTransactionQuery,
+  session: Stripe.Event.Data.Object
+): Promise<string | null> {
+  if (!isStripeRecord(session)) {
+    return null;
+  }
+  const accountId =
+    stringValue(session.client_reference_id) ??
+    stringValue(recordValue(session.metadata, "account_id"));
+  if (!accountId) {
+    return null;
+  }
+
+  const result = await query<AccountIdRow>(
+    checkoutCompletedAccountUpdateStatement({
+      accountId,
+      customerId: stripeId(session.customer),
+      subscriptionId: stripeId(session.subscription),
+      priceId: null,
+      subscriptionStatus: "checkout_completed",
+      currentPeriodEnd: null
+    })
+  );
+
+  return result.rows[0]?.account_id ?? null;
+}
+
+async function applySubscriptionEvent(
+  query: ProductTransactionQuery,
+  object: Stripe.Event.Data.Object,
+  now: Date
+): Promise<string | null> {
+  if (!isStripeRecord(object)) {
+    return null;
+  }
+  const subscriptionId = stringValue(object.id);
+  if (!subscriptionId) {
+    return null;
+  }
+  const status = stringValue(object.status) ?? "unknown";
+  const transition = billingTransitionForSubscription(object, now);
+  const result = await query<AccountIdRow>(
+    subscriptionBillingUpdateStatement({
+      subscriptionId,
+      customerId: stripeId(object.customer),
+      priceId: subscriptionPriceId(object),
+      accountId: stringValue(recordValue(object.metadata, "account_id")),
+      subscriptionStatus: status,
+      billingStatus: transition.billingStatus,
+      graceEndsAt: transition.graceEndsAt,
+      currentPeriodEnd: stripeTimestamp(
+        recordValue(object, "current_period_end")
+      )
+    })
+  );
+
+  return result.rows[0]?.account_id ?? null;
+}
+
+async function applyInvoicePaymentFailed(
+  query: ProductTransactionQuery,
+  object: Stripe.Event.Data.Object,
+  now: Date
+): Promise<string | null> {
+  if (!isStripeRecord(object)) {
+    return null;
+  }
+  const subscriptionId = stripeId(recordValue(object, "subscription"));
+  if (!subscriptionId) {
+    return null;
+  }
+
+  const result = await query<AccountIdRow>(
+    subscriptionBillingUpdateStatement({
+      subscriptionId,
+      customerId: stripeId(recordValue(object, "customer")),
+      priceId: null,
+      accountId: null,
+      subscriptionStatus: "payment_failed",
+      billingStatus: "past_due",
+      graceEndsAt: graceEndsAt(now),
+      currentPeriodEnd: null
+    })
+  );
+
+  return result.rows[0]?.account_id ?? null;
+}
+
+function billingTransitionForSubscription(
+  subscription: Record<string, unknown>,
+  now: Date
+): { billingStatus: BillingStatus; graceEndsAt: Date | null } {
+  const status = stringValue(subscription.status);
+  const currentPeriodEnd = stripeTimestamp(
+    recordValue(subscription, "current_period_end")
+  );
+  const cancelAtPeriodEnd = subscription.cancel_at_period_end === true;
+
+  if ((status === "active" || status === "trialing") && !cancelAtPeriodEnd) {
+    return { billingStatus: "active", graceEndsAt: null };
+  }
+  if ((status === "active" || status === "trialing") && cancelAtPeriodEnd) {
+    return {
+      billingStatus: "grace",
+      graceEndsAt: currentPeriodEnd ?? graceEndsAt(now)
+    };
+  }
+  if (status === "canceled" || status === "incomplete_expired") {
+    return { billingStatus: "canceled", graceEndsAt: graceEndsAt(now) };
+  }
+  if (status === "past_due" || status === "unpaid" || status === "incomplete") {
+    return { billingStatus: "past_due", graceEndsAt: graceEndsAt(now) };
+  }
+
+  return { billingStatus: "grace", graceEndsAt: graceEndsAt(now) };
+}
+
+function stripeClient(config: BillingConfig): StripeClient {
+  return new Stripe(config.secretKey);
+}
+
+function hasLiveBillingState(status: BillingStatus) {
+  return status === "active" || status === "grace" || status === "past_due";
+}
+
+function billingConfigurationError(missing: readonly string[]): ApiErrorInput {
+  return {
+    status: 503,
+    code: "temporary_unavailable",
+    message: `Billing configuration is missing required variable names: ${missing.join(", ")}.`
+  };
+}
+
+function invalidBillingRequest(message: string): BillingResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 400,
+      code: "invalid_request",
+      message
+    }
+  };
+}
+
+function temporaryUnavailableError(message: string): BillingResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message
+    }
+  };
+}
+
+function stripeId(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (isStripeRecord(value)) {
+    return stringValue(value.id);
+  }
+  return null;
+}
+
+function subscriptionPriceId(subscription: Record<string, unknown>) {
+  const items = recordValue(subscription, "items");
+  if (!isStripeRecord(items) || !Array.isArray(items.data)) {
+    return null;
+  }
+  const firstItem = items.data[0];
+  if (!isStripeRecord(firstItem)) {
+    return null;
+  }
+  const price = recordValue(firstItem, "price");
+  if (!isStripeRecord(price)) {
+    return null;
+  }
+  return stringValue(price.id);
+}
+
+function recordValue(record: unknown, key: string): unknown {
+  return isStripeRecord(record) ? record[key] : undefined;
+}
+
+function isStripeRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function stripeTimestamp(value: unknown): Date | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return new Date(value * 1000);
+}
+
+function graceEndsAt(now: Date) {
+  return new Date(now.getTime() + BILLING_GRACE_DAYS * ONE_DAY_MS);
+}
+
+function nullableTimestampValue(value: Date | null) {
+  return value ? value.toISOString() : null;
+}

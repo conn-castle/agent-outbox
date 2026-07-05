@@ -74,8 +74,10 @@ import {
   callerSetupCleanupCutoff,
   duplicateAcknowledgementLookupStatement,
   downgradeGraceExpiryStatement,
+  expiredBillingGraceDowngradeStatement,
   globalQuotaWindowMaintenanceStatements,
   neverActivatedCallerPruningStatement,
+  outputTimeoutCleanupStatement,
   pendingInputRetentionStatement,
   preReadUndoStatement,
   quotaWindowMaintenanceStatements,
@@ -965,7 +967,11 @@ test("validateRuntimeProofScope allows implemented caller API route paths", () =
     "app/api/caller/revoke/device/poll/route.ts":
       "export async function POST() {}",
     "app/api/caller/revoke/confirm/route.ts": "export async function POST() {}",
-    "app/api/account/status/route.ts": "export async function GET() {}"
+    "app/api/account/status/route.ts": "export async function GET() {}",
+    "app/api/billing/checkout/route.ts": "export async function POST() {}",
+    "app/api/billing/portal/route.ts": "export async function POST() {}",
+    "app/api/billing/webhook/route.ts": "export async function POST() {}",
+    "src/server/billing.ts": "await stripe.checkout.sessions.create({});"
   });
 
   assert.deepEqual(failures, []);
@@ -980,9 +986,8 @@ test("validateRuntimeProofScope allows Phase 3 product foundation identifiers", 
   assert.deepEqual(failures, []);
 });
 
-test("validateRuntimeProofScope rejects later-phase billing and storage drift", () => {
+test("validateRuntimeProofScope rejects later-phase storage and source drift", () => {
   const failures = validateRuntimeProofScope({
-    "app/api/billing/checkout/route.ts": "export async function POST() {}",
     "app/api/account/portal/route.ts": "export async function POST() {}",
     "app/api/account/delete/route.ts": "export async function POST() {}",
     "app/api/caller/rotate/route.ts": "export async function POST() {}",
@@ -995,13 +1000,11 @@ test("validateRuntimeProofScope rejects later-phase billing and storage drift", 
     "src/cli/main.ts": "export function main() {}",
     "src/server/steward-email.ts": "export const source = 'email';",
     "src/server/email-source.ts": "export const source = 'email';",
-    "src/server/billing.ts": "await stripe.checkout.sessions.create({});",
     "src/server/files.ts": "await supabase.storage.from('files');",
     "src/server/source.ts": "const source = 'gmail classifier';"
   });
 
   assert.deepEqual(failures, [
-    "app/api/billing/checkout/route.ts is unrelated later-phase implementation scope, not current caller API scope",
     "app/api/account/portal/route.ts is unrelated later-phase implementation scope, not current caller API scope",
     "app/api/account/delete/route.ts is unrelated later-phase implementation scope, not current caller API scope",
     "app/api/caller/rotate/route.ts is unrelated later-phase implementation scope, not current caller API scope",
@@ -1012,8 +1015,6 @@ test("validateRuntimeProofScope rejects later-phase billing and storage drift", 
     "src/cli/main.ts is unrelated later-phase implementation scope, not current caller API scope",
     "src/server/steward-email.ts is unrelated later-phase implementation scope, not current caller API scope",
     "src/server/email-source.ts is unrelated later-phase implementation scope, not current caller API scope",
-    "src/server/billing.ts contains out-of-scope token: stripe.checkout",
-    "src/server/billing.ts contains out-of-scope token: checkout.sessions",
     "src/server/files.ts contains out-of-scope token: supabase.storage",
     "src/server/source.ts contains out-of-scope token: gmail",
     "src/server/source.ts contains out-of-scope token: classifier"
@@ -1778,6 +1779,13 @@ test("cleanup statement builders target lifecycle database functions", () => {
     }
   );
   assert.deepEqual(
+    outputTimeoutCleanupStatement(new Date("2026-06-30T00:00:00.000Z")),
+    {
+      sql: "select public.agent_outbox_delete_expired_outputs($1) as deleted_count",
+      values: ["2026-06-30T00:00:00.000Z"]
+    }
+  );
+  assert.deepEqual(
     downgradeGraceExpiryStatement(
       32_000_000,
       new Date("2026-06-30T00:00:00.000Z")
@@ -1790,6 +1798,28 @@ test("cleanup statement builders target lifecycle database functions", () => {
   assert.throws(
     () =>
       downgradeGraceExpiryStatement(-1, new Date("2026-06-30T00:00:00.000Z")),
+    /nonFilePayloadLimitBytes must be a non-negative safe integer/
+  );
+  const expiredGraceDowngrade = expiredBillingGraceDowngradeStatement(
+    32_000_000,
+    new Date("2026-06-30T00:00:00.000Z")
+  );
+  assert.match(
+    expiredGraceDowngrade.sql,
+    /agent_outbox_cleanup_downgrade_grace_expiry\(\$1, \$2\)/
+  );
+  assert.match(expiredGraceDowngrade.sql, /tier = 'hosted_free'/);
+  assert.match(expiredGraceDowngrade.sql, /billing_status = 'not_applicable'/);
+  assert.deepEqual(expiredGraceDowngrade.values, [
+    32_000_000,
+    "2026-06-30T00:00:00.000Z"
+  ]);
+  assert.throws(
+    () =>
+      expiredBillingGraceDowngradeStatement(
+        Number.MAX_SAFE_INTEGER + 1,
+        new Date("2026-06-30T00:00:00.000Z")
+      ),
     /nonFilePayloadLimitBytes must be a non-negative safe integer/
   );
   const quotaPruneBefore = new Date("2026-06-01T00:00:00.000Z");
@@ -1963,8 +1993,8 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     recorded_at: result.recorded_at,
     accounts_seen: 2,
     accounts_cleaned: 2,
-    statements_run: 9,
-    rows_affected: 9
+    statements_run: 12,
+    rows_affected: 12
   });
   assert.match(result.recorded_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(
@@ -1979,10 +2009,22 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     ]
   );
   assert.deepEqual(
+    statementsByContext[1].filter((statement) =>
+      statement.sql.includes("agent_outbox_delete_expired_outputs")
+    ),
+    [outputTimeoutCleanupStatement(now)]
+  );
+  assert.deepEqual(
     statementsByContext[2].filter((statement) =>
       statement.sql.includes("agent_outbox_delete_retained_pending_inputs")
     ),
     []
+  );
+  assert.deepEqual(
+    statementsByContext[2].filter((statement) =>
+      statement.sql.includes("agent_outbox_cleanup_downgrade_grace_expiry")
+    ),
+    [expiredBillingGraceDowngradeStatement(32_000_000, now)]
   );
 });
 

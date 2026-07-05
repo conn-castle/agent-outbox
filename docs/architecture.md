@@ -209,6 +209,13 @@ acknowledgement cleanup use the same queue/file deletion path. Cleanup deletes
 whole queue items, output results, and files; it does not partially trim
 content.
 
+Stripe checkout and Billing Portal sessions are created only for Clerk-backed
+humans with Agent Outbox account membership. Stripe webhooks use raw-body
+signature verification and a small idempotency ledger that stores event ids,
+types, processing status, timestamps, and optional account linkage only. The
+database remains the canonical source for app tier and billing status after
+webhook synchronization.
+
 ## Human Review Surface
 
 The web UI is a generic renderer over the typed input model and queue state. It

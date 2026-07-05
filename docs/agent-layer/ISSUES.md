@@ -26,6 +26,18 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-05 stripe-billing-ssm-parameters-missing: Stripe billing runtime parameters are not recoverable from SSM
+    Priority: Medium. Area: Ops/Secrets
+    Description: SSM under `/agent-outbox/` has Stripe account metadata but not the app billing parameters needed for checkout, webhooks, and portal configuration.
+    Next step: During Phase 7 provider verification, store the approved test/live Stripe billing parameters in the canonical runtime secret store and matching SSM paths without exposing secret values.
+    Notes: Local PR #18 verification used Stripe CLI-created test-mode resources and process-local secrets only.
+
+- Issue 2026-07-05 stripe-webhook-ledger-retention: Stripe webhook idempotency ledger has no retention policy
+    Priority: Low. Area: Billing/Cleanup
+    Description: `agent_outbox_stripe_webhook_events` stores processed webhook ids for replay safety but has no agreed retention window or scheduled prune path, so rows can grow unbounded over time.
+    Next step: Choose a retention period and add a migration, delete grant, index, cleanup statement, scheduled cleanup wiring, and verification for pruning old processed webhook ledger rows.
+    Notes: Deferred from PR #18 review because selecting retention policy and expanding cleanup behavior is outside the approved package 1 gate.
+
 - Issue 2026-07-04 human-signup-browser-fixture-timeout: Browser signup fixture hangs in Playwright gate
     Priority: Medium. Area: Browser tests/Human auth fixture
     Description: `make browser` reached tests and the caller connect/rotate/revoke flows passed, but `tests/browser/human-ui.spec.ts` first-time self-serve signup failed in both desktop and mobile by staying on `/sign-up` or aborting navigation to `/sign-up` until the 30s test timeout.

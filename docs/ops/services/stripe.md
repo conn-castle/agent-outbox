@@ -23,6 +23,10 @@ that are not already proven in this repository.
   event inspection, and API log tailing.
 - Use read-only checks first when debugging checkout, webhook, portal,
   cancellation, downgrade, or grace behavior.
+- Local/test-mode PR verification must cover successful checkout,
+  payment-failure grace, webhook replay safety, and expired-grace downgrade
+  cleanup before billing changes merge, unless the missing credentials or
+  configuration are recorded as an explicit human checkpoint.
 
 ## Guardrails
 

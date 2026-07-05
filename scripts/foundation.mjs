@@ -155,7 +155,7 @@ const RUNTIME_PROOF_SOURCE_DIRS = ["app", "src"];
 const RUNTIME_PROOF_SOURCE_FILES = ["instrumentation.ts", "middleware.ts"];
 
 const FORBIDDEN_RUNTIME_PROOF_PATH_PATTERNS = [
-  /^app\/api\/(?:billing|checkout|stripe)\//,
+  /^app\/api\/(?:checkout|stripe)\//,
   /^app\/api\/account\/(?!status(?:\/|$))/,
   /^app\/api\/caller\/(?!(?:status\/route\.ts|connect\/(?:browser\/start|device\/start|device\/poll|exchange|activate|abort)\/route\.ts|rotate\/(?:browser\/start|device\/start|device\/poll|exchange|activate|abort)\/route\.ts|revoke\/(?:browser\/start|device\/start|device\/poll|confirm)\/route\.ts)$)/,
   /^app\/api\/input\/\[/,
@@ -172,8 +172,6 @@ const FORBIDDEN_RUNTIME_PROOF_TOKENS = [
   "alter table",
   "drop table",
   "create index",
-  "stripe.checkout",
-  "checkout.sessions",
   "uploadthing",
   "supabase.storage",
   "gmail",

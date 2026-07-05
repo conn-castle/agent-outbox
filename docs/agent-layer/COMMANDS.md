@@ -404,9 +404,9 @@ SMOKE_OR_CLEANUP_TOKEN
 
 Notes: Stripe billing variables (`STRIPE_SECRET_KEY`,
 `STRIPE_WEBHOOK_SECRET`, `STRIPE_PAID_MONTHLY_PRICE_ID`, and
-`STRIPE_BILLING_PORTAL_CONFIGURATION_ID`) are present in `.env.example` but are
-not required until the billing phase creates products, prices, portal
-configuration, and webhooks.
+`STRIPE_BILLING_PORTAL_CONFIGURATION_ID`) are present in `.env.example`.
+Credential-free gates do not require them. Local/test-mode billing verification
+does require the matching Stripe test-mode objects and webhook signing secret.
 
 Run from: repo root Prerequisites: Use `.env.example` as the source for required
 names. Notes: Diagnostics may print missing names but must not print configured

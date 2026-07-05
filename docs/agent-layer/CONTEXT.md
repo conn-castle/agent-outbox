@@ -35,9 +35,10 @@ Do not duplicate information that belongs in other memory files:
 - GitHub uses `conn-castle/agent-outbox`.
 - Cloudflare setup separates local Wrangler OAuth, DNS management tokens,
   Worker deploy tokens, and token-management credentials by purpose.
-- Stripe billing products, prices, portal configuration, webhook endpoints, and
-  application secret keys remain deferred until the billing phase. Keep tracked
-  docs free of provider account ids.
+- Stripe billing uses account-scoped checkout, Billing Portal sessions, signed
+  webhooks, and a database webhook idempotency ledger. Keep tracked docs free of
+  provider account ids, customer ids, subscription ids, price ids, webhook ids,
+  and secret values.
 - Sentry is the error-monitoring provider for the Next.js app. Organization and
   project metadata belongs in approved operator-controlled systems, not tracked
   docs.

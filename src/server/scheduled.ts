@@ -3,8 +3,10 @@ import {
   accountQuotaWindowMaintenanceStatement,
   activeLimitMaintenanceStatement,
   callerSetupCleanupCutoff,
+  expiredBillingGraceDowngradeStatement,
   globalQuotaWindowMaintenanceStatements,
   neverActivatedCallerPruningStatement,
+  outputTimeoutCleanupStatement,
   pendingInputRetentionStatement
 } from "./cleanup.ts";
 import {
@@ -128,7 +130,8 @@ export function scheduledCleanupStatementsForAccount(input: {
   const statements = [
     accountQuotaWindowMaintenanceStatement(input.now),
     activeLimitMaintenanceStatement(input.now),
-    neverActivatedCallerPruningStatement(callerSetupCleanupCutoff(input.now))
+    neverActivatedCallerPruningStatement(callerSetupCleanupCutoff(input.now)),
+    outputTimeoutCleanupStatement(input.now)
   ];
   const pendingRetentionCutoff = pendingInputRetentionCutoff(
     input.now,
@@ -138,6 +141,14 @@ export function scheduledCleanupStatementsForAccount(input: {
   if (pendingRetentionCutoff) {
     statements.push(
       pendingInputRetentionStatement(pendingRetentionCutoff, input.requestId)
+    );
+  }
+  if (input.tier === "hosted_paid") {
+    statements.push(
+      expiredBillingGraceDowngradeStatement(
+        freeTierNonFilePayloadLimitBytes(),
+        input.now
+      )
     );
   }
 
@@ -282,6 +293,21 @@ function pendingInputRetentionCutoff(
   }
 
   return new Date(now.getTime() - retentionLimit.setting.value * ONE_DAY_MS);
+}
+
+function freeTierNonFilePayloadLimitBytes(): number {
+  const freeProfile = accountLimitStatusMetadata("hosted-free");
+  const limit = freeProfile.limits.find(
+    (entry) => entry.limitName === "stored_non_file_queue_payload_bytes"
+  );
+
+  if (!limit || limit.setting.mode !== "enabled") {
+    throw new Error(
+      "Missing enabled stored_non_file_queue_payload_bytes limit for hosted-free profile."
+    );
+  }
+
+  return limit.setting.value;
 }
 
 function cleanupAccountTargetFromRow(

@@ -119,6 +119,11 @@
       "version": "1.4.0",
       "package": "pg-cloudflare",
       "source": "corepack pnpm view pg-cloudflare version --json"
+    },
+    "stripeNode": {
+      "version": "22.3.0",
+      "package": "stripe",
+      "source": "npm view stripe version engines --json"
     }
   },
   "runtimeDevTools": {

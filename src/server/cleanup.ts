@@ -74,6 +74,15 @@ export function pendingInputRetentionStatement(
   };
 }
 
+export function outputTimeoutCleanupStatement(
+  now: Date
+): TransactionContextStatement {
+  return {
+    sql: "select public.agent_outbox_delete_expired_outputs($1) as deleted_count",
+    values: [timestampValue(now)]
+  };
+}
+
 export function downgradeGraceExpiryStatement(
   nonFilePayloadLimitBytes: number,
   now: Date
@@ -89,6 +98,66 @@ export function downgradeGraceExpiryStatement(
 
   return {
     sql: "select * from public.agent_outbox_cleanup_downgrade_grace_expiry($1, $2)",
+    values: [nonFilePayloadLimitBytes, timestampValue(now)]
+  };
+}
+
+export function expiredBillingGraceDowngradeStatement(
+  nonFilePayloadLimitBytes: number,
+  now: Date
+): TransactionContextStatement {
+  if (
+    !Number.isSafeInteger(nonFilePayloadLimitBytes) ||
+    nonFilePayloadLimitBytes < 0
+  ) {
+    throw new RangeError(
+      "nonFilePayloadLimitBytes must be a non-negative safe integer"
+    );
+  }
+
+  return {
+    sql: `
+      with expired_account as (
+        select account_id
+        from public.agent_outbox_accounts
+        where account_id = public.agent_outbox_context_account_id()
+          and tier = 'hosted_paid'
+          and billing_status in ('grace', 'past_due', 'canceled')
+          and billing_grace_ends_at is not null
+          and billing_grace_ends_at <= $2
+        for update
+      ),
+      cleanup as (
+        select cleanup_result.*
+        from expired_account
+        cross join public.agent_outbox_cleanup_downgrade_grace_expiry($1, $2) cleanup_result
+      ),
+      downgraded as (
+        update public.agent_outbox_accounts account
+        set
+          tier = 'hosted_free',
+          billing_status = 'not_applicable',
+          billing_grace_ends_at = null,
+          stripe_subscription_status = null,
+          stripe_price_id = null,
+          stripe_current_period_end = null,
+          updated_at = now()
+        where account.account_id in (select account_id from expired_account)
+        returning 1
+      )
+      select
+        coalesce((
+          select
+            sum(
+              expired_outputs_deleted
+              + file_outputs_deleted
+              + file_inputs_deleted
+              + oldest_inputs_deleted
+            )
+          from cleanup
+        ), 0)::bigint
+        + coalesce((select count(*) from downgraded), 0)::bigint as deleted_count
+    `,
     values: [nonFilePayloadLimitBytes, timestampValue(now)]
   };
 }
