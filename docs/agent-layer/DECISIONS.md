@@ -75,3 +75,8 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: Hosted production protected routes fail closed when Clerk configuration is incomplete, except explicit test fixture bypasses; connect, rotate, and revoke per-IP rate limits trust only `CF-Connecting-IP`, and missing trusted IP fails loud instead of falling back to `X-Forwarded-For`.
     Reason: Agent Outbox's hosted path is Cloudflare/OpenNext, so the security boundary should use Cloudflare's client-IP header and avoid accepting spoofable generic proxy headers or silently exposing protected routes during auth misconfiguration.
     Tradeoffs: This is the smallest safe hosted policy and is easy to test, but non-Cloudflare self-hosters need an explicit future proxy policy before relying on forwarded headers.
+
+- Decision 2026-07-04 caller-runtime-throttles-paid-monthly-disabled: Keep paid monthly quota disabled while enforcing data-plane bursts
+    Decision: Hosted paid and self-hosted profiles keep the monthly caller API request quota disabled, while input send/replace, input delete, and raw output file downloads use per-account UTC-minute runtime throttles across all profiles.
+    Reason: Paid/self-hosted callers should not hit monthly cleanup-blocking request caps, but burst protection still needs to cover data-plane writes, cleanup deletes, and raw byte downloads.
+    Tradeoffs: Paid/self-hosted accounts can make unlimited monthly caller API requests, but bursty traffic is still denied temporarily by operation-specific minute windows.

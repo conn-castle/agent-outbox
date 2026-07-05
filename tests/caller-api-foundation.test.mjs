@@ -305,6 +305,15 @@ test("caller API auth masks invalid credentials and lifecycle failures from clie
 });
 
 test("monthly caller API request quota classifier matches the Phase 4 boundary", () => {
+  assert.deepEqual(MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS, [
+    "caller_api_request",
+    "input_send_replace",
+    "input_submission",
+    "output_check_read",
+    "output_file_download",
+    "status"
+  ]);
+
   /** @type {import("../src/server/limits.ts").LimitOperationKind[]} */
   const consumingOperations = [
     ...MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS
@@ -335,6 +344,16 @@ test("monthly caller API request quota classifier matches the Phase 4 boundary",
     );
   }
 
+  assert.equal(
+    consumesMonthlyCallerApiRequestQuota("input_send_replace"),
+    true
+  );
+  assert.equal(consumesMonthlyCallerApiRequestQuota("input_delete"), false);
+  assert.equal(consumesMonthlyCallerApiRequestQuota("output_ack"), false);
+  assert.equal(
+    consumesMonthlyCallerApiRequestQuota("output_file_download"),
+    true
+  );
   assert.deepEqual(
     getLimitDefinition("authenticated_caller_api_requests_per_calendar_month")
       .operationKinds,

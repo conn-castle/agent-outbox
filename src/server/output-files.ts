@@ -103,30 +103,12 @@ export async function handleOutputFileDownloadRequest(
         callerId: auth.callerId
       },
       async (query) => {
-        const profile = await accountLimitProfileForAccount(
+        return handleOutputFileDownloadAuthenticatedTransaction(
           query,
-          auth.accountId
-        );
-        if (!profile) {
-          return {
-            ok: false,
-            error: temporaryUnavailableError(
-              "Output file download is temporarily unavailable."
-            )
-          };
-        }
-
-        const limit = await enforceCallerRequestLimits(
-          query,
+          context,
           auth,
-          profile,
-          "output_file_download"
+          path
         );
-        if (!limit.ok) {
-          return { ok: false, error: limit.error };
-        }
-
-        return outputFileDownloadInTransaction(query, context, auth, path);
       }
     );
   } catch (error) {
@@ -145,6 +127,35 @@ export async function handleOutputFileDownloadRequest(
       )
     };
   }
+}
+
+export async function handleOutputFileDownloadAuthenticatedTransaction(
+  query: ProductTransactionQuery,
+  context: ApiRequestContext,
+  auth: CallerIdentity,
+  path: OutputFileDownloadPath
+): Promise<OutputFileDownloadResult> {
+  const profile = await accountLimitProfileForAccount(query, auth.accountId);
+  if (!profile) {
+    return {
+      ok: false,
+      error: temporaryUnavailableError(
+        "Output file download is temporarily unavailable."
+      )
+    };
+  }
+
+  const limit = await enforceCallerRequestLimits(
+    query,
+    auth,
+    profile,
+    "output_file_download"
+  );
+  if (!limit.ok) {
+    return { ok: false, error: limit.error };
+  }
+
+  return outputFileDownloadInTransaction(query, context, auth, path);
 }
 
 export async function outputFileDownloadInTransaction(

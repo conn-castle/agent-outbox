@@ -108,70 +108,13 @@ export async function handleInputQueueRequest(
         callerId: auth.callerId
       },
       async (query) => {
-        const profile = await accountLimitProfile(query, auth.accountId);
-        if (!profile) {
-          return temporaryUnavailableError();
-        }
-
-        if (operation === "delete") {
-          const parsed = parseInputDeleteBody(jsonBody);
-          if (!parsed.ok) {
-            return { ok: false, error: parsed.error };
-          }
-          return deleteInputItem(query, context, auth, parsed.callerItemId);
-        }
-
-        const parsed = parseInputSubmission(jsonBody, {
-          limitProfile: profile
-        });
-        if (!parsed.ok) {
-          return { ok: false, error: parsed.error };
-        }
-
-        const requestLimit = await enforceCallerRequestLimits(
+        return handleInputQueueRequestInTransaction(
           query,
+          context,
           auth,
-          profile,
-          "caller_api_request"
+          operation,
+          jsonBody
         );
-        const requestLimitResult = inputResultFromLimitGuard(requestLimit);
-        if (requestLimitResult) {
-          return requestLimitResult;
-        }
-
-        if (operation === "send") {
-          return sendInputItem(query, context, auth, parsed.submission, {
-            beforeCreate: async () => {
-              return inputResultFromLimitGuard(
-                await enforceAcceptedInputSubmissionLimits(
-                  query,
-                  auth,
-                  profile,
-                  {
-                    queuedItemDelta: 1,
-                    nonFilePayloadByteDelta:
-                      parsed.submission.nonFilePayloadBytes
-                  }
-                )
-              );
-            }
-          });
-        }
-
-        return replaceInputItem(query, context, auth, parsed.submission, {
-          beforeChange: async (existing) => {
-            return inputResultFromLimitGuard(
-              await enforceAcceptedInputSubmissionLimits(query, auth, profile, {
-                queuedItemDelta: 0,
-                nonFilePayloadByteDelta: Math.max(
-                  0,
-                  parsed.submission.nonFilePayloadBytes -
-                    databaseNonNegativeInteger(existing.non_file_payload_bytes)
-                )
-              })
-            );
-          }
-        });
       }
     );
   } catch (error) {
@@ -185,6 +128,83 @@ export async function handleInputQueueRequest(
     });
     return temporaryUnavailableError();
   }
+}
+
+export async function handleInputQueueRequestInTransaction(
+  query: ProductTransactionQuery,
+  context: ApiRequestContext,
+  auth: CallerIdentity,
+  operation: InputQueueOperation,
+  jsonBody: unknown
+): Promise<InputQueueResult> {
+  const profile = await accountLimitProfile(query, auth.accountId);
+  if (!profile) {
+    return temporaryUnavailableError();
+  }
+
+  if (operation === "delete") {
+    const parsed = parseInputDeleteBody(jsonBody);
+    if (!parsed.ok) {
+      return { ok: false, error: parsed.error };
+    }
+    const requestLimit = await enforceCallerRequestLimits(
+      query,
+      auth,
+      profile,
+      "input_delete"
+    );
+    const requestLimitResult = inputResultFromLimitGuard(requestLimit);
+    if (requestLimitResult) {
+      return requestLimitResult;
+    }
+    return deleteInputItem(query, context, auth, parsed.callerItemId);
+  }
+
+  const parsed = parseInputSubmission(jsonBody, {
+    limitProfile: profile
+  });
+  if (!parsed.ok) {
+    return { ok: false, error: parsed.error };
+  }
+
+  const requestLimit = await enforceCallerRequestLimits(
+    query,
+    auth,
+    profile,
+    "input_send_replace"
+  );
+  const requestLimitResult = inputResultFromLimitGuard(requestLimit);
+  if (requestLimitResult) {
+    return requestLimitResult;
+  }
+
+  if (operation === "send") {
+    return sendInputItem(query, context, auth, parsed.submission, {
+      beforeCreate: async () => {
+        return inputResultFromLimitGuard(
+          await enforceAcceptedInputSubmissionLimits(query, auth, profile, {
+            queuedItemDelta: 1,
+            nonFilePayloadByteDelta: parsed.submission.nonFilePayloadBytes
+          })
+        );
+      }
+    });
+  }
+
+  return replaceInputItem(query, context, auth, parsed.submission, {
+    beforeChange: async (existing) => {
+      return inputResultFromLimitGuard(
+        await enforceAcceptedInputSubmissionLimits(query, auth, profile, {
+          queuedItemDelta: 0,
+          nonFilePayloadByteDelta: Math.max(
+            0,
+            parsed.submission.nonFilePayloadBytes -
+              databaseNonNegativeInteger(existing.non_file_payload_bytes)
+          )
+        })
+      );
+    }
+  });
 }
 
 export async function sendInputItem(
