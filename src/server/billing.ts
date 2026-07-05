@@ -364,7 +364,7 @@ export function checkoutCompletedAccountUpdateStatement(input: {
         tier = 'hosted_paid',
         billing_status = 'active',
         billing_grace_ends_at = null,
-        stripe_customer_id = coalesce($2, stripe_customer_id),
+        stripe_customer_id = coalesce($2::text, stripe_customer_id),
         stripe_subscription_id = coalesce($3, stripe_subscription_id),
         stripe_price_id = coalesce($4, stripe_price_id),
         stripe_subscription_status = coalesce($5, stripe_subscription_status),
@@ -414,8 +414,8 @@ export function subscriptionBillingUpdateStatement(input: {
       where deleted_at is null
         and (
           stripe_subscription_id = $1
-          or ($2 is not null and stripe_customer_id = $2)
-          or ($8 is not null and account_id = $8)
+          or ($2::text is not null and stripe_customer_id = $2::text)
+          or ($8::uuid is not null and account_id = $8::uuid)
         )
       returning account_id::text as account_id
     `,
