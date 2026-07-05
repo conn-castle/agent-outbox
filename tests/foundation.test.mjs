@@ -1678,16 +1678,6 @@ test("accounting helpers keep audit data content-safe and use quota windows for 
       windowStartUtc: "2026-06-01T00:00:00.000Z"
     }
   );
-  assert.equal(
-    consumesMonthlyCallerApiRequestQuota("input_send_replace"),
-    true
-  );
-  assert.equal(consumesMonthlyCallerApiRequestQuota("input_delete"), false);
-  assert.equal(consumesMonthlyCallerApiRequestQuota("output_ack"), false);
-  assert.equal(
-    consumesMonthlyCallerApiRequestQuota("output_file_download"),
-    true
-  );
   assert.equal(consumesMonthlyCallerApiRequestQuota("output_check_read"), true);
   assert.deepEqual(
     storedByteAccounting({

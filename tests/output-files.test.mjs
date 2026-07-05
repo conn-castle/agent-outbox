@@ -67,7 +67,7 @@ function fakeQuery(rowsByCall) {
   const query = async (statement) => {
     calls.push(statement);
     const rows = rowsByCall[calls.length - 1] ?? [];
-    return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
+    return queryResult(rows);
   };
   const typed =
     /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
@@ -75,6 +75,14 @@ function fakeQuery(rowsByCall) {
     );
   typed.calls = calls;
   return typed;
+}
+
+/**
+ * @param {QueryResultRow[]} rows
+ * @returns {import("pg").QueryResult<QueryResultRow>}
+ */
+function queryResult(rows) {
+  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 test("output file download lookup scopes by account caller output and file ids", () => {
@@ -235,57 +243,33 @@ test("output file download transaction blocks on the per-minute request throttle
           if (
             /select tier from public\.agent_outbox_accounts/.test(statement.sql)
           ) {
-            return {
-              rows: [{ tier: "hosted_free" }],
-              rowCount: 1,
-              command: "",
-              oid: 0,
-              fields: []
-            };
+            return queryResult([{ tier: "hosted_free" }]);
           }
           if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
-            return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+            return queryResult([]);
           }
           if (
             /select used_units/.test(statement.sql) &&
             statement.values?.[1] ===
               "authenticated_caller_api_requests_per_calendar_month"
           ) {
-            return {
-              rows: [{ used_units: "50" }],
-              rowCount: 1,
-              command: "",
-              oid: 0,
-              fields: []
-            };
+            return queryResult([{ used_units: "50" }]);
           }
           if (
             /select used_units/.test(statement.sql) &&
             statement.values?.[1] ===
               "output_file_download_requests_per_account_per_minute"
           ) {
-            return {
-              rows: [{ used_units: "60" }],
-              rowCount: 1,
-              command: "",
-              oid: 0,
-              fields: []
-            };
+            return queryResult([{ used_units: "60" }]);
           }
           if (
             /insert into public\.agent_outbox_account_quota_windows/.test(
               statement.sql
             )
           ) {
-            return {
-              rows: [{ used_units: "50" }],
-              rowCount: 1,
-              command: "",
-              oid: 0,
-              fields: []
-            };
+            return queryResult([{ used_units: "50" }]);
           }
-          return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+          return queryResult([]);
         }
       )
     );
@@ -329,16 +313,10 @@ test("paid output file download transaction enforces the minute throttle without
           if (
             /select tier from public\.agent_outbox_accounts/.test(statement.sql)
           ) {
-            return {
-              rows: [{ tier: "hosted_paid" }],
-              rowCount: 1,
-              command: "",
-              oid: 0,
-              fields: []
-            };
+            return queryResult([{ tier: "hosted_paid" }]);
           }
           if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
-            return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+            return queryResult([]);
           }
           if (
             /insert into public\.agent_outbox_account_quota_windows/.test(
@@ -347,15 +325,9 @@ test("paid output file download transaction enforces the minute throttle without
             statement.values?.[1] ===
               "output_file_download_requests_per_account_per_minute"
           ) {
-            return {
-              rows: [{ used_units: "61" }],
-              rowCount: 1,
-              command: "",
-              oid: 0,
-              fields: []
-            };
+            return queryResult([{ used_units: "61" }]);
           }
-          return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+          return queryResult([]);
         }
       )
     );

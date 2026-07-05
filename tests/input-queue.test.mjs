@@ -127,6 +127,88 @@ function pendingInputRow() {
   };
 }
 
+/**
+ * @typedef {{
+ *   tier?: string,
+ *   quotaWindowRowsByLimit?: Record<string, QueryResultRow[]>,
+ *   defaultQuotaWindowRows?: QueryResultRow[],
+ *   advisoryLockRows?: QueryResultRow[],
+ *   inputRows?: QueryResultRow[],
+ *   accountStockUsageRows?: QueryResultRow[],
+ *   insertedInputRows?: QueryResultRow[],
+ *   insertedActionRows?: QueryResultRow[],
+ *   auditRows?: QueryResultRow[]
+ * }} InputQueueThrottleQueryOptions
+ */
+
+/**
+ * @param {InputQueueThrottleQueryOptions} options
+ * @returns {MockProductTransactionQuery}
+ */
+function inputQueueThrottleQuery({
+  tier = "hosted_free",
+  quotaWindowRowsByLimit = {},
+  defaultQuotaWindowRows = [],
+  advisoryLockRows = [],
+  inputRows = [],
+  accountStockUsageRows = [],
+  insertedInputRows = [],
+  insertedActionRows = [],
+  auditRows = [
+    {
+      account_audit_id: "00000000-0000-0000-0000-0000000000a1",
+      caller_audit_id: "00000000-0000-0000-0000-0000000000c1"
+    }
+  ]
+} = {}) {
+  /** @type {TransactionContextStatement[]} */
+  const calls = [];
+  /**
+   * @param {TransactionContextStatement} statement
+   * @returns {Promise<import("pg").QueryResult<QueryResultRow>>}
+   */
+  const query = async (statement) => {
+    calls.push(statement);
+    if (/select tier from public\.agent_outbox_accounts/.test(statement.sql)) {
+      return queryResult([{ tier }]);
+    }
+    if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
+      return queryResult([]);
+    }
+    if (/agent_outbox_account_quota_windows/.test(statement.sql)) {
+      const limitName =
+        typeof statement.values?.[1] === "string" ? statement.values[1] : "";
+      return queryResult(
+        quotaWindowRowsByLimit[limitName] ?? defaultQuotaWindowRows
+      );
+    }
+    if (/pg_(try_)?advisory_xact_lock/.test(statement.sql)) {
+      return queryResult(advisoryLockRows);
+    }
+    if (/from public\.agent_outbox_input_items i/.test(statement.sql)) {
+      return queryResult(inputRows);
+    }
+    if (/agent_outbox_account_stock_usage/.test(statement.sql)) {
+      return queryResult(accountStockUsageRows);
+    }
+    if (/insert into public\.agent_outbox_input_items/.test(statement.sql)) {
+      return queryResult(insertedInputRows);
+    }
+    if (/insert into public\.agent_outbox_input_actions/.test(statement.sql)) {
+      return queryResult(insertedActionRows);
+    }
+    if (/select a\.account_audit_id/.test(statement.sql)) {
+      return queryResult(auditRows);
+    }
+    return queryResult([]);
+  };
+  const typedQuery = /** @type {MockProductTransactionQuery} */ (
+    /** @type {unknown} */ (query)
+  );
+  typedQuery.calls = calls;
+  return typedQuery;
+}
+
 test("input parser normalizes safe submissions and computes stable fingerprints", () => {
   const first = parseInputSubmission(baseInput(), {
     limitProfile: "hosted-paid"
@@ -773,44 +855,12 @@ test("delete removes only pending input items", async () => {
 });
 
 test("input delete transaction blocks on the per-minute request throttle before deletion", async () => {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
-  const query =
-    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
-      async (statement) => {
-        calls.push(statement);
-        if (
-          /select tier from public\.agent_outbox_accounts/.test(statement.sql)
-        ) {
-          return queryResult([{ tier: "hosted_free" }]);
-        }
-        if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
-          return queryResult([]);
-        }
-        if (
-          /agent_outbox_account_quota_windows/.test(statement.sql) &&
-          /insert/.test(statement.sql) &&
-          statement.values?.[1] ===
-            "input_delete_requests_per_account_per_minute"
-        ) {
-          return queryResult([{ used_units: "601" }]);
-        }
-        if (/from public\.agent_outbox_input_items i/.test(statement.sql)) {
-          return queryResult([pendingInputRow()]);
-        }
-        if (/select a\.account_audit_id/.test(statement.sql)) {
-          return queryResult([
-            {
-              account_audit_id: "00000000-0000-0000-0000-0000000000a1",
-              caller_audit_id: "00000000-0000-0000-0000-0000000000c1"
-            }
-          ]);
-        }
-        return queryResult([]);
-      }
-    );
-  query.calls = calls;
+  const query = inputQueueThrottleQuery({
+    quotaWindowRowsByLimit: {
+      input_delete_requests_per_account_per_minute: [{ used_units: "601" }]
+    },
+    inputRows: [pendingInputRow()]
+  });
 
   const result = await handleInputQueueRequestInTransaction(
     query,
@@ -838,39 +888,16 @@ test("input delete transaction blocks on the per-minute request throttle before 
 
 test("input send and replace transactions block on the send/replace request throttle", async () => {
   for (const operation of /** @type {const} */ (["send", "replace"])) {
-    /** @type {TransactionContextStatement[]} */
-    const calls = [];
-    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
-    const query =
-      /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
-        async (statement) => {
-          calls.push(statement);
-          if (
-            /select tier from public\.agent_outbox_accounts/.test(statement.sql)
-          ) {
-            return queryResult([{ tier: "hosted_free" }]);
-          }
-          if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
-            return queryResult([]);
-          }
-          if (
-            /select used_units/.test(statement.sql) &&
-            statement.values?.[1] ===
-              "authenticated_caller_api_requests_per_calendar_month"
-          ) {
-            return queryResult([{ used_units: "1" }]);
-          }
-          if (
-            /select used_units/.test(statement.sql) &&
-            statement.values?.[1] ===
-              "input_send_replace_requests_per_account_per_minute"
-          ) {
-            return queryResult([{ used_units: "600" }]);
-          }
-          return queryResult([]);
-        }
-      );
-    query.calls = calls;
+    const query = inputQueueThrottleQuery({
+      quotaWindowRowsByLimit: {
+        authenticated_caller_api_requests_per_calendar_month: [
+          { used_units: "1" }
+        ],
+        input_send_replace_requests_per_account_per_minute: [
+          { used_units: "600" }
+        ]
+      }
+    });
 
     const result = await handleInputQueueRequestInTransaction(
       query,
@@ -904,43 +931,12 @@ test("input send and replace transactions block on the send/replace request thro
 });
 
 test("input delete transaction stays monthly-exempt while enforcing the minute throttle", async () => {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
-  const query =
-    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
-      async (statement) => {
-        calls.push(statement);
-        if (
-          /select tier from public\.agent_outbox_accounts/.test(statement.sql)
-        ) {
-          return queryResult([{ tier: "hosted_free" }]);
-        }
-        if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
-          return queryResult([]);
-        }
-        if (
-          /agent_outbox_account_quota_windows/.test(statement.sql) &&
-          statement.values?.[1] ===
-            "input_delete_requests_per_account_per_minute"
-        ) {
-          return queryResult([{ used_units: "1" }]);
-        }
-        if (/from public\.agent_outbox_input_items i/.test(statement.sql)) {
-          return queryResult([pendingInputRow()]);
-        }
-        if (/select a\.account_audit_id/.test(statement.sql)) {
-          return queryResult([
-            {
-              account_audit_id: "00000000-0000-0000-0000-0000000000a1",
-              caller_audit_id: "00000000-0000-0000-0000-0000000000c1"
-            }
-          ]);
-        }
-        return queryResult([]);
-      }
-    );
-  query.calls = calls;
+  const query = inputQueueThrottleQuery({
+    quotaWindowRowsByLimit: {
+      input_delete_requests_per_account_per_minute: [{ used_units: "1" }]
+    },
+    inputRows: [pendingInputRow()]
+  });
 
   const result = await handleInputQueueRequestInTransaction(
     query,
@@ -965,68 +961,19 @@ test("input delete transaction stays monthly-exempt while enforcing the minute t
 });
 
 test("allowed input send still reaches accepted-submission checks before insertion", async () => {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */
-  const query =
-    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
-      async (statement) => {
-        calls.push(statement);
-        if (
-          /select tier from public\.agent_outbox_accounts/.test(statement.sql)
-        ) {
-          return queryResult([{ tier: "hosted_free" }]);
-        }
-        if (/agent_outbox_account_limit_blocks/.test(statement.sql)) {
-          return queryResult([]);
-        }
-        if (
-          /select used_units/.test(statement.sql) ||
-          /insert into public\.agent_outbox_account_quota_windows/.test(
-            statement.sql
-          )
-        ) {
-          return queryResult([{ used_units: "1" }]);
-        }
-        if (/pg_(try_)?advisory_xact_lock/.test(statement.sql)) {
-          return queryResult([{ acquired: true }]);
-        }
-        if (/from public\.agent_outbox_input_items i/.test(statement.sql)) {
-          return queryResult([]);
-        }
-        if (/agent_outbox_account_stock_usage/.test(statement.sql)) {
-          return queryResult([
-            {
-              queued_input_items: "0",
-              non_file_stored_bytes: "0",
-              overall_stored_bytes: "0"
-            }
-          ]);
-        }
-        if (
-          /insert into public\.agent_outbox_input_items/.test(statement.sql)
-        ) {
-          return queryResult([
-            { input_item_id: "input-1", current_revision: 1 }
-          ]);
-        }
-        if (
-          /insert into public\.agent_outbox_input_actions/.test(statement.sql)
-        ) {
-          return queryResult([{ input_action_id: "action-1" }]);
-        }
-        if (/select a\.account_audit_id/.test(statement.sql)) {
-          return queryResult([
-            {
-              account_audit_id: "00000000-0000-0000-0000-0000000000a1",
-              caller_audit_id: "00000000-0000-0000-0000-0000000000c1"
-            }
-          ]);
-        }
-        return queryResult([]);
+  const query = inputQueueThrottleQuery({
+    defaultQuotaWindowRows: [{ used_units: "1" }],
+    advisoryLockRows: [{ acquired: true }],
+    accountStockUsageRows: [
+      {
+        queued_input_items: "0",
+        non_file_stored_bytes: "0",
+        overall_stored_bytes: "0"
       }
-    );
-  query.calls = calls;
+    ],
+    insertedInputRows: [{ input_item_id: "input-1", current_revision: 1 }],
+    insertedActionRows: [{ input_action_id: "action-1" }]
+  });
 
   const result = await handleInputQueueRequestInTransaction(
     query,
