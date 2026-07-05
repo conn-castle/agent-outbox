@@ -2,7 +2,9 @@ import { createCorrelationId } from "./correlation.ts";
 import {
   accountQuotaWindowMaintenanceStatement,
   activeLimitMaintenanceStatement,
+  callerSetupCleanupCutoff,
   globalQuotaWindowMaintenanceStatements,
+  neverActivatedCallerPruningStatement,
   pendingInputRetentionStatement
 } from "./cleanup.ts";
 import {
@@ -125,7 +127,8 @@ export function scheduledCleanupStatementsForAccount(input: {
 
   const statements = [
     accountQuotaWindowMaintenanceStatement(input.now),
-    activeLimitMaintenanceStatement(input.now)
+    activeLimitMaintenanceStatement(input.now),
+    neverActivatedCallerPruningStatement(callerSetupCleanupCutoff(input.now))
   ];
   const pendingRetentionCutoff = pendingInputRetentionCutoff(
     input.now,

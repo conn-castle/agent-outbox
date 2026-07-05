@@ -39,6 +39,7 @@ import {
   storedCallerCredentialDigestFromLookupRow,
   validateCallerBearer
 } from "../src/server/caller-auth.ts";
+import { callerCredentialLastUsedStatement } from "../src/server/caller-api-auth.ts";
 import {
   authorizeAccountMembership,
   authorizeCallerAccount
@@ -70,9 +71,11 @@ import {
 import {
   accountQuotaWindowMaintenanceStatement,
   activeLimitMaintenanceStatement,
+  callerSetupCleanupCutoff,
   duplicateAcknowledgementLookupStatement,
   downgradeGraceExpiryStatement,
   globalQuotaWindowMaintenanceStatements,
+  neverActivatedCallerPruningStatement,
   pendingInputRetentionStatement,
   preReadUndoStatement,
   quotaWindowMaintenanceStatements,
@@ -263,6 +266,14 @@ const outputFileSingleRowInvariantMigration = readFileSync(
 const outputOperationAuthMatrixMigration = readFileSync(
   new URL(
     "../db/migrations/V20260704123900__output_operation_auth_matrix.sql",
+    import.meta.url
+  ),
+  "utf8"
+);
+
+const neverActivatedCallerPruneMigration = readFileSync(
+  new URL(
+    "../db/migrations/V20260705040000__prune_never_activated_callers.sql",
     import.meta.url
   ),
   "utf8"
@@ -1792,6 +1803,19 @@ test("cleanup statement builders target lifecycle database functions", () => {
   );
   const quotaMaintenanceNow = new Date("2026-07-15T12:34:56.000Z");
   assert.equal(
+    callerSetupCleanupCutoff(quotaMaintenanceNow).toISOString(),
+    "2026-07-08T12:34:56.000Z"
+  );
+  assert.deepEqual(
+    neverActivatedCallerPruningStatement(
+      callerSetupCleanupCutoff(quotaMaintenanceNow)
+    ),
+    {
+      sql: "select public.agent_outbox_prune_never_activated_callers($1) as deleted_count",
+      values: ["2026-07-08T12:34:56.000Z"]
+    }
+  );
+  assert.equal(
     quotaWindowPruningCutoff(quotaMaintenanceNow).toISOString(),
     "2026-07-01T00:00:00.000Z"
   );
@@ -1939,8 +1963,8 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     recorded_at: result.recorded_at,
     accounts_seen: 2,
     accounts_cleaned: 2,
-    statements_run: 7,
-    rows_affected: 7
+    statements_run: 9,
+    rows_affected: 9
   });
   assert.match(result.recorded_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(
@@ -2494,6 +2518,62 @@ test("scheduled cleanup account targets are cleanup-surface only", () => {
   );
 });
 
+test("never-activated caller prune migration is cleanup-scoped and preserves history", () => {
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /create or replace function public\.agent_outbox_prune_never_activated_callers\(\s*p_before timestamptz\s*\)/s
+  );
+  assert.match(neverActivatedCallerPruneMigration, /security definer/);
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /set search_path = public, pg_temp/
+  );
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /agent_outbox_context_auth_surface\(\) is distinct from 'cleanup'[\s\S]*agent_outbox_context_account_id\(\) is null/
+  );
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /raise exception 'agent_outbox_prune_never_activated_callers forbidden'/
+  );
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /delete from public\.agent_outbox_callers caller/
+  );
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /caller\.account_id = public\.agent_outbox_context_account_id\(\)/
+  );
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /credential\.activated_at is not null[\s\S]*credential\.status in \('active', 'revoked'\)[\s\S]*credential\.revoked_at is not null/
+  );
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /event\.caller_audit_id = caller\.caller_audit_id/
+  );
+  assert.doesNotMatch(neverActivatedCallerPruneMigration, /event\.caller_id/);
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /from public\.agent_outbox_input_items input[\s\S]*input\.caller_id = caller\.caller_id/
+  );
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /from public\.agent_outbox_output_results output[\s\S]*output\.caller_id = caller\.caller_id/
+  );
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /revoke execute on function public\.agent_outbox_prune_never_activated_callers\(timestamptz\) from public;/
+  );
+  assert.match(
+    neverActivatedCallerPruneMigration,
+    /grant execute on function public\.agent_outbox_prune_never_activated_callers\(timestamptz\) to agent_outbox_app;/
+  );
+  assert.match(neverActivatedCallerPruneMigration, /'anon'/);
+  assert.match(neverActivatedCallerPruneMigration, /'authenticated'/);
+  assert.match(neverActivatedCallerPruneMigration, /'service_role'/);
+});
+
 test("phase 3 migration restricts app function execution to the app role", () => {
   for (const functionSignature of [
     "agent_outbox_context_account_id()",
@@ -2591,7 +2671,7 @@ test(
     const accountLabelB = `phase3-b-${runId}`;
     const ipQuotaAddress = `2001:db8::${runId.slice(0, 4)}:${runId.slice(4, 8)}`;
     const ipQuotaPolicyMetric = `phase3_policy_probe_${runId}`;
-    /** @type {{ accountA?: string, accountB?: string, accountAuditA?: string, accountAuditB?: string, userA?: string, callerA?: string, callerA2?: string, callerB?: string, answeredInput?: string, fileOutputInput?: string, fileUploadInput?: string, output?: string, fileOutput?: string, ipQuotaAddress?: string }} */
+    /** @type {{ accountA?: string, accountB?: string, accountAuditA?: string, accountAuditB?: string, userA?: string, callerA?: string, callerA2?: string, callerB?: string, reclaimCaller?: string, auditPreservedCaller?: string, activatedPreservedCaller?: string, revokedPreservedCaller?: string, answeredInput?: string, fileOutputInput?: string, fileUploadInput?: string, output?: string, fileOutput?: string, ipQuotaAddress?: string }} */
     const ids = { ipQuotaAddress };
     let grantedAppRoleForTest = false;
 
@@ -2659,6 +2739,7 @@ test(
             "public.agent_outbox_prune_quota_windows(timestamptz)",
             "public.agent_outbox_prune_ip_quota_windows(timestamptz)",
             "public.agent_outbox_prune_caller_setup_requests(timestamptz)",
+            "public.agent_outbox_prune_never_activated_callers(timestamptz)",
             "public.agent_outbox_prune_expired_limit_blocks(timestamptz)",
             "public.agent_outbox_cleanup_account_targets()"
           ]
@@ -2785,6 +2866,73 @@ test(
         }
       }
 
+      const abandonedCallerSlugs = {
+        reclaim: `reclaim-${runId}`,
+        audit: `preserve-audit-${runId}`,
+        activated: `preserve-activated-${runId}`,
+        revoked: `preserve-revoked-${runId}`
+      };
+      const abandonedCallerRows = await client.query(
+        `
+          insert into public.agent_outbox_callers(
+            account_id,
+            display_name,
+            caller_slug,
+            created_at,
+            updated_at
+          )
+          values
+            ($1, 'Reclaim abandoned caller', $2, '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'),
+            ($1, 'Audit preserved caller', $3, '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'),
+            ($1, 'Activated preserved caller', $4, '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'),
+            ($1, 'Revoked preserved caller', $5, '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z')
+          returning caller_id, caller_slug, caller_audit_id
+        `,
+        [
+          ids.accountA,
+          abandonedCallerSlugs.reclaim,
+          abandonedCallerSlugs.audit,
+          abandonedCallerSlugs.activated,
+          abandonedCallerSlugs.revoked
+        ]
+      );
+      const abandonedCallerRowsBySlug = new Map(
+        abandonedCallerRows.rows.map((row) => [row.caller_slug, row])
+      );
+      ids.reclaimCaller = abandonedCallerRowsBySlug.get(
+        abandonedCallerSlugs.reclaim
+      )?.caller_id;
+      ids.auditPreservedCaller = abandonedCallerRowsBySlug.get(
+        abandonedCallerSlugs.audit
+      )?.caller_id;
+      ids.activatedPreservedCaller = abandonedCallerRowsBySlug.get(
+        abandonedCallerSlugs.activated
+      )?.caller_id;
+      ids.revokedPreservedCaller = abandonedCallerRowsBySlug.get(
+        abandonedCallerSlugs.revoked
+      )?.caller_id;
+      assert.ok(ids.reclaimCaller);
+      assert.ok(ids.auditPreservedCaller);
+      assert.ok(ids.activatedPreservedCaller);
+      assert.ok(ids.revokedPreservedCaller);
+      const auditPreservedCallerAuditId = abandonedCallerRowsBySlug.get(
+        abandonedCallerSlugs.audit
+      )?.caller_audit_id;
+      assert.ok(auditPreservedCallerAuditId);
+
+      await client.query(
+        `
+          insert into public.agent_outbox_audit_events(
+            event_type,
+            account_audit_id,
+            caller_audit_id,
+            request_id
+          )
+          values ('caller_registered', $1, $2, $3)
+        `,
+        [ids.accountAuditA, auditPreservedCallerAuditId, `audit-${runId}`]
+      );
+
       const credentialKeyId = `key-${runId}`;
       const credentialA2KeyId = `key-a2-${runId}`;
       const credentialDigest = "c".repeat(64);
@@ -2822,6 +2970,97 @@ test(
       const activeCredentialA2Id = credentialIdsByKeyId.get(credentialA2KeyId);
       assert.ok(activeCredentialAId);
       assert.ok(activeCredentialA2Id);
+
+      const abandonedSetupLabels = {
+        reclaim: `abandoned-reclaim-${runId}`,
+        audit: `abandoned-audit-${runId}`
+      };
+      const abandonedSetupRows = await client.query(
+        `
+          insert into public.agent_outbox_caller_setup_requests(
+            operation,
+            flow,
+            local_caller_name,
+            display_name,
+            callback_url,
+            account_id,
+            caller_id,
+            approved_by_user_id,
+            status,
+            expires_at,
+            updated_at,
+            approved_at,
+            exchanged_at
+          )
+          values
+            ('connect', 'browser', $1, 'Abandoned reclaim', 'http://127.0.0.1/callback', $3, $4, $6, 'exchanged', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'),
+            ('connect', 'browser', $2, 'Abandoned audit', 'http://127.0.0.1/callback', $3, $5, $6, 'exchanged', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z')
+          returning setup_request_id, local_caller_name
+        `,
+        [
+          abandonedSetupLabels.reclaim,
+          abandonedSetupLabels.audit,
+          ids.accountA,
+          ids.reclaimCaller,
+          ids.auditPreservedCaller,
+          ids.userA
+        ]
+      );
+      const abandonedSetupIdsByLabel = new Map(
+        abandonedSetupRows.rows.map((row) => [
+          row.local_caller_name,
+          row.setup_request_id
+        ])
+      );
+      const reclaimSetupRequestId = abandonedSetupIdsByLabel.get(
+        abandonedSetupLabels.reclaim
+      );
+      const auditSetupRequestId = abandonedSetupIdsByLabel.get(
+        abandonedSetupLabels.audit
+      );
+      assert.ok(reclaimSetupRequestId);
+      assert.ok(auditSetupRequestId);
+
+      await client.query(
+        `
+          insert into public.agent_outbox_caller_credentials(
+            account_id,
+            caller_id,
+            key_id,
+            key_prefix,
+            key_last_four,
+            secret_hmac_sha256,
+            status,
+            activated_at,
+            revoked_at,
+            expires_at,
+            last_used_at,
+            pending_replacement_setup_request_id
+          )
+          values
+            ($1, $2, $3, 'aob_live_abandoned', 'abnd', $4, 'pending_activation', null, null, '2026-06-02T00:00:00.000Z', null, $5),
+            ($1, $6, $7, 'aob_live_abandoned_audit', 'aadt', $8, 'pending_activation', null, null, '2026-06-02T00:00:00.000Z', null, $9),
+            ($1, $10, $11, 'aob_live_activated', 'actv', $12, 'expired', '2026-06-01T00:00:00.000Z', null, '2026-06-02T00:00:00.000Z', null, null),
+            ($1, $13, $14, 'aob_live_revoked', 'rvkd', $15, 'expired', null, '2026-06-01T00:00:00.000Z', '2026-06-02T00:00:00.000Z', null, null)
+        `,
+        [
+          ids.accountA,
+          ids.reclaimCaller,
+          `abandoned-${runId}`,
+          "1".repeat(64),
+          reclaimSetupRequestId,
+          ids.auditPreservedCaller,
+          `abandoned-audit-${runId}`,
+          "2".repeat(64),
+          auditSetupRequestId,
+          ids.activatedPreservedCaller,
+          `activated-history-${runId}`,
+          "3".repeat(64),
+          ids.revokedPreservedCaller,
+          `revoked-history-${runId}`,
+          "4".repeat(64)
+        ]
+      );
 
       const setupPrunePrefix = `setup-prune-${runId}`;
       const setupLabels = {
@@ -3361,6 +3600,143 @@ test(
       });
       await client.query("reset role");
       await client.query("commit");
+
+      const lastUsedAccountId = ids.accountA;
+      const lastUsedCallerId = ids.callerA;
+      assert.ok(lastUsedAccountId);
+      assert.ok(lastUsedCallerId);
+      await client.query(
+        `
+          update public.agent_outbox_caller_credentials
+          set last_used_at = '2026-06-30T11:00:00.000Z'
+          where key_id = $1
+        `,
+        [credentialA2KeyId]
+      );
+
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await setOperationContext("caller", {
+        accountId: lastUsedAccountId,
+        callerId: lastUsedCallerId
+      });
+      await client.query(
+        `
+          update public.agent_outbox_caller_credentials
+          set last_used_at = null
+          where key_id = $1
+        `,
+        [credentialKeyId]
+      );
+      const nullLastUsedStatement = callerCredentialLastUsedStatement({
+        accountId: lastUsedAccountId,
+        callerId: lastUsedCallerId,
+        keyId: credentialKeyId
+      });
+      const nullLastUsedUpdate = await client.query(
+        nullLastUsedStatement.sql,
+        nullLastUsedStatement.values ?? []
+      );
+      assert.equal(nullLastUsedUpdate.rowCount, 1);
+      const nullLastUsedRows = await client.query(
+        `
+          select last_used_at
+          from public.agent_outbox_caller_credentials
+          where key_id = $1
+        `,
+        [credentialKeyId]
+      );
+      assert.ok(nullLastUsedRows.rows[0].last_used_at);
+
+      await client.query(
+        `
+          update public.agent_outbox_caller_credentials
+          set last_used_at = '2026-06-30T11:00:00.000Z'
+          where key_id = $1
+        `,
+        [credentialKeyId]
+      );
+      const staleLastUsedStatement = callerCredentialLastUsedStatement({
+        accountId: lastUsedAccountId,
+        callerId: lastUsedCallerId,
+        keyId: credentialKeyId
+      });
+      const staleLastUsedUpdate = await client.query(
+        staleLastUsedStatement.sql,
+        staleLastUsedStatement.values ?? []
+      );
+      assert.equal(staleLastUsedUpdate.rowCount, 1);
+      const scopedLastUsedRows = await client.query(
+        `
+          select key_id, last_used_at
+          from public.agent_outbox_caller_credentials
+          where key_id = $1
+          order by key_id
+        `,
+        [credentialKeyId]
+      );
+      assert.deepEqual(
+        scopedLastUsedRows.rows.map((row) => row.key_id),
+        [credentialKeyId]
+      );
+      assert.notEqual(
+        scopedLastUsedRows.rows[0].last_used_at.toISOString(),
+        "2026-06-30T11:00:00.000Z"
+      );
+
+      await client.query(
+        `
+          update public.agent_outbox_caller_credentials
+          set last_used_at = now()
+          where key_id = $1
+        `,
+        [credentialKeyId]
+      );
+      const freshLastUsedBefore = await client.query(
+        `
+          select last_used_at
+          from public.agent_outbox_caller_credentials
+          where key_id = $1
+        `,
+        [credentialKeyId]
+      );
+      const freshLastUsedStatement = callerCredentialLastUsedStatement({
+        accountId: lastUsedAccountId,
+        callerId: lastUsedCallerId,
+        keyId: credentialKeyId
+      });
+      const freshLastUsedUpdate = await client.query(
+        freshLastUsedStatement.sql,
+        freshLastUsedStatement.values ?? []
+      );
+      assert.equal(freshLastUsedUpdate.rowCount, 0);
+      const freshLastUsedAfter = await client.query(
+        `
+          select last_used_at
+          from public.agent_outbox_caller_credentials
+          where key_id = $1
+        `,
+        [credentialKeyId]
+      );
+      assert.equal(
+        freshLastUsedAfter.rows[0].last_used_at.toISOString(),
+        freshLastUsedBefore.rows[0].last_used_at.toISOString()
+      );
+      await client.query("reset role");
+      await client.query("commit");
+
+      const otherCallerLastUsedRows = await client.query(
+        `
+          select last_used_at
+          from public.agent_outbox_caller_credentials
+          where key_id = $1
+        `,
+        [credentialA2KeyId]
+      );
+      assert.equal(
+        otherCallerLastUsedRows.rows[0].last_used_at.toISOString(),
+        "2026-06-30T11:00:00.000Z"
+      );
 
       await client.query("begin");
       await client.query("set role agent_outbox_app");
@@ -4025,6 +4401,10 @@ test(
         "select public.agent_outbox_prune_caller_setup_requests('2026-06-15T00:00:00.000Z') as deleted_count"
       );
       assert.equal(prunedSetupRequests.rows[0].deleted_count, 3);
+      const prunedNeverActivatedCallers = await client.query(
+        "select public.agent_outbox_prune_never_activated_callers('2026-06-15T00:00:00.000Z') as deleted_count"
+      );
+      assert.equal(prunedNeverActivatedCallers.rows[0].deleted_count, 1);
       const prunedLimitBlocks = await client.query(
         "select public.agent_outbox_prune_expired_limit_blocks('2026-06-30T12:00:00.000Z') as deleted_count"
       );
@@ -4055,6 +4435,49 @@ test(
         "select public.agent_outbox_prune_caller_setup_requests('2026-06-15T00:00:00.000Z') as deleted_count"
       );
       assert.equal(accountlessPrunedSetupRequests.rows[0].deleted_count, 0);
+      await client.query("savepoint accountless_never_activated_prune");
+      try {
+        await assert.rejects(
+          client.query(
+            "select public.agent_outbox_prune_never_activated_callers('2026-06-15T00:00:00.000Z') as deleted_count"
+          ),
+          (error) => {
+            const databaseError = /** @type {{ code?: string }} */ (error);
+            assert.equal(databaseError.code, "42501");
+            return true;
+          }
+        );
+      } finally {
+        await client.query(
+          "rollback to savepoint accountless_never_activated_prune"
+        );
+      }
+      await client.query("reset role");
+      await client.query("commit");
+
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
+      await client.query("savepoint non_cleanup_never_activated_prune");
+      try {
+        await assert.rejects(
+          client.query(
+            "select public.agent_outbox_prune_never_activated_callers('2026-06-15T00:00:00.000Z') as deleted_count"
+          ),
+          (error) => {
+            const databaseError = /** @type {{ code?: string }} */ (error);
+            assert.equal(databaseError.code, "42501");
+            return true;
+          }
+        );
+      } finally {
+        await client.query(
+          "rollback to savepoint non_cleanup_never_activated_prune"
+        );
+      }
       await client.query("reset role");
       await client.query("commit");
 
@@ -4079,6 +4502,52 @@ test(
         setup_request_count: 1,
         credential_count: 1
       });
+
+      const neverActivatedCleanupRows = await client.query(
+        `
+          select
+            (select count(*)::int from public.agent_outbox_callers where caller_id = $1) as reclaimed_caller_count,
+            (select count(*)::int from public.agent_outbox_caller_setup_requests where setup_request_id = $2) as reclaimed_setup_count,
+            (select count(*)::int from public.agent_outbox_caller_credentials where key_id = $3) as reclaimed_credential_count,
+            (select count(*)::int from public.agent_outbox_callers where caller_id = $4) as audit_preserved_caller_count,
+            (select count(*)::int from public.agent_outbox_caller_setup_requests where setup_request_id = $5) as audit_preserved_setup_count,
+            (select count(*)::int from public.agent_outbox_caller_credentials where key_id = $6) as audit_preserved_credential_count,
+            (select count(*)::int from public.agent_outbox_callers where caller_id = $7) as activated_preserved_caller_count,
+            (select count(*)::int from public.agent_outbox_callers where caller_id = $8) as revoked_preserved_caller_count
+        `,
+        [
+          ids.reclaimCaller,
+          reclaimSetupRequestId,
+          `abandoned-${runId}`,
+          ids.auditPreservedCaller,
+          auditSetupRequestId,
+          `abandoned-audit-${runId}`,
+          ids.activatedPreservedCaller,
+          ids.revokedPreservedCaller
+        ]
+      );
+      assert.deepEqual(neverActivatedCleanupRows.rows[0], {
+        reclaimed_caller_count: 0,
+        reclaimed_setup_count: 0,
+        reclaimed_credential_count: 0,
+        audit_preserved_caller_count: 1,
+        audit_preserved_setup_count: 1,
+        audit_preserved_credential_count: 1,
+        activated_preserved_caller_count: 1,
+        revoked_preserved_caller_count: 1
+      });
+
+      const reusedCallerSlug = await client.query(
+        `
+          insert into public.agent_outbox_callers(account_id, display_name, caller_slug)
+          values ($1, 'Reused reclaimed caller', $2)
+          returning caller_slug
+        `,
+        [ids.accountA, abandonedCallerSlugs.reclaim]
+      );
+      assert.deepEqual(reusedCallerSlug.rows, [
+        { caller_slug: abandonedCallerSlugs.reclaim }
+      ]);
 
       const deletedRows = await client.query(
         `

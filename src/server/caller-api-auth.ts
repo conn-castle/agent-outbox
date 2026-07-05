@@ -273,6 +273,10 @@ export function callerCredentialLastUsedStatement(input: {
       where account_id = $1
         and caller_id = $2
         and key_id = $3
+        and (
+          last_used_at is null
+          or last_used_at < now() - interval '15 minutes'
+        )
     `,
     values: [input.accountId, input.callerId, input.keyId]
   };
