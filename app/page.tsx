@@ -23,8 +23,8 @@ export default function HomePage() {
         <p>
           This repository currently includes caller-authenticated status, input,
           output, acknowledgement, and output-file download routes plus a
-          protected human review queue UI and account-scoped Stripe billing.
-          Paid file-upload workflows and Steward-specific integrations are
+          protected human review queue UI, account-scoped Stripe billing, and
+          paid file-upload workflows. Steward-specific integrations are
           scheduled for later phases.
         </p>
       </section>

@@ -5,8 +5,6 @@ import { runtimeConfigStatus } from "./env.ts";
 const RUNTIME_CANARY_OUT_OF_SCOPE = [
   "full_human_review_queue_ui",
   "caller_registration",
-  "paid_file_upload_workflows",
-  "billing_behavior",
   "steward_behavior"
 ] as const;
 
