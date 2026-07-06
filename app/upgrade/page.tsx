@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 
 import { UpgradeActions } from "../../src/components/billing/UpgradeActions";
 import { createCorrelationId } from "../../src/server/correlation";
+import { humanBrowserFixtureEnabled } from "../../src/server/human-review-fixture";
 import {
   requiredHumanSessionConfiguration,
   resolveHumanAccountSession
@@ -19,6 +20,11 @@ export default async function UpgradePage({
   const checkout = Array.isArray(params?.checkout)
     ? params.checkout[0]
     : params?.checkout;
+
+  if (humanBrowserFixtureEnabled()) {
+    return <UpgradePageContent checkout={checkout} canOpenPortal />;
+  }
+
   const missing = requiredHumanSessionConfiguration();
   if (missing.length > 0) {
     return (
@@ -49,12 +55,24 @@ export default async function UpgradePage({
   const canOpenPortal = humanSession.account.billingStatus !== "not_applicable";
 
   return (
+    <UpgradePageContent checkout={checkout} canOpenPortal={canOpenPortal} />
+  );
+}
+
+function UpgradePageContent({
+  checkout,
+  canOpenPortal
+}: {
+  checkout: string | undefined;
+  canOpenPortal: boolean;
+}) {
+  return (
     <main className="main">
       <p className="eyebrow">Billing</p>
       <h1 className="title">Upgrade Agent Outbox</h1>
       <p className="lede">
-        Move this account to the hosted paid tier for paid limits and billing
-        management.
+        Move this account to the hosted paid tier with monthly or yearly
+        billing.
       </p>
       {checkout ? (
         <section className="panel" role="status">

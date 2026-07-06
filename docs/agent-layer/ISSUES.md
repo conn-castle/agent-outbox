@@ -28,8 +28,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 <!-- ENTRIES START -->
 - Issue 2026-07-05 stripe-billing-ssm-parameters-missing: Stripe billing runtime parameters are not recoverable from SSM
     Priority: Medium. Area: Ops/Secrets
-    Description: SSM under `/agent-outbox/` has Stripe account metadata but still lacks the app billing parameter names needed for checkout, webhooks, paid price, and portal configuration.
-    Next step: Store approved test/live Stripe billing parameters in the canonical runtime secret store and matching SSM paths without exposing secret values.
+    Description: SSM under `/agent-outbox/` has Stripe account metadata but still lacks the app billing parameter names needed for checkout, webhooks, monthly/yearly paid prices, and portal configuration.
+    Next step: Store approved test/live Stripe billing parameters, including `STRIPE_PAID_MONTHLY_PRICE_ID` and `STRIPE_PAID_YEARLY_PRICE_ID`, in the canonical runtime secret store and matching SSM paths without exposing secret values.
     Notes: Rechecked by name-only SSM inspection on 2026-07-06; do not mark Phase 7 complete until this recovery gap is closed or explicitly waived.
 
 - Issue 2026-07-05 stripe-webhook-ledger-retention: Stripe webhook idempotency ledger has no retention policy

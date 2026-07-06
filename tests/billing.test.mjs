@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   billingRuntimeConfig,
+  checkoutIntervalFromRequest,
   createBillingPortalSessionForAccount,
   createCheckoutSessionForAccount,
   handleStripeWebhookRequest,
@@ -10,11 +11,15 @@ import {
   requiredBillingConfiguration
 } from "../src/server/billing.ts";
 import { billingHumanSessionFromClerkUser } from "../src/server/billing-session.ts";
+import { INPUT_REQUEST_BODY_BYTE_LIMIT } from "../src/server/input-schema.ts";
 
 const config = {
   secretKey: "sk_test_placeholder",
   webhookSecret: "whsec_placeholder",
-  priceId: "price_test_paid_monthly",
+  priceIds: {
+    monthly: "price_test_paid_monthly",
+    yearly: "price_test_paid_yearly"
+  },
   portalConfigurationId: "bpc_test",
   publicAppBaseUrl: "https://app.example.test"
 };
@@ -25,6 +30,7 @@ const billingEnvironmentNames = [
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "STRIPE_PAID_MONTHLY_PRICE_ID",
+  "STRIPE_PAID_YEARLY_PRICE_ID",
   "STRIPE_BILLING_PORTAL_CONFIGURATION_ID",
   "PUBLIC_APP_BASE_URL"
 ];
@@ -74,6 +80,49 @@ test("portal billing configuration requires the explicit Stripe portal configura
   }
 });
 
+test("checkout billing configuration requires both paid price ids", () => {
+  const previous = Object.fromEntries(
+    billingEnvironmentNames.map((name) => [name, process.env[name]])
+  );
+  try {
+    for (const name of billingEnvironmentNames) {
+      delete process.env[name];
+    }
+    process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_placeholder";
+    process.env.STRIPE_PAID_MONTHLY_PRICE_ID = "price_test_paid_monthly";
+    process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID = "bpc_test";
+    process.env.PUBLIC_APP_BASE_URL = "https://app.example.test";
+
+    assert.deepEqual(requiredBillingConfiguration("checkout"), [
+      "STRIPE_PAID_YEARLY_PRICE_ID"
+    ]);
+    assert.deepEqual(billingRuntimeConfig("all"), {
+      ok: false,
+      error: {
+        status: 503,
+        code: "temporary_unavailable",
+        message:
+          "Billing configuration is missing required variable names: STRIPE_PAID_YEARLY_PRICE_ID."
+      }
+    });
+
+    process.env.STRIPE_PAID_YEARLY_PRICE_ID = "price_test_paid_yearly";
+    assert.deepEqual(billingRuntimeConfig("checkout"), {
+      ok: true,
+      data: config
+    });
+  } finally {
+    for (const name of billingEnvironmentNames) {
+      if (previous[name] === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = previous[name];
+      }
+    }
+  }
+});
+
 test("webhook billing configuration does not require the public app base URL", () => {
   const previous = Object.fromEntries(
     billingEnvironmentNames.map((name) => [name, process.env[name]])
@@ -90,7 +139,7 @@ test("webhook billing configuration does not require the public app base URL", (
       data: {
         secretKey: "sk_test_placeholder",
         webhookSecret: "whsec_placeholder",
-        priceId: "",
+        priceIds: { monthly: "", yearly: "" },
         portalConfigurationId: "",
         publicAppBaseUrl: ""
       }
@@ -129,7 +178,99 @@ test("billing API session returns a JSON-envelope auth error when signed out", a
   assert.equal(resolveCalls, 0);
 });
 
-test("checkout creates an account-scoped subscription session without exposing Stripe ids", async () => {
+test("checkout interval request parsing rejects malformed or unsupported bodies", async () => {
+  const invalidRequests = [
+    {
+      request: new Request("https://app.example.test/api/billing/checkout", {
+        method: "POST"
+      }),
+      status: 400,
+      code: "invalid_json"
+    },
+    {
+      request: new Request("https://app.example.test/api/billing/checkout", {
+        method: "POST",
+        body: "{"
+      }),
+      status: 400,
+      code: "invalid_json"
+    },
+    {
+      request: new Request("https://app.example.test/api/billing/checkout", {
+        method: "POST",
+        body: "null"
+      }),
+      status: 400,
+      code: "invalid_request"
+    },
+    {
+      request: new Request("https://app.example.test/api/billing/checkout", {
+        method: "POST",
+        body: "[]"
+      }),
+      status: 400,
+      code: "invalid_request"
+    },
+    {
+      request: new Request("https://app.example.test/api/billing/checkout", {
+        method: "POST",
+        body: JSON.stringify("monthly")
+      }),
+      status: 400,
+      code: "invalid_request"
+    },
+    {
+      request: new Request("https://app.example.test/api/billing/checkout", {
+        method: "POST",
+        body: JSON.stringify({ interval: "weekly" })
+      }),
+      status: 400,
+      code: "invalid_request"
+    },
+    {
+      request: new Request("https://app.example.test/api/billing/checkout", {
+        method: "POST",
+        body: JSON.stringify({
+          padding: "x".repeat(INPUT_REQUEST_BODY_BYTE_LIMIT)
+        })
+      }),
+      status: 413,
+      code: "request_too_large"
+    }
+  ];
+
+  for (const { request, status, code } of invalidRequests) {
+    const result = await checkoutIntervalFromRequest(request);
+    assert.equal(result.ok, false);
+    if (result.ok) {
+      assert.fail("expected checkout interval validation failure");
+    }
+    assert.equal(result.error.status, status);
+    assert.equal(result.error.code, code);
+    assert.doesNotMatch(JSON.stringify(result), /price_test|sk_test|whsec/);
+  }
+
+  assert.deepEqual(
+    await checkoutIntervalFromRequest(
+      new Request("https://app.example.test/api/billing/checkout", {
+        method: "POST",
+        body: JSON.stringify({ interval: "monthly" })
+      })
+    ),
+    { ok: true, data: "monthly" }
+  );
+  assert.deepEqual(
+    await checkoutIntervalFromRequest(
+      new Request("https://app.example.test/api/billing/checkout", {
+        method: "POST",
+        body: JSON.stringify({ interval: "yearly" })
+      })
+    ),
+    { ok: true, data: "yearly" }
+  );
+});
+
+test("monthly checkout creates an account-scoped subscription session without exposing Stripe ids", async () => {
   const calls = {
     contexts: /** @type {any[]} */ ([]),
     statements: /** @type {any[]} */ ([]),
@@ -154,6 +295,7 @@ test("checkout creates an account-scoped subscription session without exposing S
     accountId,
     userId,
     requestId: "req-billing-checkout",
+    interval: "monthly",
     config,
     stripe,
     async runTransaction(connectionString, context, callback) {
@@ -203,6 +345,91 @@ test("checkout creates an account-scoped subscription session without exposing S
   assert.doesNotMatch(JSON.stringify(result), /cus_|sub_|sk_test|whsec/);
 });
 
+test("yearly checkout uses the yearly Stripe price id", async () => {
+  const checkoutInputs = /** @type {any[]} */ ([]);
+  const result = await createCheckoutSessionForAccount({
+    connectionString: "postgresql://billing-test",
+    accountId,
+    userId,
+    requestId: "req-billing-checkout-yearly",
+    interval: "yearly",
+    config,
+    stripe: /** @type {any} */ ({
+      checkout: {
+        sessions: {
+          /** @param {any} input */
+          async create(input) {
+            checkoutInputs.push(input);
+            return { url: "https://checkout.stripe.test/yearly-session" };
+          }
+        }
+      },
+      billingPortal: { sessions: { async create() {} } },
+      webhooks: { constructEvent() {} }
+    }),
+    async runTransaction(_connectionString, _context, callback) {
+      return callback(
+        /** @type {any} */ (
+          async () =>
+            queryResult([
+              {
+                account_id: accountId,
+                tier: "hosted_free",
+                billing_status: "not_applicable",
+                stripe_customer_id: null
+              }
+            ])
+        )
+      );
+    }
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    data: { url: "https://checkout.stripe.test/yearly-session" }
+  });
+  assert.equal(checkoutInputs.length, 1);
+  assert.deepEqual(checkoutInputs[0].line_items, [
+    { price: "price_test_paid_yearly", quantity: 1 }
+  ]);
+});
+
+test("checkout rejects missing or unsupported intervals before billing work", async () => {
+  const invalidIntervals = [undefined, null, "", "weekly"];
+
+  for (const interval of invalidIntervals) {
+    const result = await createCheckoutSessionForAccount({
+      connectionString: "postgresql://billing-test",
+      accountId,
+      userId,
+      requestId: "req-billing-checkout-invalid-interval",
+      interval,
+      config,
+      stripe: /** @type {any} */ ({
+        checkout: {
+          sessions: {
+            async create() {
+              throw new Error("checkout should not be created");
+            }
+          }
+        },
+        billingPortal: { sessions: { async create() {} } },
+        webhooks: { constructEvent() {} }
+      }),
+      async runTransaction() {
+        throw new Error("account lookup should not run");
+      }
+    });
+
+    assert.equal(result.ok, false);
+    if (result.ok) {
+      assert.fail("expected checkout interval validation failure");
+    }
+    assert.equal(result.error.status, 400);
+    assert.equal(result.error.code, "invalid_request");
+  }
+});
+
 test("checkout rejects live billing accounts before creating another subscription", async () => {
   const checkoutInputs = /** @type {any[]} */ ([]);
   const result = await createCheckoutSessionForAccount({
@@ -210,6 +437,7 @@ test("checkout rejects live billing accounts before creating another subscriptio
     accountId,
     userId,
     requestId: "req-billing-checkout-live",
+    interval: "monthly",
     config,
     stripe: /** @type {any} */ ({
       checkout: {

@@ -95,11 +95,24 @@ Behavior:
 
 - Requires a signed-in human with Agent Outbox account membership.
 - Creates a Stripe Checkout subscription session for the initial hosted paid
-  tier.
+  tier using the requested billing interval.
+- Requires a JSON body with `interval` set to `monthly` for `$5/mo` checkout or
+  `yearly` for `$50/year` checkout; empty or malformed JSON returns
+  `invalid_json`, oversized JSON returns `request_too_large`, and valid JSON
+  with a missing interval, non-object body, or unsupported interval returns
+  `invalid_request`.
 - Uses the Agent Outbox account id as Stripe checkout metadata so webhook events
   can synchronize app billing state.
 - Returns a hosted Stripe URL; callers and CLI commands do not receive Stripe
   ids.
+
+Body:
+
+```json
+{
+  "interval": "monthly"
+}
+```
 
 Success `data`:
 
