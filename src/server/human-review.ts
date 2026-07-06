@@ -201,6 +201,12 @@ export async function humanReviewDetailInTransaction(
     optionsByActionId.set(option.input_action_id, actionOptions);
   }
 
+  const accountStatus = await accountStatusInTransaction(query, {
+    accountId: context.accountId,
+    callerId: ""
+  });
+  const fileUploadAnswerable =
+    accountStatus.ok && accountStatus.data.file_upload_enabled;
   const base = reviewListRowFromDatabase(row);
   return {
     ...base,
@@ -220,7 +226,8 @@ export async function humanReviewDetailInTransaction(
       popupKind: action.popup_kind,
       popupPayload: jsonValue(action.popup_payload),
       answerable:
-        row.status === "pending" && action.popup_kind !== "file_upload",
+        row.status === "pending" &&
+        (action.popup_kind !== "file_upload" || fileUploadAnswerable),
       options: optionsByActionId.get(action.input_action_id) ?? []
     }))
   };

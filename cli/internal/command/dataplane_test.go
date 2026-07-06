@@ -173,10 +173,10 @@ func TestOutputReadAllAutoPagesWithPostBodies(t *testing.T) {
 		bodies = append(bodies, body)
 		w.Header().Set("Content-Type", "application/json")
 		if body["cursor"] == nil {
-			_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[{"output_result_id":"out_1","caller_id":"caller_123","caller_item_id":"item_1","action_value":"approve","response":{"kind":"none"},"answered_at":"2026-07-02T20:00:00Z","answered_by":"user_123"}],"has_more":true,"next_cursor":"cursor_2","returned_count":1,"page_limit":1}}`)
+			_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[{"output_result_id":"out_1","caller_id":"caller_123","caller_item_id":"item_1","action_value":"approve","response":{"kind":"none"},"answered_at":"2026-07-02T20:00:00Z","answered_by":"user_123"}],"unavailable_outputs":[{"output_result_id":"out_bad","code":"temporary_unavailable","message":"Output file metadata is temporarily unavailable."}],"unavailable_count":1,"has_more":true,"next_cursor":"cursor_2","returned_count":1,"page_limit":1}}`)
 			return
 		}
-		_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[{"output_result_id":"out_2","caller_id":"caller_123","caller_item_id":"item_2","action_value":"reject","response":{"kind":"none"},"answered_at":"2026-07-02T20:01:00Z","answered_by":"user_123"}],"has_more":false,"next_cursor":null,"returned_count":1,"page_limit":1}}`)
+		_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[{"output_result_id":"out_2","caller_id":"caller_123","caller_item_id":"item_2","action_value":"reject","response":{"kind":"none"},"answered_at":"2026-07-02T20:01:00Z","answered_by":"user_123"}],"unavailable_outputs":[],"unavailable_count":0,"has_more":false,"next_cursor":null,"returned_count":1,"page_limit":1}}`)
 	}))
 	defer server.Close()
 
@@ -195,6 +195,53 @@ func TestOutputReadAllAutoPagesWithPostBodies(t *testing.T) {
 	}
 	if strings.Contains(stdout, "file bytes") {
 		t.Fatalf("read-all output unexpectedly contained raw bytes")
+	}
+	payload := decodeCommandJSON(t, stdout)
+	data := payload["data"].(map[string]any)
+	unavailable := data["unavailable_outputs"].([]any)
+	if len(unavailable) != 1 || data["unavailable_count"] != float64(1) {
+		t.Fatalf("unavailable data = %#v", data)
+	}
+}
+
+func TestOutputReadAllTextWarnsForUnavailableOutputs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[],"unavailable_outputs":[{"output_result_id":"out_bad","code":"temporary_unavailable","message":"Output file metadata is temporarily unavailable."}],"unavailable_count":1,"has_more":false,"next_cursor":null,"returned_count":0,"page_limit":1}}`)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"output", "read", "--all", "--page-size", "1"})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "1 output result(s) were temporarily unavailable") {
+		t.Fatalf("stderr missing unavailable warning: %s", stderr)
+	}
+	if !strings.Contains(stdout, "no output ready") {
+		t.Fatalf("stdout = %s", stdout)
+	}
+}
+
+func TestOutputReadAllJSONPreservesZeroUnavailableFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[],"unavailable_outputs":[],"unavailable_count":0,"has_more":false,"next_cursor":null,"returned_count":0,"page_limit":25}}`)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "output", "read", "--all"})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+
+	payload := decodeCommandJSON(t, stdout)
+	data := payload["data"].(map[string]any)
+	if unavailable, ok := data["unavailable_outputs"].([]any); !ok || len(unavailable) != 0 {
+		t.Fatalf("unavailable_outputs = %#v", data["unavailable_outputs"])
+	}
+	if count, ok := data["unavailable_count"].(float64); !ok || count != 0 {
+		t.Fatalf("unavailable_count = %#v", data["unavailable_count"])
 	}
 }
 

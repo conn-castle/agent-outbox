@@ -266,6 +266,58 @@ test("read all marks only returned output rows and exposes pagination", async ()
   assert.match(query.calls[0].sql, /for update/i);
 });
 
+test("read all reports unavailable file rows without marking them read", async () => {
+  const query = fakeQuery([
+    [
+      outputRow({
+        response_kind: "file_upload",
+        response_payload: {}
+      }),
+      outputRow({
+        output_result_id: outputTwoId,
+        caller_item_id: "email:thread_456",
+        response_payload: { text: "Second output." },
+        answered_at: "2026-06-30T12:01:00.000Z"
+      })
+    ],
+    [],
+    []
+  ]);
+
+  const result = await readAllOutputPageInTransaction(query, identity, 2, null);
+
+  assert.equal(result.ok, true);
+  if (
+    !result.ok ||
+    !("items" in result.data) ||
+    !("unavailable_outputs" in result.data)
+  ) {
+    assert.fail("expected output read page");
+  }
+  const data =
+    /** @type {import("../src/server/output-queue.ts").OutputReadPage} */ (
+      result.data
+    );
+  assert.deepEqual(
+    data.items.map((item) => item.output_result_id),
+    [outputTwoId]
+  );
+  assert.deepEqual(data.unavailable_outputs, [
+    {
+      output_result_id: outputOneId,
+      code: "temporary_unavailable",
+      message: "Output file metadata is temporarily unavailable."
+    }
+  ]);
+  assert.equal(data.unavailable_count, 1);
+  assert.equal(data.returned_count, 1);
+  assert.deepEqual(query.calls[2].values, [
+    identity.accountId,
+    identity.callerId,
+    outputTwoId
+  ]);
+});
+
 test("read one preserves authoritative response kind over payload keys", async () => {
   const query = fakeQuery([
     [

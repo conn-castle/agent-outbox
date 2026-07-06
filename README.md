@@ -39,9 +39,10 @@ The current repository implements:
   and runtime canaries
 - Account-scoped Stripe checkout, billing portal, webhook idempotency, billing
   grace state, and scheduled downgrade cleanup foundations
+- Paid/self-hosted file-upload inputs, human upload answers, metadata-only
+  output reads, caller-authorized raw-byte downloads, and Postgres-backed file
+  deletion audit paths
 - Sentry, Cloudflare, and Supabase/Postgres-backed observability foundations
-
-The paid file-upload workflow is a later Phase 7 package item.
 
 The hosted service has one app/API origin. Caller API routes live under
 `https://app.agent-outbox.dev/api/...`.
@@ -275,8 +276,9 @@ Implemented CLI areas:
 - `docs [topic]`, `doctor [--caller]`, `upgrade`, `version`, and `--version`
 
 Billing behind the hosted upgrade page is implemented through Stripe checkout,
-portal sessions, and signed webhooks. Paid file uploads remain later roadmap
-work.
+portal sessions, and signed webhooks. Paid/self-hosted file uploads use
+Postgres-backed output-file rows and the dedicated caller-authorized download
+route.
 
 ## Product Boundaries
 
@@ -296,11 +298,10 @@ triage, messaging workflows, local automations, and future agent systems.
 
 The target hosted product runs as one Next.js application on Cloudflare Workers
 through OpenNext. Supabase Postgres stores accounts, callers, live queues,
-output results, file bytes when file workflows exist, quotas, active limit
-blocks, and audit events. Clerk provides human authentication. Stripe billing is
-account-scoped through checkout, portal sessions, and signed webhooks. Paid file
-workflows are scheduled for later Phase 7 work. Sentry plus service-native logs
-cover observability.
+output results, paid upload file bytes, quotas, active limit blocks, and audit
+events. Clerk provides human authentication. Stripe billing is account-scoped
+through checkout, portal sessions, and signed webhooks. Sentry plus
+service-native logs cover observability.
 
 ## Self-Hosting
 

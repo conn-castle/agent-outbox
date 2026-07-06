@@ -146,6 +146,8 @@ or shorten timeout windows.
       "answered_by": "user_123"
     }
   ],
+  "unavailable_outputs": [],
+  "unavailable_count": 0,
   "has_more": false,
   "next_cursor": null,
   "returned_count": 1,
@@ -153,7 +155,22 @@ or shorten timeout windows.
 }
 ```
 
-Read-all marks only returned results as read.
+Read-all marks only returned results as read. If one scanned `file_upload` row
+cannot materialize safe file metadata, read-all still returns HTTP 200 with the
+successfully materialized `items`, advances the cursor over the scanned row, and
+adds a filename-free entry to top-level `unavailable_outputs`:
+
+```json
+{
+  "output_result_id": "out_456",
+  "code": "temporary_unavailable",
+  "message": "Output file metadata is temporarily unavailable."
+}
+```
+
+`unavailable_count` equals `unavailable_outputs.length`. `returned_count`
+continues to count only `items.length`; unavailable rows remain unread and may
+be retried by explicit output id or a later read-all call.
 
 ## Pagination
 
@@ -168,6 +185,7 @@ Output check and read-all are cursor-paginated.
 - `has_more`, `next_cursor`, `returned_count`, and `page_limit` are always
   present.
 - `output check` also includes `ready_count`.
+- `output read-all` also includes `unavailable_outputs` and `unavailable_count`.
 - If `has_more` is `true`, `next_cursor` is present.
 - If `has_more` is `false`, `next_cursor` is `null`.
 
@@ -187,8 +205,9 @@ debugging and bounded reads.
   caller.
 - Output delivery is at least once. The same result can be returned repeatedly
   until acknowledged.
-- The first successful read response that includes an `output_result_id` marks
-  that result as read and disables human undo.
+- The first successful single-output read response, or read-all `items` entry,
+  marks that result as read and disables human undo. Read-all
+  `unavailable_outputs` entries do not mark those results read.
 - Callers must treat `output_result_id` as their idempotency key.
 - Callers should acknowledge only after downstream handling is durable.
 - Acknowledgement deletes the live output result, attached file rows/bytes, and

@@ -16,7 +16,7 @@ import {
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
  * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {{ inputRows?: QueryResultRow[], actionRows?: QueryResultRow[], optionRows?: QueryResultRow[], outputRows?: QueryResultRow[], preReadRows?: QueryResultRow[], undoRows?: QueryResultRow[] }} HumanAnswerMockRows
+ * @typedef {{ inputRows?: QueryResultRow[], actionRows?: QueryResultRow[], optionRows?: QueryResultRow[], accountTierRows?: QueryResultRow[], advisoryLockRows?: QueryResultRow[], accountStockUsageRows?: QueryResultRow[], outputRows?: QueryResultRow[], outputFileRows?: QueryResultRow[], preReadRows?: QueryResultRow[], undoRows?: QueryResultRow[] }} HumanAnswerMockRows
  * @typedef {{ accountId: string, userId: string, callerId: string, inputItemId: string, actionId: string }} HumanAnswerDatabaseIds
  */
 
@@ -179,6 +179,61 @@ test("human answer response validation enforces selected popup options and bound
   assert.equal(oversizedText.code, "request_too_large");
 });
 
+test("human answer response validation accepts one matching uploaded file", () => {
+  const file = new File(["file bytes"], "receipt.pdf", {
+    type: "application/pdf"
+  });
+  const result = validatedResponsePayload(
+    {
+      popupKind: "file_upload",
+      popupPayload: {
+        accept_mime_types: ["application/*"]
+      },
+      optionValues: []
+    },
+    { kind: "file_upload", file }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.responseKind : null, "file_upload");
+  assert.equal(result.ok ? result.responsePayloadBytes : null, 2);
+
+  const rejected = validatedResponsePayload(
+    {
+      popupKind: "file_upload",
+      popupPayload: {
+        accept_mime_types: ["image/png"]
+      },
+      optionValues: []
+    },
+    { kind: "file_upload", file }
+  );
+  assert.equal(rejected.ok, false);
+  assert.equal(
+    rejected.ok ? null : rejected.fields?.[0]?.path,
+    "response.file"
+  );
+});
+
+test("human answer response validation fails closed for malformed file upload MIME policy", () => {
+  const file = new File(["file bytes"], "receipt.pdf", {
+    type: "application/pdf"
+  });
+  const result = validatedResponsePayload(
+    {
+      popupKind: "file_upload",
+      popupPayload: {
+        accept_mime_types: ["not-a-mime-pattern"]
+      },
+      optionValues: []
+    },
+    { kind: "file_upload", file }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? null : result.code, "temporary_unavailable");
+});
+
 test("human answer response validation rejects impossible and sub-millisecond datetime responses", () => {
   const action = {
     popupKind: /** @type {"date_picker"} */ ("date_picker"),
@@ -339,6 +394,143 @@ test("human answer service creates one output and audit rows without raw answer 
       return JSON.parse(metadata);
     }),
     [{ revision: 3 }, { revision: 3 }]
+  );
+});
+
+test("human answer service stores uploaded bytes in one output file row and content-safe audits", async () => {
+  /** @type {TransactionContextStatement[]} */
+  const calls = [];
+  const file = new File(["uploaded bytes"], "invoice:Q3.html", {
+    type: "text/html"
+  });
+  const result = await createHumanAnswerInTransaction(
+    mockQuery(calls, {
+      inputRows: [
+        {
+          input_item_id: baseAnswerInput.inputItemId,
+          caller_item_id: "caller-item-1",
+          caller_item_id_hash: "hash-1",
+          status: "pending",
+          current_revision: 3,
+          non_file_payload_bytes: "100",
+          account_audit_id: "audit-account-1",
+          caller_audit_id: "audit-caller-1"
+        }
+      ],
+      actionRows: [
+        {
+          input_action_id: "action-1",
+          popup_kind: "file_upload",
+          popup_payload: { accept_mime_types: ["text/*"] }
+        }
+      ],
+      accountTierRows: [{ tier: "hosted_paid" }],
+      advisoryLockRows: [{ acquired: true }],
+      accountStockUsageRows: [
+        {
+          queued_input_items: "1",
+          non_file_stored_bytes: "100",
+          overall_stored_bytes: "100"
+        }
+      ],
+      outputRows: [{ output_result_id: "output-1" }],
+      outputFileRows: [{ output_file_id: "file-1" }]
+    }),
+    {
+      ...baseAnswerInput,
+      response: { kind: "file_upload", file }
+    }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.responseKind : null, "file_upload");
+  assert.deepEqual(result.ok ? result.responsePayload : null, {
+    kind: "file_upload",
+    file: {
+      file_id: "file-1",
+      filename: "invoice_Q3.html",
+      mime_type: "application/octet-stream",
+      size_bytes: 14,
+      sha256: "b467a58745eb669cb9b2ac392cdc6871edb391065b2c3d652ffe8593500dca5b"
+    }
+  });
+
+  const fileInsert = calls.find((call) =>
+    call.sql.includes("insert into public.agent_outbox_output_files")
+  );
+  assert.ok(fileInsert);
+  assert.equal(fileInsert.values?.[3], "invoice_Q3.html");
+  assert.equal(fileInsert.values?.[4], "application/octet-stream");
+  assert.equal(fileInsert.values?.[5], 14);
+  assert.ok(Buffer.isBuffer(fileInsert.values?.[7]));
+
+  const auditCalls = calls.filter((call) =>
+    call.sql.includes("insert into public.agent_outbox_audit_events")
+  );
+  assert.deepEqual(
+    auditCalls.map((call) => call.values?.[0]),
+    ["input_answered", "output_created", "file_uploaded"]
+  );
+  assert.doesNotMatch(JSON.stringify(auditCalls), /invoice|uploaded bytes/);
+  assert.equal(auditCalls[2].values?.[9], 14);
+});
+
+test("human answer service rejects oversized uploaded files before reading bytes", async () => {
+  /** @type {TransactionContextStatement[]} */
+  const calls = [];
+  let readAttempted = false;
+
+  class OversizedFile extends File {
+    get size() {
+      return 32_000_001;
+    }
+
+    async arrayBuffer() {
+      readAttempted = true;
+      return new ArrayBuffer(0);
+    }
+  }
+
+  const file = new OversizedFile(["x"], "oversized.txt", {
+    type: "text/plain"
+  });
+  const result = await createHumanAnswerInTransaction(
+    mockQuery(calls, {
+      inputRows: [
+        {
+          input_item_id: baseAnswerInput.inputItemId,
+          caller_item_id: "caller-item-1",
+          caller_item_id_hash: "hash-1",
+          status: "pending",
+          current_revision: 3,
+          non_file_payload_bytes: "100",
+          account_audit_id: "audit-account-1",
+          caller_audit_id: "audit-caller-1"
+        }
+      ],
+      actionRows: [
+        {
+          input_action_id: "action-1",
+          popup_kind: "file_upload",
+          popup_payload: { accept_mime_types: ["text/plain"] }
+        }
+      ],
+      accountTierRows: [{ tier: "hosted_paid" }]
+    }),
+    {
+      ...baseAnswerInput,
+      response: { kind: "file_upload", file }
+    }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? null : result.code, "request_too_large");
+  assert.equal(readAttempted, false);
+  assert.equal(
+    calls.some((call) =>
+      call.sql.includes("insert into public.agent_outbox_output_results")
+    ),
+    false
   );
 });
 
@@ -550,9 +742,35 @@ function mockQuery(calls, rowsByKind) {
       return queryResult(rowsByKind.optionRows ?? []);
     }
     if (
+      statement.sql.includes("select tier from public.agent_outbox_accounts")
+    ) {
+      return queryResult(rowsByKind.accountTierRows ?? []);
+    }
+    if (statement.sql.includes("agent_outbox_account_limit_blocks")) {
+      return queryResult([]);
+    }
+    if (statement.sql.includes("pg_try_advisory_xact_lock")) {
+      return queryResult(rowsByKind.advisoryLockRows ?? []);
+    }
+    if (
+      statement.sql.includes(
+        "select account_id::text from public.agent_outbox_accounts"
+      )
+    ) {
+      return queryResult([]);
+    }
+    if (statement.sql.includes("agent_outbox_account_stock_usage")) {
+      return queryResult(rowsByKind.accountStockUsageRows ?? []);
+    }
+    if (
       statement.sql.includes("insert into public.agent_outbox_output_results")
     ) {
       return queryResult(rowsByKind.outputRows ?? []);
+    }
+    if (
+      statement.sql.includes("insert into public.agent_outbox_output_files")
+    ) {
+      return queryResult(rowsByKind.outputFileRows ?? []);
     }
     if (statement.sql.includes("from public.agent_outbox_output_results")) {
       return queryResult(rowsByKind.preReadRows ?? []);

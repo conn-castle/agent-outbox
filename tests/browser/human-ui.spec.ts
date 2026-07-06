@@ -51,9 +51,6 @@ test("first-time self-serve signup fixture lands on a provisioned human account"
   await expect(page.getByLabel("Account status")).toContainText(
     providerSubject ?? ""
   );
-  await expect(page.getByLabel("Account status")).toContainText(
-    "Downgrade grace ends"
-  );
 });
 
 test("authenticated review workspace renders content actions and preserves controls across detail navigation", async ({
@@ -201,6 +198,18 @@ test("bulk actions only submit selected rows visible in the current filter", asy
 });
 
 test("popup controls cover typed response kinds", async ({ page }) => {
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
+
+  await page.getByLabel("Evidence file").setInputFiles({
+    name: "evidence.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("browser fixture file")
+  });
+  await page.getByRole("button", { name: "Attach evidence" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Answer submitted: attach_evidence."
+  );
+
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
   await page

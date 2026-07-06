@@ -6,6 +6,7 @@ import {
   concurrencySlotStatement,
   enforceAcceptedInputSubmissionLimits,
   enforceCallerRequestLimits,
+  enforceHumanFileUploadLimits,
   incrementQuotaWindowStatement
 } from "../src/server/caller-api-limits.ts";
 
@@ -639,6 +640,60 @@ test("accepted input submission limits pre-check quota windows once before incre
   );
   assert.equal(quotaUsageReads.length, 3);
   assert.equal(quotaIncrements.length, 3);
+});
+
+test("human file upload limits use file enablement concurrency and overall storage", async () => {
+  const freeQuery = fakeQuery([[]]);
+  const freeResult = await enforceHumanFileUploadLimits(
+    freeQuery,
+    identity,
+    "hosted-free",
+    1
+  );
+
+  assert.equal(freeResult.ok, false);
+  assert.equal(freeResult.error.code, "upgrade_required");
+  assert.equal(
+    freeResult.error.limit && "limit_name" in freeResult.error.limit
+      ? freeResult.error.limit.limit_name
+      : null,
+    "file_upload_enabled"
+  );
+
+  const storageQuery = fakeQuery([
+    [],
+    [{ acquired: true }],
+    [],
+    [
+      {
+        queued_input_items: "0",
+        non_file_stored_bytes: "0",
+        overall_stored_bytes: "999999990"
+      }
+    ],
+    []
+  ]);
+  const storageResult = await enforceHumanFileUploadLimits(
+    storageQuery,
+    identity,
+    "hosted-paid",
+    20
+  );
+
+  assert.equal(storageResult.ok, false);
+  assert.equal(storageResult.error.code, "storage_limit_exceeded");
+  assert.equal(
+    storageResult.error.limit && "limit_name" in storageResult.error.limit
+      ? storageResult.error.limit.limit_name
+      : null,
+    "overall_stored_account_data_bytes"
+  );
+  assert.equal(
+    storageQuery.calls[1].values?.[2],
+    "concurrent_file_uploading_requests_per_account"
+  );
+  assert.match(storageQuery.calls[2].sql, /for update/);
+  assert.match(storageQuery.calls[4].sql, /agent_outbox_account_limit_blocks/);
 });
 
 test("quota statement builders scope rows to account metric and window", () => {

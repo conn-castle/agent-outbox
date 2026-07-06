@@ -171,8 +171,13 @@ function responseFromForm(
       }
       return null;
     }
-    case "file_upload":
-      return null;
+    case "file_upload": {
+      const values = formData.getAll("response.file");
+      const file = values[0];
+      return values.length === 1 && file instanceof File && file.size > 0
+        ? { kind: "file_upload", file }
+        : null;
+    }
   }
 }
 
