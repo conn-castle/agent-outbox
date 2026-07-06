@@ -6,10 +6,8 @@ output-file download, human-approved caller connect, rotation, revocation,
 disconnect-with-revoke control-plane contracts, and account-scoped billing
 checkout/portal/webhook contracts. Schema details live in
 [input-schema.md](input-schema.md), [output-schema.md](output-schema.md), and
-[errors.md](errors.md).
-
-Paid file-upload handling remains a future HTTP contract. The CLI `upgrade`
-command is local-only: it opens the selected app origin plus `/upgrade`.
+[errors.md](errors.md). The CLI `upgrade` command is local-only: it opens the
+selected app origin plus `/upgrade`.
 
 ## Base URL
 
@@ -317,8 +315,11 @@ Body:
 Behavior:
 
 - Returns a cursor-paginated page of full output payloads.
-- Marks only returned results as read.
+- Marks only returned `items` as read.
 - Uses the same ordering and pagination rules as output check.
+- Adds top-level `unavailable_outputs` and `unavailable_count` when a scanned
+  file-upload row cannot materialize safe metadata; unavailable entries do not
+  include filenames, MIME types, bytes, caller content, or raw payloads.
 
 Success `data` is the paginated output-read envelope in
 [output-schema.md](output-schema.md#output-read-page).

@@ -153,10 +153,10 @@ configured range.
 `accept_mime_types` is either omitted/null or a non-empty list of valid MIME
 type patterns. Hosted-free callers cannot submit `file_upload` actions; the
 server returns `upgrade_required` with
-`limit_reason_code: file_upload_upgrade_required`. Until the paid upload
-workflow is implemented, paid/self-hosted `file_upload` input actions fail loud
-with `temporary_unavailable` rather than creating inputs that cannot be
-answered.
+`limit_reason_code: file_upload_upgrade_required`. Paid hosted and self-hosted
+callers can submit `file_upload` actions; the human answer path validates
+exactly one uploaded file against the popup MIME allow-list and canonical file
+upload limits before storing bytes.
 
 ## Card Visuals
 
@@ -213,6 +213,8 @@ including `url()`, `var()`, `calc()`, and browser-specific expression syntax.
 ## Limits
 
 - Input submission request body: 128,000 bytes before file upload payloads.
+- Human uploaded raw file bytes: 32,000,000 bytes per file on paid/self-hosted
+  profiles.
 - `link_buttons`: maximum 32.
 - `actions`: 1 to 32.
 - Select popup options: 1 to 64.

@@ -3,6 +3,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "34mb"
+    }
+  },
   outputFileTracingIncludes: {
     "/*": [
       "./node_modules/pg-cloudflare/dist/index.js",

@@ -38,8 +38,8 @@ export function browserFixtureHumanSession(
     account: {
       accountId,
       label: `Browser fixture account: ${providerSubject}`,
-      tier: "hosted_free",
-      billingStatus: "not_applicable",
+      tier: "hosted_paid",
+      billingStatus: "active",
       billingGraceEndsAt: null
     }
   };
@@ -69,15 +69,15 @@ export function browserFixtureAccountBanner(
     data: {
       account_id: session.accountId,
       label: session.account.label,
-      tier: "hosted_free",
-      effective_tier: "free",
-      billing_status: "grace",
-      grace_ends_at: "2026-07-07T00:00:00.000Z",
-      file_upload_enabled: false,
+      tier: "hosted_paid",
+      effective_tier: "paid",
+      billing_status: "active",
+      grace_ends_at: null,
+      file_upload_enabled: true,
       storage: {
         stored_bytes: 24_000,
-        limit_name: "stored_non_file_queue_payload_bytes",
-        limit_bytes: 10_000_000
+        limit_name: "overall_stored_account_data_bytes",
+        limit_bytes: 1_000_000_000
       },
       active_limit_blocks: []
     }
@@ -181,6 +181,20 @@ function browserFixtureReviewDetails(): HumanReviewDetail[] {
         },
         {
           displayOrder: 2,
+          display: "Attach evidence",
+          icon: "upload",
+          value: "attach_evidence",
+          overflow: false,
+          popupKind: "file_upload",
+          popupPayload: {
+            label: "Evidence file",
+            accept_mime_types: ["application/pdf", "text/plain"]
+          },
+          answerable: true,
+          options: []
+        },
+        {
+          displayOrder: 3,
           display: "Set review lane",
           icon: "chevron-down",
           value: "set_lane",

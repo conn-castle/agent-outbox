@@ -1,9 +1,14 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 
 import {
   auditSafeLifecycleEvent,
   type AuditSafeLifecycleEvent
 } from "./accounting.ts";
+import {
+  accountLimitProfileForAccount,
+  enforceHumanFileUploadLimits
+} from "./caller-api-limits.ts";
 import { preReadUndoStatement } from "./cleanup.ts";
 import {
   runProductTransaction,
@@ -16,6 +21,7 @@ import {
   isIanaTimeZone,
   isValidUtcDateTime
 } from "./input-schema.ts";
+import { safeAttachmentFilename, safeContentType } from "./output-files.ts";
 
 export const HUMAN_ANSWER_RESPONSE_BYTE_LIMIT = 128_000;
 export const UNACKNOWLEDGED_OUTPUT_TIMEOUT_DAYS = 14;
@@ -74,7 +80,7 @@ export type UploadedFileResponse = {
 
 export type FileUploadResponse = {
   kind: "file_upload";
-  file: UploadedFileResponse;
+  file: File;
 };
 
 export type HumanActionResponse =
@@ -166,6 +172,10 @@ type OutputInsertRow = {
   output_result_id: string;
 };
 
+type OutputFileInsertRow = {
+  output_file_id: string;
+};
+
 type PreReadUndoCandidateRow = {
   output_result_id: string;
   first_read_at: Date | string | null;
@@ -182,6 +192,7 @@ type StoredPayload = {
   responseKind: OutputResponseKind;
   responsePayload: JsonValue;
   responsePayloadBytes: number;
+  file?: File;
 };
 
 type PopupActionForValidation = {
@@ -267,6 +278,11 @@ export async function createHumanAnswerInTransaction(
     return payloadResult;
   }
 
+  const upload = await preparedFileUpload(query, input, payloadResult);
+  if (!upload.ok) {
+    return upload;
+  }
+
   const outputResult = await query<OutputInsertRow>(
     createOutputResultStatement({
       input,
@@ -276,11 +292,34 @@ export async function createHumanAnswerInTransaction(
     })
   );
   const outputResultId = outputResult.rows[0].output_result_id;
+  let uploadedFile: {
+    outputFileId: string;
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+    sha256: string;
+  } | null = null;
+  if (upload.file) {
+    const insertedFile = await query<OutputFileInsertRow>(
+      createOutputFileStatement({
+        input,
+        outputResultId,
+        file: upload.file
+      })
+    );
+    uploadedFile = {
+      outputFileId: insertedFile.rows[0].output_file_id,
+      filename: upload.file.filename,
+      mimeType: upload.file.mimeType,
+      sizeBytes: upload.file.sizeBytes,
+      sha256: upload.file.sha256
+    };
+  }
 
   await query(markInputAnsweredStatement(input.inputItemId, answeredAt));
 
   const expiresAt = outputExpiresAt(answeredAt);
-  const auditEvents = [
+  const auditEvents: AuditSafeLifecycleEvent[] = [
     auditSafeLifecycleEvent({
       eventType: "input_answered",
       accountAuditId: targetInput.account_audit_id,
@@ -310,6 +349,25 @@ export async function createHumanAnswerInTransaction(
       metadata: { revision: targetInput.current_revision }
     })
   ];
+  if (uploadedFile) {
+    auditEvents.push(
+      auditSafeLifecycleEvent({
+        eventType: "file_uploaded",
+        accountAuditId: targetInput.account_audit_id,
+        callerAuditId: targetInput.caller_audit_id,
+        inputItemId: targetInput.input_item_id,
+        outputResultId,
+        outputFileId: uploadedFile.outputFileId,
+        itemStatus: "answered",
+        responseKind: "file_upload",
+        fileBytes: uploadedFile.sizeBytes,
+        requestId: input.requestId,
+        correlationId: input.correlationId,
+        callerItemIdHash: targetInput.caller_item_id_hash,
+        metadata: { revision: targetInput.current_revision }
+      })
+    );
+  }
 
   for (const event of auditEvents) {
     await query(insertAuditEventStatement(event));
@@ -322,7 +380,18 @@ export async function createHumanAnswerInTransaction(
     callerItemId: targetInput.caller_item_id,
     actionValue: input.actionValue,
     responseKind: payloadResult.responseKind,
-    responsePayload: payloadResult.responsePayload,
+    responsePayload: uploadedFile
+      ? {
+          kind: "file_upload",
+          file: {
+            file_id: uploadedFile.outputFileId,
+            filename: uploadedFile.filename,
+            mime_type: uploadedFile.mimeType,
+            size_bytes: uploadedFile.sizeBytes,
+            sha256: uploadedFile.sha256
+          }
+        }
+      : payloadResult.responsePayload,
     responsePayloadBytes: payloadResult.responsePayloadBytes,
     answeredAt: timestampValue(answeredAt),
     expiresAt: timestampValue(expiresAt)
@@ -504,11 +573,79 @@ export function validatedResponsePayload(
       return validateDatePickerResponse(action.popupPayload, response);
 
     case "file_upload":
-      return invalidActionResponse(
-        "response.kind",
-        "File upload answers require the dedicated file workflow."
-      );
+      return validateFileUploadResponse(action.popupPayload, response);
   }
+}
+
+async function preparedFileUpload(
+  query: ProductTransactionQuery,
+  input: CreateHumanAnswerInput,
+  payload: StoredPayload
+): Promise<
+  | {
+      ok: true;
+      file: {
+        filename: string;
+        mimeType: string;
+        sizeBytes: number;
+        sha256: string;
+        bytes: Buffer;
+      } | null;
+    }
+  | HumanAnswerFailure
+> {
+  if (payload.responseKind !== "file_upload") {
+    return { ok: true, file: null };
+  }
+  const file = payload.file as File;
+
+  const profile = await accountLimitProfileForAccount(query, input.accountId);
+  if (!profile) {
+    return failure(
+      "temporary_unavailable",
+      "File upload is temporarily unavailable."
+    );
+  }
+  const limits = await enforceHumanFileUploadLimits(
+    query,
+    { accountId: input.accountId, callerId: input.callerId },
+    profile,
+    file.size
+  );
+  if (!limits.ok) {
+    return {
+      ok: false,
+      code: limits.error.code,
+      message: limits.error.message
+    };
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(await file.arrayBuffer());
+  } catch {
+    return failure(
+      "temporary_unavailable",
+      "Uploaded file could not be read safely."
+    );
+  }
+  if (bytes.byteLength !== file.size) {
+    return failure(
+      "temporary_unavailable",
+      "Uploaded file could not be read safely."
+    );
+  }
+
+  return {
+    ok: true,
+    file: {
+      filename: safeAttachmentFilename(file.name),
+      mimeType: safeContentType(file.type),
+      sizeBytes: file.size,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes
+    }
+  };
 }
 
 function createOutputResultStatement(input: {
@@ -567,6 +704,46 @@ function markInputAnsweredStatement(
       where input_item_id = $1
     `,
     values: [inputItemId, timestampValue(answeredAt)]
+  };
+}
+
+function createOutputFileStatement(input: {
+  input: CreateHumanAnswerInput;
+  outputResultId: string;
+  file: {
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+    sha256: string;
+    bytes: Buffer;
+  };
+}): TransactionContextStatement {
+  return {
+    sql: `
+      insert into public.agent_outbox_output_files(
+        output_result_id,
+        account_id,
+        caller_id,
+        display_order,
+        filename,
+        mime_type,
+        size_bytes,
+        sha256,
+        file_bytes
+      )
+      values ($1, $2, $3, 0, $4, $5, $6, $7, $8)
+      returning output_file_id::text as output_file_id
+    `,
+    values: [
+      input.outputResultId,
+      input.input.accountId,
+      input.input.callerId,
+      input.file.filename,
+      input.file.mimeType,
+      input.file.sizeBytes,
+      input.file.sha256,
+      input.file.bytes
+    ]
   };
 }
 
@@ -865,6 +1042,55 @@ function validateDatePickerResponse(
   });
 }
 
+function validateFileUploadResponse(
+  popupPayload: unknown,
+  response: Record<string, unknown>
+): StoredPayload | HumanAnswerFailure {
+  if (!(response.file instanceof File)) {
+    return invalidActionResponse(
+      "response.file",
+      "File-upload responses require one uploaded file."
+    );
+  }
+  if (response.file.size <= 0) {
+    return invalidActionResponse(
+      "response.file",
+      "File-upload responses require a non-empty uploaded file."
+    );
+  }
+  if (!Number.isSafeInteger(response.file.size)) {
+    return invalidActionResponse(
+      "response.file",
+      "Uploaded file size is outside the supported range."
+    );
+  }
+
+  const mimeType = normalizeMimeType(response.file.type);
+  const accepted = acceptedMimeTypes(popupPayload);
+  if (!accepted.ok) {
+    return failure(
+      "temporary_unavailable",
+      "File-upload action configuration is temporarily unavailable."
+    );
+  }
+  if (
+    accepted.patterns.length > 0 &&
+    (!mimeType ||
+      !accepted.patterns.some((pattern) =>
+        pattern.endsWith("/*")
+          ? mimeType.startsWith(pattern.slice(0, -1))
+          : mimeType === pattern
+      ))
+  ) {
+    return invalidActionResponse(
+      "response.file",
+      "Uploaded file MIME type is not accepted by the selected action."
+    );
+  }
+
+  return storedPayload("file_upload", {}, response.file);
+}
+
 function validateDateRange(
   value: string,
   minValue: string | null,
@@ -919,7 +1145,8 @@ function validateDateTimeRange(
 
 function storedPayload(
   responseKind: OutputResponseKind,
-  responsePayload: JsonValue
+  responsePayload: JsonValue,
+  file?: File
 ): StoredPayload | HumanAnswerFailure {
   const serialized = JSON.stringify(responsePayload);
 
@@ -935,7 +1162,8 @@ function storedPayload(
     ok: true,
     responseKind,
     responsePayload,
-    responsePayloadBytes
+    responsePayloadBytes,
+    ...(file ? { file } : {})
   };
 }
 
@@ -975,6 +1203,49 @@ function stringField(source: unknown, key: string): string | null {
 
   const value = source[key];
   return typeof value === "string" ? value : null;
+}
+
+function acceptedMimeTypes(
+  source: unknown
+): { ok: true; patterns: string[] } | { ok: false } {
+  if (!isRecord(source) || source.accept_mime_types == null) {
+    return { ok: true, patterns: [] };
+  }
+  if (
+    !Array.isArray(source.accept_mime_types) ||
+    source.accept_mime_types.length === 0
+  ) {
+    return { ok: false };
+  }
+
+  const patterns: string[] = [];
+  for (const value of source.accept_mime_types) {
+    if (typeof value !== "string") {
+      return { ok: false };
+    }
+    const normalized = normalizeMimeTypePattern(value);
+    if (!normalized) {
+      return { ok: false };
+    }
+    patterns.push(normalized);
+  }
+
+  return { ok: true, patterns };
+}
+
+function normalizeMimeType(value: string | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized &&
+    /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(normalized)
+    ? normalized
+    : null;
+}
+
+function normalizeMimeTypePattern(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return /^[a-z0-9!#$&^_.+-]+\/(?:[a-z0-9!#$&^_.+-]+|\*)$/.test(normalized)
+    ? normalized
+    : null;
 }
 
 function validDateOnly(value: string) {

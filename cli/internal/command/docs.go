@@ -69,7 +69,8 @@ var terminalDocs = []docsTopic{
 		Body: strings.Join([]string{
 			"output check reads readiness metadata without marking output read.",
 			"output read <output_result_id> returns one result and marks that result read.",
-			"output read --all auto-pages by default and marks only returned results read.",
+			"output read --all auto-pages by default, marks only returned results read, and preserves unavailable output metadata in JSON mode.",
+			"In text mode, read-all prints only a filename-free warning count when file metadata is temporarily unavailable.",
 			"output file get <output_result_id> <file_id> requires --output or --stdout; --output refuses overwrite unless --force is set.",
 			"output ack <output_result_id> should run only after caller-owned downstream handling is durable.",
 		}, "\n"),
@@ -107,7 +108,7 @@ var terminalDocs = []docsTopic{
 			"upgrade resolves the selected app origin from --base-url, AGENT_OUTBOX_BASE_URL, config base_url, then the default origin.",
 			"It prints and opens <origin>/upgrade in human mode. Browser-open failure is a warning because the URL is still printed.",
 			"upgrade --json does not open a browser and returns the URL with open_attempted=false and opened=false.",
-			"The command does not implement Stripe checkout, billing portal behavior, paid file uploads, or a status-response upgrade URL.",
+			"The command does not implement Stripe checkout, billing portal behavior, or a status-response upgrade URL.",
 		}, "\n"),
 		RelatedDocs: []string{"docs/spec/README.md", "docs/spec/errors.md"},
 	},

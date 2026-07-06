@@ -93,6 +93,8 @@ function ActionResponseFields({ action }: { action: HumanReviewAction }) {
       return <MultiSelectFields action={action} />;
     case "date_picker":
       return <DatePickerFields action={action} />;
+    case "file_upload":
+      return <FileUploadFields action={action} />;
   }
 }
 
@@ -180,6 +182,27 @@ function DatePickerFields({ action }: { action: HumanReviewAction }) {
       )}
       <p className="form-note">Displayed timezone: {timezone}</p>
     </div>
+  );
+}
+
+function FileUploadFields({ action }: { action: HumanReviewAction }) {
+  const payload = recordValue(action.popupPayload);
+  const acceptMimeTypes = Array.isArray(payload.accept_mime_types)
+    ? payload.accept_mime_types.filter(
+        (value): value is string => typeof value === "string"
+      )
+    : [];
+
+  return (
+    <label className="action-field">
+      <span>{popupLabel(action)}</span>
+      <input
+        type="file"
+        name="response.file"
+        accept={acceptMimeTypes.join(",")}
+        required
+      />
+    </label>
   );
 }
 

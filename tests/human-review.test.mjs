@@ -166,7 +166,18 @@ test("human review detail lazily shapes links actions options and answerable sta
         option_value: "approve",
         icon: "check"
       }
-    ]
+    ],
+    [
+      {
+        account_id: context.accountId,
+        label: "Review account",
+        tier: "hosted_paid",
+        billing_status: "active",
+        billing_grace_ends_at: null
+      }
+    ],
+    [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
+    []
   ]);
 
   const detail = await humanReviewDetailInTransaction(
@@ -211,7 +222,7 @@ test("human review detail lazily shapes links actions options and answerable sta
       overflow: true,
       popupKind: "file_upload",
       popupPayload: {},
-      answerable: false,
+      answerable: true,
       options: []
     }
   ]);
@@ -308,6 +319,23 @@ test("human action form parser rejects malformed hidden fields before database w
   const invalidPopup = answerForm();
   invalidPopup.set("popupKind", "file_upload");
   assert.deepEqual(parseHumanAnswerForm(invalidPopup), { ok: false });
+
+  const validFileUpload = answerForm();
+  const uploadedFile = new File(["file bytes"], "receipt.pdf", {
+    type: "application/pdf"
+  });
+  validFileUpload.set("actionValue", "upload");
+  validFileUpload.set("popupKind", "file_upload");
+  validFileUpload.delete("response.text");
+  validFileUpload.set("response.file", uploadedFile);
+  assert.deepEqual(parseHumanAnswerForm(validFileUpload), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "upload",
+    response: { kind: "file_upload", file: uploadedFile }
+  });
 
   const invalidDate = answerForm();
   invalidDate.set("popupKind", "date_picker");

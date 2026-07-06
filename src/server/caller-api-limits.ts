@@ -339,6 +339,89 @@ export async function enforceAcceptedInputSubmissionLimits(
   );
 }
 
+export async function enforceHumanFileUploadLimits(
+  query: ProductTransactionQuery,
+  identity: CallerLimitIdentity,
+  profile: LimitProfileSelector,
+  fileByteDelta: number
+): Promise<CallerLimitGuardResult> {
+  if (!Number.isSafeInteger(fileByteDelta) || fileByteDelta <= 0) {
+    return {
+      ok: false,
+      error: {
+        status: 400,
+        code: "invalid_request",
+        message: "Uploaded file must contain at least one byte."
+      }
+    };
+  }
+
+  const activeBlock = await activeLimitBlock(
+    query,
+    identity,
+    profile,
+    "file_upload"
+  );
+  if (activeBlock) {
+    return limitBlockedError(profile, activeBlock);
+  }
+
+  const enabled = limitStatus(profile, "file_upload_enabled");
+  if (enabled.setting.mode !== "enabled" || enabled.setting.value !== 1) {
+    return limitError(profile, identity, "file_upload", "file_upload_enabled", {
+      usedUnits: 1,
+      limitResetsAt: null
+    });
+  }
+
+  const perFile = limitStatus(profile, "uploaded_bytes_per_file");
+  if (
+    perFile.setting.mode !== "enabled" ||
+    fileByteDelta > perFile.setting.value
+  ) {
+    return limitError(
+      profile,
+      identity,
+      "file_upload",
+      "uploaded_bytes_per_file",
+      {
+        usedUnits: fileByteDelta,
+        limitResetsAt: null
+      }
+    );
+  }
+
+  const concurrency = await acquireConcurrencySlot(
+    query,
+    identity,
+    profile,
+    "file_upload"
+  );
+  if (!concurrency.ok) {
+    return concurrency;
+  }
+
+  await query(accountWriteLockStatement(identity));
+
+  const stock = await query<AccountStockUsageRow>(
+    accountStockUsageStatement(identity)
+  );
+  const storage = limitStatus(profile, "overall_stored_account_data_bytes");
+  const usedUnits =
+    nonNegativeInteger(stock.rows[0]?.overall_stored_bytes ?? 0) +
+    fileByteDelta;
+
+  if (storage.setting.mode === "enabled" && usedUnits > storage.setting.value) {
+    return persistAndReturnLimitError(query, identity, profile, "file_upload", {
+      limitName: "overall_stored_account_data_bytes",
+      usedUnits,
+      limitResetsAt: null
+    });
+  }
+
+  return { ok: true };
+}
+
 export function accountTierStatement(
   accountId: string
 ): TransactionContextStatement {

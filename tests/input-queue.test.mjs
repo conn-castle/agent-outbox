@@ -428,7 +428,7 @@ test("input parser rejects safe-shaped but unsupported icon names", () => {
   assert.equal(result.error.code, "unsupported_icon");
 });
 
-test("file upload actions fail loudly before the paid upload workflow exists", () => {
+test("file upload actions require paid tier and are accepted for paid callers", () => {
   const input = baseInput({
     actions: [
       {
@@ -458,13 +458,8 @@ test("file upload actions fail loudly before the paid upload workflow exists", (
       : null,
     "file_upload_upgrade_required"
   );
-  assert.equal(paidResult.ok, false);
-  assert.deepEqual(paidResult.error, {
-    status: 503,
-    code: "temporary_unavailable",
-    message:
-      "File upload actions require the paid file upload workflow, which is not available in this API phase."
-  });
+  assert.equal(paidResult.ok, true);
+  assert.equal(paidResult.submission.actions[0].popupKind, "file_upload");
 });
 
 test("input request body parser rejects non-file JSON bodies over 128000 bytes", async () => {

@@ -54,10 +54,18 @@ export type AgentOutboxOutputResult = {
 
 export type OutputReadPage = {
   items: AgentOutboxOutputResult[];
+  unavailable_outputs: OutputUnavailableItem[];
+  unavailable_count: number;
   has_more: boolean;
   next_cursor: string | null;
   returned_count: number;
   page_limit: number;
+};
+
+export type OutputUnavailableItem = {
+  output_result_id: string;
+  code: "temporary_unavailable";
+  message: "Output file metadata is temporarily unavailable.";
 };
 
 export type OutputAckResult = {
@@ -288,23 +296,37 @@ export async function readAllOutputPageInTransaction(
     outputResultIds
   );
   const items: AgentOutboxOutputResult[] = [];
+  const unavailableOutputs: OutputUnavailableItem[] = [];
 
   for (const row of page) {
     const output = outputResultFromRow(row, filesByOutputId);
     if (!output.ok) {
-      return output;
+      if (row.response_kind !== "file_upload") {
+        return output;
+      }
+      unavailableOutputs.push({
+        output_result_id: row.output_result_id,
+        code: "temporary_unavailable",
+        message: "Output file metadata is temporarily unavailable."
+      });
+      continue;
     }
     items.push(output.data);
   }
 
-  if (outputResultIds.length > 0) {
-    await query(markOutputResultsReadStatement(identity, outputResultIds));
+  const returnedOutputResultIds = items.map((item) => item.output_result_id);
+  if (returnedOutputResultIds.length > 0) {
+    await query(
+      markOutputResultsReadStatement(identity, returnedOutputResultIds)
+    );
   }
 
   return {
     ok: true,
     data: {
       items,
+      unavailable_outputs: unavailableOutputs,
+      unavailable_count: unavailableOutputs.length,
       has_more: hasMore,
       next_cursor: hasMore ? cursorFromOutputRow(page[page.length - 1]) : null,
       returned_count: items.length,

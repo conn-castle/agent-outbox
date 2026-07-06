@@ -49,17 +49,27 @@ type pageFlags struct {
 }
 
 type outputPage struct {
-	Items         []json.RawMessage `json:"items"`
-	ReadyCount    *int              `json:"ready_count,omitempty"`
-	HasMore       bool              `json:"has_more"`
-	NextCursor    *string           `json:"next_cursor"`
-	ReturnedCount int               `json:"returned_count"`
-	PageLimit     int               `json:"page_limit"`
+	Items              []json.RawMessage   `json:"items"`
+	ReadyCount         *int                `json:"ready_count,omitempty"`
+	UnavailableOutputs []unavailableOutput `json:"unavailable_outputs,omitempty"`
+	UnavailableCount   int                 `json:"unavailable_count,omitempty"`
+	HasMore            bool                `json:"has_more"`
+	NextCursor         *string             `json:"next_cursor"`
+	ReturnedCount      int                 `json:"returned_count"`
+	PageLimit          int                 `json:"page_limit"`
+}
+
+type unavailableOutput struct {
+	OutputResultID string `json:"output_result_id"`
+	Code           string `json:"code"`
+	Message        string `json:"message"`
 }
 
 type paginatedData struct {
-	Items      []json.RawMessage `json:"items"`
-	ReadyCount *int              `json:"ready_count,omitempty"`
+	Items              []json.RawMessage    `json:"items"`
+	ReadyCount         *int                 `json:"ready_count,omitempty"`
+	UnavailableOutputs *[]unavailableOutput `json:"unavailable_outputs,omitempty"`
+	UnavailableCount   *int                 `json:"unavailable_count,omitempty"`
 }
 
 type paginatedResult struct {
@@ -286,6 +296,9 @@ func outputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 					return err
 				}
 				warnUnreadPagesLeft(opts.Stderr, result.Pagination)
+				if !flags.json && unavailableCount(result.Data) > 0 {
+					_, _ = fmt.Fprintf(opts.Stderr, "%d output result(s) were temporarily unavailable because file metadata could not be read; retry later or read by output_result_id\n", unavailableCount(result.Data))
+				}
 				return renderPaginatedSuccess(opts.Stdout, flags.json, result)
 			}
 
@@ -554,6 +567,12 @@ func fetchOutputPages(ctx context.Context, runtime *apiRuntime, kind string, pag
 			PageLimit: page.PageSize,
 		},
 	}
+	if kind == "read-all" {
+		unavailableOutputs := []unavailableOutput{}
+		unavailableCount := 0
+		result.Data.UnavailableOutputs = &unavailableOutputs
+		result.Data.UnavailableCount = &unavailableCount
+	}
 
 	for {
 		nextPage, err := fetchOutputPage(ctx, runtime, kind, page.PageSize, cursor)
@@ -567,6 +586,10 @@ func fetchOutputPages(ctx context.Context, runtime *apiRuntime, kind string, pag
 			result.Data.ReadyCount = nextPage.ReadyCount
 		}
 		result.Data.Items = append(result.Data.Items, nextPage.Items...)
+		if result.Data.UnavailableOutputs != nil && result.Data.UnavailableCount != nil {
+			*result.Data.UnavailableOutputs = append(*result.Data.UnavailableOutputs, nextPage.UnavailableOutputs...)
+			*result.Data.UnavailableCount += nextPage.UnavailableCount
+		}
 		result.Pagination.PageCount++
 		result.Pagination.RequestCount++
 		result.Pagination.ReturnedCount += nextPage.ReturnedCount
@@ -589,6 +612,13 @@ func fetchOutputPages(ctx context.Context, runtime *apiRuntime, kind string, pag
 		seenCursors[nextCursor] = true
 		cursor = nextCursor
 	}
+}
+
+func unavailableCount(data paginatedData) int {
+	if data.UnavailableCount == nil {
+		return 0
+	}
+	return *data.UnavailableCount
 }
 
 func fetchOutputPage(ctx context.Context, runtime *apiRuntime, kind string, pageSize int, cursor string) (*outputPage, error) {
@@ -620,6 +650,9 @@ func fetchOutputPage(ctx context.Context, runtime *apiRuntime, kind string, page
 func validateOutputPage(page *outputPage) error {
 	if page.ReturnedCount != len(page.Items) {
 		return foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned inconsistent pagination counts.")
+	}
+	if page.UnavailableCount != len(page.UnavailableOutputs) {
+		return foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned inconsistent unavailable output counts.")
 	}
 	if page.PageLimit < 1 || page.PageLimit > 100 {
 		return foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned an invalid page limit.")

@@ -1,3 +1,4 @@
+import type { Buffer } from "node:buffer";
 import { Client, type QueryResult, type QueryResultRow } from "pg";
 
 const APP_DATABASE_ROLE = "agent_outbox_app";
@@ -5,7 +6,7 @@ const DATABASE_CANARY_TIMEOUT_MS = 5_000;
 
 export type TransactionContextStatement = {
   sql: string;
-  values?: (string | number | boolean | null)[];
+  values?: (string | number | boolean | Buffer | Uint8Array | null)[];
 };
 
 export type TransactionContextAuthSurface =

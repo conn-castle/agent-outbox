@@ -354,18 +354,6 @@ export function parseInputSubmission(
       }
     };
   }
-  if (containsFileUploadAction) {
-    return {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message:
-          "File upload actions require the paid file upload workflow, which is not available in this API phase."
-      }
-    };
-  }
-
   const normalizedContent = {
     caller_item_id: callerItemId,
     priority,
