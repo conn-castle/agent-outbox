@@ -134,13 +134,13 @@ export async function checkoutIntervalFromRequest(
 function checkoutIntervalFromBody(
   body: unknown
 ): BillingResult<BillingInterval> {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+  if (!isStripeRecord(body)) {
     return invalidBillingRequest(
       'Checkout request body must be a JSON object with interval "monthly" or "yearly".'
     );
   }
 
-  return checkoutIntervalFromValue(body.interval);
+  return checkoutIntervalFromValue(recordValue(body, "interval"));
 }
 
 export async function createCheckoutSessionForAccount(input: {
