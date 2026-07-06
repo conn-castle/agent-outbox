@@ -1867,6 +1867,10 @@ test("cleanup statement builders target lifecycle database functions", () => {
     {
       sql: "select public.agent_outbox_prune_caller_setup_requests($1) as deleted_count",
       values: ["2026-07-08T12:34:56.000Z"]
+    },
+    {
+      sql: "select public.agent_outbox_prune_stripe_webhook_events($1) as deleted_count",
+      values: ["2026-04-16T12:34:56.000Z"]
     }
   ]);
   assert.deepEqual(
@@ -1886,6 +1890,10 @@ test("cleanup statement builders target lifecycle database functions", () => {
       {
         sql: "select public.agent_outbox_prune_caller_setup_requests($1) as deleted_count",
         values: ["2026-07-08T12:34:56.000Z"]
+      },
+      {
+        sql: "select public.agent_outbox_prune_stripe_webhook_events($1) as deleted_count",
+        values: ["2026-04-16T12:34:56.000Z"]
       }
     ]
   );
@@ -1993,8 +2001,8 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     recorded_at: result.recorded_at,
     accounts_seen: 2,
     accounts_cleaned: 2,
-    statements_run: 12,
-    rows_affected: 12
+    statements_run: 13,
+    rows_affected: 13
   });
   assert.match(result.recorded_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(
@@ -2255,8 +2263,6 @@ test("runtime canary keeps configuration detail behind smoke bearer auth", () =>
       assert.deepEqual(smokeBody.out_of_scope, [
         "full_human_review_queue_ui",
         "caller_registration",
-        "paid_file_upload_workflows",
-        "billing_behavior",
         "steward_behavior"
       ]);
     }
@@ -4305,6 +4311,212 @@ test(
       await client.query("reset role");
       await client.query("commit");
 
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "control_plane"
+      ]);
+      await client.query(
+        `
+          insert into public.agent_outbox_stripe_webhook_events(
+            stripe_event_id,
+            event_type,
+            processing_status,
+            received_at,
+            processed_at
+          )
+          values
+            ($1, 'checkout.session.completed', 'processed', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+            ($2, 'customer.subscription.updated', 'processed', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'),
+            ($3, 'invoice.payment_failed', 'processing', '2026-01-01T00:00:00.000Z', null)
+        `,
+        [`evt_old_${runId}`, `evt_recent_${runId}`, `evt_processing_${runId}`]
+      );
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "human"
+      ]);
+      await client.query("savepoint non_cleanup_stripe_webhook_prune");
+      await assert.rejects(
+        client.query(
+          "select public.agent_outbox_prune_stripe_webhook_events($1) as deleted_count",
+          ["2026-04-01T00:00:00.000Z"]
+        ),
+        (error) => {
+          const databaseError = /** @type {{ code?: string }} */ (error);
+          assert.equal(databaseError.code, "42501");
+          return true;
+        }
+      );
+      await client.query(
+        "rollback to savepoint non_cleanup_stripe_webhook_prune"
+      );
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      const prunedStripeWebhookEvents = await client.query(
+        "select public.agent_outbox_prune_stripe_webhook_events($1)::int as deleted_count",
+        ["2026-04-01T00:00:00.000Z"]
+      );
+      assert.deepEqual(prunedStripeWebhookEvents.rows, [{ deleted_count: 1 }]);
+      const retainedStripeWebhookEvents = await client.query(
+        `
+          select stripe_event_id
+          from public.agent_outbox_stripe_webhook_events
+          where stripe_event_id = any($1::text[])
+          order by stripe_event_id
+        `,
+        [[`evt_old_${runId}`, `evt_recent_${runId}`, `evt_processing_${runId}`]]
+      );
+      assert.deepEqual(
+        retainedStripeWebhookEvents.rows.map((row) => row.stripe_event_id),
+        [`evt_processing_${runId}`, `evt_recent_${runId}`].sort()
+      );
+
+      // Direct RLS verification for agent_outbox_stripe_webhook_events
+      // Currently under "cleanup" surface
+      const cleanupSelect = await client.query(
+        "select stripe_event_id from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+        [`evt_recent_${runId}`]
+      );
+      assert.equal(cleanupSelect.rowCount, 1);
+
+      await client.query("savepoint stripe_cleanup_insert_fail");
+      await assert.rejects(
+        client.query(
+          "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type, processing_status) values ($1, 'type', 'processing')",
+          [`evt_cleanup_insert_${runId}`]
+        ),
+        (error) => {
+          const dbError = /** @type {{ code?: string }} */ (error);
+          assert.equal(dbError.code, "42501");
+          return true;
+        }
+      );
+      await client.query("rollback to savepoint stripe_cleanup_insert_fail");
+
+      const cleanupUpdate = await client.query(
+        "update public.agent_outbox_stripe_webhook_events set event_type = 'updated' where stripe_event_id = $1",
+        [`evt_recent_${runId}`]
+      );
+      assert.equal(cleanupUpdate.rowCount, 0);
+
+      const cleanupDelete = await client.query(
+        "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+        [`evt_recent_${runId}`]
+      );
+      assert.equal(cleanupDelete.rowCount, 1);
+
+      // Switch to control_plane surface
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "control_plane"
+      ]);
+
+      await client.query(
+        "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type, processing_status) values ($1, 'checkout.session.completed', 'processing')",
+        [`evt_cp_${runId}`]
+      );
+
+      const cpSelect = await client.query(
+        "select stripe_event_id from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+        [`evt_cp_${runId}`]
+      );
+      assert.equal(cpSelect.rowCount, 1);
+
+      const cpUpdate = await client.query(
+        "update public.agent_outbox_stripe_webhook_events set processing_status = 'processed', processed_at = now() where stripe_event_id = $1",
+        [`evt_cp_${runId}`]
+      );
+      assert.equal(cpUpdate.rowCount, 1);
+
+      const cpDelete = await client.query(
+        "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+        [`evt_cp_${runId}`]
+      );
+      assert.equal(cpDelete.rowCount, 0);
+
+      // Switch to human surface
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "human"
+      ]);
+
+      const humanSelect = await client.query(
+        "select stripe_event_id from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+        [`evt_cp_${runId}`]
+      );
+      assert.equal(humanSelect.rowCount, 0);
+
+      await client.query("savepoint stripe_human_insert_fail");
+      await assert.rejects(
+        client.query(
+          "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type, processing_status) values ($1, 'type', 'processing')",
+          [`evt_human_insert_${runId}`]
+        ),
+        (error) => {
+          const dbError = /** @type {{ code?: string }} */ (error);
+          assert.equal(dbError.code, "42501");
+          return true;
+        }
+      );
+      await client.query("rollback to savepoint stripe_human_insert_fail");
+
+      const humanUpdate = await client.query(
+        "update public.agent_outbox_stripe_webhook_events set event_type = 'updated' where stripe_event_id = $1",
+        [`evt_cp_${runId}`]
+      );
+      assert.equal(humanUpdate.rowCount, 0);
+
+      const humanDelete = await client.query(
+        "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+        [`evt_cp_${runId}`]
+      );
+      assert.equal(humanDelete.rowCount, 0);
+
+      // Switch to caller surface
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "caller"
+      ]);
+
+      const callerSelect = await client.query(
+        "select stripe_event_id from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+        [`evt_cp_${runId}`]
+      );
+      assert.equal(callerSelect.rowCount, 0);
+
+      await client.query("savepoint stripe_caller_insert_fail");
+      await assert.rejects(
+        client.query(
+          "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type, processing_status) values ($1, 'type', 'processing')",
+          [`evt_caller_insert_${runId}`]
+        ),
+        (error) => {
+          const dbError = /** @type {{ code?: string }} */ (error);
+          assert.equal(dbError.code, "42501");
+          return true;
+        }
+      );
+      await client.query("rollback to savepoint stripe_caller_insert_fail");
+
+      const callerUpdate = await client.query(
+        "update public.agent_outbox_stripe_webhook_events set event_type = 'updated' where stripe_event_id = $1",
+        [`evt_cp_${runId}`]
+      );
+      assert.equal(callerUpdate.rowCount, 0);
+
+      const callerDelete = await client.query(
+        "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+        [`evt_cp_${runId}`]
+      );
+      assert.equal(callerDelete.rowCount, 0);
+
+      await client.query("reset role");
+      await client.query("rollback");
+
       const productTransactionProbe = await runProductTransaction(
         databaseVerificationUrl,
         {
@@ -4799,12 +5011,34 @@ test(
         }
       ]);
     } finally {
-      await resetRoleAndRollback(client);
-      await cleanupPhase3DatabaseVerificationRows(client, ids);
-      if (grantedAppRoleForTest) {
-        await revokeCurrentUserAppRoleGrant(client);
+      try {
+        await resetRoleAndRollback(client);
+      } catch (error) {
+        console.error("Teardown error in resetRoleAndRollback:", error);
       }
-      await client.end();
+      try {
+        await cleanupPhase3DatabaseVerificationRows(client, ids);
+      } catch (error) {
+        console.error(
+          "Teardown error in cleanupPhase3DatabaseVerificationRows:",
+          error
+        );
+      }
+      try {
+        if (grantedAppRoleForTest) {
+          await revokeCurrentUserAppRoleGrant(client);
+        }
+      } catch (error) {
+        console.error(
+          "Teardown error in revokeCurrentUserAppRoleGrant:",
+          error
+        );
+      }
+      try {
+        await client.end();
+      } catch (error) {
+        console.error("Teardown error in client.end:", error);
+      }
     }
   }
 );

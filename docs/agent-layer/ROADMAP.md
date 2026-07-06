@@ -51,14 +51,9 @@ Incomplete:
 
 <!-- PHASES START -->
 
-## Archived phases (1)
+## Archived phases (1–2)
 - Phase 1 — Operating Foundation And Quality Gates: Established the root command surface, pinned tooling, credential-free local gates, CI/release-check skeletons, diagnostics, and pre-product docs alignment.
-
-## Phase 2 ✅ — App Runtime Shell Proof
-- Established the single Next.js app/API boundary with public, auth-adjacent, protected human, caller-auth, database, structured-log, structured-error, Sentry, and scheduled canary routes.
-- Added pinned Next.js, Clerk, Supabase/Postgres, Sentry, logging, and runtime tooling to app gates while keeping queue lifecycle, product tables, file workflows, billing, cleanup implementation, and Steward-specific behavior out of scope.
-- Kept normal app CI and `make check` independent of Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, and platform runtime emulation.
-- Verified the provider-backed runtime proof with `make doctor` and `make smoke-runtime` against the local app using real development Clerk, Supabase/Postgres, Sentry, and smoke-token values.
+- Phase 2 — App Runtime Shell Proof: Established the single Next.js app/API boundary, provider-backed runtime proof routes, pinned runtime tooling, and the split between app CI and later Cloudflare/OpenNext deployment verification.
 
 ## Phase 3 ✅ — Accounts, Authorization, Limits, And Cleanup Foundation
 - Added Agent Outbox-owned account, user, membership, caller, caller credential, queue-state, output, file metadata, audit, quota, active limit, and cleanup-run schema with forced Row Level Security.
@@ -91,26 +86,12 @@ Incomplete:
 - Updated public/spec docs and command memory for the implemented CLI surface, package verification, local utility-command boundaries, and Phase 7 billing/file-upload deferrals.
 - Verified the phase with Go unit/vet/build gates, Node/app gates, direct binary smoke, Playwright browser/device approval coverage, non-publishing package checks, fresh plan verification, review-scope audits, prune/simplify passes, and recorded the local standalone migration replay environment gap while preserving CI/raw-Postgres migration coverage.
 
-## Phase 7 — Billing, Files, And Retention
-
-### Goal
-- Complete hosted MVP paid-tier behavior, paid file workflows, and retention/cleanup behavior after the queue contract is working.
-- Keep billing and file handling narrow: Agent Outbox is an async review queue, not a durable storage or billing platform.
-- Source map: [README.md](../../README.md) "Hosted Service" and "Product Boundaries", [architecture.md](../architecture.md) "File Handling" and "Limits, Billing, And Cleanup", [ops/resources.md](../ops/resources.md), [ops/secrets.md](../ops/secrets.md), and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for billing/tier, file storage, backup/durability, and spend-control decisions.
-
-### Tasks
-- [ ] Implement Stripe account-scoped paid tier, upgrade flow, portal/webhook handling, billing grace behavior, and account/tier status surfaces.
-- [ ] Complete paid-only file-upload actions, free-tier upgrade-required rejection, server-only upload/download routes, stored-byte accounting, safe attachment headers, and file delete audit events.
-- [ ] Complete retention, output-timeout, downgrade-grace, acknowledgement, quota-window, and active-limit-block cleanup jobs using the shared deletion path.
-- [ ] Reverify provider pricing, free-tier limits, Clerk signup protections, Cloudflare edge safety controls, Supabase storage posture, and secret recovery assumptions before public release.
-- [ ] Keep billing emails, higher paid tiers, managed backups, point-in-time recovery, encrypted off-site exports, and proactive spend automation deferred unless required for launch approval.
-
-### Exit criteria
-- Stripe test-mode verification covers successful upgrade, payment failure/grace, grace expiry behavior, webhook replay safety, and downgrade cleanup ordering without depending on billing emails.
-- File verification covers paid upload/download, free-tier file-upload rejection, oversized upload rejection, metadata-only output reads, raw-byte download, audit byte accounting, and deletion through acknowledgement/timeout/cleanup.
-- Cleanup verification proves terminal output deletion, retention expiry, downgrade grace expiry, and quota maintenance use the shared deletion path and remain idempotent.
-- Launch-blocking provider limits, prices, protections, and secret recovery assumptions are reverified as of the phase completion date.
-- Deferred operational/business items are recorded in the final deferral phase or explicitly accepted by the project owner.
+## Phase 7 ✅ — Billing, Files, And Retention
+- Added account-scoped Stripe paid-tier behavior with checkout and Billing Portal sessions, signed webhook processing, webhook replay safety, billing grace synchronization, upgrade actions, and account/tier status surfaces.
+- Created the approved live Stripe hosted-paid product, monthly/yearly prices, Billing Portal configuration, and billing webhook endpoint; stored setup/object/webhook recovery values in Systems Manager Parameter Store while keeping the separate production runtime Stripe key deferred to Phase 8 with Cloudflare runtime secrets.
+- Completed paid-only file-upload and output-file download workflows with free-tier upgrade-required rejection, raw upload/download limits, Postgres byte storage, metadata-only output reads, safe attachment headers, content-safe upload/download/delete audit accounting, and status storage reporting.
+- Completed shared cleanup for acknowledgement, output timeout, pending retention, downgrade grace, quota windows, active limit blocks, caller setup pruning, never-activated caller pruning, and Stripe webhook idempotency ledger pruning.
+- Reverified provider pricing, free/paid limits, Clerk application posture, Supabase Postgres storage posture, Sentry/Stripe recovery assumptions, and accepted deferrals for Cloudflare runtime setup, Stripe custom/domain configuration, billing emails, higher tiers, managed backups, point-in-time recovery, encrypted off-site exports, and proactive spend automation.
 
 ## Phase 8 — Observability, Operations, And Release Readiness
 
@@ -121,6 +102,8 @@ Incomplete:
 
 ### Tasks
 - [ ] Decide the launch analytics and product-tooling stack, then implement Sentry, Cloudflare structured logs, Supabase log usage, Cloudflare Web Analytics or the chosen web analytics tool, narrow frontend client-event logging, and canary records with shared `error_id` correlation.
+- [ ] Create or verify the Cloudflare Worker, `app.agent-outbox.dev` custom domain/route, production runtime secrets including the separate Stripe Checkout/Portal runtime key, and deploy-safe OpenNext/Wrangler verification path.
+- [ ] Create or verify the Stripe-side production domain configuration needed for hosted Checkout, Billing Portal, and supported payment methods.
 - [ ] Populate production resource inventory, deployment smoke checklist, debugging, incident, monitoring, and secret recovery instructions with exact Agent Outbox resources as they are created.
 - [ ] Build the agent-run hosted health inspection workflow so an agent can check app, auth, caller API, database connectivity, cleanup, quota enforcement, file path, logs, audit events, and obvious abuse/cost signals on demand.
 - [ ] Prepare release verification that covers local gates, CI gates, package artifacts, hosted smoke, rollback expectations, and owner acceptance.

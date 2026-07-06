@@ -55,6 +55,38 @@ variable list for local `.env` files. Keep the implementation environment schema
 and `.env.example` in sync. Do not duplicate the full variable inventory in this
 runbook.
 
+## Stripe Production Recovery Names
+
+Production Stripe billing recovery uses these Systems Manager Parameter Store
+names:
+
+```text
+/agent-outbox/environments/production/stripe-account-id
+/agent-outbox/environments/production/stripe-secret-key
+/agent-outbox/environments/production/stripe-product-id
+/agent-outbox/environments/production/stripe-paid-monthly-price-id
+/agent-outbox/environments/production/stripe-paid-yearly-price-id
+/agent-outbox/environments/production/stripe-billing-portal-configuration-id
+/agent-outbox/environments/production/stripe-webhook-endpoint-id
+/agent-outbox/environments/production/stripe-webhook-secret
+```
+
+Use `SecureString` for the Stripe secret key and webhook secret. The
+`stripe-secret-key` parameter is for the production runtime key used by the app
+to create Checkout and Billing Portal sessions. Do not store setup-only Stripe
+keys in that recovery path. Runtime also needs the corresponding Cloudflare
+Worker environment values consumed by the app plus
+`PUBLIC_APP_BASE_URL=https://app.agent-outbox.dev`.
+
+Setup-only Stripe operator keys use a separate `SecureString` recovery path:
+
+```text
+/agent-outbox/environments/production/stripe-setup-secret-key
+```
+
+This setup key can create or rotate billing objects, but it is not the runtime
+Checkout/Portal key consumed by the app.
+
 ## Safe Inspection
 
 List parameter names without decrypting values:

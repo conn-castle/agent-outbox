@@ -3,6 +3,7 @@ import type { LimitWindowKind } from "./limits.ts";
 import { fixedWindowLimitNames, getLimitDefinition } from "./limits.ts";
 
 const CALLER_SETUP_REQUEST_RETENTION_DAYS = 7;
+const STRIPE_WEBHOOK_EVENT_RETENTION_DAYS = 90;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 export const TERMINAL_OUTPUT_DELETION_REASONS = [
@@ -189,6 +190,9 @@ export function globalQuotaWindowMaintenanceStatements(
   // per attacker IP. Prune it with a minute-anchored cutoff instead.
   const ipBefore = quotaWindowPruningCutoff(now, ["minute"]);
   const callerSetupBefore = callerSetupCleanupCutoff(now);
+  const stripeWebhookBefore = new Date(
+    now.getTime() - STRIPE_WEBHOOK_EVENT_RETENTION_DAYS * ONE_DAY_MS
+  );
 
   return [
     {
@@ -198,6 +202,10 @@ export function globalQuotaWindowMaintenanceStatements(
     {
       sql: "select public.agent_outbox_prune_caller_setup_requests($1) as deleted_count",
       values: [timestampValue(callerSetupBefore)]
+    },
+    {
+      sql: "select public.agent_outbox_prune_stripe_webhook_events($1) as deleted_count",
+      values: [timestampValue(stripeWebhookBefore)]
     }
   ];
 }

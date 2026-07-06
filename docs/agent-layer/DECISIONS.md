@@ -80,3 +80,13 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: Hosted paid and self-hosted profiles keep the monthly caller API request quota disabled, while input send/replace, input delete, and raw output file downloads use per-account UTC-minute runtime throttles across all profiles.
     Reason: Paid/self-hosted callers should not hit monthly cleanup-blocking request caps, but burst protection still needs to cover data-plane writes, cleanup deletes, and raw byte downloads.
     Tradeoffs: Paid/self-hosted accounts can make unlimited monthly caller API requests, but bursty traffic is still denied temporarily by operation-specific minute windows.
+
+- Decision 2026-07-06 cloudflare-production-runtime-phase8: Defer Cloudflare runtime setup to Phase 8
+    Decision: Phase 7 may finish live Stripe object creation and SSM recovery without creating/deploying the Cloudflare Worker, binding `app.agent-outbox.dev`, or applying Worker runtime secrets.
+    Reason: Wrangler secret changes are deploy-producing, and the `agent-outbox` Worker plus `app.agent-outbox.dev` DNS/custom-domain mapping were not live during Phase 7 closeout.
+    Tradeoffs: Phase 7 cannot prove production billing end-to-end on Cloudflare, but avoids unplanned production platform writes and keeps Worker/domain/secrets/smoke verification together in Phase 8.
+
+- Decision 2026-07-06 stripe-setup-key-not-runtime: Keep Stripe setup and runtime keys separate
+    Decision: Use a setup-only live Stripe key for creating products, prices, Customer Portal configuration, and webhook endpoints; do not store that key as the app's production `STRIPE_SECRET_KEY`.
+    Reason: The owner does not want the setup credential used for production checkouts, and runtime secrets are being installed with Cloudflare in Phase 8.
+    Tradeoffs: Phase 7 can create and recover Stripe object ids, but production checkout/portal smoke requires a separate restricted runtime key in Phase 8.
