@@ -3,7 +3,7 @@ create index agent_outbox_stripe_webhook_events_processed_idx
   where processing_status = 'processed'
     and processed_at is not null;
 
-drop policy agent_outbox_stripe_webhook_events_control_plane
+drop policy if exists agent_outbox_stripe_webhook_events_control_plane
   on public.agent_outbox_stripe_webhook_events;
 
 create policy agent_outbox_stripe_webhook_events_control_plane_select
