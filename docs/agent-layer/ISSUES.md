@@ -26,6 +26,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-06 stripe-webhook-online-index-migration: Stripe webhook retention index needs nontransactional Flyway pattern
+    Priority: Medium. Area: Database/Deployment
+    Description: `db/migrations/V20260706193000__stripe_webhook_event_retention.sql` adds a retention index for a live table; building it safely may require an online/concurrent index outside Flyway's normal transaction.
+    Next step: In Phase 8 deployment/release work, define the repository pattern for nontransactional or online-index Flyway migrations and apply it to the Stripe webhook retention index before production rollout.
+    Notes: Deferred from CodeRabbit review comment 3532409084 because this PR should not establish the broader live-table migration policy.
+
 - Issue 2026-07-06 human-db-test-isolation: Human database tests have isolation failures
     Priority: High. Area: Tests/Database
     Description: The audit found pre-existing isolation failures in `tests/human-answer.test.mjs` and `tests/human-session.test.mjs` that are outside the current billing-retention diff.
@@ -58,6 +64,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-06-30 cloudflare-opennext-platform-verification: Cloudflare/OpenNext deploy path lacks pinned verification
     Priority: Medium. Area: Tooling/Deployment
-    Description: Tracked `open-next.config.ts`, `wrangler.jsonc`, and `worker/entry.mjs` cannot be fully verified from the pinned package install because OpenNext Cloudflare and Wrangler are intentionally outside the normal app toolchain; Wrangler auth works locally, but `deployments status --name agent-outbox` reported no Worker under the cached account on 2026-07-06.
-    Next step: In Phase 8 deployment/release work, pin the platform tools, create or verify the intended Cloudflare account/Worker/route/custom-domain mapping, apply runtime secrets, and add a dedicated Cloudflare/OpenNext verification command outside `make check`.
-    Notes: Owner accepted Phase 8 deferral on 2026-07-06; `app.agent-outbox.dev` also had no public DNS answer during the same check.
+    Description: OpenNext/Workers deploy cannot be fully verified from the pinned package install because platform tools are outside the normal app toolchain; release must also prove Flyway migrations run before runtime or scheduled cleanup.
+    Next step: In Phase 8 deployment/release work, pin platform tools, verify the intended Cloudflare account/Worker/route/custom-domain mapping, apply runtime secrets, ensure Flyway migrations precede cleanup execution, and add dedicated verification outside `make check`.
+    Notes: Owner accepted Phase 8 deferral on 2026-07-06; Wrangler auth worked locally, `deployments status --name agent-outbox` found no Worker, `app.agent-outbox.dev` had no public DNS answer, and CodeRabbit body 4640189856 is deferred here.

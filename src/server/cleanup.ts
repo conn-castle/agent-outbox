@@ -190,9 +190,7 @@ export function globalQuotaWindowMaintenanceStatements(
   // per attacker IP. Prune it with a minute-anchored cutoff instead.
   const ipBefore = quotaWindowPruningCutoff(now, ["minute"]);
   const callerSetupBefore = callerSetupCleanupCutoff(now);
-  const stripeWebhookBefore = new Date(
-    now.getTime() - STRIPE_WEBHOOK_EVENT_RETENTION_DAYS * ONE_DAY_MS
-  );
+  const stripeWebhookBefore = stripeWebhookRetentionCutoff(now);
 
   return [
     {
@@ -213,6 +211,12 @@ export function globalQuotaWindowMaintenanceStatements(
 export function callerSetupCleanupCutoff(now: Date): Date {
   return new Date(
     now.getTime() - CALLER_SETUP_REQUEST_RETENTION_DAYS * ONE_DAY_MS
+  );
+}
+
+export function stripeWebhookRetentionCutoff(now: Date): Date {
+  return new Date(
+    now.getTime() - STRIPE_WEBHOOK_EVENT_RETENTION_DAYS * ONE_DAY_MS
   );
 }
 
