@@ -49,7 +49,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
     if (
       !response.ok ||
       body?.ok !== true ||
-      typeof body.data?.url !== "string"
+      typeof body.data.url !== "string"
     ) {
       throw new Error(
         typeof body?.error?.message === "string"
