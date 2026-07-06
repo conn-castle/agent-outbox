@@ -3,38 +3,61 @@
 import { CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";
 
-type BillingAction = "checkout" | "portal";
+type BillingInterval = "monthly" | "yearly";
+type BillingAction = BillingInterval | "portal";
 
 export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
   const [pending, setPending] = useState<BillingAction | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function start(action: BillingAction) {
-    setPending(action);
+  async function startCheckout(interval: BillingInterval) {
+    setPending(interval);
     setError(null);
     try {
-      const response = await fetch(`/api/billing/${action}`, {
-        method: "POST"
+      const response = await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interval })
       });
-      const body = await response.json().catch(() => null);
-      if (
-        !response.ok ||
-        body?.ok !== true ||
-        typeof body.data?.url !== "string"
-      ) {
-        throw new Error(
-          typeof body?.error?.message === "string"
-            ? body.error.message
-            : "Billing action failed."
-        );
-      }
-      window.location.assign(body.data.url);
+      await handleBillingResponse(response);
     } catch (caught) {
       setPending(null);
       setError(
         caught instanceof Error ? caught.message : "Billing action failed."
       );
     }
+  }
+
+  async function startPortal() {
+    setPending("portal");
+    setError(null);
+    try {
+      const response = await fetch("/api/billing/portal", {
+        method: "POST"
+      });
+      await handleBillingResponse(response);
+    } catch (caught) {
+      setPending(null);
+      setError(
+        caught instanceof Error ? caught.message : "Billing action failed."
+      );
+    }
+  }
+
+  async function handleBillingResponse(response: Response) {
+    const body = await response.json().catch(() => null);
+    if (
+      !response.ok ||
+      body?.ok !== true ||
+      typeof body.data.url !== "string"
+    ) {
+      throw new Error(
+        typeof body?.error?.message === "string"
+          ? body.error.message
+          : "Billing action failed."
+      );
+    }
+    window.location.assign(body.data.url);
   }
 
   return (
@@ -44,17 +67,28 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
         <button
           className="button"
           type="button"
-          onClick={() => void start("checkout")}
+          onClick={() => void startCheckout("monthly")}
           disabled={pending !== null}
         >
           <CreditCard aria-hidden="true" size={18} />
-          {pending === "checkout" ? "Starting..." : "Start checkout"}
+          {pending === "monthly" ? "Starting $5/mo..." : "Start $5/mo checkout"}
+        </button>
+        <button
+          className="button"
+          type="button"
+          onClick={() => void startCheckout("yearly")}
+          disabled={pending !== null}
+        >
+          <CreditCard aria-hidden="true" size={18} />
+          {pending === "yearly"
+            ? "Starting $50/year..."
+            : "Start $50/year checkout"}
         </button>
         {canOpenPortal ? (
           <button
             className="button secondary"
             type="button"
-            onClick={() => void start("portal")}
+            onClick={() => void startPortal()}
             disabled={pending !== null}
           >
             <ExternalLink aria-hidden="true" size={18} />

@@ -3,7 +3,10 @@ import {
   apiRequestContext,
   apiSuccessResponse
 } from "../../../../src/server/api-errors";
-import { createCheckoutSessionForAccount } from "../../../../src/server/billing";
+import {
+  checkoutIntervalFromRequest,
+  createCheckoutSessionForAccount
+} from "../../../../src/server/billing";
 import { billingHumanSession } from "../../../../src/server/billing-session";
 
 export const runtime = "nodejs";
@@ -15,11 +18,17 @@ export async function POST(request: Request) {
     return apiErrorResponse(context, sessionResult.error);
   }
 
+  const intervalResult = await checkoutIntervalFromRequest(request);
+  if (!intervalResult.ok) {
+    return apiErrorResponse(context, intervalResult.error);
+  }
+
   const result = await createCheckoutSessionForAccount({
     connectionString: sessionResult.data.connectionString,
     accountId: sessionResult.data.accountId,
     userId: sessionResult.data.userId,
-    requestId: context.requestId
+    requestId: context.requestId,
+    interval: intervalResult.data
   });
 
   if (!result.ok) {

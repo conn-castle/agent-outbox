@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Request } from "@playwright/test";
 
 test.beforeEach(({ page }) => {
   page.on("pageerror", (error) => {
@@ -50,6 +50,100 @@ test("first-time self-serve signup fixture lands on a provisioned human account"
   ).not.toHaveText(existingOwnerMembership?.trim() ?? "");
   await expect(page.getByLabel("Account status")).toContainText(
     providerSubject ?? ""
+  );
+});
+
+test("upgrade billing actions submit checkout intervals and preserve portal", async ({
+  page
+}) => {
+  let checkoutHold = deferred();
+  let portalHold = deferred();
+  const checkoutRequests: unknown[] = [];
+  const portalBodies: Array<string | null> = [];
+
+  await page.route("**/api/billing/checkout", async (route) => {
+    expect(route.request().headers()["content-type"]).toContain(
+      "application/json"
+    );
+    checkoutRequests.push(postJson(route.request()));
+    await checkoutHold.promise;
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: { message: "Fixture checkout stopped." }
+      })
+    });
+  });
+  await page.route("**/api/billing/portal", async (route) => {
+    portalBodies.push(route.request().postData());
+    await portalHold.promise;
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: { message: "Fixture portal stopped." }
+      })
+    });
+  });
+
+  await page.goto("/upgrade");
+
+  await expect(
+    page.getByRole("heading", { name: "Upgrade Agent Outbox" })
+  ).toBeVisible();
+  const monthlyButton = page.getByRole("button", {
+    name: "Start $5/mo checkout"
+  });
+  const yearlyButton = page.getByRole("button", {
+    name: "Start $50/year checkout"
+  });
+  const portalButton = page.getByRole("button", {
+    name: "Open billing portal"
+  });
+  await expect(monthlyButton).toBeVisible();
+  await expect(yearlyButton).toBeVisible();
+  await expect(portalButton).toBeVisible();
+
+  await monthlyButton.click();
+  await expect.poll(() => checkoutRequests.length).toBe(1);
+  expect(checkoutRequests[0]).toEqual({ interval: "monthly" });
+  await expect(
+    page.getByRole("button", { name: "Starting $5/mo..." })
+  ).toBeDisabled();
+  await expect(yearlyButton).toBeDisabled();
+  await expect(portalButton).toBeDisabled();
+  checkoutHold.resolve();
+  await expect(page.locator(".form-error")).toContainText(
+    "Fixture checkout stopped."
+  );
+
+  checkoutHold = deferred();
+  await yearlyButton.click();
+  await expect.poll(() => checkoutRequests.length).toBe(2);
+  expect(checkoutRequests[1]).toEqual({ interval: "yearly" });
+  await expect(monthlyButton).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Starting $50/year..." })
+  ).toBeDisabled();
+  await expect(portalButton).toBeDisabled();
+  checkoutHold.resolve();
+  await expect(page.locator(".form-error")).toContainText(
+    "Fixture checkout stopped."
+  );
+
+  portalHold = deferred();
+  await portalButton.click();
+  await expect.poll(() => portalBodies.length).toBe(1);
+  expect(portalBodies[0]).toBeNull();
+  await expect(monthlyButton).toBeDisabled();
+  await expect(yearlyButton).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Opening..." })).toBeDisabled();
+  portalHold.resolve();
+  await expect(page.locator(".form-error")).toContainText(
+    "Fixture portal stopped."
   );
 });
 
@@ -196,6 +290,19 @@ test("bulk actions only submit selected rows visible in the current filter", asy
     "Bulk action complete: 1 answered, 0 failed."
   );
 });
+
+function deferred() {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = () => innerResolve();
+  });
+  return { promise, resolve };
+}
+
+function postJson(request: Request) {
+  const body = request.postData();
+  return body ? JSON.parse(body) : null;
+}
 
 test("popup controls cover typed response kinds", async ({ page }) => {
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");

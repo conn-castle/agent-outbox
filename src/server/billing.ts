@@ -6,6 +6,7 @@ import {
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
+import { readJsonBodyWithLimit } from "./input-schema.ts";
 import { emitRuntimeLog } from "./logging.ts";
 
 const BILLING_GRACE_DAYS = 7;
@@ -14,10 +15,12 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 type BillingStatus =
   "not_applicable" | "active" | "grace" | "past_due" | "canceled";
 
+type BillingInterval = "monthly" | "yearly";
+
 type BillingConfig = {
   secretKey: string;
   webhookSecret: string;
-  priceId: string;
+  priceIds: Record<BillingInterval, string>;
   portalConfigurationId: string;
   publicAppBaseUrl: string;
 };
@@ -60,7 +63,11 @@ export function requiredBillingConfiguration(
 ) {
   const required = ["STRIPE_SECRET_KEY"];
   if (surface === "checkout") {
-    required.push("STRIPE_PAID_MONTHLY_PRICE_ID", "PUBLIC_APP_BASE_URL");
+    required.push(
+      "STRIPE_PAID_MONTHLY_PRICE_ID",
+      "STRIPE_PAID_YEARLY_PRICE_ID",
+      "PUBLIC_APP_BASE_URL"
+    );
   }
   if (surface === "portal") {
     required.push(
@@ -84,6 +91,7 @@ export function billingRuntimeConfig(
           "STRIPE_SECRET_KEY",
           "STRIPE_WEBHOOK_SECRET",
           "STRIPE_PAID_MONTHLY_PRICE_ID",
+          "STRIPE_PAID_YEARLY_PRICE_ID",
           "STRIPE_BILLING_PORTAL_CONFIGURATION_ID",
           "PUBLIC_APP_BASE_URL"
         ].filter((name) => !process.env[name]?.trim())
@@ -101,7 +109,10 @@ export function billingRuntimeConfig(
     data: {
       secretKey: process.env.STRIPE_SECRET_KEY!.trim(),
       webhookSecret: process.env.STRIPE_WEBHOOK_SECRET?.trim() ?? "",
-      priceId: process.env.STRIPE_PAID_MONTHLY_PRICE_ID?.trim() ?? "",
+      priceIds: {
+        monthly: process.env.STRIPE_PAID_MONTHLY_PRICE_ID?.trim() ?? "",
+        yearly: process.env.STRIPE_PAID_YEARLY_PRICE_ID?.trim() ?? ""
+      },
       portalConfigurationId:
         process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID?.trim() ?? "",
       publicAppBaseUrl: process.env.PUBLIC_APP_BASE_URL?.trim() ?? ""
@@ -109,15 +120,44 @@ export function billingRuntimeConfig(
   };
 }
 
+export async function checkoutIntervalFromRequest(
+  request: Request
+): Promise<BillingResult<BillingInterval>> {
+  const body = await readJsonBodyWithLimit(request);
+  if (!body.ok) {
+    return body;
+  }
+
+  return checkoutIntervalFromBody(body.value);
+}
+
+function checkoutIntervalFromBody(
+  body: unknown
+): BillingResult<BillingInterval> {
+  if (!isStripeRecord(body)) {
+    return invalidBillingRequest(
+      'Checkout request body must be a JSON object with interval "monthly" or "yearly".'
+    );
+  }
+
+  return checkoutIntervalFromValue(recordValue(body, "interval"));
+}
+
 export async function createCheckoutSessionForAccount(input: {
   connectionString: string;
   accountId: string;
   userId: string;
   requestId: string;
+  interval: unknown;
   config?: BillingConfig;
   stripe?: StripeClient;
   runTransaction?: BillingTransactionRunner;
 }): Promise<BillingResult<BillingCheckoutData>> {
+  const intervalResult = checkoutIntervalFromValue(input.interval);
+  if (!intervalResult.ok) {
+    return intervalResult;
+  }
+
   const configResult = input.config
     ? { ok: true as const, data: input.config }
     : billingRuntimeConfig("checkout");
@@ -160,7 +200,7 @@ export async function createCheckoutSessionForAccount(input: {
     mode: "subscription",
     customer: account.stripe_customer_id ?? undefined,
     client_reference_id: account.account_id,
-    line_items: [{ price: config.priceId, quantity: 1 }],
+    line_items: [{ price: config.priceIds[intervalResult.data], quantity: 1 }],
     success_url: `${config.publicAppBaseUrl}/upgrade?checkout=success`,
     cancel_url: `${config.publicAppBaseUrl}/upgrade?checkout=cancelled`,
     metadata: { account_id: account.account_id },
@@ -594,6 +634,18 @@ function invalidBillingRequest(message: string): BillingResult<never> {
       message
     }
   };
+}
+
+function checkoutIntervalFromValue(
+  value: unknown
+): BillingResult<BillingInterval> {
+  if (value === "monthly" || value === "yearly") {
+    return { ok: true, data: value };
+  }
+
+  return invalidBillingRequest(
+    'Checkout interval must be either "monthly" or "yearly".'
+  );
 }
 
 function temporaryUnavailableError(message: string): BillingResult<never> {
