@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "verifiedAsOf": "2026-07-02",
+  "verifiedAsOf": "2026-07-07",
   "node": {
     "version": "24.18.0",
     "lts": "Krypton",
@@ -146,9 +146,25 @@
       "version": "1.61.1",
       "package": "@playwright/test",
       "source": "corepack pnpm view @playwright/test version"
+    },
+    "cloudflareOpenNext": {
+      "version": "1.20.1",
+      "package": "@opennextjs/cloudflare",
+      "source": "pnpm view @opennextjs/cloudflare version engines peerDependencies bin --json"
+    },
+    "cloudflareRclonePeer": {
+      "version": "0.6.6",
+      "package": "rclone.js",
+      "source": "pnpm view rclone.js version engines --json"
     }
   },
   "providerCli": {
+    "cloudflareWrangler": {
+      "version": "4.107.0",
+      "package": "wrangler",
+      "source": "pnpm view wrangler version engines --json",
+      "authCheck": ["wrangler", "whoami", "--env-file", "/dev/null"]
+    },
     "clerk": {
       "version": "1.5.0",
       "package": "clerk",

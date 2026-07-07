@@ -38,7 +38,9 @@ export default async function UpgradePage({
   const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
   const humanSession = await resolveHumanAccountSession({
     clerkUserId: session.userId,
-    requestId: createCorrelationId("upgrade_req")
+    requestId: createCorrelationId("upgrade_req"),
+    route: "/upgrade",
+    method: "GET"
   });
 
   if (!humanSession.ok) {

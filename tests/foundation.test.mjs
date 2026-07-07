@@ -85,7 +85,7 @@ import {
   quotaWindowPruningStatement,
   terminalOutputDeletionStatement
 } from "../src/server/cleanup.ts";
-import { safeLogEvent } from "../src/server/logging.ts";
+import { safeErrorName, safeLogEvent } from "../src/server/logging.ts";
 import {
   cleanupAccountTargetsStatement,
   RUNTIME_CRON_SCHEDULE,
@@ -439,6 +439,37 @@ test("validateToolchainPackage accepts runtime dependencies only when toolchain-
   };
 
   assert.deepEqual(validateToolchainPackage(toolchain, packageJson), []);
+});
+
+test("validateToolchainPackage rejects provider CLIs without auth checks", () => {
+  const toolchain = /** @type {any} */ ({
+    node: { version: "24.18.0", npm: "11.16.0" },
+    go: { version: "1.26.4" },
+    packageManager: { name: "pnpm", version: "11.9.0" },
+    flyway: FLYWAY_TOOLCHAIN_FIXTURE,
+    phase1Tools: {},
+    runtimePins: {},
+    runtimeDevTools: {},
+    providerCli: {
+      cloudflareOpenNext: {
+        package: "@opennextjs/cloudflare",
+        version: "1.20.1"
+      }
+    }
+  });
+  const packageJson = {
+    packageManager: "pnpm@11.9.0",
+    devEngines: {
+      runtime: { name: "node", version: "24.18.0", onFail: "download" },
+      packageManager: { name: "pnpm", version: "11.9.0", onFail: "download" }
+    },
+    dependencies: {},
+    devDependencies: { "@opennextjs/cloudflare": "1.20.1" }
+  };
+
+  assert.deepEqual(validateToolchainPackage(toolchain, packageJson), [
+    "toolchain.json providerCli.cloudflareOpenNext.authCheck is required"
+  ]);
 });
 
 test("validateToolchainPackage rejects unpinned runtime dependencies", () => {
@@ -893,7 +924,7 @@ test("validateWorkflowGoChecks requires Go gate jobs in CI workflows", () => {
 
 test("validateRequiredEnvExample allows optional local development names", () => {
   const template =
-    "APP_ENV=development\nPORT=38000\nAPP_BASE_URL=http://localhost:38000\nPUBLIC_APP_BASE_URL=http://localhost:38000\nSUPABASE_PROJECT_REF=\nDATABASE_URL=\nDATABASE_APP_ROLE_URL=\nDATABASE_MIGRATION_URL=\nCLERK_SECRET_KEY=\nCLERK_PUBLISHABLE_KEY=\nSTRIPE_ACCOUNT_ID=\nSTRIPE_SECRET_KEY=\nSTRIPE_WEBHOOK_SECRET=\nSTRIPE_PAID_MONTHLY_PRICE_ID=\nSTRIPE_PAID_YEARLY_PRICE_ID=\nSTRIPE_BILLING_PORTAL_CONFIGURATION_ID=\nSENTRY_DSN=\nSENTRY_BROWSER_DSN=\nSENTRY_AUTH_TOKEN=\nCALLER_KEY_HASH_SECRET=\nSMOKE_OR_CLEANUP_TOKEN=\nAWS_PROFILE=\nCLOUDFLARE_DNS_API_TOKEN=\nAGENT_OUTBOX_BASE_URL=\nAGENT_OUTBOX_CONFIG_PATH=\nAGENT_OUTBOX_CALLER=\n";
+    "APP_ENV=development\nPORT=38000\nAPP_BASE_URL=http://localhost:38000\nPUBLIC_APP_BASE_URL=http://localhost:38000\nSUPABASE_PROJECT_REF=\nDATABASE_URL=\nDATABASE_APP_ROLE_URL=\nDATABASE_MIGRATION_URL=\nCLERK_SECRET_KEY=\nCLERK_PUBLISHABLE_KEY=\nSTRIPE_ACCOUNT_ID=\nSTRIPE_SECRET_KEY=\nSTRIPE_WEBHOOK_SECRET=\nSTRIPE_PAID_MONTHLY_PRICE_ID=\nSTRIPE_PAID_YEARLY_PRICE_ID=\nSTRIPE_BILLING_PORTAL_CONFIGURATION_ID=\nSENTRY_DSN=\nSENTRY_BROWSER_DSN=\nSENTRY_RELEASE=\nSENTRY_ORG=\nSENTRY_PROJECT=\nSENTRY_AUTH_TOKEN=\nAGENT_OUTBOX_SENTRY_RELEASE_UPLOAD=\nAGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH=\nNEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN=\nCALLER_KEY_HASH_SECRET=\nSMOKE_OR_CLEANUP_TOKEN=\nAWS_PROFILE=\nCLOUDFLARE_DNS_API_TOKEN=\nAGENT_OUTBOX_BASE_URL=\nAGENT_OUTBOX_CONFIG_PATH=\nAGENT_OUTBOX_CALLER=\n";
 
   assert.deepEqual(validateRequiredEnvExample(template), []);
 });
@@ -1176,9 +1207,12 @@ test("validateMigrationFilenames enforces Flyway versioned SQL names", () => {
   assert.deepEqual(
     validateMigrationFilenames([
       "V20260630000000__initial_schema.sql",
-      "V20260701010203__add_queue_indexes.sql"
+      "V20260701010203__add_queue_indexes.sql",
+      "V20260701010204__add_queue_index_online.sql.conf"
     ]),
-    []
+    [
+      "V20260701010204__add_queue_index_online.sql.conf must have matching SQL migration V20260701010204__add_queue_index_online.sql"
+    ]
   );
   assert.deepEqual(
     validateMigrationFilenames([
@@ -1187,8 +1221,66 @@ test("validateMigrationFilenames enforces Flyway versioned SQL names", () => {
       "V20260630000000__other_change.sql"
     ]),
     [
-      "20260630000000_initial_schema.sql must match VYYYYMMDDHHMMSS__lower_snake_description.sql",
+      "20260630000000_initial_schema.sql must match VYYYYMMDDHHMMSS__lower_snake_description.sql or VYYYYMMDDHHMMSS__lower_snake_description.sql.conf",
       "migration version 20260630000000 is duplicated"
+    ]
+  );
+  assert.deepEqual(
+    validateMigrationFilenames(
+      [
+        "V20260701010204__add_queue_index_online.sql",
+        "V20260701010204__add_queue_index_online.sql.conf"
+      ],
+      {
+        "V20260701010204__add_queue_index_online.sql": `
+          create index concurrently example_idx on public.example(id);
+        `,
+        "V20260701010204__add_queue_index_online.sql.conf":
+          "executeInTransaction=false\n"
+      }
+    ),
+    []
+  );
+  assert.deepEqual(
+    validateMigrationFilenames(
+      [
+        "V20260701010205__add_unique_queue_index_online.sql",
+        "V20260701010205__add_unique_queue_index_online.sql.conf"
+      ],
+      {
+        "V20260701010205__add_unique_queue_index_online.sql": `
+          create unique index concurrently example_unique_idx on public.example(id);
+        `,
+        "V20260701010205__add_unique_queue_index_online.sql.conf":
+          "executeInTransaction=false\n"
+      }
+    ),
+    []
+  );
+  assert.deepEqual(
+    validateMigrationFilenames(
+      ["V20260701010205__add_unique_queue_index_online.sql"],
+      {
+        "V20260701010205__add_unique_queue_index_online.sql": `
+          create unique index concurrently example_unique_idx on public.example(id);
+        `
+      }
+    ),
+    [
+      "V20260701010205__add_unique_queue_index_online.sql uses CREATE [UNIQUE]/DROP INDEX CONCURRENTLY and must have V20260701010205__add_unique_queue_index_online.sql.conf with executeInTransaction=false"
+    ]
+  );
+  assert.deepEqual(
+    validateMigrationFilenames(
+      ["V20260701010204__add_queue_index_online.sql"],
+      {
+        "V20260701010204__add_queue_index_online.sql": `
+          drop index concurrently if exists public.example_idx;
+        `
+      }
+    ),
+    [
+      "V20260701010204__add_queue_index_online.sql uses CREATE [UNIQUE]/DROP INDEX CONCURRENTLY and must have V20260701010204__add_queue_index_online.sql.conf with executeInTransaction=false"
     ]
   );
 });
@@ -2127,7 +2219,16 @@ test("safeLogEvent strips request bodies and arbitrary caller-controlled fields"
     route: "/api/runtime/error",
     method: "GET",
     status_code: 500,
+    duration_ms: 17,
     operation: "runtime.structured_error.canary",
+    operation_kind: "output_check_read",
+    account_id: "00000000-0000-4000-8000-000000000001",
+    caller_id: "00000000-0000-4000-8000-000000000002",
+    limit_name: "output_check_read_requests_per_account_per_minute",
+    limit_reason_code: "output_check_read_rate_limited",
+    limit_resets_at: "2026-07-07T12:01:00.000Z",
+    used_units: 121,
+    limit_units: 120,
     message: "safe message",
     request_body: "raw review content",
     caller_display_name: "caller supplied name"
@@ -2142,9 +2243,30 @@ test("safeLogEvent strips request bodies and arbitrary caller-controlled fields"
     route: "/api/runtime/error",
     method: "GET",
     status_code: 500,
+    duration_ms: 17,
     operation: "runtime.structured_error.canary",
+    operation_kind: "output_check_read",
+    account_id: "00000000-0000-4000-8000-000000000001",
+    caller_id: "00000000-0000-4000-8000-000000000002",
+    limit_name: "output_check_read_requests_per_account_per_minute",
+    limit_reason_code: "output_check_read_rate_limited",
+    limit_resets_at: "2026-07-07T12:01:00.000Z",
+    used_units: 121,
+    limit_units: 120,
     message: "safe message"
   });
+
+  const unsafeName = new Error("raw detail");
+  unsafeName.name = "Bad Error raw detail";
+  assert.equal(safeErrorName(unsafeName), "Error");
+  assert.equal(safeErrorName("raw thrown value"), "UnknownError");
+  assert.equal(
+    safeLogEvent({
+      ...unsafeEvent,
+      error_name: "Bad Error raw detail"
+    }).error_name,
+    "Error"
+  );
 });
 
 test("runtimeConfigStatus reports missing provider values without exposing values", () => {
@@ -2274,6 +2396,7 @@ test("sentryCaptureEnabled only allows production runtime capture", () => {
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+      SENTRY_RELEASE: "agent-outbox@2026.07.07",
       CI: undefined,
       NODE_ENV: undefined
     },

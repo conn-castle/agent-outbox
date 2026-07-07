@@ -10,6 +10,7 @@ import {
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../src/server/caller-connect-clerk-fixture";
 import { createCorrelationId } from "../../src/server/correlation";
 import {
+  reportCallerApprovalFailure,
   resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
 } from "./connect/session";
@@ -41,19 +42,19 @@ export async function approveRevokeDevice(formData: FormData) {
 }
 
 export async function denyRotateBrowser(formData: FormData) {
-  await denyOperation("rotate", formData);
+  await denyOperation("rotate", formData, "/caller/rotate/approve");
 }
 
 export async function denyRevokeBrowser(formData: FormData) {
-  await denyOperation("revoke", formData);
+  await denyOperation("revoke", formData, "/caller/revoke/approve");
 }
 
 export async function denyRotateDevice(formData: FormData) {
-  await denyOperation("rotate", formData);
+  await denyOperation("rotate", formData, "/caller/rotate/device");
 }
 
 export async function denyRevokeDevice(formData: FormData) {
-  await denyOperation("revoke", formData);
+  await denyOperation("revoke", formData, "/caller/revoke/device");
 }
 
 async function approveBrowserOperation(
@@ -77,7 +78,9 @@ async function approveBrowserOperation(
   const requestId = createCorrelationId(`caller_${operation}_approve_req`);
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: `/caller/${operation}/approve`,
+    method: "POST"
   });
   if (!session.ok) {
     redirect(
@@ -92,6 +95,13 @@ async function approveBrowserOperation(
   }
 
   const result = await withApprovalErrorPage(
+    {
+      requestId,
+      route: `/caller/${operation}/approve`,
+      method: "POST",
+      operation: `caller_${operation}_browser_approval`,
+      session
+    },
     operation,
     () =>
       runCallerConnectHumanTransaction(session, requestId, (query) =>
@@ -173,7 +183,9 @@ async function approveDeviceOperation(
   const requestId = createCorrelationId(`caller_${operation}_device_req`);
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: `/caller/${operation}/device`,
+    method: "POST"
   });
   if (!session.ok) {
     redirect(
@@ -188,6 +200,13 @@ async function approveDeviceOperation(
   }
 
   const result = await withApprovalErrorPage(
+    {
+      requestId,
+      route: `/caller/${operation}/device`,
+      method: "POST",
+      operation: `caller_${operation}_device_approval`,
+      session
+    },
     operation,
     () =>
       runCallerConnectHumanTransaction(session, requestId, (query) =>
@@ -222,7 +241,8 @@ async function approveDeviceOperation(
 
 async function denyOperation(
   operation: CredentialOperation,
-  formData: FormData
+  formData: FormData,
+  route: string
 ) {
   const setupRequestId = textField(formData, "setupRequestId");
   const fixtureClerkUserId = fixtureClerkUserIdField(formData);
@@ -241,7 +261,9 @@ async function denyOperation(
   const requestId = createCorrelationId(`caller_${operation}_deny_req`);
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route,
+    method: "POST"
   });
   if (!session.ok) {
     redirect(
@@ -256,6 +278,13 @@ async function denyOperation(
   }
 
   const result = await withApprovalErrorPage(
+    {
+      requestId,
+      route,
+      method: "POST",
+      operation: `caller_${operation}_deny`,
+      session
+    },
     operation,
     () =>
       runCallerConnectHumanTransaction(session, requestId, (query) =>
@@ -302,13 +331,19 @@ function fixtureClerkUserIdField(formData: FormData) {
 }
 
 async function withApprovalErrorPage<TResult>(
+  reportContext: Parameters<typeof reportCallerApprovalFailure>[1],
   operation: CredentialOperation,
   callback: () => Promise<TResult>,
   fixtureClerkUserId: string
 ): Promise<TResult> {
+  const startedAtMs = Date.now();
   try {
     return await callback();
-  } catch {
+  } catch (error) {
+    reportCallerApprovalFailure(error, {
+      ...reportContext,
+      startedAtMs
+    });
     redirect(
       operationErrorPath(
         operation,

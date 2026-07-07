@@ -21,7 +21,8 @@ import {
   limitProfileSelectorForAccountTier,
   type LimitProfileSelector
 } from "./limits.ts";
-import { emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 export const RUNTIME_CRON_SCHEDULE = "17 * * * *";
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -79,6 +80,7 @@ export type ScheduledCleanupResult = {
 };
 
 export function runScheduledCanary(input: ScheduledCanaryInput) {
+  const startedAtMs = Date.now();
   const errorId = createCorrelationId("sched");
   const recordedAt = new Date().toISOString();
   const scheduledTime =
@@ -90,8 +92,8 @@ export function runScheduledCanary(input: ScheduledCanaryInput) {
     level: "info",
     error_id: errorId,
     environment: process.env.APP_ENV ?? null,
-    release: process.env.CF_VERSION_METADATA ?? null,
     surface: "scheduled",
+    duration_ms: durationSinceMs(startedAtMs),
     operation: "runtime.scheduled.canary",
     message: "scheduled runtime canary executed"
   });
@@ -158,6 +160,7 @@ export function scheduledCleanupStatementsForAccount(input: {
 export async function runScheduledCleanup(
   input: ScheduledCleanupInput = {}
 ): Promise<ScheduledCleanupResult> {
+  const startedAtMs = Date.now();
   const connectionString =
     input.connectionString ?? process.env.DATABASE_APP_ROLE_URL;
   const requestId = input.requestId ?? createCorrelationId("cleanup");
@@ -166,7 +169,7 @@ export async function runScheduledCleanup(
   const runTransaction = input.runTransaction ?? runProductTransaction;
 
   if (!connectionString) {
-    emitScheduledCleanupFailure(requestId);
+    emitScheduledCleanupFailure({ requestId, startedAtMs });
     throw new Error("DATABASE_APP_ROLE_URL is required for scheduled cleanup.");
   }
 
@@ -220,7 +223,12 @@ export async function runScheduledCleanup(
         rowsAffected += accountResult.rowsAffected;
         accountsCleaned += 1;
       } catch (error) {
-        emitScheduledCleanupFailure(requestId, error);
+        emitScheduledCleanupFailure({
+          requestId,
+          error,
+          accountId: account.accountId,
+          startedAtMs
+        });
         accountFailures.push({ accountId: account.accountId, error });
       }
     }
@@ -239,8 +247,8 @@ export async function runScheduledCleanup(
       level: "info",
       request_id: requestId,
       environment: process.env.APP_ENV ?? null,
-      release: process.env.CF_VERSION_METADATA ?? null,
       surface: "scheduled",
+      duration_ms: durationSinceMs(startedAtMs),
       operation: SCHEDULED_CLEANUP_OPERATION,
       message: "scheduled cleanup completed"
     });
@@ -256,7 +264,7 @@ export async function runScheduledCleanup(
       rows_affected: rowsAffected
     };
   } catch (error) {
-    emitScheduledCleanupFailure(requestId, error);
+    emitScheduledCleanupFailure({ requestId, error, startedAtMs });
     throw error;
   }
 }
@@ -346,16 +354,20 @@ function deletedCountFromRow(row: CleanupStatementResultRow | undefined) {
   throw new Error("Scheduled cleanup statement did not return deleted_count.");
 }
 
-function emitScheduledCleanupFailure(requestId: string, error?: unknown) {
-  emitRuntimeLog({
-    level: "error",
-    request_id: requestId,
-    error_id: createCorrelationId("cleanup"),
-    error_name: error instanceof Error ? error.name : "Error",
+function emitScheduledCleanupFailure(input: {
+  requestId: string;
+  error?: unknown;
+  accountId?: string;
+  startedAtMs?: number;
+}) {
+  reportRuntimeFailure(input.error, {
+    errorId: createCorrelationId("cleanup"),
+    request_id: input.requestId,
     environment: process.env.APP_ENV ?? null,
-    release: process.env.CF_VERSION_METADATA ?? null,
     surface: "scheduled",
+    duration_ms: durationSinceMs(input.startedAtMs),
     operation: SCHEDULED_CLEANUP_OPERATION,
+    account_id: input.accountId,
     message: "scheduled cleanup failed"
   });
 }

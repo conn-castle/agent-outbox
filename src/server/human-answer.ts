@@ -15,13 +15,20 @@ import {
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
-import type { ApiErrorCode, ApiFieldError } from "./api-errors.ts";
+import {
+  apiLimitMetadata,
+  type ApiErrorCode,
+  type ApiErrorInput,
+  type ApiFieldError
+} from "./api-errors.ts";
 import {
   compareUtcDateTimeValues,
   isIanaTimeZone,
   isValidUtcDateTime
 } from "./input-schema.ts";
+import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
 import { safeAttachmentFilename, safeContentType } from "./output-files.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 export const HUMAN_ANSWER_RESPONSE_BYTE_LIMIT = 128_000;
 export const UNACKNOWLEDGED_OUTPUT_TIMEOUT_DAYS = 14;
@@ -207,23 +214,47 @@ export async function createHumanAnswer(
   connectionString: string,
   input: CreateHumanAnswerInput
 ): Promise<HumanAnswerResult> {
-  return runProductTransaction(
-    connectionString,
-    {
-      requestId: input.requestId,
-      authSurface: "human",
-      accountId: input.accountId,
-      callerId: input.callerId,
-      userId: input.humanUserId
-    },
-    (query) => createHumanAnswerInTransaction(query, input)
-  );
+  const startedAtMs = Date.now();
+  try {
+    return await runProductTransaction(
+      connectionString,
+      {
+        requestId: input.requestId,
+        authSurface: "human",
+        accountId: input.accountId,
+        callerId: input.callerId,
+        userId: input.humanUserId
+      },
+      (query) => createHumanAnswerInTransaction(query, input)
+    );
+  } catch (error) {
+    reportRuntimeFailure(error, {
+      errorId: input.correlationId,
+      request_id: input.requestId,
+      surface: "app",
+      route: "/human",
+      method: "POST",
+      status_code: 503,
+      duration_ms: durationSinceMs(startedAtMs),
+      operation: "human_answer_transaction",
+      operation_kind:
+        input.response.kind === "file_upload" ? "file_upload" : undefined,
+      account_id: input.accountId,
+      caller_id: input.callerId,
+      message: "Human answer transaction failed unexpectedly."
+    });
+    return failure(
+      "temporary_unavailable",
+      "Human answer is temporarily unavailable."
+    );
+  }
 }
 
 export async function createHumanAnswerInTransaction(
   query: ProductTransactionQuery,
   input: CreateHumanAnswerInput
 ): Promise<HumanAnswerResult> {
+  const startedAtMs = Date.now();
   const contextFailure = validateHumanAnswerInput(input);
   if (contextFailure) {
     return contextFailure;
@@ -278,7 +309,12 @@ export async function createHumanAnswerInTransaction(
     return payloadResult;
   }
 
-  const upload = await preparedFileUpload(query, input, payloadResult);
+  const upload = await preparedFileUpload(
+    query,
+    input,
+    payloadResult,
+    startedAtMs
+  );
   if (!upload.ok) {
     return upload;
   }
@@ -402,17 +438,38 @@ export async function undoHumanAnswerBeforeRead(
   connectionString: string,
   input: PreReadUndoInput
 ): Promise<PreReadUndoResult> {
-  return runProductTransaction(
-    connectionString,
-    {
-      requestId: input.requestId,
-      authSurface: "human",
-      accountId: input.accountId,
-      callerId: input.callerId,
-      userId: input.humanUserId
-    },
-    (query) => undoHumanAnswerBeforeReadInTransaction(query, input)
-  );
+  const startedAtMs = Date.now();
+  try {
+    return await runProductTransaction(
+      connectionString,
+      {
+        requestId: input.requestId,
+        authSurface: "human",
+        accountId: input.accountId,
+        callerId: input.callerId,
+        userId: input.humanUserId
+      },
+      (query) => undoHumanAnswerBeforeReadInTransaction(query, input)
+    );
+  } catch (error) {
+    reportRuntimeFailure(error, {
+      errorId: input.correlationId,
+      request_id: input.requestId,
+      surface: "app",
+      route: "/human",
+      method: "POST",
+      status_code: 503,
+      duration_ms: durationSinceMs(startedAtMs),
+      operation: "human_answer_undo_transaction",
+      account_id: input.accountId,
+      caller_id: input.callerId,
+      message: "Human answer undo transaction failed unexpectedly."
+    });
+    return failure(
+      "temporary_unavailable",
+      "Human answer undo is temporarily unavailable."
+    );
+  }
 }
 
 export async function undoHumanAnswerBeforeReadInTransaction(
@@ -580,7 +637,8 @@ export function validatedResponsePayload(
 async function preparedFileUpload(
   query: ProductTransactionQuery,
   input: CreateHumanAnswerInput,
-  payload: StoredPayload
+  payload: StoredPayload,
+  startedAtMs: number
 ): Promise<
   | {
       ok: true;
@@ -601,6 +659,15 @@ async function preparedFileUpload(
 
   const profile = await accountLimitProfileForAccount(query, input.accountId);
   if (!profile) {
+    emitHumanFileUploadFailure(
+      input,
+      {
+        status: 503,
+        code: "temporary_unavailable",
+        message: "File upload is temporarily unavailable."
+      },
+      startedAtMs
+    );
     return failure(
       "temporary_unavailable",
       "File upload is temporarily unavailable."
@@ -613,6 +680,7 @@ async function preparedFileUpload(
     file.size
   );
   if (!limits.ok) {
+    emitHumanFileUploadFailure(input, limits.error, startedAtMs);
     return {
       ok: false,
       code: limits.error.code,
@@ -623,13 +691,36 @@ async function preparedFileUpload(
   let bytes: Buffer;
   try {
     bytes = Buffer.from(await file.arrayBuffer());
-  } catch {
+  } catch (error) {
+    reportRuntimeFailure(error, {
+      errorId: input.correlationId,
+      request_id: input.requestId,
+      surface: "app",
+      route: "/human",
+      method: "POST",
+      status_code: 503,
+      duration_ms: durationSinceMs(startedAtMs),
+      operation: "human_file_upload",
+      operation_kind: "file_upload",
+      account_id: input.accountId,
+      caller_id: input.callerId,
+      message: "Human file upload failed unexpectedly."
+    });
     return failure(
       "temporary_unavailable",
       "Uploaded file could not be read safely."
     );
   }
   if (bytes.byteLength !== file.size) {
+    emitHumanFileUploadFailure(
+      input,
+      {
+        status: 503,
+        code: "temporary_unavailable",
+        message: "Uploaded file could not be read safely."
+      },
+      startedAtMs
+    );
     return failure(
       "temporary_unavailable",
       "Uploaded file could not be read safely."
@@ -646,6 +737,52 @@ async function preparedFileUpload(
       bytes
     }
   };
+}
+
+function emitHumanFileUploadFailure(
+  input: CreateHumanAnswerInput,
+  error: Pick<ApiErrorInput, "status" | "code" | "message" | "limit">,
+  startedAtMs: number
+) {
+  const limit = apiLimitMetadata(error.limit ?? null);
+  if (error.status < 500 && !limit) {
+    return;
+  }
+
+  emitRuntimeLog({
+    level: error.status >= 500 ? "error" : "warn",
+    error_id: input.correlationId,
+    request_id: input.requestId,
+    surface: "app",
+    route: "/human",
+    method: "POST",
+    status_code: error.status,
+    duration_ms: durationSinceMs(startedAtMs),
+    operation: "human_file_upload",
+    operation_kind: "file_upload",
+    account_id: input.accountId,
+    caller_id: input.callerId,
+    limit_name: limit?.limit_name,
+    limit_reason_code: limit?.limit_reason_code,
+    limit_resets_at: limit?.limit_resets_at,
+    used_units: limitNumericValue(error.limit, "usedUnits", "used_units"),
+    limit_units: limitNumericValue(error.limit, "limitUnits", "limit_units"),
+    message: "Human file upload failed."
+  });
+}
+
+function limitNumericValue(
+  limit: ApiErrorInput["limit"],
+  camelKey: "usedUnits" | "limitUnits",
+  snakeKey: "used_units" | "limit_units"
+) {
+  if (!limit) {
+    return undefined;
+  }
+
+  const limitRecord = limit as Record<string, unknown>;
+  const value = limitRecord[camelKey] ?? limitRecord[snakeKey];
+  return typeof value === "number" ? value : undefined;
 }
 
 function createOutputResultStatement(input: {

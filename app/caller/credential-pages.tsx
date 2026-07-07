@@ -12,6 +12,7 @@ import { MissingConfigurationPanel } from "../../src/server/ui";
 import {
   firstParam,
   fixtureClerkUserIdParam,
+  reportCallerApprovalFailure,
   requiredCallerConnectSessionConfiguration,
   resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
@@ -75,7 +76,9 @@ export async function CredentialOperationApprovePage({
   const requestId = createCorrelationId(`caller_${operation}_approve_page_req`);
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: `/caller/${operation}/approve`,
+    method: "GET"
   });
 
   if (!session.ok) {
@@ -89,6 +92,7 @@ export async function CredentialOperationApprovePage({
   let preview: Awaited<
     ReturnType<typeof getCredentialOperationBrowserApprovalPreview>
   >;
+  const previewStartedAtMs = Date.now();
   try {
     preview = await runCallerConnectHumanTransaction(
       session,
@@ -100,7 +104,15 @@ export async function CredentialOperationApprovePage({
           accountId: session.accountId
         })
     );
-  } catch {
+  } catch (error) {
+    reportCallerApprovalFailure(error, {
+      requestId,
+      route: `/caller/${operation}/approve`,
+      method: "GET",
+      operation: `caller_${operation}_browser_approval_preview`,
+      session,
+      startedAtMs: previewStartedAtMs
+    });
     preview = temporaryPageError(operation, "approval");
   }
 
@@ -234,7 +246,9 @@ export async function CredentialOperationDevicePage({
   const requestId = createCorrelationId(`caller_${operation}_device_page_req`);
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: `/caller/${operation}/device`,
+    method: "GET"
   });
 
   if (!session.ok) {
@@ -248,6 +262,7 @@ export async function CredentialOperationDevicePage({
   let preview: Awaited<
     ReturnType<typeof getCredentialOperationDeviceApprovalPreview>
   >;
+  const previewStartedAtMs = Date.now();
   try {
     preview = await runCallerConnectHumanTransaction(
       session,
@@ -259,7 +274,15 @@ export async function CredentialOperationDevicePage({
           accountId: session.accountId
         })
     );
-  } catch {
+  } catch (error) {
+    reportCallerApprovalFailure(error, {
+      requestId,
+      route: `/caller/${operation}/device`,
+      method: "GET",
+      operation: `caller_${operation}_device_approval_preview`,
+      session,
+      startedAtMs: previewStartedAtMs
+    });
     preview = temporaryPageError(operation, "approval");
   }
 
@@ -360,7 +383,9 @@ export async function CredentialOperationSuccessPage({
   const requestId = createCorrelationId(`caller_${operation}_success_page_req`);
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: `/caller/${operation}/success`,
+    method: "GET"
   });
 
   if (!session.ok) {
@@ -389,7 +414,12 @@ export async function CredentialOperationSuccessPage({
     session,
     requestId,
     setupRequestId,
-    ["approved", "exchanged"]
+    ["approved", "exchanged"],
+    {
+      route: `/caller/${operation}/success`,
+      method: "GET",
+      operation: `caller_${operation}_terminal_success`
+    }
   );
   if (!setupState.ok) {
     return (
@@ -469,7 +499,9 @@ export async function CredentialOperationErrorPage({
   const requestId = createCorrelationId(`caller_${operation}_error_page_req`);
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: `/caller/${operation}/error`,
+    method: "GET"
   });
 
   if (!session.ok) {
@@ -485,7 +517,12 @@ export async function CredentialOperationErrorPage({
       session,
       requestId,
       setupRequestId,
-      ["denied"]
+      ["denied"],
+      {
+        route: `/caller/${operation}/error`,
+        method: "GET",
+        operation: `caller_${operation}_terminal_denied`
+      }
     );
     if (setupState.ok) {
       const setup = setupState.data;
@@ -559,10 +596,16 @@ async function terminalSetupState(
   session: HumanAccountSession,
   requestId: string,
   setupRequestId: string,
-  statuses: TerminalStatusSelection
+  statuses: TerminalStatusSelection,
+  reportContext: {
+    route: string;
+    method: string;
+    operation: string;
+  }
 ): Promise<
   Awaited<ReturnType<typeof getCredentialOperationTerminalSetupState>>
 > {
+  const startedAtMs = Date.now();
   try {
     return await runCallerConnectHumanTransaction(session, requestId, (query) =>
       getCredentialOperationTerminalSetupState(query, {
@@ -572,7 +615,13 @@ async function terminalSetupState(
         statuses
       })
     );
-  } catch {
+  } catch (error) {
+    reportCallerApprovalFailure(error, {
+      requestId,
+      session,
+      ...reportContext,
+      startedAtMs
+    });
     return temporaryPageError(operation, "status");
   }
 }

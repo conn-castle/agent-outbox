@@ -287,6 +287,49 @@ gate. It runs `make check`, `make go-check`, and `make package-check`. It must
 not deploy, publish, tag, upload packages, mutate provider state, or require
 private provider credentials.
 
+## Cloudflare Platform
+
+- Build the OpenNext Cloudflare Worker bundle
+
+```bash
+pnpm run worker:build
+```
+
+Run from: repo root Prerequisites: `make setup` has completed or pinned `pnpm`
+dependencies are installed. Notes: Runs the pinned `@opennextjs/cloudflare`
+adapter to produce `.open-next/` for the `agent-outbox` Worker. This command
+builds deployment artifacts locally but does not upload, deploy, or mutate
+Cloudflare state.
+
+- Dry-run the Worker deployment package
+
+```bash
+pnpm run worker:dry-run
+```
+
+Run from: repo root Prerequisites: pinned `pnpm` dependencies are installed.
+Notes: Builds a fresh OpenNext bundle, then runs pinned Wrangler with
+`--dry-run --env-file /dev/null` against `wrangler.jsonc`. It verifies the
+Worker bundle, custom domain route config, disabled workers.dev route, cron
+config, observability config, and static assets without uploading or mutating
+Cloudflare state.
+
+- Deploy the Worker to Cloudflare
+
+```bash
+pnpm run worker:deploy
+```
+
+Run from: repo root Prerequisites: Explicit owner approval for production
+Cloudflare writes; production runtime configuration loaded from approved
+operator-controlled secrets; pinned dependencies installed; Cloudflare deploy
+token or Wrangler OAuth is authenticated for the intended account. Notes:
+External write. Builds a fresh OpenNext bundle, then deploys the Worker named
+`agent-outbox` with `app.agent-outbox.dev` as the custom domain, workers.dev
+disabled, and cron `17 * * * *`. Do not use from credential-free CI or before
+production runtime secrets have been installed or intentionally accepted as
+blocked.
+
 ## Maintenance
 
 - Validate Flyway migration history
@@ -301,7 +344,10 @@ Notes: Runs pinned Flyway `12.10.0` in Docker against `db/migrations/` and
 validates the schema history/checksums without applying new migrations. When
 the target database listens on the host, either set `FLYWAY_DOCKER_NETWORK=host`
 where Docker supports host networking or use a Docker-reachable host such as
-`host.docker.internal` in `DATABASE_MIGRATION_URL`.
+`host.docker.internal` in `DATABASE_MIGRATION_URL`. Online index migrations
+must use a companion `.sql.conf` file with `executeInTransaction=false`; the
+wrapper validates that pattern and passes Flyway's PostgreSQL session-lock
+setting when needed.
 
 - Apply pending Flyway migrations
 
@@ -316,7 +362,8 @@ Do not use provider dashboards or provider-specific migration commands for
 schema changes. When the target database listens on the host, either set
 `FLYWAY_DOCKER_NETWORK=host` where Docker supports host networking or use a
 Docker-reachable host such as `host.docker.internal` in
-`DATABASE_MIGRATION_URL`.
+`DATABASE_MIGRATION_URL`. Online index migrations must use the documented
+Flyway script config pattern so they run outside a transaction.
 
 - Replay Flyway migrations from scratch
 
@@ -332,7 +379,8 @@ ignored, then migrate, then strict validate again. CI runs this against a raw
 target database listens on the host, either set
 `FLYWAY_DOCKER_NETWORK=host` where Docker supports host networking or use a
 Docker-reachable host such as `host.docker.internal` in
-`DATABASE_MIGRATION_URL`.
+`DATABASE_MIGRATION_URL`. This gate also replays online index migrations using
+the repository Flyway script config pattern.
 
 - Create a new Flyway migration file
 
@@ -392,12 +440,26 @@ DATABASE_URL
 DATABASE_APP_ROLE_URL
 DATABASE_MIGRATION_URL
 SUPABASE_PROJECT_REF
+AWS_PROFILE
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_ZONE_ID
+CLOUDFLARE_ZONE_NAME
+CLOUDFLARE_NAMESERVERS
+CLOUDFLARE_DNS_API_TOKEN
+CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN
+CLOUDFLARE_TOKEN_MANAGEMENT_API_TOKEN
 CLERK_SECRET_KEY
 CLERK_PUBLISHABLE_KEY
 STRIPE_ACCOUNT_ID
 SENTRY_DSN
 SENTRY_BROWSER_DSN
+SENTRY_RELEASE
+SENTRY_ORG
+SENTRY_PROJECT
 SENTRY_AUTH_TOKEN
+AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD
+AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH
+NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN
 CALLER_KEY_HASH_SECRET
 SMOKE_OR_CLEANUP_TOKEN
 ```
@@ -405,9 +467,17 @@ SMOKE_OR_CLEANUP_TOKEN
 Notes: Stripe billing variables (`STRIPE_SECRET_KEY`,
 `STRIPE_WEBHOOK_SECRET`, `STRIPE_PAID_MONTHLY_PRICE_ID`,
 `STRIPE_PAID_YEARLY_PRICE_ID`, and `STRIPE_BILLING_PORTAL_CONFIGURATION_ID`)
-are present in `.env.example`. Credential-free gates do not require them.
-Local/test-mode billing verification does require the matching Stripe test-mode
-objects and webhook signing secret.
+are present in `.env.example`. `NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN` is
+a public production-only token. Production Sentry runtime capture requires
+`SENTRY_RELEASE` to be injected by the deploy path using the immutable Worker
+build identifier, such as the Git commit SHA or release tag. Sentry
+release/source-map upload requires `SENTRY_ORG`, `SENTRY_PROJECT`,
+`SENTRY_AUTH_TOKEN`, and both `AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD=1` and
+`AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH=1`; ordinary production builds should
+not set the deploy/release-path flag.
+Credential-free gates do not require these values. Local/test-mode billing
+verification does require the matching Stripe test-mode objects and webhook
+signing secret.
 
 Run from: repo root Prerequisites: Use `.env.example` as the source for required
 names. Notes: Diagnostics may print missing names but must not print configured

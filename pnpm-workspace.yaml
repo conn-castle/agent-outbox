@@ -3,6 +3,7 @@ packages:
 allowBuilds:
   "@sentry/cli": true
   esbuild: true
+  rclone.js: false
   sharp: true
   workerd: true
 minimumReleaseAgeExclude:

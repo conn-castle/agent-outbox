@@ -34,7 +34,8 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import { requireCallerKeyHashSecret } from "./env.ts";
-import { emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
 export const CONNECT_BROWSER_SETUP_CODE_EXPIRES_IN_SECONDS = 10 * 60;
@@ -1070,16 +1071,21 @@ async function exchangeConnectSetupWithHumanContext(
       }
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation: "caller_connect_exchange",
       message: "Caller connect exchange failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: context.requestId
+      request_id: context.requestId,
+      account_id: input.accountId
     });
     return temporaryUnavailableError(
-      "Caller connect exchange is temporarily unavailable."
+      "Caller connect exchange is temporarily unavailable.",
+      { errorId: context.correlationId, reported: true }
     );
   }
 }
@@ -1299,16 +1305,20 @@ async function withControlPlaneTransaction<TData>(
       callback
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation,
       message: "Caller connect request failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
       request_id: context.requestId
     });
     return temporaryUnavailableError(
-      "Caller connect is temporarily unavailable."
+      "Caller connect is temporarily unavailable.",
+      { errorId: context.correlationId, reported: true }
     );
   }
 }
@@ -1332,16 +1342,22 @@ async function withScopedProductTransaction<TData>(
       callback
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation,
       message: "Caller connect request failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: context.requestId
+      request_id: context.requestId,
+      account_id: scopedContext.accountId,
+      caller_id: scopedContext.callerId
     });
     return temporaryUnavailableError(
-      "Caller connect is temporarily unavailable."
+      "Caller connect is temporarily unavailable.",
+      { errorId: context.correlationId, reported: true }
     );
   }
 }
@@ -2260,13 +2276,18 @@ function invalidCallerCredentialsError(): ConnectResult<never> {
   };
 }
 
-function temporaryUnavailableError(message: string): ConnectResult<never> {
+function temporaryUnavailableError(
+  message: string,
+  options?: { errorId?: string; reported?: boolean }
+): ConnectResult<never> {
   return {
     ok: false,
     error: {
       status: 503,
       code: "temporary_unavailable",
-      message
+      message,
+      ...(options?.errorId ? { errorId: options.errorId } : {}),
+      ...(options?.reported ? { reported: true } : {})
     }
   };
 }

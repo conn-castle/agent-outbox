@@ -31,6 +31,9 @@
     "test": "node --test tests/*.test.mjs",
     "browser": "playwright test",
     "next:build": "next build",
+    "worker:build": "opennextjs-cloudflare build",
+    "worker:dry-run": "pnpm run worker:build && wrangler deploy --dry-run --env-file /dev/null",
+    "worker:deploy": "pnpm run worker:build && opennextjs-cloudflare deploy",
     "smoke": "node scripts/foundation.mjs smoke",
     "smoke-runtime": "node scripts/runtime-smoke.mjs",
     "migration:validate": "node scripts/flyway.mjs validate",
@@ -44,6 +47,7 @@
     "clean": "node scripts/foundation.mjs clean"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "1.20.1",
     "@playwright/test": "1.61.1",
     "@sentry/cli": "3.6.0",
     "@types/node": "24.13.2",
@@ -53,8 +57,10 @@
     "clerk": "1.5.0",
     "markdownlint-cli2": "0.22.1",
     "prettier": "3.9.3",
+    "rclone.js": "0.6.6",
     "supabase": "2.108.0",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "wrangler": "4.107.0"
   },
   "dependencies": {
     "@clerk/nextjs": "7.5.10",

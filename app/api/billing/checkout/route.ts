@@ -12,8 +12,8 @@ import { billingHumanSession } from "../../../../src/server/billing-session";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request);
-  const sessionResult = await billingHumanSession(context.requestId);
+  const context = apiRequestContext(request, "/api/billing/checkout");
+  const sessionResult = await billingHumanSession(context);
   if (!sessionResult.ok) {
     return apiErrorResponse(context, sessionResult.error);
   }
@@ -28,7 +28,8 @@ export async function POST(request: Request) {
     accountId: sessionResult.data.accountId,
     userId: sessionResult.data.userId,
     requestId: context.requestId,
-    interval: intervalResult.data
+    interval: intervalResult.data,
+    context
   });
 
   if (!result.ok) {

@@ -27,6 +27,12 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
 ## Features and tasks (not scheduled)
 
 <!-- ENTRIES START -->
+- Backlog 2026-07-07 surface-error-id-server-actions: Surface generated error_id to users on server-action paths
+    Priority: Low. Area: Human review UI / Error handling
+    Description: Server-action paths (/human submit and undo, caller-approval error redirect) generate an `error_id` in logs and Sentry but return only a generic code/redirect, so users get no support-correlation handle like API routes provide.
+    Acceptance criteria: Failed /human submit/undo and caller-approval error flows surface the generated `error_id` to the user (error UI or redirect) so it can be quoted for support correlation.
+    Notes: Deferred from observability-analytics-stack review (review-scope 20260707-164409-d437).
+
 - Backlog 2026-07-01 server-backed-review-list-controls: Server-backed review list controls for large queues
     Priority: Medium. Area: Human review UI
     Description: Humans should be able to search, filter, sort, and page through the full review queue instead of only the first bounded list slice.

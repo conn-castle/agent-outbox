@@ -3,16 +3,22 @@ import {
   type AccountMembership,
   type AuthorizedHumanAccountContext
 } from "./authorization.ts";
+import { createCorrelationId } from "./correlation.ts";
 import {
   runProductTransaction,
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
-import { emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 export type HumanSessionInput = {
   clerkUserId: string | null | undefined;
   requestId: string;
+  errorId?: string;
+  route?: string;
+  method?: string;
+  startedAtMs?: number;
 };
 
 export type HumanAccountMetadata = {
@@ -39,6 +45,8 @@ export type HumanAccountSessionFailure = {
     | "database_configuration_missing"
     | "temporary_unavailable";
   message: string;
+  errorId?: string;
+  reported?: boolean;
 };
 
 export type HumanAccountSessionResult =
@@ -76,6 +84,8 @@ export function requiredHumanSessionConfiguration() {
 export async function resolveHumanAccountSession(
   input: HumanSessionInput
 ): Promise<HumanAccountSessionResult> {
+  const startedAtMs = input.startedAtMs ?? Date.now();
+  let accountId: string | undefined;
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
     return failure(
@@ -108,6 +118,7 @@ export async function resolveHumanAccountSession(
     if (!bootstrap.ok) {
       return bootstrap;
     }
+    accountId = bootstrap.accountId;
 
     if (bootstrap.provisionedAccount) {
       emitRuntimeLog({
@@ -136,18 +147,24 @@ export async function resolveHumanAccountSession(
         })
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    const errorId = input.errorId ?? createCorrelationId("human");
+    reportRuntimeFailure(error, {
+      errorId,
       surface: "app",
+      route: input.route,
+      method: input.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(startedAtMs),
       operation: "human_account_session",
       message: "Human account session resolution failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: input.requestId
+      request_id: input.requestId,
+      account_id: accountId
     });
     return failure(
       503,
       "temporary_unavailable",
-      "Human account session is temporarily unavailable."
+      "Human account session is temporarily unavailable.",
+      { errorId, reported: true }
     );
   }
 }
@@ -309,7 +326,15 @@ function nullableTimestampValue(value: string | Date | null): string | null {
 function failure(
   status: HumanAccountSessionFailure["status"],
   code: HumanAccountSessionFailure["code"],
-  message: string
+  message: string,
+  options?: { errorId?: string; reported?: boolean }
 ): HumanAccountSessionFailure {
-  return { ok: false, status, code, message };
+  return {
+    ok: false,
+    status,
+    code,
+    message,
+    ...(options?.errorId ? { errorId: options.errorId } : {}),
+    ...(options?.reported ? { reported: true } : {})
+  };
 }

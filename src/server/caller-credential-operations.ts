@@ -37,7 +37,8 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import { requireCallerKeyHashSecret } from "./env.ts";
-import { emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
 const CONTROL_PLANE_CODE_EXPIRES_IN_SECONDS = 10 * 60;
@@ -1477,16 +1478,20 @@ async function withControlPlaneTransaction<TData>(
       callback
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation,
       message: "Caller credential operation failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
       request_id: context.requestId
     });
     return temporaryUnavailableError(
-      "Caller credential operation is temporarily unavailable."
+      "Caller credential operation is temporarily unavailable.",
+      { errorId: context.correlationId, reported: true }
     );
   }
 }
@@ -1510,16 +1515,22 @@ async function withScopedProductTransaction<TData>(
       callback
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation,
       message: "Caller credential operation failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: context.requestId
+      request_id: context.requestId,
+      account_id: scopedContext.accountId,
+      caller_id: scopedContext.callerId
     });
     return temporaryUnavailableError(
-      "Caller credential operation is temporarily unavailable."
+      "Caller credential operation is temporarily unavailable.",
+      { errorId: context.correlationId, reported: true }
     );
   }
 }
@@ -2758,13 +2769,18 @@ function invalidCallerCredentialsError(): OperationResult<never> {
   };
 }
 
-function temporaryUnavailableError(message: string): OperationResult<never> {
+function temporaryUnavailableError(
+  message: string,
+  options?: { errorId?: string; reported?: boolean }
+): OperationResult<never> {
   return {
     ok: false,
     error: {
       status: 503,
       code: "temporary_unavailable",
-      message
+      message,
+      ...(options?.errorId ? { errorId: options.errorId } : {}),
+      ...(options?.reported ? { reported: true } : {})
     }
   };
 }

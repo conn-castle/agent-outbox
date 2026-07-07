@@ -128,6 +128,8 @@ const REQUIRED_ENV_NAMES = [
   "STRIPE_ACCOUNT_ID",
   "SENTRY_DSN",
   "SENTRY_BROWSER_DSN",
+  "SENTRY_ORG",
+  "SENTRY_PROJECT",
   "SENTRY_AUTH_TOKEN",
   "CALLER_KEY_HASH_SECRET",
   "SMOKE_OR_CLEANUP_TOKEN"
@@ -143,11 +145,17 @@ const OPTIONAL_LOCAL_ENV_NAMES = [
   "CLOUDFLARE_ZONE_NAME",
   "CLOUDFLARE_NAMESERVERS",
   "CLOUDFLARE_DNS_API_TOKEN",
+  "CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN",
+  "CLOUDFLARE_TOKEN_MANAGEMENT_API_TOKEN",
+  "NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN",
+  "SENTRY_RELEASE",
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "STRIPE_PAID_MONTHLY_PRICE_ID",
   "STRIPE_PAID_YEARLY_PRICE_ID",
-  "STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
+  "STRIPE_BILLING_PORTAL_CONFIGURATION_ID",
+  "AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD",
+  "AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH"
 ];
 
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -403,6 +411,12 @@ export function validateToolchainPackage(toolchain, packageJson) {
       if (tool.package) {
         expectedDevDependencies.set(tool.package, tool.version);
       }
+    }
+  }
+
+  for (const [name, cli] of Object.entries(toolchain.providerCli)) {
+    if (!Array.isArray(cli.authCheck) || cli.authCheck.length === 0) {
+      errors.push(`toolchain.json providerCli.${name}.authCheck is required`);
     }
   }
 

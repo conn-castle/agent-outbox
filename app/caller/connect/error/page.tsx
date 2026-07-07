@@ -1,14 +1,13 @@
 import Link from "next/link";
 
 import { createCorrelationId } from "../../../../src/server/correlation";
-import { getConnectTerminalSetupState } from "../../../../src/server/caller-connect";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import {
+  connectTerminalSetupState,
   firstParam,
   fixtureClerkUserIdParam,
   requiredCallerConnectSessionConfiguration,
-  resolveCallerConnectHumanSession,
-  runCallerConnectHumanTransaction
+  resolveCallerConnectHumanSession
 } from "../session";
 import {
   AccountSummary,
@@ -46,7 +45,9 @@ export default async function CallerConnectErrorPage({
   const requestId = createCorrelationId("caller_connect_error_page_req");
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: "/caller/connect/error",
+    method: "GET"
   });
 
   if (!session.ok) {
@@ -57,28 +58,16 @@ export default async function CallerConnectErrorPage({
     );
   }
   if (code === "setup_denied" && setupRequestId) {
-    let setupState: Awaited<ReturnType<typeof getConnectTerminalSetupState>>;
-    try {
-      setupState = await runCallerConnectHumanTransaction(
-        session,
-        requestId,
-        (query) =>
-          getConnectTerminalSetupState(query, {
-            setupRequestId,
-            accountId: session.accountId,
-            statuses: ["denied"]
-          })
-      );
-    } catch {
-      setupState = {
-        ok: false,
-        error: {
-          status: 503,
-          code: "temporary_unavailable",
-          message: "Caller connect error is temporarily unavailable."
-        }
-      };
-    }
+    const setupState = await connectTerminalSetupState({
+      session,
+      requestId,
+      setupRequestId,
+      statuses: ["denied"],
+      route: "/caller/connect/error",
+      method: "GET",
+      operation: "caller_connect_terminal_denied",
+      unavailableMessage: "Caller connect error is temporarily unavailable."
+    });
     if (setupState.ok) {
       const setup = setupState.data;
       const callerDisplayName =

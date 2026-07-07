@@ -42,5 +42,12 @@ The human review UI, Clerk-backed auth-adjacent pages, caller registration
 flows, scheduled cleanup routes, and caller API endpoints deploy as one Next.js
 app on Cloudflare Workers through OpenNext.
 
+The production Worker is configured in `wrangler.jsonc` as `agent-outbox`.
+`app.agent-outbox.dev` is the intended Worker Custom Domain, and the scheduled
+Worker cron is `17 * * * *`. The Worker `workers.dev` route is disabled so the
+custom domain remains the only hosted app/API surface. Exact account, zone,
+token, deployment, and secret values stay in Cloudflare, GitHub environment
+secrets, and Systems Manager Parameter Store rather than tracked Markdown.
+
 GitHub Actions is the canonical deployment path. This file records targets and
 ownership; it does not duplicate workflow steps.

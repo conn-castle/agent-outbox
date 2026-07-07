@@ -10,6 +10,7 @@ import {
 } from "../../../src/server/caller-connect";
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../src/server/caller-connect-clerk-fixture";
 import {
+  reportCallerApprovalFailure,
   resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
 } from "./session";
@@ -31,7 +32,9 @@ export async function approveBrowserConnect(formData: FormData) {
   const requestId = createCorrelationId("caller_connect_approve_req");
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: "/caller/connect/approve",
+    method: "POST"
   });
   if (!session.ok) {
     redirect(
@@ -45,6 +48,13 @@ export async function approveBrowserConnect(formData: FormData) {
   }
 
   const result = await withApprovalErrorPage(
+    {
+      requestId,
+      route: "/caller/connect/approve",
+      method: "POST",
+      operation: "caller_connect_browser_approval",
+      session
+    },
     () =>
       runCallerConnectHumanTransaction(session, requestId, (query) =>
         approveConnectBrowserSetupRequest(query, {
@@ -115,7 +125,9 @@ export async function approveDeviceConnect(formData: FormData) {
   const requestId = createCorrelationId("caller_connect_device_req");
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: "/caller/connect/device",
+    method: "POST"
   });
   if (!session.ok) {
     redirect(
@@ -129,6 +141,13 @@ export async function approveDeviceConnect(formData: FormData) {
   }
 
   const result = await withApprovalErrorPage(
+    {
+      requestId,
+      route: "/caller/connect/device",
+      method: "POST",
+      operation: "caller_connect_device_approval",
+      session
+    },
     () =>
       runCallerConnectHumanTransaction(session, requestId, (query) =>
         approveConnectDeviceSetupRequest(query, {
@@ -160,7 +179,15 @@ export async function approveDeviceConnect(formData: FormData) {
   redirect(`/caller/connect/success?${query.toString()}`);
 }
 
-export async function denyConnect(formData: FormData) {
+export async function denyBrowserConnect(formData: FormData) {
+  await denyConnect(formData, "/caller/connect/approve");
+}
+
+export async function denyDeviceConnect(formData: FormData) {
+  await denyConnect(formData, "/caller/connect/device");
+}
+
+async function denyConnect(formData: FormData, route: string) {
   const setupRequestId = textField(formData, "setupRequestId");
   const fixtureClerkUserId = fixtureClerkUserIdField(formData);
   if (!setupRequestId) {
@@ -177,7 +204,9 @@ export async function denyConnect(formData: FormData) {
   const requestId = createCorrelationId("caller_connect_deny_req");
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route,
+    method: "POST"
   });
   if (!session.ok) {
     redirect(
@@ -191,6 +220,13 @@ export async function denyConnect(formData: FormData) {
   }
 
   const result = await withApprovalErrorPage(
+    {
+      requestId,
+      route,
+      method: "POST",
+      operation: "caller_connect_deny",
+      session
+    },
     () =>
       runCallerConnectHumanTransaction(session, requestId, (query) =>
         denyConnectSetupRequest(query, {
@@ -233,12 +269,18 @@ function fixtureClerkUserIdField(formData: FormData) {
 }
 
 async function withApprovalErrorPage<TResult>(
+  reportContext: Parameters<typeof reportCallerApprovalFailure>[1],
   callback: () => Promise<TResult>,
   fixtureClerkUserId: string
 ): Promise<TResult> {
+  const startedAtMs = Date.now();
   try {
     return await callback();
-  } catch {
+  } catch (error) {
+    reportCallerApprovalFailure(error, {
+      ...reportContext,
+      startedAtMs
+    });
     redirect(
       connectErrorPath(
         503,

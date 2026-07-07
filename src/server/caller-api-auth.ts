@@ -15,7 +15,7 @@ import {
   runProductTransaction,
   type TransactionContextStatement
 } from "./database.ts";
-import { emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs, emitRuntimeLog, safeErrorName } from "./logging.ts";
 
 export type CallerCredentialLookup = (
   keyId: CallerApiKeyId
@@ -64,6 +64,10 @@ export type CallerIdentity = {
 export type AuthenticateCallerApiRequestOptions = {
   now?: Date;
   requestId?: string;
+  correlationId?: string;
+  route?: string;
+  method?: string;
+  startedAtMs?: number;
 };
 
 const INVALID_CALLER_CREDENTIALS_CLIENT_ERROR: ApiErrorInput = {
@@ -96,10 +100,15 @@ export async function authenticateCallerApiRequest(
     const failure = callerAuthFailure(input);
     emitRuntimeLog({
       level: "warn",
+      error_id: options.correlationId,
+      request_id: options.requestId,
       surface: "api",
+      route: options.route,
+      method: options.method,
+      status_code: failure.clientError.status,
+      duration_ms: durationSinceMs(options.startedAtMs),
       operation: "caller_api_auth",
-      message: `caller authentication failed: ${failure.internal.reason}`,
-      request_id: options.requestId
+      message: `caller authentication failed: ${failure.internal.reason}`
     });
     return failure;
   };
@@ -226,7 +235,11 @@ export async function authenticateCallerApiRequestWithDatabase(
       return row ? storedCallerCredentialDigestFromLookupRow(row) : null;
     },
     {
-      requestId: context.requestId
+      requestId: context.requestId,
+      correlationId: context.correlationId,
+      route: context.route,
+      method: context.method,
+      startedAtMs: context.startedAtMs
     }
   );
 
@@ -250,11 +263,18 @@ export async function authenticateCallerApiRequestWithDatabase(
   } catch (error) {
     emitRuntimeLog({
       level: "warn",
+      error_id: context.correlationId,
+      request_id: context.requestId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 200,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation: "caller_api_auth",
+      account_id: auth.accountId,
+      caller_id: auth.callerId,
       message: "Caller credential last-used update failed.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: context.requestId
+      error_name: safeErrorName(error)
     });
   }
 

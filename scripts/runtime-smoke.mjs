@@ -109,6 +109,7 @@ async function main() {
     true,
     "/api/runtime/canary did not report configured runtime environment"
   );
+  const runtimeAppEnv = runtimeCanary.environment?.appEnv;
   await expectErrorCode(
     new URL("/api/runtime/caller-auth", baseUrl),
     401,
@@ -169,6 +170,13 @@ async function main() {
     true,
     "runtime smoke Sentry suppression header was not honored"
   );
+  if (runtimeAppEnv === "production") {
+    assert.equal(
+      sentryCanary.sentry_capture_configured,
+      true,
+      "runtime smoke did not prove production Sentry capture readiness"
+    );
+  }
   const errorCanary = await expectJsonStatus(
     new URL("/api/runtime/error", baseUrl),
     500,

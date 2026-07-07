@@ -4,12 +4,13 @@ import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/cal
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import {
   approveDeviceConnect,
-  denyConnect,
+  denyDeviceConnect,
   previewDeviceConnect
 } from "../actions";
 import {
   firstParam,
   fixtureClerkUserIdParam,
+  reportCallerApprovalFailure,
   requiredCallerConnectSessionConfiguration,
   resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
@@ -84,7 +85,9 @@ export default async function CallerConnectDevicePage({
   const requestId = createCorrelationId("caller_connect_device_page_req");
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: "/caller/connect/device",
+    method: "GET"
   });
 
   if (!session.ok) {
@@ -96,13 +99,22 @@ export default async function CallerConnectDevicePage({
   }
 
   let preview: Awaited<ReturnType<typeof getConnectDeviceApprovalPreview>>;
+  const previewStartedAtMs = Date.now();
   try {
     preview = await runCallerConnectHumanTransaction(
       session,
       requestId,
       (query) => getConnectDeviceApprovalPreview(query, { userCode })
     );
-  } catch {
+  } catch (error) {
+    reportCallerApprovalFailure(error, {
+      requestId,
+      route: "/caller/connect/device",
+      method: "GET",
+      operation: "caller_connect_device_approval_preview",
+      session,
+      startedAtMs: previewStartedAtMs
+    });
     preview = {
       ok: false,
       error: {
@@ -146,7 +158,7 @@ export default async function CallerConnectDevicePage({
                 />
               ) : null}
             </form>
-            <form id="deny-device-connect" action={denyConnect}>
+            <form id="deny-device-connect" action={denyDeviceConnect}>
               <input
                 type="hidden"
                 name="setupRequestId"

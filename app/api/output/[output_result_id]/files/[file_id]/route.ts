@@ -12,7 +12,10 @@ export async function GET(
     params: Promise<{ output_result_id: string; file_id: string }>;
   }
 ) {
-  const context = apiRequestContext(request);
+  const context = apiRequestContext(
+    request,
+    "/api/output/[output_result_id]/files/[file_id]"
+  );
   const params = await routeContext.params;
   const result = await handleOutputFileDownloadRequest(request, context, {
     outputResultId: params.output_result_id,

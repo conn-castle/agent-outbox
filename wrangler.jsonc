@@ -2,8 +2,16 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "agent-outbox",
   "main": "worker/entry.mjs",
+  "workers_dev": false,
+  "preview_urls": false,
   "compatibility_date": "2026-06-29",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "routes": [
+    {
+      "pattern": "app.agent-outbox.dev",
+      "custom_domain": true
+    }
+  ],
   "triggers": {
     "crons": ["17 * * * *"]
   },
@@ -11,6 +19,12 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "agent-outbox"
+    }
+  ],
   "observability": {
     "enabled": true,
     "logs": {

@@ -19,7 +19,8 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import { type LimitProfileSelector } from "./limits.ts";
-import { emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 import {
   parseInputDeleteBody,
   parseInputSubmission,
@@ -89,6 +90,7 @@ export async function handleInputQueueRequest(
     };
   }
 
+  let identity: CallerIdentity | null = null;
   try {
     const auth = await authenticateCallerApiRequestWithDatabase(
       request,
@@ -98,6 +100,7 @@ export async function handleInputQueueRequest(
     if (!auth.ok) {
       return { ok: false, error: auth.clientError };
     }
+    identity = auth;
 
     return await runProductTransaction(
       connectionString,
@@ -118,15 +121,23 @@ export async function handleInputQueueRequest(
       }
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
+      request_id: context.requestId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation: `input_${operation}`,
-      message: "Input queue operation failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: context.requestId
+      account_id: identity?.accountId,
+      caller_id: identity?.callerId,
+      message: "Input queue operation failed unexpectedly."
     });
-    return temporaryUnavailableError();
+    return temporaryUnavailableError({
+      errorId: context.correlationId,
+      reported: true
+    });
   }
 }
 
@@ -880,13 +891,18 @@ function internalQueueError(): InputQueueResult {
   };
 }
 
-function temporaryUnavailableError(): InputQueueResult {
+function temporaryUnavailableError(options?: {
+  errorId?: string;
+  reported?: boolean;
+}): InputQueueResult {
   return {
     ok: false,
     error: {
       status: 503,
       code: "temporary_unavailable",
-      message: "Input queue operation is temporarily unavailable."
+      message: "Input queue operation is temporarily unavailable.",
+      ...(options?.errorId ? { errorId: options.errorId } : {}),
+      ...(options?.reported ? { reported: true } : {})
     }
   };
 }

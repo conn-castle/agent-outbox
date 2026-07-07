@@ -9,7 +9,10 @@ import { readJsonBodyWithLimit } from "../../../../../../src/server/input-schema
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request);
+  const context = apiRequestContext(
+    request,
+    "/api/caller/rotate/browser/start"
+  );
   const body = await readJsonBodyWithLimit(request);
   if (!body.ok) {
     return apiErrorResponse(context, body.error);
