@@ -7,6 +7,9 @@ import {
   sentryReleaseUploadEnabled
 } from "./src/server/observability";
 
+const sentryNextjsEdgeEntry =
+  "./node_modules/@sentry/nextjs/build/esm/edge/index.js";
+
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   experimental: {
@@ -24,6 +27,11 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   turbopack: {
+    // The app runs in Cloudflare workerd, so runtime Sentry imports should use
+    // Sentry's own edge entry instead of bundling the Node server SDK graph.
+    resolveAlias: {
+      "@sentry/nextjs": sentryNextjsEdgeEntry
+    },
     root: process.cwd()
   }
 };

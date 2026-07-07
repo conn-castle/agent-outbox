@@ -80,8 +80,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: In Phase 8, create the separate restricted Stripe runtime key for Checkout and Billing Portal sessions, store it in the production `stripe-secret-key` SSM path, and apply it to Cloudflare runtime secrets.
     Notes: Updated on 2026-07-06 after live setup. Owner accepted using a setup-only Stripe key for object creation and deferring the separate checkout/portal runtime key plus Cloudflare runtime secret installation to Phase 8.
 
-- Issue 2026-06-30 cloudflare-opennext-platform-verification: Cloudflare Worker deploy is blocked by account limits
-    Priority: High. Area: Tooling/Deployment
-    Description: Cloudflare rejected the Worker upload because the built script is about 4.6 MiB gzip and the current account limit is 3 MB; investigation found the server handler is dominated by repeated `@sentry/nextjs`/`@sentry/node`/OpenTelemetry chunks plus Next/OpenNext runtime, not app logic.
-    Next step: With Sentry retained, choose whether to reduce how Sentry is bundled, split verified route bundles, replace the Next/OpenNext runtime with a smaller Worker-native surface, or use a Cloudflare Workers Paid/limit increase.
-    Notes: Production Flyway schema was reset/replayed to 12 migrations and validated on 2026-07-07. No Worker deployment or secrets exist after the failed upload; Web Analytics site creation is also blocked by the deploy token lacking the needed RUM/account-settings write permission. Bundle investigation report: `.agent-layer/tmp/debug-issue.20260707-152452-dc2fc3.report.md`.
+- Issue 2026-06-30 cloudflare-web-analytics-permission: Cloudflare Web Analytics site creation lacks token permission
+    Priority: Medium. Area: Tooling/Deployment
+    Description: Web Analytics site creation is still blocked because the deploy token lacks the needed RUM/account-settings write permission.
+    Next step: Create Web Analytics with an appropriately scoped Cloudflare token or grant the deploy token the missing permission, then install the runtime analytics token.
+    Notes: The Worker bundle-size blocker was resolved on 2026-07-07 by resolving runtime Sentry imports through the Sentry edge entry; Wrangler dry-run now reports 2122.53 KiB gzip.
