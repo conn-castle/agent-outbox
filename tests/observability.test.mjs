@@ -996,7 +996,8 @@ test("human answer transaction failures share error id across structured log and
     /**
      * @param {(scope: {
      *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
      * }) => void} callback
      */
     withScope(callback) {
@@ -1008,7 +1009,8 @@ test("human answer transaction failures share error id across structured log and
         },
         setContext(name, value) {
           sentryContexts.push({ name, value });
-        }
+        },
+        setFingerprint() {}
       });
       tagSnapshots.push(tags);
     },
@@ -1089,7 +1091,8 @@ test("human answer undo transaction failures share error id across structured lo
     /**
      * @param {(scope: {
      *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
      * }) => void} callback
      */
     withScope(callback) {
@@ -1101,7 +1104,8 @@ test("human answer undo transaction failures share error id across structured lo
         },
         setContext(name, value) {
           sentryContexts.push({ name, value });
-        }
+        },
+        setFingerprint() {}
       });
       tagSnapshots.push(tags);
     },
@@ -1373,7 +1377,8 @@ test("caller approval failure reporter emits structured log and Sentry context",
     /**
      * @param {(scope: {
      *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
      * }) => void} callback
      */
     withScope(callback) {
@@ -1385,7 +1390,8 @@ test("caller approval failure reporter emits structured log and Sentry context",
         },
         setContext(name, value) {
           sentryContexts.push({ name, value });
-        }
+        },
+        setFingerprint() {}
       });
       tagSnapshots.push(tags);
     },
@@ -1482,6 +1488,80 @@ test("caller approval failure reporter emits structured log and Sentry context",
   );
 });
 
+test("runtime failures set a Sentry fingerprint from safe discriminators", async () => {
+  /** @type {unknown[]} */
+  const fingerprints = [];
+  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
+  const capturedExceptions = [];
+  const sentryStub = {
+    /**
+     * @param {(scope: {
+     *   setTag(name: string, value: unknown): void,
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
+     * }) => void} callback
+     */
+    withScope(callback) {
+      callback({
+        setTag() {},
+        setContext() {},
+        setFingerprint(value) {
+          fingerprints.push(value);
+        }
+      });
+    },
+    /**
+     * @param {unknown} error
+     */
+    captureException(error) {
+      capturedExceptions.push(
+        /** @type {{ name?: string, message?: string, stack?: string }} */ (
+          error
+        )
+      );
+    }
+  };
+  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+
+  await withProcessEnvAsync(
+    {
+      APP_ENV: "production",
+      SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+      SENTRY_RELEASE: "agent-outbox@2026.07.07",
+      CI: undefined,
+      NODE_ENV: "production"
+    },
+    () =>
+      captureStructuredLogs(async () => {
+        reportRuntimeFailure(new Error("raw fingerprint secret"), {
+          errorId: "corr-fingerprint",
+          surface: "app",
+          route: "/human",
+          operation: "human_answer_transaction",
+          message: "Runtime failure fingerprint test."
+        });
+      })
+  );
+
+  // Grouping must be deterministic and derived only from safe discriminators so
+  // unrelated failures reported through this helper never collapse into a single
+  // issue and no sensitive text ever reaches the fingerprint.
+  assert.equal(capturedExceptions.length, 1);
+  assert.equal(fingerprints.length, 1);
+  // The fingerprint array is created inside the sentry.ts VM realm, so copy it
+  // into this realm before the deep equality check.
+  assert.deepEqual(Array.from(/** @type {unknown[]} */ (fingerprints[0])), [
+    "agent-outbox-runtime-failure",
+    "Error",
+    "human_answer_transaction",
+    "/human"
+  ]);
+  assert.equal(
+    JSON.stringify(fingerprints).includes("raw fingerprint secret"),
+    false
+  );
+});
+
 test("connect terminal setup state reports transaction exceptions", async () => {
   /** @type {Array<Record<string, unknown>>} */
   const tagSnapshots = [];
@@ -1493,7 +1573,8 @@ test("connect terminal setup state reports transaction exceptions", async () => 
     /**
      * @param {(scope: {
      *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
      * }) => void} callback
      */
     withScope(callback) {
@@ -1505,7 +1586,8 @@ test("connect terminal setup state reports transaction exceptions", async () => 
         },
         setContext(name, value) {
           sentryContexts.push({ name, value });
-        }
+        },
+        setFingerprint() {}
       });
       tagSnapshots.push(tags);
     },
@@ -1810,7 +1892,8 @@ test("billing webhook processing failures share one error id across structured l
     /**
      * @param {(scope: {
      *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
      * }) => void} callback
      */
     withScope(callback) {
@@ -1820,7 +1903,8 @@ test("billing webhook processing failures share one error id across structured l
         },
         setContext(name, value) {
           sentryContexts.push({ name, value });
-        }
+        },
+        setFingerprint() {}
       });
     },
     /**
@@ -1949,7 +2033,8 @@ test("billing checkout and portal thrown failures share error ids across structu
     /**
      * @param {(scope: {
      *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
      * }) => void} callback
      */
     withScope(callback) {
@@ -1961,7 +2046,8 @@ test("billing checkout and portal thrown failures share error ids across structu
         },
         setContext(name, value) {
           sentryContexts.push({ name, value });
-        }
+        },
+        setFingerprint() {}
       });
       tagSnapshots.push(tags);
     },
@@ -2204,7 +2290,8 @@ test("billing session resolution failures share billing route error ids", async 
     /**
      * @param {(scope: {
      *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
      * }) => void} callback
      */
     withScope(callback) {
@@ -2216,7 +2303,8 @@ test("billing session resolution failures share billing route error ids", async 
         },
         setContext(name, value) {
           sentryContexts.push({ name, value });
-        }
+        },
+        setFingerprint() {}
       });
       tagSnapshots.push(tags);
     },
@@ -2294,7 +2382,8 @@ test("input queue and output file catch paths share error ids across logs and Se
     /**
      * @param {(scope: {
      *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
      * }) => void} callback
      */
     withScope(callback) {
@@ -2308,7 +2397,8 @@ test("input queue and output file catch paths share error ids across logs and Se
         },
         setContext(name, value) {
           contexts.push({ name, value });
-        }
+        },
+        setFingerprint() {}
       });
       sentryScopes.push({ tags, contexts });
     },
@@ -2980,7 +3070,8 @@ test("reportRuntimeFailure shares one error id across structured log and Sentry"
     /**
      * @param {(scope: {
      *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
      * }) => void} callback
      */
     withScope(callback) {
@@ -2990,7 +3081,8 @@ test("reportRuntimeFailure shares one error id across structured log and Sentry"
         },
         setContext(name, value) {
           sentryContexts.push({ name, value });
-        }
+        },
+        setFingerprint() {}
       });
     },
     /**

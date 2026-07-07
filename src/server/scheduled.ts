@@ -169,8 +169,11 @@ export async function runScheduledCleanup(
   const runTransaction = input.runTransaction ?? runProductTransaction;
 
   if (!connectionString) {
-    emitScheduledCleanupFailure({ requestId, startedAtMs });
-    throw new Error("DATABASE_APP_ROLE_URL is required for scheduled cleanup.");
+    const error = new Error(
+      "DATABASE_APP_ROLE_URL is required for scheduled cleanup."
+    );
+    emitScheduledCleanupFailure({ requestId, error, startedAtMs });
+    throw error;
   }
 
   try {

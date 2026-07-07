@@ -26,6 +26,18 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-07 sentry-capture-disabled-visibility: Silent Sentry capture-disable is not surfaced in the error log payload
+    Priority: Low. Area: Observability
+    Description: When `runtimeRelease()` is null in production (SENTRY_RELEASE/GITHUB_SHA both unset), `sentryCaptureEnabled()` disables capture; `reportRuntimeFailure` returns `sentry_captured:false` but the emitted structured log omits it, so a misconfigured deploy where errors never reach Sentry can go unnoticed.
+    Next step: Add `sentry_captured` to `RuntimeLogEvent`/`SAFE_LOG_KEYS` and include it in `reportRuntimeFailure`'s log line (or emit a one-time startup warning when capture is disabled in production).
+    Notes: Deferred from PR #22 CodeRabbit nitpick as a log-schema change beyond the batched remediation scope.
+
+- Issue 2026-07-07 billing-account-lookup-duplication: Billing account-lookup + failure-report block duplicated across checkout and portal flows
+    Priority: Low. Area: Maintainability
+    Description: The `runTransaction(... billingAccountStatement ...)` + `billingRuntimeFailure(error, ...)` account-lookup pattern is repeated near-verbatim in `createCheckoutSessionForAccount` and `createBillingPortalSessionForAccount` in `src/server/billing.ts`, differing only in operation/message strings; the two copies can drift.
+    Next step: Extract a shared `lookupBillingAccountOrFail(...)` helper both flows call, parameterized by operation/message/responseMessage.
+    Notes: Deferred from PR #22 CodeRabbit nitpick as a refactor unrelated to the observability PR's purpose.
+
 - Issue 2026-07-07 queue-invariant-500-no-sentry: Non-exception invariant 500s are logged but never captured to Sentry
     Priority: Low. Area: Observability
     Description: `internalQueueError` in `input-queue.ts` returns 500 via `apiErrorResponse`, which has a structured-log path but no Sentry capture path, so invariant-violation 5xx returns never reach Sentry (only exception paths via `reportRuntimeFailure` do). Residual gap, not a regression.

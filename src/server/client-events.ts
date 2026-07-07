@@ -96,7 +96,8 @@ async function readClientEventBody(request: Request): Promise<
     }
 > {
   const contentType = request.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().startsWith("application/json")) {
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (mediaType !== "application/json") {
     return { ok: false, reason: "content_type" };
   }
 

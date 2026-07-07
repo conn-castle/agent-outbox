@@ -59,6 +59,18 @@ export function captureRuntimeException(
         route: input.route ?? null,
         release
       });
+      // The sanitized exception carries a fixed redacted message, so Sentry's
+      // default stack/message grouping would merge every unrelated failure
+      // reported through this helper into a single issue. Pin an explicit
+      // fingerprint built from the safe discriminators (error name, operation,
+      // route) so grouping stays deterministic and triage-able without
+      // reintroducing any sensitive text.
+      scope.setFingerprint([
+        "agent-outbox-runtime-failure",
+        safeErrorName(error),
+        input.operation ?? "unknown",
+        input.route ?? "unknown"
+      ]);
       Sentry.captureException(sanitizedSentryException(error));
     });
   } catch {
