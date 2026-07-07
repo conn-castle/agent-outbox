@@ -48,12 +48,12 @@ export function buildClientEventsRateLimitRuleset(existingRules = []) {
     ),
     nextRule
   ];
+  // The phase entrypoint PUT accepts only description and rules; the ruleset
+  // name and kind are immutable and the phase is implied by the URL, so
+  // Cloudflare rejects them in the request body.
   return {
-    name: "Agent Outbox zone rate limits",
     description:
       "Prepared-but-inactive Agent Outbox rate limits. Source checked against Cloudflare Rulesets API docs on 2026-07-07.",
-    kind: "zone",
-    phase: RATE_LIMIT_PHASE,
     rules
   };
 }
@@ -208,7 +208,10 @@ async function main(argv) {
         enabled: result.enabled
       })
     );
-    if (!result.present) {
+    // The prepared rule must exist and stay disabled; fail the check if it is
+    // missing or has been activated so the runbook's present:true / enabled:false
+    // expectation is enforced by exit code, not just reported in the JSON.
+    if (!result.present || result.enabled) {
       process.exitCode = 1;
     }
     return;

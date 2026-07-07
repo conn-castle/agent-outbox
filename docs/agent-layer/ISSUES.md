@@ -26,6 +26,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-07 root-layout-error-telemetry-gap: Root-layout render errors emit no client-event telemetry
+    Priority: Low. Area: Observability / Human review UI
+    Description: `app/error.tsx` is a route-segment error boundary and, per Next.js App Router semantics, does not catch errors thrown while rendering the root `app/layout.tsx`. Such failures are only caught by an `app/global-error.tsx` boundary, which does not exist, so a root-layout crash emits none of the four client-event signals. The current layout is a thin shell (providers + analytics + ClientEventsInit), so the gap is narrow.
+    Next step: Add `app/global-error.tsx` (with its own `<html>`/`<body>` shell) that reuses `classifyReactError` + `emitClientEvent` so root-layout render errors emit the same telemetry; keep `app/error.tsx` for segment-level handling.
+    Notes: From PR #23 review (CodeRabbit). Deferred as a new user-facing full-page crash surface beyond the segment-boundary scope of this PR.
+
 - Issue 2026-07-07 client-events-origin-gate-prod-verify: /api/client-events origin gate may silently drop all events in production
     Priority: Low. Area: Observability/Reliability
     Description: `handleClientEventsRequest` drops events when `origin !== new URL(request.url).origin` and always returns 204, so if the deployed OpenNext/Cloudflare `request.url` origin does not match the browser `Origin` (proxy/rewrite), every event is dropped with no surfaced signal — a latent prod no-op that all same-origin local/browser tests pass through. Unverified at the deployed runtime (opposite failure mode from the deliberately-accepted forgeable-Origin direction).

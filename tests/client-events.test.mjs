@@ -30,7 +30,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  */
 
 test("classifyReactError detects React hydration failures without matching unrelated errors", () => {
-  for (const code of ["418", "422", "423", "425"]) {
+  for (const code of ["418", "419", "421", "422", "423", "425"]) {
     assert.equal(
       classifyReactError(new Error(`Minified React error #${code}; see docs`)),
       "hydration"
@@ -55,7 +55,7 @@ test("classifyReactError detects React hydration failures without matching unrel
   assert.equal(classifyReactError({ digest: "500" }), "other");
 });
 
-test("emitClientEvent sends one bounded content-safe batch", async () => {
+test("emitClientEvent buffers a burst and drains it across bounded batches", async () => {
   const previousFetch = globalThis.fetch;
   /** @type {FetchCall[]} */
   const requests = [];
@@ -72,6 +72,8 @@ test("emitClientEvent sends one bounded content-safe batch", async () => {
     for (let index = 0; index < 10; index += 1) {
       emitClientEvent("client_error", "browser_exception");
     }
+    // A 10-event burst exceeds the per-flush batch size, so the first flush
+    // sends one bounded batch and reschedules for the remainder.
     await clientEventsTestInternals.flushClientEvents();
 
     assert.equal(requests.length, 1);
@@ -79,12 +81,18 @@ test("emitClientEvent sends one bounded content-safe batch", async () => {
     assert.equal(requests[0].init.method, "POST");
     assert.equal(requests[0].init.keepalive, true);
     assert.equal(requests[0].init.headers["Content-Type"], "application/json");
-    const body = JSON.parse(String(requests[0].init.body));
-    assert.equal(body.events.length, 8);
-    assert.deepEqual(body.events[0], {
+    const firstBody = JSON.parse(String(requests[0].init.body));
+    assert.equal(firstBody.events.length, 8);
+    assert.deepEqual(firstBody.events[0], {
       name: "client_error",
       category: "browser_exception"
     });
+
+    // The remaining 2 events are drained by the rescheduled flush, not dropped
+    // at the batch boundary.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(requests.length, 2);
+    assert.equal(JSON.parse(String(requests[1].init.body)).events.length, 2);
     assert.equal(clientEventsTestInternals.queue.length, 0);
   } finally {
     globalThis.fetch = previousFetch;
@@ -300,6 +308,11 @@ test("Cloudflare rate-limit check and apply build Rulesets API requests", async 
   const appliedBody = JSON.parse(String(calls[2].init.body));
   assert.equal(appliedBody.rules.length, 1);
   assert.equal(appliedBody.rules.at(-1).enabled, false);
+  // The phase entrypoint PUT must not carry immutable ruleset fields; Cloudflare
+  // rejects name/kind and the phase is implied by the URL.
+  assert.ok(!("name" in appliedBody));
+  assert.ok(!("kind" in appliedBody));
+  assert.ok(!("phase" in appliedBody));
   assert.ok(payload.rules);
   assert.equal(payload.rules.at(-1)?.description, RATE_LIMIT_RULE_DESCRIPTION);
 });

@@ -6,10 +6,14 @@ import {
   type ClientEventName
 } from "../shared/client-events-contract.ts";
 
-const HYDRATION_ERROR_CODES = ["418", "422", "423", "425"];
+const HYDRATION_ERROR_CODES = ["418", "419", "421", "422", "423", "425"];
 const HYDRATION_MINIFIED_ERROR_PATTERN = new RegExp(
   `Minified React error #(?:${HYDRATION_ERROR_CODES.join("|")})\\b`
 );
+// Buffer several batches so a burst of events within the flush debounce is not
+// dropped at the per-flush batch size; flushClientEvents drains the queue across
+// multiple rescheduled batches. This bounds memory independently of the batch size.
+const CLIENT_EVENT_QUEUE_LIMIT = CLIENT_EVENT_BATCH_LIMIT * 8;
 const queue: ClientEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
@@ -23,7 +27,7 @@ export function emitClientEvent(
     if (category) {
       event.category = category;
     }
-    if (queue.length >= CLIENT_EVENT_BATCH_LIMIT) {
+    if (queue.length >= CLIENT_EVENT_QUEUE_LIMIT) {
       return;
     }
     queue.push(event);
@@ -102,11 +106,10 @@ async function flushClientEvents() {
 
 function boundedClientEventBody(events: ClientEvent[]) {
   const bounded = events.slice();
+  const encoder = new TextEncoder();
   while (bounded.length > 0) {
     const body = JSON.stringify({ events: bounded });
-    if (
-      new TextEncoder().encode(body).byteLength <= CLIENT_EVENT_BODY_BYTE_LIMIT
-    ) {
+    if (encoder.encode(body).byteLength <= CLIENT_EVENT_BODY_BYTE_LIMIT) {
       return body;
     }
     bounded.pop();

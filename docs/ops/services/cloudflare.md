@@ -202,6 +202,10 @@ deployment task. At activation time:
 3. Run `node scripts/cloudflare-ratelimit.mjs --apply` only when the operator
    intends to write the prepared disabled rule.
 4. Run `node scripts/cloudflare-ratelimit.mjs --check` again and verify
-   `present: true` and `enabled: false`.
+   `present: true` and `enabled: false`. `--check` exits non-zero unless the
+   rule is present and disabled, so an accidentally activated rule fails the
+   check instead of reporting success.
 5. Enable or adjust the rule in Cloudflare only as an incident-control decision,
    after confirming the zone plan supports the desired predicate and behavior.
+   After an intentional incident activation, `--check` will exit non-zero by
+   design because the rule is no longer in its prepared disabled state.
