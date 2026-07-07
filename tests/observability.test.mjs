@@ -3065,7 +3065,9 @@ test("sentry release metadata and source-map upload gate require the release pat
       SENTRY_PROJECT: "agent-outbox-web",
       SENTRY_AUTH_TOKEN: "token",
       AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD: "1",
-      AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH: "1"
+      AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH: "1",
+      CI: undefined,
+      NODE_ENV: "production"
     },
     () => {
       assert.equal(runtimeRelease(), "agent-outbox@2026.07.07");
