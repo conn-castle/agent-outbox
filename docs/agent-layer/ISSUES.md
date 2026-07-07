@@ -26,11 +26,29 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-07-06 stripe-webhook-online-index-migration: Stripe webhook retention index needs nontransactional Flyway pattern
-    Priority: Medium. Area: Database/Deployment
-    Description: `db/migrations/V20260706193000__stripe_webhook_event_retention.sql` adds a retention index for a live table; building it safely may require an online/concurrent index outside Flyway's normal transaction.
-    Next step: In Phase 8 deployment/release work, define the repository pattern for nontransactional or online-index Flyway migrations and apply it to the Stripe webhook retention index before production rollout.
-    Notes: Deferred from CodeRabbit review comment 3532409084 because this PR should not establish the broader live-table migration policy.
+- Issue 2026-07-07 sentry-capture-disabled-visibility: Silent Sentry capture-disable is not surfaced in the error log payload
+    Priority: Low. Area: Observability
+    Description: When `runtimeRelease()` is null in production (SENTRY_RELEASE/GITHUB_SHA both unset), `sentryCaptureEnabled()` disables capture; `reportRuntimeFailure` returns `sentry_captured:false` but the emitted structured log omits it, so a misconfigured deploy where errors never reach Sentry can go unnoticed.
+    Next step: Add `sentry_captured` to `RuntimeLogEvent`/`SAFE_LOG_KEYS` and include it in `reportRuntimeFailure`'s log line (or emit a one-time startup warning when capture is disabled in production).
+    Notes: Deferred from PR #22 CodeRabbit nitpick as a log-schema change beyond the batched remediation scope.
+
+- Issue 2026-07-07 billing-account-lookup-duplication: Billing account-lookup + failure-report block duplicated across checkout and portal flows
+    Priority: Low. Area: Maintainability
+    Description: The `runTransaction(... billingAccountStatement ...)` + `billingRuntimeFailure(error, ...)` account-lookup pattern is repeated near-verbatim in `createCheckoutSessionForAccount` and `createBillingPortalSessionForAccount` in `src/server/billing.ts`, differing only in operation/message strings; the two copies can drift.
+    Next step: Extract a shared `lookupBillingAccountOrFail(...)` helper both flows call, parameterized by operation/message/responseMessage.
+    Notes: Deferred from PR #22 CodeRabbit nitpick as a refactor unrelated to the observability PR's purpose.
+
+- Issue 2026-07-07 queue-invariant-500-no-sentry: Non-exception invariant 500s are logged but never captured to Sentry
+    Priority: Low. Area: Observability
+    Description: `internalQueueError` in `input-queue.ts` returns 500 via `apiErrorResponse`, which has a structured-log path but no Sentry capture path, so invariant-violation 5xx returns never reach Sentry (only exception paths via `reportRuntimeFailure` do). Residual gap, not a regression.
+    Next step: Thread `errorId` through non-exception 5xx returns and add a Sentry capture path in `apiErrorResponse` (queue-wide refactor).
+    Notes: Deferred from observability-analytics-stack review (review-scope 20260707-164409-d437).
+
+- Issue 2026-07-07 operator-failure-logging-duplication: Operator-actionable failure logging policy duplicated across two implementations
+    Priority: Low. Area: Maintainability
+    Description: The operator-actionable failure logging policy is implemented twice — `emitOperatorActionableApiFailure` (api-errors.ts) and `emitHumanFileUploadFailure` (human-answer.ts) — because the `/human` server-action path bypasses `apiErrorResponse`. Two implementations of one policy will drift.
+    Next step: Extract a shared helper both paths call.
+    Notes: Deferred from observability-analytics-stack review (review-scope 20260707-164409-d437).
 
 - Issue 2026-07-06 human-db-test-isolation: Human database tests have isolation failures
     Priority: High. Area: Tests/Database
@@ -62,8 +80,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: In Phase 8, create the separate restricted Stripe runtime key for Checkout and Billing Portal sessions, store it in the production `stripe-secret-key` SSM path, and apply it to Cloudflare runtime secrets.
     Notes: Updated on 2026-07-06 after live setup. Owner accepted using a setup-only Stripe key for object creation and deferring the separate checkout/portal runtime key plus Cloudflare runtime secret installation to Phase 8.
 
-- Issue 2026-06-30 cloudflare-opennext-platform-verification: Cloudflare/OpenNext deploy path lacks pinned verification
-    Priority: Medium. Area: Tooling/Deployment
-    Description: OpenNext/Workers deploy cannot be fully verified from the pinned package install because platform tools are outside the normal app toolchain; release must also prove Flyway migrations run before runtime or scheduled cleanup.
-    Next step: In Phase 8 deployment/release work, pin platform tools, verify the intended Cloudflare account/Worker/route/custom-domain mapping, apply runtime secrets, ensure Flyway migrations precede cleanup execution, and add dedicated verification outside `make check`.
-    Notes: Owner accepted Phase 8 deferral on 2026-07-06; Wrangler auth worked locally, `deployments status --name agent-outbox` found no Worker, `app.agent-outbox.dev` had no public DNS answer, and CodeRabbit body 4640189856 is deferred here.
+- Issue 2026-06-30 cloudflare-opennext-platform-verification: Cloudflare Worker deploy is blocked by account limits
+    Priority: High. Area: Tooling/Deployment
+    Description: Cloudflare rejected the Worker upload because the built script is about 4.6 MiB gzip and the current account limit is 3 MB; investigation found the server handler is dominated by repeated `@sentry/nextjs`/`@sentry/node`/OpenTelemetry chunks plus Next/OpenNext runtime, not app logic.
+    Next step: With Sentry retained, choose whether to reduce how Sentry is bundled, split verified route bundles, replace the Next/OpenNext runtime with a smaller Worker-native surface, or use a Cloudflare Workers Paid/limit increase.
+    Notes: Production Flyway schema was reset/replayed to 12 migrations and validated on 2026-07-07. No Worker deployment or secrets exist after the failed upload; Web Analytics site creation is also blocked by the deploy token lacking the needed RUM/account-settings write permission. Bundle investigation report: `.agent-layer/tmp/debug-issue.20260707-152452-dc2fc3.report.md`.

@@ -1,32 +1,34 @@
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { smokeBearerFailureResponse } from "../../../../src/server/http";
-import { emitRuntimeLog } from "../../../../src/server/logging";
+import { durationSinceMs } from "../../../../src/server/logging";
 import {
-  captureCanaryException,
-  isRuntimeSmokeRequest
+  isRuntimeSmokeRequest,
+  reportRuntimeFailure
 } from "../../../../src/server/sentry";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
+  const startedAtMs = Date.now();
   const authFailure = smokeBearerFailureResponse(request);
   if (authFailure) {
     return authFailure;
   }
 
+  const requestId = createCorrelationId("req");
   const errorId = createCorrelationId("err");
   const error = new Error("runtime structured error canary");
-  captureCanaryException(error, errorId, isRuntimeSmokeRequest(request));
-  emitRuntimeLog({
-    level: "error",
-    error_id: errorId,
+  reportRuntimeFailure(error, {
+    errorId,
+    request_id: requestId,
+    suppressCapture: isRuntimeSmokeRequest(request),
     environment: process.env.APP_ENV ?? null,
-    release: process.env.CF_VERSION_METADATA ?? null,
     surface: "api",
     route: "/api/runtime/error",
     method: "GET",
     status_code: 500,
+    duration_ms: durationSinceMs(startedAtMs),
     operation: "runtime.structured_error.canary",
     message: "structured error canary executed"
   });

@@ -1,4 +1,4 @@
-import type { ApiErrorInput } from "./api-errors.ts";
+import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
 import {
   type HumanAccountSessionFailure,
   type HumanAccountSessionResult,
@@ -19,7 +19,7 @@ type BillingHumanSessionResult =
 type ResolveHumanAccountSession = typeof resolveHumanAccountSession;
 
 export async function billingHumanSession(
-  requestId: string
+  context: ApiRequestContext
 ): Promise<BillingHumanSessionResult> {
   const missing = requiredHumanSessionConfiguration();
   if (missing.length > 0) {
@@ -36,7 +36,7 @@ export async function billingHumanSession(
   const { auth } = await import("@clerk/nextjs/server");
   const session = await auth();
   return billingHumanSessionFromClerkUser({
-    requestId,
+    context,
     clerkUserId: session.userId,
     connectionString: process.env.DATABASE_APP_ROLE_URL,
     resolveSession: resolveHumanAccountSession
@@ -44,7 +44,7 @@ export async function billingHumanSession(
 }
 
 export async function billingHumanSessionFromClerkUser(input: {
-  requestId: string;
+  context: ApiRequestContext;
   clerkUserId: string | null | undefined;
   connectionString: string | undefined;
   resolveSession: ResolveHumanAccountSession;
@@ -62,7 +62,11 @@ export async function billingHumanSessionFromClerkUser(input: {
 
   const humanSession = await input.resolveSession({
     clerkUserId: input.clerkUserId,
-    requestId: input.requestId
+    requestId: input.context.requestId,
+    errorId: input.context.correlationId,
+    route: input.context.route,
+    method: input.context.method,
+    startedAtMs: input.context.startedAtMs
   });
   if (!humanSession.ok) {
     return {
@@ -70,7 +74,9 @@ export async function billingHumanSessionFromClerkUser(input: {
       error: {
         status: humanSession.status,
         code: billingSessionErrorCode(humanSession.status),
-        message: humanSession.message
+        message: humanSession.message,
+        ...(humanSession.errorId ? { errorId: humanSession.errorId } : {}),
+        ...(humanSession.reported ? { reported: true } : {})
       }
     };
   }

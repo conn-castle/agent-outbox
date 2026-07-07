@@ -1,14 +1,13 @@
 import Link from "next/link";
 
 import { createCorrelationId } from "../../../../src/server/correlation";
-import { getConnectTerminalSetupState } from "../../../../src/server/caller-connect";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import {
+  connectTerminalSetupState,
   firstParam,
   fixtureClerkUserIdParam,
   requiredCallerConnectSessionConfiguration,
-  resolveCallerConnectHumanSession,
-  runCallerConnectHumanTransaction
+  resolveCallerConnectHumanSession
 } from "../session";
 import {
   AccountSummary,
@@ -41,7 +40,9 @@ export default async function CallerConnectSuccessPage({
   const requestId = createCorrelationId("caller_connect_success_page_req");
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: "/caller/connect/success",
+    method: "GET"
   });
 
   if (!session.ok) {
@@ -65,28 +66,16 @@ export default async function CallerConnectSuccessPage({
     );
   }
 
-  let setupState: Awaited<ReturnType<typeof getConnectTerminalSetupState>>;
-  try {
-    setupState = await runCallerConnectHumanTransaction(
-      session,
-      requestId,
-      (query) =>
-        getConnectTerminalSetupState(query, {
-          setupRequestId,
-          accountId: session.accountId,
-          statuses: ["approved", "exchanged"]
-        })
-    );
-  } catch {
-    setupState = {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Caller connect success is temporarily unavailable."
-      }
-    };
-  }
+  const setupState = await connectTerminalSetupState({
+    session,
+    requestId,
+    setupRequestId,
+    statuses: ["approved", "exchanged"],
+    route: "/caller/connect/success",
+    method: "GET",
+    operation: "caller_connect_terminal_success",
+    unavailableMessage: "Caller connect success is temporarily unavailable."
+  });
 
   if (!setupState.ok) {
     return (

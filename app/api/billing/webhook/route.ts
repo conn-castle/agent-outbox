@@ -8,7 +8,7 @@ import { handleStripeWebhookRequest } from "../../../../src/server/billing";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request);
+  const context = apiRequestContext(request, "/api/billing/webhook");
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
     return apiErrorResponse(context, {

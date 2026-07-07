@@ -79,6 +79,47 @@ All JSON success responses use the shared envelope:
 All JSON errors use the envelope in [errors.md](errors.md#error-envelope).
 File-download success responses return raw bytes instead of a JSON envelope.
 
+## Frontend Event Route
+
+### Client Events
+
+```http
+POST /api/client-events
+```
+
+Behavior:
+
+- Accepts best-effort browser event batches for narrow frontend failure
+  visibility only.
+- Requires a same-origin `Origin` header and `Content-Type: application/json`.
+- Allows only client errors, hydration failures, failed human-action
+  submissions, upload failures, and major UI state inconsistencies.
+- Enforces small batch and body limits.
+- Emits content-safe structured logs with server-generated request ids and the
+  endpoint route label.
+- Does not require caller bearer credentials or Clerk session state.
+- Treats same-origin as a browser constraint, not as authentication; server
+  operators should rate-limit or filter this route separately from trusted API
+  failure logs if public signal quality degrades.
+- Does not log arbitrary client messages, stack traces, form values, review
+  content, uploaded file metadata, caller-supplied request ids, or payload route
+  labels.
+- Returns a best-effort empty `204` response for accepted, rejected, malformed,
+  and internal-failure cases so frontend telemetry never blocks product flows.
+
+Body:
+
+```json
+{
+  "events": [
+    {
+      "name": "client_error",
+      "category": "browser_exception"
+    }
+  ]
+}
+```
+
 ## Billing Routes
 
 Billing routes are account-scoped and use Clerk-backed human account membership

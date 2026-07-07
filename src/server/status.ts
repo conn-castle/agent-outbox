@@ -1,5 +1,6 @@
 import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
-import { emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 import {
   runProductTransaction,
   type ProductTransactionQuery,
@@ -9,7 +10,10 @@ import {
   accountLimitProfileForAccount,
   enforceCallerRequestLimits
 } from "./caller-api-limits.ts";
-import { authenticateCallerApiRequestWithDatabase } from "./caller-api-auth.ts";
+import {
+  authenticateCallerApiRequestWithDatabase,
+  type CallerApiAuthSuccess
+} from "./caller-api-auth.ts";
 import {
   accountLimitStatusMetadata,
   limitErrorMetadata,
@@ -337,6 +341,7 @@ async function withAuthenticatedCallerStatusTransaction<TData>(
     );
   }
 
+  let identity: CallerApiAuthSuccess | null = null;
   try {
     const auth = await authenticateCallerApiRequestWithDatabase(
       request,
@@ -346,6 +351,7 @@ async function withAuthenticatedCallerStatusTransaction<TData>(
     if (!auth.ok) {
       return { ok: false, error: auth.clientError };
     }
+    identity = auth;
 
     return await runProductTransaction(
       connectionString,
@@ -378,15 +384,23 @@ async function withAuthenticatedCallerStatusTransaction<TData>(
       }
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
+      request_id: context.requestId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation: "caller_status_request",
-      message: "Caller status request failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: context.requestId
+      account_id: identity?.accountId,
+      caller_id: identity?.callerId,
+      message: "Caller status request failed unexpectedly."
     });
-    return temporaryUnavailableError(unavailableMessage);
+    return temporaryUnavailableError(unavailableMessage, {
+      errorId: context.correlationId,
+      reported: true
+    });
   }
 }
 
@@ -551,14 +565,17 @@ function timestampValue(value: string | Date): string {
 }
 
 function temporaryUnavailableError<TData>(
-  message: string
+  message: string,
+  options?: { errorId?: string; reported?: boolean }
 ): StatusResult<TData> {
   return {
     ok: false,
     error: {
       status: 503,
       code: "temporary_unavailable",
-      message
+      message,
+      ...(options?.errorId ? { errorId: options.errorId } : {}),
+      ...(options?.reported ? { reported: true } : {})
     }
   };
 }

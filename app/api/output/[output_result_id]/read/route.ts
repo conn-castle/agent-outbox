@@ -11,7 +11,10 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ output_result_id: string }> }
 ) {
-  const apiContext = apiRequestContext(request);
+  const apiContext = apiRequestContext(
+    request,
+    "/api/output/[output_result_id]/read"
+  );
   const { output_result_id: outputResultId } = await context.params;
   const result = await handleOutputReadRequest(
     request,

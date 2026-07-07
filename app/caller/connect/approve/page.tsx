@@ -2,10 +2,11 @@ import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectBrowserApprovalPreview } from "../../../../src/server/caller-connect";
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/caller-connect-clerk-fixture";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
-import { approveBrowserConnect, denyConnect } from "../actions";
+import { approveBrowserConnect, denyBrowserConnect } from "../actions";
 import {
   firstParam,
   fixtureClerkUserIdParam,
+  reportCallerApprovalFailure,
   requiredCallerConnectSessionConfiguration,
   resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
@@ -56,7 +57,9 @@ export default async function CallerConnectApprovePage({
   const requestId = createCorrelationId("caller_connect_approve_page_req");
   const session = await resolveCallerConnectHumanSession({
     requestId,
-    fixtureClerkUserId
+    fixtureClerkUserId,
+    route: "/caller/connect/approve",
+    method: "GET"
   });
 
   if (!session.ok) {
@@ -68,13 +71,22 @@ export default async function CallerConnectApprovePage({
   }
 
   let preview: Awaited<ReturnType<typeof getConnectBrowserApprovalPreview>>;
+  const previewStartedAtMs = Date.now();
   try {
     preview = await runCallerConnectHumanTransaction(
       session,
       requestId,
       (query) => getConnectBrowserApprovalPreview(query, { setupRequestId })
     );
-  } catch {
+  } catch (error) {
+    reportCallerApprovalFailure(error, {
+      requestId,
+      route: "/caller/connect/approve",
+      method: "GET",
+      operation: "caller_connect_browser_approval_preview",
+      session,
+      startedAtMs: previewStartedAtMs
+    });
     preview = {
       ok: false,
       error: {
@@ -113,7 +125,7 @@ export default async function CallerConnectApprovePage({
                   Approve caller
                 </button>
               </form>
-              <form action={denyConnect}>
+              <form action={denyBrowserConnect}>
                 <input
                   type="hidden"
                   name="setupRequestId"

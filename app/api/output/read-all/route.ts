@@ -9,7 +9,7 @@ import { handleOutputReadAllRequest } from "../../../../src/server/output-queue"
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request);
+  const context = apiRequestContext(request, "/api/output/read-all");
   const body = await readJsonBodyWithLimit(request);
   if (!body.ok) {
     return apiErrorResponse(context, body.error);

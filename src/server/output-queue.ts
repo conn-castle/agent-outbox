@@ -15,7 +15,8 @@ import {
   enforceCallerRequestLimits
 } from "./caller-api-limits.ts";
 import { authenticateCallerApiRequestWithDatabase } from "./caller-api-auth.ts";
-import { emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 import { safeContentType } from "./output-files.ts";
 
 export const OUTPUT_PAGE_DEFAULT_LIMIT = 25;
@@ -607,6 +608,7 @@ async function withAuthenticatedCallerTransaction(
     );
   }
 
+  let identity: CallerIdentity | null = null;
   try {
     const auth = await authenticateCallerApiRequestWithDatabase(
       request,
@@ -616,6 +618,7 @@ async function withAuthenticatedCallerTransaction(
     if (!auth.ok) {
       return { ok: false, error: auth.clientError };
     }
+    identity = auth;
 
     return await runProductTransaction(
       connectionString,
@@ -650,16 +653,22 @@ async function withAuthenticatedCallerTransaction(
       }
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
+      request_id: context.requestId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation: operationKind,
-      message: "Output queue operation failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: context.requestId
+      account_id: identity?.accountId,
+      caller_id: identity?.callerId,
+      message: "Output queue operation failed unexpectedly."
     });
     return temporaryUnavailableError(
-      "Output queue operation is temporarily unavailable."
+      "Output queue operation is temporarily unavailable.",
+      { errorId: context.correlationId, reported: true }
     );
   }
 }
@@ -927,13 +936,18 @@ function outputResultIdRequiredError(): OutputQueueResult {
   };
 }
 
-function temporaryUnavailableError(message: string): OutputQueueResult {
+function temporaryUnavailableError(
+  message: string,
+  options?: { errorId?: string; reported?: boolean }
+): OutputQueueResult {
   return {
     ok: false,
     error: {
       status: 503,
       code: "temporary_unavailable",
-      message
+      message,
+      ...(options?.errorId ? { errorId: options.errorId } : {}),
+      ...(options?.reported ? { reported: true } : {})
     }
   };
 }

@@ -151,7 +151,9 @@ async function humanActionContext() {
   const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
   const humanSession = await resolveHumanAccountSession({
     clerkUserId: session.userId,
-    requestId: createCorrelationId("human_action_session_req")
+    requestId: createCorrelationId("human_action_session_req"),
+    route: "/human",
+    method: "POST"
   });
   if (!humanSession.ok) {
     return { ok: false as const, code: humanSession.code };

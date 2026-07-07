@@ -1,5 +1,6 @@
 import { createCorrelationId } from "./correlation.ts";
 import type { ActiveLimitBlockMetadata } from "./accounting.ts";
+import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
 import type { LimitErrorMetadata } from "./limits.ts";
 
 export type ApiErrorCode =
@@ -52,6 +53,9 @@ export type ApiUpgradeMetadata = {
 export type ApiRequestContext = {
   requestId: string;
   correlationId: string;
+  route?: string;
+  method?: string;
+  startedAtMs?: number;
 };
 
 export type ApiErrorInput = {
@@ -63,12 +67,19 @@ export type ApiErrorInput = {
     LimitErrorMetadata | ActiveLimitBlockMetadata | ApiLimitMetadata | null;
   retryAfterSeconds?: number | null;
   upgrade?: ApiUpgradeMetadata | null;
+  log?: {
+    callerId?: string | null;
+  };
   errorId?: string | null;
+  reported?: boolean;
 };
 
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
-export function apiRequestContext(request: Request): ApiRequestContext {
+export function apiRequestContext(
+  request: Request,
+  route?: string
+): ApiRequestContext {
   const suppliedRequestId = request.headers.get("x-request-id")?.trim();
 
   return {
@@ -76,7 +87,10 @@ export function apiRequestContext(request: Request): ApiRequestContext {
       suppliedRequestId && SAFE_REQUEST_ID_PATTERN.test(suppliedRequestId)
         ? suppliedRequestId
         : createCorrelationId("req"),
-    correlationId: createCorrelationId("corr")
+    correlationId: createCorrelationId("corr"),
+    route,
+    method: request.method,
+    startedAtMs: Date.now()
   };
 }
 
@@ -110,6 +124,9 @@ export function apiErrorResponse(
 
   if (retryAfterSeconds != null) {
     headers.set("Retry-After", String(retryAfterSeconds));
+  }
+  if (!error.reported) {
+    emitOperatorActionableApiFailure(context, error);
   }
 
   return Response.json(
@@ -198,4 +215,38 @@ function omitNullish<TObject extends Record<string, unknown>>(value: TObject) {
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue != null)
   );
+}
+
+function emitOperatorActionableApiFailure(
+  context: ApiRequestContext,
+  error: ApiErrorInput
+) {
+  const limit = apiLimitMetadata(error.limit ?? null);
+  if (error.status < 500 && !limit) {
+    return;
+  }
+
+  const activeLimit =
+    error.limit && "account_id" in error.limit ? error.limit : null;
+
+  emitRuntimeLog({
+    level: error.status >= 500 ? "error" : "warn",
+    error_id: error.errorId ?? context.correlationId,
+    request_id: context.requestId,
+    surface: "api",
+    route: context.route,
+    method: context.method,
+    status_code: error.status,
+    duration_ms: durationSinceMs(context.startedAtMs),
+    operation: `api_error.${error.code}`,
+    operation_kind: activeLimit?.operation_kind,
+    account_id: activeLimit?.account_id,
+    caller_id: error.log?.callerId ?? undefined,
+    limit_name: limit?.limit_name,
+    limit_reason_code: limit?.limit_reason_code,
+    limit_resets_at: limit?.limit_resets_at,
+    used_units: activeLimit?.used_units,
+    limit_units: activeLimit?.limit_units,
+    message: "api request failed"
+  });
 }

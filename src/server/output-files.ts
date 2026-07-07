@@ -22,7 +22,8 @@ import {
   authenticateCallerApiRequestWithDatabase,
   type CallerIdentity
 } from "./caller-api-auth.ts";
-import { emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 export type OutputFileDownloadSuccess = {
   ok: true;
@@ -84,6 +85,7 @@ export async function handleOutputFileDownloadRequest(
     };
   }
 
+  let identity: CallerIdentity | null = null;
   try {
     const auth = await authenticateCallerApiRequestWithDatabase(
       request,
@@ -93,6 +95,7 @@ export async function handleOutputFileDownloadRequest(
     if (!auth.ok) {
       return { ok: false, error: auth.clientError };
     }
+    identity = auth;
 
     return await runProductTransaction(
       connectionString,
@@ -112,18 +115,24 @@ export async function handleOutputFileDownloadRequest(
       }
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "error",
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
+      request_id: context.requestId,
       surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
       operation: "output_file_download",
-      message: "Output file download failed unexpectedly.",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-      request_id: context.requestId
+      account_id: identity?.accountId,
+      caller_id: identity?.callerId,
+      message: "Output file download failed unexpectedly."
     });
     return {
       ok: false,
       error: temporaryUnavailableError(
-        "Output file download is temporarily unavailable."
+        "Output file download is temporarily unavailable.",
+        { errorId: context.correlationId, reported: true }
       )
     };
   }
@@ -400,10 +409,15 @@ function byteCount(value: string | number) {
   return count;
 }
 
-function temporaryUnavailableError(message: string): ApiErrorInput {
+function temporaryUnavailableError(
+  message: string,
+  options?: { errorId?: string; reported?: boolean }
+): ApiErrorInput {
   return {
     status: 503,
     code: "temporary_unavailable",
-    message
+    message,
+    ...(options?.errorId ? { errorId: options.errorId } : {}),
+    ...(options?.reported ? { reported: true } : {})
   };
 }

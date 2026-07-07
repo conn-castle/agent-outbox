@@ -1,8 +1,3 @@
-create index agent_outbox_stripe_webhook_events_processed_idx
-  on public.agent_outbox_stripe_webhook_events(processed_at)
-  where processing_status = 'processed'
-    and processed_at is not null;
-
 drop policy if exists agent_outbox_stripe_webhook_events_control_plane
   on public.agent_outbox_stripe_webhook_events;
 
@@ -90,9 +85,6 @@ begin
   end loop;
 end
 $$;
-
-comment on index public.agent_outbox_stripe_webhook_events_processed_idx is
-  'Supports scheduled pruning of processed Stripe webhook idempotency events after the billing replay safety window.';
 
 comment on function public.agent_outbox_prune_stripe_webhook_events(timestamptz) is
   'Deletes processed Stripe webhook idempotency ledger rows older than the retention cutoff under the scheduled cleanup auth surface.';

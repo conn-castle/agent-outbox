@@ -5,22 +5,22 @@
 Use the official Cloudflare Workers CLI: `wrangler`.
 
 Run `wrangler --help` first, then run command-specific help before using flags
-that are not already proven in this repository. Wrangler is platform/operations
-tooling and must not be required by normal app CI or app tests.
+that are not already proven in this repository. Wrangler and the OpenNext
+Cloudflare adapter are pinned project dev dependencies for explicit platform
+verification and deployment work, but normal app CI and app tests must not
+require Cloudflare credentials, deployment artifacts, or platform emulation.
 
-This repository intentionally does not install Wrangler in normal app setup
-because app CI must test the app, not the Cloudflare deployment platform. Use a
-versioned Wrangler invocation for occasional local Cloudflare debugging:
+Use the pinned project invocation:
 
 ```bash
-corepack pnpm dlx wrangler@4.105.0 <command>
+pnpm exec wrangler <command>
 ```
 
 Known-safe read-only checks:
 
 ```bash
-corepack pnpm dlx wrangler@4.105.0 whoami --env-file /dev/null
-corepack pnpm dlx wrangler@4.105.0 deployments status \
+pnpm exec wrangler whoami --env-file /dev/null
+pnpm exec wrangler deployments status \
   --name agent-outbox \
   --json \
   --env-file /dev/null
@@ -32,7 +32,7 @@ use the cached Wrangler OAuth login. If a Worker has not been deployed,
 Worker does not exist.
 
 Do not install Wrangler globally for this repository. A global install is easy
-to drift from the documented invocation used by project operations.
+to drift from the pinned project dependency used by project operations.
 
 `cloudflared` is not part of the Agent Outbox setup. It is for Cloudflare
 Tunnels; use this doc for Cloudflare DNS and Workers/OpenNext runtime
@@ -50,8 +50,17 @@ operations.
 ## Configuration To Verify
 
 - The selected Cloudflare account and zone belong to Agent Outbox.
-- The Worker name, routes, and zone match the intended environment before
-  inspecting or changing anything.
+- The Worker name is `agent-outbox`, the custom domain is
+  `app.agent-outbox.dev`, and the cron schedule is `17 * * * *`.
+- The account plan or approved limit must support the built OpenNext Worker
+  size. The current Agent Outbox OpenNext bundle is above the Cloudflare Workers
+  Free 3 MB Worker-size limit and must either run on a plan/limit that supports
+  it or be reduced before production deploy.
+- `wrangler.jsonc` owns the Worker custom-domain route via
+  `routes[].custom_domain=true`; do not create a separate proxied DNS record for
+  `app.agent-outbox.dev` unless the Cloudflare custom-domain flow changes.
+- `workers.dev` is disabled for the production Worker; `app.agent-outbox.dev` is
+  the only intended hosted app/API surface.
 - Local `.env` uses project-specific Cloudflare variable names for operator
   convenience and does not define generic `CLOUDFLARE_API_TOKEN`.
 - GitHub Actions deploy environments map the Worker deploy token into
@@ -89,24 +98,30 @@ local shell only for the specific token-management command being run.
 Verify local Wrangler OAuth without loading repo `.env`:
 
 ```bash
-corepack pnpm dlx wrangler@4.105.0 whoami --env-file /dev/null
+pnpm exec wrangler whoami --env-file /dev/null
 ```
 
 Verify a Worker deploy token with Wrangler without printing the token:
 
 ```bash
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN:?}" \
-  corepack pnpm dlx wrangler@4.105.0 whoami --env-file /dev/null
+  pnpm exec wrangler whoami --env-file /dev/null
 ```
 
 Check the Worker deployment status with a Worker deploy token:
 
 ```bash
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN:?}" \
-  corepack pnpm dlx wrangler@4.105.0 deployments status \
+  pnpm exec wrangler deployments status \
     --name agent-outbox \
     --json \
     --env-file /dev/null
+```
+
+Build and dry-run the OpenNext/Wrangler Worker bundle without uploading it:
+
+```bash
+pnpm run worker:dry-run
 ```
 
 ## Operations
@@ -140,7 +155,10 @@ When rotating Cloudflare tokens:
 ## Guardrails
 
 - GitHub Actions is the canonical deployment path; do not manually deploy unless
-  the task explicitly calls for operator intervention.
+  the task explicitly calls for operator intervention. The manual deploy command
+  is `pnpm run worker:deploy` after production runtime configuration has been
+  loaded through approved operator-controlled secrets; the script builds a fresh
+  OpenNext bundle before the external deploy write.
 - Wrangler is for local agent/developer operations and for the deployment
   command inside GitHub Actions. Normal app CI and app tests must not require
   Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, or

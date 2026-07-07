@@ -26,3 +26,40 @@ The canonical migration source is `db/migrations/`.
    enforced.
 10. Run database behavior tests against the replayed schema. CI: Enforced for
     representative RLS, app-role, and cleanup behavior.
+
+## Online Index Migrations
+
+Use an online index migration for indexes on live or potentially large tables.
+Keep it in a dedicated versioned SQL migration that contains only the online
+index operation and any directly related index comment or rename.
+
+Repository pattern:
+
+1. Use `CREATE INDEX CONCURRENTLY`, `CREATE UNIQUE INDEX CONCURRENTLY`, or
+   `DROP INDEX CONCURRENTLY` for the online index operation.
+2. Add a same-directory Flyway script config file with the exact migration file
+   name plus `.conf`, for example
+   `V20260706193001__stripe_webhook_event_retention_online_index.sql.conf`.
+3. Put `executeInTransaction=false` in that `.conf` file.
+4. Run the migration through `scripts/flyway.mjs` or the `make migration-*`
+   targets. The wrapper validates the companion `.conf` file and passes
+   `FLYWAY_POSTGRESQL_TRANSACTIONAL_LOCK=false` when online index migrations are
+   present.
+
+Use `CREATE INDEX CONCURRENTLY IF NOT EXISTS` (and the unique/drop equivalents)
+so a re-run after a partial failure is idempotent. Because these migrations run
+with `executeInTransaction=false`, a `CONCURRENTLY` build that fails partway
+(lock timeout, deadlock, dropped connection) leaves an `INVALID` index behind
+and Flyway records the migration as failed. `IF NOT EXISTS` does not replace
+that invalid leftover: on `flyway repair` and re-run it sees the existing
+(invalid) index and skips creation, so the index stays unusable. Recovery:
+manually `DROP INDEX IF EXISTS <index_name>` first, then `flyway repair` and
+re-run the migration so the index is rebuilt cleanly.
+
+Do not mix online index statements with unrelated schema, function, policy,
+grant, or data changes. If a shared migration needs an online index but has
+already been applied to a durable database, leave the shared migration immutable
+and use a roll-forward online index migration. If the product is still
+pre-release and no durable database history must be preserved, rewrite the
+unapplied migration sequence so the online index lives in its own dedicated
+migration.

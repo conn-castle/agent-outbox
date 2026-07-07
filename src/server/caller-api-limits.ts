@@ -98,7 +98,11 @@ export async function enforceAccountRequestLimits(
     operationKind
   );
   if (activeBlock) {
-    return limitBlockedError(profile, activeBlock);
+    return limitBlockedError(
+      profile,
+      activeBlock,
+      callerIdFromIdentity(identity)
+    );
   }
 
   const requestWindows = fixedWindowLimits(profile, operationKind, "requests");
@@ -295,7 +299,11 @@ export async function enforceAcceptedInputSubmissionLimits(
     "input_submission"
   );
   if (activeBlock) {
-    return limitBlockedError(profile, activeBlock);
+    return limitBlockedError(
+      profile,
+      activeBlock,
+      callerIdFromIdentity(identity)
+    );
   }
 
   const concurrency = await acquireConcurrencySlot(
@@ -363,7 +371,11 @@ export async function enforceHumanFileUploadLimits(
     "file_upload"
   );
   if (activeBlock) {
-    return limitBlockedError(profile, activeBlock);
+    return limitBlockedError(
+      profile,
+      activeBlock,
+      callerIdFromIdentity(identity)
+    );
   }
 
   const enabled = limitStatus(profile, "file_upload_enabled");
@@ -848,7 +860,7 @@ async function persistAndReturnLimitError(
     limitResetsAt: input.limitResetsAt ? new Date(input.limitResetsAt) : null
   });
   await query(upsertActiveLimitBlockStatement(block));
-  return limitBlockedError(profile, block);
+  return limitBlockedError(profile, block, callerIdFromIdentity(identity));
 }
 
 function fixedWindowLimits(
@@ -916,7 +928,8 @@ function quotaWindow(
 
 function limitBlockedError(
   profile: LimitProfileSelector,
-  block: ActiveLimitBlockMetadata
+  block: ActiveLimitBlockMetadata,
+  callerId?: string
 ): CallerLimitGuardResult {
   const error = limitErrorMetadata(profile, block.limit_name, {
     usedUnits: block.used_units,
@@ -938,7 +951,8 @@ function limitBlockedError(
         limit_resets_at: error.limitResetsAt,
         used_units: error.usedUnits,
         limit_units: error.limitUnits
-      }
+      },
+      log: callerId ? { callerId } : undefined
     }
   };
 }
@@ -965,6 +979,7 @@ function limitError(
     usedUnits: input.usedUnits,
     limitResetsAt: input.limitResetsAt ? new Date(input.limitResetsAt) : null
   });
+  const callerId = callerIdFromIdentity(identity);
 
   return {
     ok: false,
@@ -972,7 +987,8 @@ function limitError(
       status: error.status,
       code: error.code,
       message: error.limitReason,
-      limit: block
+      limit: block,
+      log: callerId ? { callerId } : undefined
     }
   };
 }
@@ -990,6 +1006,14 @@ function activeLimitBlockFromRow(
     used_units: nullableNonNegativeInteger(row.used_units),
     limit_units: nullableNonNegativeInteger(row.limit_units)
   };
+}
+
+function callerIdFromIdentity(identity: AccountLimitIdentity) {
+  if ("callerId" in identity && typeof identity.callerId === "string") {
+    return identity.callerId;
+  }
+
+  return undefined;
 }
 
 function activeLimitBlockAppliesToProfile(

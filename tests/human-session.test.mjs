@@ -336,10 +336,22 @@ test(
     /** @type {string[]} */
     const logLines = [];
     const previousLog = console.log;
+    const releaseEnvSnapshot = {
+      APP_ENV: process.env.APP_ENV,
+      GITHUB_SHA: process.env.GITHUB_SHA,
+      SENTRY_RELEASE: process.env.SENTRY_RELEASE
+    };
 
     try {
       await ensureCanSetAppRole(client);
       process.env.DATABASE_APP_ROLE_URL = databaseUrl;
+      // Pin the observability environment/release inputs so the emitted log
+      // shape is deterministic regardless of ambient APP_ENV or the
+      // CI-provided GITHUB_SHA (which otherwise injects a release value only in
+      // CI). This keeps the assertion an exact, content-safe field allowlist.
+      delete process.env.APP_ENV;
+      delete process.env.GITHUB_SHA;
+      process.env.SENTRY_RELEASE = "agent-outbox-test-release";
       console.log = (line) => {
         logLines.push(String(line));
       };
@@ -356,6 +368,8 @@ test(
       assert.deepEqual(parsed, [
         {
           level: "info",
+          environment: null,
+          release: "agent-outbox-test-release",
           surface: "app",
           operation: "human_account_provisioned",
           message:
@@ -371,6 +385,13 @@ test(
         delete process.env.DATABASE_APP_ROLE_URL;
       } else {
         process.env.DATABASE_APP_ROLE_URL = previousDatabaseUrl;
+      }
+      for (const [name, value] of Object.entries(releaseEnvSnapshot)) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
       }
       await client.end();
     }

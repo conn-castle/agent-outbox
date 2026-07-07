@@ -9,8 +9,8 @@ import { billingHumanSession } from "../../../../src/server/billing-session";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request);
-  const sessionResult = await billingHumanSession(context.requestId);
+  const context = apiRequestContext(request, "/api/billing/portal");
+  const sessionResult = await billingHumanSession(context);
   if (!sessionResult.ok) {
     return apiErrorResponse(context, sessionResult.error);
   }
@@ -19,7 +19,8 @@ export async function POST(request: Request) {
     connectionString: sessionResult.data.connectionString,
     accountId: sessionResult.data.accountId,
     userId: sessionResult.data.userId,
-    requestId: context.requestId
+    requestId: context.requestId,
+    context
   });
 
   if (!result.ok) {

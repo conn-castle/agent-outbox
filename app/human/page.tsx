@@ -65,7 +65,9 @@ export default async function HumanReviewPage({
   const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
   const humanSession = await resolveHumanAccountSession({
     clerkUserId: session.userId,
-    requestId: createCorrelationId("human_req")
+    requestId: createCorrelationId("human_req"),
+    route: "/human",
+    method: "GET"
   });
 
   if (!humanSession.ok) {

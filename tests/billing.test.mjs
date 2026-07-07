@@ -158,7 +158,13 @@ test("webhook billing configuration does not require the public app base URL", (
 test("billing API session returns a JSON-envelope auth error when signed out", async () => {
   let resolveCalls = 0;
   const result = await billingHumanSessionFromClerkUser({
-    requestId: "req-billing-session",
+    context: {
+      requestId: "req-billing-session",
+      correlationId: "corr-billing-session",
+      route: "/api/billing/checkout",
+      method: "POST",
+      startedAtMs: Date.now()
+    },
     clerkUserId: null,
     connectionString: "postgresql://billing-test",
     async resolveSession() {
@@ -176,6 +182,50 @@ test("billing API session returns a JSON-envelope auth error when signed out", a
     }
   });
   assert.equal(resolveCalls, 0);
+});
+
+test("billing API session forwards route context and preserves reported errors", async () => {
+  const startedAtMs = Date.now();
+  const result = await billingHumanSessionFromClerkUser({
+    context: {
+      requestId: "req-billing-session",
+      correlationId: "corr-billing-session",
+      route: "/api/billing/portal",
+      method: "POST",
+      startedAtMs
+    },
+    clerkUserId: "user_billing_session",
+    connectionString: "postgresql://billing-test",
+    async resolveSession(input) {
+      assert.deepEqual(input, {
+        clerkUserId: "user_billing_session",
+        requestId: "req-billing-session",
+        errorId: "corr-billing-session",
+        route: "/api/billing/portal",
+        method: "POST",
+        startedAtMs
+      });
+      return {
+        ok: false,
+        status: 503,
+        code: "temporary_unavailable",
+        message: "Human account session is temporarily unavailable.",
+        errorId: "corr-billing-session",
+        reported: true
+      };
+    }
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message: "Human account session is temporarily unavailable.",
+      errorId: "corr-billing-session",
+      reported: true
+    }
+  });
 });
 
 test("checkout interval request parsing rejects malformed or unsupported bodies", async () => {

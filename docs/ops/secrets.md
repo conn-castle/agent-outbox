@@ -37,16 +37,16 @@ explicitly chooses that account for Agent Outbox.
 
 ## Ownership Matrix
 
-| Secret class                                                | Runtime owner                                                 | Durable recovery owner                                         | Notes                                                                                                                   |
-| ----------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Cloudflare Worker runtime secrets                           | Cloudflare Workers                                            | Systems Manager Parameter Store                                | Exact variable names are listed in [../../.env.example](../../.env.example) and enforced by the app environment schema. |
-| Deploy credentials                                          | GitHub Actions secrets                                        | Systems Manager Parameter Store when not trivially re-mintable | Use least-scoped Cloudflare tokens for configured resources.                                                            |
-| Supabase database URLs and role passwords                   | Supabase plus Cloudflare runtime/Flyway migration environment | Systems Manager Parameter Store                                | Use [migrations.md](migrations.md) for schema changes.                                                                  |
-| Clerk secret keys                                           | Clerk plus Cloudflare runtime                                 | Systems Manager Parameter Store                                | Publishable keys may be GitHub/Cloudflare environment config, mirrored if needed for recovery.                          |
-| Stripe secret key, webhook secret, price ids, portal config | Stripe plus Cloudflare runtime                                | Systems Manager Parameter Store                                | Test and live values are separate. Production uses live mode.                                                           |
-| Sentry data source names and auth token                     | Sentry plus Cloudflare/GitHub as needed                       | Systems Manager Parameter Store                                | Runtime uses data source names only. Auth token is for source maps/operator tooling.                                    |
-| Caller key hash secret (`CALLER_KEY_HASH_SECRET`)           | Cloudflare Worker runtime                                     | Systems Manager Parameter Store                                | Required to hash display-once caller API keys. Losing or changing it requires caller credential rotation or rehashing.  |
-| Caller API keys                                             | Agent Outbox database hash plus local caller secure store     | Not Systems Manager Parameter Store                            | Plaintext caller keys are display-once and never recovered. Rotate instead.                                             |
+| Secret class                                                | Runtime owner                                                 | Durable recovery owner                                         | Notes                                                                                                                                                     |
+| ----------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloudflare Worker runtime secrets                           | Cloudflare Workers                                            | Systems Manager Parameter Store                                | Install only the Worker runtime inventory below; [../../.env.example](../../.env.example) also includes local, operator, deploy, and migration variables. |
+| Deploy credentials                                          | GitHub Actions secrets                                        | Systems Manager Parameter Store when not trivially re-mintable | Use least-scoped Cloudflare tokens for configured resources.                                                                                              |
+| Supabase database URLs and role passwords                   | Supabase plus Cloudflare runtime/Flyway migration environment | Systems Manager Parameter Store                                | Use [migrations.md](migrations.md) for schema changes.                                                                                                    |
+| Clerk secret keys                                           | Clerk plus Cloudflare runtime                                 | Systems Manager Parameter Store                                | Publishable keys may be GitHub/Cloudflare environment config, mirrored if needed for recovery.                                                            |
+| Stripe secret key, webhook secret, price ids, portal config | Stripe plus Cloudflare runtime                                | Systems Manager Parameter Store                                | Test and live values are separate. Production uses live mode.                                                                                             |
+| Sentry data source names and auth token                     | Sentry plus Cloudflare/GitHub as needed                       | Systems Manager Parameter Store                                | Runtime uses data source names only. Auth token is for source maps/operator tooling.                                                                      |
+| Caller key hash secret (`CALLER_KEY_HASH_SECRET`)           | Cloudflare Worker runtime                                     | Systems Manager Parameter Store                                | Required to hash display-once caller API keys. Losing or changing it requires caller credential rotation or rehashing.                                    |
+| Caller API keys                                             | Agent Outbox database hash plus local caller secure store     | Not Systems Manager Parameter Store                            | Plaintext caller keys are display-once and never recovered. Rotate instead.                                                                               |
 
 ## Environment Variables
 
@@ -54,6 +54,47 @@ explicitly chooses that account for Agent Outbox.
 variable list for local `.env` files. Keep the implementation environment schema
 and `.env.example` in sync. Do not duplicate the full variable inventory in this
 runbook.
+
+## Cloudflare Worker Runtime Inventory
+
+Install only these app runtime values into the production Cloudflare Worker.
+Recover secret values from Systems Manager Parameter Store or rotate them at the
+source provider; do not infer production values from local development `.env`
+files.
+
+Runtime configuration values:
+
+```text
+APP_ENV
+APP_BASE_URL
+PUBLIC_APP_BASE_URL
+CLERK_PUBLISHABLE_KEY
+SENTRY_BROWSER_DSN
+SENTRY_RELEASE
+NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN
+STRIPE_PAID_MONTHLY_PRICE_ID
+STRIPE_PAID_YEARLY_PRICE_ID
+STRIPE_BILLING_PORTAL_CONFIGURATION_ID
+```
+
+Runtime secrets:
+
+```text
+DATABASE_APP_ROLE_URL
+CLERK_SECRET_KEY
+SENTRY_DSN
+CALLER_KEY_HASH_SECRET
+SMOKE_OR_CLEANUP_TOKEN
+STRIPE_SECRET_KEY
+STRIPE_WEBHOOK_SECRET
+```
+
+Do not install operator, deploy, migration, source-map upload, or local CLI
+variables into the Worker runtime. Excluded examples include `AWS_PROFILE`,
+`CLOUDFLARE_*`, `DATABASE_URL`, `DATABASE_MIGRATION_URL`,
+`SUPABASE_PROJECT_REF`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`,
+`AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD`, `AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH`,
+`AGENT_OUTBOX_*`, and `PORT`.
 
 ## Stripe Production Recovery Names
 
@@ -126,6 +167,13 @@ When a runtime secret is lost:
 Use the configured Cloudflare secret import/set commands for the Worker project
 and the Wrangler invocation documented in
 [services/cloudflare.md](services/cloudflare.md).
+
+For production Worker setup, do not populate Cloudflare runtime values from a
+local development `.env`. Recover or rotate production values through Systems
+Manager Parameter Store and the source provider, then install them into
+Cloudflare in the same operation window. If Parameter Store access is expired or
+incomplete, production Worker deployment remains blocked rather than falling
+back to development values.
 
 ## Rotation Rules
 

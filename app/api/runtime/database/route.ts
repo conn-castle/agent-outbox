@@ -4,12 +4,14 @@ import {
   missingConfigurationResponse,
   smokeBearerFailureResponse
 } from "../../../../src/server/http";
-import { emitRuntimeLog } from "../../../../src/server/logging";
+import { durationSinceMs } from "../../../../src/server/logging";
+import { reportRuntimeFailure } from "../../../../src/server/sentry";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
+  const startedAtMs = Date.now();
   const authFailure = smokeBearerFailureResponse(request);
   if (authFailure) {
     return authFailure;
@@ -20,6 +22,7 @@ export async function GET(request: Request) {
     return missingConfigurationResponse(["DATABASE_APP_ROLE_URL"]);
   }
 
+  const requestId = createCorrelationId("req");
   try {
     const canary = await runTransactionContextCanary(connectionString);
     const ok = canary.transactionContextMatched && canary.restrictedRoleMatched;
@@ -38,16 +41,15 @@ export async function GET(request: Request) {
     );
   } catch (error) {
     const errorId = createCorrelationId("db");
-    emitRuntimeLog({
-      level: "error",
-      error_id: errorId,
-      error_name: error instanceof Error ? error.name : "UnknownError",
+    reportRuntimeFailure(error, {
+      errorId,
+      request_id: requestId,
       environment: process.env.APP_ENV ?? null,
-      release: process.env.CF_VERSION_METADATA ?? null,
       surface: "api",
       route: "/api/runtime/database",
       method: "GET",
       status_code: 502,
+      duration_ms: durationSinceMs(startedAtMs),
       operation: "runtime.database.canary",
       message: "database canary failed"
     });

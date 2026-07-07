@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -9,10 +9,22 @@ import toolchain from "../toolchain.json" with { type: "json" };
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(ROOT, "db", "migrations");
 const MIGRATION_FILE_PATTERN = /^V(\d{14})__[a-z0-9]+(?:_[a-z0-9]+)*\.sql$/;
+const MIGRATION_CONFIG_FILE_PATTERN =
+  /^V(\d{14})__[a-z0-9]+(?:_[a-z0-9]+)*\.sql\.conf$/;
+const CONCURRENT_INDEX_PATTERN =
+  /\b(?:create\s+(?:unique\s+)?index|drop\s+index)\s+concurrently\b/i;
 const ALLOWED_COMMANDS = new Set(["validate", "migrate"]);
 const PENDING_MIGRATION_IGNORE_PATTERN = "*:pending";
+const POSTGRESQL_TRANSACTIONAL_LOCK_ENV =
+  "FLYWAY_POSTGRESQL_TRANSACTIONAL_LOCK";
 
 export const FLYWAY_DOCKER_IMAGE = `${toolchain.flyway.image}:${toolchain.flyway.version}`;
+
+/**
+ * @typedef {{
+ *   ignorePendingMigrations?: boolean
+ * }} FlywayOptions
+ */
 
 /**
  * @param {string} databaseUrl
@@ -41,43 +53,125 @@ export function flywayConnectionFromDatabaseUrl(databaseUrl) {
 }
 
 /**
+ * @param {Record<string, string>} migrationFileContents
+ * @returns {Set<string>}
+ */
+function concurrentIndexMigrationFiles(migrationFileContents) {
+  const migrationFiles = new Set();
+
+  for (const [file, content] of Object.entries(migrationFileContents)) {
+    if (file.endsWith(".sql") && CONCURRENT_INDEX_PATTERN.test(content)) {
+      migrationFiles.add(file);
+    }
+  }
+
+  return migrationFiles;
+}
+
+/**
+ * @param {string} content
+ * @returns {boolean}
+ */
+function disablesTransactions(content) {
+  return content
+    .split(/\r?\n/)
+    .some((line) => line.trim() === "executeInTransaction=false");
+}
+
+/**
  * @param {string[]} migrationFiles
+ * @param {Record<string, string>} [migrationFileContents]
  * @returns {string[]}
  */
-export function validateMigrationFilenames(migrationFiles) {
+export function validateMigrationFilenames(
+  migrationFiles,
+  migrationFileContents = {}
+) {
   const errors = [];
   const versions = new Set();
+  const sqlFiles = new Set();
+  const configFiles = new Map();
 
   for (const file of migrationFiles) {
-    const match = file.match(MIGRATION_FILE_PATTERN);
-    if (!match) {
-      errors.push(
-        `${file} must match VYYYYMMDDHHMMSS__lower_snake_description.sql`
-      );
+    const sqlMatch = file.match(MIGRATION_FILE_PATTERN);
+    if (sqlMatch) {
+      const version = sqlMatch[1];
+      if (versions.has(version)) {
+        errors.push(`migration version ${version} is duplicated`);
+      }
+      versions.add(version);
+      sqlFiles.add(file);
       continue;
     }
 
-    const version = match[1];
-    if (versions.has(version)) {
-      errors.push(`migration version ${version} is duplicated`);
+    const configMatch = file.match(MIGRATION_CONFIG_FILE_PATTERN);
+    if (configMatch) {
+      configFiles.set(file.slice(0, -".conf".length), file);
+      continue;
     }
-    versions.add(version);
+
+    errors.push(
+      `${file} must match VYYYYMMDDHHMMSS__lower_snake_description.sql or VYYYYMMDDHHMMSS__lower_snake_description.sql.conf`
+    );
+  }
+
+  for (const [sqlFile, configFile] of configFiles) {
+    if (!sqlFiles.has(sqlFile)) {
+      errors.push(`${configFile} must have matching SQL migration ${sqlFile}`);
+    }
+  }
+
+  const onlineIndexFiles = concurrentIndexMigrationFiles(migrationFileContents);
+  for (const file of onlineIndexFiles) {
+    const configFile = configFiles.get(file);
+    if (
+      !configFile ||
+      !disablesTransactions(migrationFileContents[configFile] ?? "")
+    ) {
+      errors.push(
+        `${file} uses CREATE [UNIQUE]/DROP INDEX CONCURRENTLY and must have ${file}.conf with executeInTransaction=false`
+      );
+    }
   }
 
   return errors;
 }
 
-function assertMigrationFilenames() {
-  const migrationFiles = readdirSync(MIGRATIONS_DIR)
-    .filter((file) => file.endsWith(".sql"))
+/**
+ * @returns {{ files: string[], contents: Record<string, string> }}
+ */
+function readMigrationFiles() {
+  const files = readdirSync(MIGRATIONS_DIR)
+    .filter((file) => file.endsWith(".sql") || file.endsWith(".sql.conf"))
     .sort();
-  const errors = validateMigrationFilenames(migrationFiles);
-  assert.deepEqual(errors, [], errors.join("\n"));
-  assert.notEqual(migrationFiles.length, 0, "db/migrations must not be empty");
+  const contents = Object.fromEntries(
+    files.map((file) => [
+      file,
+      readFileSync(path.join(MIGRATIONS_DIR, file), "utf8")
+    ])
+  );
+
+  return { files, contents };
 }
 
 /**
- * @param {{ ignorePendingMigrations?: boolean }} [options]
+ * @param {{ files: string[], contents: Record<string, string> }} migrationFiles
+ */
+function assertMigrationFilenames(migrationFiles) {
+  const errors = validateMigrationFilenames(
+    migrationFiles.files,
+    migrationFiles.contents
+  );
+  assert.deepEqual(errors, [], errors.join("\n"));
+  assert.notEqual(
+    migrationFiles.files.filter((file) => file.endsWith(".sql")).length,
+    0,
+    "db/migrations must not be empty"
+  );
+}
+
+/**
+ * @param {FlywayOptions} [options]
  * @returns {string[]}
  */
 export function flywayDockerEnvironmentNames(options = {}) {
@@ -98,7 +192,7 @@ export function flywayDockerEnvironmentNames(options = {}) {
 
 /**
  * @param {{ jdbcUrl: string, user?: string, password?: string }} connection
- * @param {{ ignorePendingMigrations?: boolean }} [options]
+ * @param {FlywayOptions} [options]
  * @returns {NodeJS.ProcessEnv}
  */
 export function flywayEnvironmentFromConnection(connection, options = {}) {
@@ -130,7 +224,7 @@ function printUsage() {
 
 /**
  * @param {string} command
- * @param {{ ignorePendingMigrations?: boolean }} [options]
+ * @param {FlywayOptions} [options]
  * @returns {number}
  */
 function runFlyway(command, options = {}) {
@@ -142,18 +236,26 @@ function runFlyway(command, options = {}) {
     return 2;
   }
 
-  assertMigrationFilenames();
+  const migrationFiles = readMigrationFiles();
+  assertMigrationFilenames(migrationFiles);
 
   const databaseUrl = process.env.DATABASE_MIGRATION_URL;
   assert.ok(databaseUrl, "DATABASE_MIGRATION_URL is required");
   const connection = flywayConnectionFromDatabaseUrl(databaseUrl);
+  const hasOnlineIndexMigration =
+    concurrentIndexMigrationFiles(migrationFiles.contents).size > 0;
 
   const dockerArgs = ["run", "--rm"];
   if (process.env.FLYWAY_DOCKER_NETWORK) {
     dockerArgs.push("--network", process.env.FLYWAY_DOCKER_NETWORK);
   }
 
-  for (const name of flywayDockerEnvironmentNames(options)) {
+  const dockerEnvironmentNames = flywayDockerEnvironmentNames(options);
+  if (hasOnlineIndexMigration) {
+    dockerEnvironmentNames.push(POSTGRESQL_TRANSACTIONAL_LOCK_ENV);
+  }
+
+  for (const name of dockerEnvironmentNames) {
     dockerArgs.push("-e", name);
   }
 
@@ -164,9 +266,17 @@ function runFlyway(command, options = {}) {
     command
   );
 
+  const flywayEnvironment = flywayEnvironmentFromConnection(
+    connection,
+    options
+  );
+  if (hasOnlineIndexMigration) {
+    flywayEnvironment[POSTGRESQL_TRANSACTIONAL_LOCK_ENV] = "false";
+  }
+
   const result = spawnSync("docker", dockerArgs, {
     cwd: ROOT,
-    env: flywayEnvironmentFromConnection(connection, options),
+    env: flywayEnvironment,
     stdio: "inherit"
   });
 
