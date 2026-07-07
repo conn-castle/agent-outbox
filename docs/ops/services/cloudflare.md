@@ -79,6 +79,7 @@ job.
 | Local agent/developer Worker debugging | Wrangler                     | Cached Wrangler OAuth login from `wrangler login`                                                         | Local machine only; do not mirror to shared secret stores or GitHub                    |
 | DNS management                         | Cloudflare REST API          | DNS-scoped API token                                                                                      | Approved secret store; optional local `.env` value under a project-specific name       |
 | CI/CD Worker deploys                   | GitHub Actions plus Wrangler | Worker deploy API token exposed to the deploy job as `CLOUDFLARE_API_TOKEN`, plus `CLOUDFLARE_ACCOUNT_ID` | GitHub environment secret and approved secret store                                    |
+| WAF/rate-limit activation              | Cloudflare Rulesets API      | Narrow WAF/Rulesets token stored locally as `CLOUDFLARE_WAF_API_TOKEN` only during activation             | Approved secret store; load into an operator shell only for the activation command     |
 | API token minting or rotation          | Cloudflare REST API          | Dedicated token for minting narrower Cloudflare API tokens                                                | Approved secret store only; never GitHub, runtime environment, or committed repository |
 
 Root `.env` must not define generic `CLOUDFLARE_API_TOKEN`. Wrangler auto-loads
@@ -124,6 +125,16 @@ Build and dry-run the OpenNext/Wrangler Worker bundle without uploading it:
 pnpm run worker:dry-run
 ```
 
+Check the prepared inactive `/api/client-events` rate-limit rule without
+changing Cloudflare state:
+
+```bash
+node scripts/cloudflare-ratelimit.mjs --check
+```
+
+This requires `CLOUDFLARE_ZONE_ID` and activation-time
+`CLOUDFLARE_WAF_API_TOKEN`.
+
 ## Operations
 
 - Verify the configured account, Worker name, routes, and zone before inspecting
@@ -168,3 +179,33 @@ When rotating Cloudflare tokens:
 - Do not create edge blocks, challenges, or rate limits as product behavior.
   They are incident controls.
 - Do not print runtime secret values into chat, issues, logs, or docs.
+
+## Client Events Rate Limit
+
+`scripts/cloudflare-ratelimit.mjs` contains the prepared inactive Cloudflare
+Rulesets API definition for `/api/client-events`. The rule uses the
+`http_ratelimit` phase, path-only expression, `cf.colo.id` plus `ip.src`
+characteristics, a 10-second period, and `enabled: false`. The script uses the
+path-only expression because the Cloudflare Free plan supports only a path
+predicate; a POST-method predicate (`... and http.request.method eq "POST"`)
+requires Pro or higher and must be authored at activation time if the zone plan
+supports it.
+
+Activation is deferred by `client-events-ratelimit-activation` in
+[ISSUES.md](../../agent-layer/ISSUES.md) and belongs with the Worker/domain
+deployment task. At activation time:
+
+1. Mint or load a narrow Cloudflare WAF/Rulesets token into
+   `CLOUDFLARE_WAF_API_TOKEN`.
+2. Run `node scripts/cloudflare-ratelimit.mjs --check` and confirm whether the
+   prepared rule already exists.
+3. Run `node scripts/cloudflare-ratelimit.mjs --apply` only when the operator
+   intends to write the prepared disabled rule.
+4. Run `node scripts/cloudflare-ratelimit.mjs --check` again and verify
+   `present: true` and `enabled: false`. `--check` exits non-zero unless the
+   rule is present and disabled, so an accidentally activated rule fails the
+   check instead of reporting success.
+5. Enable or adjust the rule in Cloudflare only as an incident-control decision,
+   after confirming the zone plan supports the desired predicate and behavior.
+   After an intentional incident activation, `--check` will exit non-zero by
+   design because the rule is no longer in its prepared disabled state.

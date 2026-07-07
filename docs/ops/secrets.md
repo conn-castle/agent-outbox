@@ -96,6 +96,11 @@ variables into the Worker runtime. Excluded examples include `AWS_PROFILE`,
 `AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD`, `AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH`,
 `AGENT_OUTBOX_*`, and `PORT`.
 
+`CLOUDFLARE_WAF_API_TOKEN` is an activation-time operator token for
+`scripts/cloudflare-ratelimit.mjs`. It is not a Worker runtime secret and should
+only be minted with the narrow WAF/Rulesets permissions needed to apply and
+verify the prepared `/api/client-events` rate-limit rule.
+
 ## Stripe Production Recovery Names
 
 Production Stripe billing recovery uses these Systems Manager Parameter Store

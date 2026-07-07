@@ -109,7 +109,8 @@ exists, and recent content-safe audit events for lifecycle operations.
 
 ## Frontend Events
 
-The frontend event endpoint is intentionally narrow:
+The frontend event endpoint is intentionally narrow and is wired from the
+browser through the shared client-event contract:
 
 - allowlisted event names only;
 - small batch and body limits;
@@ -122,14 +123,18 @@ The frontend event endpoint is intentionally narrow:
   failure category.
 
 It accepts only client errors, hydration failures, failed human-action
-submissions, upload failures, and major UI state inconsistencies. It returns a
+submissions, upload failures, and major UI state inconsistencies. The current
+browser emitter deliberately sends only the first four signals; no stable,
+client-detectable `ui_state_inconsistent` invariant exists yet. It returns a
 best-effort 204 response and never gates product flows. Do not turn it into a
 general product analytics firehose.
 
 The same-origin check is a browser safety boundary, not authentication:
-non-browser clients can forge `Origin`. Before public launch, either add a
-Cloudflare/app-level request-rate posture for `/api/client-events` or document
-the accepted operator risk for spoofed `client_event.*` volume. If signal
-quality degrades, filter client-event logs separately from server failure logs
-while preserving server-side Sentry and API error signals as the higher-trust
-source.
+non-browser clients can forge `Origin`. A prepared-but-inactive Cloudflare
+Rulesets API rate limit exists in `scripts/cloudflare-ratelimit.mjs`; activate
+it during the Worker/domain deployment sequence with `CLOUDFLARE_WAF_API_TOKEN`
+and verify with `node scripts/cloudflare-ratelimit.mjs --check`. Until then, the
+accepted risk is spoofed `client_event.*` volume causing noisy logs rather than
+product-flow failure. If signal quality degrades, filter client-event logs
+separately from server failure logs while preserving server-side Sentry and API
+error signals as the higher-trust source.

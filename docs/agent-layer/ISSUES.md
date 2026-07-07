@@ -26,6 +26,30 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-07 root-layout-error-telemetry-gap: Root-layout render errors emit no client-event telemetry
+    Priority: Low. Area: Observability / Human review UI
+    Description: `app/error.tsx` is a route-segment error boundary and, per Next.js App Router semantics, does not catch errors thrown while rendering the root `app/layout.tsx`. Such failures are only caught by an `app/global-error.tsx` boundary, which does not exist, so a root-layout crash emits none of the four client-event signals. The current layout is a thin shell (providers + analytics + ClientEventsInit), so the gap is narrow.
+    Next step: Add `app/global-error.tsx` (with its own `<html>`/`<body>` shell) that reuses `classifyReactError` + `emitClientEvent` so root-layout render errors emit the same telemetry; keep `app/error.tsx` for segment-level handling.
+    Notes: From PR #23 review (CodeRabbit). Deferred as a new user-facing full-page crash surface beyond the segment-boundary scope of this PR.
+
+- Issue 2026-07-07 client-events-origin-gate-prod-verify: /api/client-events origin gate may silently drop all events in production
+    Priority: Low. Area: Observability/Reliability
+    Description: `handleClientEventsRequest` drops events when `origin !== new URL(request.url).origin` and always returns 204, so if the deployed OpenNext/Cloudflare `request.url` origin does not match the browser `Origin` (proxy/rewrite), every event is dropped with no surfaced signal — a latent prod no-op that all same-origin local/browser tests pass through. Unverified at the deployed runtime (opposite failure mode from the deliberately-accepted forgeable-Origin direction).
+    Next step: At Worker deploy, verify `new URL(request.url).origin` equals the public origin for a real same-origin POST; if not, gate on a configured expected origin and low-rate-log `origin_mismatch` drops.
+    Notes: Verify alongside `client-events-ratelimit-activation` at Worker deploy. From review-scope 20260707-170624-c76a6f1e (F9).
+
+- Issue 2026-07-07 human-failure-telemetry-notice-derived: human_action_failed/file_upload_failed derived from the ?error= notice undercounts and can misfire
+    Priority: Low. Area: Human review UI / Observability
+    Description: `ReviewWorkspace` emits failure telemetry from an effect keyed on the redirect notice with a message-dedup ref. Two items failing with the same code produce an identical notice string, so repeat failures never re-emit (undercount); conversely, loading/sharing a `/human?error=...` URL emits a failure with no action attempt, and each fresh load re-emits. Best-effort MVP tradeoff, not a functional bug.
+    Next step: If fidelity later matters, emit from the server-action failure path (or add a per-attempt nonce) rather than deriving from the deduped notice; otherwise document the limitation where the metric is consumed.
+    Notes: From review-scope 20260707-170624-c76a6f1e (F8). The browser test currently encodes the no-action emission path as expected.
+
+- Issue 2026-07-07 client-events-ratelimit-activation: Prepared rate limit for /api/client-events is not active
+    Priority: Medium. Area: Ops/Security
+    Description: The public, unauthenticated `/api/client-events` endpoint has no active edge rate limit. Per the documented incident-controls-only posture (`cloudflare.md`), the Cloudflare rate-limit rule is being prepared as version-controlled config + runbook (option B) but is intentionally NOT activated. The same-origin gate is forgeable, so an active limit is needed before real public traffic to bound log-ingestion cost and alert noise.
+    Next step: At Cloudflare Worker deploy (ROADMAP Phase 8, "Create or verify the Cloudflare Worker" task), mint a Zone-WAF-Write token, apply the prepared rate-limit ruleset (declarative PUT), and verify by API read-back.
+    Notes: Blocked by Worker deploy/rate-limit activation sequencing, not bundle size. Cloudflare Free plan allows a path-only rule; the path+POST predicate needs Pro or higher — confirm the zone plan at activation.
+
 - Issue 2026-07-07 sentry-capture-disabled-visibility: Silent Sentry capture-disable is not surfaced in the error log payload
     Priority: Low. Area: Observability
     Description: When `runtimeRelease()` is null in production (SENTRY_RELEASE/GITHUB_SHA both unset), `sentryCaptureEnabled()` disables capture; `reportRuntimeFailure` returns `sentry_captured:false` but the emitted structured log omits it, so a misconfigured deploy where errors never reach Sentry can go unnoticed.

@@ -20,9 +20,14 @@ import { resolveHumanAccountSession } from "../../src/server/human-session";
 const humanPath = "/human";
 
 export async function submitHumanAnswer(formData: FormData) {
+  const failedActionKind =
+    formData.get("popupKind") === "file_upload" ? "file_upload" : undefined;
   const parsed = parseHumanAnswerForm(formData);
   if (!parsed.ok) {
-    refreshHumanPage({ error: "invalid_request" });
+    refreshHumanPage({
+      error: "invalid_request",
+      ...(failedActionKind ? { failedActionKind } : {})
+    });
   }
 
   if (humanBrowserFixtureEnabled()) {
@@ -37,7 +42,8 @@ export async function submitHumanAnswer(formData: FormData) {
   if (!context.ok) {
     refreshHumanPage({
       item: parsed.inputItemId,
-      error: context.code
+      error: context.code,
+      ...(failedActionKind ? { failedActionKind } : {})
     });
   }
 
@@ -60,7 +66,11 @@ export async function submitHumanAnswer(formData: FormData) {
           notice: "answer_submitted",
           action: parsed.actionValue
         }
-      : { item: parsed.inputItemId, error: result.code }
+      : {
+          item: parsed.inputItemId,
+          error: result.code,
+          ...(failedActionKind ? { failedActionKind } : {})
+        }
   );
 }
 

@@ -27,6 +27,12 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
 ## Features and tasks (not scheduled)
 
 <!-- ENTRIES START -->
+- Backlog 2026-07-07 in-app-usage-analytics: In-app usage analytics for queue throughput
+    Priority: Low. Area: Analytics / Product
+    Description: Surface product-usage metrics derived from existing data — how many input items are queued, answered, and skipped, and over what time — so the owner can see workflow throughput without database spelunking. Distinct from Cloudflare Web Analytics (web traffic) and from /api/client-events (narrow error telemetry, explicitly not a product-analytics firehose).
+    Acceptance criteria: A rollup or query surface reports item queued/answered/skipped counts and basic time trends from agent_outbox_input_items/output_results/audit_events without content leakage.
+    Notes: Raw data already exists in Postgres; only surfacing is missing. Aligns with the deferred "analytics rollups" post-MVP line (ROADMAP.md:156); gate on real usage before building.
+
 - Backlog 2026-07-07 surface-error-id-server-actions: Surface generated error_id to users on server-action paths
     Priority: Low. Area: Human review UI / Error handling
     Description: Server-action paths (/human submit and undo, caller-approval error redirect) generate an `error_id` in logs and Sentry but return only a generic code/redirect, so users get no support-correlation handle like API routes provide.
