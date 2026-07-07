@@ -26,10 +26,8 @@ import {
   createHumanAnswer,
   createHumanAnswerInTransaction
 } from "../src/server/human-answer.ts";
-import {
-  CLIENT_EVENT_BODY_BYTE_LIMIT,
-  handleClientEventsRequest
-} from "../src/server/client-events.ts";
+import { CLIENT_EVENT_BODY_BYTE_LIMIT } from "../src/shared/client-events-contract.ts";
+import { handleClientEventsRequest } from "../src/server/client-events.ts";
 import {
   durationSinceMs,
   emitRuntimeLog,
@@ -770,6 +768,9 @@ function rootLayoutTestRequire(specifier) {
   }
   if (specifier === "../src/server/observability") {
     return { cloudflareWebAnalyticsToken };
+  }
+  if (specifier === "../src/components/observability/ClientEventsInit") {
+    return { ClientEventsInit: () => null };
   }
   if (specifier === "./globals.css") {
     return {};
@@ -2629,7 +2630,7 @@ test("client event endpoint logs only allowlisted content-safe fields", async ()
   });
 
   assert.equal(logs.length, 1);
-  assert.equal(logs[0].level, "error");
+  assert.equal(logs[0].level, "warn");
   assert.match(String(logs[0].error_id), /^client_/);
   assert.match(String(logs[0].request_id), /^req_/);
   assert.notEqual(logs[0].request_id, "caller-supplied-client-request");
@@ -2683,6 +2684,98 @@ test("client event endpoint drops cross-origin and oversized batches without pro
   assert.equal(logs[0].operation, "client_event.dropped");
   assert.equal(logs[0].drop_reason, "declared_body_too_large");
   assert.equal(logs[0].status_code, 204);
+});
+
+test("client event endpoint drops streamed bodies exceeding the byte limit", async () => {
+  // A ReadableStream body carries no content-length, so this exercises the
+  // streaming byte-count guard rather than the declared-length shortcut.
+  const streamedInit = {
+    method: "POST",
+    headers: {
+      origin: "https://app.agent-outbox.dev",
+      "content-type": "application/json"
+    },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode("x".repeat(CLIENT_EVENT_BODY_BYTE_LIMIT + 1))
+        );
+        controller.close();
+      }
+    }),
+    duplex: "half"
+  };
+  const request = new Request(
+    "https://app.agent-outbox.dev/api/client-events",
+    streamedInit
+  );
+
+  const logs = await captureStructuredLogs(async () => {
+    assert.deepEqual(await handleClientEventsRequest(request), {
+      accepted: 0,
+      dropped: 1
+    });
+  });
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].operation, "client_event.dropped");
+  assert.equal(logs[0].drop_reason, "body_too_large");
+  assert.equal(logs[0].status_code, 204);
+});
+
+test("client event endpoint drops malformed batches with the matching drop reason", async () => {
+  const cases = [
+    {
+      contentType: "text/plain",
+      body: "{}",
+      dropped: 1,
+      dropReason: "content_type"
+    },
+    {
+      contentType: "application/json",
+      body: "not json",
+      dropped: 1,
+      dropReason: "invalid_json"
+    },
+    {
+      contentType: "application/json",
+      body: "{}",
+      dropped: 1,
+      dropReason: "invalid_shape"
+    },
+    {
+      contentType: "application/json",
+      body: JSON.stringify({ events: [{ name: "not_a_real_event" }] }),
+      dropped: 1,
+      dropReason: "no_allowed_events"
+    }
+  ];
+
+  for (const testCase of cases) {
+    const request = new Request(
+      "https://app.agent-outbox.dev/api/client-events",
+      {
+        method: "POST",
+        headers: {
+          origin: "https://app.agent-outbox.dev",
+          "content-type": testCase.contentType
+        },
+        body: testCase.body
+      }
+    );
+
+    const logs = await captureStructuredLogs(async () => {
+      assert.deepEqual(await handleClientEventsRequest(request), {
+        accepted: 0,
+        dropped: testCase.dropped
+      });
+    });
+
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].operation, "client_event.dropped");
+    assert.equal(logs[0].drop_reason, testCase.dropReason);
+    assert.equal(logs[0].status_code, 204);
+  }
 });
 
 test("web analytics token renders only for production with a configured public token", () => {

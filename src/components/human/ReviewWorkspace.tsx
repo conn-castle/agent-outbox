@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { HumanAccountSession } from "../../server/human-session.ts";
 import type {
@@ -8,6 +8,7 @@ import type {
   HumanReviewListRow
 } from "../../server/human-review.ts";
 import type { AccountStatusData, StatusResult } from "../../server/status.ts";
+import { emitClientEvent } from "../../client/client-events.ts";
 import { AccountBanner } from "./AccountBanner";
 import { BulkActions } from "./BulkActions";
 import { ReviewDetail } from "./ReviewDetail";
@@ -27,6 +28,7 @@ const WORKSPACE_STATE_KEY = "agent-outbox:human-review-workspace:v1";
 export type HumanReviewNotice = {
   kind: "notice" | "error";
   message: string;
+  failedActionKind?: "file_upload";
 };
 
 export function ReviewWorkspace({
@@ -48,6 +50,7 @@ export function ReviewWorkspace({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
+  const emittedErrorNoticeKey = useRef<string | null>(null);
 
   useEffect(() => {
     const persisted = readWorkspaceState();
@@ -71,6 +74,22 @@ export function ReviewWorkspace({
       skippedIds: [...skippedIds]
     });
   }, [hydrated, search, skippedIds, sort, status]);
+
+  useEffect(() => {
+    if (notice?.kind !== "error") {
+      return;
+    }
+    const noticeKey = `${notice.message}:${notice.failedActionKind ?? ""}`;
+    if (emittedErrorNoticeKey.current === noticeKey) {
+      return;
+    }
+    emittedErrorNoticeKey.current = noticeKey;
+    if (notice.failedActionKind === "file_upload") {
+      emitClientEvent("file_upload_failed", "upload");
+    } else {
+      emitClientEvent("human_action_failed", "submission");
+    }
+  }, [notice?.failedActionKind, notice?.kind, notice?.message]);
 
   const visibleRows = useMemo(() => {
     const terms = search.trim().toLowerCase();

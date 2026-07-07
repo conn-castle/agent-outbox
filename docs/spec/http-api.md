@@ -90,7 +90,9 @@ POST /api/client-events
 Behavior:
 
 - Accepts best-effort browser event batches for narrow frontend failure
-  visibility only.
+  visibility only. The app includes a browser emitter for uncaught client
+  errors, React boundary-classified hydration failures, failed human-action
+  submissions, and failed file-upload action submissions.
 - Requires a same-origin `Origin` header and `Content-Type: application/json`.
 - Allows only client errors, hydration failures, failed human-action
   submissions, upload failures, and major UI state inconsistencies.

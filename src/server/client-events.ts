@@ -1,33 +1,18 @@
+import {
+  CLIENT_EVENT_BATCH_LIMIT,
+  CLIENT_EVENT_BODY_BYTE_LIMIT,
+  CLIENT_EVENT_CATEGORY_SET,
+  CLIENT_EVENT_NAME_SET,
+  type ClientEvent,
+  type ClientEventCategory,
+  type ClientEventName
+} from "../shared/client-events-contract.ts";
 import { createCorrelationId } from "./correlation.ts";
 import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
-
-export const CLIENT_EVENT_BODY_BYTE_LIMIT = 8_192;
-const CLIENT_EVENT_BATCH_LIMIT = 8;
-
-const CLIENT_EVENT_NAMES = new Set([
-  "client_error",
-  "hydration_error",
-  "human_action_failed",
-  "file_upload_failed",
-  "ui_state_inconsistent"
-]);
-const CLIENT_EVENT_CATEGORIES = new Set([
-  "browser_exception",
-  "hydration",
-  "network",
-  "submission",
-  "upload",
-  "state"
-]);
 
 export type ClientEventProcessResult = {
   accepted: number;
   dropped: number;
-};
-
-type ClientEvent = {
-  name: string;
-  category?: string;
 };
 
 type ClientEventsRequestContext = {
@@ -62,7 +47,7 @@ export async function handleClientEventsRequest(
 
     for (const event of parsed.events) {
       emitRuntimeLog({
-        level: event.name === "client_error" ? "error" : "warn",
+        level: "warn",
         error_id: createCorrelationId("client"),
         request_id: context.requestId,
         surface: "app",
@@ -186,18 +171,21 @@ function parseClientEvent(entry: unknown): ClientEvent | null {
   }
 
   const input = entry as Record<string, unknown>;
-  if (typeof input.name !== "string" || !CLIENT_EVENT_NAMES.has(input.name)) {
+  const name = typeof input.name === "string" ? input.name : null;
+  if (!name || !CLIENT_EVENT_NAME_SET.has(name as ClientEventName)) {
     return null;
   }
 
+  const categoryInput =
+    typeof input.category === "string" ? input.category : null;
   const category =
-    typeof input.category === "string" &&
-    CLIENT_EVENT_CATEGORIES.has(input.category)
-      ? input.category
+    categoryInput &&
+    CLIENT_EVENT_CATEGORY_SET.has(categoryInput as ClientEventCategory)
+      ? (categoryInput as ClientEventCategory)
       : undefined;
 
   return {
-    name: input.name,
+    name: name as ClientEventName,
     category
   };
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import Script from "next/script";
 import type { ReactNode } from "react";
 
+import { ClientEventsInit } from "../src/components/observability/ClientEventsInit";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate";
 import { cloudflareWebAnalyticsToken } from "../src/server/observability";
 import "./globals.css";
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
+        <ClientEventsInit />
         {webAnalyticsToken ? (
           <Script
             src="https://static.cloudflareinsights.com/beacon.min.js"

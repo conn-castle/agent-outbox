@@ -90,3 +90,8 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: Use a setup-only live Stripe key for creating products, prices, Customer Portal configuration, and webhook endpoints; do not store that key as the app's production `STRIPE_SECRET_KEY`.
     Reason: The owner does not want the setup credential used for production checkouts, and runtime secrets are being installed with Cloudflare in Phase 8.
     Tradeoffs: Phase 7 can create and recover Stripe object ids, but production checkout/portal smoke requires a separate restricted runtime key in Phase 8.
+
+- Decision 2026-07-07 client-events-four-signal-scope: Keep browser client-event logging to four signals
+    Decision: The browser emitter sends `client_error`, `hydration_error`, `human_action_failed`, and `file_upload_failed`; `ui_state_inconsistent` remains server-allowlisted but unwired in the browser.
+    Reason: No stable client-detectable UI invariant exists that is not already enforced by server-side action parsing or route state.
+    Tradeoffs: The endpoint contract can accept a future state-inconsistency signal without another server migration, but MVP browser telemetry stays narrow and avoids speculative instrumentation.

@@ -101,7 +101,7 @@ Incomplete:
 - Source map: [ops/resources.md](../ops/resources.md), [ops/monitoring.md](../ops/monitoring.md), [ops/debugging.md](../ops/debugging.md), [ops/incidents.md](../ops/incidents.md), [ops/secrets.md](../ops/secrets.md), and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for observability, secrets source, emergency shutdown, and launch-readiness decisions.
 
 ### Tasks
-- [x] Decide the launch analytics and product-tooling stack, then implement Sentry, Cloudflare structured logs, Supabase log usage, Cloudflare Web Analytics or the chosen web analytics tool, narrow frontend client-event logging, and canary records with shared `error_id` correlation.
+- [x] Decide the launch analytics and product-tooling stack, then implement Sentry, Cloudflare structured logs, Supabase log usage, Cloudflare Web Analytics or the chosen web analytics tool, narrow frontend client-event logging, and canary records with shared `error_id` correlation. Browser client-event logging now emits the four scoped signals; `ui_state_inconsistent` is intentionally unwired by decision.
 - [ ] Create or verify the Cloudflare Worker, `app.agent-outbox.dev` custom domain/route, production runtime secrets including the separate Stripe Checkout/Portal runtime key, and deploy-safe OpenNext/Wrangler verification path.
 - [ ] Create or verify the Stripe-side production domain configuration needed for hosted Checkout, Billing Portal, and supported payment methods.
 - [ ] Populate production resource inventory, deployment smoke checklist, debugging, incident, monitoring, and secret recovery instructions with exact Agent Outbox resources as they are created.

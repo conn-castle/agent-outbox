@@ -26,6 +26,10 @@ Do not duplicate information that belongs in other memory files:
 
 <!-- ENTRIES START -->
 
+## Agent Tooling
+
+- `al dispatch` supports concurrent invocations: multiple reviewers/second-agents may be launched in parallel (the earlier bug that required serialization is fixed). Skills that gate parallel dispatch on "known safe for concurrent launches" (e.g. `multi-agent-plan-review`) may fan out reviewers concurrently in this repo.
+
 ## Provider Setup
 
 - Exact provider inventory values belong in approved operator-controlled secret

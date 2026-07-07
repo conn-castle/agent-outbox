@@ -1,9 +1,11 @@
-import { expect, test, type Request } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
+
+function rethrowPageError(error: Error) {
+  throw error;
+}
 
 test.beforeEach(({ page }) => {
-  page.on("pageerror", (error) => {
-    throw error;
-  });
+  page.on("pageerror", rethrowPageError);
 });
 
 test("first-time self-serve signup fixture lands on a provisioned human account", async ({
@@ -269,6 +271,60 @@ test("human actions submit undo and narrow bulk actions through server actions",
   ).toBeDisabled();
 });
 
+test("failed human action emits a content-safe client event", async ({
+  page
+}) => {
+  const events = await interceptClientEvents(page);
+  await page.goto("/human?error=invalid_request");
+
+  await expect(page.getByRole("status")).toContainText(
+    "Action failed: invalid request."
+  );
+  await expect
+    .poll(() => events)
+    .toEqual([{ name: "human_action_failed", category: "submission" }]);
+});
+
+test("failed file upload emits a content-safe client event", async ({
+  page
+}) => {
+  const events = await interceptClientEvents(page);
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
+
+  await page.getByLabel("Evidence file").setInputFiles({
+    name: "empty.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.alloc(0)
+  });
+  await page.getByRole("button", { name: "Attach evidence" }).click();
+
+  await expect(page.getByRole("status")).toContainText(
+    "Action failed: invalid request."
+  );
+  await expect
+    .poll(() => events)
+    .toEqual([{ name: "file_upload_failed", category: "upload" }]);
+});
+
+test("uncaught browser error emits a content-safe client event", async ({
+  page
+}) => {
+  page.off("pageerror", rethrowPageError);
+  const events = await interceptClientEvents(page);
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new ErrorEvent("error", { error: new Error("fixture browser failure") })
+    );
+  });
+
+  await expect
+    .poll(() => events)
+    .toEqual([{ name: "client_error", category: "browser_exception" }]);
+});
+
 test("bulk actions only submit selected rows visible in the current filter", async ({
   page
 }) => {
@@ -302,6 +358,23 @@ function deferred() {
 function postJson(request: Request) {
   const body = request.postData();
   return body ? JSON.parse(body) : null;
+}
+
+async function interceptClientEvents(page: Page) {
+  const events: Array<{ name: string; category?: string }> = [];
+  await page.route("**/api/client-events", async (route) => {
+    const body = postJson(route.request());
+    if (body && Array.isArray(body.events)) {
+      events.push(
+        ...body.events.map((event: { name: string; category?: string }) => ({
+          name: event.name,
+          category: event.category
+        }))
+      );
+    }
+    await route.fulfill({ status: 204, body: "" });
+  });
+  return events;
 }
 
 test("popup controls cover typed response kinds", async ({ page }) => {

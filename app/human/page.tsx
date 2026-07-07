@@ -153,9 +153,12 @@ function humanReviewNotice(
 ): HumanReviewNotice | null {
   const error = firstParam(params?.error);
   if (error) {
+    const failedActionKind = firstParam(params?.failedActionKind);
     return {
       kind: "error",
-      message: `Action failed: ${error.replaceAll("_", " ")}.`
+      message: `Action failed: ${error.replaceAll("_", " ")}.`,
+      failedActionKind:
+        failedActionKind === "file_upload" ? "file_upload" : undefined
     };
   }
 
