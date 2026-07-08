@@ -15,7 +15,7 @@ It should run an iterative loop that:
 - verifies and fixes accepted findings
 - re-audits after each fix pass
 - repeats until a confirming review finds no remaining actionable findings
-- reports each round's findings and fixes to the human with severities
+- reports each round's findings and fixes to the user with severities
 
 Use this skill only for the full audit-and-fix loop over all uncommitted changes. For report-only review or single-report remediation, use the dedicated lower-level skills instead.
 
@@ -37,7 +37,7 @@ Do not interpret this skill as permission to review old commits, sweep the whole
 ## Required behavior
 
 At minimum, use:
-- parallel audit reviewers with different lenses
+- parallel audit review agents with different lenses
 - a findings resolver/fixer
 - a synthesizer that keeps the round-by-round report current
 
@@ -57,7 +57,7 @@ Always create:
 
 Create the file with `touch` before writing.
 
-The master report is the human-facing round ledger and the single place to preserve orchestrator state.
+The master report is the human-readable round ledger and the single place to preserve orchestrator state.
 
 Delegated skill outputs are handled one way:
 - Use `review-scope` report artifacts as findings input to `resolve-findings`.
@@ -88,12 +88,13 @@ You are the orchestrator. Do not do the child/subagent work yourself. Your job i
 ## Human checkpoints
 
 - Required: ask when the target is empty and no credible review scope exists.
-- Required: ask when an accepted finding requires materially broader scope, an architectural decision, or a user-visible behavior change beyond the current target.
+- Required: ask when an accepted finding requires an architectural decision, an end-user-visible behavior change beyond the current target, or another user-only decision.
 - Required: ask when a finding cannot be verified with the available code, tests, or docs.
 - Required: ask when a deferred finding blocks convergence.
 - Required: ask when the same unresolved finding recurs after two fix attempts or the loop is no longer converging.
 - Required: ask before any destructive or irreversible action would be required.
 - Stay autonomous during normal audit/fix/re-audit cycles when the target and accepted fixes are clear.
+- A broad-but-clear fix is still in scope when it resolves an accepted finding against the working-tree target and does not trigger a human checkpoint.
 
 ## Orchestration loop
 
@@ -125,7 +126,7 @@ Record each report path and one-line outcome under `## Pre-pass Cleanup`. If a p
 3. Call out any overlapping existing known issues from `ISSUES.md` instead of presenting them as novel findings.
 4. Record important assumptions in the master report before starting Round 1.
 
-### Phase 2: Run audit Round N (Audit reviewers)
+### Phase 2: Run audit Round N (Audit review agents)
 
 Use the `review-scope` skill on the current target.
 
@@ -133,7 +134,7 @@ For each round, copy the high-signal findings summary into the master report und
 
 ### Phase 3: Verify and fix Round N findings (Fixers)
 
-Use the `resolve-findings` skill on the Round N review report with authority to fix accepted findings. Fix every accepted finding regardless of severity. Do not treat `defer` as a clean outcome; escalate instead when a valid issue cannot be resolved in scope.
+Use the `resolve-findings` skill on the Round N review report with authority to fix accepted findings. Fix every accepted finding regardless of severity. Do not treat `defer` as a clean outcome; escalate instead when a valid issue cannot be resolved for a human-checkpoint reason. "Broader scope than a point fix" is not a valid deferral reason.
 
 Copy the fix summary into the master report under `## Round N Fixes` (title, severity, fix description, files touched) and `## Round N Status` (accepted/rejected/deferred counts, unresolved Critical and High counts).
 
@@ -229,6 +230,6 @@ Required chat output:
 Example summary:
 ```
 - 2 rounds to converge (Round 2 applied zero Critical/High fixes)
-- 12 findings from 5 parallel reviewers
+- 12 findings from 5 parallel review agents
 - 5 accepted and fixed, 6 rejected, 1 deferred
 ```

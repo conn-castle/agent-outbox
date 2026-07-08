@@ -4,7 +4,7 @@ Use when `worker_skill=fix-issues`.
 
 Dispatch the implementer with `/fix-issues`. Instruct it to pick 1-5 coherent
 `ISSUES.md` items for one batch, excluding items already recorded as
-human-blocked unless the user has since answered them.
+user-blocked unless the user has since answered them.
 
 The implementer must return:
 - selected issue IDs/titles
@@ -18,3 +18,5 @@ The normal PR gate applies. A batch may ship below the gate only for a
 high-severity fix or the final autonomous tail.
 
 Resolved issues must be removed from `ISSUES.md`.
+Deferred issues must not be annotated in `ISSUES.md`; record the deferral only
+in worker output, run artifacts, or the auto-skill-loop ledger.
