@@ -203,10 +203,6 @@ a {
   justify-items: start;
 }
 
-.contact-actions {
-  margin-top: 20px;
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;

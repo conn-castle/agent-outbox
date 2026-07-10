@@ -26,6 +26,16 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-10 billing-checkout-latency: Authenticated Stripe checkout takes 5–10 seconds to appear
+    Priority: Medium. Area: Billing / Performance
+    Description: Unauthenticated production requests complete in 6–102 ms of Worker wall time, while the configured database takes 387–525 ms per transaction and checkout performs three fresh sequential transactions before/during Stripe session creation; an authenticated production sample is still needed to isolate database, Stripe API, and Stripe page-load time.
+    Next step: Capture one authenticated checkout with Worker tail plus browser request timing, add stage-level timing evidence if needed, then remove confirmed redundant transaction/session work without weakening account authorization.
+
+- Issue 2026-07-10 human-review-first-100-unreachable: Human review UI cannot reach queue items beyond the first 100
+    Priority: High. Area: Human review UI / Correctness
+    Description: `/human` fetches at most 100 priority-sorted rows, then applies search, status filtering, and sorting only to that client-side subset. Free accounts can queue 1,000 items and paid accounts have no item-count cap, so valid items outside the first 100 can be invisible and unsearchable.
+    Next step: Make search/status/sort URL-backed server inputs and add stable pagination or load-more navigation with browser coverage proving items beyond the first 100 remain discoverable, selectable, and reviewable.
+
 - Issue 2026-07-07 root-layout-error-telemetry-gap: Root-layout render errors emit no client-event telemetry
     Priority: Low. Area: Observability / Human review UI
     Description: `app/error.tsx` is a route-segment error boundary and, per Next.js App Router semantics, does not catch errors thrown while rendering the root `app/layout.tsx`. Such failures are only caught by an `app/global-error.tsx` boundary, which does not exist, so a root-layout crash emits none of the four client-event signals. The current layout is a thin shell (providers + analytics + ClientEventsInit), so the gap is narrow.

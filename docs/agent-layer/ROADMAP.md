@@ -94,7 +94,56 @@ Incomplete:
 - Published and accepted the Privacy Policy, Terms of Service, Zoho-backed contact path, retention and support disclosures, and PolyForm Noncommercial license presentation for the production launch.
 - Accepted the current Cloudflare Web Analytics provider-permission gap as non-blocking for launch while retaining the deferred setup work in ISSUES.md.
 
-## Phase 9 — Steward Pilot And Public MVP Launch
+## Phase 9 — Product Experience, Branding, And Public API Documentation
+
+### Goal
+- Replace the runtime-proof presentation with a coherent public product experience that explains Agent Outbox and leads users into signup, documentation, and the review workflow.
+- Establish one accessible, responsive visual system across the public site, authentication, review queue, caller approval, billing, support, and legal surfaces.
+- Publish user-facing API documentation without creating a second mutable contract beside `docs/spec/`.
+
+### Tasks
+- [ ] Create and review real screen-by-screen storyboards before implementation for the landing/docs experience and key user journeys—signup/sign-in, first empty account, review queue/list/detail/actions, caller approval, upgrade/billing, support/legal, and important loading/empty/error states—using explicit owner checkpoints so the storyboard becomes the shared source for collaboration, scope, hierarchy, transitions, content, and responsive behavior.
+- [ ] Establish the documented public-domain split so `https://agent-outbox.dev` serves the product landing page and API documentation while `https://app.agent-outbox.dev` remains the human app and caller API origin, without creating duplicate product or contract sources.
+- [ ] Replace the runtime-proof public presentation with a real landing page covering the product value, asynchronous human-review flow, representative use cases, hosted limits/pricing posture, source-available license, and clear signup, sign-in, and API documentation calls to action; prepare the repository link for activation when Phase 10 makes it public.
+- [ ] Define and apply shared design tokens, typography, layout, navigation, interaction, feedback, empty/loading/error, and component patterns across landing, authentication, human review, caller approval, upgrade, contact, privacy, terms, and documentation surfaces.
+- [ ] Redesign the human review workspace around the shared system while preserving its generic queue semantics, typed actions, caller-defined presentation, and focused review workflow.
+- [ ] Build a public API documentation experience derived from the canonical `docs/spec/` contract, covering authentication, caller connection, queue lifecycle, endpoint and schema reference, errors, pagination, files, limits, and CLI/raw-HTTP examples without duplicating independently maintained behavior.
+- [ ] Create and approve final Agent Outbox brand assets, then install the logo and favicon consistently on the website, Clerk-hosted authentication surfaces, and the production GitHub OAuth app.
+- [ ] Add focused desktop/mobile browser coverage and accessibility checks for the landing page, documentation navigation, authentication entrypoints, redesigned review workflow, keyboard operation, focus behavior, and major empty/error states.
+
+### Exit criteria
+- Owner-approved storyboards cover the major public and authenticated journeys, and each Phase 9 implementation and browser-test task traces to the storyboard or records an explicitly approved deviation.
+- `agent-outbox.dev` presents Agent Outbox as a product rather than a runtime proof and provides working paths to the `app.agent-outbox.dev` signup/sign-in experience, documentation, and legal/support information, with the source-repository link ready for Phase 10 publication.
+- Public, authenticated, billing, approval, and documentation surfaces use one coherent responsive design with verified keyboard and accessibility behavior.
+- A caller developer can understand, connect to, and exercise the API from the public documentation, and the rendered reference remains traceable to the canonical `docs/spec/` source.
+- Final logo/favicon assets render on the website and Clerk/GitHub OAuth surfaces, and the redesigned review workflow retains focused browser coverage.
+
+## Phase 10 — Codebase, Documentation, And Public Repository Hardening
+
+### Goal
+- Remove known correctness, reliability, test, maintainability, and documentation debt before inviting external contributors and depending on the repository as the public product source.
+- Publish the repository safely with accurate source-available positioning, usable contributor/support paths, and release evidence that matches production.
+- Leave every current issue and backlog item fixed, scheduled behind an explicit trigger, or explicitly accepted by the owner—never silently abandoned.
+
+### Tasks
+- [ ] Resolve every actionable entry currently recorded in ISSUES.md, prioritizing the human database-test isolation failure, then the observability gaps, cleanup/refactor items, Stripe webhook retention decision, local/CI security parity, database teardown consistency, and Cloudflare Web Analytics permission; remove entries only after their fixes are verified.
+- [ ] Surface generated `error_id` values on the scheduled `/human` submit/undo and caller-approval failure paths so users can provide support-correlation handles.
+- [ ] Run iterative correctness, simplification, interface, test-quality, and documentation audits across the web app, HTTP API, CLI, database, deployment tooling, public docs, and operations docs; fix accepted findings and repeat until a fresh review has no unresolved critical/high findings and no unaccepted medium findings.
+- [ ] Audit tracked files, generated artifacts, configuration, and Git history for secrets, credentials, private-only references, unsafe examples, stale implementation claims, and licensing/privacy mismatches before changing repository visibility.
+- [ ] Finish the public repository surface: update pre-release wording and hosted links, preserve accurate `source-available`/PolyForm terminology, add or verify contribution, issue, security/support, and release guidance, and configure the repository description, homepage, issue path, and required branch protections.
+- [ ] Decide and implement the public CLI installation posture: either publish verified tagged binaries/Homebrew distribution from the existing GoReleaser package path or explicitly launch with a tested build-from-source workflow, then make the landing page, API docs, and README agree.
+- [ ] Run the complete local, CI, browser, migration, package, Worker dry-run, hosted runtime, hosted-health, billing, signup/auth, and production CLI smoke matrix; resolve failures and record any owner-accepted provider limitations in the release evidence.
+- [ ] Change `conn-castle/agent-outbox` from private to public only after the repository-safety audit and verification matrix pass, then verify an unauthenticated clone plus all website, documentation, license, issue, and support links from the public repository.
+- [x] Opened production Clerk signup on 2026-07-10 after the owner explicitly accepted enabling it before the remaining pilot and launch-hardening work.
+
+### Exit criteria
+- Every current ISSUES.md item is either verified fixed or retained with a concrete external blocker/owner-approved deferral and named later trigger; no actionable pre-launch defect is silently carried forward.
+- Repeated code, test, interface, and documentation reviews find no unresolved critical/high issue and no medium issue lacking an explicit disposition.
+- A new caller has one tested, publicly documented way to install or build the CLI and reach the canonical API documentation.
+- The full release and hosted verification matrix passes or has explicit owner acceptance for each provider-only limitation, with no unresolved secret, privacy, license, or production-link mismatch.
+- The GitHub repository is publicly readable, safely cloneable, accurately describes the hosted/source-available product, and exposes working contribution, issue, security/support, documentation, and license paths.
+
+## Phase 11 — Steward Pilot And Public MVP Launch
 
 ### Goal
 - Prove Agent Outbox as a standalone product with Steward as the first external caller, then launch the public hosted MVP.
@@ -106,8 +155,7 @@ Incomplete:
 - [ ] Map Steward email rows into generic Agent Outbox input items, including evidence, exact proposed actions/text, links, action values, and caller-owned downstream handling.
 - [ ] Implement Steward-side output check/read/ack handling with caller-side idempotency, freshness validation before source-system writes, and durable handling before acknowledgement.
 - [ ] Run the hosted production smoke checklist after deploy because there is no persistent staging environment.
-- [ ] Verify public README, docs, issue path, hosted URLs, self-hosting posture, retention disclosure, limits, and public/open-source license presentation are coherent for launch and match Agent Layer's license posture.
-- [ ] Open public signup only after the health inspection workflow, provider-side abuse controls, hard product limits, and owner-approved launch materials are in place.
+- [ ] Reverify that public README/docs, hosted URLs, self-hosting posture, retention disclosure, limits, source-available license presentation, signup protection, and issue/support paths still match the shipped Steward-backed launch state.
 
 ### Exit criteria
 - Steward can submit, review, read, handle, and acknowledge real review items through the same hosted API/CLI contract future callers use.
@@ -116,7 +164,7 @@ Incomplete:
 - Public launch checklist is complete, including provider resource inventory, production smoke results, signup protection, spend/abuse guardrails, rollback/incident expectations, and license posture.
 - Any unresolved launch, legal, provider, or runtime blocker is explicitly accepted by the project owner or the public launch does not proceed.
 
-## Phase 10 — Post-MVP Expansion And Deferrals
+## Phase 12 — Post-MVP Expansion And Deferrals
 
 ### Goal
 - Preserve useful future work without expanding the hosted MVP beyond the async review queue.
@@ -129,7 +177,9 @@ Incomplete:
 - [ ] Revisit caller authentication with OAuth or delegated authorization only after third-party callers, delegated scopes, or marketplace-style integrations make bearer keys the limiting tradeoff.
 - [ ] Revisit higher paid tiers, billing notification emails, managed backups, point-in-time recovery, encrypted off-site exports, and spend/usage guards only after real hosted usage or paying customers justify the operational burden.
 - [ ] Revisit Supabase Storage or another object store only if Postgres file storage becomes a measured cost or operational constraint.
-- [ ] Revisit Supabase Realtime, saved views, input expiry, team roles, caller-management UI, proactive monitoring/dashboards, analytics rollups, Axiom, and richer card visuals only when real workflows require them.
+- [ ] Add in-app usage analytics for queued, answered, and skipped throughput only after real hosted usage demonstrates that the existing Postgres data needs a product-facing rollup or query surface.
+- [ ] Migrate the Clerk route-protection entrypoint from `middleware.ts` to `proxy.ts` only after a released OpenNext Cloudflare version supports the Next.js convention and the platform verification gate proves parity.
+- [ ] Revisit Supabase Realtime, saved views, input expiry, team roles, caller-management UI, proactive monitoring/dashboards, Axiom, and richer card visuals only when real workflows require them.
 
 ### Exit criteria
 - Each post-MVP item has a named trigger from real usage, support load, cost pressure, or caller-domain proof before implementation starts.

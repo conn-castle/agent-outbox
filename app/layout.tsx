@@ -25,6 +25,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </Link>
         <nav className="nav" aria-label="Primary">
           <Link href="/human">Human</Link>
+          <Link href="/upgrade">Upgrade</Link>
           <Link href="/sign-in">Sign in</Link>
           <Link href="/sign-up">Sign up</Link>
         </nav>

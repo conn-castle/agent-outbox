@@ -1,9 +1,15 @@
 import { expect, test } from "@playwright/test";
 
-test("public legal and contact routes are reachable from the global footer", async ({
+test("public legal routes and the contact redirect are reachable from the global footer", async ({
   page
 }) => {
   await page.goto("/");
+
+  await expect(
+    page
+      .getByRole("navigation", { name: "Primary" })
+      .getByRole("link", { name: "Upgrade" })
+  ).toHaveAttribute("href", "/upgrade");
 
   const footer = page.getByRole("contentinfo");
   await expect(footer.getByRole("link", { name: "Contact" })).toBeVisible();
@@ -38,16 +44,18 @@ test("public legal and contact routes are reachable from the global footer", asy
   await expect(page.getByText("Unacknowledged outputs")).toBeVisible();
   await expect(page.getByText("Sentry:")).toBeVisible();
 
-  await page
+  const contactLink = page
     .getByRole("contentinfo")
-    .getByRole("link", { name: "Contact" })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Contact Agent Outbox", level: 1 })
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Email contact@agent-outbox.dev" })
-  ).toHaveAttribute("href", "mailto:contact@agent-outbox.dev");
+    .getByRole("link", { name: "Contact" });
+  await expect(contactLink).toHaveAttribute("href", "/contact");
+
+  const contactResponse = await page.request.get("/contact", {
+    maxRedirects: 0
+  });
+  expect(contactResponse.status()).toBe(307);
+  expect(contactResponse.headers().location).toBe(
+    "https://github.com/conn-castle/agent-outbox/issues"
+  );
 
   expect(
     await page.evaluate(
