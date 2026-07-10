@@ -330,7 +330,7 @@ private provider credentials.
 - Build the OpenNext Cloudflare Worker bundle
 
 ```bash
-pnpm run worker:build
+corepack pnpm run worker:build
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed or pinned `pnpm`
@@ -342,7 +342,7 @@ Cloudflare state.
 - Dry-run the Worker deployment package
 
 ```bash
-pnpm run worker:dry-run
+corepack pnpm run worker:dry-run
 ```
 
 Run from: repo root Prerequisites: pinned `pnpm` dependencies are installed.
@@ -355,7 +355,7 @@ Cloudflare state.
 - Deploy the Worker to Cloudflare
 
 ```bash
-pnpm run worker:deploy
+corepack pnpm run worker:deploy
 ```
 
 Run from: repo root Prerequisites: Explicit owner approval for production

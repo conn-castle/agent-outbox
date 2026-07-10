@@ -462,8 +462,8 @@ export function runWorkerDeploy(options = {}) {
     });
 
   runCommand(
-    "pnpm",
-    ["run", "worker:build"],
+    "corepack",
+    ["pnpm", "run", "worker:build"],
     buildCommandOptions,
     spawnSyncImpl
   );
@@ -476,12 +476,15 @@ export function runWorkerDeploy(options = {}) {
       tempBase: options.tempBase
     });
     runCommand(
-      "pnpm",
-      buildWranglerDeployArgsWithConfig(
-        env,
-        secretsFile.path,
-        wranglerConfigFile.path
-      ),
+      "corepack",
+      [
+        "pnpm",
+        ...buildWranglerDeployArgsWithConfig(
+          env,
+          secretsFile.path,
+          wranglerConfigFile.path
+        )
+      ],
       deployCommandOptions,
       spawnSyncImpl
     );
