@@ -1,6 +1,6 @@
 {
   "name": "agent-outbox",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Agent Outbox foundation tooling and verification gates.",
