@@ -56,11 +56,6 @@ jobs:
     environment: production
     permissions:
       contents: read
-    outputs:
-      deployment_attempted: ${{ steps.deploy-attempt.outputs.attempted }}
-      rollback_release: ${{ steps.rollback-target.outputs.rollback_release }}
-      rollback_version_id:
-        ${{ steps.rollback-target.outputs.rollback_version_id }}
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@v7
@@ -130,6 +125,34 @@ jobs:
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
         run: corepack pnpm run smoke-runtime
 
+      # Automatic rollback runs inside this already-approved deploy job so it can
+      # never be gated behind a second production-environment approval. It fires
+      # only when a deploy was attempted and a later step failed; the earlier
+      # failure keeps the job red.
+      - name: Roll back on failed deploy
+        id: rollback-worker
+        if: failure() && steps.deploy-attempt.outputs.attempted == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN:
+            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
+          ROLLBACK_VERSION_ID:
+            ${{ steps.rollback-target.outputs.rollback_version_id }}
+        run: >-
+          corepack pnpm exec wrangler rollback "$ROLLBACK_VERSION_ID" --name
+          agent-outbox --message "Automatic rollback after failed ${{
+          needs.prepare-release.outputs.release_tag }} deploy" --yes --env-file
+          /dev/null
+
+      - name: Verify restored release
+        if: failure() && steps.deploy-attempt.outputs.attempted == 'true'
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE:
+            ${{ steps.rollback-target.outputs.rollback_release }}
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: corepack pnpm run smoke-runtime
+
   finalize-release:
     name: Tag verified production release
     needs: [prepare-release, deploy]
@@ -151,53 +174,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: node scripts/production-release.mjs finalize
-
-  rollback-on-failure:
-    name: Roll back failed production deploy
-    needs: [prepare-release, deploy]
-    if: >-
-      ${{
-        always() &&
-        needs.deploy.outputs.deployment_attempted == 'true' &&
-        needs.deploy.result != 'success'
-      }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: production
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout exact candidate
-        uses: actions/checkout@v7
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24.18.0
-
-      - name: Set up dependencies
-        run: make setup
-
-      - name: Restore previous Worker version
-        id: rollback-worker
-        env:
-          CLOUDFLARE_API_TOKEN:
-            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
-          ROLLBACK_VERSION_ID: ${{ needs.deploy.outputs.rollback_version_id }}
-        run: >-
-          corepack pnpm exec wrangler rollback "$ROLLBACK_VERSION_ID" --name
-          agent-outbox --message "Automatic rollback after failed ${{
-          needs.prepare-release.outputs.release_tag }} deploy" --yes --env-file
-          /dev/null
-
-      - name: Verify restored release
-        env:
-          AGENT_OUTBOX_EXPECTED_RELEASE:
-            ${{ needs.deploy.outputs.rollback_release }}
-          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
-          APP_BASE_URL: https://app.agent-outbox.dev
-          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
-        run: corepack pnpm run smoke-runtime
 
       - name: Keep failed deploy red
         if: always()

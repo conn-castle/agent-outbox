@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 
 import {
   approveCredentialOperationBrowserSetupRequest,
@@ -299,6 +299,7 @@ async function runApprovalTransaction<TResult>(
       }
     );
   } catch (error) {
+    unstable_rethrow(error);
     reportCallerApprovalFailure(error, {
       ...reportContext,
       session: activeSession,

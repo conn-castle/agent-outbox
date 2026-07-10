@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 
 import { createCorrelationId } from "../../../src/server/correlation";
 import {
@@ -239,6 +239,7 @@ async function runApprovalTransaction<TResult>(
       }
     );
   } catch (error) {
+    unstable_rethrow(error);
     reportCallerApprovalFailure(error, {
       ...reportContext,
       session: activeSession,

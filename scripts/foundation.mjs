@@ -987,14 +987,18 @@ export function validateProductionDeployWorkflow(
     deployWorkflowContent,
     "finalize-release"
   );
-  const rollbackJob = workflowJobContent(
-    deployWorkflowContent,
-    "rollback-on-failure"
-  );
   const deployStep = workflowNamedStepContent(deployJob, "Deploy Worker");
   const verifyStep = workflowNamedStepContent(
     deployJob,
     "Verify deployed release"
+  );
+  const rollbackStep = workflowNamedStepContent(
+    deployJob,
+    "Roll back on failed deploy"
+  );
+  const verifyRestoredStep = workflowNamedStepContent(
+    deployJob,
+    "Verify restored release"
   );
   /** @type {[string, boolean][]} */
   const requirements = [
@@ -1096,27 +1100,31 @@ export function validateProductionDeployWorkflow(
       ".github/workflows/deploy-production.yml must finalize one numbered release through production-release.mjs after deploy"
     );
   }
-  // Rollback must fire only when the deploy itself did not succeed. It must not
-  // depend on finalize-release, otherwise a tagging-only failure would revert a
-  // healthy, smoke-verified deployment.
-  const rollbackConditionIsDeployScoped =
-    rollbackJob.includes("always()") &&
-    rollbackJob.includes(
-      "needs.deploy.outputs.deployment_attempted == 'true'"
+  // Automatic rollback must run inside the already-approved deploy job (so it is
+  // never gated behind a second production-environment approval) and fire only
+  // when a deploy was attempted and a later step failed. Because it lives in the
+  // deploy job, a downstream finalize/tagging failure cannot trigger it.
+  const rollbackScopedToDeployFailure =
+    rollbackStep.includes("if: failure()") &&
+    rollbackStep.includes("steps.deploy-attempt.outputs.attempted == 'true'") &&
+    rollbackStep.includes("corepack pnpm exec wrangler rollback") &&
+    rollbackStep.includes(
+      "steps.rollback-target.outputs.rollback_version_id"
     ) &&
-    rollbackJob.includes("needs.deploy.result != 'success'") &&
-    !rollbackJob.includes("finalize-release.result");
+    !rollbackStep.includes("finalize");
   if (
-    !rollbackConditionIsDeployScoped ||
-    !rollbackJob.includes("corepack pnpm exec wrangler rollback") ||
-    !rollbackJob.includes("needs.deploy.outputs.rollback_release") ||
+    !rollbackScopedToDeployFailure ||
+    !verifyRestoredStep.includes("if: failure()") ||
     !workflowRunStepIncludes(
-      workflowNamedStepContent(rollbackJob, "Verify restored release"),
+      verifyRestoredStep,
       "corepack pnpm run smoke-runtime"
+    ) ||
+    !verifyRestoredStep.includes(
+      "steps.rollback-target.outputs.rollback_release"
     )
   ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must roll back only on a failed deploy and verify the restored release"
+      ".github/workflows/deploy-production.yml must roll back within the deploy job on a failed deploy and verify the restored release"
     );
   }
 

@@ -1238,7 +1238,9 @@ test("caller approval deny actions pass stable route labels to session logging",
         /** @param {string} path */
         redirect(path) {
           throw Object.assign(new Error("redirect"), { path });
-        }
+        },
+        /** @param {unknown} _error */
+        unstable_rethrow(_error) {}
       },
       "../../../src/server/caller-connect": {
         approveConnectBrowserSetupRequest() {},
@@ -1298,7 +1300,9 @@ test("caller approval deny actions pass stable route labels to session logging",
         /** @param {string} path */
         redirect(path) {
           throw Object.assign(new Error("redirect"), { path });
-        }
+        },
+        /** @param {unknown} _error */
+        unstable_rethrow(_error) {}
       },
       "../../src/server/caller-credential-operations": {
         approveCredentialOperationBrowserSetupRequest() {},
@@ -1733,7 +1737,9 @@ test("caller approval action wrappers report transaction exceptions before redir
           /** @param {string} path */
           redirect(path) {
             throw Object.assign(new Error("redirect"), { path });
-          }
+          },
+          /** @param {unknown} _error */
+          unstable_rethrow(_error) {}
         },
         "../../../src/server/caller-connect": {
           approveConnectBrowserSetupRequest() {
@@ -1761,7 +1767,9 @@ test("caller approval action wrappers report transaction exceptions before redir
           /** @param {string} path */
           redirect(path) {
             throw Object.assign(new Error("redirect"), { path });
-          }
+          },
+          /** @param {unknown} _error */
+          unstable_rethrow(_error) {}
         },
         "../../src/server/caller-credential-operations": {
           approveCredentialOperationBrowserSetupRequest() {},

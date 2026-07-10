@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { unstable_rethrow } from "next/navigation";
 
 import {
   getCredentialOperationBrowserApprovalPreview,
@@ -625,6 +626,7 @@ async function credentialPageTransaction<TResult>(
       data: transaction.data
     };
   } catch (error) {
+    unstable_rethrow(error);
     reportCallerApprovalFailure(error, {
       session: activeSession,
       ...reportContext,

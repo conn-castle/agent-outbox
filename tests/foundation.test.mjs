@@ -803,24 +803,24 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     "OpenNext build must not depend on a globally available pnpm shim"
   );
 
-  const availabilityRegressionWorkflow = deployWorkflow.replace(
-    "needs.deploy.result != 'success'\n      }}",
-    "needs.deploy.result != 'success' ||\n          needs.finalize-release.result != 'success'\n      }}"
+  const unscopedRollbackWorkflow = deployWorkflow.replace(
+    "if: failure() && steps.deploy-attempt.outputs.attempted == 'true'",
+    "if: always()"
   );
   assert.notEqual(
-    availabilityRegressionWorkflow,
+    unscopedRollbackWorkflow,
     deployWorkflow,
-    "rollback-condition regression fixture must modify the workflow"
+    "rollback-scope regression fixture must modify the workflow"
   );
   assert.equal(
     validateProductionDeployWorkflow(
-      availabilityRegressionWorkflow,
+      unscopedRollbackWorkflow,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must roll back only on a failed deploy and verify the restored release"
+      ".github/workflows/deploy-production.yml must roll back within the deploy job on a failed deploy and verify the restored release"
     ),
     true,
-    "rollback must not revert a healthy deploy when only finalize-release fails"
+    "automatic rollback must stay scoped to a failed deploy attempt inside the deploy job"
   );
 });
 

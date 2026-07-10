@@ -1,3 +1,5 @@
+import { unstable_rethrow } from "next/navigation";
+
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectDeviceApprovalPreview } from "../../../../src/server/caller-connect";
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/caller-connect-clerk-fixture";
@@ -109,6 +111,7 @@ export default async function CallerConnectDevicePage({
     session = transaction.session;
     preview = transaction.data;
   } catch (error) {
+    unstable_rethrow(error);
     reportCallerApprovalFailure(error, {
       requestId,
       route: "/caller/connect/device",
