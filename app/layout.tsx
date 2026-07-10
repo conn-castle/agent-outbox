@@ -4,7 +4,9 @@ import Link from "next/link";
 import Script from "next/script";
 import type { ReactNode } from "react";
 
+import packageJson from "../package.json";
 import { ClientEventsInit } from "../src/components/observability/ClientEventsInit";
+import { formatVersionLabel } from "../src/server/app-version";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate";
 import { cloudflareWebAnalyticsToken } from "../src/server/observability";
 import "./globals.css";
@@ -32,7 +34,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </header>
       {children}
       <footer className="site-footer">
-        <p>&copy; {new Date().getUTCFullYear()} Conn Castle Studios.</p>
+        <p>
+          &copy; {new Date().getUTCFullYear()} Conn Castle Studios.{" "}
+          <span className="footer-version">
+            {formatVersionLabel(packageJson.version)}
+          </span>
+        </p>
         <nav className="footer-nav" aria-label="Legal and support">
           <Link href="/contact">Contact</Link>
           <Link href="/privacy-policy">Privacy</Link>

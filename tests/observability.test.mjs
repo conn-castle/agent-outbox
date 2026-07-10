@@ -10,6 +10,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 
+import { formatVersionLabel } from "../src/server/app-version.ts";
 import { authenticateCallerApiRequest } from "../src/server/caller-api-auth.ts";
 import {
   apiErrorResponse,
@@ -761,6 +762,9 @@ function rootLayoutTestRequire(specifier) {
   }
   if (specifier === "../src/server/observability") {
     return { cloudflareWebAnalyticsToken };
+  }
+  if (specifier === "../src/server/app-version") {
+    return { formatVersionLabel };
   }
   if (specifier === "../src/components/observability/ClientEventsInit") {
     return { ClientEventsInit: () => null };

@@ -79,6 +79,11 @@ a {
   margin: 0;
 }
 
+.footer-version {
+  color: #9098a3;
+  white-space: nowrap;
+}
+
 .footer-nav {
   display: flex;
   flex-wrap: wrap;
