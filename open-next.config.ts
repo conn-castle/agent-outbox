@@ -7,6 +7,6 @@ const config: OpenNextConfig = defineCloudflareConfig({
   routePreloadingBehavior: "none"
 });
 
-config.buildCommand = "pnpm run next:build";
+config.buildCommand = "corepack pnpm run next:build";
 
 export default config;

@@ -32,7 +32,7 @@
     "browser": "playwright test",
     "next:build": "next build",
     "worker:build": "opennextjs-cloudflare build",
-    "worker:dry-run": "pnpm run worker:build && wrangler deploy --dry-run --env-file /dev/null",
+    "worker:dry-run": "corepack pnpm run worker:build && wrangler deploy --dry-run --env-file /dev/null",
     "worker:deploy": "node scripts/worker-deploy.mjs",
     "smoke": "node scripts/foundation.mjs smoke",
     "smoke-runtime": "node scripts/runtime-smoke.mjs",

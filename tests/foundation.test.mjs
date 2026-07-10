@@ -690,6 +690,25 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     validateProductionDeployWorkflow(deployWorkflow, "24.18.0"),
     []
   );
+
+  const packageJson = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8")
+  );
+  assert.match(
+    packageJson.scripts["worker:dry-run"],
+    /^corepack pnpm run worker:build && /,
+    "production dry-run must not depend on a globally available pnpm shim"
+  );
+
+  const openNextConfig = readFileSync(
+    new URL("../open-next.config.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(
+    openNextConfig,
+    /config\.buildCommand = "corepack pnpm run next:build";/,
+    "OpenNext build must not depend on a globally available pnpm shim"
+  );
 });
 
 test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {
@@ -716,7 +735,8 @@ test("production deploy workflow guard rejects automatic and incomplete deploy w
       ".github/workflows/deploy-production.yml must include main-branch deploy guard",
       ".github/workflows/deploy-production.yml must include production deploy concurrency group",
       ".github/workflows/deploy-production.yml must be manual-only and not include push:",
-      ".github/workflows/deploy-production.yml must include run: pnpm run worker:dry-run",
+      ".github/workflows/deploy-production.yml must include run: corepack pnpm run worker:dry-run",
+      ".github/workflows/deploy-production.yml must include run: corepack pnpm run worker:deploy",
       ".github/workflows/deploy-production.yml must include CLOUDFLARE_HYPERDRIVE_ID"
     ]
   );
@@ -741,7 +761,7 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
       spawnSyncImpl(command, args) {
         calls.push({ command, args });
 
-        if (args[0] === "exec") {
+        if (args[0] === "pnpm" && args[1] === "exec") {
           const secretsFileIndex = args.indexOf("--secrets-file") + 1;
           secretsFilePath = args[secretsFileIndex] ?? null;
           assert.ok(secretsFilePath, "deploy command must pass --secrets-file");
@@ -770,11 +790,12 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
     });
 
     assert.deepEqual(calls[0], {
-      command: "pnpm",
-      args: ["run", "worker:build"]
+      command: "corepack",
+      args: ["pnpm", "run", "worker:build"]
     });
-    assert.equal(calls[1].command, "pnpm");
-    assert.deepEqual(calls[1].args.slice(0, 7), [
+    assert.equal(calls[1].command, "corepack");
+    assert.deepEqual(calls[1].args.slice(0, 8), [
+      "pnpm",
       "exec",
       "wrangler",
       "deploy",

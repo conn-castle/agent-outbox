@@ -15,7 +15,7 @@ make browser
 make go-check
 make package-check
 make release-check
-pnpm run worker:dry-run
+corepack pnpm run worker:dry-run
 ```
 
 When Docker and a disposable Postgres database are available, also run:
@@ -65,7 +65,7 @@ Production deploy is manual-only through
 `.github/workflows/deploy-production.yml` and the `production` GitHub
 environment. The deploy job is guarded to `refs/heads/main` and uses the
 `production-deploy` concurrency group. The workflow runs
-`pnpm run worker:dry-run`, then `pnpm run worker:deploy`.
+`corepack pnpm run worker:dry-run`, then `corepack pnpm run worker:deploy`.
 
 After any Worker redeploy, rerun hosted runtime smoke and hosted health before
 enabling branch protection or accepting the deploy:

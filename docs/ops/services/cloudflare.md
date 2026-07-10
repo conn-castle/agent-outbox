@@ -126,13 +126,13 @@ CLOUDFLARE_API_TOKEN="${CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN:?}" \
 Build and dry-run the OpenNext/Wrangler Worker bundle without uploading it:
 
 ```bash
-pnpm run worker:dry-run
+corepack pnpm run worker:dry-run
 ```
 
 The production deploy entrypoint is:
 
 ```bash
-pnpm run worker:deploy
+corepack pnpm run worker:deploy
 ```
 
 This is an external write. Use it only after explicit owner approval and after
@@ -188,11 +188,11 @@ When rotating Cloudflare tokens:
 
 - GitHub Actions is the canonical deployment path; do not manually deploy unless
   the task explicitly calls for operator intervention. The manual deploy command
-  is `pnpm run worker:deploy` after production runtime configuration has been
-  loaded through approved operator-controlled stores; the script builds a fresh
-  OpenNext bundle before the external deploy write. The production GitHub
-  Actions workflow is manual-only, uses the `production` environment, dry-runs
-  the Worker bundle first, and then calls the same deploy wrapper.
+  is `corepack pnpm run worker:deploy` after production runtime configuration
+  has been loaded through approved operator-controlled stores; the script builds
+  a fresh OpenNext bundle before the external deploy write. The production
+  GitHub Actions workflow is manual-only, uses the `production` environment,
+  dry-runs the Worker bundle first, and then calls the same deploy wrapper.
 - Wrangler is for local agent/developer operations and for the deployment
   command inside GitHub Actions. Normal app CI and app tests must not require
   Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, or
