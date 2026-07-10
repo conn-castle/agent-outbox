@@ -274,6 +274,9 @@ async function main() {
       if (attempt === attempts) {
         throw error;
       }
+      console.warn(
+        `Runtime smoke attempt ${attempt} of ${attempts} failed; retrying in ${DEPLOY_SMOKE_RETRY_DELAY_MS / 1000}s.`
+      );
       await delay(DEPLOY_SMOKE_RETRY_DELAY_MS);
     }
   }
