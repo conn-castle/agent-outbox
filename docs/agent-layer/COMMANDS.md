@@ -366,8 +366,9 @@ token or Wrangler OAuth is authenticated for the intended account; and
 Notes: External write. Calls the project-owned deploy wrapper, which builds a
 fresh OpenNext bundle with only non-secret runtime configuration, writes true
 runtime secrets to a temporary dotenv file outside the repo, writes a temporary
-Wrangler config with the Hyperdrive binding outside the repo, removes both
-temporary files after deploy, and runs pinned Wrangler with `--env-file
+Wrangler config with the Hyperdrive binding outside the repo, dry-runs that
+production-configured artifact, deploys the same artifact with pinned Wrangler,
+and removes both temporary files afterward. Both Wrangler calls use `--env-file
 /dev/null`, `--secrets-file`, deploy-time `--var NAME:value` bindings for
 public/runtime configuration, and no `--keep-vars`. Runtime secret values are
 not exposed to the build subprocess. The deploy targets the Worker named

@@ -906,6 +906,62 @@ function workflowRunStepIncludes(content, token) {
 }
 
 /**
+ * @param {string} content
+ * @param {string} jobName
+ * @returns {string}
+ */
+function workflowJobContent(content, jobName) {
+  const lines = content.split(/\r?\n/);
+  const jobsIndex = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  if (jobsIndex === -1) {
+    return "";
+  }
+
+  const jobPattern = new RegExp(`^  ${escapeRegExp(jobName)}:\\s*$`);
+  const jobIndex = lines.findIndex(
+    (line, index) => index > jobsIndex && jobPattern.test(line)
+  );
+  if (jobIndex === -1) {
+    return "";
+  }
+
+  let endIndex = lines.length;
+  for (let index = jobIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^\S/.test(line) || /^  [A-Za-z0-9_-]+:\s*$/.test(line)) {
+      endIndex = index;
+      break;
+    }
+  }
+  return lines.slice(jobIndex, endIndex).join("\n");
+}
+
+/**
+ * @param {string} jobContent
+ * @param {string} stepName
+ * @returns {string}
+ */
+function workflowNamedStepContent(jobContent, stepName) {
+  const lines = jobContent.split(/\r?\n/);
+  const stepPattern = new RegExp(
+    `^      - name:\\s*${escapeRegExp(stepName)}\\s*$`
+  );
+  const stepIndex = lines.findIndex((line) => stepPattern.test(line));
+  if (stepIndex === -1) {
+    return "";
+  }
+
+  let endIndex = lines.length;
+  for (let index = stepIndex + 1; index < lines.length; index += 1) {
+    if (/^      - /.test(lines[index])) {
+      endIndex = index;
+      break;
+    }
+  }
+  return lines.slice(stepIndex, endIndex).join("\n");
+}
+
+/**
  * @param {string} deployWorkflowContent
  * @param {string} nodeVersion
  * @returns {string[]}
@@ -915,26 +971,48 @@ export function validateProductionDeployWorkflow(
   nodeVersion
 ) {
   const failures = [];
+  const validateRefJob = workflowJobContent(
+    deployWorkflowContent,
+    "validate-ref"
+  );
+  const deployJob = workflowJobContent(deployWorkflowContent, "deploy");
+  const deployStep = workflowNamedStepContent(deployJob, "Deploy Worker");
+  const verifyStep = workflowNamedStepContent(
+    deployJob,
+    "Verify deployed release"
+  );
 
-  /** @type {[string, RegExp][]} */
+  /** @type {[string, RegExp, string][]} */
   const requiredLinePatterns = [
-    ["workflow_dispatch trigger", /^\s*workflow_dispatch:\s*$/],
-    ["production environment", /^\s*environment:\s*production\s*$/],
+    [
+      "workflow_dispatch trigger",
+      /^\s*workflow_dispatch:\s*$/,
+      deployWorkflowContent
+    ],
+    ["production environment", /^\s*environment:\s*production\s*$/, deployJob],
     [
       `Node ${nodeVersion}`,
-      new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`)
+      new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`),
+      deployJob
     ],
     [
-      "main-branch deploy guard",
-      /^\s*if:\s*github\.ref == 'refs\/heads\/main'\s*$/
+      "main-ref validation job",
+      /^\s*run:\s*test "\$GITHUB_REF" = "refs\/heads\/main"\s*$/,
+      validateRefJob
+    ],
+    [
+      "validated-ref deploy dependency",
+      /^\s*needs:\s*validate-ref\s*$/,
+      deployJob
     ],
     [
       "production deploy concurrency group",
-      /^\s*group:\s*production-deploy\s*$/
+      /^\s*group:\s*production-deploy\s*$/,
+      deployWorkflowContent
     ]
   ];
-  for (const [description, pattern] of requiredLinePatterns) {
-    if (!workflowHasLine(deployWorkflowContent, pattern)) {
+  for (const [description, pattern, content] of requiredLinePatterns) {
+    if (!workflowHasLine(content, pattern)) {
       failures.push(
         `.github/workflows/deploy-production.yml must include ${description}`
       );
@@ -954,18 +1032,41 @@ export function validateProductionDeployWorkflow(
     }
   }
 
-  for (const command of [
-    "corepack pnpm run worker:dry-run",
-    "corepack pnpm run worker:deploy"
-  ]) {
-    if (!workflowRunStepIncludes(deployWorkflowContent, command)) {
-      failures.push(
-        `.github/workflows/deploy-production.yml must include run: ${command}`
-      );
-    }
+  const deployCommand = "corepack pnpm run worker:deploy";
+  if (!workflowRunStepIncludes(deployStep, deployCommand)) {
+    failures.push(
+      `.github/workflows/deploy-production.yml must include run: ${deployCommand}`
+    );
   }
 
-  if (!deployWorkflowContent.includes("CLOUDFLARE_HYPERDRIVE_ID")) {
+  const expectedReleaseConfigured = verifyStep
+    .split(/\r?\n/)
+    .some((line) =>
+      /^\s*AGENT_OUTBOX_EXPECTED_RELEASE:\s*\$\{\{\s*github\.sha\s*\}\}\s*$/.test(
+        line
+      )
+    );
+  const smokeCommandConfigured = workflowRunStepIncludes(
+    verifyStep,
+    "corepack pnpm run smoke-runtime"
+  );
+  if (
+    !smokeCommandConfigured ||
+    deployStep === "" ||
+    verifyStep === "" ||
+    deployJob.indexOf(verifyStep) < deployJob.indexOf(deployStep)
+  ) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke"
+    );
+  }
+  if (!expectedReleaseConfigured) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must verify the deployed release"
+    );
+  }
+
+  if (!deployStep.includes("CLOUDFLARE_HYPERDRIVE_ID")) {
     failures.push(
       ".github/workflows/deploy-production.yml must include CLOUDFLARE_HYPERDRIVE_ID"
     );
