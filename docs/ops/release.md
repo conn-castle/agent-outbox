@@ -87,6 +87,7 @@ Verify the loopback browser callback:
 
 ```bash
 make go-build
+mkdir -p .agent-layer/tmp
 browser_caller="production-browser-smoke-$(date -u +%Y%m%d%H%M%S)"
 browser_config=".agent-layer/tmp/${browser_caller}.json"
 dist/agent-outbox --base-url https://app.agent-outbox.dev \
