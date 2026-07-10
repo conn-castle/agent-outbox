@@ -1,4 +1,4 @@
-name: Deploy Production
+name: Release Production
 
 on:
   workflow_dispatch:
@@ -19,14 +19,45 @@ jobs:
       - name: Require main
         run: test "$GITHUB_REF" = "refs/heads/main"
 
-  deploy:
-    name: Deploy production Worker
+  prepare-release:
+    name: Resolve numbered release
     needs: validate-ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Resolve release metadata
+        id: release
+        run: node scripts/production-release.mjs prepare
+
+  certify:
+    name: Certify exact release SHA
+    needs: validate-ref
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-check.yml
+
+  deploy:
+    name: Deploy and verify production Worker
+    needs: [prepare-release, certify]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
+      - name: Checkout exact candidate
         uses: actions/checkout@v7
 
       - name: Set up Node
@@ -37,8 +68,32 @@ jobs:
       - name: Set up dependencies
         run: make setup
 
+      - name: Capture healthy rollback target
+        id: rollback-target
+        env:
+          APP_BASE_URL: https://app.agent-outbox.dev
+          CLOUDFLARE_API_TOKEN:
+            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: node scripts/production-release.mjs capture-rollback
+
+      - name: Verify rollback target before deploy
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE:
+            ${{ steps.rollback-target.outputs.rollback_release }}
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: corepack pnpm run smoke-runtime
+
+      - name: Mark deployment attempt
+        id: deploy-attempt
+        run: echo "attempted=true" >> "$GITHUB_OUTPUT"
+
       - name: Deploy Worker
         env:
+          AGENT_OUTBOX_RELEASE_TAG:
+            ${{ needs.prepare-release.outputs.release_tag }}
           APP_ENV: production
           APP_BASE_URL: https://app.agent-outbox.dev
           PUBLIC_APP_BASE_URL: https://app.agent-outbox.dev
@@ -69,3 +124,61 @@ jobs:
           APP_BASE_URL: https://app.agent-outbox.dev
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
         run: corepack pnpm run smoke-runtime
+
+      # Automatic rollback runs inside this already-approved deploy job so it can
+      # never be gated behind a second production-environment approval. It fires
+      # only when a deploy was attempted and a later step failed; the earlier
+      # failure keeps the job red.
+      - name: Roll back on failed deploy
+        id: rollback-worker
+        if: failure() && steps.deploy-attempt.outputs.attempted == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN:
+            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
+          ROLLBACK_VERSION_ID:
+            ${{ steps.rollback-target.outputs.rollback_version_id }}
+        run: >-
+          corepack pnpm exec wrangler rollback "$ROLLBACK_VERSION_ID" --name
+          agent-outbox --message "Automatic rollback after failed ${{
+          needs.prepare-release.outputs.release_tag }} deploy" --yes --env-file
+          /dev/null
+
+      - name: Verify restored release
+        if: failure() && steps.deploy-attempt.outputs.attempted == 'true'
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE:
+            ${{ steps.rollback-target.outputs.rollback_release }}
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: corepack pnpm run smoke-runtime
+
+  finalize-release:
+    name: Tag verified production release
+    needs: [prepare-release, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Create numbered GitHub release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: node scripts/production-release.mjs finalize
+
+      - name: Keep failed deploy red
+        if: always()
+        env:
+          ROLLBACK_OUTCOME: ${{ steps.rollback-worker.outcome }}
+        run: |
+          echo "Deploy failed; Worker rollback=$ROLLBACK_OUTCOME"
+          exit 1

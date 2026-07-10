@@ -1,25 +1,30 @@
 import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
 import {
+  billingAccountStatement,
+  billingRuntimeFailure,
+  type BillingAccount
+} from "./billing.ts";
+import {
   type HumanAccountSessionFailure,
-  type HumanAccountSessionResult,
   requiredHumanSessionConfiguration,
-  resolveHumanAccountSession
+  runHumanAccountTransaction
 } from "./human-session.ts";
 
+export type BillingFlow = "checkout" | "portal";
+
 type BillingHumanSessionData = {
-  connectionString: string;
-  accountId: string;
-  userId: string;
+  account: BillingAccount;
 };
 
 type BillingHumanSessionResult =
   | { ok: true; data: BillingHumanSessionData }
   | { ok: false; error: ApiErrorInput };
 
-type ResolveHumanAccountSession = typeof resolveHumanAccountSession;
+type RunHumanAccountTransaction = typeof runHumanAccountTransaction;
 
 export async function billingHumanSession(
-  context: ApiRequestContext
+  context: ApiRequestContext,
+  flow: BillingFlow
 ): Promise<BillingHumanSessionResult> {
   const missing = requiredHumanSessionConfiguration();
   if (missing.length > 0) {
@@ -37,17 +42,17 @@ export async function billingHumanSession(
   const session = await auth();
   return billingHumanSessionFromClerkUser({
     context,
+    flow,
     clerkUserId: session.userId,
-    connectionString: process.env.DATABASE_APP_ROLE_URL,
-    resolveSession: resolveHumanAccountSession
+    runHumanTransaction: runHumanAccountTransaction
   });
 }
 
 export async function billingHumanSessionFromClerkUser(input: {
   context: ApiRequestContext;
+  flow: BillingFlow;
   clerkUserId: string | null | undefined;
-  connectionString: string | undefined;
-  resolveSession: ResolveHumanAccountSession;
+  runHumanTransaction: RunHumanAccountTransaction;
 }): Promise<BillingHumanSessionResult> {
   if (!input.clerkUserId) {
     return {
@@ -60,34 +65,64 @@ export async function billingHumanSessionFromClerkUser(input: {
     };
   }
 
-  const humanSession = await input.resolveSession({
-    clerkUserId: input.clerkUserId,
-    requestId: input.context.requestId,
-    errorId: input.context.correlationId,
-    route: input.context.route,
-    method: input.context.method,
-    startedAtMs: input.context.startedAtMs
-  });
-  if (!humanSession.ok) {
+  let accountId: string | undefined;
+  let transaction;
+  try {
+    transaction = await input.runHumanTransaction(
+      {
+        clerkUserId: input.clerkUserId,
+        requestId: input.context.requestId,
+        errorId: input.context.correlationId,
+        route: input.context.route,
+        method: input.context.method,
+        startedAtMs: input.context.startedAtMs
+      },
+      async (query, session) => {
+        accountId = session.accountId;
+        const result = await query<BillingAccount>(
+          billingAccountStatement(session.accountId)
+        );
+        return result.rows[0] ?? null;
+      }
+    );
+  } catch (error) {
+    const portal = input.flow === "portal";
+    return billingRuntimeFailure(error, {
+      context: input.context,
+      requestId: input.context.requestId,
+      accountId,
+      operation: portal
+        ? "stripe_billing_portal_account_lookup"
+        : "stripe_checkout_account_lookup",
+      message: portal
+        ? "Stripe billing portal account lookup failed unexpectedly."
+        : "Stripe checkout account lookup failed unexpectedly.",
+      responseMessage: portal
+        ? "Billing portal is temporarily unavailable."
+        : "Checkout session is temporarily unavailable."
+    });
+  }
+
+  if (!transaction.ok) {
     return {
       ok: false,
       error: {
-        status: humanSession.status,
-        code: billingSessionErrorCode(humanSession.status),
-        message: humanSession.message,
-        ...(humanSession.errorId ? { errorId: humanSession.errorId } : {}),
-        ...(humanSession.reported ? { reported: true } : {})
+        status: transaction.status,
+        code: billingSessionErrorCode(transaction.status),
+        message: transaction.message,
+        ...(transaction.errorId ? { errorId: transaction.errorId } : {}),
+        ...(transaction.reported ? { reported: true } : {})
       }
     };
   }
 
-  if (!input.connectionString) {
+  if (!transaction.data) {
     return {
       ok: false,
       error: {
         status: 503,
         code: "temporary_unavailable",
-        message: "Billing database configuration is unavailable."
+        message: "Billing account is unavailable."
       }
     };
   }
@@ -95,9 +130,7 @@ export async function billingHumanSessionFromClerkUser(input: {
   return {
     ok: true,
     data: {
-      connectionString: input.connectionString,
-      accountId: humanSession.accountId,
-      userId: humanSession.userId
+      account: transaction.data
     }
   };
 }

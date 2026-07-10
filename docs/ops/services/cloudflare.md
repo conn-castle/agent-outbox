@@ -92,11 +92,12 @@ operator tests of the deploy token, store it under a project-specific name such
 as `CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN` and map it into `CLOUDFLARE_API_TOKEN`
 only for the single Wrangler process that needs it, without printing the value.
 
-Wrangler OAuth can be broad enough for local Worker inspection, deployment,
-logs, and secret operations, but it is not the durable credential for CI/CD and
-it is not the API-token-management path. Keep any token-management credential in
-an approved secret store, give it no unrelated permissions, and load it into a
-local shell only for the specific token-management command being run.
+Wrangler OAuth can be broad enough for local Worker inspection, logs, and secret
+operations, but local deployment is prohibited, it is not the durable credential
+for CI/CD, and it is not the API-token-management path. Keep any
+token-management credential in an approved secret store, give it no unrelated
+permissions, and load it into a local shell only for the specific
+token-management command being run.
 
 ## Safe Checks
 
@@ -129,23 +130,13 @@ Build and dry-run the OpenNext/Wrangler Worker bundle without uploading it:
 corepack pnpm run worker:dry-run
 ```
 
-The production deploy entrypoint is:
-
-```bash
-corepack pnpm run worker:deploy
-```
-
-This is an external write. Use it only after explicit owner approval and after
-loading production runtime values from approved operator-controlled stores. The
-wrapper builds one OpenNext bundle, writes true runtime secrets to a temporary
-secrets file outside the repo, writes a temporary Wrangler config with the
-`AGENT_OUTBOX_DATABASE` Hyperdrive binding, invokes pinned Wrangler with
-`--env-file /dev/null`, `--secrets-file`, deploy-time `--var NAME:value`
-bindings, and no `--keep-vars`, dry-runs that production-configured artifact,
-deploys the same artifact, then removes the temporary files. Wrangler 4.107.0
-dry-run did not hard-fail or warn when a dummy `--secrets-file` omitted one
-`secrets.required` name, so the repo deploy wrapper and structural smoke guard
-are the enforcement points for the complete runtime inventory.
+The production release entrypoint is the protected GitHub Actions
+`deploy-production.yml` workflow, dispatched only from `main`. See
+[the release runbook](../release.md) for the dispatch command, prerequisites,
+certification, numbered releases, automatic restoration, and manual rollback.
+The internal deploy wrapper supplies the complete runtime inventory because
+Wrangler 4.107.0 dry-run did not reject a dummy `--secrets-file` that omitted a
+required secret.
 
 Check the prepared inactive `/api/client-events` rate-limit rule without
 changing Cloudflare state:
@@ -167,10 +158,11 @@ This requires `CLOUDFLARE_ZONE_ID` and activation-time
 - Keep any local DNS-management token in `.env` under a project-specific name.
   Wrangler auto-loads `CLOUDFLARE_API_TOKEN`; do not use that generic name for a
   DNS-only token.
-- For local Worker inspection/deployment, prefer the cached Wrangler OAuth login
+- For local read-only Worker inspection, prefer the cached Wrangler OAuth login
   or pass `--env-file /dev/null` when a local `.env` contains non-Wrangler
-  Cloudflare variables. Store a true Worker deploy token separately from DNS and
-  token-management credentials.
+  Cloudflare variables. Store the true Worker deploy token only in approved
+  recovery storage and the protected GitHub production environment, separately
+  from DNS and token-management credentials.
 
 When rotating Cloudflare tokens:
 
@@ -187,14 +179,9 @@ When rotating Cloudflare tokens:
 
 ## Guardrails
 
-- GitHub Actions is the canonical deployment path; do not manually deploy unless
-  the task explicitly calls for operator intervention. The manual deploy command
-  is `corepack pnpm run worker:deploy` after production runtime configuration
-  has been loaded through approved operator-controlled stores; the script builds
-  a fresh OpenNext bundle before the external deploy write. The production
-  GitHub Actions workflow is manual-only, uses the `production` environment,
-  fails dispatches outside `main`, and calls the same deploy wrapper. It accepts
-  the deployment only after runtime smoke confirms the exact deployed release.
+- GitHub Actions is the only deployment and rollback mutation path. Never run
+  `worker:deploy`, `wrangler deploy`, or `wrangler rollback` locally; follow the
+  [release runbook](../release.md).
 - Wrangler is for local agent/developer operations and for the deployment
   command inside GitHub Actions. Normal app CI and app tests must not require
   Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, or

@@ -352,32 +352,38 @@ Worker bundle, custom domain route config, disabled workers.dev route, cron
 config, observability config, and static assets without uploading or mutating
 Cloudflare state.
 
-- Deploy the Worker to Cloudflare
+- Dispatch a certified production release
 
 ```bash
-corepack pnpm run worker:deploy
+gh workflow run deploy-production.yml --ref main
 ```
 
-Run from: repo root Prerequisites: Explicit owner approval for production
-Cloudflare writes; production runtime configuration loaded from approved
-operator-controlled secrets; pinned dependencies installed; Cloudflare deploy
-token or Wrangler OAuth is authenticated for the intended account; and
-`CLOUDFLARE_HYPERDRIVE_ID` is loaded from the production Hyperdrive config.
-Notes: External write. Calls the project-owned deploy wrapper, which builds a
-fresh OpenNext bundle with only non-secret runtime configuration, writes true
-runtime secrets to a temporary dotenv file outside the repo, writes a temporary
-Wrangler config with the Hyperdrive binding outside the repo, dry-runs that
-production-configured artifact, deploys the same artifact with pinned Wrangler,
-and removes both temporary files afterward. Both Wrangler calls use `--env-file
-/dev/null`, `--secrets-file`, deploy-time `--var NAME:value` bindings for
-public/runtime configuration, and no `--keep-vars`. Runtime secret values are
-not exposed to the build subprocess. The deploy targets the Worker named
-`agent-outbox` with `app.agent-outbox.dev` as the custom domain, workers.dev
-disabled, Hyperdrive bound as `AGENT_OUTBOX_DATABASE`, and cron `17 * * * *`.
-Do not use from credential-free CI or before production runtime values have been
-loaded through approved operator-controlled stores. `DATABASE_APP_ROLE_URL` is
-intentionally not uploaded as a Worker secret; production database access uses
-the Hyperdrive binding.
+Run from: repo root Prerequisites: `gh` authenticated to the repository; the
+candidate merged to `main`; `package.json` containing a new stable version other
+than `0.0.0`; explicit owner approval; and the protected GitHub `production`
+environment fully configured. Notes: External write. GitHub Actions reruns the
+exact-SHA release gate, captures and verifies the current rollback target,
+builds/dry-runs/deploys the Worker, verifies the candidate SHA is live, and only
+then creates the numbered tag and GitHub Release. A failed deploy, smoke, or
+release finalization restores the previous Worker and keeps the workflow red.
+The underlying `worker:deploy` script rejects execution outside the designated
+GitHub Actions workflow.
+
+- Dispatch a manual rollback to a previously tagged release
+
+```bash
+gh workflow run rollback-production.yml --ref main \
+  -f release_tag=v<version> \
+  -f worker_version_id=<cloudflare-version-id>
+```
+
+Run from: repo root Prerequisites: `gh` authenticated to the repository;
+explicit owner approval; a previously verified numbered release tag; and its
+Cloudflare Worker version id from read-only deployment inspection. Notes:
+External write. The protected GitHub Actions workflow validates the tag and
+version id, proves the Worker version carries that release tag, rolls back
+through pinned Wrangler, and verifies that the exact tagged commit is serving.
+Never run a local mutating Wrangler rollback.
 
 ## Maintenance
 

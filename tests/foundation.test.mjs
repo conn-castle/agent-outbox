@@ -29,6 +29,7 @@ import {
   validateRuntimeProofScope,
   validateToolchainPackage,
   validateProductionDeployWorkflow,
+  validateProductionRollbackWorkflow,
   validateWorkflowGoChecks,
   validateWranglerCronSchedule,
   validateWranglerRequiredSecrets,
@@ -146,6 +147,12 @@ const FLYWAY_TOOLCHAIN_FIXTURE = {
 function workerDeployEnv(overrides = {}) {
   return {
     PATH: process.env.PATH,
+    GITHUB_ACTIONS: "true",
+    GITHUB_REF: "refs/heads/main",
+    GITHUB_SHA: "0123456789abcdef0123456789abcdef01234567",
+    GITHUB_WORKFLOW_REF:
+      "conn-castle/agent-outbox/.github/workflows/deploy-production.yml@refs/heads/main",
+    AGENT_OUTBOX_RELEASE_TAG: "v1.2.3",
     CLOUDFLARE_API_TOKEN: "cf-worker-token",
     CLOUDFLARE_HYPERDRIVE_ID: "hyperdrive-test-id",
     CLERK_SECRET_KEY: "sk_test_clerk",
@@ -157,7 +164,7 @@ function workerDeployEnv(overrides = {}) {
     APP_ENV: "production",
     APP_BASE_URL: "https://app.agent-outbox.dev",
     PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev",
-    SENTRY_RELEASE: "agent-outbox@2026.07.08",
+    SENTRY_RELEASE: "0123456789abcdef0123456789abcdef01234567",
     CLERK_PUBLISHABLE_KEY: "pk_live_clerk",
     SENTRY_BROWSER_DSN: "https://browser@example.invalid/2",
     STRIPE_PAID_MONTHLY_PRICE_ID: "price_monthly",
@@ -748,6 +755,10 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     new URL("../.github/workflows/deploy-production.yml", import.meta.url),
     "utf8"
   );
+  const rollbackWorkflow = readFileSync(
+    new URL("../.github/workflows/rollback-production.yml", import.meta.url),
+    "utf8"
+  );
 
   assert.deepEqual(
     assertNoForbiddenWorkflowCommands({
@@ -758,6 +769,19 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   assert.deepEqual(
     validateProductionDeployWorkflow(deployWorkflow, "24.18.0"),
     []
+  );
+  assert.deepEqual(
+    validateProductionRollbackWorkflow(rollbackWorkflow, "24.18.0"),
+    []
+  );
+  const releaseCheckWorkflow = readFileSync(
+    new URL("../.github/workflows/release-check.yml", import.meta.url),
+    "utf8"
+  );
+  assert.match(
+    releaseCheckWorkflow,
+    /^  workflow_call:$/m,
+    "production certification must call the exact release-check workflow"
   );
 
   const packageJson = JSON.parse(
@@ -779,71 +803,24 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     "OpenNext build must not depend on a globally available pnpm shim"
   );
 
-  const miswiredWorkflow = deployWorkflow
-    .replace(
-      'run: test "$GITHUB_REF" = "refs/heads/main"',
-      "run: echo validation-missing"
-    )
-    .replace(
-      "name: Deploy production Worker",
-      'name: Deploy production Worker\n    run: test "$GITHUB_REF" = "refs/heads/main"'
-    );
-  assert.equal(
-    validateProductionDeployWorkflow(miswiredWorkflow, "24.18.0").includes(
-      ".github/workflows/deploy-production.yml must include main-ref validation job"
-    ),
-    true
+  const unscopedRollbackWorkflow = deployWorkflow.replace(
+    "if: failure() && steps.deploy-attempt.outputs.attempted == 'true'",
+    "if: always()"
   );
-  const hardcodedReleaseWorkflow = deployWorkflow.replace(
-    /AGENT_OUTBOX_EXPECTED_RELEASE: .+/,
-    "AGENT_OUTBOX_EXPECTED_RELEASE: hardcoded-sha"
+  assert.notEqual(
+    unscopedRollbackWorkflow,
+    deployWorkflow,
+    "rollback-scope regression fixture must modify the workflow"
   );
   assert.equal(
     validateProductionDeployWorkflow(
-      hardcodedReleaseWorkflow,
+      unscopedRollbackWorkflow,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must verify the deployed release"
+      ".github/workflows/deploy-production.yml must roll back within the deploy job on a failed deploy and verify the restored release"
     ),
-    true
-  );
-  const smokeBeforeDeployWorkflow = deployWorkflow
-    .replace(
-      "run: corepack pnpm run smoke-runtime",
-      "run: echo smoke-placeholder"
-    )
-    .replace(
-      "      - name: Deploy Worker",
-      "      - name: Premature smoke\n        run: corepack pnpm run smoke-runtime\n\n      - name: Deploy Worker"
-    );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      smokeBeforeDeployWorkflow,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke"
-    ),
-    true
-  );
-  const echoedSmokeWorkflow = deployWorkflow.replace(
-    "run: corepack pnpm run smoke-runtime",
-    'run: echo "corepack pnpm run smoke-runtime"'
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(echoedSmokeWorkflow, "24.18.0").includes(
-      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke"
-    ),
-    true
-  );
-  const hiddenSmokeWorkflow = deployWorkflow.replace(
-    "run: corepack pnpm run smoke-runtime",
-    "run: |\n          cat <<'EOF'\n          corepack pnpm run smoke-runtime\n          EOF"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(hiddenSmokeWorkflow, "24.18.0").includes(
-      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke"
-    ),
-    true
+    true,
+    "automatic rollback must stay scoped to a failed deploy attempt inside the deploy job"
   );
 });
 
@@ -863,20 +840,18 @@ test("production deploy workflow guard rejects automatic and incomplete deploy w
           - run: pnpm run worker:deploy
   `;
 
-  assert.deepEqual(
-    validateProductionDeployWorkflow(unsafeWorkflow, "24.18.0"),
-    [
-      ".github/workflows/deploy-production.yml must include production environment",
-      ".github/workflows/deploy-production.yml must include Node 24.18.0",
-      ".github/workflows/deploy-production.yml must include main-ref validation job",
-      ".github/workflows/deploy-production.yml must include validated-ref deploy dependency",
-      ".github/workflows/deploy-production.yml must include production deploy concurrency group",
-      ".github/workflows/deploy-production.yml must be manual-only and not include push:",
-      ".github/workflows/deploy-production.yml must include run: corepack pnpm run worker:deploy",
-      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke",
-      ".github/workflows/deploy-production.yml must verify the deployed release",
-      ".github/workflows/deploy-production.yml must include CLOUDFLARE_HYPERDRIVE_ID"
-    ]
+  const failures = validateProductionDeployWorkflow(unsafeWorkflow, "24.18.0");
+  assert.equal(
+    failures.includes(
+      ".github/workflows/deploy-production.yml must be manual-only and not include push:"
+    ),
+    true
+  );
+  assert.equal(
+    failures.includes(
+      ".github/workflows/deploy-production.yml must include certified release flow"
+    ),
+    true
   );
 });
 
@@ -948,6 +923,8 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
     assert.equal(calls[1].args.includes("--secrets-file"), true);
     assert.equal(calls[1].args.includes("--dry-run"), true);
     assert.equal(calls[1].args.includes("--keep-vars"), false);
+    assert.equal(calls[1].args.includes("--tag"), true);
+    assert.equal(calls[1].args.includes("v1.2.3"), true);
 
     assert.equal(calls[2].command, "corepack");
     assert.deepEqual(
@@ -1079,6 +1056,24 @@ test("worker deploy wrapper requires production config and appends optional anal
       "NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:analytics-token"
     ),
     true
+  );
+});
+
+test("worker deploy wrapper refuses local or non-production-workflow execution", () => {
+  assert.deepEqual(
+    validateWorkerDeployEnvironment(
+      workerDeployEnv({
+        GITHUB_ACTIONS: undefined,
+        GITHUB_REF: "refs/heads/feature/local-deploy",
+        GITHUB_WORKFLOW_REF:
+          "conn-castle/agent-outbox/.github/workflows/ci.yml@refs/heads/main"
+      })
+    ).slice(-3),
+    [
+      "Production Worker deploys must run in GitHub Actions.",
+      "Production Worker deploys must run from refs/heads/main.",
+      "Production Worker deploys must run from deploy-production.yml."
+    ]
   );
 });
 

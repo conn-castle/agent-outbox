@@ -86,6 +86,7 @@ const DERIVED_PUBLIC_VAR_BINDINGS = [
 const REQUIRED_PROCESS_ENV_NAMES = [
   "CLOUDFLARE_API_TOKEN",
   HYPERDRIVE_ID_ENV_NAME,
+  "AGENT_OUTBOX_RELEASE_TAG",
   ...REQUIRED_SECRET_NAMES,
   ...REQUIRED_PUBLIC_VAR_NAMES
 ];
@@ -117,6 +118,38 @@ export function validateWorkerDeployEnvironment(env) {
     failures.push(
       `PUBLIC_APP_BASE_URL must be ${PRODUCTION_APP_BASE_URL} for production Worker deploy`
     );
+  }
+  if (env.GITHUB_ACTIONS !== "true") {
+    failures.push("Production Worker deploys must run in GitHub Actions.");
+  }
+  if (env.GITHUB_REF !== "refs/heads/main") {
+    failures.push("Production Worker deploys must run from refs/heads/main.");
+  }
+  if (
+    !env.GITHUB_WORKFLOW_REF?.includes(
+      "/.github/workflows/deploy-production.yml@"
+    )
+  ) {
+    failures.push(
+      "Production Worker deploys must run from deploy-production.yml."
+    );
+  }
+  if (
+    env.GITHUB_SHA &&
+    env.SENTRY_RELEASE &&
+    env.SENTRY_RELEASE !== env.GITHUB_SHA
+  ) {
+    failures.push(
+      "SENTRY_RELEASE must match GITHUB_SHA for production deploy."
+    );
+  }
+  if (
+    env.AGENT_OUTBOX_RELEASE_TAG &&
+    !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(
+      env.AGENT_OUTBOX_RELEASE_TAG
+    )
+  ) {
+    failures.push("AGENT_OUTBOX_RELEASE_TAG must be a stable v<version> tag.");
   }
 
   return failures;
@@ -171,6 +204,10 @@ export function buildWranglerDeployArgsWithConfig(
     "/dev/null",
     "--secrets-file",
     secretsFilePath,
+    "--tag",
+    env.AGENT_OUTBOX_RELEASE_TAG ?? "",
+    "--message",
+    `Production release ${env.AGENT_OUTBOX_RELEASE_TAG ?? ""}`,
     ...publicVarBindings(env).flatMap(({ name, value }) => [
       "--var",
       `${name}:${value}`

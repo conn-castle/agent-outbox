@@ -28,8 +28,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 <!-- ENTRIES START -->
 - Issue 2026-07-10 billing-checkout-latency: Authenticated Stripe checkout takes 5–10 seconds to appear
     Priority: Medium. Area: Billing / Performance
-    Description: Unauthenticated production requests complete in 6–102 ms of Worker wall time, while the configured database takes 387–525 ms per transaction and checkout performs three fresh sequential transactions before/during Stripe session creation; an authenticated production sample is still needed to isolate database, Stripe API, and Stripe page-load time.
-    Next step: Capture one authenticated checkout with Worker tail plus browser request timing, add stage-level timing evidence if needed, then remove confirmed redundant transaction/session work without weakening account authorization.
+    Description: Checkout's three sequential fresh database transactions were consolidated into one transaction locally. The remaining deployed 5–10 second latency has not yet been measured after this fix, so Stripe API and hosted page-load time remain unquantified.
+    Next step: Deploy the transaction fix, then capture one authenticated checkout with Worker tail and browser request timing; add stage-level timing only if the residual delay remains material.
 
 - Issue 2026-07-10 human-review-first-100-unreachable: Human review UI cannot reach queue items beyond the first 100
     Priority: High. Area: Human review UI / Correctness
@@ -53,12 +53,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: When `runtimeRelease()` is null in production (SENTRY_RELEASE/GITHUB_SHA both unset), `sentryCaptureEnabled()` disables capture; `reportRuntimeFailure` returns `sentry_captured:false` but the emitted structured log omits it, so a misconfigured deploy where errors never reach Sentry can go unnoticed.
     Next step: Add `sentry_captured` to `RuntimeLogEvent`/`SAFE_LOG_KEYS` and include it in `reportRuntimeFailure`'s log line (or emit a one-time startup warning when capture is disabled in production).
     Notes: Deferred from PR #22 CodeRabbit nitpick as a log-schema change beyond the batched remediation scope.
-
-- Issue 2026-07-07 billing-account-lookup-duplication: Billing account-lookup + failure-report block duplicated across checkout and portal flows
-    Priority: Low. Area: Maintainability
-    Description: The `runTransaction(... billingAccountStatement ...)` + `billingRuntimeFailure(error, ...)` account-lookup pattern is repeated near-verbatim in `createCheckoutSessionForAccount` and `createBillingPortalSessionForAccount` in `src/server/billing.ts`, differing only in operation/message strings; the two copies can drift.
-    Next step: Extract a shared `lookupBillingAccountOrFail(...)` helper both flows call, parameterized by operation/message/responseMessage.
-    Notes: Deferred from PR #22 CodeRabbit nitpick as a refactor unrelated to the observability PR's purpose.
 
 - Issue 2026-07-07 queue-invariant-500-no-sentry: Non-exception invariant 500s are logged but never captured to Sentry
     Priority: Low. Area: Observability

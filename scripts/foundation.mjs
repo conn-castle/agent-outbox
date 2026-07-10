@@ -103,7 +103,8 @@ const REQUIRED_FILES = [
   "scripts/flyway.mjs",
   ".github/workflows/ci.yml",
   ".github/workflows/release-check.yml",
-  ".github/workflows/deploy-production.yml"
+  ".github/workflows/deploy-production.yml",
+  ".github/workflows/rollback-production.yml"
 ];
 
 const FORBIDDEN_WORKFLOW_TOKENS = [
@@ -849,6 +850,12 @@ export function assertNoForbiddenWorkflowCommands(workflowContentsByPath) {
     workflowContentsByPath
   )) {
     for (const token of FORBIDDEN_WORKFLOW_TOKENS) {
+      if (
+        token === "gh release create" &&
+        workflowPath === ".github/workflows/deploy-production.yml"
+      ) {
+        continue;
+      }
       if (content.includes(token)) {
         failures.push(`${workflowPath} contains forbidden command: ${token}`);
       }
@@ -976,43 +983,73 @@ export function validateProductionDeployWorkflow(
     "validate-ref"
   );
   const deployJob = workflowJobContent(deployWorkflowContent, "deploy");
+  const finalizeJob = workflowJobContent(
+    deployWorkflowContent,
+    "finalize-release"
+  );
   const deployStep = workflowNamedStepContent(deployJob, "Deploy Worker");
   const verifyStep = workflowNamedStepContent(
     deployJob,
     "Verify deployed release"
   );
-
-  /** @type {[string, RegExp, string][]} */
-  const requiredLinePatterns = [
+  const rollbackStep = workflowNamedStepContent(
+    deployJob,
+    "Roll back on failed deploy"
+  );
+  const verifyRestoredStep = workflowNamedStepContent(
+    deployJob,
+    "Verify restored release"
+  );
+  /** @type {[string, boolean][]} */
+  const requirements = [
     [
       "workflow_dispatch trigger",
-      /^\s*workflow_dispatch:\s*$/,
-      deployWorkflowContent
+      workflowHasLine(deployWorkflowContent, /^\s*workflow_dispatch:\s*$/)
     ],
-    ["production environment", /^\s*environment:\s*production\s*$/, deployJob],
+    [
+      "production environment",
+      workflowHasLine(deployJob, /^\s*environment:\s*production\s*$/)
+    ],
     [
       `Node ${nodeVersion}`,
-      new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`),
-      deployJob
+      workflowHasLine(
+        deployJob,
+        new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`)
+      )
     ],
     [
       "main-ref validation job",
-      /^\s*run:\s*test "\$GITHUB_REF" = "refs\/heads\/main"\s*$/,
-      validateRefJob
+      workflowHasLine(
+        validateRefJob,
+        /^\s*run:\s*test "\$GITHUB_REF" = "refs\/heads\/main"\s*$/
+      )
     ],
     [
-      "validated-ref deploy dependency",
-      /^\s*needs:\s*validate-ref\s*$/,
-      deployJob
+      "certified release flow",
+      deployWorkflowContent.includes(
+        "uses: ./.github/workflows/release-check.yml"
+      ) &&
+        deployWorkflowContent.includes(
+          "run: node scripts/production-release.mjs prepare"
+        ) &&
+        deployWorkflowContent.includes(
+          "run: node scripts/production-release.mjs capture-rollback"
+        ) &&
+        workflowHasLine(
+          deployJob,
+          /^\s*needs:\s*\[prepare-release, certify\]\s*$/
+        )
     ],
     [
       "production deploy concurrency group",
-      /^\s*group:\s*production-deploy\s*$/,
-      deployWorkflowContent
+      workflowHasLine(
+        deployWorkflowContent,
+        /^\s*group:\s*production-deploy\s*$/
+      )
     ]
   ];
-  for (const [description, pattern, content] of requiredLinePatterns) {
-    if (!workflowHasLine(content, pattern)) {
+  for (const [description, present] of requirements) {
+    if (!present) {
       failures.push(
         `.github/workflows/deploy-production.yml must include ${description}`
       );
@@ -1032,46 +1069,115 @@ export function validateProductionDeployWorkflow(
     }
   }
 
-  const deployCommand = "corepack pnpm run worker:deploy";
-  if (!workflowRunStepIncludes(deployStep, deployCommand)) {
+  if (!workflowRunStepIncludes(deployStep, "corepack pnpm run worker:deploy")) {
     failures.push(
-      `.github/workflows/deploy-production.yml must include run: ${deployCommand}`
+      ".github/workflows/deploy-production.yml must deploy through worker:deploy"
     );
   }
-
-  const expectedReleaseConfigured = verifyStep
-    .split(/\r?\n/)
-    .some((line) =>
-      /^\s*AGENT_OUTBOX_EXPECTED_RELEASE:\s*\$\{\{\s*github\.sha\s*\}\}\s*$/.test(
-        line
-      )
-    );
-  const smokeCommandConfigured = workflowRunStepIncludes(
-    verifyStep,
-    "corepack pnpm run smoke-runtime"
-  );
   if (
-    !smokeCommandConfigured ||
-    deployStep === "" ||
-    verifyStep === "" ||
+    !workflowRunStepIncludes(verifyStep, "corepack pnpm run smoke-runtime") ||
+    !verifyStep.includes("AGENT_OUTBOX_EXPECTED_RELEASE: ${{ github.sha }}") ||
     deployJob.indexOf(verifyStep) < deployJob.indexOf(deployStep)
   ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke"
+      ".github/workflows/deploy-production.yml must verify the deployed SHA after deploy"
     );
   }
-  if (!expectedReleaseConfigured) {
+  if (
+    !deployStep.includes("CLOUDFLARE_HYPERDRIVE_ID") ||
+    !deployStep.includes("AGENT_OUTBOX_RELEASE_TAG")
+  ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must verify the deployed release"
+      ".github/workflows/deploy-production.yml must supply release and Hyperdrive metadata"
+    );
+  }
+  if (
+    !/^\s*needs:\s*\[prepare-release, deploy\]\s*$/m.test(finalizeJob) ||
+    !finalizeJob.includes("node scripts/production-release.mjs finalize") ||
+    !/^\s*contents:\s*write\s*$/m.test(finalizeJob)
+  ) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must finalize one numbered release through production-release.mjs after deploy"
+    );
+  }
+  // Automatic rollback must run inside the already-approved deploy job (so it is
+  // never gated behind a second production-environment approval) and fire only
+  // when a deploy was attempted and a later step failed. Because it lives in the
+  // deploy job, a downstream finalize/tagging failure cannot trigger it.
+  const rollbackScopedToDeployFailure =
+    rollbackStep.includes("if: failure()") &&
+    rollbackStep.includes("steps.deploy-attempt.outputs.attempted == 'true'") &&
+    rollbackStep.includes("corepack pnpm exec wrangler rollback") &&
+    rollbackStep.includes(
+      "steps.rollback-target.outputs.rollback_version_id"
+    ) &&
+    !rollbackStep.includes("finalize");
+  if (
+    !rollbackScopedToDeployFailure ||
+    !verifyRestoredStep.includes("if: failure()") ||
+    !workflowRunStepIncludes(
+      verifyRestoredStep,
+      "corepack pnpm run smoke-runtime"
+    ) ||
+    !verifyRestoredStep.includes(
+      "steps.rollback-target.outputs.rollback_release"
+    )
+  ) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must roll back within the deploy job on a failed deploy and verify the restored release"
     );
   }
 
-  if (!deployStep.includes("CLOUDFLARE_HYPERDRIVE_ID")) {
+  return failures;
+}
+
+/**
+ * @param {string} rollbackWorkflowContent
+ * @param {string} nodeVersion
+ * @returns {string[]}
+ */
+export function validateProductionRollbackWorkflow(
+  rollbackWorkflowContent,
+  nodeVersion
+) {
+  const failures = [];
+  const validateJob = workflowJobContent(
+    rollbackWorkflowContent,
+    "validate-target"
+  );
+  const rollbackJob = workflowJobContent(rollbackWorkflowContent, "rollback");
+  const requiredTokens = [
+    "workflow_dispatch:",
+    "environment: production",
+    `node-version: ${nodeVersion}`,
+    'run: test "$GITHUB_REF" = "refs/heads/main"',
+    "group: production-deploy",
+    "node scripts/production-release.mjs verify-rollback-version",
+    "corepack pnpm exec wrangler rollback",
+    "needs.validate-target.outputs.expected_release",
+    "corepack pnpm run smoke-runtime"
+  ];
+  if (
+    !requiredTokens.every((token) => rollbackWorkflowContent.includes(token)) ||
+    validateJob === "" ||
+    rollbackJob === ""
+  ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must include CLOUDFLARE_HYPERDRIVE_ID"
+      ".github/workflows/rollback-production.yml must restore and verify a tagged release"
     );
   }
-
+  for (const forbiddenTrigger of ["push", "pull_request", "schedule"]) {
+    if (
+      workflowHasLine(
+        rollbackWorkflowContent,
+        new RegExp(`^\\s*${escapeRegExp(forbiddenTrigger)}:\\s*$`)
+      )
+    ) {
+      failures.push(
+        `.github/workflows/rollback-production.yml must be manual-only and not include ${forbiddenTrigger}:`
+      );
+    }
+  }
   return failures;
 }
 
@@ -1378,7 +1484,8 @@ function readWorkflowContents() {
   for (const relativePath of [
     ".github/workflows/ci.yml",
     ".github/workflows/release-check.yml",
-    ".github/workflows/deploy-production.yml"
+    ".github/workflows/deploy-production.yml",
+    ".github/workflows/rollback-production.yml"
   ]) {
     workflows[relativePath] = readFileSync(
       path.join(ROOT, relativePath),
@@ -1583,7 +1690,6 @@ function checkLockfileState() {
     "--frozen-lockfile",
     "--lockfile-only",
     "--ignore-scripts",
-    "--no-runtime",
     "--reporter=silent"
   ]);
   assert.equal(
@@ -1756,6 +1862,15 @@ function smoke() {
     productionDeployWorkflowFailures,
     [],
     productionDeployWorkflowFailures.join("\n")
+  );
+  const productionRollbackWorkflowFailures = validateProductionRollbackWorkflow(
+    readWorkflowContents()[".github/workflows/rollback-production.yml"],
+    /** @type {Toolchain} */ (readJson("toolchain.json")).node.version
+  );
+  assert.deepEqual(
+    productionRollbackWorkflowFailures,
+    [],
+    productionRollbackWorkflowFailures.join("\n")
   );
   const migrationWorkflowFailures = validateMigrationReplayWorkflow(
     readWorkflowContents()

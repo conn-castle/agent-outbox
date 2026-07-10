@@ -10,15 +10,13 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   const context = apiRequestContext(request, "/api/billing/portal");
-  const sessionResult = await billingHumanSession(context);
+  const sessionResult = await billingHumanSession(context, "portal");
   if (!sessionResult.ok) {
     return apiErrorResponse(context, sessionResult.error);
   }
 
   const result = await createBillingPortalSessionForAccount({
-    connectionString: sessionResult.data.connectionString,
-    accountId: sessionResult.data.accountId,
-    userId: sessionResult.data.userId,
+    account: sessionResult.data.account,
     requestId: context.requestId,
     context
   });

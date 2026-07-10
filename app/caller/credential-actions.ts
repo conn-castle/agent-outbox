@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 
 import {
   approveCredentialOperationBrowserSetupRequest,
@@ -9,9 +9,10 @@ import {
 } from "../../src/server/caller-credential-operations";
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../src/server/caller-connect-clerk-fixture";
 import { createCorrelationId } from "../../src/server/correlation";
+import type { ProductTransactionQuery } from "../../src/server/database";
+import type { HumanAccountSession } from "../../src/server/human-session";
 import {
   reportCallerApprovalFailure,
-  resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
 } from "./connect/session";
 
@@ -76,42 +77,21 @@ async function approveBrowserOperation(
   }
 
   const requestId = createCorrelationId(`caller_${operation}_approve_req`);
-  const session = await resolveCallerConnectHumanSession({
-    requestId,
-    fixtureClerkUserId,
-    route: `/caller/${operation}/approve`,
-    method: "POST"
-  });
-  if (!session.ok) {
-    redirect(
-      operationErrorPath(
-        operation,
-        session.status,
-        session.code,
-        session.message,
-        fixtureClerkUserId
-      )
-    );
-  }
-
-  const result = await withApprovalErrorPage(
+  const result = await runApprovalTransaction(
     {
       requestId,
       route: `/caller/${operation}/approve`,
       method: "POST",
-      operation: `caller_${operation}_browser_approval`,
-      session
+      operation: `caller_${operation}_browser_approval`
     },
     operation,
-    () =>
-      runCallerConnectHumanTransaction(session, requestId, (query) =>
-        approveCredentialOperationBrowserSetupRequest(query, {
-          operation,
-          setupRequestId,
-          accountId: session.accountId,
-          userId: session.userId
-        })
-      ),
+    (query, session) =>
+      approveCredentialOperationBrowserSetupRequest(query, {
+        operation,
+        setupRequestId,
+        accountId: session.accountId,
+        userId: session.userId
+      }),
     fixtureClerkUserId
   );
 
@@ -181,42 +161,21 @@ async function approveDeviceOperation(
   }
 
   const requestId = createCorrelationId(`caller_${operation}_device_req`);
-  const session = await resolveCallerConnectHumanSession({
-    requestId,
-    fixtureClerkUserId,
-    route: `/caller/${operation}/device`,
-    method: "POST"
-  });
-  if (!session.ok) {
-    redirect(
-      operationErrorPath(
-        operation,
-        session.status,
-        session.code,
-        session.message,
-        fixtureClerkUserId
-      )
-    );
-  }
-
-  const result = await withApprovalErrorPage(
+  const result = await runApprovalTransaction(
     {
       requestId,
       route: `/caller/${operation}/device`,
       method: "POST",
-      operation: `caller_${operation}_device_approval`,
-      session
+      operation: `caller_${operation}_device_approval`
     },
     operation,
-    () =>
-      runCallerConnectHumanTransaction(session, requestId, (query) =>
-        approveCredentialOperationDeviceSetupRequest(query, {
-          operation,
-          userCode,
-          accountId: session.accountId,
-          userId: session.userId
-        })
-      ),
+    (query, session) =>
+      approveCredentialOperationDeviceSetupRequest(query, {
+        operation,
+        userCode,
+        accountId: session.accountId,
+        userId: session.userId
+      }),
     fixtureClerkUserId
   );
 
@@ -259,41 +218,20 @@ async function denyOperation(
   }
 
   const requestId = createCorrelationId(`caller_${operation}_deny_req`);
-  const session = await resolveCallerConnectHumanSession({
-    requestId,
-    fixtureClerkUserId,
-    route,
-    method: "POST"
-  });
-  if (!session.ok) {
-    redirect(
-      operationErrorPath(
-        operation,
-        session.status,
-        session.code,
-        session.message,
-        fixtureClerkUserId
-      )
-    );
-  }
-
-  const result = await withApprovalErrorPage(
+  const result = await runApprovalTransaction(
     {
       requestId,
       route,
       method: "POST",
-      operation: `caller_${operation}_deny`,
-      session
+      operation: `caller_${operation}_deny`
     },
     operation,
-    () =>
-      runCallerConnectHumanTransaction(session, requestId, (query) =>
-        denyCredentialOperationSetupRequest(query, {
-          operation,
-          setupRequestId,
-          accountId: session.accountId
-        })
-      ),
+    (query, session) =>
+      denyCredentialOperationSetupRequest(query, {
+        operation,
+        setupRequestId,
+        accountId: session.accountId
+      }),
     fixtureClerkUserId
   );
 
@@ -330,18 +268,41 @@ function fixtureClerkUserIdField(formData: FormData) {
   return textField(formData, CALLER_CONNECT_FIXTURE_USER_ID_PARAM);
 }
 
-async function withApprovalErrorPage<TResult>(
-  reportContext: Parameters<typeof reportCallerApprovalFailure>[1],
+async function runApprovalTransaction<TResult>(
+  reportContext: {
+    requestId: string;
+    route: string;
+    method: string;
+    operation: string;
+  },
   operation: CredentialOperation,
-  callback: () => Promise<TResult>,
+  callback: (
+    query: ProductTransactionQuery,
+    session: HumanAccountSession
+  ) => Promise<TResult>,
   fixtureClerkUserId: string
 ): Promise<TResult> {
   const startedAtMs = Date.now();
+  let activeSession: HumanAccountSession | undefined;
+  let transaction;
   try {
-    return await callback();
+    transaction = await runCallerConnectHumanTransaction(
+      {
+        requestId: reportContext.requestId,
+        fixtureClerkUserId,
+        route: reportContext.route,
+        method: reportContext.method
+      },
+      (query, session) => {
+        activeSession = session;
+        return callback(query, session);
+      }
+    );
   } catch (error) {
+    unstable_rethrow(error);
     reportCallerApprovalFailure(error, {
       ...reportContext,
+      session: activeSession,
       startedAtMs
     });
     redirect(
@@ -354,6 +315,19 @@ async function withApprovalErrorPage<TResult>(
       )
     );
   }
+
+  if (!transaction.ok) {
+    redirect(
+      operationErrorPath(
+        operation,
+        transaction.status,
+        transaction.code,
+        transaction.message,
+        fixtureClerkUserId
+      )
+    );
+  }
+  return transaction.data;
 }
 
 function operationErrorPath(

@@ -7,7 +7,8 @@ import {
   firstParam,
   fixtureClerkUserIdParam,
   requiredCallerConnectSessionConfiguration,
-  resolveCallerConnectHumanSession
+  resolveCallerConnectHumanSession,
+  runCallerConnectHumanTransaction
 } from "../session";
 import {
   AccountSummary,
@@ -38,21 +39,21 @@ export default async function CallerConnectSuccessPage({
   }
 
   const requestId = createCorrelationId("caller_connect_success_page_req");
-  const session = await resolveCallerConnectHumanSession({
-    requestId,
-    fixtureClerkUserId,
-    route: "/caller/connect/success",
-    method: "GET"
-  });
-
-  if (!session.ok) {
-    return (
-      <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
-        <ConnectErrorPanel error={session} />
-      </ConnectPageShell>
-    );
-  }
   if (!setupRequestId) {
+    const session = await resolveCallerConnectHumanSession({
+      requestId,
+      fixtureClerkUserId,
+      route: "/caller/connect/success",
+      method: "GET"
+    });
+    if (!session.ok) {
+      return (
+        <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
+          <ConnectErrorPanel error={session} />
+        </ConnectPageShell>
+      );
+    }
+
     return (
       <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
         <ConnectErrorPanel
@@ -66,16 +67,34 @@ export default async function CallerConnectSuccessPage({
     );
   }
 
-  const setupState = await connectTerminalSetupState({
-    session,
-    requestId,
-    setupRequestId,
-    statuses: ["approved", "exchanged"],
-    route: "/caller/connect/success",
-    method: "GET",
-    operation: "caller_connect_terminal_success",
-    unavailableMessage: "Caller connect success is temporarily unavailable."
-  });
+  const transaction = await runCallerConnectHumanTransaction(
+    {
+      requestId,
+      fixtureClerkUserId,
+      route: "/caller/connect/success",
+      method: "GET"
+    },
+    (query, humanSession) =>
+      connectTerminalSetupState(query, {
+        session: humanSession,
+        requestId,
+        setupRequestId,
+        statuses: ["approved", "exchanged"],
+        route: "/caller/connect/success",
+        method: "GET",
+        operation: "caller_connect_terminal_success",
+        unavailableMessage: "Caller connect success is temporarily unavailable."
+      })
+  );
+  if (!transaction.ok) {
+    return (
+      <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
+        <ConnectErrorPanel error={transaction} />
+      </ConnectPageShell>
+    );
+  }
+
+  const setupState = transaction.data;
 
   if (!setupState.ok) {
     return (
@@ -90,7 +109,7 @@ export default async function CallerConnectSuccessPage({
 
   return (
     <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
-      <AccountSummary session={session} />
+      <AccountSummary session={transaction.session} />
       <section className="connect-card" aria-label="Approval success">
         <p>
           {setup.flow === "device"

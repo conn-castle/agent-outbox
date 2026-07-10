@@ -1,14 +1,16 @@
+import { unstable_rethrow } from "next/navigation";
+
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectBrowserApprovalPreview } from "../../../../src/server/caller-connect";
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/caller-connect-clerk-fixture";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
+import type { HumanAccountSession } from "../../../../src/server/human-session";
 import { approveBrowserConnect, denyBrowserConnect } from "../actions";
 import {
   firstParam,
   fixtureClerkUserIdParam,
   reportCallerApprovalFailure,
   requiredCallerConnectSessionConfiguration,
-  resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
 } from "../session";
 import {
@@ -55,30 +57,33 @@ export default async function CallerConnectApprovePage({
   }
 
   const requestId = createCorrelationId("caller_connect_approve_page_req");
-  const session = await resolveCallerConnectHumanSession({
-    requestId,
-    fixtureClerkUserId,
-    route: "/caller/connect/approve",
-    method: "GET"
-  });
-
-  if (!session.ok) {
-    return (
-      <ConnectPageShell eyebrow="Caller connect" title="Approve caller setup">
-        <ConnectErrorPanel error={session} />
-      </ConnectPageShell>
-    );
-  }
-
+  let session: HumanAccountSession | undefined;
   let preview: Awaited<ReturnType<typeof getConnectBrowserApprovalPreview>>;
   const previewStartedAtMs = Date.now();
   try {
-    preview = await runCallerConnectHumanTransaction(
-      session,
-      requestId,
-      (query) => getConnectBrowserApprovalPreview(query, { setupRequestId })
+    const transaction = await runCallerConnectHumanTransaction(
+      {
+        requestId,
+        fixtureClerkUserId,
+        route: "/caller/connect/approve",
+        method: "GET"
+      },
+      (query, humanSession) => {
+        session = humanSession;
+        return getConnectBrowserApprovalPreview(query, { setupRequestId });
+      }
     );
+    if (!transaction.ok) {
+      return (
+        <ConnectPageShell eyebrow="Caller connect" title="Approve caller setup">
+          <ConnectErrorPanel error={transaction} />
+        </ConnectPageShell>
+      );
+    }
+    session = transaction.session;
+    preview = transaction.data;
   } catch (error) {
+    unstable_rethrow(error);
     reportCallerApprovalFailure(error, {
       requestId,
       route: "/caller/connect/approve",
@@ -95,6 +100,10 @@ export default async function CallerConnectApprovePage({
         message: "Caller connect approval is temporarily unavailable."
       }
     };
+  }
+
+  if (!session) {
+    throw new Error("Human session is required after caller approval setup.");
   }
 
   return (

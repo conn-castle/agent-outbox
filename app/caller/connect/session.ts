@@ -9,15 +9,13 @@ import {
   callerConnectFixtureClerkUserId
 } from "../../../src/server/caller-connect-clerk-fixture";
 import { createCorrelationId } from "../../../src/server/correlation";
-import {
-  runProductTransaction,
-  type ProductTransactionQuery
-} from "../../../src/server/database";
+import type { ProductTransactionQuery } from "../../../src/server/database";
 import {
   type HumanAccountSession,
   type HumanAccountSessionResult,
   requiredHumanSessionConfiguration,
-  resolveHumanAccountSession
+  resolveHumanAccountSession,
+  runHumanAccountTransaction
 } from "../../../src/server/human-session";
 import { durationSinceMs } from "../../../src/server/logging";
 import { reportRuntimeFailure } from "../../../src/server/sentry";
@@ -36,28 +34,9 @@ export async function resolveCallerConnectHumanSession(input: {
   route?: string;
   method?: string;
 }): Promise<HumanAccountSessionResult> {
-  const headerFixtureClerkUserId = callerConnectFixtureClerkUserId(
-    (await headers()).get(CALLER_CONNECT_FIXTURE_USER_ID_HEADER)
-  );
-  const fixtureClerkUserId =
-    callerConnectFixtureClerkUserId(input.fixtureClerkUserId) ??
-    headerFixtureClerkUserId;
-
-  if (fixtureClerkUserId) {
-    return resolveHumanAccountSession({
-      clerkUserId: fixtureClerkUserId,
-      requestId: input.requestId,
-      route: input.route,
-      method: input.method
-    });
-  }
-
-  const session = await auth.protect({
-    unauthenticatedUrl: "/sign-in"
-  });
-
+  const clerkUserId = await callerConnectClerkUserId(input.fixtureClerkUserId);
   return resolveHumanAccountSession({
-    clerkUserId: session.userId,
+    clerkUserId,
     requestId: input.requestId,
     route: input.route,
     method: input.method
@@ -65,25 +44,48 @@ export async function resolveCallerConnectHumanSession(input: {
 }
 
 export async function runCallerConnectHumanTransaction<TResult>(
-  session: HumanAccountSession,
-  requestId: string,
-  callback: (query: ProductTransactionQuery) => Promise<TResult>
+  input: {
+    requestId: string;
+    fixtureClerkUserId?: string | null;
+    route: string;
+    method: string;
+  },
+  callback: (
+    query: ProductTransactionQuery,
+    session: HumanAccountSession
+  ) => Promise<TResult>
 ) {
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    throw new Error("DATABASE_APP_ROLE_URL is required after session setup.");
-  }
-
-  return runProductTransaction(
-    connectionString,
+  const clerkUserId = await callerConnectClerkUserId(input.fixtureClerkUserId);
+  return runHumanAccountTransaction(
     {
-      requestId,
-      authSurface: "human",
-      accountId: session.accountId,
-      userId: session.userId
+      clerkUserId,
+      requestId: input.requestId,
+      route: input.route,
+      method: input.method
     },
     callback
   );
+}
+
+async function callerConnectClerkUserId(
+  inputFixtureClerkUserId?: string | null
+) {
+  const headerFixtureClerkUserId = callerConnectFixtureClerkUserId(
+    (await headers()).get(CALLER_CONNECT_FIXTURE_USER_ID_HEADER)
+  );
+  const fixtureClerkUserId =
+    callerConnectFixtureClerkUserId(inputFixtureClerkUserId) ??
+    headerFixtureClerkUserId;
+
+  if (fixtureClerkUserId) {
+    return fixtureClerkUserId;
+  }
+
+  const session = await auth.protect({
+    unauthenticatedUrl: "/sign-in"
+  });
+
+  return session.userId;
 }
 
 export function reportCallerApprovalFailure(
@@ -113,28 +115,26 @@ export function reportCallerApprovalFailure(
 
 type ConnectTerminalStatus = "approved" | "exchanged" | "denied";
 
-export async function connectTerminalSetupState(input: {
-  session: HumanAccountSession;
-  requestId: string;
-  setupRequestId: string;
-  statuses: readonly ConnectTerminalStatus[];
-  route: string;
-  method: string;
-  operation: string;
-  unavailableMessage: string;
-}) {
+export async function connectTerminalSetupState(
+  query: ProductTransactionQuery,
+  input: {
+    session: HumanAccountSession;
+    requestId: string;
+    setupRequestId: string;
+    statuses: readonly ConnectTerminalStatus[];
+    route: string;
+    method: string;
+    operation: string;
+    unavailableMessage: string;
+  }
+) {
   const startedAtMs = Date.now();
   try {
-    return await runCallerConnectHumanTransaction(
-      input.session,
-      input.requestId,
-      (query) =>
-        getConnectTerminalSetupState(query, {
-          setupRequestId: input.setupRequestId,
-          accountId: input.session.accountId,
-          statuses: input.statuses
-        })
-    );
+    return await getConnectTerminalSetupState(query, {
+      setupRequestId: input.setupRequestId,
+      accountId: input.session.accountId,
+      statuses: input.statuses
+    });
   } catch (error) {
     reportCallerApprovalFailure(error, {
       requestId: input.requestId,

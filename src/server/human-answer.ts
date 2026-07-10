@@ -228,25 +228,7 @@ export async function createHumanAnswer(
       (query) => createHumanAnswerInTransaction(query, input)
     );
   } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: input.correlationId,
-      request_id: input.requestId,
-      surface: "app",
-      route: "/human",
-      method: "POST",
-      status_code: 503,
-      duration_ms: durationSinceMs(startedAtMs),
-      operation: "human_answer_transaction",
-      operation_kind:
-        input.response.kind === "file_upload" ? "file_upload" : undefined,
-      account_id: input.accountId,
-      caller_id: input.callerId,
-      message: "Human answer transaction failed unexpectedly."
-    });
-    return failure(
-      "temporary_unavailable",
-      "Human answer is temporarily unavailable."
-    );
+    return humanAnswerTransactionFailure(error, input, startedAtMs);
   }
 }
 
@@ -434,42 +416,54 @@ export async function createHumanAnswerInTransaction(
   };
 }
 
-export async function undoHumanAnswerBeforeRead(
-  connectionString: string,
+export function humanAnswerTransactionFailure(
+  error: unknown,
+  input: CreateHumanAnswerInput,
+  startedAtMs = Date.now()
+): HumanAnswerResult {
+  reportRuntimeFailure(error, {
+    errorId: input.correlationId,
+    request_id: input.requestId,
+    surface: "app",
+    route: "/human",
+    method: "POST",
+    status_code: 503,
+    duration_ms: durationSinceMs(startedAtMs),
+    operation: "human_answer_transaction",
+    operation_kind:
+      input.response.kind === "file_upload" ? "file_upload" : undefined,
+    account_id: input.accountId,
+    caller_id: input.callerId,
+    message: "Human answer transaction failed unexpectedly."
+  });
+  return failure(
+    "temporary_unavailable",
+    "Human answer is temporarily unavailable."
+  );
+}
+
+export function humanAnswerUndoTransactionFailure(
+  error: unknown,
   input: PreReadUndoInput
-): Promise<PreReadUndoResult> {
+): PreReadUndoResult {
   const startedAtMs = Date.now();
-  try {
-    return await runProductTransaction(
-      connectionString,
-      {
-        requestId: input.requestId,
-        authSurface: "human",
-        accountId: input.accountId,
-        callerId: input.callerId,
-        userId: input.humanUserId
-      },
-      (query) => undoHumanAnswerBeforeReadInTransaction(query, input)
-    );
-  } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: input.correlationId,
-      request_id: input.requestId,
-      surface: "app",
-      route: "/human",
-      method: "POST",
-      status_code: 503,
-      duration_ms: durationSinceMs(startedAtMs),
-      operation: "human_answer_undo_transaction",
-      account_id: input.accountId,
-      caller_id: input.callerId,
-      message: "Human answer undo transaction failed unexpectedly."
-    });
-    return failure(
-      "temporary_unavailable",
-      "Human answer undo is temporarily unavailable."
-    );
-  }
+  reportRuntimeFailure(error, {
+    errorId: input.correlationId,
+    request_id: input.requestId,
+    surface: "app",
+    route: "/human",
+    method: "POST",
+    status_code: 503,
+    duration_ms: durationSinceMs(startedAtMs),
+    operation: "human_answer_undo_transaction",
+    account_id: input.accountId,
+    caller_id: input.callerId,
+    message: "Human answer undo transaction failed unexpectedly."
+  });
+  return failure(
+    "temporary_unavailable",
+    "Human answer undo is temporarily unavailable."
+  );
 }
 
 export async function undoHumanAnswerBeforeReadInTransaction(

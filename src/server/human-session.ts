@@ -6,6 +6,7 @@ import {
 import { createCorrelationId } from "./correlation.ts";
 import {
   runProductTransaction,
+  setProductTransactionIdentityContext,
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
@@ -52,6 +53,17 @@ export type HumanAccountSessionFailure = {
 export type HumanAccountSessionResult =
   ({ ok: true } & HumanAccountSession) | HumanAccountSessionFailure;
 
+type HumanAccountSessionSuccess = { ok: true } & HumanAccountSession;
+type RunProductTransaction = typeof runProductTransaction;
+
+export type HumanAccountTransactionResult<TResult> =
+  | {
+      ok: true;
+      session: HumanAccountSessionSuccess;
+      data: TResult;
+    }
+  | HumanAccountSessionFailure;
+
 export type BootstrapClerkHumanRow = {
   user_id: string;
   account_id: string;
@@ -84,8 +96,25 @@ export function requiredHumanSessionConfiguration() {
 export async function resolveHumanAccountSession(
   input: HumanSessionInput
 ): Promise<HumanAccountSessionResult> {
+  try {
+    const result = await runHumanAccountTransaction(input, async () => null);
+    return result.ok ? result.session : result;
+  } catch (error) {
+    return humanSessionRuntimeFailure(error, input);
+  }
+}
+
+export async function runHumanAccountTransaction<TResult>(
+  input: HumanSessionInput,
+  callback: (
+    query: ProductTransactionQuery,
+    session: HumanAccountSessionSuccess
+  ) => Promise<TResult>,
+  options: { runTransaction?: RunProductTransaction } = {}
+): Promise<HumanAccountTransactionResult<TResult>> {
   const startedAtMs = input.startedAtMs ?? Date.now();
   let accountId: string | undefined;
+  let operationStarted = false;
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
     return failure(
@@ -103,24 +132,49 @@ export async function resolveHumanAccountSession(
     );
   }
   const clerkUserId = input.clerkUserId;
+  const runTransaction = options.runTransaction ?? runProductTransaction;
 
   try {
-    const bootstrap = await runProductTransaction(
+    const result = await runTransaction(
       connectionString,
       {
         requestId: input.requestId,
         authSurface: "human",
         clerkUserId
       },
-      (query) => bootstrapClerkHumanInTransaction(query, clerkUserId)
+      async (query) => {
+        const bootstrap = await bootstrapClerkHumanInTransaction(
+          query,
+          clerkUserId
+        );
+
+        if (!bootstrap.ok) {
+          return bootstrap;
+        }
+        accountId = bootstrap.accountId;
+
+        await setProductTransactionIdentityContext(query, {
+          authSurface: "human",
+          accountId: bootstrap.accountId,
+          userId: bootstrap.userId
+        });
+
+        const session = await resolveHumanAccountContextInTransaction(query, {
+          accountId: bootstrap.accountId,
+          userId: bootstrap.userId,
+          provisionedAccount: bootstrap.provisionedAccount
+        });
+        if (!session.ok) {
+          return session;
+        }
+
+        operationStarted = true;
+        const data = await callback(query, session);
+        return { ok: true as const, session, data };
+      }
     );
 
-    if (!bootstrap.ok) {
-      return bootstrap;
-    }
-    accountId = bootstrap.accountId;
-
-    if (bootstrap.provisionedAccount) {
+    if (result.ok && result.session.provisionedAccount) {
       emitRuntimeLog({
         level: "info",
         surface: "app",
@@ -131,42 +185,40 @@ export async function resolveHumanAccountSession(
       });
     }
 
-    return await runProductTransaction(
-      connectionString,
-      {
-        requestId: input.requestId,
-        authSurface: "human",
-        accountId: bootstrap.accountId,
-        userId: bootstrap.userId
-      },
-      (query) =>
-        resolveHumanAccountContextInTransaction(query, {
-          accountId: bootstrap.accountId,
-          userId: bootstrap.userId,
-          provisionedAccount: bootstrap.provisionedAccount
-        })
-    );
+    return result;
   } catch (error) {
-    const errorId = input.errorId ?? createCorrelationId("human");
-    reportRuntimeFailure(error, {
-      errorId,
-      surface: "app",
-      route: input.route,
-      method: input.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(startedAtMs),
-      operation: "human_account_session",
-      message: "Human account session resolution failed unexpectedly.",
-      request_id: input.requestId,
-      account_id: accountId
-    });
-    return failure(
-      503,
-      "temporary_unavailable",
-      "Human account session is temporarily unavailable.",
-      { errorId, reported: true }
-    );
+    if (operationStarted) {
+      throw error;
+    }
+    return humanSessionRuntimeFailure(error, input, accountId, startedAtMs);
   }
+}
+
+function humanSessionRuntimeFailure(
+  error: unknown,
+  input: HumanSessionInput,
+  accountId?: string,
+  startedAtMs = input.startedAtMs ?? Date.now()
+): HumanAccountSessionFailure {
+  const errorId = input.errorId ?? createCorrelationId("human");
+  reportRuntimeFailure(error, {
+    errorId,
+    surface: "app",
+    route: input.route,
+    method: input.method,
+    status_code: 503,
+    duration_ms: durationSinceMs(startedAtMs),
+    operation: "human_account_session",
+    message: "Human account session resolution failed unexpectedly.",
+    request_id: input.requestId,
+    account_id: accountId
+  });
+  return failure(
+    503,
+    "temporary_unavailable",
+    "Human account session is temporarily unavailable.",
+    { errorId, reported: true }
+  );
 }
 
 export async function bootstrapClerkHumanInTransaction(

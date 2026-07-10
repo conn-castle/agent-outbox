@@ -1,7 +1,10 @@
+import { unstable_rethrow } from "next/navigation";
+
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectDeviceApprovalPreview } from "../../../../src/server/caller-connect";
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/caller-connect-clerk-fixture";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
+import type { HumanAccountSession } from "../../../../src/server/human-session";
 import {
   approveDeviceConnect,
   denyDeviceConnect,
@@ -12,7 +15,6 @@ import {
   fixtureClerkUserIdParam,
   reportCallerApprovalFailure,
   requiredCallerConnectSessionConfiguration,
-  resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
 } from "../session";
 import {
@@ -83,30 +85,33 @@ export default async function CallerConnectDevicePage({
   }
 
   const requestId = createCorrelationId("caller_connect_device_page_req");
-  const session = await resolveCallerConnectHumanSession({
-    requestId,
-    fixtureClerkUserId,
-    route: "/caller/connect/device",
-    method: "GET"
-  });
-
-  if (!session.ok) {
-    return (
-      <ConnectPageShell eyebrow="Caller connect" title="Verify device code">
-        <ConnectErrorPanel error={session} />
-      </ConnectPageShell>
-    );
-  }
-
+  let session: HumanAccountSession | undefined;
   let preview: Awaited<ReturnType<typeof getConnectDeviceApprovalPreview>>;
   const previewStartedAtMs = Date.now();
   try {
-    preview = await runCallerConnectHumanTransaction(
-      session,
-      requestId,
-      (query) => getConnectDeviceApprovalPreview(query, { userCode })
+    const transaction = await runCallerConnectHumanTransaction(
+      {
+        requestId,
+        fixtureClerkUserId,
+        route: "/caller/connect/device",
+        method: "GET"
+      },
+      (query, humanSession) => {
+        session = humanSession;
+        return getConnectDeviceApprovalPreview(query, { userCode });
+      }
     );
+    if (!transaction.ok) {
+      return (
+        <ConnectPageShell eyebrow="Caller connect" title="Verify device code">
+          <ConnectErrorPanel error={transaction} />
+        </ConnectPageShell>
+      );
+    }
+    session = transaction.session;
+    preview = transaction.data;
   } catch (error) {
+    unstable_rethrow(error);
     reportCallerApprovalFailure(error, {
       requestId,
       route: "/caller/connect/device",
@@ -123,6 +128,10 @@ export default async function CallerConnectDevicePage({
         message: "Caller connect approval is temporarily unavailable."
       }
     };
+  }
+
+  if (!session) {
+    throw new Error("Human session is required after device approval setup.");
   }
 
   return (

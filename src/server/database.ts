@@ -21,6 +21,18 @@ export type ProductTransactionContext = {
   userId?: string;
 };
 
+export type ProductTransactionIdentityContext =
+  | {
+      authSurface: "human";
+      accountId: string;
+      userId: string;
+    }
+  | {
+      authSurface: "caller";
+      accountId: string;
+      callerId: string;
+    };
+
 export function postgresDriverImportProof() {
   return {
     package: "pg",
@@ -51,38 +63,22 @@ export async function runProductTransaction<TResult>(
 
   try {
     await client.query("begin");
-    await client.query("select set_config($1, $2, true)", [
-      "agent_outbox.request_id",
-      context.requestId
+    const contextEntries = [
+      ["agent_outbox.request_id", context.requestId],
+      ["agent_outbox.auth_surface", context.authSurface],
+      ["agent_outbox.account_id", context.accountId],
+      ["agent_outbox.caller_id", context.callerId],
+      ["agent_outbox.clerk_user_id", context.clerkUserId],
+      ["agent_outbox.user_id", context.userId]
+    ].filter((entry): entry is [string, string] => entry[1] !== undefined);
+    const contextValues = contextEntries.flatMap(([name, value]) => [
+      name,
+      value
     ]);
-    await client.query("select set_config($1, $2, true)", [
-      "agent_outbox.auth_surface",
-      context.authSurface
-    ]);
-    if (context.accountId) {
-      await client.query("select set_config($1, $2, true)", [
-        "agent_outbox.account_id",
-        context.accountId
-      ]);
-    }
-    if (context.callerId) {
-      await client.query("select set_config($1, $2, true)", [
-        "agent_outbox.caller_id",
-        context.callerId
-      ]);
-    }
-    if (context.clerkUserId) {
-      await client.query("select set_config($1, $2, true)", [
-        "agent_outbox.clerk_user_id",
-        context.clerkUserId
-      ]);
-    }
-    if (context.userId) {
-      await client.query("select set_config($1, $2, true)", [
-        "agent_outbox.user_id",
-        context.userId
-      ]);
-    }
+    const contextSetters = contextEntries.map(
+      (_, index) => `set_config($${index * 2 + 1}, $${index * 2 + 2}, true)`
+    );
+    await client.query(`select ${contextSetters.join(", ")}`, contextValues);
 
     const result = await callback((statement) => {
       return client.query(statement.sql, statement.values);
@@ -96,6 +92,30 @@ export async function runProductTransaction<TResult>(
   } finally {
     await client.end();
   }
+}
+
+export async function setProductTransactionIdentityContext(
+  query: ProductTransactionQuery,
+  identity: ProductTransactionIdentityContext
+) {
+  const callerId = identity.authSurface === "caller" ? identity.callerId : "";
+  const userId = identity.authSurface === "human" ? identity.userId : "";
+  await query({
+    sql: `
+      select
+        set_config($1, $2, true),
+        set_config($3, $4, true),
+        set_config($5, $6, true)
+    `,
+    values: [
+      "agent_outbox.account_id",
+      identity.accountId,
+      "agent_outbox.caller_id",
+      callerId,
+      "agent_outbox.user_id",
+      userId
+    ]
+  });
 }
 
 export function transactionContextCanaryStatements(

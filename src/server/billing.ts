@@ -29,7 +29,7 @@ type BillingConfig = {
 type StripeClient = Pick<Stripe, "checkout" | "billingPortal" | "webhooks">;
 type BillingTransactionRunner = typeof runProductTransaction;
 
-type BillingAccountRow = {
+export type BillingAccount = {
   account_id: string;
   tier: string;
   billing_status: BillingStatus;
@@ -145,15 +145,12 @@ function checkoutIntervalFromBody(
 }
 
 export async function createCheckoutSessionForAccount(input: {
-  connectionString: string;
-  accountId: string;
-  userId: string;
+  account: BillingAccount;
   requestId: string;
   interval: unknown;
   context?: ApiRequestContext;
   config?: BillingConfig;
   stripe?: StripeClient;
-  runTransaction?: BillingTransactionRunner;
 }): Promise<BillingResult<BillingCheckoutData>> {
   const intervalResult = checkoutIntervalFromValue(input.interval);
   if (!intervalResult.ok) {
@@ -168,39 +165,7 @@ export async function createCheckoutSessionForAccount(input: {
   }
   const config = configResult.data;
   const stripe = input.stripe ?? stripeClient(config);
-  const runTransaction = input.runTransaction ?? runProductTransaction;
-
-  let account: BillingAccountRow | null;
-  try {
-    account = await runTransaction(
-      input.connectionString,
-      {
-        requestId: input.requestId,
-        authSurface: "human",
-        accountId: input.accountId,
-        userId: input.userId
-      },
-      async (query) => {
-        const result = await query<BillingAccountRow>(
-          billingAccountStatement(input.accountId)
-        );
-        return result.rows[0] ?? null;
-      }
-    );
-  } catch (error) {
-    return billingRuntimeFailure(error, {
-      context: input.context,
-      requestId: input.requestId,
-      accountId: input.accountId,
-      operation: "stripe_checkout_account_lookup",
-      message: "Stripe checkout account lookup failed unexpectedly.",
-      responseMessage: "Checkout session is temporarily unavailable."
-    });
-  }
-
-  if (!account) {
-    return temporaryUnavailableError("Billing account is unavailable.");
-  }
+  const account = input.account;
   if (account.tier === "self_hosted") {
     return invalidBillingRequest("Self-hosted accounts do not use Stripe.");
   }
@@ -228,7 +193,7 @@ export async function createCheckoutSessionForAccount(input: {
     return billingRuntimeFailure(error, {
       context: input.context,
       requestId: input.requestId,
-      accountId: input.accountId,
+      accountId: account.account_id,
       operation: "stripe_checkout_session_create",
       message: "Stripe checkout session creation failed unexpectedly.",
       responseMessage: "Checkout session is temporarily unavailable."
@@ -243,14 +208,11 @@ export async function createCheckoutSessionForAccount(input: {
 }
 
 export async function createBillingPortalSessionForAccount(input: {
-  connectionString: string;
-  accountId: string;
-  userId: string;
+  account: BillingAccount;
   requestId: string;
   context?: ApiRequestContext;
   config?: BillingConfig;
   stripe?: StripeClient;
-  runTransaction?: BillingTransactionRunner;
 }): Promise<BillingResult<BillingPortalData>> {
   const configResult = input.config
     ? { ok: true as const, data: input.config }
@@ -260,37 +222,9 @@ export async function createBillingPortalSessionForAccount(input: {
   }
   const config = configResult.data;
   const stripe = input.stripe ?? stripeClient(config);
-  const runTransaction = input.runTransaction ?? runProductTransaction;
+  const account = input.account;
 
-  let account: BillingAccountRow | null;
-  try {
-    account = await runTransaction(
-      input.connectionString,
-      {
-        requestId: input.requestId,
-        authSurface: "human",
-        accountId: input.accountId,
-        userId: input.userId
-      },
-      async (query) => {
-        const result = await query<BillingAccountRow>(
-          billingAccountStatement(input.accountId)
-        );
-        return result.rows[0] ?? null;
-      }
-    );
-  } catch (error) {
-    return billingRuntimeFailure(error, {
-      context: input.context,
-      requestId: input.requestId,
-      accountId: input.accountId,
-      operation: "stripe_billing_portal_account_lookup",
-      message: "Stripe billing portal account lookup failed unexpectedly.",
-      responseMessage: "Billing portal is temporarily unavailable."
-    });
-  }
-
-  if (!account?.stripe_customer_id) {
+  if (!account.stripe_customer_id) {
     return invalidBillingRequest(
       "Billing portal requires an active Stripe customer."
     );
@@ -307,7 +241,7 @@ export async function createBillingPortalSessionForAccount(input: {
     return billingRuntimeFailure(error, {
       context: input.context,
       requestId: input.requestId,
-      accountId: input.accountId,
+      accountId: account.account_id,
       operation: "stripe_billing_portal_session_create",
       message: "Stripe billing portal session creation failed unexpectedly.",
       responseMessage: "Billing portal is temporarily unavailable."
@@ -425,7 +359,6 @@ export function billingAccountStatement(
       from public.agent_outbox_accounts
       where account_id = $1
         and deleted_at is null
-      for update
     `,
     values: [accountId]
   };
@@ -747,12 +680,12 @@ function temporaryUnavailableError(
   };
 }
 
-function billingRuntimeFailure(
+export function billingRuntimeFailure(
   error: unknown,
   input: {
     context?: ApiRequestContext;
     requestId: string;
-    accountId: string;
+    accountId?: string;
     operation: string;
     message: string;
     responseMessage: string;
