@@ -51,16 +51,10 @@ Incomplete:
 
 <!-- PHASES START -->
 
-## Archived phases (1–2)
+## Archived phases (1–3)
 - Phase 1 — Operating Foundation And Quality Gates: Established the root command surface, pinned tooling, credential-free local gates, CI/release-check skeletons, diagnostics, and pre-product docs alignment.
 - Phase 2 — App Runtime Shell Proof: Established the single Next.js app/API boundary, provider-backed runtime proof routes, pinned runtime tooling, and the split between app CI and later Cloudflare/OpenNext deployment verification.
-
-## Phase 3 ✅ — Accounts, Authorization, Limits, And Cleanup Foundation
-- Added Agent Outbox-owned account, user, membership, caller, caller credential, queue-state, output, file metadata, audit, quota, active limit, and cleanup-run schema with forced Row Level Security.
-- Added transaction-context database helpers and app-layer authorization/caller-key helpers that prove cross-account denial, caller credential bootstrap, human membership enforcement, and caller scoping without trusting request-body identity.
-- Added canonical tier-aware limits for hosted free, hosted paid, and self-hosted-as-paid behavior, with shared limit/error/status metadata, quota windows, active limit blocks, and content-safe accounting/audit helpers.
-- Added cleanup statement builders and database functions for acknowledgement, pre-read undo, output timeout, pending retention, downgrade grace expiry, quota-window pruning, and active-limit maintenance.
-- Verified local migration replay, app-role posture, app-only function privileges, Row Level Security isolation, parent ownership constraints, audit safety, file deletion, quota/limit cleanup, and no duplicate mutable usage gauge.
+- Phase 3 — Accounts, Authorization, Limits, And Cleanup Foundation: Established the Row-Level-Security-backed account and queue schema, authorization boundaries, canonical tier limits, audit/accounting helpers, and retention and cleanup primitives.
 
 ## Phase 4 ✅ — Core Caller HTTP API And Queue Semantics
 - Added canonical caller HTTP contract docs for input, output, status, files, caller-registration control-plane shape, response envelopes, pagination, and stable error codes, with route-guard smoke checks keeping later-phase API drift out.
@@ -93,30 +87,12 @@ Incomplete:
 - Completed shared cleanup for acknowledgement, output timeout, pending retention, downgrade grace, quota windows, active limit blocks, caller setup pruning, never-activated caller pruning, and Stripe webhook idempotency ledger pruning.
 - Reverified provider pricing, free/paid limits, Clerk application posture, Supabase Postgres storage posture, Sentry/Stripe recovery assumptions, and accepted deferrals for Cloudflare runtime setup, Stripe custom/domain configuration, billing emails, higher tiers, managed backups, point-in-time recovery, encrypted off-site exports, and proactive spend automation.
 
-## Phase 8 — Observability, Operations, And Release Readiness
-
-### Goal
-- Make the hosted MVP inspectable, diagnosable, and releasable without adding heavyweight operations before usage justifies them.
-- Keep operations lightweight and provider-native.
-- Source map: [ops/resources.md](../ops/resources.md), [ops/monitoring.md](../ops/monitoring.md), [ops/debugging.md](../ops/debugging.md), [ops/incidents.md](../ops/incidents.md), [ops/secrets.md](../ops/secrets.md), and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for observability, secrets source, emergency shutdown, and launch-readiness decisions.
-
-### Tasks
-- [x] Decide the launch analytics and product-tooling stack, then implement Sentry, Cloudflare structured logs, Supabase log usage, Cloudflare Web Analytics or the chosen web analytics tool, narrow frontend client-event logging, and canary records with shared `error_id` correlation. Browser client-event logging now emits the four scoped signals; `ui_state_inconsistent` is intentionally unwired by decision.
-- [x] Create or verify the Cloudflare Worker, `app.agent-outbox.dev` custom domain/route, production runtime secrets including the separate Stripe Checkout/Portal runtime key, and deploy-safe OpenNext/Wrangler verification path.
-- [x] Create or verify the Stripe-side production domain configuration needed for hosted Checkout, Billing Portal, and supported payment methods. Agent Outbox uses Stripe-hosted redirect Checkout and hosted Billing Portal, so Stripe Payment Method Domain registration is not part of the current flow; production product, prices, portal configuration, webhook, runtime key, and no-charge hosted Checkout and Billing Portal smoke are verified with the dedicated production smoke fixture.
-- [x] Populate production resource inventory, deployment smoke checklist, debugging, incident, monitoring, and secret recovery instructions with exact Agent Outbox resources as they are created.
-- [x] Build the agent-run hosted health inspection workflow so an agent can check app, auth, caller API, database connectivity, cleanup, quota enforcement, file path, logs, audit events, and obvious abuse/cost signals on demand. Hosted checks pass for app/auth/runtime/caller/database/logs/cleanup/Sentry and for quota, file-path, audit-event, and abuse/cost evidence generated by the controlled production fixture.
-- [x] Prepare release verification that covers local gates, CI gates, package artifacts, hosted smoke, rollback expectations, and owner acceptance.
-- [x] Define and enable GitHub `main` branch protection after CI and release gate names settle, including required checks and production release protections. `main` now requires pull requests, up-to-date required checks (`make check`, `make go-check`, `make browser`, `make migration-replay`, `make release-check`), conversation resolution, blocked force pushes/deletions, and `production` deployments from protected branches only, with owner/admin override left available.
-- [x] Prepare legal/business launch materials for owner review, including public Privacy Policy, Terms of Service, Zoho-backed support/privacy/security/abuse contact path, exact queue/file retention disclosure, no-SLA support boundaries, and PolyForm Noncommercial license presentation. The engineering privacy/data inventory is the source for data, processor, and retention claims; final owner acceptance remains an exit criterion.
-
-### Exit criteria
-- Observability canaries and logs correlate app, API, cleanup, and file-path failures by safe identifiers without leaking content or secrets.
-- Production smoke coverage is documented for Clerk sign-in/out, protected queue load, caller auth, CLI browser callback, CLI device-code fallback, cleanup execution, observability canary, hosted Checkout session creation, and the narrow file/quota/audit/cost evidence that can be checked without completing live billing.
-- The health inspection workflow can be run by an agent and reports actionable pass/fail status without requiring dashboard spelunking.
-- The `main` branch protection policy is enabled and matches the final CI/release gate design.
-- Public launch materials are accepted by the project owner before public signup opens.
-- Any unresolved launch, legal, provider, or runtime blocker is explicitly accepted by the project owner or public launch does not proceed.
+## Phase 8 ✅ — Observability, Operations, And Release Readiness
+- Deployed the Cloudflare Worker and custom domain with production secrets, Hyperdrive database access, Stripe-hosted billing configuration, structured logs, Sentry, narrow browser telemetry, and correlated canaries.
+- Added production resource, monitoring, debugging, incident, secret-recovery, deployment, rollback, hosted-health, runtime-smoke, and billing-smoke workflows and verified the controlled production evidence paths.
+- Established the protected `main` and `production` release policy with the settled local, CI, browser, migration, package, and hosted verification gates.
+- Published and accepted the Privacy Policy, Terms of Service, Zoho-backed contact path, retention and support disclosures, and PolyForm Noncommercial license presentation for the production launch.
+- Accepted the current Cloudflare Web Analytics provider-permission gap as non-blocking for launch while retaining the deferred setup work in ISSUES.md.
 
 ## Phase 9 — Steward Pilot And Public MVP Launch
 
