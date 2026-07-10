@@ -75,6 +75,54 @@ AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE=<production-smoke-env> make smoke-runtime
 AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE=<production-health-env> make hosted-health
 ```
 
+## Manual CLI Connect Smoke
+
+Use isolated local config files and unique caller names when verifying the two
+human-approval transports against production. These checks create caller,
+credential, and audit records in the selected production account; they are
+provider-wiring smoke checks, not substitutes for the hermetic CLI and browser
+test suites.
+
+Verify the loopback browser callback:
+
+```bash
+make go-build
+browser_caller="production-browser-smoke-$(date -u +%Y%m%d%H%M%S)"
+browser_config=".agent-layer/tmp/${browser_caller}.json"
+dist/agent-outbox --base-url https://app.agent-outbox.dev \
+  --config "$browser_config" caller connect "$browser_caller"
+dist/agent-outbox --base-url https://app.agent-outbox.dev \
+  --config "$browser_config" --caller "$browser_caller" caller status
+dist/agent-outbox --base-url https://app.agent-outbox.dev \
+  --config "$browser_config" --caller "$browser_caller" \
+  caller disconnect --revoke
+```
+
+The connect and revoke commands open the production approval page. Approve each
+operation while signed in to the intended smoke account. Connect must return
+through the loopback callback, store and activate the display-once credential,
+and make `caller status` succeed before revocation.
+
+Verify the terminal device-code fallback with a different unique caller name:
+
+```bash
+device_caller="production-device-smoke-$(date -u +%Y%m%d%H%M%S)"
+device_config=".agent-layer/tmp/${device_caller}.json"
+dist/agent-outbox --base-url https://app.agent-outbox.dev \
+  --config "$device_config" caller connect "$device_caller" --device-code
+dist/agent-outbox --base-url https://app.agent-outbox.dev \
+  --config "$device_config" --caller "$device_caller" caller status
+dist/agent-outbox --base-url https://app.agent-outbox.dev \
+  --config "$device_config" --caller "$device_caller" \
+  caller disconnect --revoke --device-code
+```
+
+Open the printed production verification URL and enter or confirm its user code
+while signed in to the intended smoke account. The CLI must poll through
+approval, store and activate the credential, pass `caller status`, and complete
+the device-code revocation. Never record the display-once API key in smoke
+evidence.
+
 ## Billing Smoke
 
 `make billing-smoke` is no-charge by default. It is a production/provider wiring
