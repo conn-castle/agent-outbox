@@ -7,7 +7,8 @@ import {
   firstParam,
   fixtureClerkUserIdParam,
   requiredCallerConnectSessionConfiguration,
-  resolveCallerConnectHumanSession
+  resolveCallerConnectHumanSession,
+  runCallerConnectHumanTransaction
 } from "../session";
 import {
   AccountSummary,
@@ -43,39 +44,44 @@ export default async function CallerConnectErrorPage({
   }
 
   const requestId = createCorrelationId("caller_connect_error_page_req");
-  const session = await resolveCallerConnectHumanSession({
-    requestId,
-    fixtureClerkUserId,
-    route: "/caller/connect/error",
-    method: "GET"
-  });
-
-  if (!session.ok) {
-    return (
-      <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
-        <ConnectErrorPanel error={session} />
-      </ConnectPageShell>
-    );
-  }
   if (code === "setup_denied" && setupRequestId) {
-    const setupState = await connectTerminalSetupState({
-      session,
-      requestId,
-      setupRequestId,
-      statuses: ["denied"],
-      route: "/caller/connect/error",
-      method: "GET",
-      operation: "caller_connect_terminal_denied",
-      unavailableMessage: "Caller connect error is temporarily unavailable."
-    });
-    if (setupState.ok) {
-      const setup = setupState.data;
+    const transaction = await runCallerConnectHumanTransaction(
+      {
+        requestId,
+        fixtureClerkUserId,
+        route: "/caller/connect/error",
+        method: "GET"
+      },
+      (query, humanSession) =>
+        connectTerminalSetupState(query, {
+          session: humanSession,
+          requestId,
+          setupRequestId,
+          statuses: ["denied"],
+          route: "/caller/connect/error",
+          method: "GET",
+          operation: "caller_connect_terminal_denied",
+          unavailableMessage: "Caller connect error is temporarily unavailable."
+        })
+    );
+
+    if (!transaction.ok) {
+      return (
+        <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
+          <ConnectErrorPanel error={transaction} />
+        </ConnectPageShell>
+      );
+    }
+
+    const terminalState = transaction.data;
+    if (terminalState.ok) {
+      const setup = terminalState.data;
       const callerDisplayName =
         setup.caller?.display_name ?? setup.display_name;
 
       return (
         <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
-          <AccountSummary session={session} />
+          <AccountSummary session={transaction.session} />
           <section className="connect-card" aria-label="Approval error">
             <dl className="connect-kv">
               <div>
@@ -114,7 +120,22 @@ export default async function CallerConnectErrorPage({
 
     return (
       <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
-        <ConnectErrorPanel error={setupState.error} />
+        <ConnectErrorPanel error={terminalState.error} />
+      </ConnectPageShell>
+    );
+  }
+
+  const session = await resolveCallerConnectHumanSession({
+    requestId,
+    fixtureClerkUserId,
+    route: "/caller/connect/error",
+    method: "GET"
+  });
+
+  if (!session.ok) {
+    return (
+      <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
+        <ConnectErrorPanel error={session} />
       </ConnectPageShell>
     );
   }

@@ -5,7 +5,7 @@ import {
   ReviewWorkspace
 } from "../../src/components/human/ReviewWorkspace";
 import { createCorrelationId } from "../../src/server/correlation";
-import { runProductTransaction } from "../../src/server/database";
+import type { ProductTransactionQuery } from "../../src/server/database";
 import {
   browserFixtureAccountBanner,
   browserFixtureHumanSession,
@@ -21,7 +21,7 @@ import {
 import {
   type HumanAccountSession,
   requiredHumanSessionConfiguration,
-  resolveHumanAccountSession
+  runHumanAccountTransaction
 } from "../../src/server/human-session";
 import { MissingConfigurationPanel } from "../../src/server/ui";
 
@@ -63,14 +63,22 @@ export default async function HumanReviewPage({
   }
 
   const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
-  const humanSession = await resolveHumanAccountSession({
-    clerkUserId: session.userId,
-    requestId: createCorrelationId("human_req"),
-    route: "/human",
-    method: "GET"
-  });
+  const transaction = await runHumanAccountTransaction(
+    {
+      clerkUserId: session.userId,
+      requestId: createCorrelationId("human_req"),
+      route: "/human",
+      method: "GET"
+    },
+    (query, humanSession) =>
+      loadHumanReviewPageDataInTransaction(
+        query,
+        humanSession,
+        selectedItem ?? null
+      )
+  );
 
-  if (!humanSession.ok) {
+  if (!transaction.ok) {
     return (
       <main className="main">
         <p className="eyebrow">Protected human route</p>
@@ -80,11 +88,11 @@ export default async function HumanReviewPage({
           <ul className="status-list">
             <li>
               <span>Status</span>
-              <code>{humanSession.status}</code>
+              <code>{transaction.status}</code>
             </li>
             <li>
               <span>Code</span>
-              <code>{humanSession.code}</code>
+              <code>{transaction.code}</code>
             </li>
           </ul>
         </section>
@@ -92,10 +100,8 @@ export default async function HumanReviewPage({
     );
   }
 
-  const pageData = await loadHumanReviewPageData(
-    humanSession,
-    selectedItem ?? null
-  );
+  const humanSession = transaction.session;
+  const pageData = transaction.data;
 
   return (
     <ReviewWorkspace
@@ -108,40 +114,22 @@ export default async function HumanReviewPage({
   );
 }
 
-async function loadHumanReviewPageData(
+async function loadHumanReviewPageDataInTransaction(
+  query: ProductTransactionQuery,
   session: HumanAccountSession,
   selectedItem: string | null
 ) {
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    throw new Error("DATABASE_APP_ROLE_URL is required after session setup.");
-  }
-
-  return runProductTransaction(
-    connectionString,
-    {
-      requestId: createCorrelationId("human_review_req"),
-      authSurface: "human",
-      accountId: session.accountId,
-      userId: session.userId
-    },
-    async (query) => {
-      const rows = await humanReviewListInTransaction(query, session, {
-        status: "all",
-        sort: "priority",
-        limit: 100
-      });
-      const selected = selectedItem ?? rows[0]?.inputItemId ?? null;
-      const detail = selected
-        ? await humanReviewDetailInTransaction(query, session, selected)
-        : null;
-      const banner = await humanReviewAccountBannerInTransaction(
-        query,
-        session
-      );
-      return { rows, detail, banner };
-    }
-  );
+  const rows = await humanReviewListInTransaction(query, session, {
+    status: "all",
+    sort: "priority",
+    limit: 100
+  });
+  const selected = selectedItem ?? rows[0]?.inputItemId ?? null;
+  const detail = selected
+    ? await humanReviewDetailInTransaction(query, session, selected)
+    : null;
+  const banner = await humanReviewAccountBannerInTransaction(query, session);
+  return { rows, detail, banner };
 }
 
 function firstParam(value: string | string[] | undefined) {

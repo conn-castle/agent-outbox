@@ -6,6 +6,12 @@ values in approved operator-controlled stores, not in this file.
 
 ## Pre-Release Gate
 
+Commit a new stable `package.json` version such as `0.1.0` in the release pull
+request. Version `0.0.0`, prerelease versions, reused tags, uncommitted
+versions, and non-`main` refs fail before deployment. The committed package
+version is the single source for the numbered `v<version>` tag and GitHub
+Release.
+
 Run these local gates from the repo root before a production deploy or branch
 protection change:
 
@@ -61,17 +67,54 @@ owner approval.
 
 ## Production Deploy
 
-Production deploy is manual-only through
-`.github/workflows/deploy-production.yml` and the `production` GitHub
-environment. A separate validation job fails dispatches from any ref other than
-`refs/heads/main`, and the deploy uses the `production-deploy` concurrency
-group. The deploy wrapper builds once with production public configuration,
-dry-runs that artifact with its generated Hyperdrive and secret inventory, then
-deploys the same artifact. The workflow finishes by retrying runtime smoke until
-the exact deployed Git commit is serving or the deployment fails.
+Production release is manual-only through
+`.github/workflows/deploy-production.yml` and the protected `production` GitHub
+environment. Dispatch it from `main` only:
 
-After any Worker redeploy, rerun hosted runtime smoke and hosted health before
-enabling branch protection or accepting the deploy:
+```bash
+gh workflow run deploy-production.yml --ref main
+```
+
+The workflow applies one serialized release sequence:
+
+1. Validate the dispatch is the exact current `main` SHA and resolve the new
+   stable version from `package.json`.
+2. Rerun the reusable release gate on that SHA: `make release-check`, browser
+   tests, and migration replay/database policy checks.
+3. Capture the one current 100%-traffic Cloudflare Worker version and its live
+   runtime release SHA, then run runtime smoke against that rollback target.
+4. Build once with production public configuration, dry-run the generated
+   artifact with its Hyperdrive and secret inventory, stamp the Worker version
+   with `v<package.json version>`, and deploy that artifact.
+5. Retry runtime smoke until the exact candidate SHA is serving successfully.
+6. Only after live verification, publish `v<package.json version>` and its
+   GitHub Release on the certified SHA. Finalization is idempotent: it
+   reconciles the current tag/release state, adopts a tag a prior partial run
+   already created on this SHA, treats an already-published release as success,
+   retries only transient GitHub API failures, and proves the tag resolves to
+   the certified SHA before reporting success.
+
+The pipeline deploys only when current production is a single Worker version at
+100% traffic that passes runtime smoke (step 3). During a broad production
+outage, or a split/gradual rollout, it refuses to deploy; recover with the
+manual rollback workflow below rather than this deploy workflow.
+
+If the deploy or its live verification fails after the deploy attempt starts,
+the workflow restores the captured Worker version, verifies the captured release
+SHA, and remains red. Because the Worker is already smoke-verified before
+finalization, a tagging-only failure does NOT roll back: the verified code stays
+live, the run goes red, and re-dispatching the same version re-runs
+finalization, which adopts the existing tag. A failed rollback stays visible in
+the workflow step outcomes and requires the manual rollback procedure below.
+
+The project-owned `worker:deploy` command is an internal workflow step and fails
+outside `deploy-production.yml` on GitHub Actions. Do not load production
+credentials locally to bypass it and do not run mutating Wrangler deploy
+commands from an operator shell.
+
+After the workflow publishes the numbered release, inspect the run and rerun
+hosted runtime smoke and hosted health before broader rollout or accepting
+provider-only evidence:
 
 ```bash
 AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE=<production-smoke-env> make smoke-runtime
@@ -200,31 +243,41 @@ and the matching GitHub `production` environment secret or variable, then
 redeploy through the approved workflow. Do not use raw SQL or dashboard schema
 edits for rollback.
 
-Inspect recent Worker deployments:
+The release workflow automatically rolls back only when its deploy or
+live-verification steps fail; a tagging-only failure leaves the verified deploy
+live. For a problem found after a workflow completed, inspect recent deployments
+read-only to identify the Cloudflare version id for a previously tagged release:
 
 ```bash
 corepack pnpm exec wrangler deployments list --name agent-outbox --env-file /dev/null
 corepack pnpm exec wrangler deployments status --name agent-outbox --env-file /dev/null
 ```
 
-Roll back to a known-good Worker version:
+Dispatch the protected rollback workflow; this is the only approved manual
+rollback mutation:
 
 ```bash
-corepack pnpm exec wrangler rollback <version-id> --name agent-outbox --message "Rollback <reason>" --yes --env-file /dev/null
+gh workflow run rollback-production.yml --ref main \
+  -f release_tag=v<version> \
+  -f worker_version_id=<cloudflare-version-id>
 ```
 
-After rollback, rerun hosted runtime smoke and hosted health:
+The workflow resolves the expected commit from the existing numbered tag, proves
+the selected Cloudflare version carries that same release tag, rolls back
+through pinned Wrangler in the protected `production` environment, and accepts
+the rollback only after runtime smoke confirms that exact SHA is serving. Never
+run `wrangler rollback` locally.
+
+After rollback, run hosted runtime smoke and hosted health for additional
+provider evidence:
 
 ```bash
 AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE=<production-smoke-env> make smoke-runtime
 AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE=<production-health-env> make hosted-health
 ```
 
-To redeploy the current protected `main` workflow after fixing configuration:
-
-```bash
-gh workflow run deploy-production.yml --ref main
-```
+To redeploy after fixing configuration or code, commit a new stable package
+version through a pull request and dispatch a new numbered production release.
 
 ## Owner Acceptance
 

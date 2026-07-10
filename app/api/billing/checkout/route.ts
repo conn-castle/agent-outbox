@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   const context = apiRequestContext(request, "/api/billing/checkout");
-  const sessionResult = await billingHumanSession(context);
+  const sessionResult = await billingHumanSession(context, "checkout");
   if (!sessionResult.ok) {
     return apiErrorResponse(context, sessionResult.error);
   }
@@ -24,9 +24,7 @@ export async function POST(request: Request) {
   }
 
   const result = await createCheckoutSessionForAccount({
-    connectionString: sessionResult.data.connectionString,
-    accountId: sessionResult.data.accountId,
-    userId: sessionResult.data.userId,
+    account: sessionResult.data.account,
     requestId: context.requestId,
     interval: intervalResult.data,
     context

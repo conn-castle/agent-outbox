@@ -317,10 +317,33 @@ function loadBillingModuleForTest(reportRuntimeFailure) {
 }
 
 /**
+ * Loads billing-session.ts against a VM-compiled billing.ts whose Sentry
+ * dependency is the supplied stub, so the account-lookup failure path runs the
+ * real `billingRuntimeFailure` redaction and flow-based operation labelling
+ * while the exception capture stays in-process.
+ * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
+ * @returns {{ billingHumanSessionFromClerkUser: typeof import("../src/server/billing-session.ts").billingHumanSessionFromClerkUser }}
+ */
+function loadBillingSessionModuleForTest(reportRuntimeFailure) {
+  const billingModule = loadBillingModuleForTest(reportRuntimeFailure);
+  return /** @type {{ billingHumanSessionFromClerkUser: typeof import("../src/server/billing-session.ts").billingHumanSessionFromClerkUser }} */ (
+    loadCommonJsModuleForTest("src/server/billing-session.ts", {
+      "./billing.ts": billingModule,
+      "./human-session.ts": {
+        requiredHumanSessionConfiguration: () => [],
+        runHumanAccountTransaction() {
+          throw new Error("runHumanAccountTransaction should not run.");
+        }
+      }
+    })
+  );
+}
+
+/**
  * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
  * @returns {{
  *   createHumanAnswer: typeof createHumanAnswer,
- *   undoHumanAnswerBeforeRead: typeof import("../src/server/human-answer.ts").undoHumanAnswerBeforeRead
+ *   humanAnswerUndoTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerUndoTransactionFailure
  * }}
  */
 function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
@@ -418,7 +441,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
 
   const exportsForTest = /** @type {{
     createHumanAnswer: typeof createHumanAnswer,
-    undoHumanAnswerBeforeRead: typeof import("../src/server/human-answer.ts").undoHumanAnswerBeforeRead
+    humanAnswerUndoTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerUndoTransactionFailure
   }} */ (testModule.exports);
   return exportsForTest;
 }
@@ -561,34 +584,19 @@ function loadCallerRouteModuleForTest(
 function loadInputQueueModuleForTest(reportRuntimeFailure) {
   /**
    * @param {Request} _request
-   * @param {import("../src/server/api-errors.ts").ApiRequestContext} _context
+   * @param {import("../src/server/api-errors.ts").ApiRequestContext} context
    * @param {string} connectionString
+   * @param {(query: (statement?: unknown) => Promise<{ rows: unknown[] }>, identity: { accountId: string, callerId: string }) => Promise<unknown>} callback
    */
-  const authenticateCallerApiRequestWithDatabase = async (
+  const runAuthenticatedCallerTransaction = async (
     _request,
-    _context,
-    connectionString
-  ) => {
-    assert.equal(connectionString, "postgresql://observability-test");
-    return {
-      ok: true,
-      accountId: "00000000-0000-4000-8000-000000000201",
-      callerId: "00000000-0000-4000-8000-000000000202"
-    };
-  };
-  /**
-   * @param {string} connectionString
-   * @param {Record<string, unknown>} transactionContext
-   * @returns {Promise<never>}
-   */
-  const runProductTransaction = async (
+    context,
     connectionString,
-    transactionContext
+    callback
   ) => {
     assert.equal(connectionString, "postgresql://observability-test");
-    assert.deepEqual(transactionContext, {
-      requestId: "req-input-queue-observability",
-      authSurface: "caller",
+    assert.equal(context.requestId, "req-input-queue-observability");
+    await callback(async () => ({ rows: [] }), {
       accountId: "00000000-0000-4000-8000-000000000201",
       callerId: "00000000-0000-4000-8000-000000000202"
     });
@@ -598,13 +606,13 @@ function loadInputQueueModuleForTest(reportRuntimeFailure) {
   return /** @type {ReturnType<typeof loadInputQueueModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/input-queue.ts", {
       "./accounting.ts": { async auditSafeLifecycleEvent() {} },
-      "./caller-api-auth.ts": { authenticateCallerApiRequestWithDatabase },
+      "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
         async enforceAcceptedInputSubmissionLimits() {},
         async enforceCallerRequestLimits() {}
       },
-      "./database.ts": { runProductTransaction },
+      "./database.ts": {},
       "./input-schema.ts": {
         parseInputDeleteBody: /** @type {() => unknown} */ (() => ({})),
         parseInputSubmission: /** @type {() => unknown} */ (() => ({})),
@@ -629,34 +637,19 @@ function loadInputQueueModuleForTest(reportRuntimeFailure) {
 function loadOutputFilesModuleForTest(reportRuntimeFailure) {
   /**
    * @param {Request} _request
-   * @param {import("../src/server/api-errors.ts").ApiRequestContext} _context
+   * @param {import("../src/server/api-errors.ts").ApiRequestContext} context
    * @param {string} connectionString
+   * @param {(query: (statement?: unknown) => Promise<{ rows: unknown[] }>, identity: { accountId: string, callerId: string }) => Promise<unknown>} callback
    */
-  const authenticateCallerApiRequestWithDatabase = async (
+  const runAuthenticatedCallerTransaction = async (
     _request,
-    _context,
-    connectionString
-  ) => {
-    assert.equal(connectionString, "postgresql://observability-test");
-    return {
-      ok: true,
-      accountId: "00000000-0000-4000-8000-000000000301",
-      callerId: "00000000-0000-4000-8000-000000000302"
-    };
-  };
-  /**
-   * @param {string} connectionString
-   * @param {Record<string, unknown>} transactionContext
-   * @returns {Promise<never>}
-   */
-  const runProductTransaction = async (
+    context,
     connectionString,
-    transactionContext
+    callback
   ) => {
     assert.equal(connectionString, "postgresql://observability-test");
-    assert.deepEqual(transactionContext, {
-      requestId: "req-output-file-observability",
-      authSurface: "caller",
+    assert.equal(context.requestId, "req-output-file-observability");
+    await callback(async () => ({ rows: [] }), {
       accountId: "00000000-0000-4000-8000-000000000301",
       callerId: "00000000-0000-4000-8000-000000000302"
     });
@@ -667,12 +660,12 @@ function loadOutputFilesModuleForTest(reportRuntimeFailure) {
     loadCommonJsModuleForTest("src/server/output-files.ts", {
       "./accounting.ts": { async auditSafeLifecycleEvent() {} },
       "./api-errors.ts": { apiResponseHeaders },
-      "./caller-api-auth.ts": { authenticateCallerApiRequestWithDatabase },
+      "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
         async enforceCallerRequestLimits() {}
       },
-      "./database.ts": { runProductTransaction },
+      "./database.ts": {},
       "./logging.ts": { durationSinceMs },
       "./sentry.ts": { reportRuntimeFailure }
     })
@@ -1122,7 +1115,7 @@ test("human answer undo transaction failures share error id across structured lo
     }
   };
   const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
-  const { undoHumanAnswerBeforeRead: undoAnswer } =
+  const { humanAnswerUndoTransactionFailure: undoFailure } =
     loadHumanAnswerModuleForTest(reportRuntimeFailure);
   const logs = await withProcessEnvAsync(
     {
@@ -1134,14 +1127,17 @@ test("human answer undo transaction failures share error id across structured lo
     },
     () =>
       captureStructuredLogs(async () => {
-        const result = await undoAnswer("postgresql://human-undo-test", {
-          accountId: "00000000-0000-4000-8000-000000000421",
-          callerId: "00000000-0000-4000-8000-000000000422",
-          humanUserId: "00000000-0000-4000-8000-000000000423",
-          requestId: "req-human-undo-transaction",
-          correlationId: "corr-human-undo-transaction",
-          outputResultId: "00000000-0000-4000-8000-000000000424"
-        });
+        const result = undoFailure(
+          new Error("raw human undo database secret"),
+          {
+            accountId: "00000000-0000-4000-8000-000000000421",
+            callerId: "00000000-0000-4000-8000-000000000422",
+            humanUserId: "00000000-0000-4000-8000-000000000423",
+            requestId: "req-human-undo-transaction",
+            correlationId: "corr-human-undo-transaction",
+            outputResultId: "00000000-0000-4000-8000-000000000424"
+          }
+        );
 
         assert.equal(result.ok, false);
         assert.equal(result.ok ? null : result.code, "temporary_unavailable");
@@ -1260,7 +1256,7 @@ test("caller approval deny actions pass stable route labels to session logging",
       },
       "./session": {
         /** @param {Record<string, unknown>} input */
-        async resolveCallerConnectHumanSession(input) {
+        async runCallerConnectHumanTransaction(input) {
           connectSessionInputs.push(input);
           return {
             ok: false,
@@ -1269,9 +1265,7 @@ test("caller approval deny actions pass stable route labels to session logging",
             message: "No session."
           };
         },
-        async runCallerConnectHumanTransaction() {
-          throw new Error("unexpected transaction");
-        }
+        reportCallerApprovalFailure() {}
       }
     })
   );
@@ -1322,7 +1316,7 @@ test("caller approval deny actions pass stable route labels to session logging",
       },
       "./connect/session": {
         /** @param {Record<string, unknown>} input */
-        async resolveCallerConnectHumanSession(input) {
+        async runCallerConnectHumanTransaction(input) {
           credentialSessionInputs.push(input);
           return {
             ok: false,
@@ -1331,9 +1325,7 @@ test("caller approval deny actions pass stable route labels to session logging",
             message: "No session."
           };
         },
-        async runCallerConnectHumanTransaction() {
-          throw new Error("unexpected transaction");
-        }
+        reportCallerApprovalFailure() {}
       }
     })
   );
@@ -1605,7 +1597,7 @@ test("connect terminal setup state reports transaction exceptions", async () => 
   };
   const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
   const sessionModule =
-    /** @type {{ connectTerminalSetupState(input: Record<string, unknown>): Promise<{ ok: boolean, error?: { status: number, code: string, message: string } }> }} */ (
+    /** @type {{ connectTerminalSetupState(query: import("../src/server/database.ts").ProductTransactionQuery, input: Record<string, unknown>): Promise<{ ok: boolean, error?: { status: number, code: string, message: string } }> }} */ (
       loadCommonJsModuleForTest("app/caller/connect/session.ts", {
         "@clerk/nextjs/server": { auth: {} },
         "next/headers": { headers: async () => new Headers() },
@@ -1623,15 +1615,14 @@ test("connect terminal setup state reports transaction exceptions", async () => 
         "../../../src/server/correlation": {
           createCorrelationId: () => "caller_terminal_report"
         },
-        "../../../src/server/database": {
-          async runProductTransaction() {
-            throw new Error("raw connect terminal database secret");
-          }
-        },
+        "../../../src/server/database": {},
         "../../../src/server/human-session": {
           requiredHumanSessionConfiguration: () => [],
           async resolveHumanAccountSession() {
             throw new Error("resolveHumanAccountSession should not run.");
+          },
+          async runHumanAccountTransaction() {
+            throw new Error("runHumanAccountTransaction should not run.");
           }
         },
         "../../../src/server/logging": { durationSinceMs, emitRuntimeLog },
@@ -1650,20 +1641,27 @@ test("connect terminal setup state reports transaction exceptions", async () => 
     },
     () =>
       captureStructuredLogs(async () => {
-        const result = await sessionModule.connectTerminalSetupState({
-          session: {
-            accountId: "00000000-0000-4000-8000-000000000621",
-            userId: "user_connect_terminal"
-          },
-          requestId: "req-connect-terminal",
-          setupRequestId: "setup-connect-terminal",
-          statuses: ["approved", "exchanged"],
-          route: "/caller/connect/success",
-          method: "GET",
-          operation: "caller_connect_terminal_success",
-          unavailableMessage:
-            "Caller connect success is temporarily unavailable."
-        });
+        const result = await sessionModule.connectTerminalSetupState(
+          /** @type {any} */ (
+            async () => {
+              throw new Error("raw connect terminal database secret");
+            }
+          ),
+          {
+            session: {
+              accountId: "00000000-0000-4000-8000-000000000621",
+              userId: "user_connect_terminal"
+            },
+            requestId: "req-connect-terminal",
+            setupRequestId: "setup-connect-terminal",
+            statuses: ["approved", "exchanged"],
+            route: "/caller/connect/success",
+            method: "GET",
+            operation: "caller_connect_terminal_success",
+            unavailableMessage:
+              "Caller connect success is temporarily unavailable."
+          }
+        );
 
         assert.equal(result.ok, false);
         assert.equal(result.error?.status, 503);
@@ -1713,11 +1711,12 @@ test("caller approval action wrappers report transaction exceptions before redir
   /** @type {Array<Record<string, unknown>>} */
   const reports = [];
   const sessionStub = {
-    async resolveCallerConnectHumanSession() {
-      return session;
-    },
-    async runCallerConnectHumanTransaction() {
-      throw new Error("raw approval transaction secret");
+    /**
+     * @param {Record<string, unknown>} _input
+     * @param {(query: unknown, session: Record<string, unknown>) => Promise<unknown>} callback
+     */
+    async runCallerConnectHumanTransaction(_input, callback) {
+      return callback({}, session);
     },
     /**
      * @param {unknown} _error
@@ -1737,7 +1736,9 @@ test("caller approval action wrappers report transaction exceptions before redir
           }
         },
         "../../../src/server/caller-connect": {
-          approveConnectBrowserSetupRequest() {},
+          approveConnectBrowserSetupRequest() {
+            throw new Error("raw approval transaction secret");
+          },
           approveConnectDeviceSetupRequest() {},
           denyConnectSetupRequest() {}
         },
@@ -1764,7 +1765,9 @@ test("caller approval action wrappers report transaction exceptions before redir
         },
         "../../src/server/caller-credential-operations": {
           approveCredentialOperationBrowserSetupRequest() {},
-          approveCredentialOperationDeviceSetupRequest() {},
+          approveCredentialOperationDeviceSetupRequest() {
+            throw new Error("raw approval transaction secret");
+          },
           denyCredentialOperationSetupRequest() {}
         },
         "../../src/server/caller-connect-clerk-fixture": {
@@ -2023,7 +2026,7 @@ test("billing webhook processing failures share one error id across structured l
   assert.equal(serializedLogs.includes("whsec_secret"), false);
 });
 
-test("billing checkout and portal thrown failures share error ids across structured log and Sentry", async () => {
+test("billing checkout and portal Stripe failures share error ids across structured log and Sentry", async () => {
   /** @type {Array<Record<string, unknown>>} */
   const tagSnapshots = [];
   /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
@@ -2065,7 +2068,6 @@ test("billing checkout and portal thrown failures share error ids across structu
     createCheckoutSessionForAccount: createCheckoutSession
   } = loadBillingModuleForTest(reportRuntimeFailure);
   const accountId = "00000000-0000-4000-8000-000000000501";
-  const userId = "user_billing_observability";
   const config = {
     secretKey: "sk_test_secret",
     webhookSecret: "whsec_secret",
@@ -2076,12 +2078,13 @@ test("billing checkout and portal thrown failures share error ids across structu
     portalConfigurationId: "bpc_secret",
     publicAppBaseUrl: "https://app.agent-outbox.dev"
   };
-  const accountRow = {
-    account_id: accountId,
-    tier: "hosted_free",
-    billing_status: "not_applicable",
-    stripe_customer_id: "cus_secret"
-  };
+  const accountRow =
+    /** @type {import("../src/server/billing.ts").BillingAccount} */ ({
+      account_id: accountId,
+      tier: "hosted_free",
+      billing_status: "not_applicable",
+      stripe_customer_id: "cus_secret"
+    });
   const checkoutContext = {
     requestId: "req-billing-checkout",
     correlationId: "corr-billing-checkout",
@@ -2113,14 +2116,6 @@ test("billing checkout and portal thrown failures share error ids across structu
     },
     webhooks: { constructEvent() {} }
   });
-  /**
-   * @param {string} _connectionString
-   * @param {Record<string, unknown>} _context
-   * @param {(query: () => Promise<{ rows: Array<typeof accountRow> }>) => Promise<unknown>} callback
-   */
-  const successfulLookup = async (_connectionString, _context, callback) =>
-    callback(async () => ({ rows: [accountRow] }));
-
   const logs = await withProcessEnvAsync(
     {
       APP_ENV: "production",
@@ -2131,80 +2126,35 @@ test("billing checkout and portal thrown failures share error ids across structu
     },
     () =>
       captureStructuredLogs(async () => {
-        const checkoutLookup = await createCheckoutSession({
-          connectionString: "postgresql://billing-test",
-          accountId,
-          userId,
-          requestId: checkoutContext.requestId,
-          interval: "monthly",
-          context: checkoutContext,
-          config,
-          stripe,
-          async runTransaction() {
-            throw new Error("raw checkout database secret");
-          }
-        });
         const checkoutStripe = await createCheckoutSession({
-          connectionString: "postgresql://billing-test",
-          accountId,
-          userId,
+          account: accountRow,
           requestId: checkoutContext.requestId,
           interval: "monthly",
           context: checkoutContext,
           config,
-          stripe,
-          runTransaction: /** @type {any} */ (successfulLookup)
-        });
-        const portalLookup = await createPortalSession({
-          connectionString: "postgresql://billing-test",
-          accountId,
-          userId,
-          requestId: portalContext.requestId,
-          context: portalContext,
-          config,
-          stripe,
-          async runTransaction() {
-            throw new Error("raw portal database secret");
-          }
+          stripe
         });
         const portalStripe = await createPortalSession({
-          connectionString: "postgresql://billing-test",
-          accountId,
-          userId,
+          account: accountRow,
           requestId: portalContext.requestId,
           context: portalContext,
           config,
-          stripe,
-          runTransaction: /** @type {any} */ (successfulLookup)
+          stripe
         });
 
         assert.deepEqual(
-          [checkoutLookup, checkoutStripe, portalLookup, portalStripe].map(
-            (result) => ({
-              ok: result.ok,
-              status: result.ok ? null : result.error.status,
-              code: result.ok ? null : result.error.code,
-              errorId: result.ok ? null : result.error.errorId
-            })
-          ),
+          [checkoutStripe, portalStripe].map((result) => ({
+            ok: result.ok,
+            status: result.ok ? null : result.error.status,
+            code: result.ok ? null : result.error.code,
+            errorId: result.ok ? null : result.error.errorId
+          })),
           [
             {
               ok: false,
               status: 503,
               code: "temporary_unavailable",
               errorId: "corr-billing-checkout"
-            },
-            {
-              ok: false,
-              status: 503,
-              code: "temporary_unavailable",
-              errorId: "corr-billing-checkout"
-            },
-            {
-              ok: false,
-              status: 503,
-              code: "temporary_unavailable",
-              errorId: "corr-billing-portal"
             },
             {
               ok: false,
@@ -2217,42 +2167,22 @@ test("billing checkout and portal thrown failures share error ids across structu
       })
   );
 
-  assert.equal(logs.length, 4);
+  assert.equal(logs.length, 2);
   assert.deepEqual(
     logs.map((log) => log.operation),
-    [
-      "stripe_checkout_account_lookup",
-      "stripe_checkout_session_create",
-      "stripe_billing_portal_account_lookup",
-      "stripe_billing_portal_session_create"
-    ]
+    ["stripe_checkout_session_create", "stripe_billing_portal_session_create"]
   );
   assert.deepEqual(
     logs.map((log) => log.error_id),
-    [
-      "corr-billing-checkout",
-      "corr-billing-checkout",
-      "corr-billing-portal",
-      "corr-billing-portal"
-    ]
+    ["corr-billing-checkout", "corr-billing-portal"]
   );
   assert.deepEqual(
     logs.map((log) => log.request_id),
-    [
-      "req-billing-checkout",
-      "req-billing-checkout",
-      "req-billing-portal",
-      "req-billing-portal"
-    ]
+    ["req-billing-checkout", "req-billing-portal"]
   );
   assert.deepEqual(
     logs.map((log) => log.route),
-    [
-      "/api/billing/checkout",
-      "/api/billing/checkout",
-      "/api/billing/portal",
-      "/api/billing/portal"
-    ]
+    ["/api/billing/checkout", "/api/billing/portal"]
   );
   for (const log of logs) {
     assert.equal(log.level, "error");
@@ -2261,8 +2191,8 @@ test("billing checkout and portal thrown failures share error ids across structu
     assert.equal(log.account_id, accountId);
     assert.equal(typeof log.duration_ms, "number");
   }
-  assert.equal(capturedExceptions.length, 4);
-  assert.equal(sentryContexts.length, 4);
+  assert.equal(capturedExceptions.length, 2);
+  assert.equal(sentryContexts.length, 2);
   assert.deepEqual(
     tagSnapshots.map((tags) => tags.error_id),
     logs.map((log) => log.error_id)
@@ -2272,12 +2202,191 @@ test("billing checkout and portal thrown failures share error ids across structu
     logs.map((log) => log.operation)
   );
   const serializedLogs = JSON.stringify(logs);
-  assert.equal(serializedLogs.includes("raw checkout database secret"), false);
   assert.equal(serializedLogs.includes("raw checkout stripe secret"), false);
-  assert.equal(serializedLogs.includes("raw portal database secret"), false);
   assert.equal(serializedLogs.includes("raw portal stripe secret"), false);
   assert.equal(serializedLogs.includes("sk_test_secret"), false);
   assert.equal(serializedLogs.includes("cus_secret"), false);
+});
+
+test("billing account-lookup failures label the flow operation and redact secrets", async () => {
+  /** @type {Array<Record<string, unknown>>} */
+  const tagSnapshots = [];
+  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
+  const sentryContexts = [];
+  /** @type {Array<{ name?: string }>} */
+  const capturedExceptions = [];
+  const sentryStub = {
+    /**
+     * @param {(scope: {
+     *   setTag(name: string, value: unknown): void,
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
+     * }) => void} callback
+     */
+    withScope(callback) {
+      /** @type {Record<string, unknown>} */
+      const tags = {};
+      callback({
+        setTag(name, value) {
+          tags[name] = value;
+        },
+        setContext(name, value) {
+          sentryContexts.push({ name, value });
+        },
+        setFingerprint() {}
+      });
+      tagSnapshots.push(tags);
+    },
+    /**
+     * @param {unknown} error
+     */
+    captureException(error) {
+      capturedExceptions.push(/** @type {{ name?: string }} */ (error));
+    }
+  };
+  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const { billingHumanSessionFromClerkUser } =
+    loadBillingSessionModuleForTest(reportRuntimeFailure);
+  const accountId = "00000000-0000-4000-8000-000000000511";
+
+  /**
+   * The callback resolves the session's account id and then throws inside the
+   * account lookup query so the billing-session catch path runs.
+   * @param {import("../src/server/billing-session.ts").BillingFlow} flow
+   * @param {{ requestId: string, correlationId: string, route: string }} route
+   */
+  const runLookupFailure = (flow, route) =>
+    billingHumanSessionFromClerkUser({
+      context: { ...route, method: "POST", startedAtMs: Date.now() },
+      flow,
+      clerkUserId: `user_billing_${flow}`,
+      runHumanTransaction: /** @type {any} */ (
+        async (/** @type {any} */ _input, /** @type {any} */ callback) =>
+          callback(
+            async () => {
+              throw new Error(`raw ${flow} account lookup secret`);
+            },
+            { accountId }
+          )
+      )
+    });
+
+  const logs = await withProcessEnvAsync(
+    {
+      APP_ENV: "production",
+      SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+      SENTRY_RELEASE: "agent-outbox@2026.07.07",
+      CI: undefined,
+      NODE_ENV: "production"
+    },
+    () =>
+      captureStructuredLogs(async () => {
+        const checkoutResult = await runLookupFailure("checkout", {
+          requestId: "req-billing-checkout-lookup",
+          correlationId: "corr-billing-checkout-lookup",
+          route: "/api/billing/checkout"
+        });
+        const portalResult = await runLookupFailure("portal", {
+          requestId: "req-billing-portal-lookup",
+          correlationId: "corr-billing-portal-lookup",
+          route: "/api/billing/portal"
+        });
+
+        assert.deepEqual(
+          [checkoutResult, portalResult].map((result) => ({
+            ok: result.ok,
+            status: result.ok ? null : result.error.status,
+            code: result.ok ? null : result.error.code,
+            errorId: result.ok ? null : result.error.errorId,
+            reported: result.ok ? null : result.error.reported
+          })),
+          [
+            {
+              ok: false,
+              status: 503,
+              code: "temporary_unavailable",
+              errorId: "corr-billing-checkout-lookup",
+              reported: true
+            },
+            {
+              ok: false,
+              status: 503,
+              code: "temporary_unavailable",
+              errorId: "corr-billing-portal-lookup",
+              reported: true
+            }
+          ]
+        );
+      })
+  );
+
+  assert.equal(logs.length, 2);
+  // The operation label is selected from the explicit flow, not the URL, so an
+  // inverted mapping (checkout <-> portal) fails here.
+  assert.deepEqual(
+    logs.map((log) => log.operation),
+    ["stripe_checkout_account_lookup", "stripe_billing_portal_account_lookup"]
+  );
+  assert.deepEqual(
+    logs.map((log) => log.error_id),
+    ["corr-billing-checkout-lookup", "corr-billing-portal-lookup"]
+  );
+  assert.deepEqual(
+    logs.map((log) => log.route),
+    ["/api/billing/checkout", "/api/billing/portal"]
+  );
+  for (const log of logs) {
+    assert.equal(log.level, "error");
+    assert.equal(log.method, "POST");
+    assert.equal(log.status_code, 503);
+    assert.equal(log.account_id, accountId);
+    assert.equal(typeof log.duration_ms, "number");
+  }
+  assert.equal(capturedExceptions.length, 2);
+  assert.equal(sentryContexts.length, 2);
+  assert.deepEqual(
+    tagSnapshots.map((tags) => tags.operation),
+    ["stripe_checkout_account_lookup", "stripe_billing_portal_account_lookup"]
+  );
+  assert.deepEqual(
+    tagSnapshots.map((tags) => tags.error_id),
+    ["corr-billing-checkout-lookup", "corr-billing-portal-lookup"]
+  );
+  const serializedLogs = JSON.stringify(logs);
+  assert.equal(
+    serializedLogs.includes("raw checkout account lookup secret"),
+    false
+  );
+  assert.equal(
+    serializedLogs.includes("raw portal account lookup secret"),
+    false
+  );
+
+  // Prove the operation label follows the explicit flow, not the request route:
+  // a checkout flow reported against the portal route still labels checkout.
+  const mismatchedLogs = await withProcessEnvAsync(
+    {
+      APP_ENV: "production",
+      SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+      SENTRY_RELEASE: "agent-outbox@2026.07.07",
+      CI: undefined,
+      NODE_ENV: "production"
+    },
+    () =>
+      captureStructuredLogs(async () => {
+        await runLookupFailure("checkout", {
+          requestId: "req-billing-flow-mismatch",
+          correlationId: "corr-billing-flow-mismatch",
+          route: "/api/billing/portal"
+        });
+      })
+  );
+  assert.equal(mismatchedLogs.length, 1);
+  assert.equal(
+    mismatchedLogs[0].operation,
+    "stripe_checkout_account_lookup",
+    "operation label must follow the explicit flow, not the request route"
+  );
 });
 
 test("billing session resolution failures share billing route error ids", async () => {

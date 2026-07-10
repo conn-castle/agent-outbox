@@ -4,7 +4,6 @@ import {
   terminalOutputDeletionStatement
 } from "./cleanup.ts";
 import {
-  runProductTransaction,
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
@@ -14,7 +13,7 @@ import {
   accountLimitProfileForAccount,
   enforceCallerRequestLimits
 } from "./caller-api-limits.ts";
-import { authenticateCallerApiRequestWithDatabase } from "./caller-api-auth.ts";
+import { runAuthenticatedCallerTransaction } from "./caller-api-auth.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { safeContentType } from "./output-files.ts";
@@ -608,27 +607,14 @@ async function withAuthenticatedCallerTransaction(
     );
   }
 
-  let identity: CallerIdentity | null = null;
+  let identity: CallerIdentity | undefined;
   try {
-    const auth = await authenticateCallerApiRequestWithDatabase(
+    const transaction = await runAuthenticatedCallerTransaction(
       request,
       context,
-      connectionString
-    );
-    if (!auth.ok) {
-      return { ok: false, error: auth.clientError };
-    }
-    identity = auth;
-
-    return await runProductTransaction(
       connectionString,
-      {
-        requestId: context.requestId,
-        authSurface: "caller",
-        accountId: auth.accountId,
-        callerId: auth.callerId
-      },
-      async (query) => {
+      async (query, auth) => {
+        identity = auth;
         const profile = await accountLimitProfileForAccount(
           query,
           auth.accountId
@@ -646,12 +632,16 @@ async function withAuthenticatedCallerTransaction(
           operationKind
         );
         if (!limit.ok) {
-          return { ok: false, error: limit.error };
+          return { ok: false as const, error: limit.error };
         }
 
         return callback(query, auth);
       }
     );
+    if (!transaction.authenticated) {
+      return { ok: false, error: transaction.failure.clientError };
+    }
+    return transaction.data;
   } catch (error) {
     reportRuntimeFailure(error, {
       errorId: context.correlationId,

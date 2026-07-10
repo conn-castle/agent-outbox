@@ -10,7 +10,6 @@ import {
   type ApiRequestContext
 } from "./api-errors.ts";
 import {
-  runProductTransaction,
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
@@ -19,7 +18,7 @@ import {
   enforceCallerRequestLimits
 } from "./caller-api-limits.ts";
 import {
-  authenticateCallerApiRequestWithDatabase,
+  runAuthenticatedCallerTransaction,
   type CallerIdentity
 } from "./caller-api-auth.ts";
 import { durationSinceMs } from "./logging.ts";
@@ -85,27 +84,14 @@ export async function handleOutputFileDownloadRequest(
     };
   }
 
-  let identity: CallerIdentity | null = null;
+  let identity: CallerIdentity | undefined;
   try {
-    const auth = await authenticateCallerApiRequestWithDatabase(
+    const transaction = await runAuthenticatedCallerTransaction(
       request,
       context,
-      connectionString
-    );
-    if (!auth.ok) {
-      return { ok: false, error: auth.clientError };
-    }
-    identity = auth;
-
-    return await runProductTransaction(
       connectionString,
-      {
-        requestId: context.requestId,
-        authSurface: "caller",
-        accountId: auth.accountId,
-        callerId: auth.callerId
-      },
-      async (query) => {
+      async (query, auth) => {
+        identity = auth;
         return handleOutputFileDownloadAuthenticatedTransaction(
           query,
           context,
@@ -114,6 +100,10 @@ export async function handleOutputFileDownloadRequest(
         );
       }
     );
+    if (!transaction.authenticated) {
+      return { ok: false, error: transaction.failure.clientError };
+    }
+    return transaction.data;
   } catch (error) {
     reportRuntimeFailure(error, {
       errorId: context.correlationId,

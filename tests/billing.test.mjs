@@ -165,12 +165,16 @@ test("billing API session returns a JSON-envelope auth error when signed out", a
       method: "POST",
       startedAtMs: Date.now()
     },
+    flow: "checkout",
     clerkUserId: null,
-    connectionString: "postgresql://billing-test",
-    async resolveSession() {
-      resolveCalls += 1;
-      throw new Error("resolveSession should not run without a Clerk user.");
-    }
+    runHumanTransaction: /** @type {any} */ (
+      async () => {
+        resolveCalls += 1;
+        throw new Error(
+          "runHumanTransaction should not run without a Clerk user."
+        );
+      }
+    )
   });
 
   assert.deepEqual(result, {
@@ -194,26 +198,28 @@ test("billing API session forwards route context and preserves reported errors",
       method: "POST",
       startedAtMs
     },
+    flow: "portal",
     clerkUserId: "user_billing_session",
-    connectionString: "postgresql://billing-test",
-    async resolveSession(input) {
-      assert.deepEqual(input, {
-        clerkUserId: "user_billing_session",
-        requestId: "req-billing-session",
-        errorId: "corr-billing-session",
-        route: "/api/billing/portal",
-        method: "POST",
-        startedAtMs
-      });
-      return {
-        ok: false,
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Human account session is temporarily unavailable.",
-        errorId: "corr-billing-session",
-        reported: true
-      };
-    }
+    runHumanTransaction: /** @type {any} */ (
+      async (/** @type {any} */ input) => {
+        assert.deepEqual(input, {
+          clerkUserId: "user_billing_session",
+          requestId: "req-billing-session",
+          errorId: "corr-billing-session",
+          route: "/api/billing/portal",
+          method: "POST",
+          startedAtMs
+        });
+        return {
+          ok: false,
+          status: 503,
+          code: "temporary_unavailable",
+          message: "Human account session is temporarily unavailable.",
+          errorId: "corr-billing-session",
+          reported: true
+        };
+      }
+    )
   });
 
   assert.deepEqual(result, {
@@ -224,6 +230,76 @@ test("billing API session forwards route context and preserves reported errors",
       message: "Human account session is temporarily unavailable.",
       errorId: "corr-billing-session",
       reported: true
+    }
+  });
+});
+
+test("billing API session returns the account row resolved inside the transaction", async () => {
+  const account = {
+    account_id: accountId,
+    tier: "hosted_free",
+    billing_status: "not_applicable",
+    stripe_customer_id: null
+  };
+  /** @type {any[]} */
+  const lookupStatements = [];
+  const result = await billingHumanSessionFromClerkUser({
+    context: {
+      requestId: "req-billing-account",
+      correlationId: "corr-billing-account",
+      route: "/api/billing/checkout",
+      method: "POST",
+      startedAtMs: Date.now()
+    },
+    flow: "checkout",
+    clerkUserId: "user_billing_account",
+    runHumanTransaction: /** @type {any} */ (
+      async (/** @type {any} */ _input, /** @type {any} */ callback) => {
+        const data = await callback(
+          async (/** @type {any} */ statement) => {
+            lookupStatements.push(statement);
+            return queryResult([account]);
+          },
+          { accountId }
+        );
+        return { ok: true, session: {}, data };
+      }
+    )
+  });
+
+  assert.deepEqual(result, { ok: true, data: { account } });
+  // The callback must actually run the account lookup keyed by the session's
+  // account id, not synthesize the account from outside the transaction.
+  assert.equal(lookupStatements.length, 1);
+  assert.match(lookupStatements[0].sql, /from public\.agent_outbox_accounts/);
+  assert.deepEqual(lookupStatements[0].values, [accountId]);
+});
+
+test("billing API session reports an unavailable account when the lookup returns no row", async () => {
+  const result = await billingHumanSessionFromClerkUser({
+    context: {
+      requestId: "req-billing-account-missing",
+      correlationId: "corr-billing-account-missing",
+      route: "/api/billing/checkout",
+      method: "POST",
+      startedAtMs: Date.now()
+    },
+    flow: "checkout",
+    clerkUserId: "user_billing_account_missing",
+    runHumanTransaction: /** @type {any} */ (
+      async (/** @type {any} */ _input, /** @type {any} */ callback) => {
+        const data = await callback(async () => queryResult([]), { accountId });
+        return { ok: true, session: {}, data };
+      }
+    )
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message: "Billing account is unavailable."
     }
   });
 });
@@ -322,8 +398,6 @@ test("checkout interval request parsing rejects malformed or unsupported bodies"
 
 test("monthly checkout creates an account-scoped subscription session without exposing Stripe ids", async () => {
   const calls = {
-    contexts: /** @type {any[]} */ ([]),
-    statements: /** @type {any[]} */ ([]),
     checkoutInputs: /** @type {any[]} */ ([])
   };
   const stripe = /** @type {any} */ ({
@@ -341,46 +415,22 @@ test("monthly checkout creates an account-scoped subscription session without ex
   });
 
   const result = await createCheckoutSessionForAccount({
-    connectionString: "postgresql://billing-test",
-    accountId,
-    userId,
+    account: {
+      account_id: accountId,
+      tier: "hosted_free",
+      billing_status: "not_applicable",
+      stripe_customer_id: null
+    },
     requestId: "req-billing-checkout",
     interval: "monthly",
     config,
-    stripe,
-    async runTransaction(connectionString, context, callback) {
-      assert.equal(connectionString, "postgresql://billing-test");
-      calls.contexts.push(context);
-      return callback(
-        /** @type {any} */ (
-          async (/** @type {any} */ statement) => {
-            calls.statements.push(statement);
-            return queryResult([
-              {
-                account_id: accountId,
-                tier: "hosted_free",
-                billing_status: "not_applicable",
-                stripe_customer_id: null
-              }
-            ]);
-          }
-        )
-      );
-    }
+    stripe
   });
 
   assert.deepEqual(result, {
     ok: true,
     data: { url: "https://checkout.stripe.test/session" }
   });
-  assert.deepEqual(calls.contexts, [
-    {
-      requestId: "req-billing-checkout",
-      authSurface: "human",
-      accountId,
-      userId
-    }
-  ]);
   assert.equal(calls.checkoutInputs.length, 1);
   assert.deepEqual(calls.checkoutInputs[0], {
     mode: "subscription",
@@ -420,27 +470,15 @@ test("default Stripe checkout client uses fetch transport for Worker compatibili
 
   try {
     const result = await createCheckoutSessionForAccount({
-      connectionString: "postgresql://billing-test",
-      accountId,
-      userId,
+      account: {
+        account_id: accountId,
+        tier: "hosted_free",
+        billing_status: "not_applicable",
+        stripe_customer_id: null
+      },
       requestId: "req-billing-worker-transport",
       interval: "monthly",
-      config,
-      async runTransaction(_connectionString, _context, callback) {
-        return callback(
-          /** @type {any} */ (
-            async () =>
-              queryResult([
-                {
-                  account_id: accountId,
-                  tier: "hosted_free",
-                  billing_status: "not_applicable",
-                  stripe_customer_id: null
-                }
-              ])
-          )
-        );
-      }
+      config
     });
 
     assert.deepEqual(result, {
@@ -469,9 +507,12 @@ test("default Stripe checkout client uses fetch transport for Worker compatibili
 test("yearly checkout uses the yearly Stripe price id", async () => {
   const checkoutInputs = /** @type {any[]} */ ([]);
   const result = await createCheckoutSessionForAccount({
-    connectionString: "postgresql://billing-test",
-    accountId,
-    userId,
+    account: {
+      account_id: accountId,
+      tier: "hosted_free",
+      billing_status: "not_applicable",
+      stripe_customer_id: null
+    },
     requestId: "req-billing-checkout-yearly",
     interval: "yearly",
     config,
@@ -487,22 +528,7 @@ test("yearly checkout uses the yearly Stripe price id", async () => {
       },
       billingPortal: { sessions: { async create() {} } },
       webhooks: { constructEvent() {} }
-    }),
-    async runTransaction(_connectionString, _context, callback) {
-      return callback(
-        /** @type {any} */ (
-          async () =>
-            queryResult([
-              {
-                account_id: accountId,
-                tier: "hosted_free",
-                billing_status: "not_applicable",
-                stripe_customer_id: null
-              }
-            ])
-        )
-      );
-    }
+    })
   });
 
   assert.deepEqual(result, {
@@ -520,9 +546,12 @@ test("checkout rejects missing or unsupported intervals before billing work", as
 
   for (const interval of invalidIntervals) {
     const result = await createCheckoutSessionForAccount({
-      connectionString: "postgresql://billing-test",
-      accountId,
-      userId,
+      account: {
+        account_id: accountId,
+        tier: "hosted_free",
+        billing_status: "not_applicable",
+        stripe_customer_id: null
+      },
       requestId: "req-billing-checkout-invalid-interval",
       interval,
       config,
@@ -536,10 +565,7 @@ test("checkout rejects missing or unsupported intervals before billing work", as
         },
         billingPortal: { sessions: { async create() {} } },
         webhooks: { constructEvent() {} }
-      }),
-      async runTransaction() {
-        throw new Error("account lookup should not run");
-      }
+      })
     });
 
     assert.equal(result.ok, false);
@@ -554,9 +580,12 @@ test("checkout rejects missing or unsupported intervals before billing work", as
 test("checkout rejects live billing accounts before creating another subscription", async () => {
   const checkoutInputs = /** @type {any[]} */ ([]);
   const result = await createCheckoutSessionForAccount({
-    connectionString: "postgresql://billing-test",
-    accountId,
-    userId,
+    account: {
+      account_id: accountId,
+      tier: "hosted_paid",
+      billing_status: "active",
+      stripe_customer_id: "cus_test"
+    },
     requestId: "req-billing-checkout-live",
     interval: "monthly",
     config,
@@ -572,22 +601,7 @@ test("checkout rejects live billing accounts before creating another subscriptio
       },
       billingPortal: { sessions: { async create() {} } },
       webhooks: { constructEvent() {} }
-    }),
-    async runTransaction(_connectionString, _context, callback) {
-      return callback(
-        /** @type {any} */ (
-          async () =>
-            queryResult([
-              {
-                account_id: accountId,
-                tier: "hosted_paid",
-                billing_status: "active",
-                stripe_customer_id: "cus_test"
-              }
-            ])
-        )
-      );
-    }
+    })
   });
 
   assert.equal(result.ok, false);
@@ -604,31 +618,19 @@ test("checkout rejects live billing accounts before creating another subscriptio
 
 test("billing portal requires an existing Stripe customer", async () => {
   const result = await createBillingPortalSessionForAccount({
-    connectionString: "postgresql://billing-test",
-    accountId,
-    userId,
+    account: {
+      account_id: accountId,
+      tier: "hosted_free",
+      billing_status: "not_applicable",
+      stripe_customer_id: null
+    },
     requestId: "req-billing-portal",
     config,
     stripe: /** @type {any} */ ({
       checkout: { sessions: { async create() {} } },
       billingPortal: { sessions: { async create() {} } },
       webhooks: { constructEvent() {} }
-    }),
-    async runTransaction(_connectionString, _context, callback) {
-      return callback(
-        /** @type {any} */ (
-          async () =>
-            queryResult([
-              {
-                account_id: accountId,
-                tier: "hosted_free",
-                billing_status: "not_applicable",
-                stripe_customer_id: null
-              }
-            ])
-        )
-      );
-    }
+    })
   });
 
   assert.equal(result.ok, false);
@@ -641,13 +643,15 @@ test("billing portal requires an existing Stripe customer", async () => {
 
 test("billing portal creates an account-scoped session with configured portal policy", async () => {
   const calls = {
-    contexts: /** @type {any[]} */ ([]),
     portalInputs: /** @type {any[]} */ ([])
   };
   const result = await createBillingPortalSessionForAccount({
-    connectionString: "postgresql://billing-test",
-    accountId,
-    userId,
+    account: {
+      account_id: accountId,
+      tier: "hosted_paid",
+      billing_status: "active",
+      stripe_customer_id: "cus_test"
+    },
     requestId: "req-billing-portal-success",
     config,
     stripe: /** @type {any} */ ({
@@ -662,38 +666,13 @@ test("billing portal creates an account-scoped session with configured portal po
         }
       },
       webhooks: { constructEvent() {} }
-    }),
-    async runTransaction(connectionString, context, callback) {
-      assert.equal(connectionString, "postgresql://billing-test");
-      calls.contexts.push(context);
-      return callback(
-        /** @type {any} */ (
-          async () =>
-            queryResult([
-              {
-                account_id: accountId,
-                tier: "hosted_paid",
-                billing_status: "active",
-                stripe_customer_id: "cus_test"
-              }
-            ])
-        )
-      );
-    }
+    })
   });
 
   assert.deepEqual(result, {
     ok: true,
     data: { url: "https://billing.stripe.test/session" }
   });
-  assert.deepEqual(calls.contexts, [
-    {
-      requestId: "req-billing-portal-success",
-      authSurface: "human",
-      accountId,
-      userId
-    }
-  ]);
   assert.deepEqual(calls.portalInputs, [
     {
       customer: "cus_test",

@@ -43,8 +43,11 @@ code, caller API code, registration flows, storage access, authorization,
 limits, billing, and maintenance jobs should stay separable.
 
 Production runs on Cloudflare Workers/OpenNext against production service
-resources. There is no persistent staging environment, so production deploys
-need a focused smoke checklist.
+resources. There is no persistent staging environment yet; the protected
+production workflow instead certifies the exact `main` SHA, verifies the live
+deployment before numbering the release, and automatically restores the prior
+Worker when the deploy fails to verify. A tagging-only failure leaves the
+verified deploy live rather than reverting healthy production.
 
 ## Trust Boundaries
 

@@ -215,10 +215,11 @@ When a runtime secret is lost:
    the source service and update Systems Manager Parameter Store in the same
    operation window.
 
-Use the configured production deploy wrapper in
+Use the protected production release workflow in
 [services/cloudflare.md](services/cloudflare.md) so first deploys and rotations
-upload code and runtime secrets together through `--secrets-file`. Do not use a
-local development `.env` as the production secrets source.
+upload code and runtime secrets together through the internal deploy wrapper's
+`--secrets-file`. Do not use a local development `.env` as the production
+secrets source or run the wrapper locally.
 
 For production Worker setup, do not populate Cloudflare runtime values from a
 local development `.env`. Recover or rotate production values through Systems

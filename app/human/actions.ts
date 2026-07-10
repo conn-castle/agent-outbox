@@ -7,7 +7,12 @@ import { revalidatePath } from "next/cache";
 import { createCorrelationId } from "../../src/server/correlation";
 import {
   createHumanAnswer,
-  undoHumanAnswerBeforeRead
+  createHumanAnswerInTransaction,
+  humanAnswerTransactionFailure,
+  humanAnswerUndoTransactionFailure,
+  undoHumanAnswerBeforeReadInTransaction,
+  type CreateHumanAnswerInput,
+  type PreReadUndoInput
 } from "../../src/server/human-answer";
 import {
   parseBulkHumanAnswersForm,
@@ -15,7 +20,12 @@ import {
   parseUndoHumanAnswerForm
 } from "../../src/server/human-action-form";
 import { humanBrowserFixtureEnabled } from "../../src/server/human-review-fixture";
-import { resolveHumanAccountSession } from "../../src/server/human-session";
+import type { ProductTransactionQuery } from "../../src/server/database";
+import {
+  resolveHumanAccountSession,
+  runHumanAccountTransaction,
+  type HumanAccountSession
+} from "../../src/server/human-session";
 
 const humanPath = "/human";
 
@@ -38,26 +48,46 @@ export async function submitHumanAnswer(formData: FormData) {
     });
   }
 
-  const context = await humanActionContext();
-  if (!context.ok) {
+  const requestId = createCorrelationId("human_answer_req");
+  let answerInput: CreateHumanAnswerInput | null = null;
+  let transaction;
+  try {
+    transaction = await runHumanActionTransaction(
+      requestId,
+      (query, session) => {
+        answerInput = {
+          accountId: session.accountId,
+          callerId: parsed.callerId,
+          humanUserId: session.userId,
+          requestId,
+          correlationId: createCorrelationId("human_answer"),
+          inputItemId: parsed.inputItemId,
+          expectedRevision: parsed.expectedRevision,
+          actionValue: parsed.actionValue,
+          response: parsed.response
+        };
+        return createHumanAnswerInTransaction(query, answerInput);
+      }
+    );
+  } catch (error) {
+    if (!answerInput) {
+      throw error;
+    }
+    humanAnswerTransactionFailure(error, answerInput);
     refreshHumanPage({
       item: parsed.inputItemId,
-      error: context.code,
+      error: "temporary_unavailable",
       ...(failedActionKind ? { failedActionKind } : {})
     });
   }
-
-  const result = await createHumanAnswer(context.connectionString, {
-    accountId: context.accountId,
-    callerId: parsed.callerId,
-    humanUserId: context.userId,
-    requestId: createCorrelationId("human_answer_req"),
-    correlationId: createCorrelationId("human_answer"),
-    inputItemId: parsed.inputItemId,
-    expectedRevision: parsed.expectedRevision,
-    actionValue: parsed.actionValue,
-    response: parsed.response
-  });
+  if (!transaction.ok) {
+    refreshHumanPage({
+      item: parsed.inputItemId,
+      error: transaction.code,
+      ...(failedActionKind ? { failedActionKind } : {})
+    });
+  }
+  const result = transaction.data;
 
   refreshHumanPage(
     result.ok
@@ -131,19 +161,38 @@ export async function undoHumanAnswer(formData: FormData) {
     refreshHumanPage({ item: parsed.inputItemId, notice: "answer_undone" });
   }
 
-  const context = await humanActionContext();
-  if (!context.ok) {
-    refreshHumanPage({ item: parsed.inputItemId, error: context.code });
+  const requestId = createCorrelationId("human_undo_req");
+  let undoInput: PreReadUndoInput | null = null;
+  let transaction;
+  try {
+    transaction = await runHumanActionTransaction(
+      requestId,
+      (query, session) => {
+        undoInput = {
+          accountId: session.accountId,
+          callerId: parsed.callerId,
+          humanUserId: session.userId,
+          requestId,
+          correlationId: createCorrelationId("human_undo"),
+          outputResultId: parsed.outputResultId
+        };
+        return undoHumanAnswerBeforeReadInTransaction(query, undoInput);
+      }
+    );
+  } catch (error) {
+    if (!undoInput) {
+      throw error;
+    }
+    humanAnswerUndoTransactionFailure(error, undoInput);
+    refreshHumanPage({
+      item: parsed.inputItemId,
+      error: "temporary_unavailable"
+    });
   }
-
-  const result = await undoHumanAnswerBeforeRead(context.connectionString, {
-    accountId: context.accountId,
-    callerId: parsed.callerId,
-    humanUserId: context.userId,
-    requestId: createCorrelationId("human_undo_req"),
-    correlationId: createCorrelationId("human_undo"),
-    outputResultId: parsed.outputResultId
-  });
+  if (!transaction.ok) {
+    refreshHumanPage({ item: parsed.inputItemId, error: transaction.code });
+  }
+  const result = transaction.data;
 
   refreshHumanPage(
     result.ok
@@ -175,6 +224,25 @@ async function humanActionContext() {
     accountId: humanSession.accountId,
     userId: humanSession.userId
   };
+}
+
+async function runHumanActionTransaction<TResult>(
+  requestId: string,
+  callback: (
+    query: ProductTransactionQuery,
+    session: HumanAccountSession
+  ) => Promise<TResult>
+) {
+  const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
+  return runHumanAccountTransaction(
+    {
+      clerkUserId: session.userId,
+      requestId,
+      route: "/human",
+      method: "POST"
+    },
+    callback
+  );
 }
 
 function refreshHumanPage(params: Record<string, string>): never {

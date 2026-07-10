@@ -4,7 +4,7 @@ import {
 } from "./accounting.ts";
 import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
 import {
-  authenticateCallerApiRequestWithDatabase,
+  runAuthenticatedCallerTransaction,
   type CallerIdentity
 } from "./caller-api-auth.ts";
 import {
@@ -13,10 +13,9 @@ import {
   enforceCallerRequestLimits,
   type CallerLimitGuardResult
 } from "./caller-api-limits.ts";
-import {
-  runProductTransaction,
-  type ProductTransactionQuery,
-  type TransactionContextStatement
+import type {
+  ProductTransactionQuery,
+  TransactionContextStatement
 } from "./database.ts";
 import { type LimitProfileSelector } from "./limits.ts";
 import { durationSinceMs } from "./logging.ts";
@@ -90,27 +89,14 @@ export async function handleInputQueueRequest(
     };
   }
 
-  let identity: CallerIdentity | null = null;
+  let identity: CallerIdentity | undefined;
   try {
-    const auth = await authenticateCallerApiRequestWithDatabase(
+    const transaction = await runAuthenticatedCallerTransaction(
       request,
       context,
-      connectionString
-    );
-    if (!auth.ok) {
-      return { ok: false, error: auth.clientError };
-    }
-    identity = auth;
-
-    return await runProductTransaction(
       connectionString,
-      {
-        requestId: context.requestId,
-        authSurface: "caller",
-        accountId: auth.accountId,
-        callerId: auth.callerId
-      },
-      async (query) => {
+      async (query, auth) => {
+        identity = auth;
         return handleInputQueueRequestInTransaction(
           query,
           context,
@@ -120,6 +106,10 @@ export async function handleInputQueueRequest(
         );
       }
     );
+    if (!transaction.authenticated) {
+      return { ok: false, error: transaction.failure.clientError };
+    }
+    return transaction.data;
   } catch (error) {
     reportRuntimeFailure(error, {
       errorId: context.correlationId,

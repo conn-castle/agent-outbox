@@ -13,6 +13,8 @@ import {
 import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
 import {
   runProductTransaction,
+  setProductTransactionIdentityContext,
+  type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
 import { durationSinceMs, emitRuntimeLog, safeErrorName } from "./logging.ts";
@@ -55,6 +57,17 @@ export type CallerApiAuthFailure = {
 };
 
 export type CallerApiAuthResult = CallerApiAuthSuccess | CallerApiAuthFailure;
+type RunProductTransaction = typeof runProductTransaction;
+
+export type AuthenticatedCallerTransactionResult<TResult> =
+  | {
+      authenticated: true;
+      data: TResult;
+    }
+  | {
+      authenticated: false;
+      failure: CallerApiAuthFailure;
+    };
 
 export type CallerIdentity = {
   accountId: string;
@@ -210,57 +223,70 @@ export async function authenticateCallerApiRequest(
   } as const;
 }
 
-export async function authenticateCallerApiRequestWithDatabase(
+export async function runAuthenticatedCallerTransaction<TResult>(
   request: Request,
   context: ApiRequestContext,
-  connectionString: string
-): Promise<CallerApiAuthResult> {
-  const auth = await authenticateCallerApiRequest(
-    request,
-    async (keyId) => {
-      const row = await runProductTransaction(
-        connectionString,
-        {
-          requestId: context.requestId,
-          authSurface: "caller"
-        },
-        async (query) => {
+  connectionString: string,
+  callback: (
+    query: ProductTransactionQuery,
+    identity: CallerApiAuthSuccess
+  ) => Promise<TResult>,
+  options: {
+    runTransaction?: RunProductTransaction;
+  } = {}
+): Promise<AuthenticatedCallerTransactionResult<TResult>> {
+  const runTransaction = options.runTransaction ?? runProductTransaction;
+  return runTransaction(
+    connectionString,
+    {
+      requestId: context.requestId,
+      authSurface: "caller"
+    },
+    async (query) => {
+      const auth = await authenticateCallerApiRequest(
+        request,
+        async (keyId) => {
           const result = await query<CallerCredentialLookupRow>(
             callerCredentialLookupStatement(keyId)
           );
-          return result.rows[0] ?? null;
+          const row = result.rows[0];
+          return row ? storedCallerCredentialDigestFromLookupRow(row) : null;
+        },
+        {
+          requestId: context.requestId,
+          correlationId: context.correlationId,
+          route: context.route,
+          method: context.method,
+          startedAtMs: context.startedAtMs
         }
       );
 
-      return row ? storedCallerCredentialDigestFromLookupRow(row) : null;
-    },
-    {
-      requestId: context.requestId,
-      correlationId: context.correlationId,
-      route: context.route,
-      method: context.method,
-      startedAtMs: context.startedAtMs
-    }
-  );
+      if (!auth.ok) {
+        return { authenticated: false as const, failure: auth };
+      }
 
-  if (!auth.ok) {
-    return auth;
-  }
-
-  try {
-    await runProductTransaction(
-      connectionString,
-      {
-        requestId: context.requestId,
+      await setProductTransactionIdentityContext(query, {
         authSurface: "caller",
         accountId: auth.accountId,
         callerId: auth.callerId
-      },
-      async (query) => {
-        await query(callerCredentialLastUsedStatement(auth));
-      }
-    );
+      });
+      await updateCallerLastUsedInSavepoint(query, auth, context);
+      const data = await callback(query, auth);
+      return { authenticated: true as const, data };
+    }
+  );
+}
+
+async function updateCallerLastUsedInSavepoint(
+  query: ProductTransactionQuery,
+  auth: CallerApiAuthSuccess,
+  context: ApiRequestContext
+) {
+  await query({ sql: "savepoint caller_last_used" });
+  try {
+    await query(callerCredentialLastUsedStatement(auth));
   } catch (error) {
+    await query({ sql: "rollback to savepoint caller_last_used" });
     emitRuntimeLog({
       level: "warn",
       error_id: context.correlationId,
@@ -276,9 +302,9 @@ export async function authenticateCallerApiRequestWithDatabase(
       message: "Caller credential last-used update failed.",
       error_name: safeErrorName(error)
     });
+  } finally {
+    await query({ sql: "release savepoint caller_last_used" });
   }
-
-  return auth;
 }
 
 export function callerCredentialLastUsedStatement(input: {

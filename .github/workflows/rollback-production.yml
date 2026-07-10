@@ -1,0 +1,94 @@
+name: Roll Back Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description:
+          Previously verified release tag to restore (for example v0.1.0)
+        required: true
+        type: string
+      worker_version_id:
+        description: Cloudflare Worker version id associated with that release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  validate-target:
+    name: Validate known-good rollback target
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      expected_release: ${{ steps.target.outputs.expected_release }}
+    steps:
+      - name: Require main
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+      - name: Checkout release history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tagged release SHA
+        id: target
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          WORKER_VERSION_ID: ${{ inputs.worker_version_id }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$WORKER_VERSION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+          expected_release="$(git rev-list -n 1 "$RELEASE_TAG")"
+          [[ "$expected_release" =~ ^[0-9a-f]{40}$ ]]
+          echo "expected_release=$expected_release" >> "$GITHUB_OUTPUT"
+
+  rollback:
+    name: Restore tagged production release
+    needs: validate-target
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Set up dependencies
+        run: make setup
+
+      - name: Verify Worker version belongs to release tag
+        env:
+          CLOUDFLARE_API_TOKEN:
+            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          WORKER_VERSION_ID: ${{ inputs.worker_version_id }}
+        run: node scripts/production-release.mjs verify-rollback-version
+
+      - name: Roll back Worker
+        env:
+          CLOUDFLARE_API_TOKEN:
+            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
+          WORKER_VERSION_ID: ${{ inputs.worker_version_id }}
+        run: >-
+          corepack pnpm exec wrangler rollback "$WORKER_VERSION_ID" --name
+          agent-outbox --message "Manual rollback to ${{ inputs.release_tag }}"
+          --yes --env-file /dev/null
+
+      - name: Verify restored release
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE:
+            ${{ needs.validate-target.outputs.expected_release }}
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: corepack pnpm run smoke-runtime
