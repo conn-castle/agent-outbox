@@ -475,16 +475,20 @@ export function runWorkerDeploy(options = {}) {
     wranglerConfigFile = writeWranglerConfigFile(env, {
       tempBase: options.tempBase
     });
+    const wranglerDeployArgs = buildWranglerDeployArgsWithConfig(
+      env,
+      secretsFile.path,
+      wranglerConfigFile.path
+    );
     runCommand(
       "corepack",
-      [
-        "pnpm",
-        ...buildWranglerDeployArgsWithConfig(
-          env,
-          secretsFile.path,
-          wranglerConfigFile.path
-        )
-      ],
+      ["pnpm", ...wranglerDeployArgs, "--dry-run"],
+      deployCommandOptions,
+      spawnSyncImpl
+    );
+    runCommand(
+      "corepack",
+      ["pnpm", ...wranglerDeployArgs],
       deployCommandOptions,
       spawnSyncImpl
     );

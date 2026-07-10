@@ -71,6 +71,7 @@ export function runtimeConfigStatus() {
     insecure,
     appEnv: process.env.APP_ENV ?? null,
     appBaseUrlConfigured: Boolean(process.env.APP_BASE_URL),
-    publicAppBaseUrlConfigured: Boolean(process.env.PUBLIC_APP_BASE_URL)
+    publicAppBaseUrlConfigured: Boolean(process.env.PUBLIC_APP_BASE_URL),
+    release: process.env.SENTRY_RELEASE ?? null
   };
 }

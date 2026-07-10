@@ -1,16 +1,24 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parseEnv } from "./foundation.mjs";
-import { RUNTIME_SMOKE_ENV_NAMES } from "../src/server/env.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const PROCESS_ENV_MODE_NAME = "AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV";
+const EXPECTED_RELEASE_ENV_NAME = "AGENT_OUTBOX_EXPECTED_RELEASE";
+const RUNTIME_SMOKE_CLIENT_ENV_NAMES = [
+  "APP_BASE_URL",
+  "SMOKE_OR_CLEANUP_TOKEN"
+];
 const RUNTIME_SMOKE_HEADERS = {
   "x-agent-outbox-runtime-smoke": "1"
 };
 const REQUEST_TIMEOUT_MS = 10_000;
+const DEPLOY_SMOKE_ATTEMPTS = 6;
+const DEPLOY_SMOKE_RETRY_DELAY_MS = 10_000;
 
 /**
  * @param {{
@@ -22,6 +30,25 @@ const REQUEST_TIMEOUT_MS = 10_000;
 export function readRuntimeSmokeEnv(options = {}) {
   const env = options.env ?? process.env;
   const root = options.root ?? ROOT;
+  if (env[PROCESS_ENV_MODE_NAME] === "1") {
+    const expectedRelease = env[EXPECTED_RELEASE_ENV_NAME];
+    if (typeof expectedRelease !== "string" || expectedRelease.trim() === "") {
+      throw new Error(
+        `${EXPECTED_RELEASE_ENV_NAME} is required in process-env mode`
+      );
+    }
+    const values = new Map();
+    for (const name of [
+      ...RUNTIME_SMOKE_CLIENT_ENV_NAMES,
+      EXPECTED_RELEASE_ENV_NAME
+    ]) {
+      const value = env[name];
+      if (typeof value === "string" && value !== "") {
+        values.set(name, value);
+      }
+    }
+    return values;
+  }
   const explicitPath = env.AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE;
   const envPath =
     explicitPath && explicitPath.trim() !== ""
@@ -97,9 +124,39 @@ async function expectReachablePage(url) {
   );
 }
 
-async function main() {
-  const env = readRuntimeSmokeEnv();
-  const missing = RUNTIME_SMOKE_ENV_NAMES.filter((name) => !env.get(name));
+/**
+ * @param {Record<string, any>} runtimeCanary
+ * @param {string | undefined} expectedRelease
+ */
+export function assertRuntimeCanaryEnvironment(runtimeCanary, expectedRelease) {
+  assert.equal(
+    runtimeCanary.environment?.configured,
+    true,
+    "/api/runtime/canary did not report configured runtime environment"
+  );
+  if (expectedRelease) {
+    assert.equal(
+      runtimeCanary.environment?.release,
+      expectedRelease,
+      "/api/runtime/canary did not report the expected deployed release"
+    );
+  }
+}
+
+/**
+ * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
+ */
+export function runtimeSmokeAttemptCount(env) {
+  return env[PROCESS_ENV_MODE_NAME] === "1" ? DEPLOY_SMOKE_ATTEMPTS : 1;
+}
+
+/**
+ * @param {Map<string, string>} env
+ */
+async function runRuntimeSmoke(env) {
+  const missing = RUNTIME_SMOKE_CLIENT_ENV_NAMES.filter(
+    (name) => !env.get(name)
+  );
 
   if (missing.length > 0) {
     console.error(
@@ -120,11 +177,8 @@ async function main() {
     new URL("/api/runtime/canary", baseUrl),
     { headers: smokeAuth }
   );
-  assert.equal(
-    runtimeCanary.environment?.configured,
-    true,
-    "/api/runtime/canary did not report configured runtime environment"
-  );
+  const expectedRelease = env.get(EXPECTED_RELEASE_ENV_NAME);
+  assertRuntimeCanaryEnvironment(runtimeCanary, expectedRelease);
   const runtimeAppEnv = runtimeCanary.environment?.appEnv;
   await expectErrorCode(
     new URL("/api/runtime/caller-auth", baseUrl),
@@ -207,6 +261,22 @@ async function main() {
   assert.match(errorCanary.error_id, /^err_/);
 
   console.log("Runtime smoke canaries passed.");
+}
+
+async function main() {
+  const env = readRuntimeSmokeEnv();
+  const attempts = runtimeSmokeAttemptCount(process.env);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await runRuntimeSmoke(env);
+      return;
+    } catch (error) {
+      if (attempt === attempts) {
+        throw error;
+      }
+      await delay(DEPLOY_SMOKE_RETRY_DELAY_MS);
+    }
+  }
 }
 
 if (

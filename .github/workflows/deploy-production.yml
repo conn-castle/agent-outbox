@@ -11,9 +11,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-ref:
+    name: Validate production source ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require main
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
   deploy:
     name: Deploy production Worker
-    if: github.ref == 'refs/heads/main'
+    needs: validate-ref
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -28,9 +36,6 @@ jobs:
 
       - name: Set up dependencies
         run: make setup
-
-      - name: Dry-run Worker package
-        run: corepack pnpm run worker:dry-run
 
       - name: Deploy Worker
         env:
@@ -56,3 +61,11 @@ jobs:
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
         run: corepack pnpm run worker:deploy
+
+      - name: Verify deployed release
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE: ${{ github.sha }}
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: corepack pnpm run smoke-runtime

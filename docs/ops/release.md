@@ -63,9 +63,12 @@ owner approval.
 
 Production deploy is manual-only through
 `.github/workflows/deploy-production.yml` and the `production` GitHub
-environment. The deploy job is guarded to `refs/heads/main` and uses the
-`production-deploy` concurrency group. The workflow runs
-`corepack pnpm run worker:dry-run`, then `corepack pnpm run worker:deploy`.
+environment. A separate validation job fails dispatches from any ref other than
+`refs/heads/main`, and the deploy uses the `production-deploy` concurrency
+group. The deploy wrapper builds once with production public configuration,
+dry-runs that artifact with its generated Hyperdrive and secret inventory, then
+deploys the same artifact. The workflow finishes by retrying runtime smoke until
+the exact deployed Git commit is serving or the deployment fails.
 
 After any Worker redeploy, rerun hosted runtime smoke and hosted health before
 enabling branch protection or accepting the deploy:
@@ -192,21 +195,22 @@ Before public signup opens, verify:
 
 For a bad deploy, roll back Cloudflare Worker code/config first when migrations
 remain compatible. If the issue is a secret or provider configuration change,
-rotate or restore at the source service, update Systems Manager Parameter Store,
-then redeploy through the approved wrapper. Do not use raw SQL or dashboard
-schema edits for rollback.
+rotate or restore at the source service, update Systems Manager Parameter Store
+and the matching GitHub `production` environment secret or variable, then
+redeploy through the approved workflow. Do not use raw SQL or dashboard schema
+edits for rollback.
 
 Inspect recent Worker deployments:
 
 ```bash
-pnpm exec wrangler deployments list --name agent-outbox --env-file /dev/null
-pnpm exec wrangler deployments status --name agent-outbox --env-file /dev/null
+corepack pnpm exec wrangler deployments list --name agent-outbox --env-file /dev/null
+corepack pnpm exec wrangler deployments status --name agent-outbox --env-file /dev/null
 ```
 
 Roll back to a known-good Worker version:
 
 ```bash
-pnpm exec wrangler rollback <version-id> --name agent-outbox --message "Rollback <reason>" --yes --env-file /dev/null
+corepack pnpm exec wrangler rollback <version-id> --name agent-outbox --message "Rollback <reason>" --yes --env-file /dev/null
 ```
 
 After rollback, rerun hosted runtime smoke and hosted health:

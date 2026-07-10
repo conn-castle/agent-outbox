@@ -53,7 +53,11 @@ import {
   runtimeDatabaseConnectionString,
   runtimeDatabaseEnv
 } from "../worker/hyperdrive.mjs";
-import { readRuntimeSmokeEnv } from "../scripts/runtime-smoke.mjs";
+import {
+  assertRuntimeCanaryEnvironment,
+  readRuntimeSmokeEnv,
+  runtimeSmokeAttemptCount
+} from "../scripts/runtime-smoke.mjs";
 import {
   flywayDockerEnvironmentNames,
   flywayEnvironmentFromConnection,
@@ -480,6 +484,71 @@ test("runtime smoke fails loudly when an explicit operator env file is missing",
   );
 });
 
+test("runtime smoke process-env mode reads only remote smoke client inputs", () => {
+  const values = readRuntimeSmokeEnv({
+    env: {
+      AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1",
+      AGENT_OUTBOX_EXPECTED_RELEASE: "release-sha",
+      APP_BASE_URL: "https://app.agent-outbox.dev",
+      SMOKE_OR_CLEANUP_TOKEN: "smoke-token",
+      STRIPE_SECRET_KEY: "must-not-be-copied"
+    }
+  });
+
+  assert.deepEqual(Object.fromEntries(values), {
+    APP_BASE_URL: "https://app.agent-outbox.dev",
+    SMOKE_OR_CLEANUP_TOKEN: "smoke-token",
+    AGENT_OUTBOX_EXPECTED_RELEASE: "release-sha"
+  });
+  assert.throws(
+    () =>
+      readRuntimeSmokeEnv({
+        env: {
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1",
+          APP_BASE_URL: "https://app.agent-outbox.dev",
+          SMOKE_OR_CLEANUP_TOKEN: "smoke-token"
+        }
+      }),
+    /AGENT_OUTBOX_EXPECTED_RELEASE is required in process-env mode/
+  );
+  assert.throws(
+    () =>
+      readRuntimeSmokeEnv({
+        env: {
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1",
+          AGENT_OUTBOX_EXPECTED_RELEASE: "   ",
+          APP_BASE_URL: "https://app.agent-outbox.dev",
+          SMOKE_OR_CLEANUP_TOKEN: "smoke-token"
+        }
+      }),
+    /AGENT_OUTBOX_EXPECTED_RELEASE is required in process-env mode/
+  );
+});
+
+test("runtime smoke rejects a healthy response from the wrong release", () => {
+  assert.doesNotThrow(() =>
+    assertRuntimeCanaryEnvironment(
+      { environment: { configured: true, release: "expected-sha" } },
+      "expected-sha"
+    )
+  );
+  assert.throws(
+    () =>
+      assertRuntimeCanaryEnvironment(
+        { environment: { configured: true, release: "previous-sha" } },
+        "expected-sha"
+      ),
+    /did not report the expected deployed release/
+  );
+  assert.equal(runtimeSmokeAttemptCount({}), 1);
+  assert.equal(
+    runtimeSmokeAttemptCount({
+      AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+    }),
+    6
+  );
+});
+
 test("redactCommandResult excludes stdout and stderr from failed provider checks", () => {
   const result = redactCommandResult({
     status: 1,
@@ -709,6 +778,73 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     /config\.buildCommand = "corepack pnpm run next:build";/,
     "OpenNext build must not depend on a globally available pnpm shim"
   );
+
+  const miswiredWorkflow = deployWorkflow
+    .replace(
+      'run: test "$GITHUB_REF" = "refs/heads/main"',
+      "run: echo validation-missing"
+    )
+    .replace(
+      "name: Deploy production Worker",
+      'name: Deploy production Worker\n    run: test "$GITHUB_REF" = "refs/heads/main"'
+    );
+  assert.equal(
+    validateProductionDeployWorkflow(miswiredWorkflow, "24.18.0").includes(
+      ".github/workflows/deploy-production.yml must include main-ref validation job"
+    ),
+    true
+  );
+  const hardcodedReleaseWorkflow = deployWorkflow.replace(
+    /AGENT_OUTBOX_EXPECTED_RELEASE: .+/,
+    "AGENT_OUTBOX_EXPECTED_RELEASE: hardcoded-sha"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(
+      hardcodedReleaseWorkflow,
+      "24.18.0"
+    ).includes(
+      ".github/workflows/deploy-production.yml must verify the deployed release"
+    ),
+    true
+  );
+  const smokeBeforeDeployWorkflow = deployWorkflow
+    .replace(
+      "run: corepack pnpm run smoke-runtime",
+      "run: echo smoke-placeholder"
+    )
+    .replace(
+      "      - name: Deploy Worker",
+      "      - name: Premature smoke\n        run: corepack pnpm run smoke-runtime\n\n      - name: Deploy Worker"
+    );
+  assert.equal(
+    validateProductionDeployWorkflow(
+      smokeBeforeDeployWorkflow,
+      "24.18.0"
+    ).includes(
+      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke"
+    ),
+    true
+  );
+  const echoedSmokeWorkflow = deployWorkflow.replace(
+    "run: corepack pnpm run smoke-runtime",
+    'run: echo "corepack pnpm run smoke-runtime"'
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(echoedSmokeWorkflow, "24.18.0").includes(
+      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke"
+    ),
+    true
+  );
+  const hiddenSmokeWorkflow = deployWorkflow.replace(
+    "run: corepack pnpm run smoke-runtime",
+    "run: |\n          cat <<'EOF'\n          corepack pnpm run smoke-runtime\n          EOF"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(hiddenSmokeWorkflow, "24.18.0").includes(
+      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke"
+    ),
+    true
+  );
 });
 
 test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {
@@ -732,11 +868,13 @@ test("production deploy workflow guard rejects automatic and incomplete deploy w
     [
       ".github/workflows/deploy-production.yml must include production environment",
       ".github/workflows/deploy-production.yml must include Node 24.18.0",
-      ".github/workflows/deploy-production.yml must include main-branch deploy guard",
+      ".github/workflows/deploy-production.yml must include main-ref validation job",
+      ".github/workflows/deploy-production.yml must include validated-ref deploy dependency",
       ".github/workflows/deploy-production.yml must include production deploy concurrency group",
       ".github/workflows/deploy-production.yml must be manual-only and not include push:",
-      ".github/workflows/deploy-production.yml must include run: corepack pnpm run worker:dry-run",
       ".github/workflows/deploy-production.yml must include run: corepack pnpm run worker:deploy",
+      ".github/workflows/deploy-production.yml must run post-deploy runtime smoke",
+      ".github/workflows/deploy-production.yml must verify the deployed release",
       ".github/workflows/deploy-production.yml must include CLOUDFLARE_HYPERDRIVE_ID"
     ]
   );
@@ -747,7 +885,7 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
   const tempBase = mkdtempSync(
     path.join(os.tmpdir(), "agent-outbox-worker-deploy-test-")
   );
-  /** @type {{ command: string, args: string[] }[]} */
+  /** @type {{ command: string, args: string[], env: NodeJS.ProcessEnv | undefined }[]} */
   const calls = [];
   /** @type {string | null} */
   let secretsFilePath = null;
@@ -758,8 +896,8 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
     runWorkerDeploy({
       env,
       tempBase,
-      spawnSyncImpl(command, args) {
-        calls.push({ command, args });
+      spawnSyncImpl(command, args, options) {
+        calls.push({ command, args, env: options.env });
 
         if (args[0] === "pnpm" && args[1] === "exec") {
           const secretsFileIndex = args.indexOf("--secrets-file") + 1;
@@ -789,10 +927,13 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
       }
     });
 
-    assert.deepEqual(calls[0], {
-      command: "corepack",
-      args: ["pnpm", "run", "worker:build"]
-    });
+    assert.equal(calls[0].command, "corepack");
+    assert.deepEqual(calls[0].args, ["pnpm", "run", "worker:build"]);
+    assert.equal(calls[0].env?.APP_BASE_URL, env.APP_BASE_URL);
+    assert.equal(calls[0].env?.CLOUDFLARE_API_TOKEN, undefined);
+    for (const name of WORKER_DEPLOY_SECRET_NAMES) {
+      assert.equal(calls[0].env?.[name], undefined);
+    }
     assert.equal(calls[1].command, "corepack");
     assert.deepEqual(calls[1].args.slice(0, 8), [
       "pnpm",
@@ -805,9 +946,23 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
       "/dev/null"
     ]);
     assert.equal(calls[1].args.includes("--secrets-file"), true);
+    assert.equal(calls[1].args.includes("--dry-run"), true);
     assert.equal(calls[1].args.includes("--keep-vars"), false);
 
-    const varBindings = calls[1].args.flatMap((arg, index, args) =>
+    assert.equal(calls[2].command, "corepack");
+    assert.deepEqual(
+      calls[2].args,
+      calls[1].args.filter((arg) => arg !== "--dry-run")
+    );
+    for (const call of calls.slice(1)) {
+      assert.equal(call.env?.CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_API_TOKEN);
+      assert.equal(call.env?.APP_BASE_URL, undefined);
+      for (const name of WORKER_DEPLOY_SECRET_NAMES) {
+        assert.equal(call.env?.[name], undefined);
+      }
+    }
+
+    const varBindings = calls[2].args.flatMap((arg, index, args) =>
       arg === "--var" ? [args[index + 1]] : []
     );
     const expectedPublicVarBindings = [
@@ -2779,6 +2934,7 @@ test("runtime canary keeps configuration detail behind smoke bearer auth", () =>
       CLERK_PUBLISHABLE_KEY: "pk_test_secret",
       DATABASE_APP_ROLE_URL: "postgresql://example",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+      SENTRY_RELEASE: "release-sha",
       SMOKE_OR_CLEANUP_TOKEN: "smoke-token",
       CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE
     },
@@ -2829,6 +2985,7 @@ test("runtime canary keeps configuration detail behind smoke bearer auth", () =>
       assert.deepEqual(smokeBody.environment.missing, []);
       assert.deepEqual(smokeBody.environment.insecure, []);
       assert.equal(smokeBody.environment.appEnv, "development");
+      assert.equal(smokeBody.environment.release, "release-sha");
       assert.deepEqual(smokeBody.postgres_driver, {
         package: "pg",
         client: "function"

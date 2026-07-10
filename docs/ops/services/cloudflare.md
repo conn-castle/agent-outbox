@@ -13,14 +13,14 @@ require Cloudflare credentials, deployment artifacts, or platform emulation.
 Use the pinned project invocation:
 
 ```bash
-pnpm exec wrangler <command>
+corepack pnpm exec wrangler <command>
 ```
 
 Known-safe read-only checks:
 
 ```bash
-pnpm exec wrangler whoami --env-file /dev/null
-pnpm exec wrangler deployments status \
+corepack pnpm exec wrangler whoami --env-file /dev/null
+corepack pnpm exec wrangler deployments status \
   --name agent-outbox \
   --json \
   --env-file /dev/null
@@ -103,21 +103,21 @@ local shell only for the specific token-management command being run.
 Verify local Wrangler OAuth without loading repo `.env`:
 
 ```bash
-pnpm exec wrangler whoami --env-file /dev/null
+corepack pnpm exec wrangler whoami --env-file /dev/null
 ```
 
 Verify a Worker deploy token with Wrangler without printing the token:
 
 ```bash
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN:?}" \
-  pnpm exec wrangler whoami --env-file /dev/null
+  corepack pnpm exec wrangler whoami --env-file /dev/null
 ```
 
 Check the Worker deployment status with a Worker deploy token:
 
 ```bash
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN:?}" \
-  pnpm exec wrangler deployments status \
+  corepack pnpm exec wrangler deployments status \
     --name agent-outbox \
     --json \
     --env-file /dev/null
@@ -137,14 +137,15 @@ corepack pnpm run worker:deploy
 
 This is an external write. Use it only after explicit owner approval and after
 loading production runtime values from approved operator-controlled stores. The
-wrapper builds a fresh OpenNext bundle, writes true runtime secrets to a
-temporary secrets file outside the repo, writes a temporary Wrangler config with
-the `AGENT_OUTBOX_DATABASE` Hyperdrive binding, invokes pinned Wrangler with
+wrapper builds one OpenNext bundle, writes true runtime secrets to a temporary
+secrets file outside the repo, writes a temporary Wrangler config with the
+`AGENT_OUTBOX_DATABASE` Hyperdrive binding, invokes pinned Wrangler with
 `--env-file /dev/null`, `--secrets-file`, deploy-time `--var NAME:value`
-bindings, and no `--keep-vars`, then removes the temporary files. Wrangler
-4.107.0 dry-run did not hard-fail or warn when a dummy `--secrets-file` omitted
-one `secrets.required` name, so the repo deploy wrapper and structural smoke
-guard are the enforcement points for the complete runtime inventory.
+bindings, and no `--keep-vars`, dry-runs that production-configured artifact,
+deploys the same artifact, then removes the temporary files. Wrangler 4.107.0
+dry-run did not hard-fail or warn when a dummy `--secrets-file` omitted one
+`secrets.required` name, so the repo deploy wrapper and structural smoke guard
+are the enforcement points for the complete runtime inventory.
 
 Check the prepared inactive `/api/client-events` rate-limit rule without
 changing Cloudflare state:
@@ -192,7 +193,8 @@ When rotating Cloudflare tokens:
   has been loaded through approved operator-controlled stores; the script builds
   a fresh OpenNext bundle before the external deploy write. The production
   GitHub Actions workflow is manual-only, uses the `production` environment,
-  dry-runs the Worker bundle first, and then calls the same deploy wrapper.
+  fails dispatches outside `main`, and calls the same deploy wrapper. It accepts
+  the deployment only after runtime smoke confirms the exact deployed release.
 - Wrangler is for local agent/developer operations and for the deployment
   command inside GitHub Actions. Normal app CI and app tests must not require
   Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, or
