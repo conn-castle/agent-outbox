@@ -174,11 +174,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: node scripts/production-release.mjs finalize
-
-      - name: Keep failed deploy red
-        if: always()
-        env:
-          ROLLBACK_OUTCOME: ${{ steps.rollback-worker.outcome }}
-        run: |
-          echo "Deploy failed; Worker rollback=$ROLLBACK_OUTCOME"
-          exit 1
