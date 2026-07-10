@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parseEnv } from "./foundation.mjs";
 import { RUNTIME_SMOKE_ENV_NAMES } from "../src/server/env.ts";
@@ -12,9 +12,25 @@ const RUNTIME_SMOKE_HEADERS = {
 };
 const REQUEST_TIMEOUT_MS = 10_000;
 
-function readLocalEnv() {
-  const envPath = path.join(ROOT, ".env");
+/**
+ * @param {{
+ *   env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
+ *   root?: string
+ * }} [options]
+ * @returns {Map<string, string>}
+ */
+export function readRuntimeSmokeEnv(options = {}) {
+  const env = options.env ?? process.env;
+  const root = options.root ?? ROOT;
+  const explicitPath = env.AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE;
+  const envPath =
+    explicitPath && explicitPath.trim() !== ""
+      ? path.resolve(explicitPath)
+      : path.join(root, ".env");
   if (!existsSync(envPath)) {
+    if (explicitPath) {
+      throw new Error(`Runtime smoke env file does not exist: ${envPath}`);
+    }
     return new Map();
   }
 
@@ -82,7 +98,7 @@ async function expectReachablePage(url) {
 }
 
 async function main() {
-  const env = readLocalEnv();
+  const env = readRuntimeSmokeEnv();
   const missing = RUNTIME_SMOKE_ENV_NAMES.filter((name) => !env.get(name));
 
   if (missing.length > 0) {
@@ -193,4 +209,9 @@ async function main() {
   console.log("Runtime smoke canaries passed.");
 }
 
-await main();
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  await main();
+}

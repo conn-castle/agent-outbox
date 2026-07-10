@@ -688,7 +688,11 @@ function billingTransitionForSubscription(
 }
 
 function stripeClient(config: BillingConfig): StripeClient {
-  return new Stripe(config.secretKey);
+  return new Stripe(config.secretKey, {
+    httpClient: Stripe.createFetchHttpClient(),
+    maxNetworkRetries: 0,
+    timeout: 10_000
+  });
 }
 
 function hasLiveBillingState(status: BillingStatus) {

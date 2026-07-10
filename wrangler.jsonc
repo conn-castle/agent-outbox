@@ -15,6 +15,16 @@
   "triggers": {
     "crons": ["17 * * * *"]
   },
+  "secrets": {
+    "required": [
+      "CLERK_SECRET_KEY",
+      "SENTRY_DSN",
+      "CALLER_KEY_HASH_SECRET",
+      "SMOKE_OR_CLEANUP_TOKEN",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET"
+    ]
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"

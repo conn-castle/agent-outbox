@@ -71,7 +71,10 @@ const REQUIRED_FILES = [
   ".markdownlint-cli2.yaml",
   "tsconfig.json",
   "scripts/foundation.mjs",
+  "scripts/worker-deploy.mjs",
   "scripts/runtime-smoke.mjs",
+  "scripts/hosted-health.mjs",
+  "scripts/billing-smoke.mjs",
   "tests/foundation.test.mjs",
   ".env.example",
   "next.config.ts",
@@ -99,7 +102,8 @@ const REQUIRED_FILES = [
   "docs/ops/migrations.md",
   "scripts/flyway.mjs",
   ".github/workflows/ci.yml",
-  ".github/workflows/release-check.yml"
+  ".github/workflows/release-check.yml",
+  ".github/workflows/deploy-production.yml"
 ];
 
 const FORBIDDEN_WORKFLOW_TOKENS = [
@@ -139,12 +143,21 @@ const OPTIONAL_LOCAL_ENV_NAMES = [
   "AGENT_OUTBOX_BASE_URL",
   "AGENT_OUTBOX_CONFIG_PATH",
   "AGENT_OUTBOX_CALLER",
+  "AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE",
+  "AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE",
+  "AGENT_OUTBOX_HOSTED_HEALTH_QUOTA_EVIDENCE",
+  "AGENT_OUTBOX_HOSTED_HEALTH_FILE_EVIDENCE",
+  "AGENT_OUTBOX_HOSTED_HEALTH_AUDIT_EVIDENCE",
+  "AGENT_OUTBOX_HOSTED_HEALTH_ABUSE_COST_EVIDENCE",
+  "AGENT_OUTBOX_BILLING_SMOKE_ENV_FILE",
+  "AGENT_OUTBOX_BILLING_SMOKE_COOKIE",
   "AWS_PROFILE",
   "CLOUDFLARE_ACCOUNT_ID",
   "CLOUDFLARE_ZONE_ID",
   "CLOUDFLARE_ZONE_NAME",
   "CLOUDFLARE_NAMESERVERS",
   "CLOUDFLARE_DNS_API_TOKEN",
+  "CLOUDFLARE_HYPERDRIVE_ID",
   "CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN",
   "CLOUDFLARE_TOKEN_MANAGEMENT_API_TOKEN",
   "CLOUDFLARE_WAF_API_TOKEN",
@@ -160,6 +173,15 @@ const OPTIONAL_LOCAL_ENV_NAMES = [
 ];
 
 const COMMAND_TIMEOUT_MS = 30_000;
+
+export const REQUIRED_WORKER_SECRET_NAMES = [
+  "CLERK_SECRET_KEY",
+  "SENTRY_DSN",
+  "CALLER_KEY_HASH_SECRET",
+  "SMOKE_OR_CLEANUP_TOKEN",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET"
+];
 
 const RUNTIME_PROOF_SOURCE_DIRS = ["app", "src"];
 const RUNTIME_PROOF_SOURCE_FILES = ["instrumentation.ts", "middleware.ts"];
@@ -665,6 +687,45 @@ export function validateWranglerCronSchedule(
 }
 
 /**
+ * @param {string} wranglerConfigContent
+ * @returns {string[]}
+ */
+export function validateWranglerRequiredSecrets(wranglerConfigContent) {
+  let config;
+  try {
+    config = JSON.parse(jsoncToJson(wranglerConfigContent));
+  } catch {
+    return ["wrangler.jsonc must be parseable JSONC for secret drift checks"];
+  }
+
+  const requiredSecrets = config?.secrets?.required;
+  if (
+    !Array.isArray(requiredSecrets) ||
+    !requiredSecrets.every((name) => typeof name === "string")
+  ) {
+    return ["wrangler.jsonc secrets.required must be a string array"];
+  }
+
+  const expected = new Set(REQUIRED_WORKER_SECRET_NAMES);
+  const actual = new Set(requiredSecrets);
+  const failures = [];
+  for (const name of REQUIRED_WORKER_SECRET_NAMES) {
+    if (!actual.has(name)) {
+      failures.push(`wrangler.jsonc secrets.required missing ${name}`);
+    }
+  }
+  for (const name of requiredSecrets) {
+    if (!expected.has(name)) {
+      failures.push(
+        `wrangler.jsonc secrets.required must not include non-Worker secret or config ${name}`
+      );
+    }
+  }
+
+  return failures;
+}
+
+/**
  * @param {string} input
  * @returns {string}
  */
@@ -821,6 +882,93 @@ export function validateWorkflowVersionPins(toolchain, workflowContentsByPath) {
   }
 
   return errors;
+}
+
+/**
+ * @param {string} content
+ * @param {RegExp} pattern
+ * @returns {boolean}
+ */
+function workflowHasLine(content, pattern) {
+  return content.split(/\r?\n/).some((line) => pattern.test(line));
+}
+
+/**
+ * @param {string} content
+ * @param {string} token
+ * @returns {boolean}
+ */
+function workflowRunStepIncludes(content, token) {
+  return workflowHasLine(
+    content,
+    new RegExp(`^\\s*(?:-\\s*)?run:\\s*${escapeRegExp(token)}\\s*$`)
+  );
+}
+
+/**
+ * @param {string} deployWorkflowContent
+ * @param {string} nodeVersion
+ * @returns {string[]}
+ */
+export function validateProductionDeployWorkflow(
+  deployWorkflowContent,
+  nodeVersion
+) {
+  const failures = [];
+
+  /** @type {[string, RegExp][]} */
+  const requiredLinePatterns = [
+    ["workflow_dispatch trigger", /^\s*workflow_dispatch:\s*$/],
+    ["production environment", /^\s*environment:\s*production\s*$/],
+    [
+      `Node ${nodeVersion}`,
+      new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`)
+    ],
+    [
+      "main-branch deploy guard",
+      /^\s*if:\s*github\.ref == 'refs\/heads\/main'\s*$/
+    ],
+    [
+      "production deploy concurrency group",
+      /^\s*group:\s*production-deploy\s*$/
+    ]
+  ];
+  for (const [description, pattern] of requiredLinePatterns) {
+    if (!workflowHasLine(deployWorkflowContent, pattern)) {
+      failures.push(
+        `.github/workflows/deploy-production.yml must include ${description}`
+      );
+    }
+  }
+
+  for (const forbiddenTrigger of ["push", "pull_request", "schedule"]) {
+    if (
+      workflowHasLine(
+        deployWorkflowContent,
+        new RegExp(`^\\s*${escapeRegExp(forbiddenTrigger)}:\\s*$`)
+      )
+    ) {
+      failures.push(
+        `.github/workflows/deploy-production.yml must be manual-only and not include ${forbiddenTrigger}:`
+      );
+    }
+  }
+
+  for (const command of ["pnpm run worker:dry-run", "pnpm run worker:deploy"]) {
+    if (!workflowRunStepIncludes(deployWorkflowContent, command)) {
+      failures.push(
+        `.github/workflows/deploy-production.yml must include run: ${command}`
+      );
+    }
+  }
+
+  if (!deployWorkflowContent.includes("CLOUDFLARE_HYPERDRIVE_ID")) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must include CLOUDFLARE_HYPERDRIVE_ID"
+    );
+  }
+
+  return failures;
 }
 
 /**
@@ -1125,7 +1273,8 @@ function readWorkflowContents() {
   const workflows = {};
   for (const relativePath of [
     ".github/workflows/ci.yml",
-    ".github/workflows/release-check.yml"
+    ".github/workflows/release-check.yml",
+    ".github/workflows/deploy-production.yml"
   ]) {
     workflows[relativePath] = readFileSync(
       path.join(ROOT, relativePath),
@@ -1296,6 +1445,8 @@ function checkMakefileSurface() {
     "build",
     "smoke",
     "smoke-runtime",
+    "hosted-health",
+    "billing-smoke",
     "migration-validate",
     "migration-migrate",
     "migration-replay",
@@ -1493,6 +1644,15 @@ function smoke() {
     readWorkflowContents()
   );
   assert.deepEqual(workflowFailures, [], workflowFailures.join("\n"));
+  const productionDeployWorkflowFailures = validateProductionDeployWorkflow(
+    readWorkflowContents()[".github/workflows/deploy-production.yml"],
+    /** @type {Toolchain} */ (readJson("toolchain.json")).node.version
+  );
+  assert.deepEqual(
+    productionDeployWorkflowFailures,
+    [],
+    productionDeployWorkflowFailures.join("\n")
+  );
   const migrationWorkflowFailures = validateMigrationReplayWorkflow(
     readWorkflowContents()
   );
@@ -1530,6 +1690,14 @@ function smoke() {
     RUNTIME_CRON_SCHEDULE
   );
   assert.deepEqual(cronScheduleFailures, [], cronScheduleFailures.join("\n"));
+  const requiredSecretFailures = validateWranglerRequiredSecrets(
+    readFileSync(path.join(ROOT, "wrangler.jsonc"), "utf8")
+  );
+  assert.deepEqual(
+    requiredSecretFailures,
+    [],
+    requiredSecretFailures.join("\n")
+  );
 
   console.log("Structural smoke checks passed.");
 }

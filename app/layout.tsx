@@ -30,6 +30,17 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </nav>
       </header>
       {children}
+      <footer className="site-footer">
+        <p>&copy; {new Date().getUTCFullYear()} Conn Castle Studios.</p>
+        <nav className="footer-nav" aria-label="Legal and support">
+          <Link href="/contact">Contact</Link>
+          <Link href="/privacy-policy">Privacy</Link>
+          <Link href="/terms-of-service">Terms</Link>
+          <a href="https://github.com/conn-castle/agent-outbox/blob/main/LICENSE">
+            Software license
+          </a>
+        </nav>
+      </footer>
     </div>
   );
 

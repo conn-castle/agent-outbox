@@ -21,6 +21,9 @@ that are not already proven in this repository.
   source-map-related diagnostics.
 - Cross-check user-visible `error_id` values with Cloudflare Workers logs when
   investigating runtime failures.
+- During release verification, confirm whether source-map upload is
+  intentionally enabled or disabled for the deploy path. Missing source maps are
+  acceptable only when the owner accepts that posture for the release window.
 
 ## Guardrails
 

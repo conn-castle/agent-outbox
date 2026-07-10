@@ -28,7 +28,11 @@ Do not duplicate information that belongs in other memory files:
 
 ## Agent Tooling
 
-- `al dispatch` supports concurrent invocations: multiple reviewers/second-agents may be launched in parallel (the earlier bug that required serialization is fixed). Skills that gate parallel dispatch on "known safe for concurrent launches" (e.g. `multi-agent-plan-review`) may fan out reviewers concurrently in this repo.
+- `al dispatch` supports concurrent invocations: multiple reviewers/second-agents
+  may be launched in parallel after live option validation. The old bug that
+  required serialization is fixed; for review-agent fanout workflows such as
+  `multi-agent-plan-review`, launch requested reviewers concurrently instead of
+  serializing them.
 
 ## Provider Setup
 
@@ -39,6 +43,9 @@ Do not duplicate information that belongs in other memory files:
 - GitHub uses `conn-castle/agent-outbox`.
 - Cloudflare setup separates local Wrangler OAuth, DNS management tokens,
   Worker deploy tokens, and token-management credentials by purpose.
+- Production Cloudflare Workers database access uses a Cloudflare Hyperdrive
+  binding named `AGENT_OUTBOX_DATABASE` against the restricted Supabase app role;
+  normal local/Node execution continues to use `DATABASE_APP_ROLE_URL`.
 - Phase 8 external-write checkpoints require explicit owner approval before
   Cloudflare Worker/domain/secrets/deploy actions, Stripe production
   domain/payment-method/runtime-key actions, GitHub branch protection changes,

@@ -21,6 +21,12 @@ that are not already proven in this repository.
 - Verify account mode before inspecting production.
 - Use the Stripe CLI for billing object inspection, webhook delivery checks,
   event inspection, and API log tailing.
+- Use `make billing-smoke` for no-charge hosted billing wiring checks. The
+  command requires a valid operator-provided Clerk session cookie before it can
+  create hosted Checkout sessions. Billing Portal smoke also requires an
+  existing Stripe customer fixture and returns `action_required` when the smoke
+  account has no customer. Full live completion is a separate owner-approved
+  billing operation.
 - Use read-only checks first when debugging checkout, webhook, portal,
   cancellation, downgrade, or grace behavior.
 - Local/test-mode PR verification must cover successful checkout,
@@ -44,6 +50,15 @@ Production billing uses one account-scoped hosted paid product:
 - Webhook events: `checkout.session.completed`, `customer.subscription.created`,
   `customer.subscription.updated`, `customer.subscription.deleted`, and
   `invoice.payment_failed`.
+
+Agent Outbox uses Stripe-hosted redirect Checkout and the hosted Billing Portal,
+not embedded Checkout or Elements. Stripe payment method domain registration is
+therefore not part of the current hosted redirect flow. If Agent Outbox later
+uses Embedded Checkout, Elements, or wallet payment methods that require domain
+registration, verify or create `app.agent-outbox.dev` through Stripe Payment
+Method Domains first. Official Stripe references:
+<https://docs.stripe.com/api/payment_method_domains/list> and
+<https://docs.stripe.com/payments/payment-methods/pmd-registration>.
 
 Creating or rotating production billing resources requires a setup-only live
 Stripe key with write permission for products, prices, Customer Portal

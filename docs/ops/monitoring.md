@@ -88,10 +88,12 @@ system-owned ids, not file bytes or full user content.
 
 ## Health Checks
 
-The implemented provider-backed runtime smoke check is `make smoke-runtime`. Run
-it from a configured checkout with the app serving `APP_BASE_URL` and `.env`
-containing local development Clerk, Postgres/Supabase, Sentry, caller-key hash,
-and smoke-token values. The command checks:
+The implemented provider-backed runtime smoke check is `make smoke-runtime`. For
+local development it reads root `.env`. For hosted production, set
+`AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE` to an operator-controlled env file that
+points `APP_BASE_URL` at `https://app.agent-outbox.dev` and contains the
+production smoke/runtime values; do not replace root `.env` with production
+credentials. The command checks:
 
 - app runtime is serving, with only coarse runtime canary data public and
   detailed configuration posture available only through the smoke bearer token;
@@ -103,9 +105,19 @@ and smoke-token values. The command checks:
 - scheduled-trigger handling responds through the route canary;
 - structured runtime error correlation returns a safe `error_id`.
 
-Later hosted health inspection should also check cleanup recency, quota and
-limit-block enforcement, paid file upload/download behavior after that workflow
-exists, and recent content-safe audit events for lifecycle operations.
+Use `make hosted-health` for the broader agent-run inspection required before
+release. It runs the smoke-safe runtime checks and reports `action_required` for
+quota, file path, audit-event, or abuse/cost evidence that cannot be checked
+without a safe operator-provided marker. Exit code `2` means no check failed,
+but the release or incident review still needs operator action.
+
+Use `make billing-smoke` for hosted billing wiring checks. It is no-charge by
+default and must not replace hermetic unit, integration, or browser tests for
+billing behavior. With a valid Clerk session cookie, it verifies that the
+deployed app can create live Stripe-hosted Checkout sessions. Billing Portal
+session smoke additionally requires an existing Stripe customer fixture; without
+one it reports operator `action_required`. Full live completion remains an
+owner-approved billing operation.
 
 ## Frontend Events
 
@@ -131,10 +143,12 @@ general product analytics firehose.
 
 The same-origin check is a browser safety boundary, not authentication:
 non-browser clients can forge `Origin`. A prepared-but-inactive Cloudflare
-Rulesets API rate limit exists in `scripts/cloudflare-ratelimit.mjs`; activate
-it during the Worker/domain deployment sequence with `CLOUDFLARE_WAF_API_TOKEN`
-and verify with `node scripts/cloudflare-ratelimit.mjs --check`. Until then, the
-accepted risk is spoofed `client_event.*` volume causing noisy logs rather than
-product-flow failure. If signal quality degrades, filter client-event logs
-separately from server failure logs while preserving server-side Sentry and API
-error signals as the higher-trust source.
+Rulesets API rate limit exists in `scripts/cloudflare-ratelimit.mjs`; verify the
+prepared disabled rule with `node scripts/cloudflare-ratelimit.mjs --check` when
+reviewing launch posture or abuse response readiness. Keep the rule disabled
+during normal launch-readiness checks unless the owner explicitly approves
+activating or modifying it for abuse response. Until then, the accepted risk is
+spoofed `client_event.*` volume causing noisy logs rather than product-flow
+failure. If signal quality degrades, filter client-event logs separately from
+server failure logs while preserving server-side Sentry and API error signals as
+the higher-trust source.

@@ -1,5 +1,9 @@
 import openNextWorker from "../.open-next/worker.js";
 import {
+  runtimeDatabaseConnectionString,
+  runtimeDatabaseEnv
+} from "./hyperdrive.mjs";
+import {
   RUNTIME_CRON_SCHEDULE,
   runScheduledCanary,
   runScheduledCleanup
@@ -13,7 +17,7 @@ export {
 
 export default {
   async fetch(request, env, context) {
-    return openNextWorker.fetch(request, env, context);
+    return openNextWorker.fetch(request, runtimeDatabaseEnv(env), context);
   },
 
   async scheduled(controller, env, context) {
@@ -23,7 +27,7 @@ export default {
       scheduledTime: controller.scheduledTime
     });
     const cleanup = runScheduledCleanup({
-      connectionString: env?.DATABASE_APP_ROLE_URL,
+      connectionString: runtimeDatabaseConnectionString(env),
       now:
         typeof controller.scheduledTime === "number" &&
         Number.isFinite(controller.scheduledTime)

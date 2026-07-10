@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import pg from "pg";
 
@@ -20,10 +28,32 @@ import {
   validateRequiredEnvExample,
   validateRuntimeProofScope,
   validateToolchainPackage,
+  validateProductionDeployWorkflow,
   validateWorkflowGoChecks,
   validateWranglerCronSchedule,
+  validateWranglerRequiredSecrets,
   validateWorkflowVersionPins
 } from "../scripts/foundation.mjs";
+import {
+  REQUIRED_PUBLIC_VAR_NAMES as WORKER_DEPLOY_PUBLIC_VAR_NAMES,
+  REQUIRED_SECRET_NAMES as WORKER_DEPLOY_SECRET_NAMES,
+  buildWranglerDeployArgsWithConfig,
+  buildWranglerDeployArgs,
+  runWorkerDeploy,
+  secretsDotenvContent,
+  validateWorkerDeployEnvironment,
+  workerBuildEnvironment,
+  wranglerDeployEnvironment,
+  wranglerConfigWithHyperdrive
+} from "../scripts/worker-deploy.mjs";
+import {
+  DATABASE_CONNECTION_MODE_HYPERDRIVE,
+  DATABASE_CONNECTION_MODE_VAR,
+  DATABASE_HYPERDRIVE_BINDING,
+  runtimeDatabaseConnectionString,
+  runtimeDatabaseEnv
+} from "../worker/hyperdrive.mjs";
+import { readRuntimeSmokeEnv } from "../scripts/runtime-smoke.mjs";
 import {
   flywayDockerEnvironmentNames,
   flywayEnvironmentFromConnection,
@@ -104,6 +134,34 @@ const FLYWAY_TOOLCHAIN_FIXTURE = {
   image: "flyway/flyway",
   source: "test"
 };
+
+/**
+ * @param {Record<string, string | undefined>} [overrides]
+ * @returns {Record<string, string | undefined>}
+ */
+function workerDeployEnv(overrides = {}) {
+  return {
+    PATH: process.env.PATH,
+    CLOUDFLARE_API_TOKEN: "cf-worker-token",
+    CLOUDFLARE_HYPERDRIVE_ID: "hyperdrive-test-id",
+    CLERK_SECRET_KEY: "sk_test_clerk",
+    SENTRY_DSN: "https://public@example.invalid/1",
+    CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+    SMOKE_OR_CLEANUP_TOKEN: "runtime-smoke-token",
+    STRIPE_SECRET_KEY: "sk_live_runtime",
+    STRIPE_WEBHOOK_SECRET: "whsec_runtime",
+    APP_ENV: "production",
+    APP_BASE_URL: "https://app.agent-outbox.dev",
+    PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev",
+    SENTRY_RELEASE: "agent-outbox@2026.07.08",
+    CLERK_PUBLISHABLE_KEY: "pk_live_clerk",
+    SENTRY_BROWSER_DSN: "https://browser@example.invalid/2",
+    STRIPE_PAID_MONTHLY_PRICE_ID: "price_monthly",
+    STRIPE_PAID_YEARLY_PRICE_ID: "price_yearly",
+    STRIPE_BILLING_PORTAL_CONFIGURATION_ID: "bpc_runtime",
+    ...overrides
+  };
+}
 
 /**
  * @param {Record<string, string | undefined>} values
@@ -370,6 +428,58 @@ test("missingEnvNames reports names without exposing configured secret values", 
   ]);
 });
 
+test("runtime smoke loads an explicit operator env file before root .env", () => {
+  const root = mkdtempSync(
+    path.join(os.tmpdir(), "agent-outbox-runtime-smoke-root-")
+  );
+  const explicitDir = mkdtempSync(
+    path.join(os.tmpdir(), "agent-outbox-runtime-smoke-env-")
+  );
+  const explicitEnvPath = path.join(explicitDir, "production-smoke.env");
+
+  try {
+    writeFileSync(path.join(root, ".env"), "APP_BASE_URL=http://localhost\n");
+    writeFileSync(
+      explicitEnvPath,
+      "APP_BASE_URL=https://app.agent-outbox.dev\nSMOKE_OR_CLEANUP_TOKEN=smoke-token\n"
+    );
+
+    assert.equal(
+      readRuntimeSmokeEnv({ env: {}, root }).get("APP_BASE_URL"),
+      "http://localhost"
+    );
+    const explicitValues = readRuntimeSmokeEnv({
+      env: { AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE: explicitEnvPath },
+      root
+    });
+    assert.equal(
+      explicitValues.get("APP_BASE_URL"),
+      "https://app.agent-outbox.dev"
+    );
+    assert.equal(explicitValues.get("SMOKE_OR_CLEANUP_TOKEN"), "smoke-token");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(explicitDir, { force: true, recursive: true });
+  }
+});
+
+test("runtime smoke fails loudly when an explicit operator env file is missing", () => {
+  const missingEnvPath = path.join(
+    os.tmpdir(),
+    `agent-outbox-missing-smoke-${process.pid}.env`
+  );
+
+  assert.throws(
+    () =>
+      readRuntimeSmokeEnv({
+        env: { AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE: missingEnvPath }
+      }),
+    {
+      message: `Runtime smoke env file does not exist: ${missingEnvPath}`
+    }
+  );
+});
+
 test("redactCommandResult excludes stdout and stderr from failed provider checks", () => {
   const result = redactCommandResult({
     status: 1,
@@ -562,6 +672,326 @@ test("workflow guard rejects deploy and publish commands", () => {
     ".github/workflows/release-check.yml contains forbidden command: wrangler deploy",
     ".github/workflows/release-check.yml contains forbidden command: supabase migration"
   ]);
+});
+
+test("production deploy workflow guard accepts only the manual deploy contract", () => {
+  const deployWorkflow = readFileSync(
+    new URL("../.github/workflows/deploy-production.yml", import.meta.url),
+    "utf8"
+  );
+
+  assert.deepEqual(
+    assertNoForbiddenWorkflowCommands({
+      ".github/workflows/deploy-production.yml": deployWorkflow
+    }),
+    []
+  );
+  assert.deepEqual(
+    validateProductionDeployWorkflow(deployWorkflow, "24.18.0"),
+    []
+  );
+});
+
+test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {
+  const unsafeWorkflow = `
+    on:
+      workflow_dispatch:
+      push:
+        branches: [main]
+    jobs:
+      deploy:
+        environment: staging
+        steps:
+          - uses: actions/setup-node@v6
+            with:
+              node-version: 25.0.0
+          - run: pnpm run worker:deploy
+  `;
+
+  assert.deepEqual(
+    validateProductionDeployWorkflow(unsafeWorkflow, "24.18.0"),
+    [
+      ".github/workflows/deploy-production.yml must include production environment",
+      ".github/workflows/deploy-production.yml must include Node 24.18.0",
+      ".github/workflows/deploy-production.yml must include main-branch deploy guard",
+      ".github/workflows/deploy-production.yml must include production deploy concurrency group",
+      ".github/workflows/deploy-production.yml must be manual-only and not include push:",
+      ".github/workflows/deploy-production.yml must include run: pnpm run worker:dry-run",
+      ".github/workflows/deploy-production.yml must include CLOUDFLARE_HYPERDRIVE_ID"
+    ]
+  );
+});
+
+test("worker deploy wrapper builds, passes explicit bindings, and removes the temp secrets file", () => {
+  const env = workerDeployEnv();
+  const tempBase = mkdtempSync(
+    path.join(os.tmpdir(), "agent-outbox-worker-deploy-test-")
+  );
+  /** @type {{ command: string, args: string[] }[]} */
+  const calls = [];
+  /** @type {string | null} */
+  let secretsFilePath = null;
+  /** @type {string | null} */
+  let configFilePath = null;
+
+  try {
+    runWorkerDeploy({
+      env,
+      tempBase,
+      spawnSyncImpl(command, args) {
+        calls.push({ command, args });
+
+        if (args[0] === "exec") {
+          const secretsFileIndex = args.indexOf("--secrets-file") + 1;
+          secretsFilePath = args[secretsFileIndex] ?? null;
+          assert.ok(secretsFilePath, "deploy command must pass --secrets-file");
+          assert.equal(existsSync(secretsFilePath), true);
+          const secretNames = readFileSync(secretsFilePath, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => line.split("=", 1)[0]);
+          assert.deepEqual(secretNames, WORKER_DEPLOY_SECRET_NAMES);
+
+          const configFileIndex = args.indexOf("--config") + 1;
+          configFilePath = args[configFileIndex] ?? null;
+          assert.ok(configFilePath, "deploy command must pass --config");
+          assert.equal(existsSync(configFilePath), true);
+          const config = JSON.parse(readFileSync(configFilePath, "utf8"));
+          assert.deepEqual(config.hyperdrive, [
+            {
+              binding: DATABASE_HYPERDRIVE_BINDING,
+              id: env.CLOUDFLARE_HYPERDRIVE_ID
+            }
+          ]);
+        }
+
+        return { status: 0, signal: null, error: undefined };
+      }
+    });
+
+    assert.deepEqual(calls[0], {
+      command: "pnpm",
+      args: ["run", "worker:build"]
+    });
+    assert.equal(calls[1].command, "pnpm");
+    assert.deepEqual(calls[1].args.slice(0, 7), [
+      "exec",
+      "wrangler",
+      "deploy",
+      "--config",
+      configFilePath,
+      "--env-file",
+      "/dev/null"
+    ]);
+    assert.equal(calls[1].args.includes("--secrets-file"), true);
+    assert.equal(calls[1].args.includes("--keep-vars"), false);
+
+    const varBindings = calls[1].args.flatMap((arg, index, args) =>
+      arg === "--var" ? [args[index + 1]] : []
+    );
+    const expectedPublicVarBindings = [
+      `${DATABASE_CONNECTION_MODE_VAR}:${DATABASE_CONNECTION_MODE_HYPERDRIVE}`,
+      ...WORKER_DEPLOY_PUBLIC_VAR_NAMES.map((name) => `${name}:${env[name]}`),
+      `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:${env.CLERK_PUBLISHABLE_KEY}`
+    ];
+    assert.deepEqual(varBindings, expectedPublicVarBindings);
+    assert.equal(
+      varBindings.some((binding) =>
+        binding.startsWith("CLOUDFLARE_API_TOKEN:")
+      ),
+      false
+    );
+    assert.ok(secretsFilePath, "test must observe a secrets file path");
+    assert.equal(existsSync(secretsFilePath), false);
+    assert.ok(configFilePath, "test must observe a config file path");
+    assert.equal(existsSync(configFilePath), false);
+  } finally {
+    rmSync(tempBase, { force: true, recursive: true });
+  }
+});
+
+test("worker deploy secrets file writes raw dotenv values and rejects ambiguous characters", () => {
+  const content = secretsDotenvContent(workerDeployEnv());
+  assert.equal(content.includes('"'), false);
+  assert.equal(content.includes("CLERK_SECRET_KEY=sk_test_clerk"), true);
+  assert.throws(
+    () =>
+      secretsDotenvContent(
+        workerDeployEnv({
+          CLERK_SECRET_KEY: 'sk_test_"quoted"'
+        })
+      ),
+    /must not contain whitespace, quotes, or backslashes/
+  );
+  assert.throws(
+    () =>
+      secretsDotenvContent(
+        workerDeployEnv({
+          SMOKE_OR_CLEANUP_TOKEN: "token with space"
+        })
+      ),
+    /must not contain whitespace, quotes, or backslashes/
+  );
+});
+
+test("worker deploy command environments keep runtime secrets out of build and deploy subprocesses", () => {
+  const env = workerDeployEnv({
+    PATH: "/usr/bin",
+    HOME: "/tmp/agent-outbox-home"
+  });
+  const buildEnv = workerBuildEnvironment(env);
+  const deployEnv = wranglerDeployEnvironment(env);
+
+  for (const name of WORKER_DEPLOY_SECRET_NAMES) {
+    assert.equal(buildEnv[name], undefined);
+    assert.equal(deployEnv[name], undefined);
+  }
+  assert.equal(buildEnv.APP_BASE_URL, env.APP_BASE_URL);
+  assert.equal(buildEnv.CLERK_PUBLISHABLE_KEY, env.CLERK_PUBLISHABLE_KEY);
+  assert.equal(
+    buildEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+    env.CLERK_PUBLISHABLE_KEY
+  );
+  assert.equal(deployEnv.CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_API_TOKEN);
+  assert.equal(deployEnv.APP_BASE_URL, undefined);
+});
+
+test("worker deploy wrapper requires production config and appends optional analytics only when set", () => {
+  assert.deepEqual(
+    validateWorkerDeployEnvironment(
+      workerDeployEnv({
+        APP_ENV: "development",
+        APP_BASE_URL: "http://localhost:38000",
+        CLOUDFLARE_HYPERDRIVE_ID: undefined,
+        SENTRY_RELEASE: ""
+      })
+    ),
+    [
+      "CLOUDFLARE_HYPERDRIVE_ID is required for production Worker deploy",
+      "SENTRY_RELEASE is required for production Worker deploy",
+      "APP_ENV must be production for production Worker deploy",
+      "APP_BASE_URL must be https://app.agent-outbox.dev for production Worker deploy"
+    ]
+  );
+
+  const withoutAnalytics = buildWranglerDeployArgsWithConfig(
+    workerDeployEnv(),
+    "/tmp/worker-secrets.env",
+    "/tmp/wrangler.jsonc"
+  );
+  assert.deepEqual(withoutAnalytics.slice(0, 5), [
+    "exec",
+    "wrangler",
+    "deploy",
+    "--config",
+    "/tmp/wrangler.jsonc"
+  ]);
+  assert.equal(
+    withoutAnalytics.includes(
+      "NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:analytics-token"
+    ),
+    false
+  );
+  const withAnalytics = buildWranglerDeployArgs(
+    workerDeployEnv({
+      NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "analytics-token"
+    }),
+    "/tmp/worker-secrets.env"
+  );
+  assert.equal(
+    withAnalytics.includes(
+      "NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:analytics-token"
+    ),
+    true
+  );
+});
+
+test("worker deploy wrapper injects Hyperdrive binding into temporary Wrangler config", () => {
+  const config = JSON.parse(
+    wranglerConfigWithHyperdrive(
+      `{
+        "name": "agent-outbox",
+        "hyperdrive": [
+          { "binding": "OTHER_DATABASE", "id": "other-id" },
+          { "binding": "${DATABASE_HYPERDRIVE_BINDING}", "id": "old-id" }
+        ]
+      }`,
+      "new-hyperdrive-id"
+    )
+  );
+
+  assert.deepEqual(config.hyperdrive, [
+    { binding: "OTHER_DATABASE", id: "other-id" },
+    { binding: DATABASE_HYPERDRIVE_BINDING, id: "new-hyperdrive-id" }
+  ]);
+});
+
+test("Worker runtime database env prefers Hyperdrive and fails loud when required binding is absent", () => {
+  const envWithHyperdrive = {
+    DATABASE_APP_ROLE_URL: "postgres://pooler",
+    [DATABASE_HYPERDRIVE_BINDING]: {
+      connectionString: "postgres://hyperdrive"
+    },
+    [DATABASE_CONNECTION_MODE_VAR]: DATABASE_CONNECTION_MODE_HYPERDRIVE
+  };
+
+  assert.equal(
+    runtimeDatabaseConnectionString(envWithHyperdrive),
+    "postgres://hyperdrive"
+  );
+  assert.equal(
+    /** @type {{ DATABASE_APP_ROLE_URL: string }} */ (
+      runtimeDatabaseEnv(envWithHyperdrive)
+    ).DATABASE_APP_ROLE_URL,
+    "postgres://hyperdrive"
+  );
+
+  const missingBinding = {
+    DATABASE_APP_ROLE_URL: "postgres://pooler",
+    [DATABASE_CONNECTION_MODE_VAR]: DATABASE_CONNECTION_MODE_HYPERDRIVE
+  };
+  assert.equal(runtimeDatabaseConnectionString(missingBinding), undefined);
+  assert.equal(
+    /** @type {{ DATABASE_APP_ROLE_URL: string }} */ (
+      runtimeDatabaseEnv(missingBinding)
+    ).DATABASE_APP_ROLE_URL,
+    ""
+  );
+
+  assert.equal(
+    runtimeDatabaseConnectionString({
+      DATABASE_APP_ROLE_URL: "postgres://pooler"
+    }),
+    "postgres://pooler"
+  );
+});
+
+test("wrangler required secrets stay limited to true Worker secrets", () => {
+  const wranglerConfig = readFileSync(
+    new URL("../wrangler.jsonc", import.meta.url),
+    "utf8"
+  );
+
+  assert.deepEqual(validateWranglerRequiredSecrets(wranglerConfig), []);
+  assert.deepEqual(
+    validateWranglerRequiredSecrets(
+      `{
+        "secrets": {
+          "required": ["DATABASE_APP_ROLE_URL", "APP_ENV"]
+        }
+      }`
+    ),
+    [
+      "wrangler.jsonc secrets.required missing CLERK_SECRET_KEY",
+      "wrangler.jsonc secrets.required missing SENTRY_DSN",
+      "wrangler.jsonc secrets.required missing CALLER_KEY_HASH_SECRET",
+      "wrangler.jsonc secrets.required missing SMOKE_OR_CLEANUP_TOKEN",
+      "wrangler.jsonc secrets.required missing STRIPE_SECRET_KEY",
+      "wrangler.jsonc secrets.required missing STRIPE_WEBHOOK_SECRET",
+      "wrangler.jsonc secrets.required must not include non-Worker secret or config DATABASE_APP_ROLE_URL",
+      "wrangler.jsonc secrets.required must not include non-Worker secret or config APP_ENV"
+    ]
+  );
 });
 
 test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", () => {

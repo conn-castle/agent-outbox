@@ -65,6 +65,10 @@ operations.
   convenience and does not define generic `CLOUDFLARE_API_TOKEN`.
 - GitHub Actions deploy environments map the Worker deploy token into
   `CLOUDFLARE_API_TOKEN` only for the deploy job that invokes Wrangler.
+- Production database access is through the `AGENT_OUTBOX_DATABASE` Hyperdrive
+  binding. The deploy wrapper injects the Hyperdrive config id into a temporary
+  Wrangler config and sets `AGENT_OUTBOX_DATABASE_CONNECTION_MODE=hyperdrive` so
+  a missing binding fails loud instead of falling back to plain Worker TCP.
 - Account ids, zone ids, token ids, token values, exact secret-store paths, and
   current environment state live only in approved operator-controlled systems.
   Do not commit those values to Markdown.
@@ -125,6 +129,23 @@ Build and dry-run the OpenNext/Wrangler Worker bundle without uploading it:
 pnpm run worker:dry-run
 ```
 
+The production deploy entrypoint is:
+
+```bash
+pnpm run worker:deploy
+```
+
+This is an external write. Use it only after explicit owner approval and after
+loading production runtime values from approved operator-controlled stores. The
+wrapper builds a fresh OpenNext bundle, writes true runtime secrets to a
+temporary secrets file outside the repo, writes a temporary Wrangler config with
+the `AGENT_OUTBOX_DATABASE` Hyperdrive binding, invokes pinned Wrangler with
+`--env-file /dev/null`, `--secrets-file`, deploy-time `--var NAME:value`
+bindings, and no `--keep-vars`, then removes the temporary files. Wrangler
+4.107.0 dry-run did not hard-fail or warn when a dummy `--secrets-file` omitted
+one `secrets.required` name, so the repo deploy wrapper and structural smoke
+guard are the enforcement points for the complete runtime inventory.
+
 Check the prepared inactive `/api/client-events` rate-limit rule without
 changing Cloudflare state:
 
@@ -168,14 +189,23 @@ When rotating Cloudflare tokens:
 - GitHub Actions is the canonical deployment path; do not manually deploy unless
   the task explicitly calls for operator intervention. The manual deploy command
   is `pnpm run worker:deploy` after production runtime configuration has been
-  loaded through approved operator-controlled secrets; the script builds a fresh
-  OpenNext bundle before the external deploy write.
+  loaded through approved operator-controlled stores; the script builds a fresh
+  OpenNext bundle before the external deploy write. The production GitHub
+  Actions workflow is manual-only, uses the `production` environment, dry-runs
+  the Worker bundle first, and then calls the same deploy wrapper.
 - Wrangler is for local agent/developer operations and for the deployment
   command inside GitHub Actions. Normal app CI and app tests must not require
   Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, or
   platform runtime emulation.
 - CI/CD must use API-token authentication through GitHub environment secrets,
   not cached Wrangler OAuth.
+- Do not set `keep_vars` in `wrangler.jsonc` or pass `--keep-vars` for the
+  production deploy path. The deploy wrapper supplies the full intended runtime
+  public/config variable inventory each deploy so stale dashboard-managed vars
+  are removed instead of preserved.
+- Do not rely on Wrangler dry-run alone to prove every `secrets.required` name
+  is present in the deploy secrets file. The deploy wrapper fails before
+  invoking Wrangler when any required true secret is missing.
 - Do not create edge blocks, challenges, or rate limits as product behavior.
   They are incident controls.
 - Do not print runtime secret values into chat, issues, logs, or docs.
@@ -191,9 +221,9 @@ predicate; a POST-method predicate (`... and http.request.method eq "POST"`)
 requires Pro or higher and must be authored at activation time if the zone plan
 supports it.
 
-Activation is deferred by `client-events-ratelimit-activation` in
-[ISSUES.md](../../agent-layer/ISSUES.md) and belongs with the Worker/domain
-deployment task. At activation time:
+The prepared disabled rule is an incident-control asset. Keep it disabled during
+normal launch-readiness checks unless the owner explicitly decides to activate
+or modify it for abuse response. At inspection time:
 
 1. Mint or load a narrow Cloudflare WAF/Rulesets token into
    `CLOUDFLARE_WAF_API_TOKEN`.

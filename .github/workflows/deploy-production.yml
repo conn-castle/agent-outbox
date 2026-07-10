@@ -1,0 +1,58 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy production Worker
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Set up dependencies
+        run: make setup
+
+      - name: Dry-run Worker package
+        run: pnpm run worker:dry-run
+
+      - name: Deploy Worker
+        env:
+          APP_ENV: production
+          APP_BASE_URL: https://app.agent-outbox.dev
+          PUBLIC_APP_BASE_URL: https://app.agent-outbox.dev
+          SENTRY_RELEASE: ${{ github.sha }}
+          CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+          SENTRY_BROWSER_DSN: ${{ vars.SENTRY_BROWSER_DSN }}
+          STRIPE_PAID_MONTHLY_PRICE_ID: ${{ vars.STRIPE_PAID_MONTHLY_PRICE_ID }}
+          STRIPE_PAID_YEARLY_PRICE_ID: ${{ vars.STRIPE_PAID_YEARLY_PRICE_ID }}
+          STRIPE_BILLING_PORTAL_CONFIGURATION_ID:
+            ${{ vars.STRIPE_BILLING_PORTAL_CONFIGURATION_ID }}
+          NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:
+            ${{ vars.NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN }}
+          CLOUDFLARE_HYPERDRIVE_ID: ${{ vars.CLOUDFLARE_HYPERDRIVE_ID }}
+          CLOUDFLARE_API_TOKEN:
+            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          CALLER_KEY_HASH_SECRET: ${{ secrets.CALLER_KEY_HASH_SECRET }}
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+        run: pnpm run worker:deploy

@@ -187,13 +187,51 @@ make smoke-runtime
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed, a compatible
-local app server is serving `APP_BASE_URL`, and `.env` contains real
-development Clerk, Supabase/Postgres, and smoke-token values. Notes:
-Calls the runtime canary routes for app load, caller bearer auth acceptance and
-rejection, database transaction context, restricted app role posture, scheduled
-trigger, structured log, and Sentry suppression. Runtime smoke must not emit
-Sentry events. Fails loudly with missing variable names when `.env` is
-incomplete and must not print secret values.
+app server is serving `APP_BASE_URL`, and the smoke environment contains real
+Clerk, Supabase/Postgres, Sentry, caller-key hash, and smoke-token values.
+Notes: By default this reads root `.env` for local development. For hosted
+production smoke, set `AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE` to an
+operator-controlled env file instead of replacing root `.env` with production
+values. Calls the runtime canary routes for app load, caller bearer auth
+acceptance and rejection, database transaction context, restricted app role
+posture, scheduled trigger, structured log, and Sentry suppression. Runtime
+smoke must not emit Sentry events. Fails loudly with missing variable names when
+the selected env file is incomplete and must not print secret values.
+
+- Hosted health inspection
+
+```bash
+make hosted-health
+```
+
+Run from: repo root Prerequisites: `make setup` has completed and a hosted app
+is serving `APP_BASE_URL`. Notes: Reads `AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE`,
+then `AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE`, then root `.env`. Runs smoke-safe
+hosted checks for app/auth reachability, caller API auth, database canary,
+scheduled cleanup canary, structured logs, and Sentry suppression. Quota, file
+path, audit-event, and abuse/cost checks require content-safe operator evidence
+markers (`AGENT_OUTBOX_HOSTED_HEALTH_*_EVIDENCE`) or return
+`action_required`. Exit code `0` means all checks passed, `1` means at least one
+check failed, and `2` means no check failed but operator action is required.
+The command must not print secret values.
+
+- Hosted billing smoke check
+
+```bash
+make billing-smoke
+```
+
+Run from: repo root Prerequisites: `make setup` has completed and a hosted app
+is serving `APP_BASE_URL`. Notes: Reads `AGENT_OUTBOX_BILLING_SMOKE_ENV_FILE`,
+then `AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE`, then root `.env`. Verifies hosted
+billing configuration and, when `AGENT_OUTBOX_BILLING_SMOKE_COOKIE` contains a
+valid operator-provided Clerk session cookie, creates monthly/yearly Checkout
+sessions and a Billing Portal session without completing payment. Full live
+completion that creates subscription, charge, refund, cancellation, or downgrade
+state requires a separate owner-approved protocol and is reported as
+`action_required` by default. Exit code `0` means all checks passed, `1` means
+at least one check failed, and `2` means no check failed but operator action is
+required. The command must not print cookies or secret values.
 
 - Single local and CI verification gate
 
@@ -323,12 +361,22 @@ pnpm run worker:deploy
 Run from: repo root Prerequisites: Explicit owner approval for production
 Cloudflare writes; production runtime configuration loaded from approved
 operator-controlled secrets; pinned dependencies installed; Cloudflare deploy
-token or Wrangler OAuth is authenticated for the intended account. Notes:
-External write. Builds a fresh OpenNext bundle, then deploys the Worker named
+token or Wrangler OAuth is authenticated for the intended account; and
+`CLOUDFLARE_HYPERDRIVE_ID` is loaded from the production Hyperdrive config.
+Notes: External write. Calls the project-owned deploy wrapper, which builds a
+fresh OpenNext bundle with only non-secret runtime configuration, writes true
+runtime secrets to a temporary dotenv file outside the repo, writes a temporary
+Wrangler config with the Hyperdrive binding outside the repo, removes both
+temporary files after deploy, and runs pinned Wrangler with `--env-file
+/dev/null`, `--secrets-file`, deploy-time `--var NAME:value` bindings for
+public/runtime configuration, and no `--keep-vars`. Runtime secret values are
+not exposed to the build subprocess. The deploy targets the Worker named
 `agent-outbox` with `app.agent-outbox.dev` as the custom domain, workers.dev
-disabled, and cron `17 * * * *`. Do not use from credential-free CI or before
-production runtime secrets have been installed or intentionally accepted as
-blocked.
+disabled, Hyperdrive bound as `AGENT_OUTBOX_DATABASE`, and cron `17 * * * *`.
+Do not use from credential-free CI or before production runtime values have been
+loaded through approved operator-controlled stores. `DATABASE_APP_ROLE_URL` is
+intentionally not uploaded as a Worker secret; production database access uses
+the Hyperdrive binding.
 
 ## Maintenance
 
@@ -462,6 +510,14 @@ AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH
 NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN
 CALLER_KEY_HASH_SECRET
 SMOKE_OR_CLEANUP_TOKEN
+AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE
+AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE
+AGENT_OUTBOX_HOSTED_HEALTH_QUOTA_EVIDENCE
+AGENT_OUTBOX_HOSTED_HEALTH_FILE_EVIDENCE
+AGENT_OUTBOX_HOSTED_HEALTH_AUDIT_EVIDENCE
+AGENT_OUTBOX_HOSTED_HEALTH_ABUSE_COST_EVIDENCE
+AGENT_OUTBOX_BILLING_SMOKE_ENV_FILE
+AGENT_OUTBOX_BILLING_SMOKE_COOKIE
 ```
 
 Notes: Stripe billing variables (`STRIPE_SECRET_KEY`,
@@ -477,7 +533,9 @@ release/source-map upload requires `SENTRY_ORG`, `SENTRY_PROJECT`,
 not set the deploy/release-path flag.
 Credential-free gates do not require these values. Local/test-mode billing
 verification does require the matching Stripe test-mode objects and webhook
-signing secret.
+signing secret. Hosted health and billing smoke env-file variables are
+operator-only conveniences for production inspection and should not be installed
+as Worker runtime values.
 
 Run from: repo root Prerequisites: Use `.env.example` as the source for required
 names. Notes: Diagnostics may print missing names but must not print configured

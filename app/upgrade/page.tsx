@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 
 import { UpgradeActions } from "../../src/components/billing/UpgradeActions";
+import { LegalAcknowledgement } from "../../src/components/legal/LegalDocument";
 import { createCorrelationId } from "../../src/server/correlation";
 import { humanBrowserFixtureEnabled } from "../../src/server/human-review-fixture";
 import {
@@ -86,6 +87,7 @@ function UpgradePageContent({
         </section>
       ) : null}
       <UpgradeActions canOpenPortal={canOpenPortal} />
+      <LegalAcknowledgement action="starting checkout" />
     </main>
   );
 }

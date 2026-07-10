@@ -77,10 +77,29 @@ STRIPE_PAID_YEARLY_PRICE_ID
 STRIPE_BILLING_PORTAL_CONFIGURATION_ID
 ```
 
+The production deploy wrapper passes these as deploy-time Wrangler
+`--var NAME:value` bindings. `NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN` is
+optional until the Web Analytics provider permission blocker is resolved; when
+it is absent, the Worker deploy continues without that binding. The wrapper also
+derives `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` from `CLERK_PUBLISHABLE_KEY` for
+Clerk's Next.js middleware/runtime package; do not store or rotate it as a
+separate source value. The build subprocess receives only these non-secret
+configuration values plus the minimal process environment needed to run the
+toolchain.
+
+Deploy-only configuration values:
+
+```text
+CLOUDFLARE_HYPERDRIVE_ID
+```
+
+`CLOUDFLARE_HYPERDRIVE_ID` is consumed by the deploy wrapper to generate a
+temporary Wrangler config with the `AGENT_OUTBOX_DATABASE` Hyperdrive binding;
+it is not installed into the Worker runtime as an environment variable.
+
 Runtime secrets:
 
 ```text
-DATABASE_APP_ROLE_URL
 CLERK_SECRET_KEY
 SENTRY_DSN
 CALLER_KEY_HASH_SECRET
@@ -89,11 +108,27 @@ STRIPE_SECRET_KEY
 STRIPE_WEBHOOK_SECRET
 ```
 
+`wrangler.jsonc` declares these true Worker secrets under `secrets.required`.
+The production deploy wrapper writes only these names to a temporary dotenv
+secrets file outside the repository and passes it to Wrangler with
+`--secrets-file`; these values are not passed to the OpenNext build subprocess.
+The file is removed after the deploy attempt. Wrangler 4.107.0 dry-run did not
+reject a dummy secrets file missing one required name, so treat the repo deploy
+wrapper's required-environment check and the structural smoke guard as the
+enforced inventory checks.
+
+Do not install `DATABASE_APP_ROLE_URL` as a production Worker secret. Production
+database access is through the `AGENT_OUTBOX_DATABASE` Hyperdrive binding
+created from `CLOUDFLARE_HYPERDRIVE_ID`; direct database URLs remain for local
+Node execution, migration replay, and provider recovery outside the Worker.
+
 Do not install operator, deploy, migration, source-map upload, or local CLI
 variables into the Worker runtime. Excluded examples include `AWS_PROFILE`,
-`CLOUDFLARE_*`, `DATABASE_URL`, `DATABASE_MIGRATION_URL`,
-`SUPABASE_PROJECT_REF`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`,
+`CLOUDFLARE_*` other than the deploy-time Hyperdrive config id, `DATABASE_URL`,
+`DATABASE_APP_ROLE_URL`, `DATABASE_MIGRATION_URL`, `SUPABASE_PROJECT_REF`,
+`SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`,
 `AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD`, `AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH`,
+`AGENT_OUTBOX_HOSTED_HEALTH_*`, `AGENT_OUTBOX_BILLING_SMOKE_*`, other
 `AGENT_OUTBOX_*`, and `PORT`.
 
 `CLOUDFLARE_WAF_API_TOKEN` is an activation-time operator token for
@@ -124,6 +159,11 @@ keys in that recovery path. Runtime also needs the corresponding Cloudflare
 Worker environment values consumed by the app plus
 `PUBLIC_APP_BASE_URL=https://app.agent-outbox.dev`.
 
+As of Stripe docs checked on 2026-07-08, restricted API keys are created in the
+Stripe Dashboard, not through the local CLI. Create the live restricted runtime
+key there, copy it once into the approved operator-controlled secret flow, and
+store it as the `stripe-secret-key` `SecureString`.
+
 Setup-only Stripe operator keys use a separate `SecureString` recovery path:
 
 ```text
@@ -151,6 +191,12 @@ List GitHub environment secret names:
 gh secret list -R <owner>/<agent-outbox-repo> --env production
 ```
 
+List GitHub production environment variable names without printing values:
+
+```bash
+gh variable list -R <owner>/<agent-outbox-repo> --env production
+```
+
 Decrypt values only during recovery or rotation. Do not paste decrypted values
 into chat, issues, logs, or docs.
 
@@ -169,9 +215,10 @@ When a runtime secret is lost:
    the source service and update Systems Manager Parameter Store in the same
    operation window.
 
-Use the configured Cloudflare secret import/set commands for the Worker project
-and the Wrangler invocation documented in
-[services/cloudflare.md](services/cloudflare.md).
+Use the configured production deploy wrapper in
+[services/cloudflare.md](services/cloudflare.md) so first deploys and rotations
+upload code and runtime secrets together through `--secrets-file`. Do not use a
+local development `.env` as the production secrets source.
 
 For production Worker setup, do not populate Cloudflare runtime values from a
 local development `.env`. Recover or rotate production values through Systems

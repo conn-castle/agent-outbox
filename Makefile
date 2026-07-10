@@ -1,4 +1,4 @@
-.PHONY: help bootstrap setup doctor dev fix format lint typecheck test browser build smoke smoke-runtime migration-validate migration-migrate migration-replay go-build go-test go-lint go-fmt go-fmt-check go-check package-check check release-check clean
+.PHONY: help bootstrap setup doctor dev fix format lint typecheck test browser build smoke smoke-runtime hosted-health billing-smoke migration-validate migration-migrate migration-replay go-build go-test go-lint go-fmt go-fmt-check go-check package-check check release-check clean
 
 GORELEASER_MODULE := github.com/goreleaser/goreleaser/v2@v2.16.0
 CLI_VERSION ?= 0.0.0-dev
@@ -23,6 +23,8 @@ help:
 	@printf '%s\n' '  make build          Build the app with Next.js.'
 	@printf '%s\n' '  make smoke          Run structural smoke checks.'
 	@printf '%s\n' '  make smoke-runtime  Run provider-backed runtime canary smoke checks.'
+	@printf '%s\n' '  make hosted-health  Run hosted health inspection.'
+	@printf '%s\n' '  make billing-smoke  Run hosted billing smoke checks.'
 	@printf '%s\n' '  make migration-validate Validate Flyway migration history.'
 	@printf '%s\n' '  make migration-migrate  Apply pending Flyway migrations.'
 	@printf '%s\n' '  make migration-replay   Validate and apply migrations to an empty database.'
@@ -73,6 +75,12 @@ smoke:
 
 smoke-runtime:
 	corepack pnpm run smoke-runtime
+
+hosted-health:
+	corepack pnpm run hosted-health
+
+billing-smoke:
+	corepack pnpm run billing-smoke
 
 migration-validate:
 	corepack pnpm run migration:validate

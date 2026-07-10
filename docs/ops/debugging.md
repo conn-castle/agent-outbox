@@ -114,6 +114,12 @@ Use [services/stripe.md](services/stripe.md) to check:
 Billing notification emails are not authoritative product state. Absence of an
 email is not proof that billing state is healthy.
 
+Run `make billing-smoke` with an operator-controlled billing smoke env file when
+debugging hosted Checkout or Billing Portal. Exit code `2` means the command did
+not observe a failure but still needs a valid Clerk session cookie, an active
+Stripe customer, or owner approval for full live completion. Do not treat a
+missing live charge as a failure unless a full-completion protocol was approved.
+
 ## Database Or Storage Failure
 
 Likely causes:
@@ -140,3 +146,17 @@ intentionally logs without Sentry capture.
 
 If both are missing, verify the deployed runtime enabled Workers observability
 and Sentry configuration.
+
+## Hosted Health Action Required
+
+`make hosted-health` exits `2` when safe evidence is missing for quota, file
+path, audit-event, or abuse/cost checks. Use the named check in the JSON output
+to decide the next action:
+
+- provide a content-safe operator evidence marker;
+- run a smoke-safe product workflow that creates the evidence;
+- inspect provider read-only aggregates in the owning service;
+- explicitly accept the missing evidence for the release or incident window.
+
+Do not create customer data, replay webhooks, rotate secrets, or delete records
+just to turn an `action_required` health check green.

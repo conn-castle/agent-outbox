@@ -45,6 +45,8 @@ service incident.
 - Check Supabase connectivity if requests fail after app boot.
 - Roll back app code/config if the issue started with a deploy and migrations
   are compatible.
+- Use the rollback boundaries in [release.md](release.md) before changing
+  production deploy or branch-protection posture.
 
 ### Auth outage or signup abuse
 
@@ -79,6 +81,8 @@ service incident.
 - Use Stripe webhook delivery logs through
   [services/stripe.md](services/stripe.md) first.
 - Check app logs for webhook signature or handler failures.
+- Run `make billing-smoke` only in its no-charge default mode unless the owner
+  approves a full live completion protocol.
 - Stripe billing state is account-scoped, not seat- or caller-scoped.
 - Apply the grace behavior documented in
   [../architecture.md](../architecture.md) before enforcing lower-tier limits.

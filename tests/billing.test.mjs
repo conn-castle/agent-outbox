@@ -395,6 +395,77 @@ test("monthly checkout creates an account-scoped subscription session without ex
   assert.doesNotMatch(JSON.stringify(result), /cus_|sub_|sk_test|whsec/);
 });
 
+test("default Stripe checkout client uses fetch transport for Worker compatibility", async () => {
+  const previousFetch = globalThis.fetch;
+  const fetchCalls = /** @type {{ url: string; init?: RequestInit }[]} */ ([]);
+  globalThis.fetch = /** @type {typeof fetch} */ (
+    async (url, init) => {
+      fetchCalls.push({ url: String(url), init });
+      return new Response(
+        JSON.stringify({
+          id: "cs_test_worker_transport",
+          object: "checkout.session",
+          url: "https://checkout.stripe.com/c/pay/cs_test_worker_transport"
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "request-id": "req_worker_transport"
+          }
+        }
+      );
+    }
+  );
+
+  try {
+    const result = await createCheckoutSessionForAccount({
+      connectionString: "postgresql://billing-test",
+      accountId,
+      userId,
+      requestId: "req-billing-worker-transport",
+      interval: "monthly",
+      config,
+      async runTransaction(_connectionString, _context, callback) {
+        return callback(
+          /** @type {any} */ (
+            async () =>
+              queryResult([
+                {
+                  account_id: accountId,
+                  tier: "hosted_free",
+                  billing_status: "not_applicable",
+                  stripe_customer_id: null
+                }
+              ])
+          )
+        );
+      }
+    });
+
+    assert.deepEqual(result, {
+      ok: true,
+      data: {
+        url: "https://checkout.stripe.com/c/pay/cs_test_worker_transport"
+      }
+    });
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(
+      fetchCalls[0].url,
+      "https://api.stripe.com/v1/checkout/sessions"
+    );
+    assert.equal(fetchCalls[0].init?.method, "POST");
+    assert.equal(
+      new URLSearchParams(String(fetchCalls[0].init?.body)).get(
+        "line_items[0][price]"
+      ),
+      "price_test_paid_monthly"
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("yearly checkout uses the yearly Stripe price id", async () => {
   const checkoutInputs = /** @type {any[]} */ ([]);
   const result = await createCheckoutSessionForAccount({

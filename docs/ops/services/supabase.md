@@ -21,8 +21,11 @@ repository.
 - The selected Supabase organization and project belong to Agent Outbox.
 - The production project is in the intended region and healthy before runtime or
   migration work.
-- Local and serverless database URLs use the Supabase pooler unless direct
-  connectivity has been explicitly verified.
+- Local and generic serverless database URLs use the Supabase pooler unless
+  direct connectivity has been explicitly verified.
+- Cloudflare Workers production uses Cloudflare Hyperdrive against the direct
+  Supabase Postgres host with the restricted app role; Hyperdrive supplies the
+  Worker runtime connection string through the `AGENT_OUTBOX_DATABASE` binding.
 - `DATABASE_APP_ROLE_URL` uses the restricted app role through the transaction
   pooler.
 - `DATABASE_URL` and `DATABASE_MIGRATION_URL` use the migration/session

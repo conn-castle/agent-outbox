@@ -39,7 +39,7 @@ a {
 .shell {
   min-height: 100vh;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
 }
 
 .topbar {
@@ -61,6 +61,34 @@ a {
   align-items: center;
   gap: 16px;
   font-size: 14px;
+}
+
+.site-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px clamp(20px, 5vw, 56px);
+  border-top: 1px solid #dedbd2;
+  background: #fbfaf7;
+  color: #5c6470;
+  font-size: 13px;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+.footer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.footer-nav a,
+.legal-acknowledgement a,
+.legal-content a {
+  text-underline-offset: 3px;
 }
 
 .main {
@@ -89,6 +117,94 @@ a {
   margin: 24px 0 0;
   color: #424b57;
   font-size: 20px;
+}
+
+.legal-main {
+  width: min(820px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 64px 0 80px;
+}
+
+.legal-header {
+  padding-bottom: 32px;
+  border-bottom: 1px solid #cec9bd;
+}
+
+.legal-title {
+  margin: 0;
+  color: #111827;
+  font-size: 52px;
+  line-height: 1.06;
+  letter-spacing: 0;
+}
+
+.legal-summary {
+  max-width: 720px;
+  margin: 20px 0 0;
+  color: #424b57;
+  font-size: 18px;
+}
+
+.legal-updated {
+  margin: 20px 0 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.legal-section {
+  padding: 30px 0;
+  border-bottom: 1px solid #dedbd2;
+}
+
+.legal-section h2 {
+  margin: 0 0 14px;
+  color: #111827;
+  font-size: 23px;
+  line-height: 1.25;
+}
+
+.legal-section h3 {
+  margin: 22px 0 8px;
+  color: #202938;
+  font-size: 17px;
+}
+
+.legal-section p,
+.legal-section li {
+  color: #424b57;
+}
+
+.legal-section p {
+  margin: 12px 0 0;
+}
+
+.legal-section ul {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding-left: 24px;
+}
+
+.legal-address {
+  margin-top: 14px;
+  color: #424b57;
+  font-style: normal;
+}
+
+.legal-acknowledgement {
+  max-width: 680px;
+  margin: 18px 0 0;
+  color: #5c6470;
+  font-size: 13px;
+}
+
+.auth-main {
+  display: grid;
+  justify-items: start;
+}
+
+.contact-actions {
+  margin-top: 20px;
 }
 
 .actions {
@@ -879,6 +995,20 @@ code {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .site-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .legal-main {
+    width: calc(100% - 24px);
+    padding: 44px 0 56px;
+  }
+
+  .legal-title {
+    font-size: 40px;
   }
 
   .main,

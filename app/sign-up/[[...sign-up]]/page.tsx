@@ -1,6 +1,7 @@
 import { SignUp } from "@clerk/nextjs";
 import Link from "next/link";
 
+import { LegalAcknowledgement } from "../../../src/components/legal/LegalDocument";
 import {
   browserFixtureSignupHref,
   humanBrowserFixtureEnabled
@@ -23,6 +24,7 @@ export default function SignUpPage() {
           <Link className="button" href={browserFixtureSignupHref()}>
             Create test account
           </Link>
+          <LegalAcknowledgement action="continuing" />
         </section>
       </main>
     );
@@ -38,8 +40,9 @@ export default function SignUpPage() {
   }
 
   return (
-    <main className="main">
+    <main className="main auth-main">
       <SignUp routing="path" path="/sign-up" fallbackRedirectUrl="/human" />
+      <LegalAcknowledgement action="continuing" />
     </main>
   );
 }
