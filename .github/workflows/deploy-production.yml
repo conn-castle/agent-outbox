@@ -30,7 +30,7 @@ jobs:
         run: make setup
 
       - name: Dry-run Worker package
-        run: pnpm run worker:dry-run
+        run: corepack pnpm run worker:dry-run
 
       - name: Deploy Worker
         env:
@@ -55,4 +55,4 @@ jobs:
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
-        run: pnpm run worker:deploy
+        run: corepack pnpm run worker:deploy

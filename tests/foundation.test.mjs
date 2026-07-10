@@ -716,7 +716,8 @@ test("production deploy workflow guard rejects automatic and incomplete deploy w
       ".github/workflows/deploy-production.yml must include main-branch deploy guard",
       ".github/workflows/deploy-production.yml must include production deploy concurrency group",
       ".github/workflows/deploy-production.yml must be manual-only and not include push:",
-      ".github/workflows/deploy-production.yml must include run: pnpm run worker:dry-run",
+      ".github/workflows/deploy-production.yml must include run: corepack pnpm run worker:dry-run",
+      ".github/workflows/deploy-production.yml must include run: corepack pnpm run worker:deploy",
       ".github/workflows/deploy-production.yml must include CLOUDFLARE_HYPERDRIVE_ID"
     ]
   );

@@ -954,7 +954,10 @@ export function validateProductionDeployWorkflow(
     }
   }
 
-  for (const command of ["pnpm run worker:dry-run", "pnpm run worker:deploy"]) {
+  for (const command of [
+    "corepack pnpm run worker:dry-run",
+    "corepack pnpm run worker:deploy"
+  ]) {
     if (!workflowRunStepIncludes(deployWorkflowContent, command)) {
       failures.push(
         `.github/workflows/deploy-production.yml must include run: ${command}`
