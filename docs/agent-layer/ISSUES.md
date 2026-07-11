@@ -26,6 +26,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-07-10 sentry-cli-api-schema-mismatch: Pinned sentry-cli 3.6.0 cannot parse current Sentry API responses
+    Priority: Low. Area: Tooling / Observability
+    Description: `sentry-cli organizations list` (@sentry/cli 3.6.0) fails with "could not parse JSON response: missing field `requireEmailVerification`", a schema drift between the pinned CLI and the current Sentry API. Production source-map upload is unaffected (the @sentry/nextjs build plugin uploads via debug IDs), but services/sentry.md directs operators to sentry-cli for release/issue/source-map diagnostics.
+    Next step: Bump @sentry/cli to a version compatible with the current Sentry API and re-verify the operator commands sentry.md recommends.
+    Notes: Observed while enabling source-map upload; only `organizations list` was exercised.
+
 - Issue 2026-07-10 billing-checkout-latency: Authenticated Stripe checkout takes 5–10 seconds to appear
     Priority: Medium. Area: Billing / Performance
     Description: Checkout's three sequential fresh database transactions were consolidated into one transaction locally. The remaining deployed 5–10 second latency has not yet been measured after this fix, so Stripe API and hosted page-load time remain unquantified.
@@ -89,9 +95,3 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: `tests/foundation.test.mjs` now guards teardown steps, but similar robust teardown handling is not consistently applied across other database test files.
     Next step: Review database test teardown helpers and apply one consistent failure-safe cleanup pattern where needed.
     Notes: Deferred from the Phase 7 billing-retention PR audit to avoid broad test refactoring in this PR.
-
-- Issue 2026-06-30 cloudflare-web-analytics-permission: Cloudflare Web Analytics site creation lacks token permission
-    Priority: Medium. Area: Tooling/Deployment
-    Description: Web Analytics site creation is still blocked because the deploy token lacks the needed RUM/account-settings write permission.
-    Next step: Create Web Analytics with an appropriately scoped Cloudflare token or grant the deploy token the missing permission, then install the runtime analytics token.
-    Notes: The Worker bundle-size blocker was resolved on 2026-07-07 by resolving runtime Sentry imports through the Sentry edge entry; Wrangler dry-run now reports 2122.53 KiB gzip.
