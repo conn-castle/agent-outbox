@@ -65,6 +65,7 @@ test("human review list statement scopes rows by account and supports focused fi
     /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\) ilike \$3/
   );
   assert.match(statement.sql, /or i\.caller_item_id ilike \$3/);
+  assert.match(statement.sql, /or i\.row_type_display ilike \$3/);
   assert.match(statement.sql, /case i\.priority/);
 });
 
@@ -102,7 +103,7 @@ test("human review search treats LIKE metacharacters as literal text", () => {
     50,
     0
   ]);
-  assert.equal(statement.sql.match(/ilike \$2 escape '!'/g)?.length, 5);
+  assert.equal(statement.sql.match(/ilike \$2 escape '!'/g)?.length, 6);
 });
 
 test("human review list shapes caller affordances and output read state", async () => {

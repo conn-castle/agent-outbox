@@ -306,6 +306,7 @@ function humanReviewListStatementWithLimit(
       or regexp_replace(i.subtitle_html, '<[^>]*>', ' ', 'g') ilike $${values.length} escape '!'
       or regexp_replace(i.summary_html, '<[^>]*>', ' ', 'g') ilike $${values.length} escape '!'
       or i.caller_item_id ilike $${values.length} escape '!'
+      or i.row_type_display ilike $${values.length} escape '!'
       or c.display_name ilike $${values.length} escape '!'
     )`);
   }
