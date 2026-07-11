@@ -352,7 +352,15 @@ function readWorkspaceState(): {
       return null;
     }
 
-    const parsed = JSON.parse(raw) as PersistedWorkspaceState;
+    const parsedJson: unknown = JSON.parse(raw);
+    if (
+      parsedJson === null ||
+      typeof parsedJson !== "object" ||
+      Array.isArray(parsedJson)
+    ) {
+      return null;
+    }
+    const parsed = parsedJson as Partial<PersistedWorkspaceState>;
     return {
       selectedIds: Array.isArray(parsed.selectedIds)
         ? parsed.selectedIds.filter(

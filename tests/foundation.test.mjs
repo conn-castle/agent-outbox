@@ -6210,9 +6210,6 @@ test(
         "Phase 3 database test and teardown both failed."
       );
     }
-    if (bodyError !== undefined) {
-      throw bodyError;
-    }
   }
 );
 

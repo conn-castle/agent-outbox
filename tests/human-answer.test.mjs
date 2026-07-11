@@ -736,9 +736,6 @@ test(
         "Human answer database test and teardown both failed."
       );
     }
-    if (bodyError !== undefined) {
-      throw bodyError;
-    }
   }
 );
 
@@ -924,9 +921,6 @@ test(
         () => cleanupHumanAnswerDatabaseTest(client, ids),
         "Human answer database test and teardown both failed."
       );
-    }
-    if (bodyError !== undefined) {
-      throw bodyError;
     }
   }
 );

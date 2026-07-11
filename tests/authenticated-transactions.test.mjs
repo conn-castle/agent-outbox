@@ -635,9 +635,6 @@ test(
         "Caller transaction database test and teardown both failed."
       );
     }
-    if (bodyError !== undefined) {
-      throw bodyError;
-    }
   }
 );
 

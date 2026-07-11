@@ -249,9 +249,6 @@ test(
         "Human session database test and teardown both failed."
       );
     }
-    if (bodyError !== undefined) {
-      throw bodyError;
-    }
   }
 );
 
@@ -307,9 +304,6 @@ test(
           }),
         "Human session database test and teardown both failed."
       );
-    }
-    if (bodyError !== undefined) {
-      throw bodyError;
     }
   }
 );
@@ -374,9 +368,6 @@ test(
         () => cleanupHumanSessionDatabaseTest(client, { accountIds, userIds }),
         "Human session database test and teardown both failed."
       );
-    }
-    if (bodyError !== undefined) {
-      throw bodyError;
     }
   }
 );
@@ -470,9 +461,6 @@ test(
         () => cleanupHumanSessionDatabaseTest(client, { accountIds, userIds }),
         "Human session database test and teardown both failed."
       );
-    }
-    if (bodyError !== undefined) {
-      throw bodyError;
     }
   }
 );

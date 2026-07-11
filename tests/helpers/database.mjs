@@ -65,7 +65,9 @@ export function teardownAttempt(errors, stagePrefix) {
 /**
  * Runs `teardown` without letting a teardown failure mask a test-body
  * failure: when both fail, an AggregateError carrying both (with the body
- * error as cause) is thrown under `aggregateMessage`.
+ * error as cause) is thrown under `aggregateMessage`. When only the body
+ * failed, `bodyError` is rethrown after the teardown succeeds, so call sites
+ * do not need their own trailing rethrow.
  *
  * @param {unknown} bodyError
  * @param {() => Promise<void>} teardown
@@ -86,6 +88,9 @@ export async function preserveBodyErrorDuringTeardown(
       });
     }
     throw teardownError;
+  }
+  if (bodyError !== undefined) {
+    throw bodyError;
   }
 }
 
