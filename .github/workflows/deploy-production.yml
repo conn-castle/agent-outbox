@@ -98,6 +98,10 @@ jobs:
           APP_BASE_URL: https://app.agent-outbox.dev
           PUBLIC_APP_BASE_URL: https://app.agent-outbox.dev
           SENTRY_RELEASE: ${{ github.sha }}
+          AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD: "1"
+          AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH: "1"
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
           CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
           SENTRY_BROWSER_DSN: ${{ vars.SENTRY_BROWSER_DSN }}
           STRIPE_PAID_MONTHLY_PRICE_ID: ${{ vars.STRIPE_PAID_MONTHLY_PRICE_ID }}
@@ -111,6 +115,7 @@ jobs:
             ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           CALLER_KEY_HASH_SECRET: ${{ secrets.CALLER_KEY_HASH_SECRET }}
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}

@@ -1009,6 +1009,54 @@ test("worker deploy command environments keep runtime secrets out of build and d
   assert.equal(deployEnv.APP_BASE_URL, undefined);
 });
 
+test("worker build subprocess gets Sentry upload config, never the deploy subprocess or Worker vars", () => {
+  const sentryUploadNames = [
+    "SENTRY_ORG",
+    "SENTRY_PROJECT",
+    "SENTRY_AUTH_TOKEN",
+    "AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD",
+    "AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH"
+  ];
+  const env = workerDeployEnv({
+    SENTRY_ORG: "conn-castle",
+    SENTRY_PROJECT: "agent-outbox",
+    SENTRY_AUTH_TOKEN: "sntrys_upload_token",
+    AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD: "1",
+    AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH: "1"
+  });
+  const buildEnv = workerBuildEnvironment(env);
+  const deployEnv = wranglerDeployEnvironment(env);
+
+  // The build subprocess needs the upload config plus the already-public
+  // release id so the Sentry plugin can create the release and upload maps.
+  for (const name of sentryUploadNames) {
+    assert.equal(buildEnv[name], env[name]);
+  }
+  assert.equal(buildEnv.SENTRY_RELEASE, env.SENTRY_RELEASE);
+
+  // The secret auth token must never reach the wrangler deploy subprocess...
+  for (const name of sentryUploadNames) {
+    assert.equal(deployEnv[name], undefined);
+  }
+
+  // ...nor become a Worker runtime --var binding.
+  const varBindings = buildWranglerDeployArgs(env, "/tmp/secrets").flatMap(
+    (arg, index, args) => (arg === "--var" ? [args[index + 1]] : [])
+  );
+  for (const name of sentryUploadNames) {
+    assert.equal(
+      varBindings.some((binding) => binding.startsWith(`${name}:`)),
+      false
+    );
+  }
+
+  // Absent by default: the passthrough must not fabricate empty values.
+  const buildEnvUnset = workerBuildEnvironment(workerDeployEnv());
+  for (const name of sentryUploadNames) {
+    assert.equal(buildEnvUnset[name], undefined);
+  }
+});
+
 test("worker deploy wrapper requires production config and appends optional analytics only when set", () => {
   assert.deepEqual(
     validateWorkerDeployEnvironment(

@@ -83,9 +83,15 @@ optional until the Web Analytics provider permission blocker is resolved; when
 it is absent, the Worker deploy continues without that binding. The wrapper also
 derives `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` from `CLERK_PUBLISHABLE_KEY` for
 Clerk's Next.js middleware/runtime package; do not store or rotate it as a
-separate source value. The build subprocess receives only these non-secret
+separate source value. The build subprocess receives these non-secret
 configuration values plus the minimal process environment needed to run the
-toolchain.
+toolchain. When Sentry source-map upload is enabled
+(`AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD` and
+`AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH` set), the wrapper additionally threads
+`SENTRY_ORG`, `SENTRY_PROJECT`, and the `SENTRY_AUTH_TOKEN` secret into the
+build subprocess only — never into the Worker runtime `--var` bindings and never
+into the wrangler deploy subprocess — so the Sentry build plugin can create the
+release and upload source maps.
 
 Deploy-only configuration values:
 

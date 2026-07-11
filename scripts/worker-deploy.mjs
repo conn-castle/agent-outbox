@@ -76,6 +76,19 @@ const COMMAND_ENV_PASSTHROUGH_NAMES = [
   "PNPM_HOME"
 ];
 
+// Threaded into the OpenNext build subprocess only (never the Worker runtime
+// --var bindings and never the wrangler deploy subprocess) so the Sentry build
+// plugin can create the release and upload source maps when upload is enabled.
+// commandEnvironment drops empty/undefined values, so these are absent unless
+// set. SENTRY_RELEASE is already a public var binding, so it is not repeated.
+const SENTRY_UPLOAD_BUILD_PASSTHROUGH_NAMES = [
+  "SENTRY_ORG",
+  "SENTRY_PROJECT",
+  "SENTRY_AUTH_TOKEN",
+  "AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD",
+  "AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH"
+];
+
 const DERIVED_PUBLIC_VAR_BINDINGS = [
   {
     name: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
@@ -242,12 +255,14 @@ function commandEnvironment(env, values = {}) {
  * @returns {NodeJS.ProcessEnv}
  */
 export function workerBuildEnvironment(env) {
-  return commandEnvironment(
-    env,
-    Object.fromEntries(
+  return commandEnvironment(env, {
+    ...Object.fromEntries(
       publicVarBindings(env).map(({ name, value }) => [name, value])
+    ),
+    ...Object.fromEntries(
+      SENTRY_UPLOAD_BUILD_PASSTHROUGH_NAMES.map((name) => [name, env[name]])
     )
-  );
+  });
 }
 
 /**
