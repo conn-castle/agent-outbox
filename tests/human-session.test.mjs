@@ -10,6 +10,11 @@ import {
   resolveHumanAccountContextInTransaction,
   resolveHumanAccountSession
 } from "../src/server/human-session.ts";
+import {
+  assertMigrationOwnerCanSetAppRole,
+  preserveBodyErrorDuringTeardown,
+  teardownAttempt
+} from "./helpers/database.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -185,14 +190,22 @@ test(
     const runId = crypto.randomUUID();
     const clerkUserA = `db-bootstrap-a-${runId}`;
     const clerkUserB = `db-bootstrap-b-${runId}`;
+    /** @type {string[]} */
+    const accountIds = [];
+    /** @type {string[]} */
+    const userIds = [];
+    /** @type {unknown} */
+    let bodyError;
 
     try {
-      await ensureCanSetAppRole(client);
+      await assertMigrationOwnerCanSetAppRole(client);
 
       const first = await callBootstrapFunction(client, clerkUserA, {
         authSurface: "human",
         clerkUserId: clerkUserA
       });
+      accountIds.push(first.account_id);
+      userIds.push(first.user_id);
       const repeat = await callBootstrapFunction(client, clerkUserA, {
         authSurface: "human",
         clerkUserId: clerkUserA
@@ -201,6 +214,8 @@ test(
         authSurface: "human",
         clerkUserId: clerkUserB
       });
+      accountIds.push(secondUser.account_id);
+      userIds.push(secondUser.user_id);
 
       assert.equal(first.provisioned_account, true);
       assert.equal(repeat.provisioned_account, false);
@@ -210,23 +225,29 @@ test(
       assert.notEqual(secondUser.user_id, first.user_id);
       assert.notEqual(secondUser.account_id, first.account_id);
 
-      const counts = await client.query(
-        `
-          select
-            (select count(*)::int from public.agent_outbox_users where clerk_user_id in ($1, $2)) as user_count,
-            (select count(*)::int from public.agent_outbox_account_members where user_id in ($3, $4)) as membership_count,
-            (select count(distinct account_id)::int from public.agent_outbox_account_members where user_id in ($3, $4)) as distinct_account_count
-        `,
-        [clerkUserA, clerkUserB, first.user_id, secondUser.user_id]
+      const firstMembership = await queryAsAppRole(
+        client,
+        { accountId: first.account_id, userId: first.user_id },
+        `select count(*)::int as membership_count from public.agent_outbox_account_members where user_id = $1 and account_id = $2`,
+        [first.user_id, first.account_id]
+      );
+      const secondMembership = await queryAsAppRole(
+        client,
+        { accountId: secondUser.account_id, userId: secondUser.user_id },
+        `select count(*)::int as membership_count from public.agent_outbox_account_members where user_id = $1 and account_id = $2`,
+        [secondUser.user_id, secondUser.account_id]
       );
 
-      assert.deepEqual(counts.rows[0], {
-        user_count: 2,
-        membership_count: 2,
-        distinct_account_count: 2
-      });
+      assert.equal(firstMembership.rows[0].membership_count, 1);
+      assert.equal(secondMembership.rows[0].membership_count, 1);
+    } catch (error) {
+      bodyError = error;
     } finally {
-      await client.end();
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        () => cleanupHumanSessionDatabaseTest(client, { accountIds, userIds }),
+        "Human session database test and teardown both failed."
+      );
     }
   }
 );
@@ -242,9 +263,11 @@ test(
     const client = await connectedDatabaseClient();
     const runId = crypto.randomUUID();
     const clerkUserId = `db-bootstrap-denial-${runId}`;
+    /** @type {unknown} */
+    let bodyError;
 
     try {
-      await ensureCanSetAppRole(client);
+      await assertMigrationOwnerCanSetAppRole(client);
 
       await assert.rejects(
         () =>
@@ -269,8 +292,18 @@ test(
           }),
         sqlState("42501")
       );
+    } catch (error) {
+      bodyError = error;
     } finally {
-      await client.end();
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        () =>
+          cleanupHumanSessionDatabaseTest(client, {
+            accountIds: [],
+            userIds: []
+          }),
+        "Human session database test and teardown both failed."
+      );
     }
   }
 );
@@ -285,23 +318,35 @@ test(
   async () => {
     const client = await connectedDatabaseClient();
     const clerkUserId = `db-bootstrap-repair-${crypto.randomUUID()}`;
+    /** @type {string[]} */
+    const accountIds = [];
+    /** @type {string[]} */
+    const userIds = [];
+    /** @type {unknown} */
+    let bodyError;
 
     try {
-      await ensureCanSetAppRole(client);
+      await assertMigrationOwnerCanSetAppRole(client);
 
-      const existingUser = await client.query(
+      const existingUserId = crypto.randomUUID();
+      userIds.push(existingUserId);
+      await queryAsAppRole(
+        client,
+        { userId: existingUserId },
         `
-          insert into public.agent_outbox_users(clerk_user_id)
-          values ($1)
-          returning user_id::text as user_id
+          insert into public.agent_outbox_users(user_id, clerk_user_id)
+          values ($1, $2)
         `,
-        [clerkUserId]
+        [existingUserId, clerkUserId]
       );
       const repaired = await callBootstrapFunction(client, clerkUserId, {
         authSurface: "human",
         clerkUserId
       });
-      const membership = await client.query(
+      accountIds.push(repaired.account_id);
+      const membership = await queryAsAppRole(
+        client,
+        { accountId: repaired.account_id, userId: repaired.user_id },
         `
           select count(*)::int as membership_count
           from public.agent_outbox_account_members
@@ -312,11 +357,17 @@ test(
         [repaired.user_id, repaired.account_id]
       );
 
-      assert.equal(repaired.user_id, existingUser.rows[0].user_id);
+      assert.equal(repaired.user_id, existingUserId);
       assert.equal(repaired.provisioned_account, true);
       assert.deepEqual(membership.rows[0], { membership_count: 1 });
+    } catch (error) {
+      bodyError = error;
     } finally {
-      await client.end();
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        () => cleanupHumanSessionDatabaseTest(client, { accountIds, userIds }),
+        "Human session database test and teardown both failed."
+      );
     }
   }
 );
@@ -341,9 +392,15 @@ test(
       GITHUB_SHA: process.env.GITHUB_SHA,
       SENTRY_RELEASE: process.env.SENTRY_RELEASE
     };
+    /** @type {string[]} */
+    const accountIds = [];
+    /** @type {string[]} */
+    const userIds = [];
+    /** @type {unknown} */
+    let bodyError;
 
     try {
-      await ensureCanSetAppRole(client);
+      await assertMigrationOwnerCanSetAppRole(client);
       process.env.DATABASE_APP_ROLE_URL = databaseUrl;
       // Pin the observability environment/release inputs so the emitted log
       // shape is deterministic regardless of ambient APP_ENV or the
@@ -360,6 +417,10 @@ test(
         clerkUserId,
         requestId
       });
+      if (result.ok) {
+        accountIds.push(result.accountId);
+        userIds.push(result.userId);
+      }
 
       assert.equal(result.ok, true);
       assert.equal(result.ok ? result.provisionedAccount : null, true);
@@ -379,6 +440,8 @@ test(
       ]);
       assert.doesNotMatch(JSON.stringify(parsed), new RegExp(clerkUserId));
       assert.doesNotMatch(JSON.stringify(parsed), /secret|password|token/i);
+    } catch (error) {
+      bodyError = error;
     } finally {
       console.log = previousLog;
       if (previousDatabaseUrl === undefined) {
@@ -393,7 +456,11 @@ test(
           process.env[name] = value;
         }
       }
-      await client.end();
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        () => cleanupHumanSessionDatabaseTest(client, { accountIds, userIds }),
+        "Human session database test and teardown both failed."
+      );
     }
   }
 );
@@ -446,22 +513,115 @@ async function connectedDatabaseClient() {
 
 /**
  * @param {import("pg").Client} client
+ * @param {{ accountId?: string, userId?: string }} context
+ * @param {string} sql
+ * @param {unknown[]} values
  */
-async function ensureCanSetAppRole(client) {
-  const membership = await client.query(
-    "select pg_has_role(current_user, 'agent_outbox_app', 'member') as is_member"
-  );
-  if (membership.rows[0]?.is_member === true) {
-    return;
+async function queryAsAppRole(client, context, sql, values) {
+  await client.query("begin");
+  try {
+    await client.query("set role agent_outbox_app");
+    await client.query("select set_config($1, $2, true)", [
+      "agent_outbox.auth_surface",
+      context.accountId ? "human" : "cleanup"
+    ]);
+    if (context.accountId) {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        context.accountId
+      ]);
+    }
+    if (context.userId) {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.user_id",
+        context.userId
+      ]);
+    }
+    const result = await client.query(sql, values);
+    await client.query("reset role");
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
   }
+}
 
-  await client.query(`
-    do $$
-    begin
-      execute format('grant agent_outbox_app to %I', current_user);
-    end
-    $$;
-  `);
+/**
+ * @param {import("pg").Client} client
+ * @param {{ accountIds: string[], userIds: string[] }} ownership
+ */
+async function cleanupHumanSessionDatabaseTest(client, ownership) {
+  /** @type {Error[]} */
+  const errors = [];
+  const attempt = teardownAttempt(
+    errors,
+    "Human session database teardown failed"
+  );
+
+  await attempt("transaction rollback", () => client.query("rollback"));
+  await attempt("role reset", () => client.query("reset role"));
+  await attempt("test row cleanup", async () => {
+    const cleanupRole = await client.query(
+      `select rolsuper or rolbypassrls as bypasses_rls from pg_catalog.pg_roles where rolname = current_user`
+    );
+    const bypassesRls = cleanupRole.rows[0]?.bypasses_rls === true;
+    if (!bypassesRls) {
+      await client.query("set role agent_outbox_app");
+    }
+    await client.query("begin");
+    try {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.audit_break_glass",
+        "on"
+      ]);
+      if (bypassesRls && ownership.userIds.length > 0) {
+        await client.query(
+          `delete from public.agent_outbox_audit_events where account_audit_id in (select a.account_audit_id from public.agent_outbox_accounts a join public.agent_outbox_account_members m on m.account_id = a.account_id where m.user_id = any($1::uuid[]))`,
+          [ownership.userIds]
+        );
+      }
+      for (const accountId of ownership.accountIds) {
+        await client.query("select set_config($1, $2, true)", [
+          "agent_outbox.auth_surface",
+          "cleanup"
+        ]);
+        await client.query("select set_config($1, $2, true)", [
+          "agent_outbox.account_id",
+          accountId
+        ]);
+        await client.query(
+          `delete from public.agent_outbox_accounts where account_id = $1`,
+          [accountId]
+        );
+      }
+      for (const userId of ownership.userIds) {
+        await client.query("select set_config($1, $2, true)", [
+          "agent_outbox.user_id",
+          userId
+        ]);
+        await client.query(
+          `delete from public.agent_outbox_users where user_id = $1`,
+          [userId]
+        );
+      }
+      await client.query("commit");
+      if (!bypassesRls) {
+        await client.query("reset role");
+      }
+    } catch (error) {
+      await client.query("rollback");
+      if (!bypassesRls) {
+        await client.query("reset role");
+      }
+      throw error;
+    }
+  });
+  await attempt("client close", () => client.end());
+
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "Human session database teardown failed.");
+  }
 }
 
 /**

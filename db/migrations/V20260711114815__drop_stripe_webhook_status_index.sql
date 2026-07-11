@@ -1,0 +1,1 @@
+drop index concurrently if exists public.agent_outbox_stripe_webhook_events_processed_idx;

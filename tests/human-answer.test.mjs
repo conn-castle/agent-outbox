@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import pg from "pg";
 import test from "node:test";
 
 import {
@@ -11,6 +10,13 @@ import {
   undoHumanAnswerBeforeReadInTransaction,
   validatedResponsePayload
 } from "../src/server/human-answer.ts";
+import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
+import {
+  assertMigrationOwnerCanSetAppRole,
+  connectedDatabaseClient,
+  preserveBodyErrorDuringTeardown,
+  teardownAttempt
+} from "./helpers/database.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -19,8 +25,6 @@ import {
  * @typedef {{ inputRows?: QueryResultRow[], actionRows?: QueryResultRow[], optionRows?: QueryResultRow[], accountTierRows?: QueryResultRow[], advisoryLockRows?: QueryResultRow[], accountStockUsageRows?: QueryResultRow[], outputRows?: QueryResultRow[], outputFileRows?: QueryResultRow[], preReadRows?: QueryResultRow[], undoRows?: QueryResultRow[] }} HumanAnswerMockRows
  * @typedef {{ accountId: string, userId: string, callerId: string, inputItemId: string, actionId: string }} HumanAnswerDatabaseIds
  */
-
-const { Client } = pg;
 
 const databaseTestsEnabled =
   process.env.AGENT_OUTBOX_ENABLE_DATABASE_TESTS === "1";
@@ -609,7 +613,7 @@ test(
   async () => {
     assert.ok(databaseUrl);
 
-    const client = new Client({ connectionString: databaseUrl });
+    const client = await connectedDatabaseClient(databaseUrl);
     const ids = {
       accountId: crypto.randomUUID(),
       userId: crypto.randomUUID(),
@@ -617,11 +621,27 @@ test(
       inputItemId: crypto.randomUUID(),
       actionId: crypto.randomUUID()
     };
+    /** @type {unknown} */
+    let bodyError;
 
-    await client.connect();
     try {
-      await seedDatabaseRows(client, ids);
+      await assertMigrationOwnerCanSetAppRole(client);
       await client.query("set role agent_outbox_app");
+      await client.query("begin");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountId
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.user_id",
+        ids.userId
+      ]);
+      await seedDatabaseRows(client, ids);
+      await client.query("commit");
       await client.query("begin");
       await client.query("select set_config($1, $2, true)", [
         "agent_outbox.request_id",
@@ -707,10 +727,200 @@ test(
         status: "pending",
         current_revision: 2
       });
+    } catch (error) {
+      bodyError = error;
     } finally {
-      await resetRoleAndRollback(client);
-      await cleanupDatabaseRows(client, ids);
-      await client.end();
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        () => cleanupHumanAnswerDatabaseTest(client, ids),
+        "Human answer database test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "phase 4 local database human review pagination and search run the production statement",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+
+    const client = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    // 105 extra items plus the seeded item make 106 rows, so page one must
+    // contain exactly 100 rows and the second page exactly 6.
+    const extraItemIds = Array.from({ length: 105 }, () => crypto.randomUUID());
+    const markerItemId = extraItemIds[0];
+    const decoyItemId = extraItemIds[1];
+    // Every row is inserted in one transaction, so all rows share the same
+    // default updated_at and the list order is fully determined by the
+    // input_item_id tiebreaker (uuid comparison matches sorting the
+    // lowercase canonical strings).
+    const sortedItemIds = [ids.inputItemId, ...extraItemIds].sort();
+    /** @type {import("../src/server/authorization.ts").AuthorizedHumanAccountContext} */
+    const reviewContext = {
+      surface: "human",
+      accountId: ids.accountId,
+      userId: ids.userId,
+      role: "owner"
+    };
+    /**
+     * @param {TransactionContextStatement} statement
+     * @returns {Promise<import("pg").QueryResult<QueryResultRow>>}
+     */
+    const rawQuery = (statement) =>
+      client.query(statement.sql, statement.values);
+    const query = /** @type {ProductTransactionQuery} */ (
+      /** @type {unknown} */ (rawQuery)
+    );
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await assertMigrationOwnerCanSetAppRole(client);
+      await client.query("set role agent_outbox_app");
+      await client.query("begin");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountId
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.user_id",
+        ids.userId
+      ]);
+      await seedDatabaseRows(client, ids);
+      for (const [index, extraItemId] of extraItemIds.entries()) {
+        // The marker title exercises both LIKE-metacharacter escaping (the
+        // literal "50%_off!") and tag stripping (the visible phrase crosses
+        // the </strong> boundary). The decoy only matches "50%_off!" when %
+        // and _ are wrongly treated as wildcards.
+        const titleHtml =
+          extraItemId === markerItemId
+            ? "<strong>Tail</strong> literal 50%_off! marker"
+            : extraItemId === decoyItemId
+              ? "50 percent off! wildcard decoy"
+              : `Bulk review item ${index}`;
+        await client.query(
+          `
+            insert into public.agent_outbox_input_items(
+              input_item_id,
+              account_id,
+              caller_id,
+              caller_item_id,
+              caller_item_id_hash,
+              row_type_display,
+              row_type_icon,
+              title_html,
+              subtitle_html,
+              summary_html,
+              non_file_payload_bytes
+            )
+            values ($1, $2, $3, $4, $5, 'Review', 'inbox', $6, 'Subtitle', 'Summary', 25)
+          `,
+          [
+            extraItemId,
+            ids.accountId,
+            ids.callerId,
+            `caller-item-page-${index}`,
+            `hash-page-${index}`,
+            titleHtml
+          ]
+        );
+      }
+      await client.query("commit");
+      await client.query("begin");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.request_id",
+        "req-db-page-test"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "human"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountId
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.user_id",
+        ids.userId
+      ]);
+
+      const firstPage = await humanReviewPageInTransaction(
+        query,
+        reviewContext,
+        { offset: 0 }
+      );
+      assert.equal(firstPage.hasNext, true);
+      assert.deepEqual(
+        firstPage.rows.map((row) => row.inputItemId),
+        sortedItemIds.slice(0, 100)
+      );
+
+      const secondPage = await humanReviewPageInTransaction(
+        query,
+        reviewContext,
+        { offset: 100 }
+      );
+      assert.equal(secondPage.hasNext, false);
+      assert.deepEqual(
+        secondPage.rows.map((row) => row.inputItemId),
+        sortedItemIds.slice(100)
+      );
+
+      // The literal search only matches when %, _ and ! are escaped; broken
+      // escaping either drops the marker (its visible text has no "off%")
+      // or pulls in the wildcard decoy.
+      const literalSearch = await humanReviewPageInTransaction(
+        query,
+        reviewContext,
+        { search: "50%_off!" }
+      );
+      assert.deepEqual(
+        literalSearch.rows.map((row) => row.inputItemId),
+        [markerItemId]
+      );
+
+      // The SQL replaces each tag with a single space, so the marker's
+      // visible title reads "Tail  literal ..." (two spaces where </strong>
+      // sat). The raw HTML column never contains this phrase, so the match
+      // proves the statement searches tag-stripped text.
+      const strippedSearch = await humanReviewPageInTransaction(
+        query,
+        reviewContext,
+        { search: "Tail  literal" }
+      );
+      assert.deepEqual(
+        strippedSearch.rows.map((row) => row.inputItemId),
+        [markerItemId]
+      );
+
+      // Markup must not be searchable: no seeded row has "strong" in its
+      // visible text, so the marker's <strong> tag must not match.
+      const markupSearch = await humanReviewPageInTransaction(
+        query,
+        reviewContext,
+        { search: "strong" }
+      );
+      assert.deepEqual(markupSearch.rows, []);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        () => cleanupHumanAnswerDatabaseTest(client, ids),
+        "Human answer database test and teardown both failed."
+      );
     }
   }
 );
@@ -869,12 +1079,30 @@ async function seedDatabaseRows(client, ids) {
  * @param {HumanAnswerDatabaseIds} ids
  */
 async function cleanupDatabaseRows(client, ids) {
-  await client.query("reset role");
+  const cleanupRole = await client.query(
+    `select rolsuper or rolbypassrls as bypasses_rls from pg_catalog.pg_roles where rolname = current_user`
+  );
+  const bypassesRls = cleanupRole.rows[0]?.bypasses_rls === true;
+  if (!bypassesRls) {
+    await client.query("set role agent_outbox_app");
+  }
   await client.query("begin");
   try {
     await client.query("select set_config($1, $2, true)", [
       "agent_outbox.audit_break_glass",
       "on"
+    ]);
+    await client.query("select set_config($1, $2, true)", [
+      "agent_outbox.auth_surface",
+      "cleanup"
+    ]);
+    await client.query("select set_config($1, $2, true)", [
+      "agent_outbox.account_id",
+      ids.accountId
+    ]);
+    await client.query("select set_config($1, $2, true)", [
+      "agent_outbox.user_id",
+      ids.userId
     ]);
     await client.query(
       `
@@ -898,21 +1126,36 @@ async function cleanupDatabaseRows(client, ids) {
       [ids.userId]
     );
     await client.query("commit");
+    if (!bypassesRls) {
+      await client.query("reset role");
+    }
   } catch (error) {
     await client.query("rollback");
+    if (!bypassesRls) {
+      await client.query("reset role");
+    }
     throw error;
   }
 }
 
 /**
  * @param {import("pg").Client} client
+ * @param {HumanAnswerDatabaseIds} ids
  */
-async function resetRoleAndRollback(client) {
-  for (const sql of ["rollback", "reset role"]) {
-    try {
-      await client.query(sql);
-    } catch {
-      // Best-effort cleanup after a failed database assertion.
-    }
+async function cleanupHumanAnswerDatabaseTest(client, ids) {
+  /** @type {Error[]} */
+  const errors = [];
+  const attempt = teardownAttempt(
+    errors,
+    "Human answer database teardown failed"
+  );
+
+  await attempt("transaction rollback", () => client.query("rollback"));
+  await attempt("role reset", () => client.query("reset role"));
+  await attempt("test row cleanup", () => cleanupDatabaseRows(client, ids));
+  await attempt("client close", () => client.end());
+
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "Human answer database teardown failed.");
   }
 }

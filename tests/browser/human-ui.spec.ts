@@ -271,21 +271,7 @@ test("human actions submit undo and narrow bulk actions through server actions",
   ).toBeDisabled();
 });
 
-test("failed human action emits a content-safe client event", async ({
-  page
-}) => {
-  const events = await interceptClientEvents(page);
-  await page.goto("/human?error=invalid_request");
-
-  await expect(page.getByRole("status")).toContainText(
-    "Action failed: invalid request."
-  );
-  await expect
-    .poll(() => events)
-    .toEqual([{ name: "human_action_failed", category: "submission" }]);
-});
-
-test("failed file upload emits a content-safe client event", async ({
+test("failed file upload notice is not re-emitted by the browser", async ({
   page
 }) => {
   const events = await interceptClientEvents(page);
@@ -301,9 +287,93 @@ test("failed file upload emits a content-safe client event", async ({
   await expect(page.getByRole("status")).toContainText(
     "Action failed: invalid request."
   );
-  await expect
-    .poll(() => events)
-    .toEqual([{ name: "file_upload_failed", category: "upload" }]);
+  // The regression this guards against emitted from a post-hydration client
+  // effect; assert emptiness only after hydration so a reintroduced emission
+  // would land before the check and fail it.
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await expect.poll(() => events).toEqual([]);
+});
+
+test("reviews beyond the first 100 remain discoverable and reviewable", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByRole("button", { name: "Next page" })).toBeVisible();
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(page).toHaveURL(/page=2/);
+  await page.getByRole("link", { name: /Beyond one hundred review/ }).click();
+  await expect(
+    page.getByRole("region", { name: "Review detail" })
+  ).toContainText("Open and approve this item");
+  await expect(page.getByRole("button", { name: "Approve" })).toBeEnabled();
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+
+  // Submitting from page 2 must land back on page 2, not a reset view.
+  await page.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Answer submitted: approve."
+  );
+  await expect(page).toHaveURL(/page=2/);
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+
+  await page.getByLabel("Search").fill("Beyond one hundred");
+  await expect(page).toHaveURL(/search=Beyond\+one\+hundred/);
+  await expect(page).not.toHaveURL(/page=2/);
+  await expect(
+    page.getByRole("link", { name: /Beyond one hundred review/ })
+  ).toBeVisible();
+});
+
+test("review search sends one request after the trailing debounce", async ({
+  page
+}) => {
+  await page.clock.install({ time: new Date("2026-07-11T08:00:00Z") });
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await page.clock.pauseAt(new Date("2026-07-11T10:00:00Z"));
+  const searchRequests = trackHumanSearchRequests(page);
+
+  await page.getByLabel("Search").pressSequentially("follow-up");
+  expect(searchRequests).toHaveLength(0);
+  await page.clock.runFor(299);
+  expect(searchRequests).toHaveLength(0);
+  await page.clock.runFor(1);
+
+  await expect(page).toHaveURL(/search=follow-up/);
+  await expect.poll(() => searchRequests.length).toBe(1);
+});
+
+test("Enter and the Search button submit immediately and cancel debounce", async ({
+  page
+}) => {
+  await page.clock.install({ time: new Date("2026-07-11T08:00:00Z") });
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await page.clock.pauseAt(new Date("2026-07-11T10:00:00Z"));
+  const searchRequests = trackHumanSearchRequests(page);
+  const searchInput = page.getByLabel("Search");
+
+  await searchInput.fill("follow-up");
+  await searchInput.press("Enter");
+  await expect(page).toHaveURL(/search=follow-up/);
+  await expect.poll(() => searchRequests.length).toBe(1);
+  await page.clock.runFor(300);
+  expect(searchRequests).toHaveLength(1);
+
+  await page.getByLabel("Search").fill("Beyond one hundred");
+  await page.getByRole("button", { name: "Search" }).click();
+  await expect(page).toHaveURL(/search=Beyond\+one\+hundred/);
+  await expect.poll(() => searchRequests.length).toBe(2);
+  await page.clock.runFor(300);
+  expect(searchRequests).toHaveLength(2);
+
+  await page.getByLabel("Search").fill("summary");
+  await page.getByRole("combobox", { name: "Status" }).selectOption("answered");
+  await expect(page).toHaveURL(/search=summary/);
+  await expect(page).toHaveURL(/status=answered/);
+  await expect.poll(() => searchRequests.length).toBe(3);
+  await page.clock.runFor(300);
+  expect(searchRequests).toHaveLength(3);
 });
 
 test("uncaught browser error emits a content-safe client event", async ({
@@ -358,6 +428,17 @@ function deferred() {
 function postJson(request: Request) {
   const body = request.postData();
   return body ? JSON.parse(body) : null;
+}
+
+function trackHumanSearchRequests(page: Page) {
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/human" && url.searchParams.has("search")) {
+      requests.push(url.toString());
+    }
+  });
+  return requests;
 }
 
 async function interceptClientEvents(page: Page) {

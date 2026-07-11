@@ -470,6 +470,13 @@ code {
   font-weight: 650;
 }
 
+.review-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
 .review-controls input,
 .review-controls select,
 .bulk-actions select,
@@ -514,6 +521,18 @@ code {
 
 .bulk-actions span,
 .form-note {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.review-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.review-pagination span {
   color: #64748b;
   font-size: 13px;
 }
@@ -790,6 +809,8 @@ code {
 .detail-pane {
   position: sticky;
   top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
 }
 
 .detail-header {
@@ -989,6 +1010,8 @@ code {
 
   .detail-pane {
     position: static;
+    max-height: none;
+    overflow: visible;
   }
 }
 

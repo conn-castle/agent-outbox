@@ -1198,8 +1198,7 @@ export function validateMigrationReplayWorkflow(workflowContentsByPath) {
       "DATABASE_MIGRATION_URL",
       "FLYWAY_DOCKER_NETWORK: host",
       "make migration-replay",
-      'node --test --test-name-pattern "phase 3 local',
-      'database" tests/foundation.test.mjs',
+      "corepack pnpm exec node --test --test-concurrency=1 tests/foundation.test.mjs tests/human-session.test.mjs tests/human-answer.test.mjs tests/authenticated-transactions.test.mjs",
       'AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"'
     ]) {
       if (!content.includes(requiredToken)) {

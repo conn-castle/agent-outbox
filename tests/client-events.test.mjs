@@ -258,6 +258,48 @@ test("app error boundary drives the real classifyReactError from the thrown erro
   ]);
 });
 
+test("global error boundary renders a document shell and emits classified telemetry", () => {
+  /** @type {TestClientEvent[]} */
+  const emissions = [];
+  const GlobalError = loadErrorBoundaryForTest(
+    {
+      classifyReactError,
+      emitClientEvent: (name, category) => emissions.push({ name, category })
+    },
+    "app/global-error.tsx"
+  );
+  const rendered =
+    /** @type {{ type: unknown, props: { children: { type: unknown } } }} */ (
+      GlobalError({
+        error: new Error("plain root layout failure"),
+        reset: () => {}
+      })
+    );
+  assert.equal(rendered.type, "html");
+  assert.equal(rendered.props.children.type, "body");
+  assert.deepEqual(emissions, [
+    { name: "client_error", category: "browser_exception" }
+  ]);
+
+  /** @type {TestClientEvent[]} */
+  const hydrationEmissions = [];
+  const HydrationGlobalError = loadErrorBoundaryForTest(
+    {
+      classifyReactError,
+      emitClientEvent: (name, category) =>
+        hydrationEmissions.push({ name, category })
+    },
+    "app/global-error.tsx"
+  );
+  HydrationGlobalError({
+    error: new Error("Minified React error #418; see docs"),
+    reset: () => {}
+  });
+  assert.deepEqual(hydrationEmissions, [
+    { name: "hydration_error", category: "hydration" }
+  ]);
+});
+
 test("Cloudflare rate-limit check and apply build Rulesets API requests", async () => {
   /** @type {FetchCall[]} */
   const calls = [];
@@ -374,8 +416,8 @@ test("Cloudflare rate-limit check and apply handle a fresh zone without the rule
 /**
  * @param {ClientEventsStub} clientEventsStub
  */
-function loadErrorBoundaryForTest(clientEventsStub) {
-  const source = readFileSync(resolve(REPO_ROOT, "app/error.tsx"), "utf8");
+function loadErrorBoundaryForTest(clientEventsStub, path = "app/error.tsx") {
+  const source = readFileSync(resolve(REPO_ROOT, path), "utf8");
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
       esModuleInterop: true,
@@ -383,7 +425,7 @@ function loadErrorBoundaryForTest(clientEventsStub) {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2024
     },
-    fileName: "app/error.tsx"
+    fileName: path
   }).outputText;
   const testModule = {
     exports: /** @type {Record<string, unknown>} */ ({})
@@ -422,6 +464,11 @@ function loadErrorBoundaryForTest(clientEventsStub) {
         }
         if (specifier === "../src/client/client-events.ts") {
           return clientEventsStub;
+        }
+        if (specifier === "./globals.css") {
+          // global-error.tsx imports the stylesheet for standalone rendering;
+          // CSS is a bundler concern with no runtime module shape.
+          return {};
         }
         return require(specifier);
       }

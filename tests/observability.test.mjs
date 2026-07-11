@@ -27,12 +27,21 @@ import {
   createHumanAnswer,
   createHumanAnswerInTransaction
 } from "../src/server/human-answer.ts";
+import {
+  parseBulkHumanAnswersForm,
+  parseHumanAnswerForm,
+  parseUndoHumanAnswerForm
+} from "../src/server/human-action-form.ts";
 import { CLIENT_EVENT_BODY_BYTE_LIMIT } from "../src/shared/client-events-contract.ts";
-import { handleClientEventsRequest } from "../src/server/client-events.ts";
+import {
+  emitClientEventLog,
+  handleClientEventsRequest
+} from "../src/server/client-events.ts";
 import {
   durationSinceMs,
   emitRuntimeLog,
-  safeErrorName
+  safeErrorName,
+  safeLogEvent
 } from "../src/server/logging.ts";
 import {
   cloudflareWebAnalyticsToken,
@@ -246,6 +255,61 @@ function loadSentryModuleForTest(sentryStub) {
   );
 
   return /** @type {{ reportRuntimeFailure: RuntimeFailureReporterForTest }} */ (
+    testModule.exports
+  );
+}
+
+/**
+ * @param {(error: Error, input: Record<string, unknown>) => boolean} captureRuntimeException
+ * @returns {Pick<typeof import("../src/server/api-errors.ts"), "apiErrorResponse">}
+ */
+function loadApiErrorsModuleForTest(captureRuntimeException) {
+  const source = readFileSync(
+    resolve(REPO_ROOT, "src/server/api-errors.ts"),
+    "utf8"
+  );
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: {
+      esModuleInterop: true,
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2024
+    },
+    fileName: "src/server/api-errors.ts"
+  }).outputText;
+  const testModule = {
+    exports: /** @type {Record<string, unknown>} */ ({})
+  };
+
+  vm.runInNewContext(
+    compiled,
+    {
+      console,
+      exports: testModule.exports,
+      module: testModule,
+      process,
+      Response,
+      Headers,
+      /**
+       * @param {string} specifier
+       */
+      require(specifier) {
+        if (specifier === "./correlation.ts") {
+          return { createCorrelationId: () => "unused-correlation" };
+        }
+        if (specifier === "./logging.ts") {
+          return { durationSinceMs, emitRuntimeLog };
+        }
+        if (specifier === "./sentry.ts") {
+          return { captureRuntimeException };
+        }
+
+        return require(specifier);
+      }
+    },
+    { filename: "src/server/api-errors.ts" }
+  );
+
+  return /** @type {Pick<typeof import("../src/server/api-errors.ts"), "apiErrorResponse">} */ (
     testModule.exports
   );
 }
@@ -850,6 +914,76 @@ test("apiErrorResponse logs quota denials with safe operator metadata", async ()
   assert.equal(JSON.stringify(logs).includes("raw review content"), false);
 });
 
+test("apiErrorResponse captures only unreported internal status-500 failures", async () => {
+  /** @type {Array<{ error: Error, input: Record<string, unknown> }>} */
+  const captures = [];
+  const { apiErrorResponse: apiErrorResponseForTest } =
+    loadApiErrorsModuleForTest((error, input) => {
+      captures.push({ error, input });
+      return true;
+    });
+  const context = {
+    requestId: "req-api-boundary",
+    correlationId: "corr-api-boundary",
+    route: "/api/input/send",
+    method: "POST",
+    startedAtMs: Date.now()
+  };
+
+  const logs = await captureStructuredLogs(async () => {
+    const internalResponse = apiErrorResponseForTest(context, {
+      status: 500,
+      code: "internal_error",
+      message: "Safe public internal failure."
+    });
+    const unavailableResponse = apiErrorResponseForTest(context, {
+      status: 503,
+      code: "temporary_unavailable",
+      message: "Safe public transient failure."
+    });
+    const reportedResponse = apiErrorResponseForTest(context, {
+      status: 500,
+      code: "internal_error",
+      message: "Safe already-reported failure.",
+      reported: true
+    });
+
+    assert.equal(internalResponse.status, 500);
+    assert.equal(unavailableResponse.status, 503);
+    assert.equal(reportedResponse.status, 500);
+    const internalBody = await internalResponse.json();
+    assert.equal(internalBody.correlation_id, context.correlationId);
+    assert.equal("error_id" in internalBody.error, false);
+  });
+
+  assert.equal(captures.length, 1);
+  assert.equal(captures[0].error.message, "API request failed");
+  assert.equal(captures[0].input.errorId, context.correlationId);
+  assert.equal(captures[0].input.operation, "api_error.internal_error");
+  assert.equal(captures[0].input.route, context.route);
+  assert.equal(logs.length, 2);
+  assert.equal(logs[0].status_code, 500);
+  assert.equal(logs[0].error_id, context.correlationId);
+  assert.equal(logs[0].sentry_captured, true);
+  assert.equal(logs[1].status_code, 503);
+  // Expected operational 5xx are not captured as Sentry exceptions, but the
+  // log must say so explicitly for operator alerting on sentry_captured=false.
+  assert.equal(logs[1].sentry_captured, false);
+});
+
+test("safe structured logs retain the computed Sentry capture outcome", () => {
+  const safeEvent = safeLogEvent({
+    level: "error",
+    error_id: "err-safe-capture-result",
+    sentry_captured: false,
+    surface: "api",
+    operation: "api_error.internal_error",
+    message: "api request failed"
+  });
+
+  assert.equal(safeEvent.sentry_captured, false);
+});
+
 test("caller auth failures use server correlation id as error id", async () => {
   const logs = await captureStructuredLogs(async () => {
     const auth = await authenticateCallerApiRequest(
@@ -1365,6 +1499,238 @@ test("caller approval deny actions pass stable route labels to session logging",
       "/caller/revoke/device"
     ]
   );
+});
+
+test("human review server actions emit failure telemetry only on failure paths", async () => {
+  /** @type {Array<{ name: string, category?: string, producer?: string }>} */
+  const emitted = [];
+  /** @type {string[]} */
+  const redirects = [];
+  /**
+   * @param {{
+   *   transactionResult?: unknown,
+   *   createHumanAnswerResult?: { ok: boolean, code?: string }
+   * }} behavior
+   */
+  const loadHumanActions = (behavior) =>
+    /** @type {{
+        submitHumanAnswer(formData: FormData): Promise<void>,
+        submitBulkHumanAnswers(formData: FormData): Promise<void>,
+        undoHumanAnswer(formData: FormData): Promise<void>
+      }} */ (
+      loadCommonJsModuleForTest("app/human/actions.ts", {
+        "@clerk/nextjs/server": {
+          auth: {
+            /** @param {unknown} _options */
+            async protect(_options) {
+              return { userId: "clerk-user-observability" };
+            }
+          }
+        },
+        "next/navigation": {
+          /** @param {string} path */
+          redirect(path) {
+            redirects.push(path);
+            throw Object.assign(new Error("redirect"), { path });
+          }
+        },
+        "next/cache": { revalidatePath() {} },
+        "../../src/server/correlation": {
+          /** @param {string} prefix */
+          createCorrelationId(prefix) {
+            return `${prefix}_test`;
+          }
+        },
+        "../../src/server/client-events": {
+          /**
+           * @param {{ name: string, category?: string }} event
+           * @param {{ producer?: string }} context
+           */
+          emitClientEventLog(event, context) {
+            emitted.push({
+              name: event.name,
+              category: event.category,
+              producer: context.producer
+            });
+          }
+        },
+        "../../src/server/human-review-fixture": {
+          humanBrowserFixtureEnabled: () => false
+        },
+        "../../src/server/human-action-form": {
+          parseBulkHumanAnswersForm,
+          parseHumanAnswerForm,
+          parseUndoHumanAnswerForm
+        },
+        "../../src/server/human-answer": {
+          async createHumanAnswer() {
+            return behavior.createHumanAnswerResult;
+          },
+          async createHumanAnswerInTransaction() {
+            throw new Error("unused: transaction runner is stubbed");
+          },
+          async undoHumanAnswerBeforeReadInTransaction() {
+            throw new Error("unused: transaction runner is stubbed");
+          },
+          humanAnswerTransactionFailure() {},
+          humanAnswerUndoTransactionFailure() {}
+        },
+        "../../src/server/human-session": {
+          async resolveHumanAccountSession() {
+            return {
+              ok: true,
+              accountId: "00000000-0000-4000-8000-000000000701",
+              userId: "00000000-0000-4000-8000-000000000702"
+            };
+          },
+          async runHumanAccountTransaction() {
+            return behavior.transactionResult;
+          }
+        }
+      })
+    );
+
+  const submitForm = new FormData();
+  submitForm.set("inputItemId", "00000000-0000-4000-8000-000000000711");
+  submitForm.set("callerId", "00000000-0000-4000-8000-000000000712");
+  submitForm.set("expectedRevision", "1");
+  submitForm.set("actionValue", "approve");
+  submitForm.set("popupKind", "none");
+  submitForm.set("view.page", "2");
+
+  const failingSubmit = loadHumanActions({
+    transactionResult: {
+      ok: true,
+      data: { ok: false, code: "stale_input_revision" }
+    }
+  });
+  await assert.rejects(
+    () => failingSubmit.submitHumanAnswer(submitForm),
+    /redirect/
+  );
+  assert.deepEqual(emitted, [
+    {
+      name: "human_action_failed",
+      category: "submission",
+      producer: "server_action"
+    }
+  ]);
+  assert.match(redirects[0] ?? "", /error=stale_input_revision/);
+  assert.match(redirects[0] ?? "", /page=2/);
+
+  emitted.length = 0;
+  redirects.length = 0;
+  const successfulSubmit = loadHumanActions({
+    transactionResult: { ok: true, data: { ok: true } }
+  });
+  await assert.rejects(
+    () => successfulSubmit.submitHumanAnswer(submitForm),
+    /redirect/
+  );
+  assert.deepEqual(emitted, []);
+  assert.match(redirects[0] ?? "", /notice=answer_submitted/);
+  assert.match(redirects[0] ?? "", /page=2/);
+
+  emitted.length = 0;
+  redirects.length = 0;
+  const invalidUploadForm = new FormData();
+  invalidUploadForm.set("popupKind", "file_upload");
+  const parseFailure = loadHumanActions({});
+  await assert.rejects(
+    () => parseFailure.submitHumanAnswer(invalidUploadForm),
+    /redirect/
+  );
+  assert.deepEqual(emitted, [
+    {
+      name: "file_upload_failed",
+      category: "upload",
+      producer: "server_action"
+    }
+  ]);
+  assert.match(redirects[0] ?? "", /error=invalid_request/);
+  assert.match(redirects[0] ?? "", /failedActionKind=file_upload/);
+
+  emitted.length = 0;
+  redirects.length = 0;
+  const undoForm = new FormData();
+  undoForm.set("inputItemId", "00000000-0000-4000-8000-000000000711");
+  undoForm.set("callerId", "00000000-0000-4000-8000-000000000712");
+  undoForm.set("outputResultId", "00000000-0000-4000-8000-000000000713");
+  const failingUndo = loadHumanActions({
+    transactionResult: {
+      ok: false,
+      status: 503,
+      code: "temporary_unavailable"
+    }
+  });
+  await assert.rejects(() => failingUndo.undoHumanAnswer(undoForm), /redirect/);
+  assert.deepEqual(emitted, [
+    {
+      name: "human_action_failed",
+      category: "submission",
+      producer: "server_action"
+    }
+  ]);
+  assert.match(redirects[0] ?? "", /error=temporary_unavailable/);
+
+  const bulkForm = new FormData();
+  bulkForm.set("bulkActionValue", "approve");
+  bulkForm.append(
+    "bulkItem",
+    JSON.stringify({
+      inputItemId: "00000000-0000-4000-8000-000000000721",
+      callerId: "00000000-0000-4000-8000-000000000712",
+      expectedRevision: 1
+    })
+  );
+  bulkForm.append(
+    "bulkItem",
+    JSON.stringify({
+      inputItemId: "00000000-0000-4000-8000-000000000722",
+      callerId: "00000000-0000-4000-8000-000000000712",
+      expectedRevision: 1
+    })
+  );
+  const previousAppRoleUrl = process.env.DATABASE_APP_ROLE_URL;
+  process.env.DATABASE_APP_ROLE_URL = "postgresql://stubbed-app-role";
+  try {
+    emitted.length = 0;
+    redirects.length = 0;
+    const failingBulk = loadHumanActions({
+      createHumanAnswerResult: { ok: false, code: "stale_input_revision" }
+    });
+    await assert.rejects(
+      () => failingBulk.submitBulkHumanAnswers(bulkForm),
+      /redirect/
+    );
+    assert.deepEqual(emitted, [
+      {
+        name: "human_action_failed",
+        category: "submission",
+        producer: "server_action"
+      }
+    ]);
+    assert.match(redirects[0] ?? "", /notice=bulk_answered/);
+    assert.match(redirects[0] ?? "", /failed=2/);
+
+    emitted.length = 0;
+    redirects.length = 0;
+    const successfulBulk = loadHumanActions({
+      createHumanAnswerResult: { ok: true }
+    });
+    await assert.rejects(
+      () => successfulBulk.submitBulkHumanAnswers(bulkForm),
+      /redirect/
+    );
+    assert.deepEqual(emitted, []);
+    assert.match(redirects[0] ?? "", /answered=2/);
+  } finally {
+    if (previousAppRoleUrl === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previousAppRoleUrl;
+    }
+  }
 });
 
 test("caller approval failure reporter emits structured log and Sentry context", async () => {
@@ -2765,6 +3131,63 @@ test("client event endpoint logs only allowlisted content-safe fields", async ()
   assert.equal(JSON.stringify(logs).includes("secret stack trace"), false);
 });
 
+test("server action failure events use trusted producer context without HTTP ingress fields", async () => {
+  const logs = await captureStructuredLogs(async () => {
+    emitClientEventLog(
+      { name: "human_action_failed", category: "submission" },
+      {
+        requestId: "human-action-request",
+        route: "/human",
+        producer: "server_action"
+      }
+    );
+    emitClientEventLog(
+      { name: "file_upload_failed", category: "upload" },
+      {
+        requestId: "file-action-request",
+        route: "/human",
+        producer: "server_action"
+      }
+    );
+  });
+
+  assert.equal(logs.length, 2);
+  assert.deepEqual(
+    logs.map((log) => ({
+      operation: log.operation,
+      operation_kind: log.operation_kind,
+      name: log.client_event_name,
+      category: log.client_event_category,
+      request_id: log.request_id,
+      route: log.route
+    })),
+    [
+      {
+        operation: "client_event.human_action_failed",
+        operation_kind: "server_action",
+        name: "human_action_failed",
+        category: "submission",
+        request_id: "human-action-request",
+        route: "/human"
+      },
+      {
+        operation: "client_event.file_upload_failed",
+        operation_kind: "server_action",
+        name: "file_upload_failed",
+        category: "upload",
+        request_id: "file-action-request",
+        route: "/human"
+      }
+    ]
+  );
+  for (const log of logs) {
+    assert.equal("method" in log, false);
+    assert.equal("status_code" in log, false);
+    assert.equal("duration_ms" in log, false);
+    assert.equal("event_count" in log, false);
+  }
+});
+
 test("client event endpoint drops cross-origin and oversized batches without product-flow errors", async () => {
   const crossOrigin = new Request(
     "https://app.agent-outbox.dev/api/client-events",
@@ -3349,6 +3772,7 @@ test("reportRuntimeFailure shares one error id across structured log and Sentry"
   assert.equal(report.sentry_captured, true);
   assert.equal(logs.length, 1);
   assert.equal(logs[0].error_id, "err_shared_observability");
+  assert.equal(logs[0].sentry_captured, true);
   assert.equal(tags.get("error_id"), "err_shared_observability");
   assert.equal(tags.get("operation"), "runtime.failure.test");
   assert.equal(tags.get("route"), "/api/runtime/error");
@@ -3358,6 +3782,30 @@ test("reportRuntimeFailure shares one error id across structured log and Sentry"
   assert.equal(capturedException.name, "Error");
   assert.equal(capturedException.message, "Agent Outbox runtime failure");
   assert.equal(String(capturedException.stack).includes("raw detail"), false);
+
+  const disabledLogs = await withProcessEnv(
+    {
+      APP_ENV: "production",
+      SENTRY_DSN: undefined,
+      SENTRY_RELEASE: "agent-outbox@2026.07.07",
+      CI: undefined,
+      NODE_ENV: "production"
+    },
+    () =>
+      captureStructuredLogs(async () => {
+        const disabledReport = reportRuntimeFailure(new Error("raw detail"), {
+          errorId: "err_disabled_observability",
+          surface: "api",
+          route: "/api/runtime/error",
+          operation: "runtime.failure.disabled",
+          message: "Runtime failure test."
+        });
+        assert.equal(disabledReport.sentry_captured, false);
+      })
+  );
+  assert.equal(disabledLogs.length, 1);
+  assert.equal(disabledLogs[0].sentry_captured, false);
+  assert.equal(capturedExceptions.length, 1);
 });
 
 test("sentry release metadata and source-map upload gate require the release path", () => {

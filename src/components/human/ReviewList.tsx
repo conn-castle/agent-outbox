@@ -1,4 +1,5 @@
 import type { HumanReviewListRow } from "../../server/human-review.ts";
+import type { HumanReviewView } from "./ReviewWorkspace";
 import { AccentRail, CardVisual, HumanIcon, SafeHtml } from "./TypedContent";
 
 export function ReviewList({
@@ -7,7 +8,8 @@ export function ReviewList({
   selectedIds,
   skippedIds,
   onSelectedChange,
-  onSkipToggle
+  onSkipToggle,
+  view
 }: {
   rows: HumanReviewListRow[];
   selectedId: string | null;
@@ -15,6 +17,7 @@ export function ReviewList({
   skippedIds: Set<string>;
   onSelectedChange: (inputItemId: string, selected: boolean) => void;
   onSkipToggle: (inputItemId: string) => void;
+  view: HumanReviewView;
 }) {
   if (rows.length === 0) {
     return (
@@ -64,10 +67,7 @@ export function ReviewList({
                   <span className="status-pill status-skipped">skipped</span>
                 ) : null}
               </div>
-              <a
-                className="row-link"
-                href={`/human?item=${encodeURIComponent(row.inputItemId)}`}
-              >
+              <a className="row-link" href={reviewHref(row.inputItemId, view)}>
                 <SafeHtml html={row.titleHtml} className="row-title" />
               </a>
               <SafeHtml html={row.subtitleHtml} className="row-subtitle" />
@@ -98,6 +98,15 @@ export function ReviewList({
       ))}
     </ol>
   );
+}
+
+function reviewHref(inputItemId: string, view: HumanReviewView) {
+  const params = new URLSearchParams({ item: inputItemId });
+  if (view.search) params.set("search", view.search);
+  if (view.status !== "all") params.set("status", view.status);
+  if (view.sort !== "priority") params.set("sort", view.sort);
+  if (view.page !== 1) params.set("page", String(view.page));
+  return `/human?${params.toString()}`;
 }
 
 function formatTimestamp(value: string) {

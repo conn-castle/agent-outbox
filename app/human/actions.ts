@@ -21,6 +21,7 @@ import {
 } from "../../src/server/human-action-form";
 import { humanBrowserFixtureEnabled } from "../../src/server/human-review-fixture";
 import type { ProductTransactionQuery } from "../../src/server/database";
+import { emitClientEventLog } from "../../src/server/client-events";
 import {
   resolveHumanAccountSession,
   runHumanAccountTransaction,
@@ -30,25 +31,30 @@ import {
 const humanPath = "/human";
 
 export async function submitHumanAnswer(formData: FormData) {
+  const requestId = createCorrelationId("human_answer_req");
   const failedActionKind =
     formData.get("popupKind") === "file_upload" ? "file_upload" : undefined;
   const parsed = parseHumanAnswerForm(formData);
   if (!parsed.ok) {
-    refreshHumanPage({
-      error: "invalid_request",
-      ...(failedActionKind ? { failedActionKind } : {})
-    });
+    refreshHumanFailurePage(
+      formData,
+      {
+        error: "invalid_request",
+        ...(failedActionKind ? { failedActionKind } : {})
+      },
+      requestId,
+      failedActionKind
+    );
   }
 
   if (humanBrowserFixtureEnabled()) {
-    refreshHumanPage({
+    refreshHumanPage(formData, {
       item: parsed.inputItemId,
       notice: "answer_submitted",
       action: parsed.actionValue
     });
   }
 
-  const requestId = createCorrelationId("human_answer_req");
   let answerInput: CreateHumanAnswerInput | null = null;
   let transaction;
   try {
@@ -74,44 +80,59 @@ export async function submitHumanAnswer(formData: FormData) {
       throw error;
     }
     humanAnswerTransactionFailure(error, answerInput);
-    refreshHumanPage({
-      item: parsed.inputItemId,
-      error: "temporary_unavailable",
-      ...(failedActionKind ? { failedActionKind } : {})
-    });
+    refreshHumanFailurePage(
+      formData,
+      {
+        item: parsed.inputItemId,
+        error: "temporary_unavailable",
+        ...(failedActionKind ? { failedActionKind } : {})
+      },
+      requestId,
+      failedActionKind
+    );
   }
   if (!transaction.ok) {
-    refreshHumanPage({
-      item: parsed.inputItemId,
-      error: transaction.code,
-      ...(failedActionKind ? { failedActionKind } : {})
-    });
+    refreshHumanFailurePage(
+      formData,
+      {
+        item: parsed.inputItemId,
+        error: transaction.code,
+        ...(failedActionKind ? { failedActionKind } : {})
+      },
+      requestId,
+      failedActionKind
+    );
   }
   const result = transaction.data;
 
-  refreshHumanPage(
-    result.ok
-      ? {
-          item: parsed.inputItemId,
-          notice: "answer_submitted",
-          action: parsed.actionValue
-        }
-      : {
-          item: parsed.inputItemId,
-          error: result.code,
-          ...(failedActionKind ? { failedActionKind } : {})
-        }
+  if (result.ok) {
+    refreshHumanPage(formData, {
+      item: parsed.inputItemId,
+      notice: "answer_submitted",
+      action: parsed.actionValue
+    });
+  }
+  refreshHumanFailurePage(
+    formData,
+    {
+      item: parsed.inputItemId,
+      error: result.code,
+      ...(failedActionKind ? { failedActionKind } : {})
+    },
+    requestId,
+    failedActionKind
   );
 }
 
 export async function submitBulkHumanAnswers(formData: FormData) {
+  const requestId = createCorrelationId("human_bulk_answer_req");
   const parsed = parseBulkHumanAnswersForm(formData);
   if (!parsed.ok) {
-    refreshHumanPage({ error: "invalid_request" });
+    refreshHumanFailurePage(formData, { error: "invalid_request" }, requestId);
   }
 
   if (humanBrowserFixtureEnabled()) {
-    refreshHumanPage({
+    refreshHumanPage(formData, {
       notice: "bulk_answered",
       answered: String(parsed.items.length),
       failed: "0"
@@ -120,7 +141,7 @@ export async function submitBulkHumanAnswers(formData: FormData) {
 
   const context = await humanActionContext();
   if (!context.ok) {
-    refreshHumanPage({ error: context.code });
+    refreshHumanFailurePage(formData, { error: context.code }, requestId);
   }
 
   let answered = 0;
@@ -130,7 +151,7 @@ export async function submitBulkHumanAnswers(formData: FormData) {
       accountId: context.accountId,
       callerId: item.callerId,
       humanUserId: context.userId,
-      requestId: createCorrelationId("human_bulk_answer_req"),
+      requestId,
       correlationId: createCorrelationId("human_bulk_answer"),
       inputItemId: item.inputItemId,
       expectedRevision: item.expectedRevision,
@@ -144,7 +165,10 @@ export async function submitBulkHumanAnswers(formData: FormData) {
     }
   }
 
-  refreshHumanPage({
+  if (failed > 0) {
+    emitHumanActionFailure(requestId);
+  }
+  refreshHumanPage(formData, {
     notice: "bulk_answered",
     answered: String(answered),
     failed: String(failed)
@@ -152,16 +176,19 @@ export async function submitBulkHumanAnswers(formData: FormData) {
 }
 
 export async function undoHumanAnswer(formData: FormData) {
+  const requestId = createCorrelationId("human_undo_req");
   const parsed = parseUndoHumanAnswerForm(formData);
   if (!parsed.ok) {
-    refreshHumanPage({ error: "invalid_request" });
+    refreshHumanFailurePage(formData, { error: "invalid_request" }, requestId);
   }
 
   if (humanBrowserFixtureEnabled()) {
-    refreshHumanPage({ item: parsed.inputItemId, notice: "answer_undone" });
+    refreshHumanPage(formData, {
+      item: parsed.inputItemId,
+      notice: "answer_undone"
+    });
   }
 
-  const requestId = createCorrelationId("human_undo_req");
   let undoInput: PreReadUndoInput | null = null;
   let transaction;
   try {
@@ -184,20 +211,34 @@ export async function undoHumanAnswer(formData: FormData) {
       throw error;
     }
     humanAnswerUndoTransactionFailure(error, undoInput);
-    refreshHumanPage({
-      item: parsed.inputItemId,
-      error: "temporary_unavailable"
-    });
+    refreshHumanFailurePage(
+      formData,
+      {
+        item: parsed.inputItemId,
+        error: "temporary_unavailable"
+      },
+      requestId
+    );
   }
   if (!transaction.ok) {
-    refreshHumanPage({ item: parsed.inputItemId, error: transaction.code });
+    refreshHumanFailurePage(
+      formData,
+      { item: parsed.inputItemId, error: transaction.code },
+      requestId
+    );
   }
   const result = transaction.data;
 
-  refreshHumanPage(
-    result.ok
-      ? { item: parsed.inputItemId, notice: "answer_undone" }
-      : { item: parsed.inputItemId, error: result.code }
+  if (result.ok) {
+    refreshHumanPage(formData, {
+      item: parsed.inputItemId,
+      notice: "answer_undone"
+    });
+  }
+  refreshHumanFailurePage(
+    formData,
+    { item: parsed.inputItemId, error: result.code },
+    requestId
   );
 }
 
@@ -245,8 +286,51 @@ async function runHumanActionTransaction<TResult>(
   );
 }
 
-function refreshHumanPage(params: Record<string, string>): never {
+const HUMAN_VIEW_PARAM_KEYS = ["search", "status", "sort", "page"] as const;
+
+/**
+ * View state (search/status/sort/page) submitted as hidden `view.*` fields by
+ * `ViewStateFields` so post-action redirects restore the user's current view.
+ * Values are re-validated server-side by `humanReviewView` on the next render.
+ */
+function viewParamsFromForm(formData: FormData): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const key of HUMAN_VIEW_PARAM_KEYS) {
+    const value = formData.get(`view.${key}`);
+    if (typeof value === "string" && value !== "") {
+      params[key] = value;
+    }
+  }
+  return params;
+}
+
+function refreshHumanPage(
+  formData: FormData,
+  params: Record<string, string>
+): never {
   revalidatePath(humanPath);
-  const query = new URLSearchParams(params);
+  const query = new URLSearchParams({
+    ...viewParamsFromForm(formData),
+    ...params
+  });
   redirect(`${humanPath}?${query.toString()}`);
+}
+
+function refreshHumanFailurePage(
+  formData: FormData,
+  params: Record<string, string>,
+  requestId: string,
+  kind?: "file_upload"
+): never {
+  emitHumanActionFailure(requestId, kind);
+  refreshHumanPage(formData, params);
+}
+
+function emitHumanActionFailure(requestId: string, kind?: "file_upload") {
+  emitClientEventLog(
+    kind === "file_upload"
+      ? { name: "file_upload_failed", category: "upload" }
+      : { name: "human_action_failed", category: "submission" },
+    { requestId, route: humanPath, producer: "server_action" }
+  );
 }

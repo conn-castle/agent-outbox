@@ -257,7 +257,7 @@ export async function sendInputItem(
     if (raced) {
       return sendResultForExisting(raced, submission);
     }
-    return internalQueueError();
+    return internalQueueError(context.correlationId);
   }
 
   await insertChildRows(query, insertedRow.input_item_id, submission);
@@ -338,7 +338,7 @@ export async function replaceInputItem(
   );
   const revision = updated.rows[0]?.current_revision;
   if (!revision) {
-    return internalQueueError();
+    return internalQueueError(context.correlationId);
   }
 
   await query(deleteLinkButtonsStatement(existing.input_item_id));
@@ -870,13 +870,14 @@ function inputNotPendingError(): InputQueueResult {
   };
 }
 
-function internalQueueError(): InputQueueResult {
+function internalQueueError(errorId: string): InputQueueResult {
   return {
     ok: false,
     error: {
       status: 500,
       code: "internal_error",
-      message: "Input queue operation could not be completed."
+      message: "Input queue operation could not be completed.",
+      errorId
     }
   };
 }

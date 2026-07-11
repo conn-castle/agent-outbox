@@ -549,6 +549,43 @@ test("send creates a pending item and stores normalized child rows", async () =>
   assert.match(query.calls[5].sql, /agent_outbox_audit_events/);
 });
 
+test("send and replace invariant failures carry the request correlation id", async () => {
+  const submission = parseValidInput();
+  const send = await sendInputItem(
+    fakeQuery([[], [], []]),
+    context,
+    identity,
+    submission
+  );
+  const replace = await replaceInputItem(
+    fakeQuery([
+      [
+        {
+          input_item_id: "input-1",
+          status: "pending",
+          current_revision: 2,
+          normalized_content_fingerprint: "different",
+          has_live_output: false
+        }
+      ],
+      []
+    ]),
+    context,
+    identity,
+    submission
+  );
+
+  for (const result of [send, replace]) {
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.ok ? null : result.error, {
+      status: 500,
+      code: "internal_error",
+      message: "Input queue operation could not be completed.",
+      errorId: context.correlationId
+    });
+  }
+});
+
 test("send no-ops only for equivalent pending content and conflicts on changed content", async () => {
   const submission = parseValidInput();
   const duplicateQuery = fakeQuery([

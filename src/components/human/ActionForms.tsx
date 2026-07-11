@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { useSearchParams } from "next/navigation";
 
 import { submitHumanAnswer, undoHumanAnswer } from "../../../app/human/actions";
 import type { JsonValue } from "../../server/human-answer.ts";
@@ -10,6 +11,26 @@ import type {
   HumanReviewDetail
 } from "../../server/human-review.ts";
 import { HumanIcon } from "./TypedContent";
+
+const VIEW_STATE_KEYS = ["search", "status", "sort", "page"] as const;
+
+/**
+ * Hidden inputs carrying the current URL view state (search/status/sort/page)
+ * so server-action redirects can restore the view instead of resetting it.
+ */
+export function ViewStateFields() {
+  const searchParams = useSearchParams();
+  return (
+    <>
+      {VIEW_STATE_KEYS.map((key) => {
+        const value = searchParams.get(key);
+        return value ? (
+          <input key={key} type="hidden" name={`view.${key}`} value={value} />
+        ) : null;
+      })}
+    </>
+  );
+}
 
 export function ActionForm({
   detail,
@@ -35,6 +56,7 @@ export function ActionForm({
 
   return (
     <form className="action-form" action={submitHumanAnswer}>
+      <ViewStateFields />
       <input type="hidden" name="inputItemId" value={detail.inputItemId} />
       <input type="hidden" name="callerId" value={detail.caller.callerId} />
       <input
@@ -69,6 +91,7 @@ export function UndoAnswerForm({ detail }: { detail: HumanReviewDetail }) {
 
   return (
     <form action={undoHumanAnswer}>
+      <ViewStateFields />
       <input type="hidden" name="inputItemId" value={detail.inputItemId} />
       <input type="hidden" name="callerId" value={detail.caller.callerId} />
       <input

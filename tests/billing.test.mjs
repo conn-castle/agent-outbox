@@ -771,6 +771,21 @@ test("webhook verifies the raw Stripe signature and records idempotent processin
     { requestId: "req-webhook", authSurface: "control_plane" }
   ]);
   assert.equal(calls.statements.length, 3);
+  assert.match(
+    calls.statements[0].sql,
+    /insert into public\.agent_outbox_stripe_webhook_events/
+  );
+  // Rollout tolerance: the insert must stay valid on the pre-default schema by
+  // explicitly writing the completed state (see insertStripeWebhookEventStatement).
+  assert.match(
+    calls.statements[0].sql,
+    /values \(\$1, \$2, 'processed', now\(\)\)/
+  );
+  assert.match(calls.statements[1].sql, /update public\.agent_outbox_accounts/);
+  assert.match(
+    calls.statements[2].sql,
+    /update public\.agent_outbox_stripe_webhook_events[\s\S]*set account_id = \$2/
+  );
   assert.deepEqual(calls.statements[2].values, [
     "evt_checkout_completed",
     accountId
@@ -822,7 +837,11 @@ test("webhook processing rejects array-shaped Stripe event objects", async () =>
     ),
     false
   );
-  assert.deepEqual(statements.at(-1).values, ["evt_array_subscription", null]);
+  assert.equal(statements.length, 1);
+  assert.deepEqual(statements[0].values, [
+    "evt_array_subscription",
+    "customer.subscription.updated"
+  ]);
 });
 
 test("subscription webhooks can update an account from Stripe metadata before checkout completion", async () => {
