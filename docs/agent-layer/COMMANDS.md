@@ -448,17 +448,23 @@ lower-snake descriptive names. Flyway migration commands and CI migration
 replay validate migration filenames; `make test` unit-tests the filename
 parser.
 
-- Verify database policies and cleanup against migrated Postgres
+- Run the local and CI database verification suite against migrated Postgres
 
 ```bash
-AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 DATABASE_MIGRATION_URL='postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci' corepack pnpm exec node --test --test-name-pattern 'phase 3 local database' tests/foundation.test.mjs
+AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 DATABASE_MIGRATION_URL='postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci' corepack pnpm exec node --test --test-concurrency=1 tests/foundation.test.mjs tests/human-session.test.mjs tests/human-answer.test.mjs tests/authenticated-transactions.test.mjs
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed and Flyway
-migrations have been applied to the target database. Notes: Runs the opt-in
-database-backed test that proves restricted app-role posture, transaction-local
-Row Level Security isolation, and shared cleanup deletion behavior. Normal
-`make test` skips this test unless `AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1`.
+migrations have been applied to a disposable target database. Notes: This is the
+exact serialized command used after migration replay in CI and release-check.
+`DATABASE_MIGRATION_URL` must use the established privileged migration owner
+(superuser, or `BYPASSRLS` with SET-capable membership in `agent_outbox_app`),
+never the restricted runtime `agent_outbox_app`.
+It proves restricted app-role posture, transaction-local Row Level Security
+isolation, human bootstrap and answer behavior, authenticated transaction
+behavior, and failure-safe test cleanup. Serialization keeps shared-database
+lifecycle checks deterministic. Normal `make test` skips
+database-backed tests unless `AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1`.
 
 - Remove reproducible generated artifacts
 
@@ -562,8 +568,8 @@ Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
 commands with read-only repository permissions and no provider credentials by
 default. The same workflow also installs Playwright Chromium and runs a
 separate `make browser` job, plus a separate `make migration-replay` job against
-a raw `postgres:17` service followed by the opt-in database policy and human
-bootstrap database tests.
+a raw `postgres:17` service followed by the canonical serialized database
+verification suite.
 
 - GitHub Actions release-check gate
 
@@ -578,5 +584,5 @@ Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
 repository permissions. The workflow is verification-only and has no deployment
 or package publication step. The same workflow also installs Playwright
 Chromium and runs a separate `make browser` job, plus `make migration-replay`
-against a raw `postgres:17` service followed by the opt-in database policy and
-human bootstrap database tests.
+against a raw `postgres:17` service followed by the canonical serialized
+database verification suite.

@@ -60,6 +60,23 @@ Method Domains first. Official Stripe references:
 <https://docs.stripe.com/api/payment_method_domains/list> and
 <https://docs.stripe.com/payments/payment-methods/pmd-registration>.
 
+Webhook event ids are claimed inside the same database transaction that applies
+their billing changes. A committed ledger row therefore means the event
+completed; transaction rollback removes both the claim and billing changes so
+Stripe can retry. During the expand/deploy compatibility window, the schema
+retains `processing_status` with a `processed` default. The new writer
+explicitly writes `processing_status = 'processed'` and `processed_at = now()`,
+which is valid on both the pre-migration schema (NOT NULL, no default) and the
+migrated schema, so deploying this release and applying its migrations are
+order-independent. The prior writer and a rollback deployment can still
+explicitly write `processing` and transition it to `processed` inside the same
+transaction. No intermediate state is durably committed. Drop the compatibility
+column only in a later reviewed contract migration after this release is live
+and the rollback target no longer needs the prior writer; that contract
+migration must also remove the new writer's explicit column write and replace
+the prune function's `processing_status` predicate. The ledger stores no raw
+webhook payload.
+
 Creating or rotating production billing resources requires a setup-only live
 Stripe key with write permission for products, prices, Customer Portal
 Configurations, and webhook endpoints. A read-only or otherwise restricted live

@@ -83,6 +83,7 @@ import {
   runProductTransaction,
   transactionContextCanaryStatements as databaseCanaryStatements
 } from "../src/server/database.ts";
+import { processStripeEventInTransaction } from "../src/server/billing.ts";
 import {
   InsecureServerEnvironmentError,
   MissingServerEnvironmentError,
@@ -129,6 +130,11 @@ import {
   scheduledCleanupStatementsForAccount
 } from "../src/server/scheduled.ts";
 import { sentryCaptureEnabled } from "../src/server/sentry.ts";
+import {
+  assertMigrationOwnerCanSetAppRole,
+  preserveBodyErrorDuringTeardown,
+  teardownAttempt
+} from "./helpers/database.mjs";
 
 const { Client } = pg;
 
@@ -207,28 +213,20 @@ function withProcessEnv(values, callback) {
  * @param {import("pg").Client} client
  */
 async function resetRoleAndRollback(client) {
+  /** @type {Error[]} */
+  const errors = [];
   for (const sql of ["rollback", "reset role"]) {
     try {
       await client.query(sql);
-    } catch {
-      // Best effort cleanup after failed database verification.
+    } catch (error) {
+      errors.push(
+        new Error(`Database state reset failed for ${sql}.`, { cause: error })
+      );
     }
   }
-}
-
-/**
- * @param {import("pg").Client} client
- */
-async function revokeCurrentUserAppRoleGrant(client) {
-  await client.query(
-    `
-      do $$
-      begin
-        execute format('revoke agent_outbox_app from %I', current_user);
-      end
-      $$;
-    `
-  );
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "Database state reset failed.");
+  }
 }
 
 /**
@@ -247,6 +245,13 @@ async function cleanupPhase3DatabaseVerificationRows(client, ids) {
     return;
   }
 
+  const cleanupRole = await client.query(
+    `select rolsuper or rolbypassrls as bypasses_rls from pg_catalog.pg_roles where rolname = current_user`
+  );
+  const bypassesRls = cleanupRole.rows[0]?.bypasses_rls === true;
+  if (!bypassesRls) {
+    await client.query("set role agent_outbox_app");
+  }
   await client.query("begin");
 
   try {
@@ -254,8 +259,12 @@ async function cleanupPhase3DatabaseVerificationRows(client, ids) {
       "agent_outbox.audit_break_glass",
       "on"
     ]);
+    await client.query("select set_config($1, $2, true)", [
+      "agent_outbox.auth_surface",
+      "cleanup"
+    ]);
 
-    if (ids.accountAuditA || ids.accountAuditB) {
+    if (bypassesRls && (ids.accountAuditA || ids.accountAuditB)) {
       await client.query(
         `
           delete from public.agent_outbox_audit_events
@@ -275,17 +284,25 @@ async function cleanupPhase3DatabaseVerificationRows(client, ids) {
       );
     }
 
-    if (ids.accountA || ids.accountB) {
+    for (const accountId of [ids.accountA, ids.accountB].filter(Boolean)) {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        accountId
+      ]);
       await client.query(
         `
           delete from public.agent_outbox_accounts
-          where account_id = any($1::uuid[])
+          where account_id = $1
         `,
-        [[ids.accountA, ids.accountB].filter(Boolean)]
+        [accountId]
       );
     }
 
     if (ids.userA) {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.user_id",
+        ids.userA
+      ]);
       await client.query(
         `
           delete from public.agent_outbox_users
@@ -296,8 +313,14 @@ async function cleanupPhase3DatabaseVerificationRows(client, ids) {
     }
 
     await client.query("commit");
+    if (!bypassesRls) {
+      await client.query("reset role");
+    }
   } catch (error) {
     await client.query("rollback");
+    if (!bypassesRls) {
+      await client.query("reset role");
+    }
     throw error;
   }
 }
@@ -349,6 +372,46 @@ const neverActivatedCallerPruneMigration = readFileSync(
   ),
   "utf8"
 );
+
+const stripeWebhookCompletedLedgerMigrationPath = new URL(
+  "../db/migrations/V20260711114816__stripe_webhook_completed_ledger.sql",
+  import.meta.url
+);
+
+/**
+ * Executes one transactional migration file inside the caller's open transaction.
+ * @param {import("pg").Client} client
+ * @param {URL} migrationPath
+ */
+async function executeTransactionalMigrationFile(client, migrationPath) {
+  if (!migrationPath.pathname.endsWith(".sql")) {
+    throw new Error("Transactional migration executor requires a .sql file.");
+  }
+  const sql = readFileSync(migrationPath, "utf8");
+  if (/\bconcurrently\b/i.test(sql)) {
+    throw new Error(
+      "Transactional migration executor rejects online migrations."
+    );
+  }
+  await client.query(sql);
+}
+
+/**
+ * @param {import("pg").Client} observer
+ * @param {number} backendPid
+ */
+async function waitForDatabaseLock(observer, backendPid) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const state = await observer.query(
+      `select wait_event_type from pg_catalog.pg_stat_activity where pid = $1`,
+      [backendPid]
+    );
+    if (state.rows[0]?.wait_event_type === "Lock") return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Backend ${backendPid} did not enter a database lock wait.`);
+}
 
 const phase3FoundationSourceContents = Object.fromEntries(
   [
@@ -1214,6 +1277,8 @@ test("wrangler required secrets stay limited to true Worker secrets", () => {
 });
 
 test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", () => {
+  const databaseVerificationCommand =
+    "corepack pnpm exec node --test --test-concurrency=1 tests/foundation.test.mjs tests/human-session.test.mjs tests/human-answer.test.mjs tests/authenticated-transactions.test.mjs";
   const validWorkflow = `
     services:
       postgres:
@@ -1224,9 +1289,7 @@ test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", (
       FLYWAY_DOCKER_NETWORK: host
     steps:
       - run: make migration-replay
-      - run: >-
-          corepack pnpm exec node --test --test-name-pattern "phase 3 local
-          database" tests/foundation.test.mjs
+      - run: ${databaseVerificationCommand}
   `;
 
   assert.deepEqual(
@@ -1247,11 +1310,29 @@ test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", (
       ".github/workflows/ci.yml must include migration replay token: DATABASE_MIGRATION_URL",
       ".github/workflows/ci.yml must include migration replay token: FLYWAY_DOCKER_NETWORK: host",
       ".github/workflows/ci.yml must include migration replay token: make migration-replay",
-      '.github/workflows/ci.yml must include migration replay token: node --test --test-name-pattern "phase 3 local',
-      '.github/workflows/ci.yml must include migration replay token: database" tests/foundation.test.mjs',
+      `.github/workflows/ci.yml must include migration replay token: ${databaseVerificationCommand}`,
       '.github/workflows/ci.yml must include migration replay token: AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"'
     ]
   );
+
+  for (const databaseTestFile of [
+    "tests/foundation.test.mjs",
+    "tests/human-session.test.mjs",
+    "tests/human-answer.test.mjs",
+    "tests/authenticated-transactions.test.mjs"
+  ]) {
+    const incompleteWorkflow = validWorkflow.replace(databaseTestFile, "");
+    const failures = validateMigrationReplayWorkflow({
+      ".github/workflows/ci.yml": incompleteWorkflow,
+      ".github/workflows/release-check.yml": validWorkflow
+    });
+    assert.ok(
+      failures.includes(
+        `.github/workflows/ci.yml must include migration replay token: ${databaseVerificationCommand}`
+      ),
+      `removing ${databaseTestFile} must invalidate the database verification command`
+    );
+  }
 });
 
 test("validateWorkflowVersionPins rejects CI Node drift", () => {
@@ -3475,6 +3556,267 @@ test("initial migration keeps the app role restricted before schema access", () 
 });
 
 test(
+  "completed Stripe webhook claims serialize duplicates and rollback permits retry",
+  {
+    skip: phase3DatabaseVerificationUrl
+      ? false
+      : "set AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 and DATABASE_MIGRATION_URL to run database policy verification"
+  },
+  async () => {
+    const connectionString = phase3DatabaseVerificationUrl;
+    assert.ok(connectionString);
+    const first = new Client({ connectionString });
+    const duplicate = new Client({ connectionString });
+    const observer = new Client({ connectionString });
+    const eventId = `evt_concurrent_${crypto.randomUUID()}`;
+    const failedEventId = `evt_rollback_${crypto.randomUUID()}`;
+    const rollbackCompatibleEventId = `evt_old_writer_${crypto.randomUUID()}`;
+    const event = /** @type {any} */ ({ id: eventId, type: "test.ignored" });
+
+    await Promise.all([
+      first.connect(),
+      duplicate.connect(),
+      observer.connect()
+    ]);
+    /** @type {Promise<boolean> | null} */
+    let duplicateTransaction = null;
+    let bodyError;
+    try {
+      await first.query("begin");
+      await first.query("set role agent_outbox_app");
+      await first.query(
+        "select set_config('agent_outbox.auth_surface', 'control_plane', true)"
+      );
+      const firstProcessed = await processStripeEventInTransaction(
+        /** @type {any} */ (
+          (/** @type {any} */ statement) =>
+            first.query(statement.sql, statement.values)
+        ),
+        event
+      );
+      assert.equal(firstProcessed, true);
+
+      const duplicatePid = await duplicate.query(
+        "select pg_catalog.pg_backend_pid() as pid"
+      );
+      duplicateTransaction = (async () => {
+        await duplicate.query("begin");
+        await duplicate.query("set role agent_outbox_app");
+        await duplicate.query(
+          "select set_config('agent_outbox.auth_surface', 'control_plane', true)"
+        );
+        const processed = await processStripeEventInTransaction(
+          /** @type {any} */ (
+            (/** @type {any} */ statement) =>
+              duplicate.query(statement.sql, statement.values)
+          ),
+          event
+        );
+        await duplicate.query("commit");
+        return processed;
+      })();
+
+      await waitForDatabaseLock(observer, duplicatePid.rows[0].pid);
+      await first.query("commit");
+      assert.equal(await duplicateTransaction, false);
+      const committed = await observer.query(
+        `
+          select
+            count(*)::int as count,
+            min(processing_status) as processing_status,
+            bool_and(processed_at is not null) as has_completion_time
+          from public.agent_outbox_stripe_webhook_events
+          where stripe_event_id = $1
+        `,
+        [eventId]
+      );
+      assert.deepEqual(committed.rows, [
+        {
+          count: 1,
+          processing_status: "processed",
+          has_completion_time: true
+        }
+      ]);
+
+      await observer.query("begin");
+      const oldWriterClaim = await observer.query(
+        `
+          insert into public.agent_outbox_stripe_webhook_events(
+            stripe_event_id,
+            event_type,
+            processing_status
+          )
+          values ($1, 'test.old-writer', 'processing')
+          returning processing_status, processed_at is not null as has_completion_time
+        `,
+        [rollbackCompatibleEventId]
+      );
+      assert.deepEqual(oldWriterClaim.rows, [
+        { processing_status: "processing", has_completion_time: true }
+      ]);
+      const oldWriterCompletion = await observer.query(
+        `
+          update public.agent_outbox_stripe_webhook_events
+          set processing_status = 'processed', processed_at = now()
+          where stripe_event_id = $1
+          returning processing_status
+        `,
+        [rollbackCompatibleEventId]
+      );
+      assert.deepEqual(oldWriterCompletion.rows, [
+        { processing_status: "processed" }
+      ]);
+      await observer.query("commit");
+
+      await assert.rejects(
+        runProductTransaction(
+          connectionString,
+          {
+            requestId: `rollback-${failedEventId}`,
+            authSurface: "control_plane"
+          },
+          async (query) => {
+            await processStripeEventInTransaction(
+              query,
+              /** @type {any} */ ({ id: failedEventId, type: "test.ignored" })
+            );
+            throw new Error("forced webhook transaction failure");
+          }
+        ),
+        /forced webhook transaction failure/
+      );
+      const retried = await runProductTransaction(
+        connectionString,
+        { requestId: `retry-${failedEventId}`, authSurface: "control_plane" },
+        (query) =>
+          processStripeEventInTransaction(
+            query,
+            /** @type {any} */ ({ id: failedEventId, type: "test.ignored" })
+          )
+      );
+      assert.equal(retried, true);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      /** @type {Error[]} */
+      const teardownErrors = [];
+      const attempt = teardownAttempt(
+        teardownErrors,
+        "Stripe concurrency teardown failed"
+      );
+
+      await attempt("first transaction reset", () =>
+        resetRoleAndRollback(first)
+      );
+      const pendingDuplicate = duplicateTransaction;
+      if (pendingDuplicate) {
+        await attempt("duplicate transaction settlement", () =>
+          pendingDuplicate.then(() => undefined)
+        );
+      }
+      await attempt("duplicate transaction reset", () =>
+        resetRoleAndRollback(duplicate)
+      );
+      await attempt("cleanup timeout configuration", () =>
+        observer.query("set statement_timeout = '5s'")
+      );
+      await attempt("test row cleanup", () =>
+        observer.query(
+          "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = any($1::text[])",
+          [[eventId, failedEventId, rollbackCompatibleEventId]]
+        )
+      );
+      await attempt("first client close", () => first.end());
+      await attempt("duplicate client close", () => duplicate.end());
+      await attempt("observer client close", () => observer.end());
+
+      if (teardownErrors.length > 0) {
+        const teardownError = new AggregateError(
+          teardownErrors,
+          "Stripe concurrency teardown failed."
+        );
+        if (bodyError !== undefined) {
+          throw new AggregateError(
+            [bodyError, teardownError],
+            "Stripe concurrency test and teardown both failed."
+          );
+        }
+        throw teardownError;
+      }
+      if (bodyError !== undefined) {
+        throw bodyError;
+      }
+    }
+  }
+);
+
+test(
+  "Stripe webhook expand migration rejects each contradictory old-row shape without durable mutation",
+  {
+    skip: phase3DatabaseVerificationUrl
+      ? false
+      : "set AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 and DATABASE_MIGRATION_URL to run database policy verification"
+  },
+  async () => {
+    const client = new Client({
+      connectionString: phase3DatabaseVerificationUrl
+    });
+    await client.connect();
+    try {
+      await client.query("begin");
+      await client.query(`
+        alter table public.agent_outbox_stripe_webhook_events
+          alter column processing_status drop default,
+          alter column processing_status set not null,
+          alter column processed_at drop not null,
+          alter column processed_at drop default;
+        insert into public.agent_outbox_stripe_webhook_events(
+          stripe_event_id, event_type, processing_status, processed_at
+        ) values
+          ('evt_guard_missing_completion', 'test.guard', 'processed', null),
+          ('evt_guard_incomplete_status', 'test.guard', 'processing', now());
+      `);
+      await assert.rejects(
+        executeTransactionalMigrationFile(
+          client,
+          stripeWebhookCompletedLedgerMigrationPath
+        ),
+        (error) => {
+          assert.equal(/** @type {{ code?: string }} */ (error).code, "23514");
+          return true;
+        }
+      );
+      await client.query("rollback");
+
+      const finalShape = await client.query(`
+        select column_name, is_nullable, column_default
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'agent_outbox_stripe_webhook_events'
+          and column_name in ('processing_status', 'processed_at')
+        order by column_name
+      `);
+      assert.equal(finalShape.rows.length, 2);
+      assert.deepEqual(
+        finalShape.rows.map((row) => ({
+          column_name: row.column_name,
+          is_nullable: row.is_nullable
+        })),
+        [
+          { column_name: "processed_at", is_nullable: "NO" },
+          { column_name: "processing_status", is_nullable: "NO" }
+        ]
+      );
+      assert.match(finalShape.rows[0].column_default, /now\(\)/);
+      assert.match(finalShape.rows[1].column_default, /processed/);
+    } finally {
+      await client.query("rollback").catch(() => {});
+      await client.end();
+    }
+  }
+);
+
+test(
   "phase 3 local database enforces representative policies and shared cleanup",
   {
     skip: phase3DatabaseVerificationUrl
@@ -3495,7 +3837,8 @@ test(
     const ipQuotaPolicyMetric = `phase3_policy_probe_${runId}`;
     /** @type {{ accountA?: string, accountB?: string, accountAuditA?: string, accountAuditB?: string, userA?: string, callerA?: string, callerA2?: string, callerB?: string, reclaimCaller?: string, auditPreservedCaller?: string, activatedPreservedCaller?: string, revokedPreservedCaller?: string, answeredInput?: string, fileOutputInput?: string, fileUploadInput?: string, output?: string, fileOutput?: string, ipQuotaAddress?: string }} */
     const ids = { ipQuotaAddress };
-    let grantedAppRoleForTest = false;
+    /** @type {unknown} */
+    let bodyError;
 
     await client.connect();
 
@@ -3607,51 +3950,60 @@ test(
           providerFunctionPrivileges.rows.map(() => false)
         );
       }
-      const hadAppRoleBeforeGrant = await client.query(
-        "select pg_has_role(current_user, 'agent_outbox_app', 'member') as is_member"
-      );
-      if (hadAppRoleBeforeGrant.rows[0]?.is_member !== true) {
-        await client.query(
-          `
-            do $$
-            begin
-              execute format('grant agent_outbox_app to %I', current_user);
-            end
-            $$;
-          `
-        );
-        grantedAppRoleForTest = true;
-      }
+      await assertMigrationOwnerCanSetAppRole(client);
 
+      await client.query("set role agent_outbox_app");
       await client.query("begin");
+      ids.accountA = crypto.randomUUID();
+      ids.accountB = crypto.randomUUID();
+      ids.userA = crypto.randomUUID();
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
 
-      const accountRows = await client.query(
+      const accountARows = await client.query(
         `
-          insert into public.agent_outbox_accounts(label)
-          values ($1), ($2)
-          returning account_id, account_audit_id, label
+          insert into public.agent_outbox_accounts(account_id, label)
+          values ($1, $2)
+          returning account_audit_id
         `,
-        [accountLabelA, accountLabelB]
+        [ids.accountA, accountLabelA]
       );
-      for (const row of accountRows.rows) {
-        if (row.label === accountLabelA) {
-          ids.accountA = row.account_id;
-          ids.accountAuditA = row.account_audit_id;
-        } else {
-          ids.accountB = row.account_id;
-          ids.accountAuditB = row.account_audit_id;
-        }
-      }
+      ids.accountAuditA = accountARows.rows[0].account_audit_id;
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountB
+      ]);
+      const accountBRows = await client.query(
+        `
+          insert into public.agent_outbox_accounts(account_id, label)
+          values ($1, $2)
+          returning account_audit_id
+        `,
+        [ids.accountB, accountLabelB]
+      );
+      ids.accountAuditB = accountBRows.rows[0].account_audit_id;
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.user_id",
+        ids.userA
+      ]);
 
-      const userRows = await client.query(
+      await client.query(
         `
-          insert into public.agent_outbox_users(clerk_user_id)
-          values ($1)
-          returning user_id
+          insert into public.agent_outbox_users(user_id, clerk_user_id)
+          values ($1, $2)
         `,
-        [`phase3-user-${runId}`]
+        [ids.userA, `phase3-user-${runId}`]
       );
-      ids.userA = userRows.rows[0].user_id;
 
       await client.query(
         `
@@ -3661,32 +4013,40 @@ test(
         [ids.accountA, ids.userA]
       );
 
-      const callerRows = await client.query(
+      const callerARows = await client.query(
         `
           insert into public.agent_outbox_callers(account_id, display_name, caller_slug)
           values
             ($1, 'Caller A', $2),
-            ($1, 'Caller A2', $3),
-            ($4, 'Caller B', $5)
+            ($1, 'Caller A2', $3)
           returning caller_id, caller_slug
         `,
-        [
-          ids.accountA,
-          `caller-a-${runId}`,
-          `caller-a2-${runId}`,
-          ids.accountB,
-          `caller-b-${runId}`
-        ]
+        [ids.accountA, `caller-a-${runId}`, `caller-a2-${runId}`]
       );
-      for (const row of callerRows.rows) {
+      for (const row of callerARows.rows) {
         if (row.caller_slug === `caller-a-${runId}`) {
           ids.callerA = row.caller_id;
-        } else if (row.caller_slug === `caller-a2-${runId}`) {
-          ids.callerA2 = row.caller_id;
         } else {
-          ids.callerB = row.caller_id;
+          ids.callerA2 = row.caller_id;
         }
       }
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountB
+      ]);
+      const callerBRows = await client.query(
+        `
+          insert into public.agent_outbox_callers(account_id, display_name, caller_slug)
+          values ($1, 'Caller B', $2)
+          returning caller_id
+        `,
+        [ids.accountB, `caller-b-${runId}`]
+      );
+      ids.callerB = callerBRows.rows[0].caller_id;
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
 
       const abandonedCallerSlugs = {
         reclaim: `reclaim-${runId}`,
@@ -3993,7 +4353,31 @@ test(
         ]
       );
 
-      const inputRows = await client.query(
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountB
+      ]);
+      const inputBRows = await client.query(
+        `
+          insert into public.agent_outbox_input_items(
+            account_id, caller_id, caller_item_id, caller_item_id_hash,
+            row_type_display, row_type_icon, title_html, subtitle_html,
+            summary_html, status, non_file_payload_bytes, updated_at
+          )
+          values ($1, $2, 'item-b', $3, 'Review', 'Inbox', 'Title B', 'Subtitle B', 'Summary B', 'pending', 10, '2026-06-30T12:00:00.000Z')
+          returning input_item_id, caller_item_id
+        `,
+        [ids.accountB, ids.callerB, `hash-b-${runId}`]
+      );
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
+      const inputARows = await client.query(
         `
           insert into public.agent_outbox_input_items(
             account_id,
@@ -4013,14 +4397,13 @@ test(
           values
             ($1, $2, 'item-a', $3, 'Review', 'Inbox', 'Title A', 'Subtitle A', 'Summary A', 'pending', 10, '2026-06-30T12:00:00.000Z', null),
             ($1, $4, 'item-a2', $5, 'Review', 'Inbox', 'Title A2', 'Subtitle A2', 'Summary A2', 'pending', 10, '2026-06-30T12:00:00.000Z', null),
-            ($6, $7, 'item-b', $8, 'Review', 'Inbox', 'Title B', 'Subtitle B', 'Summary B', 'pending', 10, '2026-06-30T12:00:00.000Z', null),
-            ($1, $2, 'answered-over-cap', $9, 'Review', 'Inbox', 'Answered title', 'Answered subtitle', 'Answered summary', 'answered', 100, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z'),
-            ($1, $2, 'ack-output', $10, 'Review', 'Inbox', 'Ack title', 'Ack subtitle', 'Ack summary', 'answered', 10, '2026-06-30T12:00:00.000Z', '2026-06-30T12:00:00.000Z'),
-            ($1, $2, 'timeout-output', $11, 'Review', 'Inbox', 'Timeout title', 'Timeout subtitle', 'Timeout summary', 'answered', 10, '2026-06-30T12:00:00.000Z', '2026-06-30T12:00:00.000Z'),
-            ($1, $2, 'undo-output', $12, 'Review', 'Inbox', 'Undo title', 'Undo subtitle', 'Undo summary', 'answered', 10, '2026-06-30T12:00:00.000Z', '2026-06-30T12:00:00.000Z'),
-            ($1, $2, 'retained-pending', $13, 'Review', 'Inbox', 'Retention title', 'Retention subtitle', 'Retention summary', 'pending', 10, '2026-01-01T00:00:00.000Z', null),
-            ($1, $2, 'file-output', $14, 'Review', 'Inbox', 'File output title', 'File output subtitle', 'File output summary', 'answered', 10, '2026-06-30T12:00:00.000Z', '2026-06-30T12:00:00.000Z'),
-            ($1, $2, 'file-upload-pending', $15, 'Review', 'Inbox', 'File upload title', 'File upload subtitle', 'File upload summary', 'pending', 12, '2026-06-29T12:00:00.000Z', null)
+            ($1, $2, 'answered-over-cap', $6, 'Review', 'Inbox', 'Answered title', 'Answered subtitle', 'Answered summary', 'answered', 100, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z'),
+            ($1, $2, 'ack-output', $7, 'Review', 'Inbox', 'Ack title', 'Ack subtitle', 'Ack summary', 'answered', 10, '2026-06-30T12:00:00.000Z', '2026-06-30T12:00:00.000Z'),
+            ($1, $2, 'timeout-output', $8, 'Review', 'Inbox', 'Timeout title', 'Timeout subtitle', 'Timeout summary', 'answered', 10, '2026-06-30T12:00:00.000Z', '2026-06-30T12:00:00.000Z'),
+            ($1, $2, 'undo-output', $9, 'Review', 'Inbox', 'Undo title', 'Undo subtitle', 'Undo summary', 'answered', 10, '2026-06-30T12:00:00.000Z', '2026-06-30T12:00:00.000Z'),
+            ($1, $2, 'retained-pending', $10, 'Review', 'Inbox', 'Retention title', 'Retention subtitle', 'Retention summary', 'pending', 10, '2026-01-01T00:00:00.000Z', null),
+            ($1, $2, 'file-output', $11, 'Review', 'Inbox', 'File output title', 'File output subtitle', 'File output summary', 'answered', 10, '2026-06-30T12:00:00.000Z', '2026-06-30T12:00:00.000Z'),
+            ($1, $2, 'file-upload-pending', $12, 'Review', 'Inbox', 'File upload title', 'File upload subtitle', 'File upload summary', 'pending', 12, '2026-06-29T12:00:00.000Z', null)
           returning input_item_id, caller_item_id
         `,
         [
@@ -4029,9 +4412,6 @@ test(
           `hash-a-${runId}`,
           ids.callerA2,
           `hash-a2-${runId}`,
-          ids.accountB,
-          ids.callerB,
-          `hash-b-${runId}`,
           `hash-answered-${runId}`,
           `hash-ack-${runId}`,
           `hash-timeout-${runId}`,
@@ -4041,6 +4421,9 @@ test(
           `hash-file-upload-${runId}`
         ]
       );
+      const inputRows = {
+        rows: [...inputARows.rows, ...inputBRows.rows]
+      };
       const inputIdsByCallerItemId = new Map(
         inputRows.rows.map((row) => [row.caller_item_id, row.input_item_id])
       );
@@ -4127,6 +4510,14 @@ test(
         "file-output",
         "2026-07-14T12:00:00.000Z"
       );
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountB
+      ]);
       const accountBOutput = await client.query(
         `
           insert into public.agent_outbox_output_results(
@@ -4156,6 +4547,10 @@ test(
         [ids.accountB, ids.callerB, inputIdsByCallerItemId.get("item-b")]
       );
       const accountBOutputId = accountBOutput.rows[0].output_result_id;
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
 
       await client.query(
         `
@@ -5096,16 +5491,14 @@ test(
           insert into public.agent_outbox_stripe_webhook_events(
             stripe_event_id,
             event_type,
-            processing_status,
             received_at,
             processed_at
           )
           values
-            ($1, 'checkout.session.completed', 'processed', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
-            ($2, 'customer.subscription.updated', 'processed', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z'),
-            ($3, 'invoice.payment_failed', 'processing', '2026-01-01T00:00:00.000Z', null)
+            ($1, 'checkout.session.completed', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+            ($2, 'customer.subscription.updated', '2026-06-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z')
         `,
-        [`evt_old_${runId}`, `evt_recent_${runId}`, `evt_processing_${runId}`]
+        [`evt_old_${runId}`, `evt_recent_${runId}`]
       );
       await client.query("select set_config($1, $2, true)", [
         "agent_outbox.auth_surface",
@@ -5142,11 +5535,11 @@ test(
           where stripe_event_id = any($1::text[])
           order by stripe_event_id
         `,
-        [[`evt_old_${runId}`, `evt_recent_${runId}`, `evt_processing_${runId}`]]
+        [[`evt_old_${runId}`, `evt_recent_${runId}`]]
       );
       assert.deepEqual(
         retainedStripeWebhookEvents.rows.map((row) => row.stripe_event_id),
-        [`evt_processing_${runId}`, `evt_recent_${runId}`].sort()
+        [`evt_recent_${runId}`]
       );
 
       // Direct RLS verification for agent_outbox_stripe_webhook_events
@@ -5160,7 +5553,7 @@ test(
       await client.query("savepoint stripe_cleanup_insert_fail");
       await assert.rejects(
         client.query(
-          "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type, processing_status) values ($1, 'type', 'processing')",
+          "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type) values ($1, 'type')",
           [`evt_cleanup_insert_${runId}`]
         ),
         (error) => {
@@ -5190,7 +5583,7 @@ test(
       ]);
 
       await client.query(
-        "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type, processing_status) values ($1, 'checkout.session.completed', 'processing')",
+        "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type) values ($1, 'checkout.session.completed')",
         [`evt_cp_${runId}`]
       );
 
@@ -5201,7 +5594,7 @@ test(
       assert.equal(cpSelect.rowCount, 1);
 
       const cpUpdate = await client.query(
-        "update public.agent_outbox_stripe_webhook_events set processing_status = 'processed', processed_at = now() where stripe_event_id = $1",
+        "update public.agent_outbox_stripe_webhook_events set event_type = 'checkout.session.async_payment_succeeded' where stripe_event_id = $1",
         [`evt_cp_${runId}`]
       );
       assert.equal(cpUpdate.rowCount, 1);
@@ -5227,7 +5620,7 @@ test(
       await client.query("savepoint stripe_human_insert_fail");
       await assert.rejects(
         client.query(
-          "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type, processing_status) values ($1, 'type', 'processing')",
+          "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type) values ($1, 'type')",
           [`evt_human_insert_${runId}`]
         ),
         (error) => {
@@ -5265,7 +5658,7 @@ test(
       await client.query("savepoint stripe_caller_insert_fail");
       await assert.rejects(
         client.query(
-          "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type, processing_status) values ($1, 'type', 'processing')",
+          "insert into public.agent_outbox_stripe_webhook_events (stripe_event_id, event_type) values ($1, 'type')",
           [`evt_caller_insert_${runId}`]
         ),
         (error) => {
@@ -5554,6 +5947,10 @@ test(
           ids.revokedPreservedCaller
         ]
       );
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
       assert.deepEqual(neverActivatedCleanupRows.rows[0], {
         reclaimed_caller_count: 0,
         reclaimed_setup_count: 0,
@@ -5784,35 +6181,37 @@ test(
           non_file_bytes: 12
         }
       ]);
+    } catch (error) {
+      bodyError = error;
     } finally {
-      try {
-        await resetRoleAndRollback(client);
-      } catch (error) {
-        console.error("Teardown error in resetRoleAndRollback:", error);
-      }
-      try {
-        await cleanupPhase3DatabaseVerificationRows(client, ids);
-      } catch (error) {
-        console.error(
-          "Teardown error in cleanupPhase3DatabaseVerificationRows:",
-          error
-        );
-      }
-      try {
-        if (grantedAppRoleForTest) {
-          await revokeCurrentUserAppRoleGrant(client);
-        }
-      } catch (error) {
-        console.error(
-          "Teardown error in revokeCurrentUserAppRoleGrant:",
-          error
-        );
-      }
-      try {
-        await client.end();
-      } catch (error) {
-        console.error("Teardown error in client.end:", error);
-      }
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          /** @type {Error[]} */
+          const teardownErrors = [];
+          const attempt = teardownAttempt(
+            teardownErrors,
+            "Phase 3 database teardown failed"
+          );
+          await attempt("transaction and role reset", () =>
+            resetRoleAndRollback(client)
+          );
+          await attempt("test row cleanup", () =>
+            cleanupPhase3DatabaseVerificationRows(client, ids)
+          );
+          await attempt("client close", () => client.end());
+          if (teardownErrors.length > 0) {
+            throw new AggregateError(
+              teardownErrors,
+              "Phase 3 database teardown failed."
+            );
+          }
+        },
+        "Phase 3 database test and teardown both failed."
+      );
+    }
+    if (bodyError !== undefined) {
+      throw bodyError;
     }
   }
 );

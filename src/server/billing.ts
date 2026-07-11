@@ -342,7 +342,11 @@ export async function processStripeEventInTransaction(
   }
 
   const accountId = await applyStripeEventInTransaction(query, event, now);
-  await query(markStripeWebhookEventProcessedStatement(event.id, accountId));
+  if (accountId) {
+    await query(
+      associateStripeWebhookEventAccountStatement(event.id, accountId)
+    );
+  }
   return true;
 }
 
@@ -368,14 +372,20 @@ export function insertStripeWebhookEventStatement(
   eventId: string,
   eventType: string
 ): TransactionContextStatement {
+  // The explicit processing_status/processed_at writes keep this insert valid
+  // on both the pre-V20260711114816 schema (NOT NULL, no default) and the
+  // migrated schema, so deploy and migration order are independent. Remove the
+  // explicit column write together with the tracked contract migration
+  // (ISSUES.md stripe-webhook-status-contract-migration).
   return {
     sql: `
       insert into public.agent_outbox_stripe_webhook_events(
         stripe_event_id,
         event_type,
-        processing_status
+        processing_status,
+        processed_at
       )
-      values ($1, $2, 'processing')
+      values ($1, $2, 'processed', now())
       on conflict (stripe_event_id) do nothing
       returning stripe_event_id
     `,
@@ -383,17 +393,14 @@ export function insertStripeWebhookEventStatement(
   };
 }
 
-export function markStripeWebhookEventProcessedStatement(
+export function associateStripeWebhookEventAccountStatement(
   eventId: string,
-  accountId: string | null
+  accountId: string
 ): TransactionContextStatement {
   return {
     sql: `
       update public.agent_outbox_stripe_webhook_events
-      set
-        processing_status = 'processed',
-        processed_at = now(),
-        account_id = $2
+      set account_id = $2
       where stripe_event_id = $1
     `,
     values: [eventId, accountId]

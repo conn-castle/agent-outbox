@@ -23,6 +23,38 @@ type ClientEventsRequestContext = {
   startedAtMs: number;
 };
 
+type ClientEventProducer = "browser" | "server_action";
+
+export function emitClientEventLog(
+  event: ClientEvent,
+  context: {
+    requestId: string;
+    route: string;
+    producer: ClientEventProducer;
+    method?: string;
+    statusCode?: number;
+    durationMs?: number;
+    eventCount?: number;
+  }
+) {
+  return emitRuntimeLog({
+    level: "warn",
+    error_id: createCorrelationId("client"),
+    request_id: context.requestId,
+    surface: "app",
+    route: context.route,
+    method: context.method,
+    status_code: context.statusCode,
+    duration_ms: context.durationMs,
+    operation: `client_event.${event.name}`,
+    operation_kind: context.producer,
+    client_event_name: event.name,
+    client_event_category: event.category,
+    event_count: context.eventCount,
+    message: "client event received"
+  });
+}
+
 export async function handleClientEventsRequest(
   request: Request
 ): Promise<ClientEventProcessResult> {
@@ -46,20 +78,14 @@ export async function handleClientEventsRequest(
     }
 
     for (const event of parsed.events) {
-      emitRuntimeLog({
-        level: "warn",
-        error_id: createCorrelationId("client"),
-        request_id: context.requestId,
-        surface: "app",
+      emitClientEventLog(event, {
+        requestId: context.requestId,
         route: context.route,
+        producer: "browser",
         method: request.method,
-        status_code: 204,
-        duration_ms: durationSinceMs(context.startedAtMs),
-        operation: `client_event.${event.name}`,
-        client_event_name: event.name,
-        client_event_category: event.category,
-        event_count: parsed.events.length,
-        message: "client event received"
+        statusCode: 204,
+        durationMs: durationSinceMs(context.startedAtMs),
+        eventCount: parsed.events.length
       });
     }
 

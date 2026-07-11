@@ -127,7 +127,7 @@ Incomplete:
 - Leave every current issue and backlog item fixed, scheduled behind an explicit trigger, or explicitly accepted by the owner—never silently abandoned.
 
 ### Tasks
-- [ ] Resolve every actionable entry currently recorded in ISSUES.md, prioritizing the human database-test isolation failure, then the observability gaps, cleanup/refactor items, Stripe webhook retention decision, local/CI security parity, and database teardown consistency; remove entries only after their fixes are verified.
+- [x] Resolve every actionable entry currently recorded in ISSUES.md, prioritizing the human database-test isolation failure, then the observability gaps, cleanup/refactor items, Stripe webhook retention decision, local/CI security parity, and database teardown consistency; remove entries only after their fixes are verified.
 - [ ] Surface generated `error_id` values on the scheduled `/human` submit/undo and caller-approval failure paths so users can provide support-correlation handles.
 - [ ] Run iterative correctness, simplification, interface, test-quality, and documentation audits across the web app, HTTP API, CLI, database, deployment tooling, public docs, and operations docs; fix accepted findings and repeat until a fresh review has no unresolved critical/high findings and no unaccepted medium findings.
 - [ ] Audit tracked files, generated artifacts, configuration, and Git history for secrets, credentials, private-only references, unsafe examples, stale implementation claims, and licensing/privacy mismatches before changing repository visibility.

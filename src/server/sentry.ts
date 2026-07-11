@@ -82,7 +82,7 @@ export function captureRuntimeException(
 
 export type RuntimeFailureReportInput = Omit<
   RuntimeLogEvent,
-  "level" | "error_id" | "error_name"
+  "level" | "error_id" | "error_name" | "sentry_captured"
 > & {
   errorId: string;
   suppressCapture?: boolean;
@@ -103,7 +103,8 @@ export function reportRuntimeFailure(
     ...event,
     level: "error",
     error_id: errorId,
-    error_name: safeErrorName(exception)
+    error_name: safeErrorName(exception),
+    sentry_captured: sentryCaptured
   });
 
   return {

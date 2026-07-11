@@ -26,6 +26,16 @@ A rolling log of important, non-obvious decisions that materially affect future 
 ## Decision Log
 
 <!-- ENTRIES START -->
+- Decision 2026-07-11 privileged-migration-owner-runtime-role-split: Keep migration ownership privileged and runtime access restricted
+    Decision: `DATABASE_MIGRATION_URL` uses a superuser or `BYPASSRLS` migration owner; application traffic uses the separate non-superuser, non-`BYPASSRLS` `agent_outbox_app` role.
+    Reason: Security-definer bootstrap and maintenance functions operate over forced-Row-Level-Security tables, while the runtime boundary must remain least-privileged; PostgreSQL 17 creator/admin membership with `set_option=false` is baseline ownership metadata, not test leakage.
+    Tradeoffs: Local migration/database tests require a privileged disposable connection matching CI, but runtime credentials cannot bypass Row-Level Security and tests fail loudly when the roles are conflated.
+
+- Decision 2026-07-11 database-parity-runs-full-foundation: Run the full foundation test file in database parity checks
+    Decision: The canonical serialized database verification command runs all of `tests/foundation.test.mjs` alongside the three focused database test files in local, CI, and release-check environments.
+    Reason: Node's global test-name filter would exclude tests in the other files, and one byte-identical directly runnable command is the database-posture source of truth.
+    Tradeoffs: Migration-replay jobs repeat credential-free foundation unit coverage, but avoid relocating the Phase 3 database test or maintaining divergent local and CI commands.
+
 - Decision 2026-06-30 worker-scheduled-wrapper: Use a Worker wrapper for cron events
     Decision: `wrangler.jsonc` points at `worker/entry.mjs`, which delegates HTTP traffic to OpenNext's generated `.open-next/worker.js` and owns the Worker `scheduled` handler.
     Reason: The OpenNext Cloudflare template generates a `fetch` entrypoint but no project-owned `scheduled` export, while hosted cleanup will need a durable Worker cron hook.
@@ -91,10 +101,10 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Reason: The owner does not want the setup credential used for production checkouts, and runtime secrets are being installed with Cloudflare in Phase 8.
     Tradeoffs: Phase 7 can create and recover Stripe object ids, but production checkout/portal smoke requires a separate restricted runtime key in Phase 8.
 
-- Decision 2026-07-07 client-events-four-signal-scope: Keep browser client-event logging to four signals
-    Decision: The browser emitter sends `client_error`, `hydration_error`, `human_action_failed`, and `file_upload_failed`; `ui_state_inconsistent` remains server-allowlisted but unwired in the browser.
-    Reason: No stable client-detectable UI invariant exists that is not already enforced by server-side action parsing or route state.
-    Tradeoffs: The endpoint contract can accept a future state-inconsistency signal without another server migration, but MVP browser telemetry stays narrow and avoids speculative instrumentation.
+- Decision 2026-07-07 client-events-four-signal-scope: Keep client-event logging to four emitted signals with explicit producers
+    Decision: Browser code emits `client_error` and `hydration_error`; canonical human server-action outcomes emit `human_action_failed` and `file_upload_failed`. Structured logs distinguish `browser` from `server_action` producers. `ui_state_inconsistent` remains allowlisted but unwired.
+    Reason: Action notices are replayable presentation state and cannot count attempts faithfully, while no stable client-detectable UI invariant exists beyond server-enforced action parsing and route state.
+    Tradeoffs: Action-failure counts become attempt-faithful and higher-trust while browser exception signals remain forgeable; the shared event vocabulary stays narrow and avoids speculative instrumentation.
 
 - Decision 2026-07-10 production-release-certification: Certify production directly before numbering releases
     Decision: Until paying-customer usage justifies staging, production releases run only through the protected manual GitHub Actions workflow: certify the exact `main` SHA, capture a healthy rollback target, deploy, verify the live SHA, then publish the `package.json`-versioned tag and GitHub Release. A failed deploy or live verification automatically restores the captured Worker; because the Worker is smoke-verified before tagging, a tagging-only failure leaves the verified code live and reconciles on re-dispatch (finalization is idempotent) instead of reverting healthy production.

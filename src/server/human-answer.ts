@@ -16,7 +16,7 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import {
-  apiLimitMetadata,
+  emitOperatorActionableFailure,
   type ApiErrorCode,
   type ApiErrorInput,
   type ApiFieldError
@@ -26,7 +26,7 @@ import {
   isIanaTimeZone,
   isValidUtcDateTime
 } from "./input-schema.ts";
-import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
+import { durationSinceMs } from "./logging.ts";
 import { safeAttachmentFilename, safeContentType } from "./output-files.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
@@ -738,45 +738,21 @@ function emitHumanFileUploadFailure(
   error: Pick<ApiErrorInput, "status" | "code" | "message" | "limit">,
   startedAtMs: number
 ) {
-  const limit = apiLimitMetadata(error.limit ?? null);
-  if (error.status < 500 && !limit) {
-    return;
-  }
-
-  emitRuntimeLog({
-    level: error.status >= 500 ? "error" : "warn",
+  emitOperatorActionableFailure({
+    status: error.status,
+    limit: error.limit,
     error_id: input.correlationId,
     request_id: input.requestId,
     surface: "app",
     route: "/human",
     method: "POST",
-    status_code: error.status,
     duration_ms: durationSinceMs(startedAtMs),
     operation: "human_file_upload",
     operation_kind: "file_upload",
     account_id: input.accountId,
     caller_id: input.callerId,
-    limit_name: limit?.limit_name,
-    limit_reason_code: limit?.limit_reason_code,
-    limit_resets_at: limit?.limit_resets_at,
-    used_units: limitNumericValue(error.limit, "usedUnits", "used_units"),
-    limit_units: limitNumericValue(error.limit, "limitUnits", "limit_units"),
     message: "Human file upload failed."
   });
-}
-
-function limitNumericValue(
-  limit: ApiErrorInput["limit"],
-  camelKey: "usedUnits" | "limitUnits",
-  snakeKey: "used_units" | "limit_units"
-) {
-  if (!limit) {
-    return undefined;
-  }
-
-  const limitRecord = limit as Record<string, unknown>;
-  const value = limitRecord[camelKey] ?? limitRecord[snakeKey];
-  return typeof value === "number" ? value : undefined;
 }
 
 function createOutputResultStatement(input: {

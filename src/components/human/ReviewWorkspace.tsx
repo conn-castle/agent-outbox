@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import type { HumanAccountSession } from "../../server/human-session.ts";
 import type {
@@ -8,18 +9,19 @@ import type {
   HumanReviewListRow
 } from "../../server/human-review.ts";
 import type { AccountStatusData, StatusResult } from "../../server/status.ts";
-import { emitClientEvent } from "../../client/client-events.ts";
 import { AccountBanner } from "./AccountBanner";
 import { BulkActions } from "./BulkActions";
 import { ReviewDetail } from "./ReviewDetail";
 import { ReviewList } from "./ReviewList";
 
-type ReviewStatusFilter = "all" | "pending" | "answered";
-type ReviewSort = "priority" | "updated_at";
+export type HumanReviewView = {
+  search: string;
+  status: "all" | "pending" | "answered";
+  sort: "priority" | "updated_at";
+  page: number;
+};
 type PersistedWorkspaceState = {
-  search?: unknown;
-  status?: unknown;
-  sort?: unknown;
+  selectedIds?: unknown;
   skippedIds?: unknown;
 };
 
@@ -36,28 +38,29 @@ export function ReviewWorkspace({
   rows,
   detail,
   banner,
-  notice
+  notice,
+  view,
+  hasNext
 }: {
   session: HumanAccountSession;
   rows: HumanReviewListRow[];
   detail: HumanReviewDetail | null;
   banner: StatusResult<AccountStatusData>;
   notice: HumanReviewNotice | null;
+  view: HumanReviewView;
+  hasNext: boolean;
 }) {
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<ReviewStatusFilter>("all");
-  const [sort, setSort] = useState<ReviewSort>("priority");
+  const router = useRouter();
+  const [search, setSearch] = useState(view.search);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
-  const emittedErrorNoticeKey = useRef<string | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const persisted = readWorkspaceState();
     if (persisted) {
-      setSearch(persisted.search);
-      setStatus(persisted.status);
-      setSort(persisted.sort);
+      setSelectedIds(new Set(persisted.selectedIds));
       setSkippedIds(new Set(persisted.skippedIds));
     }
     setHydrated(true);
@@ -68,71 +71,102 @@ export function ReviewWorkspace({
       return;
     }
     writeWorkspaceState({
-      search,
-      status,
-      sort,
+      selectedIds: [...selectedIds],
       skippedIds: [...skippedIds]
     });
-  }, [hydrated, search, skippedIds, sort, status]);
+  }, [hydrated, selectedIds, skippedIds]);
 
   useEffect(() => {
-    if (notice?.kind !== "error") {
-      return;
+    // Re-sync the input after navigation (back/forward, action redirects).
+    // Skip while a debounced edit is pending so in-flight typing survives.
+    if (searchTimer.current === null) {
+      setSearch(view.search);
     }
-    const noticeKey = `${notice.message}:${notice.failedActionKind ?? ""}`;
-    if (emittedErrorNoticeKey.current === noticeKey) {
-      return;
+  }, [view.search]);
+
+  function updateView(changes: Partial<HumanReviewView>) {
+    const params = new URLSearchParams(window.location.search);
+    params.delete("item");
+    params.delete("error");
+    params.delete("failedActionKind");
+    params.delete("notice");
+    params.delete("action");
+    params.delete("answered");
+    params.delete("failed");
+    // Seed from the URL, not the `view` prop: the prop lags router.replace
+    // until the server round-trip completes, so rapid successive control
+    // changes would silently revert earlier ones.
+    const next = { ...viewFromSearchParams(params), ...changes };
+    if (next.search === "") params.delete("search");
+    else params.set("search", next.search);
+    if (next.status === "all") params.delete("status");
+    else params.set("status", next.status);
+    if (next.sort === "priority") params.delete("sort");
+    else params.set("sort", next.sort);
+    if (next.page === 1) params.delete("page");
+    else params.set("page", String(next.page));
+    const href = `${window.location.pathname}?${params.toString()}`;
+    router.replace(href);
+  }
+
+  useEffect(
+    () => () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    },
+    []
+  );
+
+  function cancelDebouncedSearch() {
+    if (searchTimer.current) {
+      clearTimeout(searchTimer.current);
+      searchTimer.current = null;
     }
-    emittedErrorNoticeKey.current = noticeKey;
-    if (notice.failedActionKind === "file_upload") {
-      emitClientEvent("file_upload_failed", "upload");
-    } else {
-      emitClientEvent("human_action_failed", "submission");
-    }
-  }, [notice?.failedActionKind, notice?.kind, notice?.message]);
+  }
+
+  function applyDebouncedSearch(nextSearch: string) {
+    cancelDebouncedSearch();
+    searchTimer.current = setTimeout(() => {
+      searchTimer.current = null;
+      updateView({ search: nextSearch, page: 1 });
+    }, 300);
+  }
+
+  function submitSearch() {
+    cancelDebouncedSearch();
+    updateView({ search, page: 1 });
+  }
+
+  function updateViewImmediately(changes: Partial<HumanReviewView>) {
+    cancelDebouncedSearch();
+    updateView(
+      search === view.search ? changes : { ...changes, search, page: 1 }
+    );
+  }
 
   const visibleRows = useMemo(() => {
-    const terms = search.trim().toLowerCase();
-    const filtered = rows.filter((row) => {
-      const statusMatches = status === "all" || row.status === status;
-      const searchMatches =
-        !terms ||
-        [
-          stripHtml(row.titleHtml),
-          stripHtml(row.subtitleHtml),
-          stripHtml(row.summaryHtml),
-          row.caller.displayName,
-          row.callerItemId,
-          row.rowType.display
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(terms);
-      return statusMatches && searchMatches;
-    });
-
-    return [...filtered].sort((left, right) => {
+    return [...rows].sort((left, right) => {
       const leftSkipped = skippedIds.has(left.inputItemId);
       const rightSkipped = skippedIds.has(right.inputItemId);
       if (leftSkipped !== rightSkipped) {
         return leftSkipped ? 1 : -1;
       }
-      if (sort === "priority") {
-        const priority =
-          priorityWeight(left.priority) - priorityWeight(right.priority);
-        if (priority !== 0) {
-          return priority;
-        }
-      }
-      return (
-        new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-      );
+      return 0;
     });
-  }, [rows, search, skippedIds, sort, status]);
+  }, [rows, skippedIds]);
   const selectedRows = useMemo(
     () => visibleRows.filter((row) => selectedIds.has(row.inputItemId)),
     [selectedIds, visibleRows]
   );
+  const offPageSelectedCount = useMemo(() => {
+    const visibleIds = new Set(rows.map((row) => row.inputItemId));
+    let count = 0;
+    for (const id of selectedIds) {
+      if (!visibleIds.has(id)) {
+        count += 1;
+      }
+    }
+    return count;
+  }, [rows, selectedIds]);
 
   function setRowSelected(inputItemId: string, selected: boolean) {
     setSelectedIds((current) => {
@@ -195,20 +229,38 @@ export function ReviewWorkspace({
         <span className="sr-only" data-testid="workspace-hydrated">
           {hydrated ? "hydrated" : "loading"}
         </span>
-        <label>
-          <span>Search</span>
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search reviews"
-          />
-        </label>
+        <form
+          className="review-search"
+          role="search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitSearch();
+          }}
+        >
+          <label>
+            <span>Search</span>
+            <input
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                applyDebouncedSearch(event.target.value);
+              }}
+              placeholder="Search reviews"
+            />
+          </label>
+          <button className="action-button" type="submit">
+            Search
+          </button>
+        </form>
         <label>
           <span>Status</span>
           <select
-            value={status}
+            value={view.status}
             onChange={(event) =>
-              setStatus(event.target.value as ReviewStatusFilter)
+              updateViewImmediately({
+                status: event.target.value as HumanReviewView["status"],
+                page: 1
+              })
             }
           >
             <option value="all">All</option>
@@ -219,8 +271,13 @@ export function ReviewWorkspace({
         <label>
           <span>Sort</span>
           <select
-            value={sort}
-            onChange={(event) => setSort(event.target.value as ReviewSort)}
+            value={view.sort}
+            onChange={(event) =>
+              updateViewImmediately({
+                sort: event.target.value as HumanReviewView["sort"],
+                page: 1
+              })
+            }
           >
             <option value="priority">Priority</option>
             <option value="updated_at">Updated</option>
@@ -228,7 +285,32 @@ export function ReviewWorkspace({
         </label>
       </section>
 
-      <BulkActions selectedRows={selectedRows} />
+      <BulkActions
+        selectedRows={selectedRows}
+        offPageSelectedCount={offPageSelectedCount}
+      />
+
+      <nav className="review-pagination" aria-label="Review pages">
+        {view.page > 1 ? (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => updateViewImmediately({ page: view.page - 1 })}
+          >
+            Previous page
+          </button>
+        ) : null}
+        <span>Page {view.page}</span>
+        {hasNext ? (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => updateViewImmediately({ page: view.page + 1 })}
+          >
+            Next page
+          </button>
+        ) : null}
+      </nav>
 
       <div className="review-shell">
         <ReviewList
@@ -238,6 +320,7 @@ export function ReviewWorkspace({
           skippedIds={skippedIds}
           onSelectedChange={setRowSelected}
           onSkipToggle={toggleSkipped}
+          view={view}
         />
         <ReviewDetail detail={detail} />
       </div>
@@ -245,18 +328,22 @@ export function ReviewWorkspace({
   );
 }
 
-function priorityWeight(priority: HumanReviewListRow["priority"]) {
-  return { urgent: 0, high: 1, normal: 2, low: 3 }[priority];
-}
-
-function stripHtml(value: string) {
-  return value.replace(/<[^>]*>/g, " ");
+// Mirrors the server-side `humanReviewView` defaults in app/human/page.tsx.
+function viewFromSearchParams(params: URLSearchParams): HumanReviewView {
+  const status = params.get("status");
+  const sort = params.get("sort");
+  const rawPage = params.get("page");
+  const parsedPage = rawPage && /^\d+$/.test(rawPage) ? Number(rawPage) : 1;
+  return {
+    search: params.get("search")?.trim() ?? "",
+    status: status === "pending" || status === "answered" ? status : "all",
+    sort: sort === "updated_at" ? "updated_at" : "priority",
+    page: Number.isSafeInteger(parsedPage) && parsedPage >= 1 ? parsedPage : 1
+  };
 }
 
 function readWorkspaceState(): {
-  search: string;
-  status: ReviewStatusFilter;
-  sort: ReviewSort;
+  selectedIds: string[];
   skippedIds: string[];
 } | null {
   try {
@@ -267,19 +354,15 @@ function readWorkspaceState(): {
 
     const parsed = JSON.parse(raw) as PersistedWorkspaceState;
     return {
-      search: typeof parsed.search === "string" ? parsed.search : "",
-      status:
-        parsed.status === "all" ||
-        parsed.status === "pending" ||
-        parsed.status === "answered"
-          ? parsed.status
-          : "all",
-      sort:
-        parsed.sort === "priority" || parsed.sort === "updated_at"
-          ? parsed.sort
-          : "priority",
+      selectedIds: Array.isArray(parsed.selectedIds)
+        ? parsed.selectedIds.filter(
+            (item): item is string => typeof item === "string"
+          )
+        : [],
       skippedIds: Array.isArray(parsed.skippedIds)
-        ? parsed.skippedIds.filter((id): id is string => typeof id === "string")
+        ? parsed.skippedIds.filter(
+            (item): item is string => typeof item === "string"
+          )
         : []
     };
   } catch {
@@ -288,9 +371,7 @@ function readWorkspaceState(): {
 }
 
 function writeWorkspaceState(state: {
-  search: string;
-  status: ReviewStatusFilter;
-  sort: ReviewSort;
+  selectedIds: string[];
   skippedIds: string[];
 }) {
   try {

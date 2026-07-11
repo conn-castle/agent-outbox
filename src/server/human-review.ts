@@ -16,6 +16,12 @@ export type HumanReviewListOptions = {
   search?: string | null;
   sort?: "priority" | "updated_at";
   limit?: number;
+  offset?: number;
+};
+
+export type HumanReviewPage = {
+  rows: HumanReviewListRow[];
+  hasNext: boolean;
 };
 
 export type HumanReviewCallerAffordance = {
@@ -154,7 +160,9 @@ type ActionOptionRow = {
 };
 
 const DEFAULT_REVIEW_LIST_LIMIT = 50;
-const MAX_REVIEW_LIST_LIMIT = 100;
+export const REVIEW_PAGE_SIZE = 100;
+const MAX_REVIEW_LIST_LIMIT = REVIEW_PAGE_SIZE;
+const REVIEW_PAGE_QUERY_LIMIT = MAX_REVIEW_LIST_LIMIT + 1;
 
 export async function humanReviewListInTransaction(
   query: ProductTransactionQuery,
@@ -165,6 +173,22 @@ export async function humanReviewListInTransaction(
     humanReviewListStatement(context, options)
   );
   return rows.rows.map(reviewListRowFromDatabase);
+}
+
+export async function humanReviewPageInTransaction(
+  query: ProductTransactionQuery,
+  context: AuthorizedHumanAccountContext,
+  options: Omit<HumanReviewListOptions, "limit"> = {}
+): Promise<HumanReviewPage> {
+  const result = await query<HumanReviewRow>(
+    humanReviewListStatementWithLimit(context, options, REVIEW_PAGE_QUERY_LIMIT)
+  );
+  return {
+    rows: result.rows
+      .slice(0, MAX_REVIEW_LIST_LIMIT)
+      .map(reviewListRowFromDatabase),
+    hasNext: result.rows.length > MAX_REVIEW_LIST_LIMIT
+  };
 }
 
 export async function humanReviewDetailInTransaction(
@@ -247,6 +271,18 @@ export function humanReviewListStatement(
   context: AuthorizedHumanAccountContext,
   options: HumanReviewListOptions = {}
 ): TransactionContextStatement {
+  return humanReviewListStatementWithLimit(
+    context,
+    options,
+    boundedLimit(options.limit)
+  );
+}
+
+function humanReviewListStatementWithLimit(
+  context: AuthorizedHumanAccountContext,
+  options: HumanReviewListOptions,
+  limit: number
+): TransactionContextStatement {
   const values: (string | number)[] = [context.accountId];
   const filters = ["i.account_id = $1"];
   const status =
@@ -258,25 +294,33 @@ export function humanReviewListStatement(
 
   const search = options.search?.trim();
   if (search) {
-    values.push(`%${search}%`);
+    const escapedSearch = search
+      .replaceAll("!", "!!")
+      .replaceAll("%", "!%")
+      .replaceAll("_", "!_");
+    values.push(`%${escapedSearch}%`);
+    // Search visible text: strip markup from the HTML columns so allowed
+    // inline tags neither match tag names nor split matching phrases.
     filters.push(`(
-      i.title_html ilike $${values.length}
-      or i.subtitle_html ilike $${values.length}
-      or i.summary_html ilike $${values.length}
-      or i.caller_item_id ilike $${values.length}
-      or c.display_name ilike $${values.length}
+      regexp_replace(i.title_html, '<[^>]*>', ' ', 'g') ilike $${values.length} escape '!'
+      or regexp_replace(i.subtitle_html, '<[^>]*>', ' ', 'g') ilike $${values.length} escape '!'
+      or regexp_replace(i.summary_html, '<[^>]*>', ' ', 'g') ilike $${values.length} escape '!'
+      or i.caller_item_id ilike $${values.length} escape '!'
+      or c.display_name ilike $${values.length} escape '!'
     )`);
   }
 
-  const limit = boundedLimit(options.limit);
   values.push(limit);
+  const limitParameter = values.length;
+  values.push(options.offset ?? 0);
 
   return {
     sql: `
       ${reviewRowSelect()}
       where ${filters.join("\n        and ")}
       ${reviewRowOrderBy(options.sort)}
-      limit $${values.length}
+      limit $${limitParameter}
+      offset $${values.length}
     `,
     values
   };

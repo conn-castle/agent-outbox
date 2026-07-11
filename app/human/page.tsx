@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 
 import {
   type HumanReviewNotice,
+  type HumanReviewView,
   ReviewWorkspace
 } from "../../src/components/human/ReviewWorkspace";
 import { createCorrelationId } from "../../src/server/correlation";
@@ -10,13 +11,14 @@ import {
   browserFixtureAccountBanner,
   browserFixtureHumanSession,
   browserFixtureReviewDetail,
-  browserFixtureReviewRows,
+  browserFixtureReviewPage,
   humanBrowserFixtureEnabled
 } from "../../src/server/human-review-fixture";
 import {
   humanReviewAccountBannerInTransaction,
   humanReviewDetailInTransaction,
-  humanReviewListInTransaction
+  humanReviewPageInTransaction,
+  REVIEW_PAGE_SIZE
 } from "../../src/server/human-review";
 import {
   type HumanAccountSession,
@@ -35,19 +37,23 @@ export default async function HumanReviewPage({
   const params = await searchParams;
   const selectedItem = firstParam(params?.item);
   const notice = humanReviewNotice(params);
+  const view = humanReviewView(params);
 
   if (humanBrowserFixtureEnabled()) {
     const session = browserFixtureHumanSession({
       firstTimeSignup: firstParam(params?.fixture_signup) === "1",
       providerSubject: firstParam(params?.fixture_provider_subject)
     });
+    const fixturePage = browserFixtureReviewPage(view);
     return (
       <ReviewWorkspace
         session={session}
-        rows={browserFixtureReviewRows()}
+        rows={fixturePage.rows}
         detail={browserFixtureReviewDetail(selectedItem ?? null)}
         banner={browserFixtureAccountBanner(session)}
         notice={notice}
+        view={view}
+        hasNext={fixturePage.hasNext}
       />
     );
   }
@@ -74,7 +80,8 @@ export default async function HumanReviewPage({
       loadHumanReviewPageDataInTransaction(
         query,
         humanSession,
-        selectedItem ?? null
+        selectedItem ?? null,
+        view
       )
   );
 
@@ -110,6 +117,8 @@ export default async function HumanReviewPage({
       detail={pageData.detail}
       banner={pageData.banner}
       notice={notice}
+      view={view}
+      hasNext={pageData.hasNext}
     />
   );
 }
@@ -117,19 +126,37 @@ export default async function HumanReviewPage({
 async function loadHumanReviewPageDataInTransaction(
   query: ProductTransactionQuery,
   session: HumanAccountSession,
-  selectedItem: string | null
+  selectedItem: string | null,
+  view: HumanReviewView
 ) {
-  const rows = await humanReviewListInTransaction(query, session, {
-    status: "all",
-    sort: "priority",
-    limit: 100
+  const page = await humanReviewPageInTransaction(query, session, {
+    status: view.status,
+    search: view.search,
+    sort: view.sort,
+    offset: (view.page - 1) * REVIEW_PAGE_SIZE
   });
+  const rows = page.rows;
   const selected = selectedItem ?? rows[0]?.inputItemId ?? null;
   const detail = selected
     ? await humanReviewDetailInTransaction(query, session, selected)
     : null;
   const banner = await humanReviewAccountBannerInTransaction(query, session);
-  return { rows, detail, banner };
+  return { rows, detail, banner, hasNext: page.hasNext };
+}
+
+function humanReviewView(
+  params: Record<string, string | string[] | undefined> | undefined
+): HumanReviewView {
+  const status = firstParam(params?.status);
+  const sort = firstParam(params?.sort);
+  const rawPage = firstParam(params?.page);
+  const parsedPage = rawPage && /^\d+$/.test(rawPage) ? Number(rawPage) : 1;
+  return {
+    search: firstParam(params?.search)?.trim() ?? "",
+    status: status === "pending" || status === "answered" ? status : "all",
+    sort: sort === "updated_at" ? "updated_at" : "priority",
+    page: Number.isSafeInteger(parsedPage) && parsedPage >= 1 ? parsedPage : 1
+  };
 }
 
 function firstParam(value: string | string[] | undefined) {

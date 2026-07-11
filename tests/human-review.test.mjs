@@ -12,6 +12,7 @@ import {
   humanReviewDetailInTransaction,
   humanReviewDetailStatement,
   humanReviewListInTransaction,
+  humanReviewPageInTransaction,
   humanReviewListStatement
 } from "../src/server/human-review.ts";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture.ts";
@@ -46,7 +47,8 @@ test("human review list statement scopes rows by account and supports focused fi
     context.accountId,
     "pending",
     "%Acme%",
-    25
+    25,
+    0
   ]);
   assert.match(statement.sql, /from public\.agent_outbox_input_items i/);
   assert.match(statement.sql, /join public\.agent_outbox_callers c/);
@@ -58,8 +60,49 @@ test("human review list statement scopes rows by account and supports focused fi
   assert.match(statement.sql, /action\.popup_kind = 'none'/);
   assert.match(statement.sql, /where i\.account_id = \$1/);
   assert.match(statement.sql, /i\.status = \$2/);
-  assert.match(statement.sql, /i\.title_html ilike \$3/);
+  assert.match(
+    statement.sql,
+    /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\) ilike \$3/
+  );
+  assert.match(statement.sql, /or i\.caller_item_id ilike \$3/);
   assert.match(statement.sql, /case i\.priority/);
+});
+
+test("human review page trims its private sentinel and reports another page", async () => {
+  const databaseRows = Array.from({ length: 101 }, (_, index) =>
+    reviewRow({
+      input_item_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`
+    })
+  );
+  const query = fakeQuery([databaseRows]);
+
+  const page = await humanReviewPageInTransaction(query, context, {
+    status: "pending",
+    offset: 100
+  });
+
+  assert.equal(page.rows.length, 100);
+  assert.equal(page.hasNext, true);
+  const call = query.calls[0];
+  assert.ok(call);
+  assert.ok(call.values);
+  assert.deepEqual(call.values.slice(-2), [101, 100]);
+  assert.match(call.sql, /order by i\.updated_at desc, i\.input_item_id/);
+  assert.match(call.sql, /limit \$3\s+offset \$4/);
+});
+
+test("human review search treats LIKE metacharacters as literal text", () => {
+  const statement = humanReviewListStatement(context, {
+    search: "50%_off!"
+  });
+
+  assert.deepEqual(statement.values, [
+    context.accountId,
+    "%50!%!_off!!%",
+    50,
+    0
+  ]);
+  assert.equal(statement.sql.match(/ilike \$2 escape '!'/g)?.length, 5);
 });
 
 test("human review list shapes caller affordances and output read state", async () => {

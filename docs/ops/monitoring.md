@@ -67,9 +67,20 @@ operator-actionable handled failures. Useful fields include:
 - `caller_id` or an opaque audit-safe caller id when useful
 - `operation`
 - `limit_name` for quota and rate-limit denials
+- `sentry_captured` on every 5xx failure log: whether this failure reached
+  Sentry
 
 Use stable low-cardinality fields. Do not use high-cardinality caller display
 strings as log dimensions.
+
+Sentry capture policy for server failures: unexpected exceptions are always
+captured (`reportRuntimeFailure`) regardless of status code. Non-exception
+handled failures are captured only for internal `500` responses; expected
+operational non-500 5xx failures (for example `503` missing-configuration or
+temporary-unavailable) are log-only and carry an explicit
+`sentry_captured: false`. Alert on error-level logs, not on `sentry_captured`
+alone; `sentry_captured: false` on a `500` indicates capture was attempted but
+disabled or failed (for example a missing production DSN or release).
 
 ## Log Safety
 
@@ -135,20 +146,23 @@ browser through the shared client-event contract:
   failure category.
 
 It accepts only client errors, hydration failures, failed human-action
-submissions, upload failures, and major UI state inconsistencies. The current
-browser emitter deliberately sends only the first four signals; no stable,
-client-detectable `ui_state_inconsistent` invariant exists yet. It returns a
-best-effort 204 response and never gates product flows. Do not turn it into a
-general product analytics firehose.
+submissions, upload failures, and major UI state inconsistencies. Browser
+exception and hydration reports use `operation_kind=browser` and remain
+low-trust. Human-action and upload failures originate from the canonical server
+action outcome and use `operation_kind=server_action`; rendering or sharing an
+error-notice URL does not emit them. No stable, client-detectable
+`ui_state_inconsistent` invariant exists yet. Event delivery is best-effort and
+never gates product flows. Do not turn it into a general product analytics
+firehose.
 
-The same-origin check is a browser safety boundary, not authentication:
-non-browser clients can forge `Origin`. A prepared-but-inactive Cloudflare
-Rulesets API rate limit exists in `scripts/cloudflare-ratelimit.mjs`; verify the
-prepared disabled rule with `node scripts/cloudflare-ratelimit.mjs --check` when
-reviewing launch posture or abuse response readiness. Keep the rule disabled
-during normal launch-readiness checks unless the owner explicitly approves
-activating or modifying it for abuse response. Until then, the accepted risk is
-spoofed `client_event.*` volume causing noisy logs rather than product-flow
-failure. If signal quality degrades, filter client-event logs separately from
-server failure logs while preserving server-side Sentry and API error signals as
-the higher-trust source.
+For events accepted by the browser endpoint, the same-origin check is a browser
+safety boundary, not authentication: non-browser clients can forge `Origin`. A
+prepared-but-inactive Cloudflare Rulesets API rate limit exists in
+`scripts/cloudflare-ratelimit.mjs`; verify the prepared disabled rule with
+`node scripts/cloudflare-ratelimit.mjs --check` when reviewing launch posture or
+abuse response readiness. Keep the rule disabled during normal launch-readiness
+checks unless the owner explicitly approves activating or modifying it for abuse
+response. Until then, the accepted risk is spoofed `client_event.*` volume
+causing noisy logs rather than product-flow failure. If signal quality degrades,
+filter client-event logs separately from server failure logs while preserving
+server-side Sentry and API error signals as the higher-trust source.

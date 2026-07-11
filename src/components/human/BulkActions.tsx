@@ -7,12 +7,15 @@ import type {
   HumanReviewBulkAction,
   HumanReviewListRow
 } from "../../server/human-review.ts";
+import { ViewStateFields } from "./ActionForms";
 import { HumanIcon } from "./TypedContent";
 
 export function BulkActions({
-  selectedRows
+  selectedRows,
+  offPageSelectedCount
 }: {
   selectedRows: HumanReviewListRow[];
+  offPageSelectedCount: number;
 }) {
   const pendingRows = selectedRows.filter((row) => row.status === "pending");
   const compatibleActions = commonNoPopupActions(pendingRows);
@@ -20,12 +23,19 @@ export function BulkActions({
 
   return (
     <form className="bulk-actions" action={submitBulkHumanAnswers}>
+      <ViewStateFields />
       <div>
         <strong>Bulk action</strong>
         <span>
           {pendingRows.length} selected pending{" "}
           {pendingRows.length === 1 ? "row" : "rows"}
         </span>
+        {offPageSelectedCount > 0 ? (
+          <span>
+            {offPageSelectedCount} selected on other pages{" "}
+            {offPageSelectedCount === 1 ? "is" : "are"} not included.
+          </span>
+        ) : null}
       </div>
       {pendingRows.map((row) => (
         <input

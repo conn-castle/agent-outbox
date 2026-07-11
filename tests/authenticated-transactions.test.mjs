@@ -8,6 +8,11 @@ import {
   generateCallerApiKeyMaterial,
   parseCallerApiKey
 } from "../src/server/caller-auth.ts";
+import {
+  assertMigrationOwnerCanSetAppRole,
+  preserveBodyErrorDuringTeardown,
+  teardownAttempt
+} from "./helpers/database.mjs";
 
 const { Client } = pg;
 
@@ -405,19 +410,33 @@ test(
     const sentinelSlug = `savepoint-sentinel-${runId}`;
     /** @type {{ accountId?: string, callerId?: string }} */
     const ids = {};
+    /** @type {unknown} */
+    let bodyError;
 
     await client.connect();
 
     try {
       const material = generateCallerApiKeyMaterial();
+      ids.accountId = crypto.randomUUID();
+      await assertMigrationOwnerCanSetAppRole(client);
+      await client.query("set role agent_outbox_app");
+      await client.query("begin");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        "cleanup"
+      ]);
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountId
+      ]);
 
       const accountRows = await client.query(
         `
-          insert into public.agent_outbox_accounts(label)
-          values ($1)
+          insert into public.agent_outbox_accounts(account_id, label)
+          values ($1, $2)
           returning account_id
         `,
-        [`caller-savepoint-${runId}`]
+        [ids.accountId, `caller-savepoint-${runId}`]
       );
       /** @type {string} */
       const seedAccountId = accountRows.rows[0].account_id;
@@ -457,6 +476,8 @@ test(
           material.secretDigest
         ]
       );
+      await client.query("commit");
+      await client.query("reset role");
 
       // Force the last_used_at UPDATE that runs inside the caller transaction to
       // raise, so the caller savepoint must roll back exactly that statement
@@ -552,35 +573,70 @@ test(
         null,
         "last_used_at must not be bumped when the savepoint rolls back"
       );
+    } catch (error) {
+      bodyError = error;
     } finally {
-      try {
-        await client.query(
-          `drop trigger if exists ${triggerName} on public.agent_outbox_caller_credentials`
-        );
-      } catch {
-        // Best-effort cleanup after database verification.
-      }
-      try {
-        await client.query(`drop function if exists public.${triggerName}()`);
-      } catch {
-        // Best-effort cleanup after database verification.
-      }
-      if (ids.accountId) {
-        try {
-          await client.query(
-            `delete from public.agent_outbox_accounts where account_id = $1`,
-            [ids.accountId]
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          /** @type {Error[]} */
+          const teardownErrors = [];
+          const attempt = teardownAttempt(
+            teardownErrors,
+            "Caller transaction database teardown failed"
           );
-        } catch {
-          // Best-effort cleanup after database verification.
-        }
-      }
-      await client.end();
-      if (previousHashSecret === undefined) {
-        delete process.env.CALLER_KEY_HASH_SECRET;
-      } else {
-        process.env.CALLER_KEY_HASH_SECRET = previousHashSecret;
-      }
+          await attempt("test trigger cleanup", () =>
+            client.query(
+              `drop trigger if exists ${triggerName} on public.agent_outbox_caller_credentials`
+            )
+          );
+          await attempt("test function cleanup", () =>
+            client.query(`drop function if exists public.${triggerName}()`)
+          );
+          if (ids.accountId) {
+            await attempt("test account cleanup", async () => {
+              await client.query("set role agent_outbox_app");
+              await client.query("begin");
+              try {
+                await client.query("select set_config($1, $2, true)", [
+                  "agent_outbox.auth_surface",
+                  "cleanup"
+                ]);
+                await client.query("select set_config($1, $2, true)", [
+                  "agent_outbox.account_id",
+                  ids.accountId
+                ]);
+                await client.query(
+                  `delete from public.agent_outbox_accounts where account_id = $1`,
+                  [ids.accountId]
+                );
+                await client.query("commit");
+              } catch (error) {
+                await client.query("rollback");
+                throw error;
+              } finally {
+                await client.query("reset role");
+              }
+            });
+          }
+          await attempt("client close", () => client.end());
+          if (previousHashSecret === undefined) {
+            delete process.env.CALLER_KEY_HASH_SECRET;
+          } else {
+            process.env.CALLER_KEY_HASH_SECRET = previousHashSecret;
+          }
+          if (teardownErrors.length > 0) {
+            throw new AggregateError(
+              teardownErrors,
+              "Caller transaction database teardown failed."
+            );
+          }
+        },
+        "Caller transaction database test and teardown both failed."
+      );
+    }
+    if (bodyError !== undefined) {
+      throw bodyError;
     }
   }
 );

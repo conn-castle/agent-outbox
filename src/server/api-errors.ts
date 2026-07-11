@@ -2,6 +2,7 @@ import { createCorrelationId } from "./correlation.ts";
 import type { ActiveLimitBlockMetadata } from "./accounting.ts";
 import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
 import type { LimitErrorMetadata } from "./limits.ts";
+import { captureRuntimeException } from "./sentry.ts";
 
 export type ApiErrorCode =
   | "invalid_request"
@@ -126,7 +127,29 @@ export function apiErrorResponse(
     headers.set("Retry-After", String(retryAfterSeconds));
   }
   if (!error.reported) {
-    emitOperatorActionableApiFailure(context, error);
+    const errorId = error.errorId ?? context.correlationId;
+    const sentryCaptured =
+      error.status === 500
+        ? captureRuntimeException(new Error("API request failed"), {
+            errorId,
+            operation: `api_error.${error.code}`,
+            route: context.route
+          })
+        : undefined;
+    emitOperatorActionableFailure({
+      status: error.status,
+      limit: error.limit,
+      error_id: errorId,
+      request_id: context.requestId,
+      sentry_captured: sentryCaptured,
+      surface: "api",
+      route: context.route,
+      method: context.method,
+      duration_ms: durationSinceMs(context.startedAtMs),
+      operation: `api_error.${error.code}`,
+      caller_id: error.log?.callerId ?? undefined,
+      message: "api request failed"
+    });
   }
 
   return Response.json(
@@ -217,36 +240,71 @@ function omitNullish<TObject extends Record<string, unknown>>(value: TObject) {
   );
 }
 
-function emitOperatorActionableApiFailure(
-  context: ApiRequestContext,
-  error: ApiErrorInput
+type OperatorActionableFailureInput = {
+  status: number;
+  limit?: ApiErrorInput["limit"];
+  error_id: string;
+  request_id: string;
+  sentry_captured?: boolean;
+  surface: "app" | "api";
+  route?: string;
+  method?: string;
+  duration_ms?: number;
+  operation: string;
+  operation_kind?: string;
+  account_id?: string;
+  caller_id?: string;
+  message: string;
+};
+
+export function emitOperatorActionableFailure(
+  input: OperatorActionableFailureInput
 ) {
-  const limit = apiLimitMetadata(error.limit ?? null);
-  if (error.status < 500 && !limit) {
+  const limit = apiLimitMetadata(input.limit ?? null);
+  if (input.status < 500 && !limit) {
     return;
   }
 
   const activeLimit =
-    error.limit && "account_id" in error.limit ? error.limit : null;
+    input.limit && "account_id" in input.limit ? input.limit : null;
 
   emitRuntimeLog({
-    level: error.status >= 500 ? "error" : "warn",
-    error_id: error.errorId ?? context.correlationId,
-    request_id: context.requestId,
-    surface: "api",
-    route: context.route,
-    method: context.method,
-    status_code: error.status,
-    duration_ms: durationSinceMs(context.startedAtMs),
-    operation: `api_error.${error.code}`,
-    operation_kind: activeLimit?.operation_kind,
-    account_id: activeLimit?.account_id,
-    caller_id: error.log?.callerId ?? undefined,
+    level: input.status >= 500 ? "error" : "warn",
+    error_id: input.error_id,
+    request_id: input.request_id,
+    // Every 5xx failure log must state its Sentry outcome explicitly so
+    // operators can alert on sentry_captured=false without blind spots.
+    // Callers that captured (or attempted capture) pass the real outcome.
+    sentry_captured:
+      input.sentry_captured ?? (input.status >= 500 ? false : undefined),
+    surface: input.surface,
+    route: input.route,
+    method: input.method,
+    status_code: input.status,
+    duration_ms: input.duration_ms,
+    operation: input.operation,
+    operation_kind: input.operation_kind ?? activeLimit?.operation_kind,
+    account_id: input.account_id ?? activeLimit?.account_id,
+    caller_id: input.caller_id,
     limit_name: limit?.limit_name,
     limit_reason_code: limit?.limit_reason_code,
     limit_resets_at: limit?.limit_resets_at,
-    used_units: activeLimit?.used_units,
-    limit_units: activeLimit?.limit_units,
-    message: "api request failed"
+    used_units: limitNumericValue(input.limit, "usedUnits", "used_units"),
+    limit_units: limitNumericValue(input.limit, "limitUnits", "limit_units"),
+    message: input.message
   });
+}
+
+function limitNumericValue(
+  limit: ApiErrorInput["limit"],
+  camelKey: "usedUnits" | "limitUnits",
+  snakeKey: "used_units" | "limit_units"
+) {
+  if (!limit) {
+    return undefined;
+  }
+
+  const limitRecord = limit as Record<string, unknown>;
+  const value = limitRecord[camelKey] ?? limitRecord[snakeKey];
+  return typeof value === "number" ? value : undefined;
 }

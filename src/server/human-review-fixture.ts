@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 
 import type { HumanAccountSession } from "./human-session.ts";
-import type { HumanReviewDetail, HumanReviewListRow } from "./human-review.ts";
+import {
+  REVIEW_PAGE_SIZE,
+  type HumanReviewDetail,
+  type HumanReviewListRow
+} from "./human-review.ts";
 import type { AccountStatusData, StatusResult } from "./status.ts";
 export { humanBrowserFixtureEnabled } from "./human-review-fixture-gate.ts";
 
@@ -49,6 +53,44 @@ export function browserFixtureReviewRows(): HumanReviewListRow[] {
   return browserFixtureReviewDetails().map(
     ({ detailsHtml: _details, ...row }) => row
   );
+}
+
+export function browserFixtureReviewPage(view: {
+  search: string;
+  status: "all" | "pending" | "answered";
+  sort: "priority" | "updated_at";
+  page: number;
+}) {
+  const terms = view.search.toLowerCase();
+  // Mirrors the production SQL exactly: tag-stripped matching over the three
+  // HTML columns plus plain matching on caller item id and caller display name.
+  const stripTags = (html: string) => html.replaceAll(/<[^>]*>/g, " ");
+  const filtered = browserFixtureReviewRows().filter((row) => {
+    if (view.status !== "all" && row.status !== view.status) return false;
+    if (!terms) return true;
+    return [
+      stripTags(row.titleHtml),
+      stripTags(row.subtitleHtml),
+      stripTags(row.summaryHtml),
+      row.callerItemId,
+      row.caller.displayName
+    ].some((field) => field.toLowerCase().includes(terms));
+  });
+  filtered.sort((left, right) => {
+    if (view.sort === "priority") {
+      const weights = { urgent: 0, high: 1, normal: 2, low: 3 };
+      const priority = weights[left.priority] - weights[right.priority];
+      if (priority !== 0) return priority;
+    }
+    const updated = right.updatedAt.localeCompare(left.updatedAt);
+    return updated || left.inputItemId.localeCompare(right.inputItemId);
+  });
+  const offset = (view.page - 1) * REVIEW_PAGE_SIZE;
+  const window = filtered.slice(offset, offset + REVIEW_PAGE_SIZE + 1);
+  return {
+    rows: window.slice(0, REVIEW_PAGE_SIZE),
+    hasNext: window.length > REVIEW_PAGE_SIZE
+  };
 }
 
 export function browserFixtureReviewDetail(
@@ -101,7 +143,7 @@ function fixtureUuid(seed: string) {
 }
 
 function browserFixtureReviewDetails(): HumanReviewDetail[] {
-  return [
+  const details: HumanReviewDetail[] = [
     {
       inputItemId: "00000000-0000-4000-8000-000000000511",
       callerItemId: "steward-brief-101",
@@ -492,6 +534,36 @@ function browserFixtureReviewDetails(): HumanReviewDetail[] {
       actions: []
     }
   ];
+  const template = details[0]!;
+  const generated = Array.from({ length: 101 }, (_, index) => {
+    const sequence = index + 1;
+    const isTail = sequence === 101;
+    return {
+      ...template,
+      inputItemId: fixtureUuid(`review-page-fixture:${sequence}`),
+      callerItemId: `fixture-page-${String(sequence).padStart(3, "0")}`,
+      priority: "low" as const,
+      titleHtml: isTail
+        ? "<strong>Beyond one hundred review</strong>"
+        : `<strong>Pagination fixture ${sequence}</strong>`,
+      subtitleHtml: isTail
+        ? "Discoverable after the first full review page."
+        : `Deterministic pagination row ${sequence}.`,
+      summaryHtml: isTail
+        ? "<p>This review proves that queue items beyond the first 100 remain actionable.</p>"
+        : `<p>Pagination fixture summary ${sequence}.</p>`,
+      detailsHtml: isTail
+        ? "<p>Open and approve this item to verify tail-page review behavior.</p>"
+        : `<p>Pagination fixture detail ${sequence}.</p>`,
+      createdAt: new Date(
+        Date.UTC(2026, 5, 30, 0, 101 - sequence)
+      ).toISOString(),
+      updatedAt: new Date(
+        Date.UTC(2026, 5, 30, 0, 101 - sequence)
+      ).toISOString()
+    };
+  });
+  return [...details, ...generated];
 }
 
 function fixtureCaller() {
