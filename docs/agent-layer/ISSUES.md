@@ -45,6 +45,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-07-10 sentry-cli-api-schema-mismatch: Pinned sentry-cli 3.6.0 cannot parse current Sentry API responses
     Priority: Low. Area: Tooling / Observability
-    Description: `sentry-cli organizations list` (@sentry/cli 3.6.0) fails with "could not parse JSON response: missing field `requireEmailVerification`", a schema drift between the pinned CLI and the current Sentry API. Production source-map upload is unaffected (the @sentry/nextjs build plugin uploads via debug IDs), but services/sentry.md directs operators to sentry-cli for release/issue/source-map diagnostics.
-    Next step: Bump @sentry/cli to a version compatible with the current Sentry API and re-verify the operator commands sentry.md recommends.
-    Notes: Observed while enabling source-map upload; only `organizations list` was exercised.
+    Description: `sentry-cli organizations list` (@sentry/cli 3.6.0) fails with "could not parse JSON response: missing field `requireEmailVerification`". Upstream merged PR #3352 on 2026-07-09 to use the current organization-list endpoint and remove the obsolete field, but it is not in the latest stable release; the operator workaround uses an explicit organization slug.
+    Next step: When the next stable @sentry/cli release includes upstream PR #3352, bump package.json/toolchain.json and pnpm-lock.yaml, then re-verify `sentry-cli organizations list` and remove the documented workaround.
+    Notes: Production source-map upload is unaffected (the @sentry/nextjs build plugin uploads via debug IDs).
