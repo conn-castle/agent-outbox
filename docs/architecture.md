@@ -217,11 +217,12 @@ humans with Agent Outbox account membership. Stripe webhooks use raw-body
 signature verification and a small idempotency ledger that stores event ids,
 types, processing status, timestamps, and optional account linkage only. The
 database remains the canonical source for app tier and billing status after
-webhook synchronization. Each account projection records the created time of its
-last applied Stripe event, so a distinct older event is retained in the
-idempotency ledger but cannot overwrite newer billing state. Stripe event
-timestamps have one-second precision; events created in the same second retain
-delivery order.
+webhook synchronization. Each account projection records the created time and
+database receipt order of its last applied Stripe event, so a distinct older
+event is retained in the idempotency ledger but cannot overwrite newer billing
+state. Stripe event timestamps have one-second precision; the persisted receipt
+order makes later-delivered events win within the same second even when webhook
+transactions overlap.
 
 ## Human Review Surface
 
