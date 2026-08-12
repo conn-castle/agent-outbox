@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -266,6 +268,110 @@ func TestReadBodyWithLimit(t *testing.T) {
 	if got, want := string(data), "seventeen bytes!!"; got != want {
 		t.Fatalf("data = %q, want %q", got, want)
 	}
+}
+
+func TestAPIClientDownloadRejectsAdvertisedOversizeBeforeWriting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", strconv.FormatInt(maxOutputFileDownloadBytes+1, 10))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	dst := &countingWriter{}
+	_, err := (APIClient{BaseURL: server.URL}).Download(context.Background(), "/api/output/out_1/files/file_1", "bearer-fixture", dst)
+	assertDownloadOversizeError(t, err)
+	if dst.bytes != 0 {
+		t.Fatalf("destination bytes = %d, want 0", dst.bytes)
+	}
+}
+
+func TestAPIClientDownloadRejectsLengthlessOversizeWithoutWritingProbeByte(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		_, _ = io.Copy(w, &repeatedByteReader{remaining: maxOutputFileDownloadBytes + 1})
+	}))
+	defer server.Close()
+
+	dst := &countingWriter{}
+	meta, err := (APIClient{BaseURL: server.URL}).Download(context.Background(), "/api/output/out_1/files/file_1", "bearer-fixture", dst)
+	assertDownloadOversizeError(t, err)
+	if meta.ContentLength != -1 {
+		t.Fatalf("content length = %d, want unknown", meta.ContentLength)
+	}
+	if dst.bytes != maxOutputFileDownloadBytes {
+		t.Fatalf("destination bytes = %d, want %d", dst.bytes, maxOutputFileDownloadBytes)
+	}
+}
+
+func TestAPIClientDownloadAcceptsFilesAtOrBelowLimit(t *testing.T) {
+	for name, size := range map[string]int64{
+		"smaller file": 17,
+		"exact limit":  maxOutputFileDownloadBytes,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+				_, _ = io.Copy(w, &repeatedByteReader{remaining: size})
+			}))
+			defer server.Close()
+
+			dst := &countingWriter{}
+			meta, err := (APIClient{BaseURL: server.URL}).Download(context.Background(), "/api/output/out_1/files/file_1", "bearer-fixture", dst)
+			if err != nil {
+				t.Fatalf("Download failed: %v", err)
+			}
+			if meta.ContentLength != size {
+				t.Fatalf("content length = %d, want %d", meta.ContentLength, size)
+			}
+			if dst.bytes != size {
+				t.Fatalf("destination bytes = %d, want %d", dst.bytes, size)
+			}
+		})
+	}
+}
+
+func assertDownloadOversizeError(t *testing.T, err error) {
+	t.Helper()
+
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	if appErr.Code != CodeTemporaryUnavailable {
+		t.Fatalf("error code = %q, want %q", appErr.Code, CodeTemporaryUnavailable)
+	}
+	if appErr.Message != "Output file exceeded the maximum size." {
+		t.Fatalf("error message = %q", appErr.Message)
+	}
+}
+
+type countingWriter struct {
+	bytes int64
+}
+
+func (w *countingWriter) Write(data []byte) (int, error) {
+	w.bytes += int64(len(data))
+	return len(data), nil
+}
+
+type repeatedByteReader struct {
+	remaining int64
+}
+
+func (r *repeatedByteReader) Read(data []byte) (int, error) {
+	if r.remaining == 0 {
+		return 0, io.EOF
+	}
+	n := int64(len(data))
+	if n > r.remaining {
+		n = r.remaining
+	}
+	for i := range data[:n] {
+		data[i] = 'x'
+	}
+	r.remaining -= n
+	return int(n), nil
 }
 
 func renderedErrorBody(t *testing.T, data []byte) map[string]any {

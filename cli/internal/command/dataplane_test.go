@@ -395,6 +395,63 @@ func TestOutputFileGetForcePreservesExistingFileWhenDownloadFails(t *testing.T) 
 	}
 }
 
+func TestOutputFileGetForcePreservesExistingFileWhenDownloadIsOversized(t *testing.T) {
+	outputPath := filepath.Join(t.TempDir(), "answer.bin")
+	original := []byte("original local bytes")
+	if err := os.WriteFile(outputPath, original, 0o644); err != nil {
+		t.Fatalf("write existing output: %v", err)
+	}
+	if err := os.Chmod(outputPath, 0o644); err != nil {
+		t.Fatalf("chmod existing output: %v", err)
+	}
+	const rawBytes = "raw-download-test-bytes"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/output/out_1/files/file_1" {
+			t.Errorf("request = %s %s, want GET /api/output/out_1/files/file_1", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Length", "32000001")
+		_, _ = io.WriteString(w, rawBytes)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "output", "file", "get", "out_1", "file_1", "--output", outputPath, "--force"})
+	if code != foundation.ExitTemporary {
+		t.Fatalf("exit code = %d, want temporary; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for failed download")
+	}
+	if strings.Contains(stdout, rawBytes) || strings.Contains(stderr, rawBytes) {
+		t.Fatalf("raw bytes leaked into command output; stdout=%q stderr=%q", stdout, stderr)
+	}
+	if !strings.Contains(stderr, `"code":"temporary_unavailable"`) {
+		t.Fatalf("stderr missing temporary-unavailable error: %s", stderr)
+	}
+	written, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read preserved output: %v", err)
+	}
+	if !bytes.Equal(written, original) {
+		t.Fatalf("forced oversized download changed existing file: %q", string(written))
+	}
+	stat, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatalf("stat preserved output: %v", err)
+	}
+	if got := stat.Mode().Perm(); got != 0o644 {
+		t.Fatalf("preserved output mode = %o, want 644", got)
+	}
+	entries, err := os.ReadDir(filepath.Dir(outputPath))
+	if err != nil {
+		t.Fatalf("read output directory: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".answer.bin.tmp-") {
+			t.Fatalf("temporary download file was not removed: %s", entry.Name())
+		}
+	}
+}
+
 func TestOutputFileGetForceReplacesWithOwnerOnlyPermissions(t *testing.T) {
 	fileBytes := []byte("replacement file bytes")
 	outputPath := filepath.Join(t.TempDir(), "answer.bin")
