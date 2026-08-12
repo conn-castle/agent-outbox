@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -228,12 +229,27 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 	if resp.ContentLength > maxOutputFileDownloadBytes {
 		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Output file exceeded the maximum size."}
 	}
-	oversized, err := copyBodyWithLimit(dst, resp.Body, maxOutputFileDownloadBytes)
+	staged, err := os.CreateTemp("", "agent-outbox-download-*")
 	if err != nil {
-		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not write output file bytes.", cause: err}
+		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not stage output file bytes.", cause: err}
+	}
+	defer func() {
+		_ = staged.Close()
+		_ = os.Remove(staged.Name())
+	}()
+
+	oversized, err := copyBodyWithLimit(staged, resp.Body, maxOutputFileDownloadBytes)
+	if err != nil {
+		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not stage output file bytes.", cause: err}
 	}
 	if oversized {
 		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Output file exceeded the maximum size."}
+	}
+	if _, err := staged.Seek(0, io.SeekStart); err != nil {
+		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not stage output file bytes.", cause: err}
+	}
+	if _, err := io.Copy(dst, staged); err != nil {
+		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not write output file bytes.", cause: err}
 	}
 	return downloadMeta, nil
 }

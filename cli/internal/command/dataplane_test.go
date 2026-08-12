@@ -502,6 +502,43 @@ func TestOutputFileGetForceReplacesWithOwnerOnlyPermissions(t *testing.T) {
 	}
 }
 
+func TestOutputFileGetStdoutRejectsLengthlessOversizeWithoutRawBytes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/output/out_1/files/file_1" {
+			t.Errorf("request = %s %s, want GET /api/output/out_1/files/file_1", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer caller-secret" {
+			t.Errorf("authorization = %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		chunkBytes := strings.Repeat("raw-download-test-bytes", 4096)
+		for remaining := int64(32_000_001); remaining > 0; {
+			writeBytes := int64(len(chunkBytes))
+			if writeBytes > remaining {
+				writeBytes = remaining
+			}
+			_, _ = io.WriteString(w, chunkBytes[:writeBytes])
+			remaining -= writeBytes
+		}
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"output", "file", "get", "out_1", "file_1", "--stdout"})
+	if code != foundation.ExitTemporary {
+		t.Fatalf("exit code = %d, want temporary; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout contained %d raw bytes, want none", len(stdout))
+	}
+	if strings.Contains(stderr, "raw-download-test-bytes") {
+		t.Fatalf("raw bytes leaked into diagnostics: %q", stderr)
+	}
+	if !strings.Contains(stderr, "temporary_unavailable") {
+		t.Fatalf("stderr missing temporary-unavailable error: %s", stderr)
+	}
+}
+
 func TestOutputFileGetStdoutRejectsJSONMode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

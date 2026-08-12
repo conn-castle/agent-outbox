@@ -299,8 +299,8 @@ func TestAPIClientDownloadRejectsLengthlessOversizeWithoutWritingProbeByte(t *te
 	if meta.ContentLength != -1 {
 		t.Fatalf("content length = %d, want unknown", meta.ContentLength)
 	}
-	if dst.bytes != maxOutputFileDownloadBytes {
-		t.Fatalf("destination bytes = %d, want %d", dst.bytes, maxOutputFileDownloadBytes)
+	if dst.bytes != 0 {
+		t.Fatalf("destination bytes = %d, want 0", dst.bytes)
 	}
 }
 
