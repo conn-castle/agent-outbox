@@ -389,6 +389,11 @@ const stripeWebhookCompletedLedgerMigrationPath = new URL(
   import.meta.url
 );
 
+const stripeWebhookEventOrderingMigrationPath = new URL(
+  "../db/migrations/V20260812194000__stripe_webhook_event_ordering.sql",
+  import.meta.url
+);
+
 /**
  * Executes one transactional migration file inside the caller's open transaction.
  * @param {import("pg").Client} client
@@ -3665,7 +3670,11 @@ test(
     const eventId = `evt_concurrent_${crypto.randomUUID()}`;
     const failedEventId = `evt_rollback_${crypto.randomUUID()}`;
     const rollbackCompatibleEventId = `evt_old_writer_${crypto.randomUUID()}`;
-    const event = /** @type {any} */ ({ id: eventId, type: "test.ignored" });
+    const event = /** @type {any} */ ({
+      id: eventId,
+      created: 1783209600,
+      type: "test.ignored"
+    });
 
     await Promise.all([
       first.connect(),
@@ -3772,7 +3781,11 @@ test(
           async (query) => {
             await processStripeEventInTransaction(
               query,
-              /** @type {any} */ ({ id: failedEventId, type: "test.ignored" })
+              /** @type {any} */ ({
+                id: failedEventId,
+                created: 1783209600,
+                type: "test.ignored"
+              })
             );
             throw new Error("forced webhook transaction failure");
           }
@@ -3785,7 +3798,11 @@ test(
         (query) =>
           processStripeEventInTransaction(
             query,
-            /** @type {any} */ ({ id: failedEventId, type: "test.ignored" })
+            /** @type {any} */ ({
+              id: failedEventId,
+              created: 1783209600,
+              type: "test.ignored"
+            })
           )
       );
       assert.equal(retried, true);
@@ -3906,6 +3923,395 @@ test(
     } finally {
       await client.query("rollback").catch(() => {});
       await client.end();
+    }
+  }
+);
+
+test(
+  "Stripe webhook ordering migration backfills existing account projections",
+  {
+    skip: phase3DatabaseVerificationUrl
+      ? false
+      : "set AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 and DATABASE_MIGRATION_URL to run database policy verification"
+  },
+  async () => {
+    const client = new Client({
+      connectionString: phase3DatabaseVerificationUrl
+    });
+    const accountId = crypto.randomUUID();
+    const preMigrationWriterAccountId = crypto.randomUUID();
+    const eventId = `evt_ordering_backfill_${crypto.randomUUID()}`;
+    await client.connect();
+    try {
+      await client.query("begin");
+      await client.query(`
+        drop trigger agent_outbox_accounts_clear_stripe_order_on_legacy_update
+          on public.agent_outbox_accounts;
+        drop function public.agent_outbox_clear_stripe_event_order_on_legacy_update();
+        alter table public.agent_outbox_accounts
+          drop constraint agent_outbox_accounts_stripe_event_order_pair,
+          drop column stripe_last_event_created_at,
+          drop column stripe_last_event_receipt_order;
+        alter table public.agent_outbox_stripe_webhook_events
+          drop constraint agent_outbox_stripe_webhook_events_receipt_order_unique,
+          drop column stripe_receipt_order;
+        drop sequence if exists public.agent_outbox_stripe_webhook_receipt_order_seq;
+      `);
+      await client.query(
+        `
+          insert into public.agent_outbox_accounts(
+            account_id,
+            label,
+            stripe_customer_id,
+            stripe_subscription_id,
+            stripe_subscription_status
+          ) values ($1, $2, $3, $4, 'active')
+        `,
+        [
+          accountId,
+          `stripe-ordering-backfill-${accountId}`,
+          `cus_backfill_${accountId}`,
+          `sub_backfill_${accountId}`
+        ]
+      );
+      await client.query(
+        `
+          insert into public.agent_outbox_stripe_webhook_events(
+            stripe_event_id,
+            event_type,
+            processing_status,
+            account_id,
+            processed_at
+          ) values ($1, 'customer.subscription.updated', 'processed', $2, $3)
+        `,
+        [eventId, accountId, "2026-07-05T12:34:56.789Z"]
+      );
+      await client.query(
+        "insert into public.agent_outbox_accounts(account_id, label) values ($1, $2)",
+        [
+          preMigrationWriterAccountId,
+          `stripe-pre-ordering-writer-${preMigrationWriterAccountId}`
+        ]
+      );
+      const preMigrationProcessed = await processStripeEventInTransaction(
+        /** @type {any} */ (
+          (/** @type {any} */ statement) =>
+            client.query(statement.sql, statement.values)
+        ),
+        /** @type {any} */ ({
+          id: `evt_pre_ordering_migration_${crypto.randomUUID()}`,
+          created: 1783209600,
+          type: "checkout.session.completed",
+          data: {
+            object: { client_reference_id: preMigrationWriterAccountId }
+          }
+        })
+      );
+      assert.equal(preMigrationProcessed, true);
+
+      await executeTransactionalMigrationFile(
+        client,
+        stripeWebhookEventOrderingMigrationPath
+      );
+
+      const backfilled = await client.query(
+        `
+          select
+            stripe_last_event_created_at = $2::timestamptz as floor_matches,
+            stripe_last_event_receipt_order is not null as has_receipt_order
+          from public.agent_outbox_accounts
+          where account_id = $1
+        `,
+        [accountId, "2026-07-05T12:34:56.000Z"]
+      );
+      assert.deepEqual(backfilled.rows, [
+        { floor_matches: true, has_receipt_order: true }
+      ]);
+
+      await client.query(
+        `
+          update public.agent_outbox_accounts
+          set stripe_subscription_status = 'canceled'
+          where account_id = $1
+        `,
+        [accountId]
+      );
+      const afterLegacyUpdate = await client.query(
+        `
+          select
+            stripe_last_event_created_at is null as created_floor_cleared,
+            stripe_last_event_receipt_order is null as receipt_order_cleared
+          from public.agent_outbox_accounts
+          where account_id = $1
+        `,
+        [accountId]
+      );
+      assert.deepEqual(afterLegacyUpdate.rows, [
+        { created_floor_cleared: true, receipt_order_cleared: true }
+      ]);
+    } finally {
+      try {
+        await client.query("rollback");
+      } finally {
+        await client.end();
+      }
+    }
+  }
+);
+
+test(
+  "Stripe webhook projections retain newer account state while recording stale distinct events",
+  {
+    skip: phase3DatabaseVerificationUrl
+      ? false
+      : "set AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 and DATABASE_MIGRATION_URL to run database policy verification"
+  },
+  async () => {
+    const connectionString = phase3DatabaseVerificationUrl;
+    assert.ok(connectionString);
+    const client = new Client({ connectionString });
+    const accountId = crypto.randomUUID();
+    const subscriptionId = `sub_ordering_${crypto.randomUUID()}`;
+    const customerId = `cus_ordering_${crypto.randomUUID()}`;
+    const newerEventId = `evt_newer_${crypto.randomUUID()}`;
+    const staleEventId = `evt_stale_${crypto.randomUUID()}`;
+    const equalEventId = `evt_equal_${crypto.randomUUID()}`;
+    const concurrentEarlierEventId = `evt_equal_earlier_${crypto.randomUUID()}`;
+    const concurrentLaterEventId = `evt_equal_later_${crypto.randomUUID()}`;
+    const newerCreated = 1783296000;
+    const now = new Date("2026-07-05T00:00:00.000Z");
+    /** @type {() => void} */
+    let releaseConcurrentEarlier = () => {};
+    /** @type {Promise<boolean> | null} */
+    let concurrentEarlierProcessing = null;
+    let bodyError;
+
+    await client.connect();
+    try {
+      await client.query(
+        "insert into public.agent_outbox_accounts(account_id, label) values ($1, $2)",
+        [accountId, `stripe-ordering-${accountId}`]
+      );
+
+      const event = (
+        /** @type {string} */ eventId,
+        /** @type {number} */ created,
+        /** @type {string} */ status
+      ) =>
+        /** @type {any} */ ({
+          id: eventId,
+          created,
+          type: "customer.subscription.updated",
+          data: {
+            object: {
+              id: subscriptionId,
+              customer: customerId,
+              status,
+              metadata: { account_id: accountId },
+              items: { data: [] }
+            }
+          }
+        });
+      const process = (/** @type {any} */ stripeEvent) =>
+        runProductTransaction(
+          connectionString,
+          {
+            requestId: `stripe-ordering-${stripeEvent.id}`,
+            authSurface: "control_plane"
+          },
+          (query) => processStripeEventInTransaction(query, stripeEvent, now)
+        );
+
+      assert.equal(
+        await process(event(newerEventId, newerCreated, "active")),
+        true
+      );
+      assert.equal(
+        await process(event(staleEventId, newerCreated - 3600, "canceled")),
+        true
+      );
+
+      const afterStale = await client.query(
+        `
+          select billing_status, stripe_subscription_status,
+            stripe_last_event_created_at = $2::timestamptz as marker_matches
+          from public.agent_outbox_accounts
+          where account_id = $1
+        `,
+        [accountId, "2026-07-06T00:00:00.000Z"]
+      );
+      assert.deepEqual(afterStale.rows, [
+        {
+          billing_status: "active",
+          stripe_subscription_status: "active",
+          marker_matches: true
+        }
+      ]);
+      const staleLedger = await client.query(
+        `
+          select account_id::text as account_id
+          from public.agent_outbox_stripe_webhook_events
+          where stripe_event_id = $1
+        `,
+        [staleEventId]
+      );
+      assert.deepEqual(staleLedger.rows, [{ account_id: null }]);
+
+      assert.equal(
+        await process(event(equalEventId, newerCreated, "past_due")),
+        true
+      );
+      const afterEqual = await client.query(
+        `
+          select billing_status, stripe_subscription_status,
+            stripe_last_event_created_at = $2::timestamptz as marker_matches
+          from public.agent_outbox_accounts
+          where account_id = $1
+        `,
+        [accountId, "2026-07-06T00:00:00.000Z"]
+      );
+      assert.deepEqual(afterEqual.rows, [
+        {
+          billing_status: "past_due",
+          stripe_subscription_status: "past_due",
+          marker_matches: true
+        }
+      ]);
+
+      /** @type {(value?: void | PromiseLike<void>) => void} */
+      let markConcurrentEarlierInserted = () => {};
+      /** @type {Promise<void>} */
+      const concurrentEarlierInserted = new Promise((resolve) => {
+        markConcurrentEarlierInserted = resolve;
+      });
+      /** @type {Promise<void>} */
+      const concurrentEarlierRelease = new Promise((resolve) => {
+        releaseConcurrentEarlier = resolve;
+      });
+      concurrentEarlierProcessing = runProductTransaction(
+        connectionString,
+        {
+          requestId: `stripe-ordering-${concurrentEarlierEventId}`,
+          authSurface: "control_plane"
+        },
+        (query) =>
+          processStripeEventInTransaction(
+            /** @type {any} */ (
+              async (/** @type {any} */ statement) => {
+                const result = await query(statement);
+                if (
+                  /insert into public\.agent_outbox_stripe_webhook_events/.test(
+                    statement.sql
+                  )
+                ) {
+                  markConcurrentEarlierInserted();
+                  await concurrentEarlierRelease;
+                }
+                return result;
+              }
+            ),
+            event(concurrentEarlierEventId, newerCreated, "canceled"),
+            now
+          )
+      );
+      await Promise.race([
+        concurrentEarlierInserted,
+        concurrentEarlierProcessing.then(
+          () => {
+            throw new Error(
+              "Earlier equal-second Stripe event completed before the deliberate interleave."
+            );
+          },
+          (error) => {
+            throw error;
+          }
+        )
+      ]);
+
+      assert.equal(
+        await process(event(concurrentLaterEventId, newerCreated, "active")),
+        true
+      );
+      releaseConcurrentEarlier();
+      assert.equal(await concurrentEarlierProcessing, true);
+
+      const afterConcurrentEqual = await client.query(
+        `
+          select billing_status, stripe_subscription_status
+          from public.agent_outbox_accounts
+          where account_id = $1
+        `,
+        [accountId]
+      );
+      assert.deepEqual(afterConcurrentEqual.rows, [
+        {
+          billing_status: "active",
+          stripe_subscription_status: "active"
+        }
+      ]);
+      const concurrentEarlierLedger = await client.query(
+        `
+          select account_id::text as account_id
+          from public.agent_outbox_stripe_webhook_events
+          where stripe_event_id = $1
+        `,
+        [concurrentEarlierEventId]
+      );
+      assert.deepEqual(concurrentEarlierLedger.rows, [{ account_id: null }]);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      /** @type {Error[]} */
+      const teardownErrors = [];
+      const attempt = teardownAttempt(
+        teardownErrors,
+        "Stripe ordering teardown failed"
+      );
+      releaseConcurrentEarlier();
+      const pendingConcurrentEarlier = concurrentEarlierProcessing;
+      if (pendingConcurrentEarlier) {
+        await attempt("concurrent earlier event settlement", () =>
+          pendingConcurrentEarlier.then(() => undefined)
+        );
+      }
+      await attempt("Stripe ordering ledger cleanup", () =>
+        client.query(
+          "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = any($1::text[])",
+          [
+            [
+              newerEventId,
+              staleEventId,
+              equalEventId,
+              concurrentEarlierEventId,
+              concurrentLaterEventId
+            ]
+          ]
+        )
+      );
+      await attempt("Stripe ordering account cleanup", () =>
+        client.query(
+          "delete from public.agent_outbox_accounts where account_id = $1",
+          [accountId]
+        )
+      );
+      await attempt("Stripe ordering client close", () => client.end());
+
+      if (teardownErrors.length > 0) {
+        const teardownError = new AggregateError(
+          teardownErrors,
+          "Stripe ordering teardown failed."
+        );
+        if (bodyError !== undefined) {
+          throw new AggregateError(
+            [bodyError, teardownError],
+            "Stripe ordering test and teardown both failed."
+          );
+        }
+        throw teardownError;
+      }
+      if (bodyError !== undefined) {
+        throw bodyError;
+      }
     }
   }
 );

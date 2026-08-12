@@ -14,6 +14,7 @@ import { reportRuntimeFailure } from "./sentry.ts";
 
 const BILLING_GRACE_DAYS = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_DATE_MILLISECONDS = 8_640_000_000_000_000;
 export const STRIPE_WEBHOOK_BODY_BYTE_LIMIT = 1_048_576;
 
 type BillingStatus =
@@ -41,6 +42,7 @@ export type BillingAccount = {
 
 type InsertWebhookEventRow = {
   stripe_event_id: string;
+  stripe_receipt_order: string | null;
 };
 
 type AccountIdRow = {
@@ -371,6 +373,7 @@ export async function processStripeEventInTransaction(
   event: Stripe.Event,
   now: Date = new Date()
 ): Promise<boolean> {
+  const eventCreatedAt = stripeEventCreatedAt(event);
   const inserted = await query<InsertWebhookEventRow>(
     insertStripeWebhookEventStatement(event.id, event.type)
   );
@@ -378,7 +381,13 @@ export async function processStripeEventInTransaction(
     return false;
   }
 
-  const accountId = await applyStripeEventInTransaction(query, event, now);
+  const accountId = await applyStripeEventInTransaction(
+    query,
+    event,
+    eventCreatedAt,
+    inserted.rows[0].stripe_receipt_order,
+    now
+  );
   if (accountId) {
     await query(
       associateStripeWebhookEventAccountStatement(event.id, accountId)
@@ -416,7 +425,7 @@ export function insertStripeWebhookEventStatement(
   // (ISSUES.md stripe-webhook-status-contract-migration).
   return {
     sql: `
-      insert into public.agent_outbox_stripe_webhook_events(
+      insert into public.agent_outbox_stripe_webhook_events as webhook_event(
         stripe_event_id,
         event_type,
         processing_status,
@@ -424,7 +433,9 @@ export function insertStripeWebhookEventStatement(
       )
       values ($1, $2, 'processed', now())
       on conflict (stripe_event_id) do nothing
-      returning stripe_event_id
+      returning
+        stripe_event_id,
+        to_jsonb(webhook_event)->>'stripe_receipt_order' as stripe_receipt_order
     `,
     values: [eventId, eventType]
   };
@@ -451,7 +462,31 @@ export function checkoutCompletedAccountUpdateStatement(input: {
   priceId: string | null;
   subscriptionStatus: string | null;
   currentPeriodEnd: Date | null;
+  eventCreatedAt: Date | null;
+  eventReceiptOrder: string | null;
 }): TransactionContextStatement {
+  const orderingValues: string[] = [];
+  if (input.eventCreatedAt !== null && input.eventReceiptOrder !== null) {
+    orderingValues.push(
+      input.eventCreatedAt.toISOString(),
+      input.eventReceiptOrder
+    );
+  }
+  const orderingEnabled = orderingValues.length > 0;
+  const orderingAssignment = orderingEnabled
+    ? `stripe_last_event_created_at = $7,
+        stripe_last_event_receipt_order = $8,`
+    : "";
+  const orderingPredicate = orderingEnabled
+    ? `and (
+          stripe_last_event_created_at is null
+          or stripe_last_event_created_at < $7
+          or (
+            stripe_last_event_created_at = $7
+            and stripe_last_event_receipt_order <= $8
+          )
+        )`
+    : "";
   return {
     sql: `
       update public.agent_outbox_accounts
@@ -464,9 +499,11 @@ export function checkoutCompletedAccountUpdateStatement(input: {
         stripe_price_id = coalesce($4, stripe_price_id),
         stripe_subscription_status = coalesce($5, stripe_subscription_status),
         stripe_current_period_end = $6,
+        ${orderingAssignment}
         updated_at = now()
       where account_id = $1
         and deleted_at is null
+        ${orderingPredicate}
       returning account_id::text as account_id
     `,
     values: [
@@ -475,7 +512,8 @@ export function checkoutCompletedAccountUpdateStatement(input: {
       input.subscriptionId,
       input.priceId,
       input.subscriptionStatus,
-      nullableTimestampValue(input.currentPeriodEnd)
+      nullableTimestampValue(input.currentPeriodEnd),
+      ...orderingValues
     ]
   };
 }
@@ -489,7 +527,31 @@ export function subscriptionBillingUpdateStatement(input: {
   billingStatus: BillingStatus;
   graceEndsAt: Date | null;
   currentPeriodEnd: Date | null;
+  eventCreatedAt: Date | null;
+  eventReceiptOrder: string | null;
 }): TransactionContextStatement {
+  const orderingValues: string[] = [];
+  if (input.eventCreatedAt !== null && input.eventReceiptOrder !== null) {
+    orderingValues.push(
+      input.eventCreatedAt.toISOString(),
+      input.eventReceiptOrder
+    );
+  }
+  const orderingEnabled = orderingValues.length > 0;
+  const orderingAssignment = orderingEnabled
+    ? `stripe_last_event_created_at = $9,
+        stripe_last_event_receipt_order = $10,`
+    : "";
+  const orderingPredicate = orderingEnabled
+    ? `and (
+          stripe_last_event_created_at is null
+          or stripe_last_event_created_at < $9
+          or (
+            stripe_last_event_created_at = $9
+            and stripe_last_event_receipt_order <= $10
+          )
+        )`
+    : "";
   return {
     sql: `
       update public.agent_outbox_accounts
@@ -505,6 +567,7 @@ export function subscriptionBillingUpdateStatement(input: {
         stripe_price_id = coalesce($3, stripe_price_id),
         stripe_subscription_status = $4,
         stripe_current_period_end = $7,
+        ${orderingAssignment}
         updated_at = now()
       where deleted_at is null
         and (
@@ -512,6 +575,7 @@ export function subscriptionBillingUpdateStatement(input: {
           or ($2::text is not null and stripe_customer_id = $2::text)
           or ($8::uuid is not null and account_id = $8::uuid)
         )
+        ${orderingPredicate}
       returning account_id::text as account_id
     `,
     values: [
@@ -522,7 +586,8 @@ export function subscriptionBillingUpdateStatement(input: {
       input.billingStatus,
       nullableTimestampValue(input.graceEndsAt),
       nullableTimestampValue(input.currentPeriodEnd),
-      input.accountId
+      input.accountId,
+      ...orderingValues
     ]
   };
 }
@@ -530,17 +595,36 @@ export function subscriptionBillingUpdateStatement(input: {
 async function applyStripeEventInTransaction(
   query: ProductTransactionQuery,
   event: Stripe.Event,
+  eventCreatedAt: Date,
+  eventReceiptOrder: string | null,
   now: Date
 ): Promise<string | null> {
   switch (event.type) {
     case "checkout.session.completed":
-      return applyCheckoutCompleted(query, event.data.object);
+      return applyCheckoutCompleted(
+        query,
+        event.data.object,
+        eventCreatedAt,
+        eventReceiptOrder
+      );
     case "customer.subscription.created":
     case "customer.subscription.updated":
     case "customer.subscription.deleted":
-      return applySubscriptionEvent(query, event.data.object, now);
+      return applySubscriptionEvent(
+        query,
+        event.data.object,
+        eventCreatedAt,
+        eventReceiptOrder,
+        now
+      );
     case "invoice.payment_failed":
-      return applyInvoicePaymentFailed(query, event.data.object, now);
+      return applyInvoicePaymentFailed(
+        query,
+        event.data.object,
+        eventCreatedAt,
+        eventReceiptOrder,
+        now
+      );
     default:
       return null;
   }
@@ -548,7 +632,9 @@ async function applyStripeEventInTransaction(
 
 async function applyCheckoutCompleted(
   query: ProductTransactionQuery,
-  session: Stripe.Event.Data.Object
+  session: Stripe.Event.Data.Object,
+  eventCreatedAt: Date,
+  eventReceiptOrder: string | null
 ): Promise<string | null> {
   if (!isStripeRecord(session)) {
     return null;
@@ -567,7 +653,9 @@ async function applyCheckoutCompleted(
       subscriptionId: stripeId(session.subscription),
       priceId: null,
       subscriptionStatus: "checkout_completed",
-      currentPeriodEnd: null
+      currentPeriodEnd: null,
+      eventCreatedAt,
+      eventReceiptOrder
     })
   );
 
@@ -577,6 +665,8 @@ async function applyCheckoutCompleted(
 async function applySubscriptionEvent(
   query: ProductTransactionQuery,
   object: Stripe.Event.Data.Object,
+  eventCreatedAt: Date,
+  eventReceiptOrder: string | null,
   now: Date
 ): Promise<string | null> {
   if (!isStripeRecord(object)) {
@@ -599,7 +689,9 @@ async function applySubscriptionEvent(
       graceEndsAt: transition.graceEndsAt,
       currentPeriodEnd: stripeTimestamp(
         recordValue(object, "current_period_end")
-      )
+      ),
+      eventCreatedAt,
+      eventReceiptOrder
     })
   );
 
@@ -609,6 +701,8 @@ async function applySubscriptionEvent(
 async function applyInvoicePaymentFailed(
   query: ProductTransactionQuery,
   object: Stripe.Event.Data.Object,
+  eventCreatedAt: Date,
+  eventReceiptOrder: string | null,
   now: Date
 ): Promise<string | null> {
   if (!isStripeRecord(object)) {
@@ -628,7 +722,9 @@ async function applyInvoicePaymentFailed(
       subscriptionStatus: "payment_failed",
       billingStatus: "past_due",
       graceEndsAt: graceEndsAt(now),
-      currentPeriodEnd: null
+      currentPeriodEnd: null,
+      eventCreatedAt,
+      eventReceiptOrder
     })
   );
 
@@ -790,6 +886,31 @@ function isStripeRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+export function stripeEventCreatedAt(event: Stripe.Event): Date {
+  const created = event.created;
+  if (
+    typeof created !== "number" ||
+    !Number.isInteger(created) ||
+    created < 0
+  ) {
+    throw new Error(
+      "Stripe event created timestamp must be a non-negative integer Unix second value."
+    );
+  }
+
+  const milliseconds = created * 1000;
+  if (
+    !Number.isSafeInteger(milliseconds) ||
+    milliseconds > MAX_DATE_MILLISECONDS
+  ) {
+    throw new Error(
+      "Stripe event created timestamp is outside the supported JavaScript Date range."
+    );
+  }
+
+  return new Date(milliseconds);
 }
 
 function stripeTimestamp(value: unknown): Date | null {
