@@ -1293,8 +1293,7 @@ test("wrangler required secrets stay limited to true Worker secrets", () => {
 });
 
 test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", () => {
-  const databaseVerificationCommand =
-    "corepack pnpm exec node --test --test-concurrency=1 tests/foundation.test.mjs tests/human-session.test.mjs tests/human-answer.test.mjs tests/authenticated-transactions.test.mjs";
+  const databaseVerificationTarget = "run: make test-database";
   const validWorkflow = `
     services:
       postgres:
@@ -1305,7 +1304,7 @@ test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", (
       FLYWAY_DOCKER_NETWORK: host
     steps:
       - run: make migration-replay
-      - run: ${databaseVerificationCommand}
+      - ${databaseVerificationTarget}
   `;
 
   assert.deepEqual(
@@ -1326,29 +1325,24 @@ test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", (
       ".github/workflows/ci.yml must include migration replay token: DATABASE_MIGRATION_URL",
       ".github/workflows/ci.yml must include migration replay token: FLYWAY_DOCKER_NETWORK: host",
       ".github/workflows/ci.yml must include migration replay token: make migration-replay",
-      `.github/workflows/ci.yml must include migration replay token: ${databaseVerificationCommand}`,
+      `.github/workflows/ci.yml must include migration replay token: ${databaseVerificationTarget}`,
       '.github/workflows/ci.yml must include migration replay token: AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"'
     ]
   );
 
-  for (const databaseTestFile of [
-    "tests/foundation.test.mjs",
-    "tests/human-session.test.mjs",
-    "tests/human-answer.test.mjs",
-    "tests/authenticated-transactions.test.mjs"
-  ]) {
-    const incompleteWorkflow = validWorkflow.replace(databaseTestFile, "");
-    const failures = validateMigrationReplayWorkflow({
-      ".github/workflows/ci.yml": incompleteWorkflow,
+  const workflowThatBypassesTheTarget = validWorkflow.replace(
+    databaseVerificationTarget,
+    "run: corepack pnpm run test:database"
+  );
+  assert.deepEqual(
+    validateMigrationReplayWorkflow({
+      ".github/workflows/ci.yml": workflowThatBypassesTheTarget,
       ".github/workflows/release-check.yml": validWorkflow
-    });
-    assert.ok(
-      failures.includes(
-        `.github/workflows/ci.yml must include migration replay token: ${databaseVerificationCommand}`
-      ),
-      `removing ${databaseTestFile} must invalidate the database verification command`
-    );
-  }
+    }),
+    [
+      `.github/workflows/ci.yml must include migration replay token: ${databaseVerificationTarget}`
+    ]
+  );
 });
 
 test("validateWorkflowVersionPins rejects CI Node drift", () => {

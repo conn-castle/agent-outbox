@@ -1,4 +1,4 @@
-.PHONY: help bootstrap setup doctor dev fix format lint typecheck test browser build smoke smoke-runtime hosted-health billing-smoke migration-validate migration-migrate migration-replay go-build go-test go-lint go-fmt go-fmt-check go-check package-check check release-check clean
+.PHONY: help bootstrap setup doctor dev fix format lint typecheck test test-database browser build smoke smoke-runtime hosted-health billing-smoke migration-validate migration-migrate migration-replay go-build go-test go-lint go-fmt go-fmt-check go-check package-check check release-check clean
 
 GORELEASER_MODULE := github.com/goreleaser/goreleaser/v2@v2.16.0
 CLI_VERSION ?= 0.0.0-dev
@@ -19,6 +19,7 @@ help:
 	@printf '%s\n' '  make lint           Run markdown lint.'
 	@printf '%s\n' '  make typecheck      Run TypeScript checks for tooling.'
 	@printf '%s\n' '  make test           Run Node tests.'
+	@printf '%s\n' '  make test-database  Run serialized Node tests with database gates enabled.'
 	@printf '%s\n' '  make browser        Run browser smoke tests.'
 	@printf '%s\n' '  make build          Build the app with Next.js.'
 	@printf '%s\n' '  make smoke          Run structural smoke checks.'
@@ -63,6 +64,9 @@ typecheck:
 
 test:
 	corepack pnpm run test
+
+test-database:
+	corepack pnpm run test:database
 
 browser:
 	corepack pnpm run browser

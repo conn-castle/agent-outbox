@@ -452,12 +452,14 @@ parser.
 - Run the local and CI database verification suite against migrated Postgres
 
 ```bash
-AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 DATABASE_MIGRATION_URL='postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci' corepack pnpm exec node --test --test-concurrency=1 tests/foundation.test.mjs tests/human-session.test.mjs tests/human-answer.test.mjs tests/authenticated-transactions.test.mjs
+AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 DATABASE_MIGRATION_URL='postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci' make test-database
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed and Flyway
 migrations have been applied to a disposable target database. Notes: This is the
-exact serialized command used after migration replay in CI and release-check.
+canonical command used after migration replay in CI and release-check. It
+serially discovers every root `tests/*.test.mjs` file, so new database-gated
+tests are included automatically.
 `DATABASE_MIGRATION_URL` must use the established privileged migration owner
 (superuser, or `BYPASSRLS` with SET-capable membership in `agent_outbox_app`),
 never the restricted runtime `agent_outbox_app`.
