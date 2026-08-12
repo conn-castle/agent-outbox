@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,13 +19,16 @@ import (
 // defaultHTTPClient bounds connection, TLS-handshake, and response-header waits
 // so a server that accepts a connection but stalls before sending response
 // headers cannot hang a one-shot CLI command indefinitely. No client-wide
-// Timeout is set on purpose: Download streams response bodies of unbounded size,
-// and an overall deadline would truncate large file downloads.
+// Timeout is set on purpose: Download streams bounded file response bodies, and
+// an overall deadline would truncate a valid download on a slow connection.
 // maxJSONResponseBytes bounds the in-memory read of a JSON envelope so a
 // malfunctioning or hostile endpoint cannot exhaust memory. Envelopes are small
 // (well under the 128 KiB input-body limit); large file bytes use the streaming
 // Download path, not this one, so a generous cap never truncates a real response.
-const maxJSONResponseBytes int64 = 64 << 20 // 64 MiB
+const (
+	maxJSONResponseBytes       int64 = 64 << 20 // 64 MiB
+	maxOutputFileDownloadBytes int64 = 32_000_000
+)
 
 var defaultHTTPClient = &http.Client{
 	Transport: &http.Transport{
@@ -222,10 +226,51 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 		return downloadMeta, appErrorFromEnvelope(&envelope, &downloadMeta.APIResponse)
 	}
 
-	if _, err := io.Copy(dst, resp.Body); err != nil {
+	if resp.ContentLength > maxOutputFileDownloadBytes {
+		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Output file exceeded the maximum size."}
+	}
+	staged, err := os.CreateTemp("", "agent-outbox-download-*")
+	if err != nil {
+		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not stage output file bytes.", cause: err}
+	}
+	defer func() {
+		_ = staged.Close()
+		_ = os.Remove(staged.Name())
+	}()
+
+	oversized, err := copyBodyWithLimit(staged, resp.Body, maxOutputFileDownloadBytes)
+	if err != nil {
+		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not stage output file bytes.", cause: err}
+	}
+	if oversized {
+		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Output file exceeded the maximum size."}
+	}
+	if _, err := staged.Seek(0, io.SeekStart); err != nil {
+		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not stage output file bytes.", cause: err}
+	}
+	if _, err := io.Copy(dst, staged); err != nil {
 		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not write output file bytes.", cause: err}
 	}
 	return downloadMeta, nil
+}
+
+func copyBodyWithLimit(dst io.Writer, src io.Reader, byteLimit int64) (bool, error) {
+	if _, err := io.Copy(dst, io.LimitReader(src, byteLimit)); err != nil {
+		return false, err
+	}
+
+	var probe [1]byte
+	n, err := src.Read(probe[:])
+	if n > 0 {
+		return true, nil
+	}
+	if err == io.EOF {
+		return false, nil
+	}
+	if err == nil {
+		return false, io.ErrNoProgress
+	}
+	return false, err
 }
 
 func readBodyWithLimit(reader io.Reader, byteLimit int64) ([]byte, bool, error) {

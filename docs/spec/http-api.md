@@ -426,11 +426,14 @@ Required success headers:
 ```http
 Content-Disposition: attachment; filename="<sanitized filename>"
 Content-Type: <safe stored MIME type or application/octet-stream>
+Content-Length: <stored file byte count>
 Cache-Control: no-store
 X-Content-Type-Options: nosniff
 X-Request-ID: req_...
 X-Correlation-ID: corr_...
 ```
+
+`Content-Length` is the stored file byte count.
 
 The stored MIME type is advisory. Safe stored MIME types may be returned as the
 download `Content-Type`; missing or unsafe MIME types return
