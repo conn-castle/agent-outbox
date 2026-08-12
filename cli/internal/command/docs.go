@@ -103,7 +103,7 @@ var terminalDocs = []docsTopic{
 	{
 		Name:    "upgrade",
 		Title:   "Upgrade Command",
-		Summary: "Hosted upgrade page behavior and Phase 7 billing boundary.",
+		Summary: "Hosted upgrade page and CLI billing boundary.",
 		Body: strings.Join([]string{
 			"upgrade resolves the selected app origin from --base-url, AGENT_OUTBOX_BASE_URL, config base_url, then the default origin.",
 			"It prints and opens <origin>/upgrade in human mode. Browser-open failure is a warning because the URL is still printed.",

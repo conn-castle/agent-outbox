@@ -277,6 +277,10 @@ test(
         sqlState("42501")
       );
       await assert.rejects(
+        () => callBootstrapFunction(client, clerkUserId, { clerkUserId }),
+        sqlState("42501")
+      );
+      await assert.rejects(
         () =>
           callBootstrapFunction(client, clerkUserId, {
             authSurface: "human",
@@ -627,7 +631,7 @@ async function cleanupHumanSessionDatabaseTest(client, ownership) {
 /**
  * @param {import("pg").Client} client
  * @param {string} clerkUserId
- * @param {{ authSurface: "human" | "caller", clerkUserId?: string }} context
+ * @param {{ authSurface?: "human" | "caller", clerkUserId?: string }} context
  */
 async function callBootstrapFunction(client, clerkUserId, context) {
   await client.query("begin");
@@ -637,10 +641,12 @@ async function callBootstrapFunction(client, clerkUserId, context) {
       "agent_outbox.request_id",
       `req-${crypto.randomUUID()}`
     ]);
-    await client.query("select set_config($1, $2, true)", [
-      "agent_outbox.auth_surface",
-      context.authSurface
-    ]);
+    if (context.authSurface) {
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.auth_surface",
+        context.authSurface
+      ]);
+    }
     if (context.clerkUserId) {
       await client.query("select set_config($1, $2, true)", [
         "agent_outbox.clerk_user_id",

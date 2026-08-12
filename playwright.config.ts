@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 
 import { defineConfig, devices } from "@playwright/test";
 
+import { validateBrowserFixtureRunId } from "./scripts/browser-fixture-run-id.mjs";
+
 const port = 39010;
 const baseURL = `http://127.0.0.1:${port}`;
 
@@ -12,9 +14,10 @@ const baseURL = `http://127.0.0.1:${port}`;
 // label). The config module and globalTeardown execute in the same runner
 // process, and the spawned web server inherits its environment, so setting it
 // here reaches all three.
-const runId =
+const runId = validateBrowserFixtureRunId(
   process.env.AGENT_OUTBOX_BROWSER_RUN_ID ??
-  crypto.randomBytes(4).toString("hex");
+    crypto.randomBytes(4).toString("hex")
+);
 process.env.AGENT_OUTBOX_BROWSER_RUN_ID = runId;
 
 export default defineConfig({

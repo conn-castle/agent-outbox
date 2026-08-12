@@ -45,10 +45,6 @@ Do not duplicate information that belongs in other memory files:
 - Production Cloudflare Workers database access uses a Cloudflare Hyperdrive
   binding named `AGENT_OUTBOX_DATABASE` against the restricted Supabase app role;
   normal local/Node execution continues to use `DATABASE_APP_ROLE_URL`.
-- Phase 8 external-write checkpoints require explicit owner approval before
-  Cloudflare Worker/domain/secrets/deploy actions, Stripe production
-  domain/payment-method/runtime-key actions, GitHub branch protection changes,
-  Sentry release/source-map uploads, and legal/business launch acceptance.
 - Stripe billing uses account-scoped checkout, Billing Portal sessions, signed
   webhooks, and a database webhook idempotency ledger. Keep tracked docs free of
   provider account ids, customer ids, subscription ids, price ids, webhook ids,

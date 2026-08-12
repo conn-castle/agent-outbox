@@ -27,6 +27,7 @@ import {
   type CallerCredentialLookupRow,
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
+import { absoluteHttpOrigin } from "./env.ts";
 import {
   runProductTransaction,
   type ProductTransactionContext,
@@ -2308,13 +2309,13 @@ function publicAppBaseUrl(): ConnectResult<string> {
     );
   }
 
-  try {
-    return { ok: true, data: new URL(value).origin };
-  } catch {
+  const origin = absoluteHttpOrigin(value);
+  if (!origin) {
     return temporaryUnavailableError(
       "Public app base URL configuration is invalid."
     );
   }
+  return { ok: true, data: origin };
 }
 
 function generateUserCode() {

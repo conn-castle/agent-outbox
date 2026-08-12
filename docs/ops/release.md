@@ -61,9 +61,10 @@ The release-check workflow also exposes:
 
 Do not require a status check in branch protection until a fresh or recent
 workflow run confirms the exact check name is green for the current tree.
-`release-check.yml` currently also runs on pull requests; if duplicate browser
-or migration jobs become too expensive, change workflow triggers only after
-owner approval.
+`release-check.yml` also runs on pull requests by design. Its browser and
+migration jobs intentionally overlap ordinary CI: this repository prioritizes
+independent automated certification and early release-specific feedback over
+minimizing runner consumption.
 
 ## Production Deploy
 
@@ -219,7 +220,7 @@ the public policy shape in docs.
 
 ## Public Legal Gate
 
-Before public signup opens, verify:
+For every public release, verify:
 
 - `/privacy-policy`, `/terms-of-service`, and `/contact` are publicly reachable;
 - the global footer links the public policies, contact path, and PolyForm
@@ -281,7 +282,7 @@ version through a pull request and dispatch a new numbered production release.
 
 ## Owner Acceptance
 
-Before public signup or a broader launch, the owner must accept:
+Before a broader launch, the owner must accept:
 
 - unresolved hosted-health or billing-smoke `action_required` items;
 - any missing Cloudflare Web Analytics token caused by provider permission

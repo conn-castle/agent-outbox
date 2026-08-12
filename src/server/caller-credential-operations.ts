@@ -30,6 +30,7 @@ import {
   type CallerApiKeyDisplayMetadata,
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
+import { absoluteHttpOrigin } from "./env.ts";
 import {
   runProductTransaction,
   type ProductTransactionContext,
@@ -1011,9 +1012,8 @@ async function handleOperationDeviceStartRequest(
         return limit;
       }
 
-      let result: { rows: SetupRequestIdRow[] };
       try {
-        result = await query<SetupRequestIdRow>(
+        await query<SetupRequestIdRow>(
           createDeviceSetupRequestStatement(operation, {
             ...parsed.data,
             deviceCodeHash: setupCodeDigest(deviceCode),
@@ -1029,8 +1029,6 @@ async function handleOperationDeviceStartRequest(
         }
         throw error;
       }
-      const setup = result.rows[0];
-
       const verificationUri = new URL(
         `/caller/${operation}/device`,
         baseUrl.data
@@ -2667,13 +2665,13 @@ function publicAppBaseUrl(): OperationResult<string> {
     );
   }
 
-  try {
-    return { ok: true, data: new URL(value).origin };
-  } catch {
+  const origin = absoluteHttpOrigin(value);
+  if (!origin) {
     return temporaryUnavailableError(
       "Public app base URL configuration is invalid."
     );
   }
+  return { ok: true, data: origin };
 }
 
 function generateUserCode() {

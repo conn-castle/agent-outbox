@@ -16,6 +16,7 @@ export const CLIENT_EVENTS_RATE_LIMIT_EXPRESSION =
   '(http.request.uri.path eq "/api/client-events")';
 
 const API_BASE = "https://api.cloudflare.com/client/v4";
+const API_TIMEOUT_MS = 30_000;
 
 /**
  * @param {CloudflareRule[]} [existingRules]
@@ -134,7 +135,8 @@ export async function cloudflareRequest({
   return fetchImpl(`${API_BASE}${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(API_TIMEOUT_MS)
   });
 }
 

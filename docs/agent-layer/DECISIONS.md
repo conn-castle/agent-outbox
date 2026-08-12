@@ -26,16 +26,6 @@ A rolling log of important, non-obvious decisions that materially affect future 
 ## Decision Log
 
 <!-- ENTRIES START -->
-- Decision 2026-07-11 privileged-migration-owner-runtime-role-split: Keep migration ownership privileged and runtime access restricted
-    Decision: `DATABASE_MIGRATION_URL` uses a superuser or `BYPASSRLS` migration owner; application traffic uses the separate non-superuser, non-`BYPASSRLS` `agent_outbox_app` role.
-    Reason: Security-definer bootstrap and maintenance functions operate over forced-Row-Level-Security tables, while the runtime boundary must remain least-privileged; PostgreSQL 17 creator/admin membership with `set_option=false` is baseline ownership metadata, not test leakage.
-    Tradeoffs: Local migration/database tests require a privileged disposable connection matching CI, but runtime credentials cannot bypass Row-Level Security and tests fail loudly when the roles are conflated.
-
-- Decision 2026-07-11 database-parity-runs-full-foundation: Run the full foundation test file in database parity checks
-    Decision: The canonical serialized database verification command runs all of `tests/foundation.test.mjs` alongside the three focused database test files in local, CI, and release-check environments.
-    Reason: Node's global test-name filter would exclude tests in the other files, and one byte-identical directly runnable command is the database-posture source of truth.
-    Tradeoffs: Migration-replay jobs repeat credential-free foundation unit coverage, but avoid relocating the Phase 3 database test or maintaining divergent local and CI commands.
-
 - Decision 2026-06-30 worker-scheduled-wrapper: Use a Worker wrapper for cron events
     Decision: `wrangler.jsonc` points at `worker/entry.mjs`, which delegates HTTP traffic to OpenNext's generated `.open-next/worker.js` and owns the Worker `scheduled` handler.
     Reason: The OpenNext Cloudflare template generates a `fetch` entrypoint but no project-owned `scheduled` export, while hosted cleanup will need a durable Worker cron hook.
@@ -91,15 +81,10 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Reason: Paid/self-hosted callers should not hit monthly cleanup-blocking request caps, but burst protection still needs to cover data-plane writes, cleanup deletes, and raw byte downloads.
     Tradeoffs: Paid/self-hosted accounts can make unlimited monthly caller API requests, but bursty traffic is still denied temporarily by operation-specific minute windows.
 
-- Decision 2026-07-06 cloudflare-production-runtime-phase8: Defer Cloudflare runtime setup to Phase 8
-    Decision: Phase 7 may finish live Stripe object creation and SSM recovery without creating/deploying the Cloudflare Worker, binding `app.agent-outbox.dev`, or applying Worker runtime secrets.
-    Reason: Wrangler secret changes are deploy-producing, and the `agent-outbox` Worker plus `app.agent-outbox.dev` DNS/custom-domain mapping were not live during Phase 7 closeout.
-    Tradeoffs: Phase 7 cannot prove production billing end-to-end on Cloudflare, but avoids unplanned production platform writes and keeps Worker/domain/secrets/smoke verification together in Phase 8.
-
 - Decision 2026-07-06 stripe-setup-key-not-runtime: Keep Stripe setup and runtime keys separate
     Decision: Use a setup-only live Stripe key for creating products, prices, Customer Portal configuration, and webhook endpoints; do not store that key as the app's production `STRIPE_SECRET_KEY`.
-    Reason: The owner does not want the setup credential used for production checkouts, and runtime secrets are being installed with Cloudflare in Phase 8.
-    Tradeoffs: Phase 7 can create and recover Stripe object ids, but production checkout/portal smoke requires a separate restricted runtime key in Phase 8.
+    Reason: Setup credentials need broader resource-management permissions than production checkout and portal requests, so reusing one key would unnecessarily widen runtime authority.
+    Tradeoffs: Operators must manage separate setup and runtime credentials, but the production Worker keeps narrower Stripe permissions.
 
 - Decision 2026-07-07 client-events-four-signal-scope: Keep client-event logging to four emitted signals with explicit producers
     Decision: Browser code emits `client_error` and `hydration_error`; canonical human server-action outcomes emit `human_action_failed` and `file_upload_failed`. Structured logs distinguish `browser` from `server_action` producers. `ui_state_inconsistent` remains allowlisted but unwired.
@@ -110,3 +95,18 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: Until paying-customer usage justifies staging, production releases run only through the protected manual GitHub Actions workflow: certify the exact `main` SHA, capture a healthy rollback target, deploy, verify the live SHA, then publish the `package.json`-versioned tag and GitHub Release. A failed deploy or live verification automatically restores the captured Worker; because the Worker is smoke-verified before tagging, a tagging-only failure leaves the verified code live and reconciles on re-dispatch (finalization is idempotent) instead of reverting healthy production.
     Reason: Agent Outbox does not yet warrant a second provider stack, but direct production deploys still need the exact-SHA certification, post-deploy verification, immutable numbering, and rollback guarantees used by Agent Panel staging. Deploy health and release tagging are separate failure domains: reverting a healthy, smoke-verified Worker because a GitHub metadata write failed would be a self-inflicted outage, so only a failed deploy triggers rollback.
     Tradeoffs: This avoids staging cost and configuration while making releases reproducible and failure-safe, but production remains the first provider-backed environment, every deploy requires a committed version bump, and a verified deploy can be briefly live before its numbered tag exists until finalization is re-run.
+
+- Decision 2026-07-11 privileged-migration-owner-runtime-role-split: Keep migration ownership privileged and runtime access restricted
+    Decision: `DATABASE_MIGRATION_URL` uses a superuser or `BYPASSRLS` migration owner; application traffic uses the separate non-superuser, non-`BYPASSRLS` `agent_outbox_app` role.
+    Reason: Security-definer bootstrap and maintenance functions operate over forced-Row-Level-Security tables, while the runtime boundary must remain least-privileged; PostgreSQL 17 creator/admin membership with `set_option=false` is baseline ownership metadata, not test leakage.
+    Tradeoffs: Local migration/database tests require a privileged disposable connection matching CI, but runtime credentials cannot bypass Row-Level Security and tests fail loudly when the roles are conflated.
+
+- Decision 2026-07-11 database-parity-runs-full-foundation: Run the full foundation test file in database parity checks
+    Decision: The canonical serialized database verification command runs all of `tests/foundation.test.mjs` alongside the three focused database test files in local, CI, and release-check environments.
+    Reason: Node's global test-name filter would exclude tests in the other files, and one byte-identical directly runnable command is the database-posture source of truth.
+    Tradeoffs: Migration-replay jobs repeat credential-free foundation unit coverage, but avoid relocating the Phase 3 database test or maintaining divergent local and CI commands.
+
+- Decision 2026-08-12 retain-pr-release-certification: Retain independent release certification on pull requests
+    Decision: Keep both ordinary CI and the release-check workflow running on pull requests, including their intentionally duplicated browser and migration-replay lanes.
+    Reason: Development is fully agentic and relies on automated process rather than routine human code inspection, so catching packaging, workflow, and provider-parity regressions before merge is more important than minimizing CI consumption.
+    Tradeoffs: Pull requests consume additional runner time and repeat several gates, but gain independent certification and earlier release-specific feedback rather than discovering those failures during a production release.

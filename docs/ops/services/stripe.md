@@ -80,15 +80,14 @@ webhook payload.
 Creating or rotating production billing resources requires a setup-only live
 Stripe key with write permission for products, prices, Customer Portal
 Configurations, and webhook endpoints. A read-only or otherwise restricted live
-key can inspect resources but cannot complete Phase 7 billing setup.
+key can inspect resources but cannot create or rotate billing resources.
 
 Setup-only keys are operator credentials for creating Stripe objects. Do not
 store a setup-only key as `STRIPE_SECRET_KEY` or in the production
 `stripe-secret-key` recovery path. If a setup key must be recoverable, store it
 only in the setup-key recovery path documented in
 [../secrets.md](../secrets.md). Production Checkout and Billing Portal sessions
-need a separate runtime restricted key when Cloudflare runtime secrets are
-installed.
+use the separate restricted runtime key installed in Cloudflare Worker secrets.
 
 Test-mode Stripe resources created for verification are disposable unless the
 owner explicitly promotes a reusable test fixture. Record test-mode evidence,

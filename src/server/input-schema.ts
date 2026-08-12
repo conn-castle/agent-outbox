@@ -10,6 +10,7 @@ import {
   limitErrorMetadata,
   type LimitProfileSelector
 } from "./limits.ts";
+import { readRawRequestBodyWithLimit } from "./request-body.ts";
 import {
   isSafeColor,
   SUPPORTED_LUCIDE_ICON_NAMES
@@ -172,22 +173,14 @@ const ALLOWED_HTML_ELEMENTS = new Set([
 export async function readJsonBodyWithLimit(
   request: Request
 ): Promise<JsonBodyParseResult> {
-  const declaredLength = Number(request.headers.get("content-length") ?? "");
-  if (
-    Number.isFinite(declaredLength) &&
-    declaredLength > INPUT_REQUEST_BODY_BYTE_LIMIT
-  ) {
-    return {
-      ok: false,
-      error: requestTooLargeError()
-    };
-  }
-
-  const body = await readRequestBodyWithLimit(request);
+  const body = await readRawRequestBodyWithLimit(
+    request,
+    INPUT_REQUEST_BODY_BYTE_LIMIT
+  );
   if (!body.ok) {
     return {
       ok: false,
-      error: body.error
+      error: requestTooLargeError()
     };
   }
 
@@ -206,39 +199,6 @@ export async function readJsonBodyWithLimit(
         message: "Request body must be valid JSON."
       }
     };
-  }
-}
-
-async function readRequestBodyWithLimit(
-  request: Request
-): Promise<
-  | { ok: true; bytes: number; buffer: Buffer }
-  | { ok: false; error: ApiErrorInput }
-> {
-  if (!request.body) {
-    return { ok: true, bytes: 0, buffer: Buffer.alloc(0) };
-  }
-
-  const reader = request.body.getReader();
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-
-  while (true) {
-    const next = await reader.read();
-    if (next.done) {
-      return { ok: true, bytes, buffer: Buffer.concat(chunks, bytes) };
-    }
-
-    bytes += next.value.byteLength;
-    if (bytes > INPUT_REQUEST_BODY_BYTE_LIMIT) {
-      await reader.cancel();
-      return {
-        ok: false,
-        error: requestTooLargeError()
-      };
-    }
-
-    chunks.push(Buffer.from(next.value));
   }
 }
 

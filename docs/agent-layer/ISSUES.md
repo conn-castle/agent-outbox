@@ -45,8 +45,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: After the next production deploy, capture one authenticated checkout with Worker tail and browser request timing; add stage-level timing only if the residual delay remains material.
     Notes: Blocked on a production deploy (explicit trigger); restored after review found the verification obligation was dropped without a recorded measurement.
 
-- Issue 2026-07-10 sentry-cli-api-schema-mismatch: Pinned sentry-cli 3.6.0 cannot parse current Sentry API responses
+- Issue 2026-07-10 sentry-cli-api-schema-mismatch: Pinned sentry-cli cannot parse current Sentry API responses
     Priority: Low. Area: Tooling / Observability
-    Description: `sentry-cli organizations list` (@sentry/cli 3.6.0) fails with "could not parse JSON response: missing field `requireEmailVerification`". Upstream merged PR #3352 on 2026-07-09 to use the current organization-list endpoint and remove the obsolete field, but it is not in the latest stable release; the operator workaround uses an explicit organization slug.
+    Description: `sentry-cli organizations list` (@sentry/cli 3.6.0) fails with "could not parse JSON response: missing field `requireEmailVerification`". Upstream merged PR #3352 on 2026-07-09 to use the current organization-list endpoint and remove the obsolete field, but stable 3.6.2 still does not include that fix; the operator workaround uses an explicit organization slug.
     Next step: When the next stable @sentry/cli release includes upstream PR #3352, bump package.json/toolchain.json and pnpm-lock.yaml, then re-verify `sentry-cli organizations list` and remove the documented workaround.
     Notes: Production source-map upload is unaffected (the @sentry/nextjs build plugin uploads via debug IDs).

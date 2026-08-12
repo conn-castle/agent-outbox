@@ -90,9 +90,10 @@ POST /api/client-events
 Behavior:
 
 - Accepts best-effort browser event batches for narrow frontend failure
-  visibility only. The app includes a browser emitter for uncaught client
-  errors, React boundary-classified hydration failures, failed human-action
-  submissions, and failed file-upload action submissions.
+  visibility only. The browser emitter reports uncaught client errors and React
+  boundary-classified hydration failures. Canonical human server actions report
+  failed human-action and file-upload submissions directly as trusted
+  `server_action` events.
 - Requires a same-origin `Origin` header and `Content-Type: application/json`.
 - Allows only client errors, hydration failures, failed human-action
   submissions, upload failures, and major UI state inconsistencies.
@@ -197,6 +198,8 @@ Behavior:
 
 - Verifies the raw request body with the configured Stripe webhook signing
   secret.
+- Rejects raw request bodies larger than 1,048,576 bytes before signature
+  verification.
 - Does not use Clerk or caller credentials.
 - Stores only webhook event id, event type, processing status, timestamps, and
   optional account linkage for idempotency.
@@ -306,14 +309,10 @@ Success `data`:
 
 ## Human Answer Boundary
 
-Phase 4 implements human-answer creation as a server-only service with explicit
-account and human actor context so queue semantics can be tested before the web
-UI exists. The MVP does not expose `app/api/human/*` answer routes in Phase 4.
-
-A production human-answer route belongs to the Phase 5 human review UI unless
-the project owner explicitly approves adding that route earlier. If added later,
-the route must use Clerk-backed human authentication and Agent Outbox account
-membership, not caller API keys.
+Human answers use authenticated server actions with explicit account and human
+actor context. The MVP does not expose public `app/api/human/*` answer routes;
+human writes require Clerk-backed authentication and Agent Outbox account
+membership, never caller API keys.
 
 ## Output Routes
 

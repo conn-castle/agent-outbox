@@ -141,8 +141,9 @@ export function validateMigrationFilenames(
  * @returns {{ files: string[], contents: Record<string, string> }}
  */
 function readMigrationFiles() {
-  const files = readdirSync(MIGRATIONS_DIR)
-    .filter((file) => file.endsWith(".sql") || file.endsWith(".sql.conf"))
+  const files = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
+    .map((entry) => entry.name)
     .sort();
   const contents = Object.fromEntries(
     files.map((file) => [

@@ -377,7 +377,7 @@ function credentialExpired(
   }
 
   const expiresAtMs = new Date(credential.expiresAt).getTime();
-  return Number.isFinite(expiresAtMs) && expiresAtMs <= now.getTime();
+  return !Number.isFinite(expiresAtMs) || expiresAtMs <= now.getTime();
 }
 
 function compareCallerSecretDigest(

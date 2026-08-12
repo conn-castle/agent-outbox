@@ -364,8 +364,9 @@ than `0.0.0`; explicit owner approval; and the protected GitHub `production`
 environment fully configured. Notes: External write. GitHub Actions reruns the
 exact-SHA release gate, captures and verifies the current rollback target,
 builds/dry-runs/deploys the Worker, verifies the candidate SHA is live, and only
-then creates the numbered tag and GitHub Release. A failed deploy, smoke, or
-release finalization restores the previous Worker and keeps the workflow red.
+then creates the numbered tag and GitHub Release. A failed deploy or smoke check
+restores the previous Worker. A tagging-only failure keeps the verified code
+live and leaves the workflow red for finalization retry.
 The underlying `worker:deploy` script rejects execution outside the designated
 GitHub Actions workflow.
 
@@ -490,69 +491,16 @@ template; `.env` is local-only and must not be committed. `make check` is
 credential-free and should not require `.env`. `make doctor` requires `.env`
 when validating local/provider readiness.
 
-- Required local environment variable names
+- Review local environment variable names
 
-```text
-APP_ENV
-PORT
-APP_BASE_URL
-PUBLIC_APP_BASE_URL
-DATABASE_URL
-DATABASE_APP_ROLE_URL
-DATABASE_MIGRATION_URL
-SUPABASE_PROJECT_REF
-AWS_PROFILE
-CLOUDFLARE_ACCOUNT_ID
-CLOUDFLARE_ZONE_ID
-CLOUDFLARE_ZONE_NAME
-CLOUDFLARE_NAMESERVERS
-CLOUDFLARE_DNS_API_TOKEN
-CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN
-CLOUDFLARE_TOKEN_MANAGEMENT_API_TOKEN
-CLERK_SECRET_KEY
-CLERK_PUBLISHABLE_KEY
-STRIPE_ACCOUNT_ID
-SENTRY_DSN
-SENTRY_BROWSER_DSN
-SENTRY_RELEASE
-SENTRY_ORG
-SENTRY_PROJECT
-SENTRY_AUTH_TOKEN
-AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD
-AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH
-NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN
-CALLER_KEY_HASH_SECRET
-SMOKE_OR_CLEANUP_TOKEN
-AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE
-AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE
-AGENT_OUTBOX_HOSTED_HEALTH_QUOTA_EVIDENCE
-AGENT_OUTBOX_HOSTED_HEALTH_FILE_EVIDENCE
-AGENT_OUTBOX_HOSTED_HEALTH_AUDIT_EVIDENCE
-AGENT_OUTBOX_HOSTED_HEALTH_ABUSE_COST_EVIDENCE
-AGENT_OUTBOX_BILLING_SMOKE_ENV_FILE
-AGENT_OUTBOX_BILLING_SMOKE_COOKIE
+```bash
+sed -n '1,240p' .env.example
 ```
 
-Notes: Stripe billing variables (`STRIPE_SECRET_KEY`,
-`STRIPE_WEBHOOK_SECRET`, `STRIPE_PAID_MONTHLY_PRICE_ID`,
-`STRIPE_PAID_YEARLY_PRICE_ID`, and `STRIPE_BILLING_PORTAL_CONFIGURATION_ID`)
-are present in `.env.example`. `NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN` is
-a public production-only token. Production Sentry runtime capture requires
-`SENTRY_RELEASE` to be injected by the deploy path using the immutable Worker
-build identifier, such as the Git commit SHA or release tag. Sentry
-release/source-map upload requires `SENTRY_ORG`, `SENTRY_PROJECT`,
-`SENTRY_AUTH_TOKEN`, and both `AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD=1` and
-`AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH=1`; ordinary production builds should
-not set the deploy/release-path flag.
-Credential-free gates do not require these values. Local/test-mode billing
-verification does require the matching Stripe test-mode objects and webhook
-signing secret. Hosted health and billing smoke env-file variables are
-operator-only conveniences for production inspection and should not be installed
-as Worker runtime values.
-
-Run from: repo root Prerequisites: Use `.env.example` as the source for required
-names. Notes: Diagnostics may print missing names but must not print configured
-values.
+Run from: repo root Prerequisites: None. Notes: `.env.example` is the canonical
+tracked variable list and documents which values are required, optional,
+runtime-only, or operator-only. Diagnostics may print missing names but must not
+print configured values.
 
 ## CI
 

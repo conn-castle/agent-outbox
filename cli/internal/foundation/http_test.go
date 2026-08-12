@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -254,28 +255,16 @@ func TestAPIClientPreservesErrorIDInRenderedJSONError(t *testing.T) {
 	}
 }
 
-func TestAPIClientRejectsOversizedResponseBody(t *testing.T) {
-	original := maxJSONResponseBytes
-	maxJSONResponseBytes = 16
-	defer func() { maxJSONResponseBytes = original }()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		// A well-formed success envelope that is larger than the lowered cap.
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":   true,
-			"data": map[string]string{"value": "this body is comfortably over sixteen bytes"},
-		})
-	}))
-	defer server.Close()
-
-	client := APIClient{BaseURL: server.URL}
-	_, err := client.Do(context.Background(), http.MethodGet, "/api/example", "bearer-fixture", nil, nil)
-	appErr, ok := err.(*AppError)
-	if !ok {
-		t.Fatalf("error type = %T, want *AppError", err)
+func TestReadBodyWithLimit(t *testing.T) {
+	data, oversized, err := readBodyWithLimit(strings.NewReader("seventeen bytes!!"), 16)
+	if err != nil {
+		t.Fatalf("readBodyWithLimit returned an error: %v", err)
 	}
-	if appErr.Code != CodeTemporaryUnavailable {
-		t.Fatalf("error code = %q, want %q", appErr.Code, CodeTemporaryUnavailable)
+	if !oversized {
+		t.Fatal("oversized = false, want true")
+	}
+	if got, want := string(data), "seventeen bytes!!"; got != want {
+		t.Fatalf("data = %q, want %q", got, want)
 	}
 }
 

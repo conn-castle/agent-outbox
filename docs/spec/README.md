@@ -1,8 +1,8 @@
 # Agent Outbox API Contract
 
 This directory is the durable HTTP contract for Agent Outbox caller
-integrations. The source product spec lives in the `castle-steward` repository
-at `project-ideas/agent-outbox/README.md`.
+integrations. [NORTH_STAR.md](../../NORTH_STAR.md) defines the product boundary,
+and these files are the canonical integration contract.
 
 Raw HTTP is canonical. The `agent-outbox` CLI must be a wrapper over these
 documented endpoints and must not add hidden product behavior, queue semantics,
@@ -11,8 +11,8 @@ or error states that are unavailable through HTTP.
 ## Contract Index
 
 - [http-api.md](http-api.md) - routes, authentication, request headers, response
-  envelopes, status, data-plane commands, file downloads, and future
-  human-approved caller registration flows.
+  envelopes, status, data-plane commands, file downloads, and human-approved
+  caller registration flows.
 - [input-schema.md](input-schema.md) - typed input submission model, validation
   rules, normalization, and input send/replace/delete semantics.
 - [output-schema.md](output-schema.md) - typed output result model, readiness
