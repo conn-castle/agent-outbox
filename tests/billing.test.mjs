@@ -8,7 +8,8 @@ import {
   createCheckoutSessionForAccount,
   handleStripeWebhookRequest,
   processStripeEventInTransaction,
-  requiredBillingConfiguration
+  requiredBillingConfiguration,
+  STRIPE_WEBHOOK_BODY_BYTE_LIMIT
 } from "../src/server/billing.ts";
 import { billingHumanSessionFromClerkUser } from "../src/server/billing-session.ts";
 import { INPUT_REQUEST_BODY_BYTE_LIMIT } from "../src/server/input-schema.ts";
@@ -133,6 +134,7 @@ test("webhook billing configuration does not require the public app base URL", (
     }
     process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_placeholder";
+    process.env.PUBLIC_APP_BASE_URL = "file:///stale-irrelevant-value";
 
     assert.deepEqual(billingRuntimeConfig("webhook"), {
       ok: true,
@@ -151,6 +153,33 @@ test("webhook billing configuration does not require the public app base URL", (
       } else {
         process.env[name] = previous[name];
       }
+    }
+  }
+});
+
+test("billing configuration rejects a non-origin public app URL", () => {
+  const previous = Object.fromEntries(
+    billingEnvironmentNames.map((name) => [name, process.env[name]])
+  );
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+    process.env.STRIPE_PAID_MONTHLY_PRICE_ID = "price_test_paid_monthly";
+    process.env.STRIPE_PAID_YEARLY_PRICE_ID = "price_test_paid_yearly";
+    process.env.PUBLIC_APP_BASE_URL = "file:///tmp/agent-outbox";
+
+    assert.deepEqual(billingRuntimeConfig("checkout"), {
+      ok: false,
+      error: {
+        status: 503,
+        code: "temporary_unavailable",
+        message:
+          "Billing configuration has invalid PUBLIC_APP_BASE_URL; expected an absolute HTTP(S) origin."
+      }
+    });
+  } finally {
+    for (const name of billingEnvironmentNames) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
     }
   }
 });
@@ -762,7 +791,7 @@ test("webhook verifies the raw Stripe signature and records idempotent processin
   assert.deepEqual(result, { ok: true, data: { processed: true } });
   assert.deepEqual(calls.construct, [
     {
-      payload: '{"id":"evt_checkout_completed"}',
+      payload: Buffer.from('{"id":"evt_checkout_completed"}'),
       signature: "signed",
       secret: "whsec_placeholder"
     }
@@ -790,6 +819,75 @@ test("webhook verifies the raw Stripe signature and records idempotent processin
     "evt_checkout_completed",
     accountId
   ]);
+});
+
+test("webhook rejects declared and streamed bodies over the raw-byte cap", async () => {
+  let constructCalls = 0;
+  const stripe = /** @type {any} */ ({
+    checkout: { sessions: { async create() {} } },
+    billingPortal: { sessions: { async create() {} } },
+    webhooks: {
+      constructEvent() {
+        constructCalls += 1;
+      }
+    }
+  });
+  const context = {
+    requestId: "req-webhook-large",
+    correlationId: "corr-webhook-large"
+  };
+  const expected = {
+    ok: false,
+    error: {
+      status: 413,
+      code: "request_too_large",
+      message: "Stripe webhook request body exceeds the 1048576-byte cap."
+    }
+  };
+
+  const declared = new Request("https://app.example.test/api/billing/webhook", {
+    method: "POST",
+    headers: {
+      "stripe-signature": "signed",
+      "content-length": String(STRIPE_WEBHOOK_BODY_BYTE_LIMIT + 1)
+    },
+    body: "{}"
+  });
+  assert.deepEqual(
+    await handleStripeWebhookRequest(declared, context, {
+      connectionString: "postgresql://billing-test",
+      config,
+      stripe
+    }),
+    expected
+  );
+
+  const chunk = new Uint8Array(STRIPE_WEBHOOK_BODY_BYTE_LIMIT / 2 + 1);
+  const streamedInit = {
+    method: "POST",
+    headers: { "stripe-signature": "signed" },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.enqueue(chunk);
+        controller.close();
+      }
+    }),
+    duplex: "half"
+  };
+  const streamed = new Request(
+    "https://app.example.test/api/billing/webhook",
+    streamedInit
+  );
+  assert.deepEqual(
+    await handleStripeWebhookRequest(streamed, context, {
+      connectionString: "postgresql://billing-test",
+      config,
+      stripe
+    }),
+    expected
+  );
+  assert.equal(constructCalls, 0);
 });
 
 test("webhook replay stops before applying the event a second time", async () => {

@@ -47,6 +47,7 @@ export default async function HumanReviewPage({
     const fixturePage = browserFixtureReviewPage(view);
     return (
       <ReviewWorkspace
+        key={session.accountId}
         session={session}
         rows={fixturePage.rows}
         detail={browserFixtureReviewDetail(selectedItem ?? null)}
@@ -112,6 +113,7 @@ export default async function HumanReviewPage({
 
   return (
     <ReviewWorkspace
+      key={humanSession.accountId}
       session={humanSession}
       rows={pageData.rows}
       detail={pageData.detail}

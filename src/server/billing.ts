@@ -7,11 +7,14 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import { readJsonBodyWithLimit } from "./input-schema.ts";
+import { absoluteHttpOrigin } from "./env.ts";
 import { durationSinceMs, emitRuntimeLog, safeErrorName } from "./logging.ts";
+import { readRawRequestBodyWithLimit } from "./request-body.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
 const BILLING_GRACE_DAYS = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+export const STRIPE_WEBHOOK_BODY_BYTE_LIMIT = 1_048_576;
 
 type BillingStatus =
   "not_applicable" | "active" | "grace" | "past_due" | "canceled";
@@ -105,6 +108,25 @@ export function billingRuntimeConfig(
     };
   }
 
+  const usesPublicAppBaseUrl = surface !== "webhook";
+  const configuredPublicAppBaseUrl = usesPublicAppBaseUrl
+    ? process.env.PUBLIC_APP_BASE_URL?.trim()
+    : undefined;
+  const publicAppBaseUrl = configuredPublicAppBaseUrl
+    ? absoluteHttpOrigin(configuredPublicAppBaseUrl)
+    : null;
+  if (configuredPublicAppBaseUrl && !publicAppBaseUrl) {
+    return {
+      ok: false,
+      error: {
+        status: 503,
+        code: "temporary_unavailable",
+        message:
+          "Billing configuration has invalid PUBLIC_APP_BASE_URL; expected an absolute HTTP(S) origin."
+      }
+    };
+  }
+
   return {
     ok: true,
     data: {
@@ -116,7 +138,7 @@ export function billingRuntimeConfig(
       },
       portalConfigurationId:
         process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID?.trim() ?? "",
-      publicAppBaseUrl: process.env.PUBLIC_APP_BASE_URL?.trim() ?? ""
+      publicAppBaseUrl: publicAppBaseUrl ?? ""
     }
   };
 }
@@ -275,10 +297,25 @@ export async function handleStripeWebhookRequest(
     return invalidBillingRequest("Stripe signature is required.");
   }
 
+  const body = await readRawRequestBodyWithLimit(
+    request,
+    STRIPE_WEBHOOK_BODY_BYTE_LIMIT
+  );
+  if (!body.ok) {
+    return {
+      ok: false,
+      error: {
+        status: 413,
+        code: "request_too_large",
+        message: "Stripe webhook request body exceeds the 1048576-byte cap."
+      }
+    };
+  }
+
   let event: Stripe.Event;
   try {
     event = stripe.webhooks.constructEvent(
-      await request.text(),
+      body.buffer,
       signature,
       config.webhookSecret
     );

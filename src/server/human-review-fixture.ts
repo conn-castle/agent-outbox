@@ -447,7 +447,7 @@ function browserFixtureReviewDetails(): HumanReviewDetail[] {
           overflow: true,
           popupKind: "file_upload",
           popupPayload: {
-            label: "Phase 7 file upload",
+            label: "Paid file upload",
             component: "CallerInjectedUploader"
           },
           answerable: false,

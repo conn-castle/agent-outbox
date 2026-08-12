@@ -56,6 +56,29 @@ export function requireCallerKeyHashSecret() {
   return value;
 }
 
+export function absoluteHttpOrigin(value: string | undefined): string | null {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value.trim());
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== "/" ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 export function runtimeConfigStatus() {
   const missing = RUNTIME_SMOKE_ENV_NAMES.filter((name) => !process.env[name]);
   const insecure =

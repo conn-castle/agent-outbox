@@ -3,7 +3,7 @@
   "version": "0.1.2",
   "private": true,
   "type": "module",
-  "description": "Agent Outbox foundation tooling and verification gates.",
+  "description": "Hosted human-review queue and CLI for agent-prepared work.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "packageManager": "pnpm@11.9.0",
   "devEngines": {

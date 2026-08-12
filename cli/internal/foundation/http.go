@@ -24,8 +24,7 @@ import (
 // malfunctioning or hostile endpoint cannot exhaust memory. Envelopes are small
 // (well under the 128 KiB input-body limit); large file bytes use the streaming
 // Download path, not this one, so a generous cap never truncates a real response.
-// It is a var only so tests can lower it; production never reassigns it.
-var maxJSONResponseBytes int64 = 64 << 20 // 64 MiB
+const maxJSONResponseBytes int64 = 64 << 20 // 64 MiB
 
 var defaultHTTPClient = &http.Client{
 	Transport: &http.Transport{
@@ -127,11 +126,11 @@ func (c APIClient) Do(ctx context.Context, method string, apiPath string, bearer
 		RetryAfterSeconds: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now()),
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONResponseBytes+1))
+	data, oversized, err := readBodyWithLimit(resp.Body, maxJSONResponseBytes)
 	if err != nil {
 		return responseMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not read Agent Outbox API response.", cause: err}
 	}
-	if int64(len(data)) > maxJSONResponseBytes {
+	if oversized {
 		return responseMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Agent Outbox API response exceeded the maximum size."}
 	}
 
@@ -203,9 +202,12 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, readErr := io.ReadAll(resp.Body)
+		data, oversized, readErr := readBodyWithLimit(resp.Body, maxJSONResponseBytes)
 		if readErr != nil {
 			return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not read Agent Outbox API response.", cause: readErr}
+		}
+		if oversized {
+			return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Agent Outbox API response exceeded the maximum size."}
 		}
 		var envelope apiEnvelope
 		if err := json.Unmarshal(data, &envelope); err != nil {
@@ -224,6 +226,14 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not write output file bytes.", cause: err}
 	}
 	return downloadMeta, nil
+}
+
+func readBodyWithLimit(reader io.Reader, byteLimit int64) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, byteLimit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	return data, int64(len(data)) > byteLimit, nil
 }
 
 func joinBaseAndPath(base string, apiPath string) (string, error) {

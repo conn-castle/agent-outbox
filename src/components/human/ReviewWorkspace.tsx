@@ -25,7 +25,8 @@ type PersistedWorkspaceState = {
   skippedIds?: unknown;
 };
 
-const WORKSPACE_STATE_KEY = "agent-outbox:human-review-workspace:v1";
+const WORKSPACE_STATE_KEY_PREFIX = "agent-outbox:human-review-workspace:v1";
+const WORKSPACE_ID_LIMIT = 100;
 
 export type HumanReviewNotice = {
   kind: "notice" | "error";
@@ -54,27 +55,39 @@ export function ReviewWorkspace({
   const [search, setSearch] = useState(view.search);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
-  const [hydrated, setHydrated] = useState(false);
+  const [hydratedAccountId, setHydratedAccountId] = useState<string | null>(
+    null
+  );
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const persisted = readWorkspaceState();
-    if (persisted) {
-      setSelectedIds(new Set(persisted.selectedIds));
-      setSkippedIds(new Set(persisted.skippedIds));
-    }
-    setHydrated(true);
-  }, []);
+    const persisted = readWorkspaceState(session.accountId);
+    setSelectedIds(new Set(persisted?.selectedIds ?? []));
+    setSkippedIds(new Set(persisted?.skippedIds ?? []));
+    setHydratedAccountId(session.accountId);
+  }, [session.accountId]);
 
   useEffect(() => {
-    if (!hydrated) {
+    if (hydratedAccountId !== session.accountId) {
       return;
     }
-    writeWorkspaceState({
+    writeWorkspaceState(session.accountId, {
       selectedIds: [...selectedIds],
       skippedIds: [...skippedIds]
     });
-  }, [hydrated, selectedIds, skippedIds]);
+  }, [hydratedAccountId, selectedIds, session.accountId, skippedIds]);
+
+  useEffect(() => {
+    const visibleNonPendingIds = new Set(
+      rows
+        .filter((row) => row.status !== "pending")
+        .map((row) => row.inputItemId)
+    );
+    if (visibleNonPendingIds.size === 0) {
+      return;
+    }
+    setSelectedIds((current) => removeIds(current, visibleNonPendingIds));
+  }, [rows]);
 
   useEffect(() => {
     // Re-sync the input after navigation (back/forward, action redirects).
@@ -172,7 +185,7 @@ export function ReviewWorkspace({
     setSelectedIds((current) => {
       const next = new Set(current);
       if (selected) {
-        next.add(inputItemId);
+        addBoundedId(next, inputItemId);
       } else {
         next.delete(inputItemId);
       }
@@ -186,7 +199,7 @@ export function ReviewWorkspace({
       if (next.has(inputItemId)) {
         next.delete(inputItemId);
       } else {
-        next.add(inputItemId);
+        addBoundedId(next, inputItemId);
       }
       return next;
     });
@@ -227,7 +240,7 @@ export function ReviewWorkspace({
 
       <section className="review-controls" aria-label="Review controls">
         <span className="sr-only" data-testid="workspace-hydrated">
-          {hydrated ? "hydrated" : "loading"}
+          {hydratedAccountId === session.accountId ? "hydrated" : "loading"}
         </span>
         <form
           className="review-search"
@@ -342,12 +355,16 @@ function viewFromSearchParams(params: URLSearchParams): HumanReviewView {
   };
 }
 
-function readWorkspaceState(): {
+function workspaceStateKey(accountId: string) {
+  return `${WORKSPACE_STATE_KEY_PREFIX}:${accountId}`;
+}
+
+function readWorkspaceState(accountId: string): {
   selectedIds: string[];
   skippedIds: string[];
 } | null {
   try {
-    const raw = window.sessionStorage.getItem(WORKSPACE_STATE_KEY);
+    const raw = window.sessionStorage.getItem(workspaceStateKey(accountId));
     if (!raw) {
       return null;
     }
@@ -363,14 +380,10 @@ function readWorkspaceState(): {
     const parsed = parsedJson as Partial<PersistedWorkspaceState>;
     return {
       selectedIds: Array.isArray(parsed.selectedIds)
-        ? parsed.selectedIds.filter(
-            (item): item is string => typeof item === "string"
-          )
+        ? boundedStringIds(parsed.selectedIds)
         : [],
       skippedIds: Array.isArray(parsed.skippedIds)
-        ? parsed.skippedIds.filter(
-            (item): item is string => typeof item === "string"
-          )
+        ? boundedStringIds(parsed.skippedIds)
         : []
     };
   } catch {
@@ -378,13 +391,49 @@ function readWorkspaceState(): {
   }
 }
 
-function writeWorkspaceState(state: {
-  selectedIds: string[];
-  skippedIds: string[];
-}) {
+function writeWorkspaceState(
+  accountId: string,
+  state: {
+    selectedIds: string[];
+    skippedIds: string[];
+  }
+) {
   try {
-    window.sessionStorage.setItem(WORKSPACE_STATE_KEY, JSON.stringify(state));
+    window.sessionStorage.setItem(
+      workspaceStateKey(accountId),
+      JSON.stringify({
+        selectedIds: boundedStringIds(state.selectedIds),
+        skippedIds: boundedStringIds(state.skippedIds)
+      })
+    );
   } catch {
     // Browsers can disable session storage; the queue still works with defaults.
   }
+}
+
+function boundedStringIds(values: unknown[]) {
+  return [
+    ...new Set(
+      values.filter((value): value is string => typeof value === "string")
+    )
+  ].slice(-WORKSPACE_ID_LIMIT);
+}
+
+function addBoundedId(ids: Set<string>, id: string) {
+  ids.delete(id);
+  ids.add(id);
+  while (ids.size > WORKSPACE_ID_LIMIT) {
+    const oldest = ids.values().next().value;
+    if (oldest === undefined) break;
+    ids.delete(oldest);
+  }
+}
+
+function removeIds(ids: Set<string>, removals: Set<string>) {
+  if (![...removals].some((id) => ids.has(id))) {
+    return ids;
+  }
+  const next = new Set(ids);
+  for (const id of removals) next.delete(id);
+  return next;
 }

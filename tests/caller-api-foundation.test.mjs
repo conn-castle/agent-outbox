@@ -181,6 +181,21 @@ test("caller API auth masks invalid credentials and lifecycle failures from clie
           }
         },
         {
+          name: "malformed expiry timestamp",
+          apiKey: material.plaintextApiKey,
+          credential: {
+            ...baseCredential,
+            expiresAt: "not-a-timestamp"
+          },
+          expectedInternal: {
+            reason: "credential_expired",
+            keyId: material.keyId,
+            credentialStatus: "active",
+            secretDigestCompared: true,
+            secretMatched: true
+          }
+        },
+        {
           name: "pending",
           apiKey: material.plaintextApiKey,
           credential: { ...baseCredential, status: "pending_activation" },

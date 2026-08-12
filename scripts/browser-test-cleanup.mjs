@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
 
+import { validateBrowserFixtureRunId } from "./browser-fixture-run-id.mjs";
+
 const NETWORK_REMOVAL_ATTEMPTS = 5;
 
 export default async function globalTeardown() {
@@ -8,12 +10,13 @@ export default async function globalTeardown() {
   // agent-outbox.browser-fixture=1 label would kill a concurrent run's live
   // Postgres on a shared host. The run label is strictly narrower, so this still
   // never touches a real/local database.
-  const runId = process.env.AGENT_OUTBOX_BROWSER_RUN_ID;
-  if (!runId) {
+  const rawRunId = process.env.AGENT_OUTBOX_BROWSER_RUN_ID;
+  if (!rawRunId) {
     throw new Error(
       "AGENT_OUTBOX_BROWSER_RUN_ID is required for browser test cleanup."
     );
   }
+  const runId = validateBrowserFixtureRunId(rawRunId);
   const runLabel = `agent-outbox.browser-fixture-run=${runId}`;
 
   const containers = dockerIds("ps", ["-aq", "--filter", `label=${runLabel}`]);

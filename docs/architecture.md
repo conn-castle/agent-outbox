@@ -253,6 +253,9 @@ Architecture-level responsibilities:
 - Unexpected or operator-actionable failures get a stable `error_id` shared by
   structured logs and Sentry.
 - Logs, audit events, and frontend telemetry are content-safe.
+- Application responses deny framing, disable MIME sniffing and unnecessary
+  camera/microphone/geolocation capabilities, limit cross-origin referrer
+  detail, and enable one-year HSTS on the production app.
 - Provider-native logs and dashboards are the default operational surfaces.
 - Agent Outbox stores temporary queue data and does not add custom backups of
   queue content or uploaded bytes.

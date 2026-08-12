@@ -59,6 +59,7 @@ import {
   readRuntimeSmokeEnv,
   runtimeSmokeAttemptCount
 } from "../scripts/runtime-smoke.mjs";
+import { validateBrowserFixtureRunId } from "../scripts/browser-fixture-run-id.mjs";
 import {
   flywayDockerEnvironmentNames,
   flywayEnvironmentFromConnection,
@@ -85,10 +86,12 @@ import {
 } from "../src/server/database.ts";
 import { processStripeEventInTransaction } from "../src/server/billing.ts";
 import {
+  absoluteHttpOrigin,
   InsecureServerEnvironmentError,
   MissingServerEnvironmentError,
   runtimeConfigStatus
 } from "../src/server/env.ts";
+import { applicationSecurityHeaders } from "../src/server/http-security.ts";
 import {
   accountLimitStatusMetadata,
   doctorLimitMetadata,
@@ -368,6 +371,14 @@ const outputOperationAuthMatrixMigration = readFileSync(
 const neverActivatedCallerPruneMigration = readFileSync(
   new URL(
     "../db/migrations/V20260705040000__prune_never_activated_callers.sql",
+    import.meta.url
+  ),
+  "utf8"
+);
+
+const failClosedFunctionAuthGuardsMigration = readFileSync(
+  new URL(
+    "../db/migrations/V20260812155500__fail_closed_function_auth_guards.sql",
     import.meta.url
   ),
   "utf8"
@@ -1782,11 +1793,11 @@ test("validateRuntimeProofScope rejects later-phase storage and source drift", (
   ]);
 });
 
-test("validateRuntimeProofScope allows current app boundary copy", () => {
+test("validateRuntimeProofScope allows current product boundary copy", () => {
   assert.deepEqual(
     validateRuntimeProofScope({
       "app/page.tsx":
-        "A protected human review queue UI is current functionality. Caller registration, billing, paid file-upload workflows, and Steward behavior are scheduled for later phases."
+        "A protected human review queue UI, caller registration, billing, and paid file-upload workflows are current functionality. Steward-specific integration remains outside the generic product boundary."
     }),
     []
   );
@@ -1931,6 +1942,22 @@ test("worker cron schedule stays aligned with runtime scheduled canary", () => {
       "wrangler.jsonc triggers.crons must include runtime scheduled canary 17 * * * *"
     ]
   );
+});
+
+test("browser fixture run ids are safe for shell and Docker interpolation", () => {
+  assert.equal(validateBrowserFixtureRunId("run_2026-08.12"), "run_2026-08.12");
+  for (const invalid of [
+    "",
+    "bad id",
+    "$(touch-pwned)",
+    "'quoted'",
+    "semi;colon"
+  ]) {
+    assert.throws(
+      () => validateBrowserFixtureRunId(invalid),
+      /must contain only/
+    );
+  }
 });
 
 test("validateMigrationFilenames enforces Flyway versioned SQL names", () => {
@@ -3048,6 +3075,55 @@ test("runtimeConfigStatus reports missing provider values without exposing value
   );
 });
 
+test("absoluteHttpOrigin accepts only an origin-safe HTTP(S) URL", () => {
+  assert.equal(
+    absoluteHttpOrigin("https://app.example.test"),
+    "https://app.example.test"
+  );
+  assert.equal(
+    absoluteHttpOrigin("http://127.0.0.1:38000/"),
+    "http://127.0.0.1:38000"
+  );
+  for (const invalid of [
+    undefined,
+    "not-a-url",
+    "mailto:operator@example.test",
+    "https://user:secret@app.example.test",
+    "https://app.example.test/path",
+    "https://app.example.test/?mode=test",
+    "https://app.example.test/#fragment"
+  ]) {
+    assert.equal(absoluteHttpOrigin(invalid), null);
+  }
+});
+
+test("application security headers add HSTS only in production", () => {
+  const development = applicationSecurityHeaders("development");
+  assert.deepEqual(development, [
+    { key: "X-Content-Type-Options", value: "nosniff" },
+    { key: "X-Frame-Options", value: "DENY" },
+    { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+    {
+      key: "Permissions-Policy",
+      value: "camera=(), microphone=(), geolocation=()"
+    }
+  ]);
+  assert.deepEqual(applicationSecurityHeaders("production"), [
+    ...development,
+    { key: "Strict-Transport-Security", value: "max-age=31536000" }
+  ]);
+
+  const nextConfig = readFileSync(
+    new URL("../next.config.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(
+    nextConfig,
+    /source: "\/:path\*"[\s\S]*headers: applicationSecurityHeaders\(process\.env\.APP_ENV\)/,
+    "Next.js must apply the security-header policy to every application path"
+  );
+});
+
 test("runtime canary keeps configuration detail behind smoke bearer auth", () => {
   withProcessEnv(
     {
@@ -3400,8 +3476,8 @@ test("scheduled cleanup account targets are cleanup-surface only", () => {
   );
   assert.match(scheduledCleanupAccountTargetsMigration, /security definer/);
   assert.match(
-    scheduledCleanupAccountTargetsMigration,
-    /agent_outbox_context_auth_surface\(\) <> 'cleanup'/
+    failClosedFunctionAuthGuardsMigration,
+    /agent_outbox_context_auth_surface\(\) is distinct from 'cleanup'/
   );
   assert.match(
     scheduledCleanupAccountTargetsMigration,
@@ -3419,6 +3495,24 @@ test("scheduled cleanup account targets are cleanup-surface only", () => {
     scheduledCleanupAccountTargetsMigration,
     /grant execute on function public\.agent_outbox_cleanup_account_targets\(\) to agent_outbox_app;/
   );
+});
+
+test("function auth guards fail closed when transaction context is unset", () => {
+  for (const functionName of [
+    "agent_outbox_bootstrap_clerk_human",
+    "agent_outbox_prune_ip_quota_windows",
+    "agent_outbox_prune_caller_setup_requests",
+    "agent_outbox_cleanup_account_targets",
+    "agent_outbox_prune_stripe_webhook_events"
+  ]) {
+    assert.match(
+      failClosedFunctionAuthGuardsMigration,
+      new RegExp(
+        `create or replace function public\\.${functionName}\\([\\s\\S]*?agent_outbox_context_auth_surface\\(\\) is distinct from`,
+        "i"
+      )
+    );
+  }
 });
 
 test("never-activated caller prune migration is cleanup-scoped and preserves history", () => {
@@ -5378,6 +5472,48 @@ test(
       assert.deepEqual(controlPlaneIpQuota.rows, [
         { metric: ipQuotaPolicyMetric, window_kind: "minute", used_units: 2 }
       ]);
+      await client.query("reset role");
+      await client.query("commit");
+
+      await client.query("begin");
+      await client.query("set role agent_outbox_app");
+      await client.query("select set_config($1, $2, true)", [
+        "agent_outbox.account_id",
+        ids.accountA
+      ]);
+      for (const [name, sql] of [
+        [
+          "ip_quota",
+          "select public.agent_outbox_prune_ip_quota_windows('2026-06-15T00:00:00.000Z')"
+        ],
+        [
+          "caller_setup",
+          "select public.agent_outbox_prune_caller_setup_requests('2026-06-15T00:00:00.000Z')"
+        ],
+        [
+          "account_targets",
+          "select * from public.agent_outbox_cleanup_account_targets()"
+        ],
+        [
+          "stripe_webhooks",
+          "select public.agent_outbox_prune_stripe_webhook_events('2026-06-15T00:00:00.000Z')"
+        ]
+      ]) {
+        await client.query(`savepoint unset_auth_surface_${name}`);
+        try {
+          await assert.rejects(client.query(sql), (error) => {
+            assert.equal(
+              /** @type {{ code?: string }} */ (error).code,
+              "42501"
+            );
+            return true;
+          });
+        } finally {
+          await client.query(
+            `rollback to savepoint unset_auth_surface_${name}`
+          );
+        }
+      }
       await client.query("reset role");
       await client.query("commit");
 

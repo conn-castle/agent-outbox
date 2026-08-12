@@ -1,5 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 
+import { validateBrowserFixtureRunId } from "./browser-fixture-run-id.mjs";
+
 const POSTGRES_IMAGE = "postgres:17";
 const POSTGRES_PASSWORD = "postgres";
 const APP_ROLE_PASSWORD = "agent-outbox-browser-app-role";
@@ -11,12 +13,13 @@ const PUBLIC_APP_BASE_URL = process.env.PUBLIC_APP_BASE_URL;
 // so cleanup only ever removes this run's throwaway resources. Require it rather
 // than self-generating: a divergent id would orphan resources the teardown
 // cannot find.
-const RUN_ID = process.env.AGENT_OUTBOX_BROWSER_RUN_ID;
-if (!APP_PORT || !APP_BASE_URL || !PUBLIC_APP_BASE_URL || !RUN_ID) {
+const RAW_RUN_ID = process.env.AGENT_OUTBOX_BROWSER_RUN_ID;
+if (!APP_PORT || !APP_BASE_URL || !PUBLIC_APP_BASE_URL || !RAW_RUN_ID) {
   throw new Error(
     "PORT, APP_BASE_URL, PUBLIC_APP_BASE_URL, and AGENT_OUTBOX_BROWSER_RUN_ID are required."
   );
 }
+const RUN_ID = validateBrowserFixtureRunId(RAW_RUN_ID);
 const NETWORK_NAME = `agent-outbox-browser-${RUN_ID}`;
 const CONTAINER_NAME = `agent-outbox-browser-postgres-${RUN_ID}`;
 const HASH_SECRET = "agent-outbox-browser-fixture-hash-secret";

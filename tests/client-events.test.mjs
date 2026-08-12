@@ -347,6 +347,7 @@ test("Cloudflare rate-limit check and apply build Rulesets API requests", async 
     "https://api.cloudflare.com/client/v4/zones/zone_123/rulesets/phases/http_ratelimit/entrypoint"
   );
   assert.equal(calls[2].init.headers.Authorization, "Bearer token");
+  assert.ok(calls.every((call) => call.init.signal instanceof AbortSignal));
   const appliedBody = JSON.parse(String(calls[2].init.body));
   assert.equal(appliedBody.rules.length, 1);
   assert.equal(appliedBody.rules.at(-1).enabled, false);

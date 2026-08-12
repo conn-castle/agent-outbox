@@ -129,8 +129,7 @@ Input items define the review surface. Each item includes:
 - One or more action buttons
 - Optional typed popups for free text, single select, multi select, date or
   datetime input
-- File-upload actions, which currently fail loud until the paid upload workflow
-  is implemented
+- Paid/self-hosted file-upload actions with free-tier upgrade-required rejection
 
 Example:
 

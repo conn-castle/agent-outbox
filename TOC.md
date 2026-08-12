@@ -3,10 +3,6 @@
 Agent-facing map of this repository. Use it to pick which file to open for a
 question or task. This is a router, not a product overview or a planning index.
 
-Until the first release, documentation describes the intended final pre-release
-state and may be ahead of implementation. Verify current implemented behavior in
-code when the distinction matters.
-
 ## Start here
 
 - [`README.md`](README.md) —> Product model, hosted service, API/CLI direction,
@@ -36,6 +32,10 @@ code when the distinction matters.
   rotation, safe inspection
 - [`docs/ops/migrations.md`](docs/ops/migrations.md) —> Flyway migration rules,
   migration source, and CI enforcement
+- [`docs/ops/release.md`](docs/ops/release.md) —> CI, release certification,
+  deployment, rollback, and owner-acceptance gates
+- [`docs/ops/privacy-data-inventory.md`](docs/ops/privacy-data-inventory.md) —>
+  Canonical data, processor, retention, and deletion inventory
 
 ## Hosted Services (`docs/ops/services/`)
 

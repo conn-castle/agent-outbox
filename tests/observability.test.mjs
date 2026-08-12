@@ -43,6 +43,8 @@ import {
   safeErrorName,
   safeLogEvent
 } from "../src/server/logging.ts";
+import { absoluteHttpOrigin } from "../src/server/env.ts";
+import { readRawRequestBodyWithLimit } from "../src/server/request-body.ts";
 import {
   cloudflareWebAnalyticsToken,
   runtimeRelease,
@@ -360,8 +362,14 @@ function loadBillingModuleForTest(reportRuntimeFailure) {
         if (specifier === "./input-schema.ts") {
           return { async readJsonBodyWithLimit() {} };
         }
+        if (specifier === "./env.ts") {
+          return { absoluteHttpOrigin };
+        }
         if (specifier === "./logging.ts") {
           return { durationSinceMs, emitRuntimeLog, safeErrorName };
+        }
+        if (specifier === "./request-body.ts") {
+          return { readRawRequestBodyWithLimit };
         }
         if (specifier === "./sentry.ts") {
           return { reportRuntimeFailure };

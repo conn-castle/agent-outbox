@@ -6,6 +6,7 @@ import {
   sentryReleaseUploadConfig,
   sentryReleaseUploadEnabled
 } from "./src/server/observability";
+import { applicationSecurityHeaders } from "./src/server/http-security";
 
 const sentryNextjsEdgeEntry =
   "./node_modules/@sentry/nextjs/build/esm/edge/index.js";
@@ -16,6 +17,14 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: "34mb"
     }
+  },
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: applicationSecurityHeaders(process.env.APP_ENV)
+      }
+    ];
   },
   outputFileTracingIncludes: {
     "/*": [

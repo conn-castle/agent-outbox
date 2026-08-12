@@ -127,7 +127,7 @@ Incomplete:
 - Leave every current issue and backlog item fixed, scheduled behind an explicit trigger, or explicitly accepted by the owner—never silently abandoned.
 
 ### Tasks
-- [x] Resolve every actionable entry currently recorded in ISSUES.md, prioritizing the human database-test isolation failure, then the observability gaps, cleanup/refactor items, Stripe webhook retention decision, local/CI security parity, and database teardown consistency; remove entries only after their fixes are verified.
+- [ ] Resolve every actionable entry currently recorded in ISSUES.md; remove entries only after their fixes are verified, and retain externally blocked or trigger-based items with their concrete next condition.
 - [ ] Surface generated `error_id` values on the scheduled `/human` submit/undo and caller-approval failure paths so users can provide support-correlation handles.
 - [ ] Run iterative correctness, simplification, interface, test-quality, and documentation audits across the web app, HTTP API, CLI, database, deployment tooling, public docs, and operations docs; fix accepted findings and repeat until a fresh review has no unresolved critical/high findings and no unaccepted medium findings.
 - [ ] Audit tracked files, generated artifacts, configuration, and Git history for secrets, credentials, private-only references, unsafe examples, stale implementation claims, and licensing/privacy mismatches before changing repository visibility.
@@ -149,7 +149,7 @@ Incomplete:
 ### Goal
 - Prove Agent Outbox as a standalone product with Steward as the first external caller, then launch the public hosted MVP.
 - Preserve the product boundary: Steward pressures the generic API, but Steward concepts do not become core Agent Outbox semantics.
-- Source map: [README.md](../../README.md) "How It Works", "Product Boundaries", and "Self-Hosting", [NORTH_STAR.md](../../NORTH_STAR.md), and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for standalone product direction, first domains, guardrails, sequencing, and implementation-time action items.
+- Source map: [README.md](../../README.md) "Target Product Flow", "Product Boundaries", and "Self-Hosting", plus [NORTH_STAR.md](../../NORTH_STAR.md) for standalone product direction, first domains, guardrails, and sequencing.
 
 ### Tasks
 - [ ] Build the Steward email caller integration against the public HTTP/CLI contract while keeping the existing Steward email review UI stable until migration is explicitly safe.
@@ -170,7 +170,7 @@ Incomplete:
 ### Goal
 - Preserve useful future work without expanding the hosted MVP beyond the async review queue.
 - Sequence post-MVP work by proven demand, starting with caller integrations that validate the generic contract.
-- Source map: [NORTH_STAR.md](../../NORTH_STAR.md), [README.md](../../README.md) "Product Boundaries", and original handoff path `/Users/nicholasjconn/Local/git-repos/conn-castle/castle-steward/project-ideas/agent-outbox/README.md` for post-MVP backlog, first domains, sequencing, and post-MVP notes in billing, observability, storage, auth, backup, and delivery decisions.
+- Source map: [NORTH_STAR.md](../../NORTH_STAR.md) and [README.md](../../README.md) "Product Boundaries" for post-MVP scope, first domains, sequencing, and deferred billing, observability, storage, auth, backup, and delivery work.
 
 ### Tasks
 - [ ] Add the next caller domains in order of product learning value, with X/Twitter as the next proof before LinkedIn, Monarch, SMS/SignalWire, or shared human access.
