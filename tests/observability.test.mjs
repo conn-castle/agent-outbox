@@ -2318,6 +2318,7 @@ test("billing webhook processing failures share one error id across structured l
       constructEvent() {
         return {
           id: "evt_secret_processing",
+          created: 1783209600,
           type: "invoice.payment_failed",
           data: { object: {} }
         };

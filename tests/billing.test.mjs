@@ -9,6 +9,7 @@ import {
   handleStripeWebhookRequest,
   processStripeEventInTransaction,
   requiredBillingConfiguration,
+  stripeEventCreatedAt,
   STRIPE_WEBHOOK_BODY_BYTE_LIMIT
 } from "../src/server/billing.ts";
 import { billingHumanSessionFromClerkUser } from "../src/server/billing-session.ts";
@@ -715,6 +716,7 @@ test("billing portal creates an account-scoped session with configured portal po
 test("webhook verifies the raw Stripe signature and records idempotent processing", async () => {
   const event = {
     id: "evt_checkout_completed",
+    created: 1783209600,
     type: "checkout.session.completed",
     data: {
       object: {
@@ -812,6 +814,19 @@ test("webhook verifies the raw Stripe signature and records idempotent processin
   );
   assert.match(calls.statements[1].sql, /update public\.agent_outbox_accounts/);
   assert.match(
+    calls.statements[1].sql,
+    /stripe_last_event_created_at = \$7[\s\S]*and \(\s*stripe_last_event_created_at is null\s*or stripe_last_event_created_at <= \$7\s*\)/
+  );
+  assert.deepEqual(calls.statements[1].values, [
+    accountId,
+    "cus_test",
+    "sub_test",
+    null,
+    "checkout_completed",
+    null,
+    "2026-07-05T00:00:00.000Z"
+  ]);
+  assert.match(
     calls.statements[2].sql,
     /update public\.agent_outbox_stripe_webhook_events[\s\S]*set account_id = \$2/
   );
@@ -901,6 +916,7 @@ test("webhook replay stops before applying the event a second time", async () =>
     ),
     /** @type {any} */ ({
       id: "evt_replayed",
+      created: 1783209600,
       type: "checkout.session.completed",
       data: { object: { client_reference_id: accountId } }
     })
@@ -922,6 +938,7 @@ test("webhook processing rejects array-shaped Stripe event objects", async () =>
     fakeTransitionQuery(statements),
     /** @type {any} */ ({
       id: "evt_array_subscription",
+      created: 1783209600,
       type: "customer.subscription.updated",
       data: { object: arrayLikeSubscription }
     }),
@@ -946,6 +963,7 @@ test("subscription webhooks can update an account from Stripe metadata before ch
   const statements = /** @type {any[]} */ ([]);
   const event = {
     id: "evt_subscription_before_checkout",
+    created: 1783209600,
     type: "customer.subscription.updated",
     data: {
       object: {
@@ -995,7 +1013,8 @@ test("subscription webhooks can update an account from Stripe metadata before ch
     "active",
     null,
     "2026-07-09T00:00:00.000Z",
-    accountId
+    accountId,
+    "2026-07-05T00:00:00.000Z"
   ]);
   assert.deepEqual(statements.at(-1).values, [
     "evt_subscription_before_checkout",
@@ -1008,6 +1027,7 @@ test("subscription and failed-payment events update grace state without raw payl
   const now = new Date("2026-07-05T00:00:00.000Z");
   const subscriptionEvent = {
     id: "evt_subscription_updated",
+    created: 1783209600,
     type: "customer.subscription.updated",
     data: {
       object: {
@@ -1024,6 +1044,7 @@ test("subscription and failed-payment events update grace state without raw payl
   };
   const failedPaymentEvent = {
     id: "evt_invoice_failed",
+    created: 1783296000,
     type: "invoice.payment_failed",
     data: {
       object: {
@@ -1055,7 +1076,8 @@ test("subscription and failed-payment events update grace state without raw payl
     "grace",
     "2026-07-09T00:00:00.000Z",
     "2026-07-09T00:00:00.000Z",
-    null
+    null,
+    "2026-07-05T00:00:00.000Z"
   ]);
   assert.deepEqual(updateStatements[1].values, [
     "sub_test",
@@ -1065,11 +1087,117 @@ test("subscription and failed-payment events update grace state without raw payl
     "past_due",
     "2026-07-12T00:00:00.000Z",
     null,
-    null
+    null,
+    "2026-07-06T00:00:00.000Z"
   ]);
   assert.doesNotMatch(
     JSON.stringify(statements),
     /request_body|raw|card|email|cus_test@example/i
+  );
+});
+
+test("webhook ordering timestamps reject invalid metadata before ledger insertion", async () => {
+  for (const created of [
+    undefined,
+    null,
+    "1783209600",
+    1783209600.5,
+    Number.NaN,
+    -1,
+    8_640_000_000_001
+  ]) {
+    const statements = /** @type {any[]} */ ([]);
+    await assert.rejects(
+      () =>
+        processStripeEventInTransaction(
+          /** @type {any} */ (
+            async (/** @type {any} */ statement) => {
+              statements.push(statement);
+              return queryResult([{ stripe_event_id: "evt_invalid_created" }]);
+            }
+          ),
+          /** @type {any} */ ({
+            id: "evt_invalid_created",
+            created,
+            type: "test.ignored",
+            data: { object: {} }
+          })
+        ),
+      /Stripe event created timestamp/
+    );
+    assert.equal(statements.length, 0);
+  }
+
+  assert.equal(
+    stripeEventCreatedAt(/** @type {any} */ ({ created: 0 })).toISOString(),
+    "1970-01-01T00:00:00.000Z"
+  );
+});
+
+test("account projection guards retain newer Stripe state while equal seconds retain arrival order", async () => {
+  const statements = /** @type {any[]} */ ([]);
+  const query = async (/** @type {any} */ statement) => {
+    statements.push(statement);
+    if (
+      /insert into public\.agent_outbox_stripe_webhook_events/.test(
+        statement.sql
+      )
+    ) {
+      return queryResult([{ stripe_event_id: statement.values[0] }]);
+    }
+    return queryResult([]);
+  };
+  const newer = /** @type {any} */ ({
+    id: "evt_newer_subscription",
+    created: 1783296000,
+    type: "customer.subscription.updated",
+    data: {
+      object: {
+        id: "sub_ordering",
+        customer: "cus_ordering",
+        status: "active",
+        items: { data: [] }
+      }
+    }
+  });
+  const older = /** @type {any} */ ({
+    ...newer,
+    id: "evt_older_subscription",
+    created: 1783209600,
+    data: { object: { ...newer.data.object, status: "canceled" } }
+  });
+  const equal = /** @type {any} */ ({
+    ...newer,
+    id: "evt_equal_subscription",
+    data: { object: { ...newer.data.object, status: "past_due" } }
+  });
+
+  for (const event of [newer, older, equal]) {
+    await processStripeEventInTransaction(
+      /** @type {any} */ (query),
+      event,
+      new Date("2026-07-05T00:00:00.000Z")
+    );
+  }
+
+  const updates = statements.filter((statement) =>
+    /update public\.agent_outbox_accounts/.test(statement.sql)
+  );
+  assert.equal(updates.length, 3);
+  for (const update of updates) {
+    assert.match(
+      update.sql,
+      /and \(\s*stripe_subscription_id = \$1[\s\S]*account_id = \$8::uuid\)\s*\)[\s\S]*and \(\s*stripe_last_event_created_at is null\s*or stripe_last_event_created_at <= \$9\s*\)/
+    );
+    assert.match(update.sql, /stripe_last_event_created_at = \$9/);
+  }
+  assert.deepEqual(
+    updates.map((statement) => statement.values.at(-1)),
+    [
+      "2026-07-06T00:00:00.000Z",
+      "2026-07-05T00:00:00.000Z",
+      "2026-07-06T00:00:00.000Z"
+    ]
   );
 });
 

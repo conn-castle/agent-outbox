@@ -3665,7 +3665,11 @@ test(
     const eventId = `evt_concurrent_${crypto.randomUUID()}`;
     const failedEventId = `evt_rollback_${crypto.randomUUID()}`;
     const rollbackCompatibleEventId = `evt_old_writer_${crypto.randomUUID()}`;
-    const event = /** @type {any} */ ({ id: eventId, type: "test.ignored" });
+    const event = /** @type {any} */ ({
+      id: eventId,
+      created: 1783209600,
+      type: "test.ignored"
+    });
 
     await Promise.all([
       first.connect(),
@@ -3772,7 +3776,11 @@ test(
           async (query) => {
             await processStripeEventInTransaction(
               query,
-              /** @type {any} */ ({ id: failedEventId, type: "test.ignored" })
+              /** @type {any} */ ({
+                id: failedEventId,
+                created: 1783209600,
+                type: "test.ignored"
+              })
             );
             throw new Error("forced webhook transaction failure");
           }
@@ -3785,7 +3793,11 @@ test(
         (query) =>
           processStripeEventInTransaction(
             query,
-            /** @type {any} */ ({ id: failedEventId, type: "test.ignored" })
+            /** @type {any} */ ({
+              id: failedEventId,
+              created: 1783209600,
+              type: "test.ignored"
+            })
           )
       );
       assert.equal(retried, true);
@@ -3905,6 +3917,131 @@ test(
       assert.match(finalShape.rows[1].column_default, /processed/);
     } finally {
       await client.query("rollback").catch(() => {});
+      await client.end();
+    }
+  }
+);
+
+test(
+  "Stripe webhook projections retain newer account state while recording stale distinct events",
+  {
+    skip: phase3DatabaseVerificationUrl
+      ? false
+      : "set AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 and DATABASE_MIGRATION_URL to run database policy verification"
+  },
+  async () => {
+    const connectionString = phase3DatabaseVerificationUrl;
+    assert.ok(connectionString);
+    const client = new Client({ connectionString });
+    const accountId = crypto.randomUUID();
+    const subscriptionId = `sub_ordering_${crypto.randomUUID()}`;
+    const customerId = `cus_ordering_${crypto.randomUUID()}`;
+    const newerEventId = `evt_newer_${crypto.randomUUID()}`;
+    const staleEventId = `evt_stale_${crypto.randomUUID()}`;
+    const equalEventId = `evt_equal_${crypto.randomUUID()}`;
+    const newerCreated = 1783296000;
+    const now = new Date("2026-07-05T00:00:00.000Z");
+
+    await client.connect();
+    try {
+      await client.query(
+        "insert into public.agent_outbox_accounts(account_id, label) values ($1, $2)",
+        [accountId, `stripe-ordering-${accountId}`]
+      );
+
+      const event = (
+        /** @type {string} */ eventId,
+        /** @type {number} */ created,
+        /** @type {string} */ status
+      ) =>
+        /** @type {any} */ ({
+          id: eventId,
+          created,
+          type: "customer.subscription.updated",
+          data: {
+            object: {
+              id: subscriptionId,
+              customer: customerId,
+              status,
+              metadata: { account_id: accountId },
+              items: { data: [] }
+            }
+          }
+        });
+      const process = (/** @type {any} */ stripeEvent) =>
+        runProductTransaction(
+          connectionString,
+          {
+            requestId: `stripe-ordering-${stripeEvent.id}`,
+            authSurface: "control_plane"
+          },
+          (query) => processStripeEventInTransaction(query, stripeEvent, now)
+        );
+
+      assert.equal(
+        await process(event(newerEventId, newerCreated, "active")),
+        true
+      );
+      assert.equal(
+        await process(event(staleEventId, newerCreated - 3600, "canceled")),
+        true
+      );
+
+      const afterStale = await client.query(
+        `
+          select billing_status, stripe_subscription_status,
+            stripe_last_event_created_at = $2::timestamptz as marker_matches
+          from public.agent_outbox_accounts
+          where account_id = $1
+        `,
+        [accountId, "2026-07-06T00:00:00.000Z"]
+      );
+      assert.deepEqual(afterStale.rows, [
+        {
+          billing_status: "active",
+          stripe_subscription_status: "active",
+          marker_matches: true
+        }
+      ]);
+      const staleLedger = await client.query(
+        `
+          select account_id::text as account_id
+          from public.agent_outbox_stripe_webhook_events
+          where stripe_event_id = $1
+        `,
+        [staleEventId]
+      );
+      assert.deepEqual(staleLedger.rows, [{ account_id: null }]);
+
+      assert.equal(
+        await process(event(equalEventId, newerCreated, "past_due")),
+        true
+      );
+      const afterEqual = await client.query(
+        `
+          select billing_status, stripe_subscription_status,
+            stripe_last_event_created_at = $2::timestamptz as marker_matches
+          from public.agent_outbox_accounts
+          where account_id = $1
+        `,
+        [accountId, "2026-07-06T00:00:00.000Z"]
+      );
+      assert.deepEqual(afterEqual.rows, [
+        {
+          billing_status: "past_due",
+          stripe_subscription_status: "past_due",
+          marker_matches: true
+        }
+      ]);
+    } finally {
+      await client.query(
+        "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = any($1::text[])",
+        [[newerEventId, staleEventId, equalEventId]]
+      );
+      await client.query(
+        "delete from public.agent_outbox_accounts where account_id = $1",
+        [accountId]
+      );
       await client.end();
     }
   }
