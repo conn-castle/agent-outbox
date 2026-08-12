@@ -1,95 +1,82 @@
 ---
 name: auto-skill-loop
 description: >-
-  Run an explicitly authorized autonomous loop for fix-issues or improve-codebase: dispatch worker agents, preserve blocked work on pushed branches, ship and merge ready PRs, and continue until interrupted or autonomous work is exhausted.
+  Run an autonomous loop intended to result in merged PRs.
+disable-model-invocation: true
 ---
 
 # auto-skill-loop
 
-This is a parent orchestrator skill. Do not implement or ship code yourself.
+## Inputs
 
-## Required inputs
+Required:
 
-Fail before side effects unless all are present:
-- `worker_skill`: exactly `fix-issues` or `improve-codebase`
-- `implementer`: dispatch agent role
-- `shipper`: dispatch agent role
-- `review_agents`: one or more dispatch agent roles
-- explicit standing authorization for this orchestrator to merge ready PRs
+- a `mode` matching `references/modes/<mode>.md`
+- standing authorization to merge under the gate below
+- `operator`, `planner`, one or more `plan_reviewers`, `implementer`, `code_reviewer`,
+  `pr_worker`, and `rote_worker` dispatch targets
 
-Dispatch agent roles may be terse (`codex xhigh`, `claude opus high`,
-`antigravity`). Infer the agent only when unambiguous from the model; otherwise
-fail. Before dispatching, follow `agent-dispatch`, inspect live options, and
-fail if a requested override is unsupported.
+## Rules
 
-Pass `review_agents` to any delegated skill that uses `multi-agent-plan-review`.
+- Use `/dispatch-agent` for every dispatch.
+- Act as the orchestrator. Delegate all work.
+- When compacting, retain the original user inputs and this skill verbatim in
+  addition to what you would normally retain.
 
-## References
+## Acting on the User's Behalf
 
-Read the one selected worker skill contract. Do not read both.
-- `fix-issues`: [references/fix-issues-loop.md](references/fix-issues-loop.md)
-- `improve-codebase`: [references/improve-codebase-loop.md](references/improve-codebase-loop.md)
+This loop must run without human intervention. Each iteration is intended to result
+in a merged PR. For each loop that requires human input, dispatch `operator` in
+a fresh session. Use `dispatch_continue` for multiple invocations within a
+single loop. The first prompt should include the complete contents of
+`references/human-guidance.md`, followed by the item requiring human input with all
+provided details verbatim.
 
-Read [references/blocker-classification.md](references/blocker-classification.md)
-only when a worker returns a checkpoint or blocker candidate.
-
-Read [references/merge-readiness.md](references/merge-readiness.md) only when a
-PR exists and is ready for final review or merge.
-
-## Ledger
-
-Create `.agent-layer/tmp/auto-skill-loop.<run-id>.state.md`. Update it before
-and after dispatches, branch switches, pushes, PR actions, blockers, and
-merges.
-
-Record current step, branches, PRs, dispatch agent roles, normalized dispatch
-flags, review agent dispatch roles, merged PRs, blocked branches, blocked PRs,
-recent touched paths, exhausted lenses, worker questions and answers,
-user-only blockers, manual gates, PR-gate status, and verification evidence.
-Record worker deferrals in this ledger or worker artifacts, not as deferral
-notes in `ISSUES.md`.
+If the `operator` determines that real human intervention is required, save the
+work to an appropriate remote branch for future handling, then check out the
+primary branch. Continue with another loop iteration. Do not block the loop
+waiting for human input.
 
 ## Loop
 
-1. Start each fresh attempt from a clean primary branch checkout. Do not stash
-   or discard work; if leaving an attempt, commit and push its branch first.
-2. Create or reuse one batch branch for autonomous, non-blocked work.
-3. Dispatch the implementer with the selected worker skill, the current ledger
-   context, and the review agents to any delegated `multi-agent-plan-review` run.
-4. Answer worker checkpoints as the human proxy when no user-only decision is
-   required. If user input is required, commit and push the branch, leave any
-   PR open, record the blocker, and checkout the primary branch. Then start a
-   fresh attempt from #1.
-5. If the PR gate has not been met, go back to #3 and continue on the same
-   batch branch with the current uncommitted work or local commits. Once the PR
-   gate has been met, continue to #6.
-6. Use the shipper dispatch agent role for `/ship-pr` through its green,
-   open-PR endpoint. Do not delegate merge execution.
-7. Perform final readiness review yourself. If repository policy, PR automation,
-   or any external gate requires explicit manual approval, leave the PR open,
-   record the gate, and checkout the primary branch. Then continue back at #1
-   with a fresh attempt.
-8. Merge ready PRs under this skill's standing authorization.
-9. Go back to #1 and continue. Stop only when interrupted or no autonomous work
-   remains. When only a final small autonomous tail remains, ship it even if it
-   misses the normal size gate.
+1. Dispatch `planner` with skill `implement`. Use the following as its prompt:
 
-## PR gate
+```text
+<complete contents of references/modes/<mode>.md>
+<applicable caller-provided context or constraints, if any>
 
-Open or ship a PR when at least one is true:
-- fixes at least 3 issues
-- touches at least 5 meaningful files
-- changes at least 500 meaningful lines
-- fixes a high-severity security, data-loss, release-blocking, or correctness
-  issue
-- ships the final remaining autonomous work before exhaustion
+implementer: <implementer>
+plan_reviewers: <plan_reviewers>
+code_reviewer: <code_reviewer>
 
-Generated files, lockfile churn, and mechanical dependency noise do not count
-unless they are the substance of the work.
+Return a self-contained `<implementation_input>` that states the actual task,
+request, or spec you implemented and includes paths to plan artifacts if used.
+This context will preserve the intended scope during later review.
+```
 
-## Guardrails
+If `planner` is unable to find work to complete, repeat the dispatch one more
+time. If two invocations in a row cannot find work, exit and inform the user.
 
-- Never close or delete a blocked PR or branch.
-- Never weaken checks, tests, or skill definitions to keep the loop moving.
-- Never treat low-value churn as progress.
-- Keep the checkout clean between attempts.
+2. Dispatch `rote_worker` with skill `ship-pr` and this prompt:
+
+```text
+pr_worker: <pr_worker>
+
+Use the following context to preserve intended scope and behavior throughout the PR
+workflow:
+
+<implementation_input>
+```
+
+Continue when it returns a merge-authorization request.
+
+3. Dispatch `operator` in a new session. Use the complete contents of
+`references/merge-authorization.md` as its prompt, then append:
+
+```text
+request: <rote_worker merge-authorization request>
+```
+
+4. If authorized, continue the dispatch session from step 2 with the exact
+authorization. If not, continue the dispatch to preserve the PR and return to
+the primary branch without merging. Then return to step 1.

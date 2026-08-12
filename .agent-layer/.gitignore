@@ -6,7 +6,14 @@ config.toml.bak
 .env.bak
 /templates/
 state/
+sync.lock
 tmp/
+
+# Imported skills and skills.lock.json are committed: a clone or CI run then
+# has the exact skill content without a network `al skills pull`. Only the
+# import transaction's scratch space is machine-local.
+skills-imported/.staging/
+
 open-vscode.app/
 open-vscode.command
 open-vscode.desktop

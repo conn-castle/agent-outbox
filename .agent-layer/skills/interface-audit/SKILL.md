@@ -9,99 +9,47 @@ description: >-
 
 # interface-audit
 
-Audit product interfaces as component boundaries. Produce a report, not code.
+Produce one evidence-backed audit of product interface boundaries. Do not
+implement or launch planning.
 
-## Progressive Disclosure
+## Inputs and references
 
-Read [`references/report-structure.md`](references/report-structure.md) before
-creating or editing a report. It owns filename, sections, tables, and fields.
+Run a fresh audit by default. `--update [report-path]` refreshes an existing
+report. Read `references/report-structure.md`; for an update also read
+`references/update-workflow.md`.
 
-With `--update`, also read
-[`references/update-workflow.md`](references/update-workflow.md) before
-inspecting code. It owns report selection, local-change review, merged-PR
-review, and update limits.
+A fresh audit uses only current code, tests, docs, command output, and evidence
+created for this run. Do not inspect prior audit artifacts unless the user asks
+for an update.
 
-Do not duplicate those reference details in generated notes or side artifacts.
+## Evidence contract
 
-## Inputs
-
-- Fresh audit: no option.
-- Update audit: `--update`.
-
-No other options are supported. If extra flags appear, stop and ask which mode
-to use. In update mode, a report path may appear in the user's message;
-otherwise use `references/update-workflow.md`.
-
-## Fresh-Run Isolation
-
-Fresh audits must be independent. Do not open, list, quote, summarize, compare,
-or mine prior audit reports, cleanup analyses, or prior subagent outputs. Do not
-give prior-run material to subagents.
-
-Use only current code, tests, docs, command output, and user instructions. If
-the user asks to use prior audit material, stop and ask whether to switch to
-`--update`.
-
-## Audit Rules
-
-- Describe current code in present tense.
-- Verify numeric claims and names before writing them.
-- Preserve row numbers once assigned; retired numbers are not reused.
-- Mark partial or unverifiable claims explicitly.
-- Product requirements discovered during the audit are protected unless the user
-  explicitly approves a behavior change.
-- Prefer code and tests over docs when they disagree.
-- Prefer exact file paths and symbol names over prose descriptions.
-- Use structured parsers, language tooling, `rg`, `git`, and package test tools
-  before manual counting when available.
-- Do not preserve stale scores because prior reports said so.
+- Score concrete component boundaries, not vague subsystems.
+- Verify names and numeric claims; use `partial` when exact measurement adds
+  little value.
+- Ground complexity, over-engineering, debt, confidence, and recommendations in
+  current evidence. Current code and tests outrank stale documentation.
+- Preserve row identifiers during updates and never reuse retired identifiers.
+- Protect discovered product requirements unless the user approves a behavior
+  change. Do not preserve stale scores for continuity.
 
 ## Workflow
 
-1. Establish the mode and read the required reference file or files.
-2. Confirm the repository baseline with `git status --porcelain`.
-3. For a fresh audit, create the new report path defined by
-   `references/report-structure.md`, then discover and score interfaces from
-   current evidence only.
-4. For `--update`, follow `references/update-workflow.md` exactly and edit only
-   the selected report.
-5. Use focused subagents for broad investigation, row-level verification, and
-   adversarial score review when available. If unavailable, work inline and
-   record the limitation.
-6. Honor user-requested agent or model targets when available. If a requested
-   target is unavailable, fail loudly and ask whether to continue with available
-   targets or inline review.
-7. Keep the main agent responsible for scoring calibration, resolving reviewer
-   disagreement, and the final recommendation gate.
-8. Complete the final recommendation gate below, then stop.
+1. Establish fresh or update mode, repository baseline, report path, and scope.
+2. Trace the interface chain, contracts, ownership, state, tests, failure modes,
+   and meaningful cleanup opportunities. Investigate directly unless coherent,
+   independent boundary groups benefit from read-only parallel investigation.
+3. Calibrate neighboring rows, update the report, and select the highest-value
+   coherent improvement. Revisit only evidence gaps or inconsistencies. If no
+   candidate justifies its cost, record `no-material-improvement`.
+4. For a material candidate, decide whether it requires broad ownership,
+   protocol, data-model, cross-language, or user-workflow redesign. Recommend
+   that architecture only when a smaller interface improvement is insufficient;
+   otherwise recommend the smallest coherent improvement. State any behavior
+   change and require approval before it enters a plan. Include exact
+   `/implement` input as a handoff, but do not run it.
 
-## Final Recommendation Gate
-
-1. Decide whether any major architectural change is required to address the
-   highest-value findings. Major means broad ownership changes, protocol
-   redesign, data model changes, cross-language contract replacement, or a
-   substantial change to user workflows.
-2. If major architecture is required, propose that architecture item and state
-   why smaller interface work is insufficient.
-3. Otherwise propose the smallest coherent interface improvement that
-   meaningfully reduces complexity, over-engineering, or debt.
-4. If the proposal changes behavior, say so and ask for explicit approval before
-   planning or implementation.
-5. Stop after asking whether to run `/plan-work` for the proposed item or search
-   for another item.
-
-## Guardrails
-
-- Do not edit production code, tests, docs, or memory files as part of this
-  skill.
-- Do not silently widen the audit beyond product interfaces.
-- Do not create a parallel plan, summary, or scratch report.
-- Do not score from vibes. Tie every score to concrete evidence.
-- Do not treat behavior changes as cleanup.
-- Do not run `/plan-work` from this skill without asking at the final gate.
-
-## Definition of done
-
-- Report created or updated.
-- Applicable reference workflow followed.
-- Final handoff satisfies the final recommendation gate.
+Do not edit production code, tests, docs, or memory files, widen beyond product
+interfaces, or create parallel reports. Return the report path and either the
+recommendation or `no-material-improvement`, with current evidence for every
+material score and conclusion.
