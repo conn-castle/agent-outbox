@@ -28,7 +28,7 @@ When Docker and a disposable Postgres database are available, also run:
 
 ```bash
 make migration-replay
-AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 DATABASE_MIGRATION_URL='postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci' corepack pnpm exec node --test --test-concurrency=1 tests/foundation.test.mjs tests/human-session.test.mjs tests/human-answer.test.mjs tests/authenticated-transactions.test.mjs
+AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 DATABASE_MIGRATION_URL='postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci' make test-database
 ```
 
 For hosted production, use operator-controlled env files:

@@ -101,10 +101,10 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Reason: Security-definer bootstrap and maintenance functions operate over forced-Row-Level-Security tables, while the runtime boundary must remain least-privileged; PostgreSQL 17 creator/admin membership with `set_option=false` is baseline ownership metadata, not test leakage.
     Tradeoffs: Local migration/database tests require a privileged disposable connection matching CI, but runtime credentials cannot bypass Row-Level Security and tests fail loudly when the roles are conflated.
 
-- Decision 2026-07-11 database-parity-runs-full-foundation: Run the full foundation test file in database parity checks
-    Decision: The canonical serialized database verification command runs all of `tests/foundation.test.mjs` alongside the three focused database test files in local, CI, and release-check environments.
-    Reason: Node's global test-name filter would exclude tests in the other files, and one byte-identical directly runnable command is the database-posture source of truth.
-    Tradeoffs: Migration-replay jobs repeat credential-free foundation unit coverage, but avoid relocating the Phase 3 database test or maintaining divergent local and CI commands.
+- Decision 2026-08-12 database-parity-runs-full-root-suite: Discover every root test file in database parity checks
+    Decision: The canonical `make test-database` command runs every `tests/*.test.mjs` file serially in local, CI, and release-check database environments.
+    Reason: A new database-gated root test must automatically receive migrated-Postgres coverage; one Make target keeps the local and workflow boundary identical.
+    Tradeoffs: Migration-replay jobs repeat credential-free coverage and run new root tests serially, but cannot silently omit database-gated tests or drift from the canonical command.
 
 - Decision 2026-08-12 retain-pr-release-certification: Retain independent release certification on pull requests
     Decision: Keep both ordinary CI and the release-check workflow running on pull requests, including their intentionally duplicated browser and migration-replay lanes.

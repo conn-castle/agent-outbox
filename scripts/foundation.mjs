@@ -38,6 +38,7 @@ import { RUNTIME_CRON_SCHEDULE } from "../src/server/scheduled.ts";
  *     runtime?: { name?: string, version?: string, onFail?: string },
  *     packageManager?: { name?: string, version?: string, onFail?: string }
  *   },
+ *   scripts?: Record<string, string>,
  *   dependencies?: Record<string, string>,
  *   devDependencies?: Record<string, string>
  * }} PackageJson
@@ -944,6 +945,40 @@ function workflowJobContent(content, jobName) {
 }
 
 /**
+ * @param {string} content
+ * @param {string} blockName
+ * @param {number} indentation
+ * @returns {string}
+ */
+function workflowMappingBlockContent(content, blockName, indentation) {
+  const lines = content.split(/\r?\n/);
+  const prefix = " ".repeat(indentation);
+  const blockPattern = new RegExp(
+    `^${escapeRegExp(prefix)}${escapeRegExp(blockName)}:\\s*(?:#.*)?$`
+  );
+  const blockIndex = lines.findIndex((line) => blockPattern.test(line));
+  if (blockIndex === -1) {
+    return "";
+  }
+
+  let endIndex = lines.length;
+  for (let index = blockIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trimStart().startsWith("#")) {
+      continue;
+    }
+    if (
+      line.trim() !== "" &&
+      line.length - line.trimStart().length <= indentation
+    ) {
+      endIndex = index;
+      break;
+    }
+  }
+  return lines.slice(blockIndex, endIndex).join("\n");
+}
+
+/**
  * @param {string} jobContent
  * @param {string} stepName
  * @returns {string}
@@ -1193,20 +1228,123 @@ export function validateMigrationReplayWorkflow(workflowContentsByPath) {
     ".github/workflows/release-check.yml"
   ]) {
     const content = workflowContentsByPath[workflowPath] ?? "";
-    for (const requiredToken of [
-      "postgres:17",
-      "DATABASE_MIGRATION_URL",
-      "FLYWAY_DOCKER_NETWORK: host",
-      "make migration-replay",
-      "corepack pnpm exec node --test --test-concurrency=1 tests/foundation.test.mjs tests/human-session.test.mjs tests/human-answer.test.mjs tests/authenticated-transactions.test.mjs",
-      'AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"'
-    ]) {
-      if (!content.includes(requiredToken)) {
-        failures.push(
-          `${workflowPath} must include migration replay token: ${requiredToken}`
-        );
+    const migrationReplayJob = workflowJobContent(content, "migration-replay");
+    const services = workflowMappingBlockContent(
+      migrationReplayJob,
+      "services",
+      4
+    );
+    const postgresService = workflowMappingBlockContent(
+      services,
+      "postgres",
+      6
+    );
+    const migrationStep = workflowNamedStepContent(
+      migrationReplayJob,
+      "Replay migrations from scratch"
+    );
+    const databaseStep = workflowNamedStepContent(
+      migrationReplayJob,
+      "Run database verification suite"
+    );
+    const jobEnvironment = workflowMappingBlockContent(
+      migrationReplayJob,
+      "env",
+      4
+    );
+    const databaseEnvironment = workflowMappingBlockContent(
+      databaseStep,
+      "env",
+      8
+    );
+    /** @param {RegExp} pattern */
+    const hasJobEnvironment = (pattern) => pattern.test(jobEnvironment);
+    /** @param {RegExp} pattern */
+    const hasStepEnvironment = (pattern) => pattern.test(databaseEnvironment);
+    const requirements = [
+      ["a migration-replay job", migrationReplayJob !== ""],
+      [
+        "a Postgres 17 service in the migration-replay job",
+        /^        image:\s*postgres:17\s*$/m.test(postgresService)
+      ],
+      [
+        "make migration-replay in the named replay step",
+        workflowRunStepIncludes(migrationStep, "make migration-replay")
+      ],
+      [
+        "make test-database in the named database verification step",
+        workflowRunStepIncludes(databaseStep, "make test-database")
+      ],
+      [
+        "AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification",
+        hasJobEnvironment(
+          /^      AGENT_OUTBOX_ENABLE_DATABASE_TESTS:\s*["']?1["']?\s*$/m
+        ) ||
+          hasStepEnvironment(
+            /^          AGENT_OUTBOX_ENABLE_DATABASE_TESTS:\s*["']?1["']?\s*$/m
+          )
+      ],
+      [
+        "DATABASE_MIGRATION_URL for database verification",
+        hasJobEnvironment(/^      DATABASE_MIGRATION_URL:\s*\S+\s*$/m) ||
+          hasStepEnvironment(/^          DATABASE_MIGRATION_URL:\s*\S+\s*$/m)
+      ],
+      [
+        "FLYWAY_DOCKER_NETWORK=host in the migration-replay job",
+        /^      FLYWAY_DOCKER_NETWORK:\s*host\s*$/m.test(jobEnvironment)
+      ],
+      [
+        "database verification after migration replay",
+        migrationStep !== "" &&
+          databaseStep !== "" &&
+          migrationReplayJob.indexOf(databaseStep) >
+            migrationReplayJob.indexOf(migrationStep)
+      ]
+    ];
+
+    for (const [description, present] of requirements) {
+      if (!present) {
+        failures.push(`${workflowPath} must include ${description}`);
       }
     }
+  }
+
+  return failures;
+}
+
+/**
+ * @param {PackageJson} packageJson
+ * @param {string} makefileContent
+ * @returns {string[]}
+ */
+export function validateDatabaseTestCommand(packageJson, makefileContent) {
+  const failures = [];
+  const expectedScript = "node --test --test-concurrency=1 tests/*.test.mjs";
+  if (packageJson.scripts?.["test:database"] !== expectedScript) {
+    failures.push(
+      `package.json test:database must be exactly: ${expectedScript}`
+    );
+  }
+  for (const hook of ["pretest:database", "posttest:database"]) {
+    if (Object.hasOwn(packageJson.scripts ?? {}, hook)) {
+      failures.push(`package.json must not define ${hook}`);
+    }
+  }
+
+  const targetMatch = makefileContent.match(
+    /(?:^|\n)test-database:\s*\n((?:\t[^\n]*(?:\n|$))*)/
+  );
+  const recipeLines = (targetMatch?.[1] ?? "")
+    .split(/\r?\n/)
+    .filter((line) => line !== "")
+    .map((line) => line.slice(1));
+  if (
+    recipeLines.length !== 1 ||
+    recipeLines[0] !== "corepack pnpm run test:database"
+  ) {
+    failures.push(
+      "Makefile test-database must delegate only to corepack pnpm run test:database"
+    );
   }
 
   return failures;
@@ -1651,6 +1789,7 @@ function checkMakefileSurface() {
     "lint",
     "typecheck",
     "test",
+    "test-database",
     "browser",
     "build",
     "smoke",
@@ -1679,6 +1818,15 @@ function checkMakefileSurface() {
     missingTargets,
     [],
     `Makefile missing targets: ${missingTargets.join(", ")}`
+  );
+  const databaseTestCommandFailures = validateDatabaseTestCommand(
+    /** @type {PackageJson} */ (readJson("package.json")),
+    makefile
+  );
+  assert.deepEqual(
+    databaseTestCommandFailures,
+    [],
+    databaseTestCommandFailures.join("\n")
   );
 }
 
