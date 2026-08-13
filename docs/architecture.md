@@ -49,6 +49,28 @@ deployment before numbering the release, and automatically restores the prior
 Worker when the deploy fails to verify. A tagging-only failure leaves the
 verified deploy live rather than reverting healthy production.
 
+## System Contract Ownership
+
+[`system-contract.json`](../system-contract.json) is the language-neutral source
+of truth for stable values shared by the hosted API, CLI, deployment
+configuration, or public protocol documentation: the hosted app origin, cleanup
+cron, API body ceilings, raw-file ceiling, output pagination, control-plane
+timing, output timeout, and billing downgrade grace period. TypeScript reads it
+through `src/shared/system-contract.ts`; the Node generator commits the matching
+Go constants in `cli/internal/foundation/system_contract_generated.go`.
+
+Run `node scripts/system-contract.mjs generate` after intentionally changing the
+contract. `node scripts/system-contract.mjs check` is part of `make check` and
+detects generated-code, selected-consumer, Wrangler cron, migration-default, and
+public-documentation drift without requiring Go.
+
+The full server limit-profile registry remains owned by `src/server/limits.ts`.
+Profile-specific policy and independently owned controls are intentionally not
+folded into the system contract: the free-tier stored non-file queue cap, script
+HTTP timeouts and retries, setup-record retention, review/bulk UI sizing, HTTP
+transport pooling, cryptographic byte sizes, file modes, and test fixtures.
+Equal numbers alone do not establish shared ownership.
+
 ## Trust Boundaries
 
 Human routes use Clerk sessions and Agent Outbox account membership. The hosted

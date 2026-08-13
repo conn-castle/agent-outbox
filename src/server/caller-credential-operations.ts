@@ -5,6 +5,8 @@ import {
   timingSafeEqual
 } from "node:crypto";
 
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
+
 import type {
   ApiErrorInput,
   ApiFieldError,
@@ -42,8 +44,10 @@ import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
-const CONTROL_PLANE_CODE_EXPIRES_IN_SECONDS = 10 * 60;
-const DEVICE_POLL_INTERVAL_SECONDS = 5;
+const CONTROL_PLANE_CODE_EXPIRES_IN_SECONDS =
+  SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds;
+const DEVICE_POLL_INTERVAL_SECONDS =
+  SYSTEM_CONTRACT.defaultDevicePollIntervalSeconds;
 const TOKEN_HASH_ALGORITHM = "sha256";
 const SETUP_TOKEN_BYTES = 32;
 const DEVICE_TOKEN_BYTES = 32;

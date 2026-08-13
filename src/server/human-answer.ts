@@ -1,6 +1,8 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
+
 import {
   auditSafeLifecycleEvent,
   type AuditSafeLifecycleEvent
@@ -30,8 +32,10 @@ import { durationSinceMs } from "./logging.ts";
 import { safeAttachmentFilename, safeContentType } from "./output-files.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
-export const HUMAN_ANSWER_RESPONSE_BYTE_LIMIT = 128_000;
-export const UNACKNOWLEDGED_OUTPUT_TIMEOUT_DAYS = 14;
+export const HUMAN_ANSWER_RESPONSE_BYTE_LIMIT =
+  SYSTEM_CONTRACT.humanAnswerResponseBodyBytes;
+export const UNACKNOWLEDGED_OUTPUT_TIMEOUT_DAYS =
+  SYSTEM_CONTRACT.unacknowledgedOutputTimeoutDays;
 
 export const OUTPUT_RESPONSE_KINDS = [
   "none",
@@ -1261,7 +1265,7 @@ function storedPayload(
   if (responsePayloadBytes > HUMAN_ANSWER_RESPONSE_BYTE_LIMIT) {
     return failure(
       "request_too_large",
-      "Human answer response payload exceeds the 128000-byte cap."
+      `Human answer response payload exceeds the ${HUMAN_ANSWER_RESPONSE_BYTE_LIMIT}-byte cap.`
     );
   }
 

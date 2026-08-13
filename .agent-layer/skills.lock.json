@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "skills": [
+    {
+      "name": "apple-design",
+      "repository": "https://github.com/emilkowalski/skills",
+      "selector": "skills/apple-design",
+      "selected_path": "skills/apple-design",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "78761e1b57f97dce65b983d640c70a68f39e8163",
+      "tree_hash": "sha256:40275ee69d527d933daa762ed32419d305fe5a99e41a3c0b2fa39baa1aeef297"
+    }
+  ]
+}

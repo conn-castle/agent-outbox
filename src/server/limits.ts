@@ -1,3 +1,5 @@
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
+
 export const LIMIT_NAMES = [
   "input_submissions_per_calendar_month",
   "input_submissions_per_day",
@@ -706,11 +708,17 @@ const HOSTED_FREE_LIMITS = {
   authenticated_caller_api_requests_per_calendar_month: enabled(100_000),
   queued_input_items: enabled(1_000),
   input_retention_days: enabled(60),
-  unacknowledged_output_timeout_days: enabled(14),
+  unacknowledged_output_timeout_days: enabled(
+    SYSTEM_CONTRACT.unacknowledgedOutputTimeoutDays
+  ),
   downgrade_grace_days: notApplicable("free_tier_not_billed"),
   file_upload_enabled: disabled("file_upload_disabled"),
-  input_request_body_bytes_excluding_files: enabled(128_000),
-  human_answer_request_body_bytes_excluding_files: enabled(128_000),
+  input_request_body_bytes_excluding_files: enabled(
+    SYSTEM_CONTRACT.inputSubmissionBodyBytes
+  ),
+  human_answer_request_body_bytes_excluding_files: enabled(
+    SYSTEM_CONTRACT.humanAnswerResponseBodyBytes
+  ),
   stored_non_file_queue_payload_bytes: enabled(32_000_000),
   overall_stored_account_data_bytes: notApplicable(
     "free_tier_uses_non_file_storage_cap"
@@ -748,16 +756,22 @@ const HOSTED_PAID_LIMITS = {
   ),
   queued_input_items: disabled("paid_tier_unlimited"),
   input_retention_days: disabled("paid_tier_no_retention_cleanup"),
-  unacknowledged_output_timeout_days: enabled(14),
-  downgrade_grace_days: enabled(7),
+  unacknowledged_output_timeout_days: enabled(
+    SYSTEM_CONTRACT.unacknowledgedOutputTimeoutDays
+  ),
+  downgrade_grace_days: enabled(SYSTEM_CONTRACT.billingDowngradeGraceDays),
   file_upload_enabled: enabled(1),
-  input_request_body_bytes_excluding_files: enabled(128_000),
-  human_answer_request_body_bytes_excluding_files: enabled(128_000),
+  input_request_body_bytes_excluding_files: enabled(
+    SYSTEM_CONTRACT.inputSubmissionBodyBytes
+  ),
+  human_answer_request_body_bytes_excluding_files: enabled(
+    SYSTEM_CONTRACT.humanAnswerResponseBodyBytes
+  ),
   stored_non_file_queue_payload_bytes: disabled(
     "paid_tier_uses_overall_storage_cap"
   ),
   overall_stored_account_data_bytes: enabled(1_000_000_000),
-  uploaded_bytes_per_file: enabled(32_000_000),
+  uploaded_bytes_per_file: enabled(SYSTEM_CONTRACT.rawFileBytes),
   burst_input_submissions_per_account_per_minute: enabled(120),
   concurrent_write_requests_per_account: enabled(20),
   concurrent_file_uploading_requests_per_account: enabled(5),

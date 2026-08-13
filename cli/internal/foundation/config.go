@@ -14,7 +14,7 @@ import (
 
 const (
 	ConfigVersion  = 1
-	DefaultBaseURL = "https://app.agent-outbox.dev"
+	DefaultBaseURL = SystemContractHostedAppBaseURL
 	EnvBaseURL     = "AGENT_OUTBOX_BASE_URL"
 	EnvCaller      = "AGENT_OUTBOX_CALLER"
 	EnvConfigPath  = "AGENT_OUTBOX_CONFIG_PATH"

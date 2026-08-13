@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	defaultDevicePollIntervalSeconds = 5
+	defaultDevicePollIntervalSeconds = foundation.SystemContractDefaultDevicePollIntervalSeconds
 	browserApprovalExpiryGrace       = 5 * time.Second
 )
 

@@ -1,4 +1,5 @@
 import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
   duplicateAcknowledgementLookupStatement,
   terminalOutputDeletionStatement
@@ -18,8 +19,8 @@ import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { safeContentType } from "./output-files.ts";
 
-export const OUTPUT_PAGE_DEFAULT_LIMIT = 25;
-export const OUTPUT_PAGE_MAX_LIMIT = 100;
+export const OUTPUT_PAGE_DEFAULT_LIMIT = SYSTEM_CONTRACT.outputPageDefaultLimit;
+export const OUTPUT_PAGE_MAX_LIMIT = SYSTEM_CONTRACT.outputPageMaxLimit;
 
 export type OutputQueueResult =
   { ok: true; data: OutputQueueSuccess } | { ok: false; error: ApiErrorInput };
