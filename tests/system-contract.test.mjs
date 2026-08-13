@@ -30,13 +30,13 @@ test("system contract has the approved stable external values", () => {
 });
 
 test("both system-contract readers reject invalid schema and invariants", () => {
-  const invalid = {
+  const valid = {
     hosted_app_base_url: "https://app.agent-outbox.dev",
     scheduled_cleanup_cron: "17 * * * *",
     input_submission_body_bytes: 128_000,
     human_answer_response_body_bytes: 128_000,
     raw_file_bytes: 32_000_000,
-    output_page_default_limit: 101,
+    output_page_default_limit: 25,
     output_page_max_limit: 100,
     control_plane_setup_code_expiry_seconds: 600,
     default_device_poll_interval_seconds: 5,
@@ -44,27 +44,40 @@ test("both system-contract readers reject invalid schema and invariants", () => 
     billing_downgrade_grace_days: 7
   };
 
-  assert.throws(() => validateSystemContract(invalid));
-  assert.throws(() => validateTypeScriptSystemContract(invalid));
-  assert.throws(() => validateSystemContract({ ...invalid, extra: true }));
+  const invalidPagination = { ...valid, output_page_default_limit: 101 };
+  assert.throws(() => validateSystemContract(invalidPagination));
+  assert.throws(() => validateTypeScriptSystemContract(invalidPagination));
+  assert.throws(() => validateSystemContract({ ...valid, extra: true }));
   assert.throws(() =>
-    validateTypeScriptSystemContract({ ...invalid, extra: true })
+    validateTypeScriptSystemContract({ ...valid, extra: true })
   );
   const insecure = {
-    ...invalid,
-    hosted_app_base_url: "http://app.agent-outbox.dev",
-    output_page_default_limit: 25
+    ...valid,
+    hosted_app_base_url: "http://app.agent-outbox.dev"
   };
   assert.throws(() => validateSystemContract(insecure));
   assert.throws(() => validateTypeScriptSystemContract(insecure));
 
   const impossiblePolling = {
-    ...invalid,
-    output_page_default_limit: 25,
+    ...valid,
     control_plane_setup_code_expiry_seconds: 4
   };
   assert.throws(() => validateSystemContract(impossiblePolling));
   assert.throws(() => validateTypeScriptSystemContract(impossiblePolling));
+
+  const pollingAboveDatabaseMaximum = {
+    ...valid,
+    control_plane_setup_code_expiry_seconds: 3601,
+    default_device_poll_interval_seconds: 3601
+  };
+  assert.throws(
+    () => validateSystemContract(pollingAboveDatabaseMaximum),
+    /must not exceed 3600/
+  );
+  assert.throws(
+    () => validateTypeScriptSystemContract(pollingAboveDatabaseMaximum),
+    /must not exceed 3600/
+  );
 });
 
 test("generated Go contract is deterministic and all selected consumers remain aligned", () => {
@@ -89,5 +102,20 @@ test("generated Go contract is deterministic and all selected consumers remain a
   );
   assert.ok(
     failures.some((failure) => failure.includes("docs/spec/input-schema.md"))
+  );
+
+  const changedPollIntervalFailures = systemContractDriftFailures({
+    ...contract,
+    defaultDevicePollIntervalSeconds:
+      contract.defaultDevicePollIntervalSeconds + 1
+  });
+  assert.ok(changedPollIntervalFailures.length > 0);
+  assert.ok(
+    changedPollIntervalFailures.every(
+      (failure) =>
+        !failure.includes(
+          "db/migrations/V20260702000000__caller_setup_requests.sql"
+        )
+    )
   );
 });

@@ -9,6 +9,7 @@ const GENERATED_GO_PATH = path.join(
   ROOT,
   "cli/internal/foundation/system_contract_generated.go"
 );
+const MAX_DEVICE_POLL_INTERVAL_SECONDS = 3600;
 
 const REQUIRED_FIELDS = [
   "hosted_app_base_url",
@@ -124,6 +125,11 @@ export function validateSystemContract(value) {
     contract.default_device_poll_interval_seconds,
     "default_device_poll_interval_seconds"
   );
+  if (defaultDevicePollIntervalSeconds > MAX_DEVICE_POLL_INTERVAL_SECONDS) {
+    throw new RangeError(
+      `system-contract.json default_device_poll_interval_seconds must not exceed ${MAX_DEVICE_POLL_INTERVAL_SECONDS}.`
+    );
+  }
   if (defaultDevicePollIntervalSeconds > controlPlaneSetupCodeExpirySeconds) {
     throw new RangeError(
       "system-contract.json default_device_poll_interval_seconds must not exceed control_plane_setup_code_expiry_seconds."
@@ -296,14 +302,6 @@ export function systemContractDriftFailures(contract = readSystemContract()) {
   requireMarkers(failures, "cli/internal/foundation/http.go", [
     "SystemContractRawFileBytes"
   ]);
-  requireMarkers(
-    failures,
-    "db/migrations/V20260702000000__caller_setup_requests.sql",
-    [
-      `poll_interval_seconds integer not null default ${contract.defaultDevicePollIntervalSeconds}`
-    ]
-  );
-
   const wrangler = JSON.parse(
     source("wrangler.jsonc").replace(/\/\/.*$/gm, "")
   );

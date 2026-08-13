@@ -27,6 +27,7 @@ const SYSTEM_CONTRACT_JSON_FIELDS = [
   "scheduled_cleanup_cron",
   "unacknowledged_output_timeout_days"
 ] as const;
+const MAX_DEVICE_POLL_INTERVAL_SECONDS = 3600;
 
 function positiveSafeInteger(value: unknown, name: string): number {
   if (!Number.isSafeInteger(value)) {
@@ -112,6 +113,11 @@ export function validateSystemContract(value: unknown): SystemContract {
     contract.default_device_poll_interval_seconds,
     "default_device_poll_interval_seconds"
   );
+  if (defaultDevicePollIntervalSeconds > MAX_DEVICE_POLL_INTERVAL_SECONDS) {
+    throw new RangeError(
+      `system-contract.json default_device_poll_interval_seconds must not exceed ${MAX_DEVICE_POLL_INTERVAL_SECONDS}.`
+    );
+  }
   if (defaultDevicePollIntervalSeconds > controlPlaneSetupCodeExpirySeconds) {
     throw new RangeError(
       "system-contract.json default_device_poll_interval_seconds must not exceed control_plane_setup_code_expiry_seconds."
