@@ -954,7 +954,7 @@ function workflowMappingBlockContent(content, blockName, indentation) {
   const lines = content.split(/\r?\n/);
   const prefix = " ".repeat(indentation);
   const blockPattern = new RegExp(
-    `^${escapeRegExp(prefix)}${escapeRegExp(blockName)}:\\s*$`
+    `^${escapeRegExp(prefix)}${escapeRegExp(blockName)}:\\s*(?:#.*)?$`
   );
   const blockIndex = lines.findIndex((line) => blockPattern.test(line));
   if (blockIndex === -1) {
@@ -964,6 +964,9 @@ function workflowMappingBlockContent(content, blockName, indentation) {
   let endIndex = lines.length;
   for (let index = blockIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
+    if (line.trimStart().startsWith("#")) {
+      continue;
+    }
     if (
       line.trim() !== "" &&
       line.length - line.trimStart().length <= indentation
@@ -1244,13 +1247,20 @@ export function validateMigrationReplayWorkflow(workflowContentsByPath) {
       migrationReplayJob,
       "Run database verification suite"
     );
+    const jobEnvironment = workflowMappingBlockContent(
+      migrationReplayJob,
+      "env",
+      4
+    );
+    const databaseEnvironment = workflowMappingBlockContent(
+      databaseStep,
+      "env",
+      8
+    );
     /** @param {RegExp} pattern */
-    const hasJobEnvironment = (pattern) =>
-      /^    env:\s*$/m.test(migrationReplayJob) &&
-      pattern.test(migrationReplayJob);
+    const hasJobEnvironment = (pattern) => pattern.test(jobEnvironment);
     /** @param {RegExp} pattern */
-    const hasStepEnvironment = (pattern) =>
-      /^        env:\s*$/m.test(databaseStep) && pattern.test(databaseStep);
+    const hasStepEnvironment = (pattern) => pattern.test(databaseEnvironment);
     const requirements = [
       ["a migration-replay job", migrationReplayJob !== ""],
       [
@@ -1281,7 +1291,7 @@ export function validateMigrationReplayWorkflow(workflowContentsByPath) {
       ],
       [
         "FLYWAY_DOCKER_NETWORK=host in the migration-replay job",
-        /^      FLYWAY_DOCKER_NETWORK:\s*host\s*$/m.test(migrationReplayJob)
+        /^      FLYWAY_DOCKER_NETWORK:\s*host\s*$/m.test(jobEnvironment)
       ],
       [
         "database verification after migration replay",
@@ -1314,6 +1324,11 @@ export function validateDatabaseTestCommand(packageJson, makefileContent) {
     failures.push(
       `package.json test:database must be exactly: ${expectedScript}`
     );
+  }
+  for (const hook of ["pretest:database", "posttest:database"]) {
+    if (Object.hasOwn(packageJson.scripts ?? {}, hook)) {
+      failures.push(`package.json must not define ${hook}`);
+    }
   }
 
   const targetMatch = makefileContent.match(

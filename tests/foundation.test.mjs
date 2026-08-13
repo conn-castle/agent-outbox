@@ -1319,6 +1319,22 @@ jobs:
     []
   );
 
+  const commentedWorkflow = validWorkflow
+    .replace(
+      "    services:\n      postgres:",
+      `    services: # migration database services
+    # The replay job uses raw Postgres.
+      postgres: # canonical service`
+    )
+    .replace("    env:", "    env: # job environment");
+  assert.deepEqual(
+    validateMigrationReplayWorkflow({
+      ".github/workflows/ci.yml": commentedWorkflow,
+      ".github/workflows/release-check.yml": validWorkflow
+    }),
+    []
+  );
+
   const stepScopedDatabaseEnvironment = validWorkflow
     .replace('      AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"\n', "")
     .replace(
@@ -1428,6 +1444,43 @@ jobs:
         "      AGENT_OUTBOX_ENABLE_DATABASE_TESTS"
       ),
       "AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification"
+    ],
+    [
+      "database opt-in under step with",
+      validWorkflow
+        .replace('      AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"\n', "")
+        .replace(
+          "        run: make test-database",
+          `        with:
+          AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"
+        run: make test-database`
+        ),
+      "AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification"
+    ],
+    [
+      "database URL under the Postgres service environment",
+      validWorkflow
+        .replace(
+          "      DATABASE_MIGRATION_URL: postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci\n",
+          ""
+        )
+        .replace(
+          "        image: postgres:17",
+          `        image: postgres:17
+        env:
+          DATABASE_MIGRATION_URL: postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci`
+        ),
+      "DATABASE_MIGRATION_URL for database verification"
+    ],
+    [
+      "Flyway network under job outputs",
+      validWorkflow.replace("      FLYWAY_DOCKER_NETWORK: host\n", "").replace(
+        "    env:",
+        `    outputs:
+      FLYWAY_DOCKER_NETWORK: host
+    env:`
+      ),
+      "FLYWAY_DOCKER_NETWORK=host in the migration-replay job"
     ]
   ];
   for (const [description, workflow, expectedFailure] of invalidWorkflows) {
@@ -1472,6 +1525,20 @@ test("validateDatabaseTestCommand enforces the serialized root test command chai
       "package.json test:database must be exactly: node --test --test-concurrency=1 tests/*.test.mjs"
     ]
   );
+  for (const hook of ["pretest:database", "posttest:database"]) {
+    assert.deepEqual(
+      validateDatabaseTestCommand(
+        {
+          scripts: {
+            ...validPackageJson.scripts,
+            [hook]: "node unexpected-hook.mjs"
+          }
+        },
+        validMakefile
+      ),
+      [`package.json must not define ${hook}`]
+    );
+  }
   assert.deepEqual(
     validateDatabaseTestCommand(
       {
