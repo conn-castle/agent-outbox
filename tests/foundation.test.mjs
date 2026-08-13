@@ -1367,6 +1367,26 @@ jobs:
       "make test-database in the named database verification step"
     ],
     [
+      "a Postgres image token inside a run block without a service",
+      validWorkflow
+        .replace(
+          `    services:
+      postgres:
+        image: postgres:17`,
+          ""
+        )
+        .replace(
+          `    steps:
+      - name: Replay migrations from scratch`,
+          `    steps:
+      - name: Misleading image text
+        run: |
+          image: postgres:17
+      - name: Replay migrations from scratch`
+        ),
+      "a Postgres 17 service in the migration-replay job"
+    ],
+    [
       "database verification before migration replay",
       validWorkflow.replace(
         /      - name: Replay migrations from scratch[\s\S]*?        run: make test-database/,

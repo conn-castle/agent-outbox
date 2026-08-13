@@ -945,6 +945,37 @@ function workflowJobContent(content, jobName) {
 }
 
 /**
+ * @param {string} content
+ * @param {string} blockName
+ * @param {number} indentation
+ * @returns {string}
+ */
+function workflowMappingBlockContent(content, blockName, indentation) {
+  const lines = content.split(/\r?\n/);
+  const prefix = " ".repeat(indentation);
+  const blockPattern = new RegExp(
+    `^${escapeRegExp(prefix)}${escapeRegExp(blockName)}:\\s*$`
+  );
+  const blockIndex = lines.findIndex((line) => blockPattern.test(line));
+  if (blockIndex === -1) {
+    return "";
+  }
+
+  let endIndex = lines.length;
+  for (let index = blockIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (
+      line.trim() !== "" &&
+      line.length - line.trimStart().length <= indentation
+    ) {
+      endIndex = index;
+      break;
+    }
+  }
+  return lines.slice(blockIndex, endIndex).join("\n");
+}
+
+/**
  * @param {string} jobContent
  * @param {string} stepName
  * @returns {string}
@@ -1195,6 +1226,16 @@ export function validateMigrationReplayWorkflow(workflowContentsByPath) {
   ]) {
     const content = workflowContentsByPath[workflowPath] ?? "";
     const migrationReplayJob = workflowJobContent(content, "migration-replay");
+    const services = workflowMappingBlockContent(
+      migrationReplayJob,
+      "services",
+      4
+    );
+    const postgresService = workflowMappingBlockContent(
+      services,
+      "postgres",
+      6
+    );
     const migrationStep = workflowNamedStepContent(
       migrationReplayJob,
       "Replay migrations from scratch"
@@ -1214,7 +1255,7 @@ export function validateMigrationReplayWorkflow(workflowContentsByPath) {
       ["a migration-replay job", migrationReplayJob !== ""],
       [
         "a Postgres 17 service in the migration-replay job",
-        /^\s*image:\s*postgres:17\s*$/m.test(migrationReplayJob)
+        /^        image:\s*postgres:17\s*$/m.test(postgresService)
       ],
       [
         "make migration-replay in the named replay step",
