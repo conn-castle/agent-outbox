@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   readSystemContract,
   renderGeneratedGoSystemContract,
+  stripJsonComments,
   systemContractDriftFailures,
   validateSystemContract
 } from "../scripts/system-contract.mjs";
@@ -27,6 +28,27 @@ test("system contract has the approved stable external values", () => {
     billingDowngradeGraceDays: 7
   });
   assert.ok(Object.isFrozen(SYSTEM_CONTRACT));
+});
+
+test("JSONC comment stripping preserves comment-like text in strings", () => {
+  const jsonc = String.raw`{
+    // line comment
+    "url": "https://app.agent-outbox.dev/path/*literal*/",
+    "quoted": "escaped quote: \" // still a string",
+    /* block
+       comment */
+    "enabled": true
+  }`;
+
+  assert.deepEqual(JSON.parse(stripJsonComments(jsonc)), {
+    url: "https://app.agent-outbox.dev/path/*literal*/",
+    quoted: 'escaped quote: " // still a string',
+    enabled: true
+  });
+  assert.throws(
+    () => stripJsonComments('{ "enabled": true /* unterminated'),
+    /Unterminated JSONC block comment/
+  );
 });
 
 test("both system-contract readers reject invalid schema and invariants", () => {

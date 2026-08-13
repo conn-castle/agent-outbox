@@ -396,7 +396,7 @@ function requestTooLargeError(): ApiErrorInput {
   return {
     status: 413,
     code: "request_too_large",
-    message: "Input request body exceeds the 128,000 byte limit.",
+    message: `Input request body exceeds the ${INPUT_REQUEST_BODY_BYTE_LIMIT.toLocaleString("en-US")} byte limit.`,
     limit: {
       limit_name: "input_request_body_bytes_excluding_files",
       limit_reason_code: "input_request_too_large",

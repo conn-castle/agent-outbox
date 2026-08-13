@@ -74,27 +74,33 @@ Apple deliberately replaced the physics triplet (mass/stiffness/damping) with tw
 - **Response** — how quickly the value reaches the target, in seconds. Lower = snappier. **This is not "duration"** — a spring has no fixed duration; its settle time emerges from the parameters.
 
 **Defaults:**
-- Start most UI at **damping `1.0`** (critically damped) — graceful and non-distracting.
-- Add bounce (**damping ~`0.8`**) **only when the gesture itself carried momentum** (a flick, a throw, a drag release). Overshoot on a menu that just faded in feels wrong; overshoot on a card you flicked feels right.
+- Start most UI at an Apple **damping ratio of `1.0`** (critically damped) — graceful and non-distracting.
+- Add bounce (Apple **damping ratio ~`0.8`**) **only when the gesture itself carried momentum** (a flick, a throw, a drag release). Overshoot on a menu that just faded in feels wrong; overshoot on a card you flicked feels right.
 
 **Concrete values Apple ships:**
 
-| Interaction | Damping | Response |
+| Interaction | Damping ratio | Response |
 | --- | --- | --- |
 | Move / reposition (e.g. PiP) | `1.0` | `0.4` |
 | Rotation | `0.8` | `0.4` |
 | Drawer / sheet | `0.8` | `0.3` |
 
-**Web mapping (Motion / Framer Motion):** the `bounce` + `duration` spring API maps closely to Apple's damping + response. A safe house style is `damping: 1.0` springs everywhere by default; reserve bounce for momentum-driven, physical interactions.
+**Web mapping (Motion / Framer Motion):** keep Apple's dimensionless damping ratio separate from Motion's `damping` coefficient. For a duration-based default with no overshoot, use `bounce: 0`. Duration-based `bounce` springs do not incorporate gesture velocity. For momentum interactions, use a physics-based spring with `stiffness`, `damping`, and `mass`, then pass the gesture's release velocity with `velocity`; tune those coefficients together instead of copying Apple's damping-ratio values.
 
 ```js
 import { animate } from 'motion';
 
-// Critically damped default (no overshoot)
+// Duration-based default with no overshoot
 animate(el, { y: 0 }, { type: 'spring', bounce: 0, duration: 0.4 });
 
-// Momentum interaction — a little bounce, only because a flick preceded it
-animate(el, { y: target }, { type: 'spring', bounce: 0.2, duration: 0.4 });
+// Momentum interaction — physics parameters preserve the flick's velocity
+animate(el, { y: target }, {
+  type: 'spring',
+  stiffness: 300,
+  damping: 24,
+  mass: 1,
+  velocity: releaseVelocity,
+});
 ```
 
 ## 5. Velocity handoff — the seam between drag and animation
@@ -266,8 +272,8 @@ Tactical rules that serve these:
 
 | Need | Technique | Concrete value |
 | --- | --- | --- |
-| Default UI spring | Critically damped, no overshoot | `damping 1.0`, `response 0.3–0.4` |
-| Momentum / flick spring | Under-damped, slight bounce | `damping ~0.8`, `response 0.3–0.4` |
+| Default UI spring | Critically damped, no overshoot | Apple `damping ratio 1.0`, `response 0.3–0.4` |
+| Momentum / flick spring | Under-damped, slight bounce | Apple `damping ratio ~0.8`, `response 0.3–0.4` |
 | Gesture → spring velocity | Hand off release velocity | `gestureVelocity / (target − current)` if normalized |
 | Flick landing point | Project momentum | `current + (v/1000)·d/(1−d)`, `d ≈ 0.998` |
 | Interrupt cleanly | Start from presentation (live) value | read the on-screen transform |

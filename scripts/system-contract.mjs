@@ -227,6 +227,69 @@ function source(relativePath) {
   return readFileSync(path.join(ROOT, relativePath), "utf8");
 }
 
+/** @param {string} input */
+export function stripJsonComments(input) {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1] ?? "";
+
+    if (inLineComment) {
+      if (char === "\n" || char === "\r") {
+        inLineComment = false;
+        output += char;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === "*" && next === "/") {
+        inBlockComment = false;
+        index += 1;
+      } else if (char === "\n" || char === "\r") {
+        output += char;
+      }
+      continue;
+    }
+
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      output += char;
+    } else if (char === "/" && next === "/") {
+      inLineComment = true;
+      index += 1;
+    } else if (char === "/" && next === "*") {
+      inBlockComment = true;
+      index += 1;
+    } else {
+      output += char;
+    }
+  }
+
+  if (inBlockComment) {
+    throw new SyntaxError("Unterminated JSONC block comment.");
+  }
+
+  return output;
+}
+
 /** @param {string[]} failures @param {string} relativePath @param {string[]} markers */
 function requireMarkers(failures, relativePath, markers) {
   const contents = source(relativePath);
@@ -259,7 +322,8 @@ export function systemContractDriftFailures(contract = readSystemContract()) {
   ]);
   requireMarkers(failures, "src/server/input-schema.ts", [
     "SYSTEM_CONTRACT.inputSubmissionBodyBytes",
-    "SYSTEM_CONTRACT.hostedAppBaseUrl"
+    "SYSTEM_CONTRACT.hostedAppBaseUrl",
+    '${INPUT_REQUEST_BODY_BYTE_LIMIT.toLocaleString("en-US")} byte limit'
   ]);
   requireMarkers(failures, "src/server/human-answer.ts", [
     "SYSTEM_CONTRACT.humanAnswerResponseBodyBytes",
@@ -302,9 +366,7 @@ export function systemContractDriftFailures(contract = readSystemContract()) {
   requireMarkers(failures, "cli/internal/foundation/http.go", [
     "SystemContractRawFileBytes"
   ]);
-  const wrangler = JSON.parse(
-    source("wrangler.jsonc").replace(/\/\/.*$/gm, "")
-  );
+  const wrangler = JSON.parse(stripJsonComments(source("wrangler.jsonc")));
   const hostedAppHostname = new URL(contract.hostedAppBaseUrl).hostname;
   if (
     !Array.isArray(wrangler?.routes) ||
