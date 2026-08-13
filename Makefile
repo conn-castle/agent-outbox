@@ -1,4 +1,4 @@
-.PHONY: help bootstrap setup doctor dev fix format lint typecheck test test-database browser build smoke smoke-runtime hosted-health billing-smoke migration-validate migration-migrate migration-replay go-build go-test go-lint go-fmt go-fmt-check go-check package-check check release-check clean
+.PHONY: help bootstrap setup doctor dev fix format lint typecheck test test-database browser build smoke smoke-runtime hosted-health billing-smoke migration-validate migration-migrate migration-replay contract-generate contract-check go-build go-test go-lint go-fmt go-fmt-check go-check package-check check release-check clean
 
 GORELEASER_MODULE := github.com/goreleaser/goreleaser/v2@v2.16.0
 CLI_VERSION ?= 0.0.0-dev
@@ -30,6 +30,8 @@ help:
 	@printf '%s\n' '  make migration-validate Validate Flyway migration history.'
 	@printf '%s\n' '  make migration-migrate  Apply pending Flyway migrations.'
 	@printf '%s\n' '  make migration-replay   Validate and apply migrations to an empty database.'
+	@printf '%s\n' '  make contract-generate Regenerate committed Go system-contract constants with Node.'
+	@printf '%s\n' '  make contract-check    Check system-contract consumer and generated-code drift with Node.'
 	@printf '%s\n' '  make go-build      Build the Go CLI binary to dist/agent-outbox.'
 	@printf '%s\n' '  make go-test       Run Go CLI unit tests.'
 	@printf '%s\n' '  make go-lint       Run Go CLI vet checks.'
@@ -95,6 +97,12 @@ migration-migrate:
 
 migration-replay:
 	corepack pnpm run migration:replay
+
+contract-generate:
+	corepack pnpm run contract:generate
+
+contract-check:
+	corepack pnpm run contract:check
 
 go-build:
 	mkdir -p dist

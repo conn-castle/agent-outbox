@@ -33,6 +33,7 @@ import {
   parseUndoHumanAnswerForm
 } from "../src/server/human-action-form.ts";
 import { CLIENT_EVENT_BODY_BYTE_LIMIT } from "../src/shared/client-events-contract.ts";
+import { SYSTEM_CONTRACT } from "../src/shared/system-contract.ts";
 import {
   emitClientEventLog,
   handleClientEventsRequest
@@ -352,6 +353,9 @@ function loadBillingModuleForTest(reportRuntimeFailure) {
        * @param {string} specifier
        */
       require(specifier) {
+        if (specifier === "../shared/system-contract.ts") {
+          return { SYSTEM_CONTRACT };
+        }
         if (specifier === "./database.ts") {
           return {
             async runProductTransaction() {
@@ -454,6 +458,9 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
         }
         if (specifier === "node:crypto") {
           return require(specifier);
+        }
+        if (specifier === "../shared/system-contract.ts") {
+          return { SYSTEM_CONTRACT };
         }
         if (specifier === "./accounting.ts") {
           return {

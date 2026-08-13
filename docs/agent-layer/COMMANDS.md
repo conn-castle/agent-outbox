@@ -246,6 +246,26 @@ checks. It tests the app, not deployment platforms: it must not require
 Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, or
 platform runtime emulation.
 
+- Regenerate Go system-contract constants
+
+```bash
+node scripts/system-contract.mjs generate
+```
+
+Run from: repo root Prerequisites: Node `22.13.0` or newer. Notes: Regenerates
+the committed Go view of `system-contract.json`; it does not invoke Go.
+
+- Check system-contract drift
+
+```bash
+node scripts/system-contract.mjs check
+```
+
+Run from: repo root Prerequisites: Node `22.13.0` or newer. Notes: Validates
+the contract schema, generated Go file, selected consumers, Wrangler cron,
+public documentation, and the persisted device-poll default. This Node-only
+check runs first in `make check` and does not require the Go toolchain.
+
 ## Go CLI Foundation
 
 - Build the Go CLI binary

@@ -90,3 +90,9 @@ autoMemoryEnabled = false
 [agents.claude.agent_specific.env]
 CLAUDE_CODE_AUTO_CONNECT_IDE = "false"
 ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+
+[[skills.imports]]
+repository = 'https://github.com/emilkowalski/skills'
+selectors = [
+  'skills/apple-design',
+]

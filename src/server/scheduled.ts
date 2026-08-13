@@ -1,4 +1,5 @@
 import { createCorrelationId } from "./correlation.ts";
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
   accountQuotaWindowMaintenanceStatement,
   activeLimitMaintenanceStatement,
@@ -24,7 +25,7 @@ import {
 import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
-export const RUNTIME_CRON_SCHEDULE = "17 * * * *";
+export const RUNTIME_CRON_SCHEDULE = SYSTEM_CONTRACT.scheduledCleanupCron;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const SCHEDULED_CLEANUP_OPERATION = "maintenance.scheduled_cleanup";
 

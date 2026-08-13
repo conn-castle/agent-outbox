@@ -36,6 +36,8 @@
     "worker:dry-run": "corepack pnpm run worker:build && wrangler deploy --dry-run --env-file /dev/null",
     "worker:deploy": "node scripts/worker-deploy.mjs",
     "smoke": "node scripts/foundation.mjs smoke",
+    "contract:generate": "node scripts/system-contract.mjs generate",
+    "contract:check": "node scripts/system-contract.mjs check",
     "smoke-runtime": "node scripts/runtime-smoke.mjs",
     "hosted-health": "node scripts/hosted-health.mjs",
     "billing-smoke": "node scripts/billing-smoke.mjs",
@@ -45,7 +47,7 @@
     "migration:replay": "corepack pnpm run migration:validate-pre-migrate && corepack pnpm run migration:migrate && corepack pnpm run migration:validate",
     "build": "node scripts/foundation.mjs build && corepack pnpm run next:build",
     "doctor": "node scripts/foundation.mjs doctor",
-    "check": "corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test && corepack pnpm run build && corepack pnpm run smoke",
+    "check": "corepack pnpm run contract:check && corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test && corepack pnpm run build && corepack pnpm run smoke",
     "release-check": "make release-check",
     "clean": "node scripts/foundation.mjs clean"
   },

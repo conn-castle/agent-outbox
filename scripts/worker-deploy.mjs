@@ -14,9 +14,11 @@ import {
   DATABASE_CONNECTION_MODE_VAR,
   DATABASE_HYPERDRIVE_BINDING
 } from "../worker/hyperdrive.mjs";
+import { readSystemContract } from "./system-contract.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PRODUCTION_APP_BASE_URL = "https://app.agent-outbox.dev";
+const systemContract = readSystemContract();
+const PRODUCTION_APP_BASE_URL = systemContract.hostedAppBaseUrl;
 const WRANGLER_CONFIG_PATH = path.join(ROOT, "wrangler.jsonc");
 
 export const HYPERDRIVE_ID_ENV_NAME = "CLOUDFLARE_HYPERDRIVE_ID";

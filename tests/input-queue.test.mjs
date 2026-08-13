@@ -474,6 +474,10 @@ test("input request body parser rejects non-file JSON bodies over 128000 bytes",
   assert.equal(response.error.status, 413);
   assert.equal(response.error.code, "request_too_large");
   assert.equal(
+    response.error.message,
+    `Input request body exceeds the ${INPUT_REQUEST_BODY_BYTE_LIMIT.toLocaleString("en-US")} byte limit.`
+  );
+  assert.equal(
     response.error.limit && "limit_reason_code" in response.error.limit
       ? response.error.limit.limit_reason_code
       : null,

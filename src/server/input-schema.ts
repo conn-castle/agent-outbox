@@ -15,8 +15,10 @@ import {
   isSafeColor,
   SUPPORTED_LUCIDE_ICON_NAMES
 } from "../shared/input-schema-rules.ts";
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
-export const INPUT_REQUEST_BODY_BYTE_LIMIT = 128_000;
+export const INPUT_REQUEST_BODY_BYTE_LIMIT =
+  SYSTEM_CONTRACT.inputSubmissionBodyBytes;
 
 export type QueuePriority = "low" | "normal" | "high" | "urgent";
 export type PopupKind =
@@ -309,7 +311,7 @@ export function parseInputSubmission(
         limit: limitErrorMetadata(options.limitProfile, "file_upload_enabled"),
         upgrade: {
           message: "File upload actions require a paid hosted account.",
-          url: "https://app.agent-outbox.dev/upgrade"
+          url: `${SYSTEM_CONTRACT.hostedAppBaseUrl}/upgrade`
         }
       }
     };
@@ -394,7 +396,7 @@ function requestTooLargeError(): ApiErrorInput {
   return {
     status: 413,
     code: "request_too_large",
-    message: "Input request body exceeds the 128,000 byte limit.",
+    message: `Input request body exceeds the ${INPUT_REQUEST_BODY_BYTE_LIMIT.toLocaleString("en-US")} byte limit.`,
     limit: {
       limit_name: "input_request_body_bytes_excluding_files",
       limit_reason_code: "input_request_too_large",

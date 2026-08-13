@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const inputPayloadLimitBytes = 128000
+const inputPayloadLimitBytes = foundation.SystemContractInputSubmissionBodyBytes
 
 type apiRuntime struct {
 	Client foundation.APIClient
@@ -232,7 +232,7 @@ func inputDeleteCommand(opts Options, flags *rootFlags) *cobra.Command {
 }
 
 func outputCheckCommand(opts Options, flags *rootFlags) *cobra.Command {
-	page := pageFlags{PageSize: 25}
+	page := pageFlags{PageSize: foundation.SystemContractOutputPageDefaultLimit}
 	cmd := &cobra.Command{
 		Use:           "check",
 		Short:         "Check ready output without marking it read",
@@ -256,7 +256,7 @@ func outputCheckCommand(opts Options, flags *rootFlags) *cobra.Command {
 	documentCommand(cmd, commandHelpSpec{
 		Purpose:     "Check ready output metadata without marking results read. Auto-pages by default until the API reports no more ready output.",
 		Arguments:   "None.",
-		Flags:       "--page-size sets a 1 to 100 item page size. --cursor starts from a server cursor. --no-auto-page fetches one page and warns if more remains. --json includes pagination metadata. Global flags are available.",
+		Flags:       fmt.Sprintf("--page-size sets a 1 to %d item page size. --cursor starts from a server cursor. --no-auto-page fetches one page and warns if more remains. --json includes pagination metadata. Global flags are available.", foundation.SystemContractOutputPageMaxLimit),
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox output check\nagent-outbox output check --page-size 50 --json\nagent-outbox output check --no-auto-page",
 		ExitCodes:   "0 success. 64 usage. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
@@ -266,7 +266,7 @@ func outputCheckCommand(opts Options, flags *rootFlags) *cobra.Command {
 }
 
 func outputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
-	page := pageFlags{PageSize: 25}
+	page := pageFlags{PageSize: foundation.SystemContractOutputPageDefaultLimit}
 	readAll := false
 	cmd := &cobra.Command{
 		Use:           "read <output_result_id>",
@@ -413,7 +413,12 @@ func outputAckCommand(opts Options, flags *rootFlags) *cobra.Command {
 }
 
 func addPageFlags(cmd *cobra.Command, page *pageFlags) {
-	cmd.Flags().IntVar(&page.PageSize, "page-size", 25, "output page size, 1 to 100")
+	cmd.Flags().IntVar(
+		&page.PageSize,
+		"page-size",
+		foundation.SystemContractOutputPageDefaultLimit,
+		fmt.Sprintf("output page size, 1 to %d", foundation.SystemContractOutputPageMaxLimit),
+	)
 	cmd.Flags().StringVar(&page.Cursor, "cursor", "", "opaque output pagination cursor")
 	cmd.Flags().BoolVar(&page.NoAutoPage, "no-auto-page", false, "fetch only one output page")
 }
@@ -480,7 +485,7 @@ func readInputSubmissionFile(path string) (json.RawMessage, error) {
 		return nil, foundation.NewAppError(foundation.CodeConfig, "Could not read input submission file.")
 	}
 	if len(data) > inputPayloadLimitBytes {
-		return nil, foundation.NewAppError(foundation.CodeRequestTooLarge, "Input submission JSON exceeds the 128000 byte limit.")
+		return nil, foundation.NewAppError(foundation.CodeRequestTooLarge, fmt.Sprintf("Input submission JSON exceeds the %d byte limit.", foundation.SystemContractInputSubmissionBodyBytes))
 	}
 	if err := validateInputSubmissionJSON(data); err != nil {
 		return nil, err
@@ -550,8 +555,8 @@ func containsClearlyUnsafeHTML(value string) bool {
 }
 
 func fetchOutputPages(ctx context.Context, runtime *apiRuntime, kind string, page pageFlags) (*paginatedResult, error) {
-	if page.PageSize < 1 || page.PageSize > 100 {
-		return nil, foundation.NewUsageError("--page-size must be between 1 and 100.")
+	if page.PageSize < 1 || page.PageSize > foundation.SystemContractOutputPageMaxLimit {
+		return nil, foundation.NewUsageError(fmt.Sprintf("--page-size must be between 1 and %d.", foundation.SystemContractOutputPageMaxLimit))
 	}
 
 	cursor := strings.TrimSpace(page.Cursor)
@@ -654,7 +659,7 @@ func validateOutputPage(page *outputPage) error {
 	if page.UnavailableCount != len(page.UnavailableOutputs) {
 		return foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned inconsistent unavailable output counts.")
 	}
-	if page.PageLimit < 1 || page.PageLimit > 100 {
+	if page.PageLimit < 1 || page.PageLimit > foundation.SystemContractOutputPageMaxLimit {
 		return foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned an invalid page limit.")
 	}
 	if page.HasMore {

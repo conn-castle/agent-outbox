@@ -1,5 +1,7 @@
 import Stripe from "stripe";
 
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
+
 import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
 import {
   runProductTransaction,
@@ -12,7 +14,7 @@ import { durationSinceMs, emitRuntimeLog, safeErrorName } from "./logging.ts";
 import { readRawRequestBodyWithLimit } from "./request-body.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
-const BILLING_GRACE_DAYS = 7;
+const BILLING_GRACE_DAYS = SYSTEM_CONTRACT.billingDowngradeGraceDays;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DATE_MILLISECONDS = 8_640_000_000_000_000;
 export const STRIPE_WEBHOOK_BODY_BYTE_LIMIT = 1_048_576;

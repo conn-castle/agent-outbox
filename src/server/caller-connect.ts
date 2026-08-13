@@ -5,6 +5,8 @@ import {
   timingSafeEqual
 } from "node:crypto";
 
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
+
 import type {
   ApiErrorInput,
   ApiFieldError,
@@ -39,9 +41,12 @@ import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
-export const CONNECT_BROWSER_SETUP_CODE_EXPIRES_IN_SECONDS = 10 * 60;
-export const CONNECT_DEVICE_CODE_EXPIRES_IN_SECONDS = 10 * 60;
-export const CONNECT_DEVICE_POLL_INTERVAL_SECONDS = 5;
+export const CONNECT_BROWSER_SETUP_CODE_EXPIRES_IN_SECONDS =
+  SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds;
+export const CONNECT_DEVICE_CODE_EXPIRES_IN_SECONDS =
+  SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds;
+export const CONNECT_DEVICE_POLL_INTERVAL_SECONDS =
+  SYSTEM_CONTRACT.defaultDevicePollIntervalSeconds;
 
 type ConnectResult<TData> =
   { ok: true; data: TData } | { ok: false; error: ApiErrorInput };

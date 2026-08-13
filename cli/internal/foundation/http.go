@@ -27,7 +27,7 @@ import (
 // Download path, not this one, so a generous cap never truncates a real response.
 const (
 	maxJSONResponseBytes       int64 = 64 << 20 // 64 MiB
-	maxOutputFileDownloadBytes int64 = 32_000_000
+	maxOutputFileDownloadBytes int64 = SystemContractRawFileBytes
 )
 
 var defaultHTTPClient = &http.Client{
