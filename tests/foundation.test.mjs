@@ -20,6 +20,7 @@ import {
   runQuiet,
   supabaseProjectsIncludeRef,
   validateCommandsVersionPins,
+  validateDatabaseTestCommand,
   validateGoReleaserTooling,
   validateGoModuleTooling,
   validateMigrationReplayWorkflow,
@@ -1293,8 +1294,9 @@ test("wrangler required secrets stay limited to true Worker secrets", () => {
 });
 
 test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", () => {
-  const databaseVerificationTarget = "run: make test-database";
   const validWorkflow = `
+jobs:
+  migration-replay:
     services:
       postgres:
         image: postgres:17
@@ -1303,13 +1305,36 @@ test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", (
       DATABASE_MIGRATION_URL: postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci
       FLYWAY_DOCKER_NETWORK: host
     steps:
-      - run: make migration-replay
-      - ${databaseVerificationTarget}
+      - name: Replay migrations from scratch
+        run: make migration-replay
+      - name: Run database verification suite
+        run: make test-database
   `;
 
   assert.deepEqual(
     validateMigrationReplayWorkflow({
       ".github/workflows/ci.yml": validWorkflow,
+      ".github/workflows/release-check.yml": validWorkflow
+    }),
+    []
+  );
+
+  const stepScopedDatabaseEnvironment = validWorkflow
+    .replace('      AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"\n', "")
+    .replace(
+      "      DATABASE_MIGRATION_URL: postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci\n",
+      ""
+    )
+    .replace(
+      "        run: make test-database",
+      `        env:
+          AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"
+          DATABASE_MIGRATION_URL: postgresql://postgres:postgres@127.0.0.1:5432/agent_outbox_ci
+        run: make test-database`
+    );
+  assert.deepEqual(
+    validateMigrationReplayWorkflow({
+      ".github/workflows/ci.yml": stepScopedDatabaseEnvironment,
       ".github/workflows/release-check.yml": validWorkflow
     }),
     []
@@ -1321,26 +1346,146 @@ test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", (
       ".github/workflows/release-check.yml": validWorkflow
     }),
     [
-      ".github/workflows/ci.yml must include migration replay token: postgres:17",
-      ".github/workflows/ci.yml must include migration replay token: DATABASE_MIGRATION_URL",
-      ".github/workflows/ci.yml must include migration replay token: FLYWAY_DOCKER_NETWORK: host",
-      ".github/workflows/ci.yml must include migration replay token: make migration-replay",
-      `.github/workflows/ci.yml must include migration replay token: ${databaseVerificationTarget}`,
-      '.github/workflows/ci.yml must include migration replay token: AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"'
+      ".github/workflows/ci.yml must include a migration-replay job",
+      ".github/workflows/ci.yml must include a Postgres 17 service in the migration-replay job",
+      ".github/workflows/ci.yml must include make migration-replay in the named replay step",
+      ".github/workflows/ci.yml must include make test-database in the named database verification step",
+      ".github/workflows/ci.yml must include AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification",
+      ".github/workflows/ci.yml must include DATABASE_MIGRATION_URL for database verification",
+      ".github/workflows/ci.yml must include FLYWAY_DOCKER_NETWORK=host in the migration-replay job",
+      ".github/workflows/ci.yml must include database verification after migration replay"
     ]
   );
 
-  const workflowThatBypassesTheTarget = validWorkflow.replace(
-    databaseVerificationTarget,
-    "run: corepack pnpm run test:database"
+  const invalidWorkflows = [
+    [
+      "a commented-out command",
+      validWorkflow.replace(
+        "        run: make test-database",
+        "        # run: make test-database"
+      ),
+      "make test-database in the named database verification step"
+    ],
+    [
+      "database verification before migration replay",
+      validWorkflow.replace(
+        /      - name: Replay migrations from scratch[\s\S]*?        run: make test-database/,
+        `      - name: Run database verification suite
+        run: make test-database
+      - name: Replay migrations from scratch
+        run: make migration-replay`
+      ),
+      "database verification after migration replay"
+    ],
+    [
+      "database verification in another job",
+      validWorkflow.replace(
+        `      - name: Run database verification suite
+        run: make test-database`,
+        `  database-tests:
+    steps:
+      - name: Run database verification suite
+        run: make test-database`
+      ),
+      "make test-database in the named database verification step"
+    ],
+    [
+      "database opt-in on an unrelated job",
+      validWorkflow.replace(
+        '      AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"\n',
+        ""
+      ).concat(`
+  unrelated:
+    env:
+      AGENT_OUTBOX_ENABLE_DATABASE_TESTS: "1"
+`),
+      "AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification"
+    ],
+    [
+      "database opt-in outside an env block",
+      validWorkflow.replace(
+        "    env:\n      AGENT_OUTBOX_ENABLE_DATABASE_TESTS",
+        "      AGENT_OUTBOX_ENABLE_DATABASE_TESTS"
+      ),
+      "AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification"
+    ]
+  ];
+  for (const [description, workflow, expectedFailure] of invalidWorkflows) {
+    const failures = validateMigrationReplayWorkflow({
+      ".github/workflows/ci.yml": workflow,
+      ".github/workflows/release-check.yml": validWorkflow
+    });
+    assert.ok(
+      failures.includes(
+        `.github/workflows/ci.yml must include ${expectedFailure}`
+      ),
+      description
+    );
+  }
+});
+
+test("validateDatabaseTestCommand enforces the serialized root test command chain", () => {
+  const validPackageJson = {
+    scripts: {
+      "test:database": "node --test --test-concurrency=1 tests/*.test.mjs"
+    }
+  };
+  const validMakefile = `test-database:
+\tcorepack pnpm run test:database
+`;
+
+  assert.deepEqual(
+    validateDatabaseTestCommand(validPackageJson, validMakefile),
+    []
   );
   assert.deepEqual(
-    validateMigrationReplayWorkflow({
-      ".github/workflows/ci.yml": workflowThatBypassesTheTarget,
-      ".github/workflows/release-check.yml": validWorkflow
-    }),
+    validateDatabaseTestCommand(
+      {
+        scripts: {
+          "test:database":
+            "node --test --test-concurrency=1 tests/foundation.test.mjs"
+        }
+      },
+      validMakefile
+    ),
     [
-      `.github/workflows/ci.yml must include migration replay token: ${databaseVerificationTarget}`
+      "package.json test:database must be exactly: node --test --test-concurrency=1 tests/*.test.mjs"
+    ]
+  );
+  assert.deepEqual(
+    validateDatabaseTestCommand(
+      {
+        scripts: {
+          "test:database": "node --test tests/*.test.mjs"
+        }
+      },
+      validMakefile
+    ),
+    [
+      "package.json test:database must be exactly: node --test --test-concurrency=1 tests/*.test.mjs"
+    ]
+  );
+  assert.deepEqual(
+    validateDatabaseTestCommand(
+      validPackageJson,
+      `test-database:
+\t@true
+`
+    ),
+    [
+      "Makefile test-database must delegate only to corepack pnpm run test:database"
+    ]
+  );
+  assert.deepEqual(
+    validateDatabaseTestCommand(
+      validPackageJson,
+      `test-database:
+\tcorepack pnpm run test:database
+\t@true
+`
+    ),
+    [
+      "Makefile test-database must delegate only to corepack pnpm run test:database"
     ]
   );
 });
