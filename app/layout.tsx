@@ -1,19 +1,18 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
-import Link from "next/link";
 import Script from "next/script";
 import type { ReactNode } from "react";
 
-import packageJson from "../package.json";
 import { ClientEventsInit } from "../src/components/observability/ClientEventsInit";
-import { formatVersionLabel } from "../src/server/app-version";
+import { SiteFooter } from "../src/components/SiteFooter";
+import { SiteHeader } from "../src/components/SiteHeader";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate";
 import { cloudflareWebAnalyticsToken } from "../src/server/observability";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Agent Outbox",
-  description: "Human review queue for agent-prepared work."
+  description: "An asynchronous human review queue for AI agents."
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -21,39 +20,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   const webAnalyticsToken = cloudflareWebAnalyticsToken();
   const content = (
     <div className="shell">
-      <header className="topbar">
-        <Link className="brand" href="/">
-          Agent Outbox
-        </Link>
-        <nav className="nav" aria-label="Primary">
-          <Link href="/human">Human</Link>
-          <Link href="/upgrade">Upgrade</Link>
-          <Link href="/sign-in">Sign in</Link>
-          <Link href="/sign-up">Sign up</Link>
-        </nav>
-      </header>
+      <SiteHeader />
       {children}
-      <footer className="site-footer">
-        <p>
-          &copy; {new Date().getUTCFullYear()} Conn Castle Studios.{" "}
-          <span className="footer-version">
-            {formatVersionLabel(packageJson.version)}
-          </span>
-        </p>
-        <nav className="footer-nav" aria-label="Legal and support">
-          <Link href="/contact">Contact</Link>
-          <Link href="/privacy-policy">Privacy</Link>
-          <Link href="/terms-of-service">Terms</Link>
-          <a href="https://github.com/conn-castle/agent-outbox/blob/main/LICENSE">
-            Software license
-          </a>
-        </nav>
-      </footer>
+      <SiteFooter />
     </div>
   );
 
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth">
       <body>
         <ClientEventsInit />
         {webAnalyticsToken ? (
