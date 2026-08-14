@@ -20,14 +20,16 @@ export type ContactSubmission = {
   message: string;
 };
 
+export type ContactEmailMessageBuilder = {
+  from: string;
+  to: string;
+  replyTo: string;
+  subject: string;
+  text: string;
+};
+
 export type ContactEmailBinding = {
-  send(message: {
-    to: string;
-    from: string;
-    replyTo: string;
-    subject: string;
-    text: string;
-  }): Promise<{ messageId: string }>;
+  send(message: ContactEmailMessageBuilder): Promise<{ messageId: string }>;
 };
 
 export type ContactRateLimitBinding = {

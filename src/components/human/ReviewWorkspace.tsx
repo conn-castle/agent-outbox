@@ -219,12 +219,12 @@ export function ReviewWorkspace({
             </span>
             .
           </p>
-          <div className="workspace-counts" aria-label="Queue summary">
+          <div className="workspace-counts" aria-label="Current view summary">
             <span>
-              <b>{pendingCount}</b> pending
+              <b>{pendingCount}</b> pending in this view
             </span>
             <span>
-              <b>{rows.length - pendingCount}</b> answered
+              <b>{rows.length - pendingCount}</b> answered in this view
             </span>
           </div>
         </div>

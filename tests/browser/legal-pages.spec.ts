@@ -1,5 +1,35 @@
 import { expect, test } from "@playwright/test";
 
+test("local development contact API uses the simulated email binding", async ({
+  isMobile,
+  page
+}, testInfo) => {
+  test.skip(isMobile, "the shared simulated binding is exercised once");
+  const contactUrl = new URL("/contact", String(testInfo.project.use.baseURL));
+  contactUrl.hostname = "localhost";
+  await page.goto(contactUrl.href);
+  const result = await page.evaluate(
+    async (submission) => {
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(submission)
+      });
+      return { status: response.status, payload: await response.json() };
+    },
+    {
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      topic: "Product question",
+      message: "I would like to understand how team review works.",
+      company: ""
+    }
+  );
+
+  expect(result.status, JSON.stringify(result.payload)).toBe(200);
+  expect(result.payload).toEqual({ ok: true });
+});
+
 test("public legal and contact routes are reachable from the global footer", async ({
   page
 }) => {

@@ -139,6 +139,25 @@ test('overlay injection keeps comment text inert and yields a parseable script',
   assert.doesNotThrow(() => new Function(rendered.slice(scriptStart, scriptEnd)))
 })
 
+test('file overlay injection preserves non-ASCII restored comments through Latin-1 encoding', () => {
+  const comments = [{ id: 'unicode', comment: 'Keep the em dash — and 中文 😀' }]
+  const rendered = injectHtml(
+    '<html><body>Review me</body></html>',
+    '/token',
+    comments,
+    'globalThis.restoredComments=__INITIAL_COMMENTS__;',
+  )
+  const encoded = Buffer.from(rendered, 'latin1').toString('latin1')
+  const scriptStart = encoded.lastIndexOf('<script>') + '<script>'.length
+  const scriptEnd = encoded.indexOf('</script>', scriptStart)
+  const target = {}
+
+  new Function('globalThis', encoded.slice(scriptStart, scriptEnd))(target)
+
+  assert.deepEqual(target.restoredComments, comments)
+  assert.doesNotMatch(encoded.slice(scriptStart, scriptEnd), /[^\x00-\x7f]/)
+})
+
 test('the injected overlay stays inactive inside an iframe', () => {
   const rendered = injectHtml('<html><body>Framed page</body></html>', '/token', [], OVERLAY_SCRIPT)
   const scriptStart = rendered.lastIndexOf('<script>') + '<script>'.length
@@ -311,6 +330,36 @@ test('the safety timeout completes an otherwise idle review', async t => {
   assert.deepEqual(await review.completion, { action: 'timeout', comments: [] })
 })
 
+test('request filesystem failures return an error without ending the review worker', async t => {
+  const directory = temporaryDirectory(t)
+  const html = join(directory, 'page.html')
+  writeFileSync(html, '<html><body>Review me</body></html>')
+  const events = []
+  const review = await createReviewServer({
+    source: parseSource(html),
+    draftOutput: null,
+    initialComments: [],
+    overlayScript: 'const endpoint=__ENDPOINT__;const comments=__INITIAL_COMMENTS__;',
+    log: (level, message, details) => events.push({ level, message, details }),
+  })
+  t.after(() => review.close())
+  const endpoint = endpointFromHtml(await (await fetch(review.reviewUrl)).text())
+  rmSync(directory, { recursive: true, force: true })
+
+  const failedAsset = await fetch(new URL('/missing.css', review.reviewUrl))
+  assert.equal(failedAsset.status, 500)
+  assert.equal(await failedAsset.text(), 'Review request failed')
+  assert.ok(events.some(event => event.level === 'error' && event.message === 'Review request failed'))
+
+  const cancel = await fetch(new URL(`${endpoint}/cancel`, review.reviewUrl), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(cancel.status, 200)
+  assert.deepEqual(await review.completion, { action: 'cancel', comments: [] })
+})
+
 test('served-page review proxies HTML and assets while removing blocking CSP', async t => {
   let pageOrigin
   let websocketOrigin
@@ -348,8 +397,10 @@ test('served-page review proxies HTML and assets while removing blocking CSP', a
   })
   t.after(() => review.close())
 
-  const browserOrigin = 'http://127.0.0.1:65500'
-  const pageResponse = await fetch(review.reviewUrl, { headers: { origin: browserOrigin } })
+  const browserOrigin = new URL(review.reviewUrl).origin
+  const pageResponse = await fetch(review.reviewUrl, {
+    headers: { origin: browserOrigin, 'sec-fetch-site': 'same-origin' },
+  })
   assert.equal(pageResponse.status, 200)
   assert.equal(pageResponse.headers.get('content-security-policy'), null)
   const pageHtml = await pageResponse.text()
@@ -364,6 +415,16 @@ test('served-page review proxies HTML and assets while removing blocking CSP', a
   const handshake = await websocketHandshake(Number(reviewUrl.port), '/socket', browserOrigin)
   assert.match(handshake, /^HTTP\/1\.1 101 Switching Protocols/)
   assert.equal(websocketOrigin, upstreamOrigin)
+  const crossOriginResponse = await fetch(review.reviewUrl, {
+    headers: { origin: 'https://example.com' },
+  })
+  assert.equal(crossOriginResponse.status, 403)
+  const crossSiteResponse = await fetch(review.reviewUrl, {
+    headers: { 'sec-fetch-site': 'cross-site' },
+  })
+  assert.equal(crossSiteResponse.status, 403)
+  const rejectedHandshake = await websocketHandshake(Number(reviewUrl.port), '/socket', 'https://example.com')
+  assert.match(rejectedHandshake, /^HTTP\/1\.1 403 Forbidden/)
   await fetch(new URL(`${endpoint}/cancel`, review.reviewUrl), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -394,7 +455,7 @@ test('server shutdown destroys upgraded sockets instead of waiting indefinitely'
   })
   t.after(() => review.close())
   const reviewUrl = new URL(review.reviewUrl)
-  const socket = await openWebsocket(Number(reviewUrl.port), '/socket', 'http://127.0.0.1:65500')
+  const socket = await openWebsocket(Number(reviewUrl.port), '/socket', reviewUrl.origin)
   t.after(() => socket.destroy())
 
   const shutdown = await Promise.race([
@@ -422,4 +483,49 @@ test('an unavailable served page returns a visible error instead of hanging', as
   assert.equal(response.status, 502)
   assert.match(await response.text(), /Could not reach local page/)
   assert.ok(events.some(event => event.level === 'error' && event.message === 'Could not reach served-page source'))
+})
+
+test('a stalled served page times out and releases the proxied request', async t => {
+  const upstream = createServer(() => {})
+  const upstreamPort = await listen(upstream)
+  t.after(() => new Promise(resolveClose => upstream.close(resolveClose)))
+  const events = []
+  const review = await createReviewServer({
+    source: parseSource(`http://127.0.0.1:${upstreamPort}/stalled`),
+    draftOutput: null,
+    initialComments: [],
+    overlayScript: OVERLAY_SCRIPT,
+    log: (level, message, details) => events.push({ level, message, details }),
+    upstreamTimeoutMs: 20,
+  })
+  t.after(() => review.close())
+
+  const response = await fetch(review.reviewUrl)
+  assert.equal(response.status, 502)
+  assert.match(await response.text(), /did not respond in time/)
+  assert.ok(events.some(event => (
+    event.level === 'error'
+    && event.message === 'Could not reach served-page source'
+    && /did not respond in time/.test(event.details.error)
+  )))
+})
+
+test('localhost served-page reviews retain the localhost browser hostname', async t => {
+  const upstream = createServer((_request, response) => response.end('<html><body>Local session</body></html>'))
+  const upstreamPort = await new Promise((resolveListen, rejectListen) => {
+    upstream.once('error', rejectListen)
+    upstream.listen(0, 'localhost', () => resolveListen(upstream.address().port))
+  })
+  t.after(() => new Promise(resolveClose => upstream.close(resolveClose)))
+  const review = await createReviewServer({
+    source: parseSource(`http://localhost:${upstreamPort}/session`),
+    draftOutput: null,
+    initialComments: [],
+    overlayScript: OVERLAY_SCRIPT,
+    log: () => {},
+  })
+  t.after(() => review.close())
+
+  assert.equal(new URL(review.reviewUrl).hostname, 'localhost')
+  assert.equal((await fetch(review.reviewUrl)).status, 200)
 })

@@ -292,7 +292,12 @@
     };
   };
   const resolveEndpoint = (reference) => {
-    const parent = document.querySelector(reference.parent_css_selector);
+    let parent;
+    try {
+      parent = document.querySelector(reference.parent_css_selector);
+    } catch {
+      return null;
+    }
     if (!parent || isOverlay(parent)) return null;
     let node = parent;
     for (const index of reference.node_path || []) {
