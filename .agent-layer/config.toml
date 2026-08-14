@@ -96,3 +96,9 @@ repository = 'https://github.com/emilkowalski/skills'
 selectors = [
   'skills/apple-design',
 ]
+
+[[skills.imports]]
+repository = 'https://github.com/nicholasjconn/skills'
+selectors = [
+  'skills/tools/request-html-comments',
+]

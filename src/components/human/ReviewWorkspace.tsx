@@ -180,6 +180,7 @@ export function ReviewWorkspace({
     }
     return count;
   }, [rows, selectedIds]);
+  const pendingCount = rows.filter((row) => row.status === "pending").length;
 
   function setRowSelected(inputItemId: string, selected: boolean) {
     setSelectedIds((current) => {
@@ -208,16 +209,24 @@ export function ReviewWorkspace({
   return (
     <main className="human-workspace">
       <section className="workspace-heading">
-        <div>
-          <p className="eyebrow">Human review</p>
+        <div className="workspace-title">
+          <p className="eyebrow">Your outbox</p>
           <h1>Review queue</h1>
           <p>
-            Signed in as owner of{" "}
+            Clear the decisions your agents are waiting on for{" "}
             <span data-testid="fixture-account-id">
               {session.account.accountId}
             </span>
             .
           </p>
+          <div className="workspace-counts" aria-label="Queue summary">
+            <span>
+              <b>{pendingCount}</b> pending
+            </span>
+            <span>
+              <b>{rows.length - pendingCount}</b> answered
+            </span>
+          </div>
         </div>
         <div className="session-card" data-testid="owner-membership">
           <span>Owner membership</span>

@@ -29,6 +29,23 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "send_email": [
+    {
+      "name": "CONTACT_EMAIL",
+      "destination_address": "contact@agent-outbox.dev",
+      "allowed_sender_addresses": ["contact-form@agent-outbox.dev"]
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "CONTACT_RATE_LIMIT",
+      "namespace_id": "1002",
+      "simple": {
+        "limit": 5,
+        "period": 60
+      }
+    }
+  ],
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",

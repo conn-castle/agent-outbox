@@ -4,10 +4,11 @@ This document defines the implemented HTTP surface for caller integrations:
 caller/account status, input writes, output reads, output acknowledgement,
 output-file download, human-approved caller connect, rotation, revocation,
 disconnect-with-revoke control-plane contracts, and account-scoped billing
-checkout/portal/webhook contracts. Schema details live in
-[input-schema.md](input-schema.md), [output-schema.md](output-schema.md), and
-[errors.md](errors.md). The CLI `upgrade` command is local-only: it opens the
-selected app origin plus `/upgrade`.
+checkout/portal/webhook contracts. It also records the public contact-form
+endpoint. Schema details live in [input-schema.md](input-schema.md),
+[output-schema.md](output-schema.md), and [errors.md](errors.md). The CLI
+`upgrade` command is local-only: it opens the selected app origin plus
+`/upgrade`.
 
 ## Base URL
 
@@ -120,6 +121,52 @@ Body:
       "category": "browser_exception"
     }
   ]
+}
+```
+
+## Public Contact Route
+
+### Send Contact Message
+
+```http
+POST /api/contact
+```
+
+Behavior:
+
+- Accepts the public `/contact` form without caller credentials or a Clerk
+  session.
+- Requires a same-origin `Origin` header and `Content-Type: application/json`.
+- Accepts a bounded name, email address, allowlisted topic, and message. A
+  hidden company field must remain empty.
+- Applies the `CONTACT_RATE_LIMIT` Cloudflare binding by trusted source IP at
+  five attempts per minute.
+- Sends through the destination- and sender-restricted `CONTACT_EMAIL`
+  Cloudflare Email Service binding to `contact@agent-outbox.dev`, with the
+  submitted email address as the reply-to address.
+- Does not write form content to application storage or logs.
+- Returns success only after the email binding accepts the message. Missing
+  bindings or delivery failures return a non-cacheable `503` response.
+- Uses a minimal contact-specific JSON response rather than the authenticated
+  caller API envelope.
+
+Body:
+
+```json
+{
+  "name": "Ada Lovelace",
+  "email": "ada@example.com",
+  "topic": "Product question",
+  "message": "I would like to understand how team review works.",
+  "company": ""
+}
+```
+
+Success:
+
+```json
+{
+  "ok": true
 }
 ```
 

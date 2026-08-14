@@ -23,7 +23,7 @@ export default function PrivacyPolicyPage() {
           primary service content remains available, and the choices available
           to you.
         </p>
-        <p className="legal-updated">Last updated: July 9, 2026</p>
+        <p className="legal-updated">Last updated: August 13, 2026</p>
       </header>
       <article className="legal-content">
         <section className="legal-section">
@@ -132,10 +132,11 @@ export default function PrivacyPolicyPage() {
 
           <h3>Information you send us</h3>
           <p>
-            If you email us, we receive the address, subject, message,
-            attachments, and other information you choose to provide. Do not
-            send passwords, caller API keys, payment-card data, or unnecessary
-            review content in a support message.
+            If you use our contact form or email us, we receive your name and
+            email address, the topic and message you provide, and related
+            delivery metadata. Do not send passwords, caller API keys,
+            payment-card data, or unnecessary review content in a support
+            message.
           </p>
         </LegalSection>
 
@@ -240,8 +241,8 @@ export default function PrivacyPolicyPage() {
             </li>
             <li>
               <strong>Cloudflare:</strong> DNS, hosted application and API
-              execution, request security, structured runtime logs, and
-              privacy-oriented Web Analytics.
+              execution, contact-form email delivery, request security,
+              structured runtime logs, and privacy-oriented Web Analytics.
             </li>
             <li>
               <strong>Supabase:</strong> managed Postgres storage for accounts,
@@ -253,8 +254,8 @@ export default function PrivacyPolicyPage() {
               releases, and source-map-assisted diagnostics.
             </li>
             <li>
-              <strong>Zoho Mail:</strong> receipt and delivery of messages sent
-              to contact@agent-outbox.dev.
+              <strong>Zoho Mail:</strong> receipt and storage of contact-form
+              and email messages delivered to contact@agent-outbox.dev.
             </li>
             <li>
               <strong>Professional advisors and legal process:</strong> lawyers,
@@ -315,7 +316,7 @@ export default function PrivacyPolicyPage() {
               their enforcement windows are no longer live.
             </li>
             <li>
-              Logs, diagnostics, and support email are retained according to
+              Logs, diagnostics, and contact messages are retained according to
               operational need and the configured retention of Cloudflare,
               Sentry, and Zoho Mail.
             </li>

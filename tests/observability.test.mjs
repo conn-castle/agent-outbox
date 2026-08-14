@@ -848,6 +848,12 @@ function rootLayoutTestRequire(specifier) {
   if (specifier === "../src/components/observability/ClientEventsInit") {
     return { ClientEventsInit: () => null };
   }
+  if (specifier === "../src/components/SiteFooter") {
+    return { SiteFooter: () => React.createElement("footer") };
+  }
+  if (specifier === "../src/components/SiteHeader") {
+    return { SiteHeader: () => React.createElement("header") };
+  }
   if (specifier === "./globals.css") {
     return {};
   }

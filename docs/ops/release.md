@@ -226,8 +226,9 @@ For every public release, verify:
 - the global footer links the public policies, contact path, and PolyForm
   software license;
 - sign-up/sign-in and hosted billing surfaces link the Terms and Privacy Policy;
-- `contact@agent-outbox.dev` receives support, privacy, security, abuse,
-  copyright, and legal mail through Zoho Mail;
+- `/contact` successfully sends support, privacy, security, abuse, copyright,
+  and legal messages through the restricted Cloudflare Email Service binding to
+  `contact@agent-outbox.dev` in Zoho Mail;
 - the public Privacy Policy matches
   [privacy-data-inventory.md](privacy-data-inventory.md), including current
   processors and retention behavior;
