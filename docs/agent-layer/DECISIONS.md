@@ -110,3 +110,8 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: Keep both ordinary CI and the release-check workflow running on pull requests, including their intentionally duplicated browser and migration-replay lanes.
     Reason: Development is fully agentic and relies on automated process rather than routine human code inspection, so catching packaging, workflow, and provider-parity regressions before merge is more important than minimizing CI consumption.
     Tradeoffs: Pull requests consume additional runner time and repeat several gates, but gain independent certification and earlier release-specific feedback rather than discovering those failures during a production release.
+
+- Decision 2026-08-14 perimeter-source-license: Permit internal commercial use while prohibiting competing products
+    Decision: License Agent Outbox source under PolyForm Perimeter License 1.0.1, allowing internal use and modification, including commercial internal operations, while prohibiting providing others a product that competes with Agent Outbox, including a competing hosted service.
+    Reason: Nick selected this boundary so individuals and companies can adapt Agent Outbox for their own operations without enabling competing products or hosted services.
+    Tradeoffs: Commercial internal operation is allowed, but the source license cannot be used to provide others a competing product; access to hosted free and paid services remains governed by the Terms and plan limits.

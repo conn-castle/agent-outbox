@@ -63,7 +63,7 @@ test("public legal and contact routes are reachable from the global footer", asy
     page.getByRole("heading", { name: "Terms of Service", level: 1 })
   ).toBeVisible();
   await expect(
-    page.getByText("PolyForm Noncommercial License 1.0.0")
+    page.getByText("PolyForm Perimeter License 1.0.1")
   ).toBeVisible();
   await expect(page.getByText("Monroe County, New York").first()).toBeVisible();
 

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Hosted human-review queue and CLI for agent-prepared work.",
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "PolyForm-Perimeter-1.0.1",
   "packageManager": "pnpm@11.9.0",
   "devEngines": {
     "runtime": {

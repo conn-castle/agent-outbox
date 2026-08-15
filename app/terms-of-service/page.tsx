@@ -21,7 +21,7 @@ export default function TermsOfServicePage() {
           These Terms govern your use of Agent Outbox, the hosted human-review
           queue and caller API. Please read them before using the service.
         </p>
-        <p className="legal-updated">Last updated: July 9, 2026</p>
+        <p className="legal-updated">Last updated: August 14, 2026</p>
       </header>
       <article className="legal-content">
         <section className="legal-section">
@@ -183,11 +183,18 @@ export default function TermsOfServicePage() {
             Agent Outbox source code made available through its public
             repository is separately licensed under the{" "}
             <a href="https://github.com/conn-castle/agent-outbox/blob/main/LICENSE">
-              PolyForm Noncommercial License 1.0.0
+              PolyForm Perimeter License 1.0.1
             </a>
-            . That software license, rather than this hosted-service license,
+            . It permits internal use and modification, including commercial
+            internal operations, but prohibits providing others a product that
+            competes with Agent Outbox, including a competing hosted service.
+          </p>
+          <p>
+            That software license, rather than this hosted-service license,
             controls your rights to copy, modify, or distribute that source
-            code.
+            code. It does not grant access to the hosted Services or change
+            free- or paid-plan features, limits, pricing, or other terms of
+            these Terms.
           </p>
           <p>
             The Agent Outbox and Conn Castle Studios names, marks,

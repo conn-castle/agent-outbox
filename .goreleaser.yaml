@@ -52,7 +52,7 @@ homebrew_casks:
       verified: github.com/conn-castle/agent-outbox/
     homepage: https://agent-outbox.dev
     description: Agent Outbox command line client
-    license: PolyForm-Noncommercial-1.0.0
+    license: PolyForm-Perimeter-1.0.1
 
 release:
   disable: true

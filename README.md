@@ -305,9 +305,16 @@ service-native logs cover observability.
 ## Self-Hosting
 
 Agent Outbox is source-available and can be self-hosted from this repository for
-noncommercial uses. The same application boundary supports local development and
-production operation with configured Cloudflare, Supabase, Clerk, Stripe,
-Sentry, and secret-store resources.
+internal use, including commercial internal operations, under the
+[PolyForm Perimeter License 1.0.1](https://polyformproject.org/licenses/perimeter/1.0.1).
+You may not provide others a product that competes with Agent Outbox, including
+a competing hosted service. The same application boundary supports local
+development and production operation with configured Cloudflare, Supabase,
+Clerk, Stripe, Sentry, and secret-store resources.
+
+Self-hosted deployments are separate from the hosted service. Access to hosted
+free and paid plans remains governed by the
+[Terms of Service](/terms-of-service) and their plan limits.
 
 ## Contributing
 
@@ -320,6 +327,9 @@ execution.
 
 ## License
 
-Agent Outbox is released under the PolyForm Noncommercial License 1.0.0.
-Commercial use requires separate permission from the licensor. See
-[LICENSE](LICENSE).
+Agent Outbox is released under the [PolyForm Perimeter License 1.0.1](LICENSE).
+It permits internal use and modification, including commercial internal
+operations, but prohibits providing others a product that competes with Agent
+Outbox, including a competing hosted service. The hosted free and paid services
+remain governed by the [Terms of Service](/terms-of-service) and their plan
+limits.

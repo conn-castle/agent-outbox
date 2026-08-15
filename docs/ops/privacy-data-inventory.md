@@ -18,9 +18,11 @@ configurable policy.
   or Switzerland.
 - Hosted service terms: `/terms-of-service`.
 - Hosted service privacy policy: `/privacy-policy`.
-- Software license: PolyForm Noncommercial License 1.0.0 in the repository
-  `LICENSE` file. Hosted-service Terms must not contradict source-code rights
-  granted by that license.
+- Software license: PolyForm Perimeter License 1.0.1 in the repository `LICENSE`
+  file. It permits internal use and modification, including commercial internal
+  operations, but prohibits providing others a competing product, including a
+  competing hosted service. Hosted free and paid service access remains governed
+  by the Terms and plan limits.
 
 ## Systems And Data
 
