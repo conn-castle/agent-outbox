@@ -9,6 +9,12 @@
   --paper-muted: #e9e3d7;
   --text: #23282c;
   --muted: #687078;
+  --slate-text: #5f676b;
+  --line-light: #d4cdc1;
+  --text-on-ink: var(--paper-bright);
+  --muted-on-ink: color-mix(in srgb, var(--paper-bright) 72%, var(--ink));
+  --faint-on-ink: color-mix(in srgb, var(--paper-bright) 58%, var(--ink));
+  --line-on-ink: color-mix(in srgb, var(--paper-bright) 13%, transparent);
   --amber: #f2a347;
   --amber-light: #f7bd69;
   --amber-dark: #c86e2d;
@@ -104,7 +110,7 @@ svg {
   width: min(100% - 3rem, 1440px);
   margin: 0 auto;
   padding: 1.15rem 0;
-  color: #f8f5ee;
+  color: var(--text-on-ink);
 }
 
 .brand,
@@ -112,7 +118,7 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 0.75rem;
-  color: #f8f5ee;
+  color: var(--text-on-ink);
   font-size: 1.35rem;
   font-weight: 580;
   letter-spacing: -0.035em;
@@ -144,14 +150,14 @@ svg {
 }
 
 .nav a {
-  color: #c9cdcb;
+  color: var(--muted-on-ink);
   text-decoration: none;
   white-space: nowrap;
   transition: color 150ms ease;
 }
 
 .nav a:hover {
-  color: #fff;
+  color: var(--text-on-ink);
 }
 
 .nav .nav-icon-link {
@@ -216,7 +222,7 @@ svg {
 }
 
 .shell:has(.landing) .topbar {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--line-on-ink);
   background: var(--ink);
 }
 
@@ -231,8 +237,8 @@ svg {
   gap: 3rem;
   padding: 4rem max(1.5rem, calc((100vw - 1280px) / 2)) 1.6rem;
   border-top: 1px solid rgba(242, 163, 71, 0.24);
-  background: #090d0f;
-  color: #90999b;
+  background: var(--ink);
+  color: var(--faint-on-ink);
   font-size: 0.82rem;
 }
 
@@ -283,11 +289,11 @@ svg {
 
 .footer-brand > div > p:last-child {
   max-width: 24rem;
-  color: #858f91;
+  color: var(--faint-on-ink);
 }
 
 .footer-brand .footer-product {
-  color: #f2f1eb;
+  color: var(--text-on-ink);
   font-size: 1rem;
   font-weight: 720;
   letter-spacing: -0.025em;
@@ -303,9 +309,9 @@ svg {
 
 .footer-version {
   padding: 0.25rem 0.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--line-on-ink);
   border-radius: 999px;
-  color: #596367;
+  color: var(--faint-on-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.64rem;
   white-space: nowrap;
@@ -332,7 +338,7 @@ svg {
 
 .footer-navigation p {
   margin-bottom: 0.3rem;
-  color: #f1f0ea;
+  color: var(--text-on-ink);
   font-size: 0.75rem;
   font-weight: 760;
   letter-spacing: 0.08em;
@@ -340,7 +346,7 @@ svg {
 }
 
 .footer-navigation a {
-  color: #969fa1;
+  color: var(--faint-on-ink);
   font-size: 0.84rem;
   text-decoration: none;
   transition: color 160ms ease;
@@ -352,8 +358,8 @@ svg {
 
 .footer-meta {
   padding-top: 1.25rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  color: #7c8588;
+  border-top: 1px solid var(--line-on-ink);
+  color: var(--faint-on-ink);
   font-size: 0.76rem;
 }
 
@@ -368,7 +374,7 @@ svg {
 }
 
 .footer-legal-links a {
-  color: #8a9496;
+  color: var(--faint-on-ink);
   text-decoration: none;
   transition: color 160ms ease;
   white-space: nowrap;
@@ -380,12 +386,12 @@ svg {
 
 .footer-github {
   display: inline-flex;
-  color: #7f898b;
+  color: var(--faint-on-ink);
   transition: color 160ms ease;
 }
 
 .footer-github:hover {
-  color: #aab2b3;
+  color: var(--muted-on-ink);
 }
 
 .footer-github svg {
@@ -893,7 +899,7 @@ code {
 .landing {
   overflow: clip;
   background: var(--ink);
-  color: #f8f5ee;
+  color: var(--text-on-ink);
 }
 
 .landing section[id] {
@@ -971,7 +977,7 @@ code {
 .landing-hero-copy {
   max-width: 680px;
   margin: 2.25rem 0 0;
-  color: #aab1b2;
+  color: var(--muted-on-ink);
   font-size: clamp(1.08rem, 1.4vw, 1.25rem);
   line-height: 1.55;
 }
@@ -988,7 +994,7 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  color: #d4d8d6;
+  color: var(--muted-on-ink);
   font-size: 0.84rem;
   font-weight: 680;
   text-decoration: none;
@@ -999,7 +1005,7 @@ code {
 }
 
 .landing-text-link:hover {
-  color: #fff;
+  color: var(--text-on-ink);
 }
 
 .landing-product {
@@ -1012,7 +1018,7 @@ code {
   display: flex;
   justify-content: space-between;
   gap: 2rem;
-  color: #70797c;
+  color: var(--faint-on-ink);
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -1094,14 +1100,14 @@ code {
 }
 
 .landing-product-footnote p:first-child {
-  color: #a9b0b0;
+  color: var(--muted-on-ink);
   font-size: 0.78rem;
   letter-spacing: 0;
   text-transform: none;
 }
 
 .landing-product-footnote b {
-  color: #f2f1eb;
+  color: var(--text-on-ink);
 }
 
 .landing-thesis {
@@ -1110,8 +1116,8 @@ code {
   gap: 2rem clamp(3rem, 9vw, 9rem);
   padding: clamp(6rem, 8vw, 8rem) max(1.5rem, calc((100vw - 1320px) / 2));
   border-radius: 2rem 2rem 0 0;
-  background: #171c1f;
-  color: #f8f5ee;
+  background: var(--ink-raised);
+  color: var(--text-on-ink);
 }
 
 .landing-thesis-heading h2,
@@ -1136,7 +1142,7 @@ code {
 .landing-thesis-copy p {
   max-width: 34rem;
   margin-bottom: 0;
-  color: #aab1b2;
+  color: var(--muted-on-ink);
   font-size: 1.08rem;
   line-height: 1.7;
 }
@@ -1149,7 +1155,7 @@ code {
 .landing-section-deck p,
 .landing-use-cases header > .landing-section-deck,
 .landing-pricing header > .landing-section-deck {
-  color: #3f484b;
+  color: var(--slate-text);
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.22rem;
   line-height: 1.55;
@@ -1171,13 +1177,13 @@ code {
 }
 
 .landing-thesis .landing-section-deck p {
-  color: #c1c7c6;
+  color: var(--muted-on-ink);
 }
 
 .landing-handoff-list {
   grid-column: 1 / -1;
   margin-top: clamp(3rem, 7vw, 7rem);
-  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  border-top: 1px solid var(--line-on-ink);
 }
 
 .landing-handoff-list article {
@@ -1186,7 +1192,7 @@ code {
   gap: clamp(1.5rem, 5vw, 5rem);
   align-items: start;
   padding: 2rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
+  border-bottom: 1px solid var(--line-on-ink);
 }
 
 .landing-handoff-list article > p:first-child {
@@ -1203,12 +1209,12 @@ code {
   font-weight: 680;
   letter-spacing: -0.04em;
   line-height: 1.15;
-  color: #f8f5ee;
+  color: var(--text-on-ink);
 }
 
 .landing-handoff-list article > p:last-child {
   margin-bottom: 0;
-  color: #9ca5a7;
+  color: var(--faint-on-ink);
   font-size: 0.97rem;
   line-height: 1.7;
 }
@@ -1233,7 +1239,7 @@ code {
 
 .landing-review-copy > p:not(.landing-index) {
   margin: 1.6rem 0 0;
-  color: #626a6d;
+  color: var(--slate-text);
   font-size: 1.08rem;
   line-height: 1.7;
 }
@@ -1243,7 +1249,7 @@ code {
   gap: 0;
   margin: 2.2rem 0 0;
   padding: 0;
-  border-top: 1px solid #d4cdc1;
+  border-top: 1px solid var(--line-light);
   list-style: none;
 }
 
@@ -1252,8 +1258,8 @@ code {
   align-items: center;
   gap: 0.75rem;
   padding: 0.9rem 0;
-  border-bottom: 1px solid #d4cdc1;
-  color: #4e565a;
+  border-bottom: 1px solid var(--line-light);
+  color: var(--slate-text);
   font-size: 0.92rem;
   font-weight: 650;
 }
@@ -1327,9 +1333,9 @@ code {
 
 .landing-use-cases {
   padding: clamp(6rem, 8vw, 8rem) max(1.5rem, calc((100vw - 1320px) / 2));
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: #111618;
-  color: #f8f5ee;
+  border-top: 1px solid var(--line-on-ink);
+  background: var(--ink-raised);
+  color: var(--text-on-ink);
 }
 
 .landing-use-cases header {
@@ -1352,14 +1358,14 @@ code {
   grid-column: 2;
   grid-row: 1 / span 2;
   margin: 0 0 0.4rem;
-  color: #c1c7c6;
+  color: var(--muted-on-ink);
   font-size: 1.08rem;
   line-height: 1.7;
 }
 
 .landing-use-case-list {
   margin-top: clamp(4rem, 6vw, 6rem);
-  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  border-top: 1px solid var(--line-on-ink);
 }
 
 .landing-use-case-list article {
@@ -1368,7 +1374,7 @@ code {
   gap: clamp(1.5rem, 5vw, 5rem);
   align-items: start;
   padding: 2.1rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
+  border-bottom: 1px solid var(--line-on-ink);
 }
 
 .landing-use-case-number {
@@ -1395,13 +1401,13 @@ code {
   font-weight: 680;
   letter-spacing: -0.04em;
   line-height: 1.18;
-  color: #f8f5ee;
+  color: var(--text-on-ink);
 }
 
 .landing-use-case-copy {
   max-width: 34rem;
   margin-bottom: 0;
-  color: #a3abad;
+  color: var(--faint-on-ink);
   font-size: 0.97rem;
   line-height: 1.7;
 }
@@ -1413,7 +1419,7 @@ code {
   align-items: center;
   min-height: 50rem;
   padding: clamp(6rem, 8vw, 8rem) max(1.5rem, calc((100vw - 1180px) / 2));
-  border-top: 1px solid #d8d1c5;
+  border-top: 1px solid var(--line-light);
   background: var(--paper);
   color: var(--text);
 }
@@ -1487,7 +1493,7 @@ code {
 .landing-mobile-copy > p:not(.landing-index):not(.landing-proof-label) {
   max-width: 34rem;
   margin: 1.6rem 0 0;
-  color: #626a6d;
+  color: var(--slate-text);
   font-size: 1.08rem;
   line-height: 1.7;
 }
@@ -1496,7 +1502,7 @@ code {
   margin: 2.5rem 0 0;
   padding-top: 1rem;
   border-top: 1px solid rgba(35, 43, 46, 0.12);
-  color: #667174;
+  color: var(--slate-text);
   font-size: 0.73rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -1509,7 +1515,7 @@ code {
   gap: clamp(4rem, 10vw, 10rem);
   align-items: center;
   padding: clamp(6rem, 8vw, 8rem) max(1.5rem, calc((100vw - 1320px) / 2));
-  border-top: 1px solid #d8d1c5;
+  border-top: 1px solid var(--line-light);
   background: var(--paper-bright);
   color: var(--text);
 }
@@ -1526,7 +1532,7 @@ code {
 .landing-install-note {
   max-width: 33rem;
   margin: 2.25rem 0 0;
-  color: #626a6d;
+  color: var(--slate-text);
   font-size: 1rem;
   line-height: 1.65;
 }
@@ -1536,15 +1542,15 @@ code {
   grid-template-columns: repeat(3, 1fr);
   margin: 0;
   padding: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom: 1px solid var(--line-on-ink);
   list-style: none;
 }
 
 .landing-install-panel {
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line-on-ink);
   border-radius: 0.9rem;
-  background: #090c0e;
+  background: var(--ink);
   box-shadow: 0 2.5rem 7rem rgba(0, 0, 0, 0.32);
 }
 
@@ -1558,12 +1564,12 @@ code {
 }
 
 .landing-install-steps li + li {
-  border-left: 1px solid rgba(255, 255, 255, 0.09);
+  border-left: 1px solid var(--line-on-ink);
 }
 
 .landing-install-steps p {
   margin: 0;
-  color: #c9cfce;
+  color: var(--muted-on-ink);
   font-size: 0.86rem;
   font-weight: 650;
   line-height: 1.35;
@@ -1588,15 +1594,15 @@ code {
   max-width: none;
   margin: 0;
   padding: 0.95rem 1.25rem 1.05rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  border-top: 1px solid var(--line-on-ink);
   background: rgba(255, 255, 255, 0.018);
-  color: #a7b0b1;
+  color: var(--faint-on-ink);
   font-size: 0.78rem;
   line-height: 1.6;
 }
 
 .landing-terminal-help code {
-  color: #d2d7d6;
+  color: var(--muted-on-ink);
 }
 
 .landing-terminal {
@@ -1604,7 +1610,7 @@ code {
   margin-top: 0;
   border: 0;
   border-radius: 0;
-  background: #090c0e;
+  background: var(--ink);
   box-shadow: none;
 }
 
@@ -1612,9 +1618,9 @@ code {
   display: flex;
   justify-content: space-between;
   padding: 0.8rem 1rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-  background: #0d1214;
-  color: #a3adaf;
+  border-bottom: 1px solid var(--line-on-ink);
+  background: var(--ink-raised);
+  color: var(--faint-on-ink);
   font-size: 0.66rem;
 }
 
@@ -1622,7 +1628,7 @@ code {
   margin: 0;
   padding: clamp(1.5rem, 4vw, 3rem);
   overflow-x: auto;
-  color: #d7dbd9;
+  color: var(--muted-on-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: clamp(0.72rem, 1.05vw, 0.9rem);
   line-height: 1.9;
@@ -1638,7 +1644,7 @@ code {
 }
 
 .landing-terminal code i {
-  color: #83ae84;
+  color: var(--green);
   font-style: normal;
 }
 
@@ -1649,9 +1655,9 @@ code {
 
 .landing-pricing {
   padding: clamp(5rem, 6vw, 6rem) max(1.5rem, calc((100vw - 1320px) / 2));
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: #111618;
-  color: #f8f5ee;
+  border-top: 1px solid var(--line-on-ink);
+  background: var(--ink-raised);
+  color: var(--text-on-ink);
 }
 
 .landing-pricing header {
@@ -1670,7 +1676,7 @@ code {
   grid-column: 2;
   grid-row: 1 / span 2;
   margin: 0 0 0.4rem;
-  color: #c1c7c6;
+  color: var(--muted-on-ink);
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.22rem;
   line-height: 1.55;
@@ -1726,7 +1732,7 @@ code {
 }
 
 .landing-plan-price span {
-  color: #8d9799;
+  color: var(--faint-on-ink);
   font-size: 0.8rem;
   line-height: 1.4;
   white-space: nowrap;
@@ -1736,7 +1742,7 @@ code {
   max-width: 25rem;
   min-height: 3.1em;
   margin: 1rem 0 0;
-  color: #abb3b4;
+  color: var(--muted-on-ink);
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1rem;
   line-height: 1.55;
@@ -1748,7 +1754,7 @@ code {
   align-content: start;
   margin: 1.5rem 0 0;
   padding: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.11);
+  border-top: 1px solid var(--line-on-ink);
   list-style: none;
 }
 
@@ -1757,8 +1763,8 @@ code {
   align-items: center;
   gap: 0.75rem;
   padding: 0.68rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.11);
-  color: #c5cbca;
+  border-bottom: 1px solid var(--line-on-ink);
+  color: var(--muted-on-ink);
   font-size: 0.82rem;
   font-weight: 650;
 }
@@ -1780,7 +1786,7 @@ code {
   padding: 0.75rem 1rem;
   border: 1px solid rgba(255, 255, 255, 0.34);
   border-radius: 0.55rem;
-  color: #f8f5ee;
+  color: var(--text-on-ink);
   font-size: 0.82rem;
   font-weight: 760;
   text-decoration: none;
@@ -1820,7 +1826,7 @@ code {
 .landing-pricing-note {
   width: min(100%, 48rem);
   margin: 1rem auto 0;
-  color: #778184;
+  color: var(--faint-on-ink);
   font-size: 0.72rem;
   line-height: 1.6;
 }
@@ -1830,7 +1836,7 @@ code {
   flex-direction: column;
   align-items: center;
   padding: clamp(7rem, 10vw, 10rem) 1.5rem;
-  border-top: 1px solid #d8d1c5;
+  border-top: 1px solid var(--line-light);
   background:
     radial-gradient(
       circle at 50% 50%,
@@ -1861,7 +1867,7 @@ code {
 
 .landing-final-cta > p:last-child {
   margin: 1rem 0 0;
-  color: #737a7c;
+  color: var(--slate-text);
   font-size: 0.7rem;
 }
 
