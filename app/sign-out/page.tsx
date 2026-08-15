@@ -15,7 +15,7 @@ export default function SignOutPage() {
   }
 
   return (
-    <main className="main">
+    <main className="main auth-main">
       <section className="panel">
         <h1>Sign out</h1>
         <p>End the current Clerk-backed human session.</p>

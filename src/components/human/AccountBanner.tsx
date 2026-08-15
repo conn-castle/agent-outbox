@@ -1,4 +1,5 @@
 import type { AccountStatusData, StatusResult } from "../../server/status.ts";
+import { formatUtcTimestamp } from "./review-format";
 
 export function AccountBanner({
   banner
@@ -7,48 +8,64 @@ export function AccountBanner({
 }) {
   if (!banner.ok) {
     return (
-      <section className="account-banner" aria-label="Account status">
-        <strong>Account status unavailable</strong>
-        <span>{banner.error.message}</span>
-      </section>
+      <details className="account-banner" aria-label="Account status">
+        <summary>
+          <span className="account-avatar">!</span>
+          <span>Account</span>
+        </summary>
+        <div className="account-popover">
+          <strong>Account status unavailable</strong>
+          <span>{banner.error.message}</span>
+        </div>
+      </details>
     );
   }
 
   const { data } = banner;
+  const accountLabel = data.label ?? "Account";
+  const summaryLabel = accountLabel.startsWith("Browser fixture account:")
+    ? "Demo workspace"
+    : accountLabel;
   const storageLimit = data.storage.limit_bytes
     ? `${Math.round((data.storage.stored_bytes / data.storage.limit_bytes) * 100)}%`
     : "unlimited";
 
   return (
-    <section className="account-banner" aria-label="Account status">
-      <div>
-        <strong>{data.label ?? "Review account"}</strong>
-        <span>
-          {data.effective_tier} tier · {data.billing_status.replace("_", " ")}
+    <details className="account-banner" aria-label="Account status">
+      <summary>
+        <span className="account-avatar">
+          {summaryLabel.charAt(0).toUpperCase()}
         </span>
-      </div>
-      <div>
-        <strong>File uploads</strong>
-        <span>{data.file_upload_enabled ? "enabled" : "not enabled"}</span>
-      </div>
-      <div>
-        <strong>Storage</strong>
-        <span>{storageLimit}</span>
-      </div>
-      {data.grace_ends_at ? (
-        <div>
-          <strong>Downgrade grace ends</strong>
-          <span>{formatTimestamp(data.grace_ends_at)}</span>
+        <span>{summaryLabel}</span>
+      </summary>
+      <div className="account-popover">
+        <header>
+          <strong>{accountLabel}</strong>
+          <span>
+            {data.effective_tier} · {data.billing_status.replace("_", " ")}
+          </span>
+        </header>
+        <dl>
+          <div>
+            <dt>File uploads</dt>
+            <dd>{data.file_upload_enabled ? "Enabled" : "Not enabled"}</dd>
+          </div>
+          <div>
+            <dt>Storage used</dt>
+            <dd>{storageLimit}</dd>
+          </div>
+          {data.grace_ends_at ? (
+            <div>
+              <dt>Grace ends</dt>
+              <dd>{formatUtcTimestamp(data.grace_ends_at)}</dd>
+            </div>
+          ) : null}
+        </dl>
+        <div className="account-popover-actions">
+          <a href="/upgrade">Manage plan</a>
+          <a href="/sign-out">Sign out</a>
         </div>
-      ) : null}
-    </section>
+      </div>
+    </details>
   );
-}
-
-function formatTimestamp(value: string) {
-  return new Intl.DateTimeFormat("en", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC"
-  }).format(new Date(value));
 }

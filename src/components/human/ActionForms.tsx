@@ -3,16 +3,18 @@
 import { useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useSearchParams } from "next/navigation";
+import { X } from "lucide-react";
 
 import { submitHumanAnswer, undoHumanAnswer } from "../../../app/human/actions";
 import type { JsonValue } from "../../server/human-answer.ts";
 import type {
   HumanReviewAction,
-  HumanReviewDetail
+  HumanReviewBulkAction,
+  HumanReviewDetail,
+  HumanReviewListRow
 } from "../../server/human-review.ts";
+import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../shared/human-review-view";
 import { HumanIcon } from "./TypedContent";
-
-const VIEW_STATE_KEYS = ["search", "status", "sort", "page"] as const;
 
 /**
  * Hidden inputs carrying the current URL view state (search/status/sort/page)
@@ -22,7 +24,7 @@ export function ViewStateFields() {
   const searchParams = useSearchParams();
   return (
     <>
-      {VIEW_STATE_KEYS.map((key) => {
+      {HUMAN_REVIEW_VIEW_PARAM_KEYS.map((key) => {
         const value = searchParams.get(key);
         return value ? (
           <input key={key} type="hidden" name={`view.${key}`} value={value} />
@@ -32,21 +34,78 @@ export function ViewStateFields() {
   );
 }
 
-export function ActionForm({
+export function InlineQuickAction({
+  row,
+  action
+}: {
+  row: HumanReviewListRow;
+  action: HumanReviewBulkAction;
+}) {
+  const semanticClass = destructiveActionValues.has(action.value)
+    ? " destructive"
+    : "";
+  return (
+    <form className="inline-action-form" action={submitHumanAnswer}>
+      <ViewStateFields />
+      <HumanAnswerFields
+        target={row}
+        actionValue={action.value}
+        popupKind="none"
+        actionLabel={action.display}
+        noticeSubject={plainText(row.titleHtml)}
+        returnToQueue
+      />
+      <SubmitButton
+        className={`inline-action-button${semanticClass}`}
+        icon={action.icon}
+        label={action.display}
+      />
+    </form>
+  );
+}
+
+export function ActionTrigger({
   detail,
   action,
-  variant
+  variant,
+  active,
+  onActivate
 }: {
   detail: HumanReviewDetail;
   action: HumanReviewAction;
   variant: "primary" | "overflow";
+  active: boolean;
+  onActivate: () => void;
 }) {
+  const semanticClass = destructiveActionValues.has(action.value)
+    ? " destructive"
+    : "";
   if (!action.answerable) {
     return (
       <button
-        className={variant === "primary" ? "action-button" : "secondary-button"}
+        className={`${
+          variant === "primary" ? "action-button" : "secondary-button"
+        }${semanticClass}`}
         type="button"
         disabled
+      >
+        <HumanIcon name={action.icon} />
+        <span>{action.display}</span>
+      </button>
+    );
+  }
+
+  if (action.popupKind !== "none") {
+    return (
+      <button
+        className={
+          variant === "primary"
+            ? `action-button action-trigger${semanticClass}${active ? " active" : ""}`
+            : `secondary-button action-trigger${semanticClass}${active ? " active" : ""}`
+        }
+        type="button"
+        aria-expanded={active}
+        onClick={onActivate}
       >
         <HumanIcon name={action.icon} />
         <span>{action.display}</span>
@@ -57,21 +116,79 @@ export function ActionForm({
   return (
     <form className="action-form" action={submitHumanAnswer}>
       <ViewStateFields />
-      <input type="hidden" name="inputItemId" value={detail.inputItemId} />
-      <input type="hidden" name="callerId" value={detail.caller.callerId} />
-      <input
-        type="hidden"
-        name="expectedRevision"
-        value={detail.currentRevision}
+      <HumanAnswerFields
+        target={detail}
+        actionValue={action.value}
+        popupKind={action.popupKind}
+        actionLabel={action.display}
+        noticeSubject={plainText(detail.titleHtml)}
       />
-      <input type="hidden" name="actionValue" value={action.value} />
-      <input type="hidden" name="popupKind" value={action.popupKind} />
-      <ActionResponseFields action={action} />
       <SubmitButton
-        className={variant === "primary" ? "action-button" : "secondary-button"}
+        className={`${
+          variant === "primary" ? "action-button" : "secondary-button"
+        }${semanticClass}`}
         icon={action.icon}
         label={action.display}
       />
+    </form>
+  );
+}
+
+const destructiveActionValues = new Set([
+  "decline_post",
+  "delete",
+  "delete_draft",
+  "ignore",
+  "reject_send",
+  "roll_back"
+]);
+
+export function ActionComposer({
+  detail,
+  action,
+  onCancel
+}: {
+  detail: HumanReviewDetail;
+  action: HumanReviewAction;
+  onCancel: () => void;
+}) {
+  return (
+    <form className="action-composer" action={submitHumanAnswer}>
+      <ViewStateFields />
+      <HumanAnswerFields
+        target={detail}
+        actionValue={action.value}
+        popupKind={action.popupKind}
+        actionLabel={action.display}
+        noticeSubject={plainText(detail.titleHtml)}
+      />
+      <header>
+        <div>
+          <span>Complete action</span>
+          <strong>{action.display}</strong>
+        </div>
+        <button
+          className="composer-close"
+          type="button"
+          onClick={onCancel}
+          aria-label="Close action"
+        >
+          <X aria-hidden="true" />
+        </button>
+      </header>
+      <div className="composer-fields">
+        <ActionResponseFields action={action} />
+      </div>
+      <footer>
+        <button className="secondary-button" type="button" onClick={onCancel}>
+          Cancel
+        </button>
+        <SubmitButton
+          className="action-button"
+          icon={action.icon}
+          label={`Submit ${action.display}`}
+        />
+      </footer>
     </form>
   );
 }
@@ -104,6 +221,26 @@ export function UndoAnswerForm({ detail }: { detail: HumanReviewDetail }) {
   );
 }
 
+export function UndoNoticeForm({
+  inputItemId,
+  callerId,
+  outputResultId
+}: {
+  inputItemId: string;
+  callerId: string;
+  outputResultId: string;
+}) {
+  return (
+    <form className="notice-undo-form" action={undoHumanAnswer}>
+      <ViewStateFields />
+      <input type="hidden" name="inputItemId" value={inputItemId} />
+      <input type="hidden" name="callerId" value={callerId} />
+      <input type="hidden" name="outputResultId" value={outputResultId} />
+      <SubmitButton className="notice-undo-button" label="Undo" />
+    </form>
+  );
+}
+
 function ActionResponseFields({ action }: { action: HumanReviewAction }) {
   switch (action.popupKind) {
     case "none":
@@ -119,6 +256,41 @@ function ActionResponseFields({ action }: { action: HumanReviewAction }) {
     case "file_upload":
       return <FileUploadFields action={action} />;
   }
+}
+
+function HumanAnswerFields({
+  target,
+  actionValue,
+  popupKind,
+  actionLabel,
+  noticeSubject,
+  returnToQueue = false
+}: {
+  target: Pick<HumanReviewDetail, "inputItemId" | "caller" | "currentRevision">;
+  actionValue: string;
+  popupKind: HumanReviewAction["popupKind"];
+  actionLabel: string;
+  noticeSubject: string;
+  returnToQueue?: boolean;
+}) {
+  return (
+    <>
+      <input type="hidden" name="inputItemId" value={target.inputItemId} />
+      <input type="hidden" name="callerId" value={target.caller.callerId} />
+      <input
+        type="hidden"
+        name="expectedRevision"
+        value={target.currentRevision}
+      />
+      <input type="hidden" name="actionValue" value={actionValue} />
+      <input type="hidden" name="popupKind" value={popupKind} />
+      <input type="hidden" name="noticeAction" value={actionLabel} />
+      <input type="hidden" name="noticeSubject" value={noticeSubject} />
+      {returnToQueue ? (
+        <input type="hidden" name="returnToQueue" value="1" />
+      ) : null}
+    </>
+  );
 }
 
 function FreeTextFields({ action }: { action: HumanReviewAction }) {
@@ -271,6 +443,19 @@ function recordValue(value: JsonValue): Record<string, JsonValue> {
 
 function stringValue(value: JsonValue | undefined) {
   return typeof value === "string" ? value : "";
+}
+
+function plainText(html: string) {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function numberOrUndefined(value: JsonValue | undefined) {

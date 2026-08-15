@@ -21,14 +21,22 @@ export function BulkActions({
   const compatibleActions = commonNoPopupActions(pendingRows);
   const disabled = pendingRows.length === 0 || compatibleActions.length === 0;
 
+  if (pendingRows.length === 0 && offPageSelectedCount === 0) {
+    return null;
+  }
+
   return (
     <form className="bulk-actions" action={submitBulkHumanAnswers}>
       <ViewStateFields />
       <div>
-        <strong>Bulk action</strong>
-        <span>
+        <strong>
           {pendingRows.length} selected pending{" "}
           {pendingRows.length === 1 ? "row" : "rows"}
+        </strong>
+        <span>
+          {compatibleActions.length > 0
+            ? "Choose one shared action"
+            : "No shared quick action"}
         </span>
         {offPageSelectedCount > 0 ? (
           <span>
@@ -50,7 +58,7 @@ export function BulkActions({
         />
       ))}
       <label>
-        <span className="sr-only">Compatible no-popup action</span>
+        <span className="sr-only">Compatible quick action</span>
         <select name="bulkActionValue" disabled={disabled} required>
           {compatibleActions.map((action) => (
             <option key={action.value} value={action.value}>

@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type { HumanAccountSession } from "./human-session.ts";
 import {
   REVIEW_PAGE_SIZE,
@@ -7,15 +5,31 @@ import {
   type HumanReviewListRow
 } from "./human-review.ts";
 import type { AccountStatusData, StatusResult } from "./status.ts";
+import {
+  browserFixtureCoreReviewDetails,
+  fixtureUuid,
+  STORYBOARD_USE_CASES
+} from "./human-review-fixture-scenarios.ts";
+import type { HumanReviewView } from "../shared/human-review-view.ts";
+
 export { humanBrowserFixtureEnabled } from "./human-review-fixture-gate.ts";
 
-const fixtureCallerId = "00000000-0000-4000-8000-000000000503";
 const fixtureExistingProviderSubject = "browser-fixture-existing-human";
 const fixtureSignupProviderSubject = "browser-fixture-first-time-human";
 
 type BrowserFixtureSessionInput = {
   firstTimeSignup?: boolean;
   providerSubject?: string | null;
+};
+
+export type BrowserFixtureStoryboardScenario = {
+  inputItemId: string;
+  callerItemId: string;
+  title: string;
+  rowType: string;
+  caller: string;
+  useCase: string;
+  coverage: string[];
 };
 
 export function browserFixtureSignupHref() {
@@ -49,23 +63,35 @@ export function browserFixtureHumanSession(
   };
 }
 
-export function browserFixtureReviewRows(): HumanReviewListRow[] {
-  return browserFixtureReviewDetails().map(
+type BrowserFixtureReviewOptions = {
+  includePaginationRows?: boolean;
+  resolvedItemId?: string;
+};
+
+export function browserFixtureReviewRows(
+  options: BrowserFixtureReviewOptions = {}
+): HumanReviewListRow[] {
+  return browserFixtureReviewDetails(options).map(
     ({ detailsHtml: _details, ...row }) => row
   );
 }
 
-export function browserFixtureReviewPage(view: {
-  search: string;
-  status: "all" | "pending" | "answered";
-  sort: "priority" | "updated_at";
-  page: number;
-}) {
+export function browserFixtureReviewPage(
+  view: HumanReviewView,
+  options: BrowserFixtureReviewOptions = {}
+) {
+  const effectiveOptions = {
+    includePaginationRows:
+      options.includePaginationRows ||
+      view.page > 1 ||
+      view.search.toLowerCase().includes("beyond one hundred")
+  };
   const terms = view.search.toLowerCase();
   // Mirrors the production SQL exactly: tag-stripped matching over the three
   // HTML columns plus plain matching on caller item id and caller display name.
   const stripTags = (html: string) => html.replaceAll(/<[^>]*>/g, " ");
-  const filtered = browserFixtureReviewRows().filter((row) => {
+  const filtered = browserFixtureReviewRows(effectiveOptions).filter((row) => {
+    if (row.inputItemId === options.resolvedItemId) return false;
     if (view.status !== "all" && row.status !== view.status) return false;
     if (!terms) return true;
     return [
@@ -94,13 +120,41 @@ export function browserFixtureReviewPage(view: {
 }
 
 export function browserFixtureReviewDetail(
-  inputItemId: string | null
+  inputItemId: string | null,
+  _options: BrowserFixtureReviewOptions = {}
 ): HumanReviewDetail | null {
-  const details = browserFixtureReviewDetails();
+  // Direct item links do not carry the fixture-only dataset flag. Keep tail
+  // details addressable so pagination navigation and server-action redirects
+  // exercise the same item URL shape as production.
+  const details = browserFixtureReviewDetails({ includePaginationRows: true });
   if (inputItemId) {
     return details.find((detail) => detail.inputItemId === inputItemId) ?? null;
   }
   return details[0] ?? null;
+}
+
+export function browserFixtureStoryboardDetails(): HumanReviewDetail[] {
+  return browserFixtureCoreReviewDetails();
+}
+
+export function browserFixtureStoryboardScenarios(): BrowserFixtureStoryboardScenario[] {
+  return browserFixtureStoryboardDetails().map((detail) => {
+    const useCase = STORYBOARD_USE_CASES[detail.callerItemId];
+    if (!useCase) {
+      throw new Error(
+        `Missing storyboard use case for fixture ${detail.callerItemId}.`
+      );
+    }
+    return {
+      inputItemId: detail.inputItemId,
+      callerItemId: detail.callerItemId,
+      title: plainFixtureText(detail.titleHtml),
+      rowType: detail.rowType.display,
+      caller: detail.caller.displayName,
+      useCase,
+      coverage: fixtureCoverage(detail)
+    };
+  });
 }
 
 export function browserFixtureAccountBanner(
@@ -134,424 +188,85 @@ function fixtureProviderSubject(input: BrowserFixtureSessionInput) {
   return fixtureExistingProviderSubject;
 }
 
-function fixtureUuid(seed: string) {
-  const hash = createHash("sha256").update(seed).digest("hex");
-  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(
-    13,
-    16
-  )}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
-}
-
-function browserFixtureReviewDetails(): HumanReviewDetail[] {
-  const details: HumanReviewDetail[] = [
-    {
-      inputItemId: "00000000-0000-4000-8000-000000000511",
-      callerItemId: "steward-brief-101",
-      status: "pending",
-      priority: "urgent",
-      currentRevision: 3,
-      rowType: { display: "Steward Brief", icon: "inbox" },
-      rowAccentColor: "#0f766e",
-      titleHtml: "<strong>Review neighborhood permit brief</strong>",
-      subtitleHtml: "A resident-facing summary needs a final human check.",
-      cornerHtml: "Rev 3",
-      summaryHtml:
-        "<p>Confirm the brief is accurate, calm, and ready for handoff.</p>",
-      detailsHtml:
-        "<p>The system drafted a short permit explanation from structured notes. Verify the recommendation, edit only if the popup asks for it, and keep the response generic.</p><ul><li>No source-system action is performed here.</li><li>The caller receives only the selected answer value.</li></ul>",
-      cardVisual: {
-        kind: "numeric_bar",
-        payload: {
-          label: "Confidence",
-          value: 82,
-          display: "82",
-          unit: "%",
-          min_value: 0,
-          max_value: 100
-        }
-      },
-      skipDisabled: false,
-      createdAt: "2026-07-01T13:00:00.000Z",
-      updatedAt: "2026-07-01T13:20:00.000Z",
-      answeredAt: null,
-      caller: fixtureCaller(),
-      output: null,
-      bulkActions: [
-        {
-          displayOrder: 0,
-          display: "Approve",
-          icon: "check",
-          value: "approve"
-        }
-      ],
-      linkButtons: [
-        {
-          displayOrder: 0,
-          display: "Open context",
-          icon: "external-link",
-          url: "https://example.com/context/steward-brief-101"
-        }
-      ],
-      actions: [
-        {
-          displayOrder: 0,
-          display: "Approve",
-          icon: "check",
-          value: "approve",
-          overflow: false,
-          popupKind: "none",
-          popupPayload: {},
-          answerable: true,
-          options: []
-        },
-        {
-          displayOrder: 1,
-          display: "Request edit",
-          icon: "send",
-          value: "request_edit",
-          overflow: false,
-          popupKind: "free_text",
-          popupPayload: {
-            label: "Requested change",
-            placeholder: "Name the one change needed before handoff.",
-            multiline: true,
-            min_length: 4,
-            max_length: 240
-          },
-          answerable: true,
-          options: []
-        },
-        {
-          displayOrder: 2,
-          display: "Attach evidence",
-          icon: "upload",
-          value: "attach_evidence",
-          overflow: false,
-          popupKind: "file_upload",
-          popupPayload: {
-            label: "Evidence file",
-            accept_mime_types: ["application/pdf", "text/plain"]
-          },
-          answerable: true,
-          options: []
-        },
-        {
-          displayOrder: 3,
-          display: "Set review lane",
-          icon: "chevron-down",
-          value: "set_lane",
-          overflow: true,
-          popupKind: "single_select",
-          popupPayload: { label: "Review lane" },
-          answerable: true,
-          options: [
-            {
-              displayOrder: 0,
-              display: "Policy",
-              value: "policy",
-              icon: "file"
-            },
-            {
-              displayOrder: 1,
-              display: "Operations",
-              value: "operations",
-              icon: "inbox"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      inputItemId: "00000000-0000-4000-8000-000000000512",
-      callerItemId: "steward-check-202",
-      status: "pending",
-      priority: "high",
-      currentRevision: 1,
-      rowType: { display: "Decision Check", icon: "calendar" },
-      rowAccentColor: "hsl(32, 86%, 43%)",
-      titleHtml: "Choose follow-up window",
-      subtitleHtml: "The caller needs a review date before continuing.",
-      cornerHtml: "Today",
-      summaryHtml:
-        "<p>Select the acceptable timing metadata. This does not schedule anything.</p>",
-      detailsHtml:
-        "<p>The date picker metadata is displayed here for human review.</p>",
-      cardVisual: {
-        kind: "progress_ring",
-        payload: {
-          label: "Readiness",
-          value: 6,
-          display: "6 of 10",
-          unit: null,
-          min_value: 0,
-          max_value: 10,
-          color: "rgb(217, 119, 6)"
-        }
-      },
-      skipDisabled: true,
-      createdAt: "2026-07-01T12:10:00.000Z",
-      updatedAt: "2026-07-01T12:55:00.000Z",
-      answeredAt: null,
-      caller: fixtureCaller(),
-      output: null,
-      bulkActions: [
-        {
-          displayOrder: 0,
-          display: "Approve",
-          icon: "check",
-          value: "approve"
-        }
-      ],
-      linkButtons: [],
-      actions: [
-        {
-          displayOrder: 0,
-          display: "Approve",
-          icon: "check",
-          value: "approve",
-          overflow: false,
-          popupKind: "none",
-          popupPayload: {},
-          answerable: true,
-          options: []
-        },
-        {
-          displayOrder: 1,
-          display: "Pick date",
-          icon: "calendar",
-          value: "pick_date",
-          overflow: false,
-          popupKind: "date_picker",
-          popupPayload: {
-            label: "Follow-up date",
-            mode: "date",
-            placeholder: "YYYY-MM-DD",
-            display_timezone: "UTC",
-            min_value: "2026-07-01",
-            max_value: "2026-07-31"
-          },
-          answerable: true,
-          options: []
-        },
-        {
-          displayOrder: 2,
-          display: "Pick date and time",
-          icon: "clock",
-          value: "pick_datetime",
-          overflow: false,
-          popupKind: "date_picker",
-          popupPayload: {
-            label: "Follow-up instant",
-            mode: "datetime",
-            placeholder: "UTC datetime",
-            display_timezone: "UTC",
-            min_value: "2026-07-01T00:00:00.000Z",
-            max_value: "2026-07-31T23:59:59.000Z"
-          },
-          answerable: true,
-          options: []
-        },
-        {
-          displayOrder: 3,
-          display: "Select checks",
-          icon: "check",
-          value: "select_checks",
-          overflow: true,
-          popupKind: "multi_select",
-          popupPayload: {
-            label: "Completed checks",
-            min_selected: 1,
-            max_selected: 2
-          },
-          answerable: true,
-          options: [
-            {
-              displayOrder: 0,
-              display: "Facts reviewed",
-              value: "facts_reviewed",
-              icon: "check"
-            },
-            {
-              displayOrder: 1,
-              display: "Tone reviewed",
-              value: "tone_reviewed",
-              icon: "check"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      inputItemId: "00000000-0000-4000-8000-000000000515",
-      callerItemId: "security-render-505",
-      status: "pending",
-      priority: "normal",
-      currentRevision: 1,
-      rowType: { display: "Security Probe", icon: "not-a-supported-icon" },
-      rowAccentColor: "url(https://example.com/unsafe-color)",
-      titleHtml: "Renderer boundary probe",
-      subtitleHtml:
-        "&lt;script&gt;fixtureUnsafeScript()&lt;/script&gt; stays text.",
-      cornerHtml: null,
-      summaryHtml:
-        "&lt;svg&gt;&lt;foreignObject&gt;bad&lt;/foreignObject&gt;&lt;/svg&gt;",
-      detailsHtml:
-        "&lt;form action='https://example.com'&gt;&lt;input name='x'&gt;&lt;/form&gt;&lt;video src='https://example.com/movie.mp4'&gt;&lt;/video&gt;&lt;CallerInjectedWidget /&gt;",
-      cardVisual: {
-        kind: "pill",
-        payload: {
-          text: "Safe fallback",
-          icon: "not-a-supported-icon",
-          color: "var(--caller-controlled-color)"
-        }
-      },
-      skipDisabled: false,
-      createdAt: "2026-07-01T11:30:00.000Z",
-      updatedAt: "2026-07-01T11:50:00.000Z",
-      answeredAt: null,
-      caller: fixtureCaller(),
-      output: null,
-      bulkActions: [
-        {
-          displayOrder: 0,
-          display: "Escalate",
-          icon: "send",
-          value: "approve"
-        }
-      ],
-      linkButtons: [
-        {
-          displayOrder: 0,
-          display: "Blocked javascript link",
-          icon: "external-link",
-          url: "javascript:alert(1)"
-        }
-      ],
-      actions: [
-        {
-          displayOrder: 0,
-          display: "Escalate",
-          icon: "send",
-          value: "approve",
-          overflow: false,
-          popupKind: "none",
-          popupPayload: {},
-          answerable: true,
-          options: []
-        },
-        {
-          displayOrder: 1,
-          display: "Attach file",
-          icon: "upload",
-          value: "attach_file",
-          overflow: true,
-          popupKind: "file_upload",
-          popupPayload: {
-            label: "Paid file upload",
-            component: "CallerInjectedUploader"
-          },
-          answerable: false,
-          options: []
-        }
-      ]
-    },
-    {
-      inputItemId: "00000000-0000-4000-8000-000000000513",
-      callerItemId: "steward-result-303",
-      status: "answered",
-      priority: "normal",
-      currentRevision: 2,
-      rowType: { display: "Outcome Review", icon: "check" },
-      rowAccentColor: "#2563eb",
-      titleHtml: "Answered summary verification",
-      subtitleHtml: "Waiting for caller acknowledgement.",
-      cornerHtml: null,
-      summaryHtml: "<p>The selected answer is available to the caller.</p>",
-      detailsHtml:
-        "<p>This item remains visible until caller acknowledgement or cleanup.</p>",
-      cardVisual: {
-        kind: "pill",
-        payload: {
-          text: "Answered",
-          icon: "check",
-          color: "#2563eb"
-        }
-      },
-      skipDisabled: false,
-      createdAt: "2026-07-01T11:00:00.000Z",
-      updatedAt: "2026-07-01T11:45:00.000Z",
-      answeredAt: "2026-07-01T11:45:00.000Z",
-      caller: fixtureCaller(),
-      output: {
-        outputResultId: "00000000-0000-4000-8000-000000000599",
-        actionValue: "approve",
-        answeredAt: "2026-07-01T11:45:00.000Z",
-        firstReadAt: null,
-        readCount: 0,
-        undoEligible: true
-      },
-      bulkActions: [],
-      linkButtons: [],
-      actions: []
-    },
-    {
-      inputItemId: "00000000-0000-4000-8000-000000000514",
-      callerItemId: "steward-read-404",
-      status: "answered",
-      priority: "low",
-      currentRevision: 1,
-      rowType: { display: "Read Result", icon: "check" },
-      rowAccentColor: "#334155",
-      titleHtml: "Caller already read this answer",
-      subtitleHtml: "Undo is disabled after caller read.",
-      cornerHtml: null,
-      summaryHtml: "<p>The caller has read the answer once.</p>",
-      detailsHtml:
-        "<p>This answered item demonstrates the no-undo-after-read state.</p>",
-      cardVisual: {
-        kind: "pill",
-        payload: {
-          text: "Read",
-          icon: "check",
-          color: "#334155"
-        }
-      },
-      skipDisabled: false,
-      createdAt: "2026-07-01T10:00:00.000Z",
-      updatedAt: "2026-07-01T10:30:00.000Z",
-      answeredAt: "2026-07-01T10:20:00.000Z",
-      caller: fixtureCaller(),
-      output: {
-        outputResultId: "00000000-0000-4000-8000-000000000598",
-        actionValue: "approve",
-        answeredAt: "2026-07-01T10:20:00.000Z",
-        firstReadAt: "2026-07-01T10:30:00.000Z",
-        readCount: 1,
-        undoEligible: false
-      },
-      bulkActions: [],
-      linkButtons: [],
-      actions: []
-    }
-  ];
+function browserFixtureReviewDetails(
+  options: BrowserFixtureReviewOptions = {}
+): HumanReviewDetail[] {
+  const details = browserFixtureCoreReviewDetails();
+  if (!options.includePaginationRows) {
+    return details;
+  }
   const template = details[0]!;
+  const scenarios = [
+    {
+      type: "Email Draft",
+      icon: "mail",
+      title: "Send revised vendor timeline",
+      subtitle: "Reply prepared from the approved delivery plan.",
+      summary:
+        "<p><strong>Send:</strong> “Phase one remains on track for August 18; final QA begins the following Monday.”</p>"
+    },
+    {
+      type: "Calendar Change",
+      icon: "calendar",
+      title: "Confirm planning review",
+      subtitle: "One attendee requested a later start.",
+      summary:
+        "<p><strong>Move meeting:</strong> Thursday, August 6 · 3:30–4:00 PM ET.</p>"
+    },
+    {
+      type: "Client Update",
+      icon: "send",
+      title: "Share weekly project status",
+      subtitle: "Draft assembled from this week’s completed work.",
+      summary:
+        "<p><strong>Publish:</strong> “Research is complete. Prototype testing begins tomorrow with no scope change.”</p>"
+    },
+    {
+      type: "Finance Check",
+      icon: "check",
+      title: "Approve software categorization",
+      subtitle: "Recurring vendor charge matched to prior months.",
+      summary:
+        "<p><strong>Categorize:</strong> Harbor Cloud · $84.00 · Software subscriptions.</p>"
+    },
+    {
+      type: "Follow-up",
+      icon: "inbox",
+      title: "Send renewal reminder",
+      subtitle: "Contract renewal window closes in twelve days.",
+      summary:
+        "<p><strong>Send:</strong> “Your renewal decision is due August 14. Reply if the term or seat count should change.”</p>"
+    },
+    {
+      type: "Travel Change",
+      icon: "calendar",
+      title: "Accept itinerary adjustment",
+      subtitle: "The original connection is no longer available.",
+      summary:
+        "<p><strong>Replace flight:</strong> DL 2184 · depart 6:10 PM · arrive 8:02 PM.</p>"
+    }
+  ] as const;
   const generated = Array.from({ length: 101 }, (_, index) => {
     const sequence = index + 1;
     const isTail = sequence === 101;
+    const scenario = scenarios[index % scenarios.length]!;
     return {
       ...template,
       inputItemId: fixtureUuid(`review-page-fixture:${sequence}`),
       callerItemId: `fixture-page-${String(sequence).padStart(3, "0")}`,
       priority: "low" as const,
+      rowType: isTail
+        ? template.rowType
+        : { display: scenario.type, icon: scenario.icon },
       titleHtml: isTail
         ? "<strong>Beyond one hundred review</strong>"
-        : `<strong>Pagination fixture ${sequence}</strong>`,
+        : `<strong>${scenario.title}</strong>`,
       subtitleHtml: isTail
         ? "Discoverable after the first full review page."
-        : `Deterministic pagination row ${sequence}.`,
+        : scenario.subtitle,
       summaryHtml: isTail
         ? "<p>This review proves that queue items beyond the first 100 remain actionable.</p>"
-        : `<p>Pagination fixture summary ${sequence}.</p>`,
+        : scenario.summary,
       detailsHtml: isTail
         ? "<p>Open and approve this item to verify tail-page review behavior.</p>"
         : `<p>Pagination fixture detail ${sequence}.</p>`,
@@ -566,11 +281,63 @@ function browserFixtureReviewDetails(): HumanReviewDetail[] {
   return [...details, ...generated];
 }
 
-function fixtureCaller() {
-  return {
-    callerId: fixtureCallerId,
-    displayName: "Steward Operations",
-    slug: "steward-operations",
-    revoked: false
-  };
+function fixtureCoverage(detail: HumanReviewDetail) {
+  const coverage = new Set<string>([
+    detail.status,
+    detail.priority,
+    detail.cardVisual?.kind ?? "no visual",
+    detail.bulkActions.length > 0 ? "quick action" : "detail required",
+    detail.detailsHtml ? "rich detail" : "no detail body",
+    detail.linkButtons.length > 0 ? "context links" : "no context links",
+    detail.skipDisabled ? "skip disabled" : "skip enabled",
+    detail.cornerHtml ? "corner metadata" : "no corner metadata",
+    detail.rowAccentColor ? "accent color" : "no accent color"
+  ]);
+  if (detail.bulkActions.length > 1) coverage.add("multiple quick actions");
+  if (detail.linkButtons.length > 1) coverage.add("multiple context links");
+  if (detail.actions.some((action) => action.overflow)) {
+    coverage.add("overflow actions");
+  }
+  if (detail.actions.some((action) => !action.answerable)) {
+    coverage.add("disabled action");
+  }
+  for (const action of detail.actions) {
+    coverage.add(action.popupKind.replaceAll("_", " "));
+    if (action.popupKind === "date_picker") {
+      const payload = recordFixtureValue(action.popupPayload);
+      coverage.add(payload.mode === "datetime" ? "date and time" : "date");
+    }
+    if (action.popupKind === "free_text") {
+      const payload = recordFixtureValue(action.popupPayload);
+      coverage.add(
+        payload.multiline === true ? "multiline text" : "single-line text"
+      );
+      if (typeof payload.default_value === "string") {
+        coverage.add("default text");
+      }
+    }
+  }
+  if (detail.output) {
+    coverage.add(detail.output.firstReadAt ? "caller read" : "caller unread");
+    coverage.add(
+      detail.output.undoEligible ? "undo available" : "undo disabled"
+    );
+  }
+  return [...coverage];
+}
+
+function recordFixtureValue(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function plainFixtureText(html: string) {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
 }

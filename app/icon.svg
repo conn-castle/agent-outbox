@@ -12,6 +12,7 @@
       <stop offset="1" stop-color="#e6883b" />
     </linearGradient>
   </defs>
+  <rect width="256" height="256" rx="28" fill="#fffdf8" />
   <g transform="translate(0 18)">
     <rect
       x="48"

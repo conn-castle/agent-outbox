@@ -33,6 +33,15 @@ Do not duplicate information that belongs in other memory files:
   `multi-agent-plan-review`, launch requested reviewers concurrently instead of
   serializing them.
 
+### Required UI completion gate (user instruction, verbatim)
+
+Every time you believe you are done, I want you to do the following:
+
+1. Dispatch to claude opus high, and ask it if the /apple-design skill is being followed. And to have it call out any deviations for you to fix.
+2. Dispatch to antigravity, claude opus high, codex terra xhigh, and ask them all if this follows best UI practices and if there are any obvious UI/UX issues. You should send them only PNGs. Send them 4 PNGs, each with different page widths. No more. No less.
+
+Only once #1 and all agents from #2 say that the version is ready for me to review based on the above items, are you to tell me to review the page.
+
 ## Provider Setup
 
 - Exact provider inventory values belong in approved operator-controlled secret

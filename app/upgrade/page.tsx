@@ -70,15 +70,20 @@ function UpgradePageContent({
   canOpenPortal: boolean;
 }) {
   return (
-    <main className="main">
-      <p className="eyebrow">Billing</p>
-      <h1 className="title">Upgrade Agent Outbox</h1>
-      <p className="lede">
-        Move this account to the hosted paid tier with monthly or yearly
-        billing.
-      </p>
+    <main className="main billing-main">
+      <a className="app-page-back" href="/human">
+        Back to review queue
+      </a>
+      <header className="billing-intro">
+        <p className="eyebrow">Billing</p>
+        <h1 className="title">Upgrade Agent Outbox</h1>
+        <p className="lede">
+          Enable file uploads and support the hosted service. Choose the billing
+          rhythm that works for you.
+        </p>
+      </header>
       {checkout ? (
-        <section className="panel" role="status">
+        <section className="panel billing-status" role="status">
           <h2>Checkout {checkout === "success" ? "completed" : "cancelled"}</h2>
           <p>
             Account billing status updates after Stripe sends the matching

@@ -30,16 +30,25 @@ export function ConnectPageShell({
 }) {
   return (
     <main className="connect-main">
-      <p className="eyebrow">{eyebrow}</p>
-      <h1 className="connect-title">{title}</h1>
-      {children}
+      <a className="app-page-back" href="/human">
+        Back to review queue
+      </a>
+      <header className="connect-intro">
+        <p className="eyebrow">{eyebrow}</p>
+        <h1 className="connect-title">{title}</h1>
+        <p>Confirm the request before your local caller can continue.</p>
+      </header>
+      <div className="connect-content">{children}</div>
     </main>
   );
 }
 
 export function ConnectErrorPanel({ error }: { error: ConnectPageError }) {
   return (
-    <section className="connect-card" aria-labelledby="connect-error">
+    <section
+      className="connect-card connect-error-card"
+      aria-labelledby="connect-error"
+    >
       <h2 id="connect-error">Connect approval unavailable</h2>
       <dl className="connect-kv">
         <div>
@@ -60,7 +69,7 @@ export function ConnectErrorPanel({ error }: { error: ConnectPageError }) {
 
 export function AccountSummary({ session }: { session: HumanAccountSession }) {
   return (
-    <section className="connect-card" aria-label="Account">
+    <section className="connect-card connect-account-card" aria-label="Account">
       <dl className="connect-kv">
         <div>
           <dt>Account</dt>
@@ -81,7 +90,10 @@ export function AccountSummary({ session }: { session: HumanAccountSession }) {
 
 export function ApprovalSummary({ preview }: { preview: ApprovalPreview }) {
   return (
-    <section className="connect-card" aria-label="Caller setup request">
+    <section
+      className="connect-card connect-request-card"
+      aria-label="Caller setup request"
+    >
       <dl className="connect-kv">
         <div>
           <dt>Operation</dt>

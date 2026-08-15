@@ -27,6 +27,7 @@ import {
   runHumanAccountTransaction,
   type HumanAccountSession
 } from "../../src/server/human-session";
+import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../src/shared/human-review-view";
 
 const humanPath = "/human";
 
@@ -49,9 +50,14 @@ export async function submitHumanAnswer(formData: FormData) {
 
   if (humanBrowserFixtureEnabled()) {
     refreshHumanPage(formData, {
-      item: parsed.inputItemId,
+      ...(returnsToQueue(formData) ? {} : { item: parsed.inputItemId }),
       notice: "answer_submitted",
-      action: parsed.actionValue
+      action: noticeText(formData, "noticeAction") ?? parsed.actionValue,
+      subject: noticeText(formData, "noticeSubject") ?? "this review",
+      resolved: parsed.inputItemId,
+      undo_target: parsed.inputItemId,
+      undo_actor: parsed.callerId,
+      undo_result: "00000000-0000-4000-8000-000000009999"
     });
   }
 
@@ -107,9 +113,13 @@ export async function submitHumanAnswer(formData: FormData) {
 
   if (result.ok) {
     refreshHumanPage(formData, {
-      item: parsed.inputItemId,
+      ...(returnsToQueue(formData) ? {} : { item: parsed.inputItemId }),
       notice: "answer_submitted",
-      action: parsed.actionValue
+      action: noticeText(formData, "noticeAction") ?? parsed.actionValue,
+      subject: noticeText(formData, "noticeSubject") ?? "this review",
+      undo_target: result.inputItemId,
+      undo_actor: parsed.callerId,
+      undo_result: result.outputResultId
     });
   }
   refreshHumanFailurePage(
@@ -286,7 +296,16 @@ async function runHumanActionTransaction<TResult>(
   );
 }
 
-const HUMAN_VIEW_PARAM_KEYS = ["search", "status", "sort", "page"] as const;
+function returnsToQueue(formData: FormData) {
+  return formData.get("returnToQueue") === "1";
+}
+
+function noticeText(formData: FormData, key: string) {
+  const value = formData.get(key);
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized ? normalized.slice(0, 160) : null;
+}
 
 /**
  * View state (search/status/sort/page) submitted as hidden `view.*` fields by
@@ -295,7 +314,7 @@ const HUMAN_VIEW_PARAM_KEYS = ["search", "status", "sort", "page"] as const;
  */
 function viewParamsFromForm(formData: FormData): Record<string, string> {
   const params: Record<string, string> = {};
-  for (const key of HUMAN_VIEW_PARAM_KEYS) {
+  for (const key of HUMAN_REVIEW_VIEW_PARAM_KEYS) {
     const value = formData.get(`view.${key}`);
     if (typeof value === "string" && value !== "") {
       params[key] = value;

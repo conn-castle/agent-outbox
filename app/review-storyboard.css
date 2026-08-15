@@ -1,0 +1,430 @@
+/* Fixture-only storyboard. Previews render at exact CSS pixel sizes. */
+
+.shell:has(.review-storyboard) {
+  display: block;
+  min-height: 100dvh;
+}
+
+.shell:has(.review-storyboard) > .topbar,
+.shell:has(.review-storyboard) > .site-footer {
+  display: none;
+}
+
+.review-storyboard * {
+  box-sizing: border-box;
+}
+
+.review-storyboard
+  :where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 3px solid rgba(243, 161, 68, 0.4);
+  outline-offset: 2px;
+}
+
+body:has(.review-storyboard),
+.shell:has(.review-storyboard) {
+  min-width: 20rem;
+  background: #0f1415;
+}
+
+.review-storyboard {
+  --story-line: rgba(255, 255, 255, 0.1);
+  min-height: 100dvh;
+  background: #0f1415;
+  color: #f8f5ee;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+}
+
+.storyboard-header {
+  position: sticky;
+  z-index: 50;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3.5rem;
+  padding: 0.45rem max(1rem, calc((100vw - 92rem) / 2));
+  border-bottom: 1px solid var(--story-line);
+  background: rgba(15, 20, 21, 0.96);
+  backdrop-filter: blur(20px) saturate(145%);
+}
+
+.storyboard-brand,
+.storyboard-header-actions,
+.storyboard-header-actions a,
+.storyboard-mode,
+.storyboard-mode a,
+.storyboard-frame > header,
+.storyboard-frame > header a,
+.storyboard-width-nav,
+.storyboard-width-nav a {
+  display: flex;
+  align-items: center;
+}
+
+.storyboard-brand {
+  gap: 0.55rem;
+  font-size: 0.84rem;
+  font-weight: 680;
+  letter-spacing: -0.025em;
+}
+
+.storyboard-brand img {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.storyboard-brand b {
+  color: #f3a144;
+}
+
+.storyboard-brand i {
+  margin-left: 0.25rem;
+  padding-left: 0.8rem;
+  border-left: 1px solid var(--story-line);
+  color: #909795;
+  font-size: 0.6rem;
+  font-style: normal;
+  font-weight: 720;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.storyboard-header-actions {
+  gap: 0.4rem;
+}
+
+.storyboard-header-actions a,
+.storyboard-frame > header a {
+  gap: 0.35rem;
+  min-height: 2.15rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--story-line);
+  border-radius: 0.42rem;
+  color: #c9cdcb;
+  font-size: 0.65rem;
+  font-weight: 690;
+  text-decoration: none;
+}
+
+.storyboard-header-actions a:last-child {
+  border-color: #d47a36;
+  background: #f3a144;
+  color: #111617;
+}
+
+.storyboard-header-actions svg,
+.storyboard-frame > header svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.storyboard-layout {
+  min-height: calc(100dvh - 3.5rem);
+}
+
+.storyboard-index {
+  position: sticky;
+  z-index: 40;
+  top: 3.5rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 4.7rem;
+  border-bottom: 1px solid var(--story-line);
+  background: rgba(23, 29, 30, 0.98);
+  backdrop-filter: blur(20px);
+}
+
+.storyboard-index-intro {
+  display: grid;
+  align-content: center;
+  min-width: 15rem;
+  padding: 0.65rem 1rem;
+  border-right: 1px solid var(--story-line);
+}
+
+.storyboard-index-intro > span,
+.storyboard-stage-header p {
+  margin: 0 0 0.2rem;
+  color: #f3ad5b;
+  font-size: 0.56rem;
+  font-weight: 790;
+  letter-spacing: 0.095em;
+  text-transform: uppercase;
+}
+
+.storyboard-index-intro strong {
+  font-size: 0.76rem;
+}
+
+.storyboard-index-intro p {
+  margin: 0.15rem 0 0;
+  color: #858d8b;
+  font-size: 0.57rem;
+}
+
+.storyboard-index ol {
+  display: flex;
+  align-items: stretch;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.45rem 1rem;
+  overflow: auto hidden;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.storyboard-index li {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.storyboard-index li > a {
+  display: grid;
+  grid-template-columns: auto minmax(7.5rem, 10.5rem);
+  align-items: center;
+  gap: 0.42rem;
+  padding: 0.42rem 0.58rem;
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  color: #b5bbba;
+  text-decoration: none;
+}
+
+.storyboard-index li > a:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.storyboard-index li > a.selected {
+  border-color: rgba(243, 161, 68, 0.42);
+  background: rgba(243, 161, 68, 0.12);
+  color: #fff;
+}
+
+.storyboard-index li > a > span {
+  color: #6f7775;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.55rem;
+}
+
+.storyboard-index li > a.selected > span {
+  color: #f3ad5b;
+}
+
+.storyboard-index li strong {
+  font-size: 0.63rem;
+  font-weight: 680;
+  line-height: 1.18;
+}
+
+.storyboard-stage {
+  min-width: 0;
+  padding: 1.4rem max(1rem, calc((100vw - 92rem) / 2)) 4rem;
+  overflow-x: auto;
+  background:
+    radial-gradient(
+      circle at 18% -5%,
+      rgba(243, 161, 68, 0.08),
+      transparent 30rem
+    ),
+    #0f1415;
+}
+
+.storyboard-stage-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  width: min(100%, 90rem);
+  margin: 0 auto;
+}
+
+.storyboard-stage-header h1 {
+  max-width: 54rem;
+  margin: 0;
+  color: #f8f5ee;
+  font-size: clamp(1.35rem, 2.3vw, 2.1rem);
+  font-weight: 720;
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+}
+
+.storyboard-stage-header > div > span {
+  display: block;
+  margin-top: 0.4rem;
+  color: #737b79;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.57rem;
+}
+
+.storyboard-mode {
+  flex: none;
+  gap: 0.18rem;
+  padding: 0.2rem;
+  border: 1px solid var(--story-line);
+  border-radius: 0.45rem;
+  background: #181e1f;
+}
+
+.storyboard-mode a {
+  gap: 0.3rem;
+  min-height: 2rem;
+  padding: 0 0.65rem;
+  border-radius: 0.3rem;
+  color: #929997;
+  font-size: 0.62rem;
+  font-weight: 690;
+  text-decoration: none;
+}
+
+.storyboard-mode a.selected {
+  background: #fffdf8;
+  color: #202526;
+}
+
+.storyboard-mode svg {
+  width: 0.72rem;
+  height: 0.72rem;
+}
+
+.storyboard-meta-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  width: min(100%, 90rem);
+  margin: 0.9rem auto 0;
+}
+
+.storyboard-coverage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.storyboard-coverage span {
+  padding: 0.27rem 0.48rem;
+  border: 1px solid var(--story-line);
+  border-radius: 999px;
+  color: #aeb4b2;
+  font-size: 0.55rem;
+  font-weight: 650;
+}
+
+.storyboard-width-nav {
+  flex: none;
+  gap: 0.3rem;
+}
+
+.storyboard-width-nav a {
+  gap: 0.35rem;
+  min-height: 1.9rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--story-line);
+  border-radius: 0.4rem;
+  color: #d2d6d4;
+  font-size: 0.58rem;
+  font-weight: 680;
+  text-decoration: none;
+}
+
+.storyboard-width-nav a span {
+  color: #757d7b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.storyboard-frames {
+  display: grid;
+  justify-items: center;
+  gap: 2rem;
+  width: 100%;
+  margin-top: 1.25rem;
+}
+
+.storyboard-frame {
+  width: max-content;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0.65rem;
+  background: #202627;
+  box-shadow: 0 1.3rem 4rem rgba(0, 0, 0, 0.28);
+  scroll-margin-top: 9rem;
+}
+
+.storyboard-frame > header {
+  justify-content: space-between;
+  min-height: 3rem;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--story-line);
+}
+
+.storyboard-frame > header > div {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.storyboard-frame > header span {
+  font-size: 0.68rem;
+  font-weight: 720;
+}
+
+.storyboard-frame > header small {
+  color: #858d8b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.55rem;
+}
+
+.storyboard-frame > header a {
+  min-height: 1.9rem;
+}
+
+.storyboard-viewport,
+.storyboard-viewport iframe {
+  display: block;
+  border: 0;
+  background: #f2eee6;
+}
+
+@media (max-width: 800px) {
+  .storyboard-header-actions a:first-child,
+  .storyboard-brand i,
+  .storyboard-index-intro p,
+  .storyboard-width-nav {
+    display: none;
+  }
+
+  .storyboard-index {
+    grid-template-columns: 10rem minmax(0, 1fr);
+  }
+
+  .storyboard-index-intro {
+    min-width: 0;
+  }
+
+  .storyboard-stage-header,
+  .storyboard-meta-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-storyboard *,
+  .review-storyboard *::before,
+  .review-storyboard *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .review-storyboard .storyboard-header,
+  .review-storyboard .storyboard-index {
+    background: #171d1e;
+    backdrop-filter: none;
+  }
+}

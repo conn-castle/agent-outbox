@@ -2,7 +2,6 @@ import { auth } from "@clerk/nextjs/server";
 
 import {
   type HumanReviewNotice,
-  type HumanReviewView,
   ReviewWorkspace
 } from "../../src/components/human/ReviewWorkspace";
 import { createCorrelationId } from "../../src/server/correlation";
@@ -26,6 +25,11 @@ import {
   runHumanAccountTransaction
 } from "../../src/server/human-session";
 import { MissingConfigurationPanel } from "../../src/server/ui";
+import {
+  firstSearchParam,
+  humanReviewViewFromRecord,
+  type HumanReviewView
+} from "../../src/shared/human-review-view";
 
 export const dynamic = "force-dynamic";
 
@@ -35,26 +39,38 @@ export default async function HumanReviewPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const selectedItem = firstParam(params?.item);
+  const renderedAt = new Date().toISOString();
+  const selectedItem = firstSearchParam(params?.item);
   const notice = humanReviewNotice(params);
-  const view = humanReviewView(params);
+  const view = humanReviewViewFromRecord(params);
 
   if (humanBrowserFixtureEnabled()) {
+    const fixtureOptions = {
+      includePaginationRows:
+        firstSearchParam(params?.fixture_dataset) === "pagination",
+      resolvedItemId: firstSearchParam(params?.resolved)
+    };
     const session = browserFixtureHumanSession({
-      firstTimeSignup: firstParam(params?.fixture_signup) === "1",
-      providerSubject: firstParam(params?.fixture_provider_subject)
+      firstTimeSignup: firstSearchParam(params?.fixture_signup) === "1",
+      providerSubject: firstSearchParam(params?.fixture_provider_subject)
     });
-    const fixturePage = browserFixtureReviewPage(view);
+    const fixturePage = browserFixtureReviewPage(view, fixtureOptions);
     return (
       <ReviewWorkspace
         key={session.accountId}
         session={session}
         rows={fixturePage.rows}
-        detail={browserFixtureReviewDetail(selectedItem ?? null)}
+        detail={
+          selectedItem
+            ? browserFixtureReviewDetail(selectedItem, fixtureOptions)
+            : null
+        }
         banner={browserFixtureAccountBanner(session)}
         notice={notice}
         view={view}
         hasNext={fixturePage.hasNext}
+        detailOpen={selectedItem !== undefined}
+        renderedAt={renderedAt}
       />
     );
   }
@@ -121,6 +137,8 @@ export default async function HumanReviewPage({
       notice={notice}
       view={view}
       hasNext={pageData.hasNext}
+      detailOpen={selectedItem !== undefined}
+      renderedAt={renderedAt}
     />
   );
 }
@@ -138,39 +156,19 @@ async function loadHumanReviewPageDataInTransaction(
     offset: (view.page - 1) * REVIEW_PAGE_SIZE
   });
   const rows = page.rows;
-  const selected = selectedItem ?? rows[0]?.inputItemId ?? null;
-  const detail = selected
-    ? await humanReviewDetailInTransaction(query, session, selected)
+  const detail = selectedItem
+    ? await humanReviewDetailInTransaction(query, session, selectedItem)
     : null;
   const banner = await humanReviewAccountBannerInTransaction(query, session);
   return { rows, detail, banner, hasNext: page.hasNext };
 }
 
-function humanReviewView(
-  params: Record<string, string | string[] | undefined> | undefined
-): HumanReviewView {
-  const status = firstParam(params?.status);
-  const sort = firstParam(params?.sort);
-  const rawPage = firstParam(params?.page);
-  const parsedPage = rawPage && /^\d+$/.test(rawPage) ? Number(rawPage) : 1;
-  return {
-    search: firstParam(params?.search)?.trim() ?? "",
-    status: status === "pending" || status === "answered" ? status : "all",
-    sort: sort === "updated_at" ? "updated_at" : "priority",
-    page: Number.isSafeInteger(parsedPage) && parsedPage >= 1 ? parsedPage : 1
-  };
-}
-
-function firstParam(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] : value;
-}
-
 function humanReviewNotice(
   params: Record<string, string | string[] | undefined> | undefined
 ): HumanReviewNotice | null {
-  const error = firstParam(params?.error);
+  const error = firstSearchParam(params?.error);
   if (error) {
-    const failedActionKind = firstParam(params?.failedActionKind);
+    const failedActionKind = firstSearchParam(params?.failedActionKind);
     return {
       kind: "error",
       message: `Action failed: ${error.replaceAll("_", " ")}.`,
@@ -179,20 +177,27 @@ function humanReviewNotice(
     };
   }
 
-  const notice = firstParam(params?.notice);
+  const notice = firstSearchParam(params?.notice);
   if (notice === "answer_submitted") {
-    const action = firstParam(params?.action);
+    const action = firstSearchParam(params?.action);
+    const subject = firstSearchParam(params?.subject);
+    const inputItemId = firstSearchParam(params?.undo_target);
+    const callerId = firstSearchParam(params?.undo_actor);
+    const outputResultId = firstSearchParam(params?.undo_result);
     return {
       kind: "notice",
-      message: action ? `Answer submitted: ${action}.` : "Answer submitted."
+      message: completedActionNotice(action, subject),
+      ...(inputItemId && callerId && outputResultId
+        ? { undo: { inputItemId, callerId, outputResultId } }
+        : {})
     };
   }
   if (notice === "answer_undone") {
     return { kind: "notice", message: "Answer undone before caller read." };
   }
   if (notice === "bulk_answered") {
-    const answered = firstParam(params?.answered) ?? "0";
-    const failed = firstParam(params?.failed) ?? "0";
+    const answered = firstSearchParam(params?.answered) ?? "0";
+    const failed = firstSearchParam(params?.failed) ?? "0";
     return {
       kind: "notice",
       message: `Bulk action complete: ${answered} answered, ${failed} failed.`
@@ -200,4 +205,19 @@ function humanReviewNotice(
   }
 
   return null;
+}
+
+function completedActionNotice(
+  action: string | undefined,
+  subject: string | undefined
+) {
+  if (action === "Approve to send") {
+    return subject
+      ? `Draft approved for sending: “${subject}”.`
+      : "Draft approved for sending.";
+  }
+  if (action && subject) {
+    return `${action} completed for “${subject}”.`;
+  }
+  return action ? `${action} completed.` : "Answer submitted.";
 }

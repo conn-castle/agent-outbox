@@ -61,30 +61,62 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
   }
 
   return (
-    <section className="panel" aria-labelledby="billing-actions">
-      <h2 id="billing-actions">Billing actions</h2>
-      <div className="actions">
+    <section
+      className="billing-actions-panel"
+      aria-labelledby="billing-actions"
+    >
+      <header>
+        <p>Hosted paid</p>
+        <h2 id="billing-actions">One plan, two ways to pay</h2>
+      </header>
+      <div className="billing-options">
         <button
-          className="button"
+          className="billing-option"
           type="button"
           onClick={() => void startCheckout("monthly")}
           disabled={pending !== null}
+          aria-label={
+            pending === "monthly" ? "Starting $5/mo..." : "Start $5/mo checkout"
+          }
         >
-          <CreditCard aria-hidden="true" size={18} />
-          {pending === "monthly" ? "Starting $5/mo..." : "Start $5/mo checkout"}
+          <span>Monthly</span>
+          <strong>
+            $5 <small>/ month</small>
+          </strong>
+          <span>Simple month-to-month billing</span>
+          <span className="billing-option-action">
+            <CreditCard aria-hidden="true" size={16} />
+            {pending === "monthly" ? "Starting..." : "Choose monthly"}
+          </span>
         </button>
         <button
-          className="button"
+          className="billing-option featured"
           type="button"
           onClick={() => void startCheckout("yearly")}
           disabled={pending !== null}
+          aria-label={
+            pending === "yearly"
+              ? "Starting $50/year..."
+              : "Start $50/year checkout"
+          }
         >
-          <CreditCard aria-hidden="true" size={18} />
-          {pending === "yearly"
-            ? "Starting $50/year..."
-            : "Start $50/year checkout"}
+          <span>Yearly · save $10</span>
+          <strong>
+            $50 <small>/ year</small>
+          </strong>
+          <span>One annual payment</span>
+          <span className="billing-option-action">
+            <CreditCard aria-hidden="true" size={16} />
+            {pending === "yearly" ? "Starting..." : "Choose yearly"}
+          </span>
         </button>
-        {canOpenPortal ? (
+      </div>
+      {canOpenPortal ? (
+        <div className="billing-portal-row">
+          <div>
+            <strong>Already subscribed?</strong>
+            <span>Update payment details or manage your subscription.</span>
+          </div>
           <button
             className="button secondary"
             type="button"
@@ -94,8 +126,8 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
             <ExternalLink aria-hidden="true" size={18} />
             {pending === "portal" ? "Opening..." : "Open billing portal"}
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       {error ? (
         <p className="form-error" role="alert">
           {error}

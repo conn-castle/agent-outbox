@@ -854,7 +854,7 @@ function rootLayoutTestRequire(specifier) {
   if (specifier === "../src/components/SiteHeader") {
     return { SiteHeader: () => React.createElement("header") };
   }
-  if (specifier === "./globals.css") {
+  if (specifier === "./globals.css" || specifier === "./review-workspace.css") {
     return {};
   }
 
@@ -1607,6 +1607,9 @@ test("human review server actions emit failure telemetry only on failure paths",
           async runHumanAccountTransaction() {
             return behavior.transactionResult;
           }
+        },
+        "../../src/shared/human-review-view": {
+          HUMAN_REVIEW_VIEW_PARAM_KEYS: ["search", "status", "sort", "page"]
         }
       })
     );

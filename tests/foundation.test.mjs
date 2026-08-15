@@ -3343,6 +3343,15 @@ test("application security headers add HSTS only in production", () => {
     ...development,
     { key: "Strict-Transport-Security", value: "max-age=31536000" }
   ]);
+  assert.deepEqual(applicationSecurityHeaders("test", true), [
+    { key: "X-Content-Type-Options", value: "nosniff" },
+    { key: "X-Frame-Options", value: "SAMEORIGIN" },
+    { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+    {
+      key: "Permissions-Policy",
+      value: "camera=(), microphone=(), geolocation=()"
+    }
+  ]);
 
   const nextConfig = readFileSync(
     new URL("../next.config.ts", import.meta.url),
@@ -3350,7 +3359,7 @@ test("application security headers add HSTS only in production", () => {
   );
   assert.match(
     nextConfig,
-    /source: "\/:path\*"[\s\S]*headers: applicationSecurityHeaders\(process\.env\.APP_ENV\)/,
+    /source: "\/:path\*"[\s\S]*headers: applicationSecurityHeaders\([\s\S]*process\.env\.APP_ENV,[\s\S]*process\.env\.AGENT_OUTBOX_BROWSER_FIXTURE === "1"[\s\S]*\)/,
     "Next.js must apply the security-header policy to every application path"
   );
 });

@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export default function SignUpPage() {
   if (humanBrowserFixtureEnabled()) {
     return (
-      <main className="main">
+      <main className="main auth-main">
         <section className="panel">
           <p className="eyebrow">Public signup</p>
           <h1>Browser fixture signup</h1>

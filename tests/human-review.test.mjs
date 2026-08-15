@@ -15,7 +15,21 @@ import {
   humanReviewPageInTransaction,
   humanReviewListStatement
 } from "../src/server/human-review.ts";
-import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture.ts";
+import {
+  browserFixtureStoryboardDetails,
+  browserFixtureStoryboardScenarios,
+  humanBrowserFixtureEnabled
+} from "../src/server/human-review-fixture.ts";
+import {
+  isSafeColor,
+  SUPPORTED_LUCIDE_ICON_NAMES
+} from "../src/shared/input-schema-rules.ts";
+import {
+  humanReviewHref,
+  humanReviewViewFromRecord,
+  humanReviewViewFromSearchParams,
+  writeHumanReviewView
+} from "../src/shared/human-review-view.ts";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -34,6 +48,334 @@ const context = {
 const inputItemId = "00000000-0000-4000-8000-000000000003";
 const callerId = "00000000-0000-4000-8000-000000000005";
 const outputResultId = "00000000-0000-4000-8000-000000000004";
+
+test("human review view parsing and links share canonical defaults", () => {
+  assert.deepEqual(humanReviewViewFromRecord(undefined), {
+    search: "",
+    status: "pending",
+    sort: "priority",
+    page: 1
+  });
+
+  const params = new URLSearchParams(
+    "search=%20invoice%20&status=answered&sort=updated_at&page=3"
+  );
+  const parsed = humanReviewViewFromSearchParams(params);
+  assert.deepEqual(parsed, {
+    search: "invoice",
+    status: "answered",
+    sort: "updated_at",
+    page: 3
+  });
+  assert.deepEqual(
+    parsed,
+    humanReviewViewFromRecord({
+      search: " invoice ",
+      status: "answered",
+      sort: "updated_at",
+      page: "3"
+    })
+  );
+  assert.equal(
+    humanReviewHref(parsed, inputItemId),
+    `/human?search=invoice&status=answered&sort=updated_at&page=3&item=${inputItemId}`
+  );
+
+  const retained = new URLSearchParams("fixture_signup=1&status=all&page=7");
+  writeHumanReviewView(retained, {
+    search: "",
+    status: "pending",
+    sort: "priority",
+    page: 1
+  });
+  assert.equal(retained.toString(), "fixture_signup=1");
+
+  for (const invalidPage of ["0", "-1", "1.5", "not-a-page"]) {
+    assert.equal(
+      humanReviewViewFromRecord({ page: invalidPage }).page,
+      1,
+      invalidPage
+    );
+  }
+});
+
+/** @param {string[]} values */
+function sortedSet(values) {
+  return [...new Set(values)].sort();
+}
+
+/**
+ * @param {import("../src/server/human-answer.ts").JsonValue} value
+ * @returns {Record<string, import("../src/server/human-answer.ts").JsonValue>}
+ */
+function jsonObject(value) {
+  assert.ok(
+    typeof value === "object" && value !== null && !Array.isArray(value)
+  );
+  return value;
+}
+
+/** @param {import("../src/server/human-review.ts").HumanReviewListRow["cardVisual"]} visual */
+function pillVisualIcons(visual) {
+  if (visual?.kind !== "pill") return [];
+  const icon = jsonObject(visual.payload).icon;
+  return typeof icon === "string" ? [icon] : [];
+}
+
+/** @param {import("../src/server/human-review.ts").HumanReviewListRow["cardVisual"]} visual */
+function numericVisualPercents(visual) {
+  if (visual?.kind !== "numeric_bar" && visual?.kind !== "progress_ring") {
+    return [];
+  }
+  const payload = jsonObject(visual.payload);
+  const value = payload.value;
+  const min = payload.min_value;
+  const max = payload.max_value;
+  if (
+    typeof value !== "number" ||
+    typeof min !== "number" ||
+    typeof max !== "number"
+  ) {
+    return [];
+  }
+  return [((value - min) / (max - min)) * 100];
+}
+
+test("browser fixture storyboards cover every declared review renderer option and product use case", () => {
+  const details = browserFixtureStoryboardDetails();
+  const scenarios = browserFixtureStoryboardScenarios();
+  assert.equal(details.length, 10);
+  assert.deepEqual(
+    scenarios.map((scenario) => scenario.inputItemId),
+    details.map((detail) => detail.inputItemId)
+  );
+  assert.equal(
+    new Set(scenarios.map((scenario) => scenario.callerItemId)).size,
+    10
+  );
+
+  assert.deepEqual(sortedSet(details.map((detail) => detail.priority)), [
+    "high",
+    "low",
+    "normal",
+    "urgent"
+  ]);
+  assert.deepEqual(sortedSet(details.map((detail) => detail.status)), [
+    "answered",
+    "pending"
+  ]);
+  assert.deepEqual(
+    sortedSet(
+      details.flatMap((detail) =>
+        detail.actions.map((action) => action.popupKind)
+      )
+    ),
+    [
+      "date_picker",
+      "file_upload",
+      "free_text",
+      "multi_select",
+      "none",
+      "single_select"
+    ]
+  );
+  assert.deepEqual(
+    sortedSet(
+      details.flatMap((detail) =>
+        detail.actions
+          .filter((action) => action.popupKind === "date_picker")
+          .map((action) => jsonObject(action.popupPayload).mode)
+          .filter((mode) => typeof mode === "string")
+      )
+    ),
+    ["date", "datetime"]
+  );
+  assert.deepEqual(
+    sortedSet(
+      details
+        .map((detail) => detail.cardVisual?.kind)
+        .filter((kind) => kind !== undefined)
+    ),
+    ["numeric_bar", "pill", "progress_ring"]
+  );
+  assert.ok(details.some((detail) => detail.cardVisual === null));
+
+  const numericVisuals = details.flatMap((detail) =>
+    detail.cardVisual?.kind === "numeric_bar" ||
+    detail.cardVisual?.kind === "progress_ring"
+      ? [jsonObject(detail.cardVisual.payload)]
+      : []
+  );
+  assert.ok(numericVisuals.some((payload) => typeof payload.unit === "string"));
+  assert.ok(numericVisuals.some((payload) => payload.unit == null));
+
+  const progressColors = details.flatMap((detail) =>
+    detail.cardVisual?.kind === "progress_ring"
+      ? [jsonObject(detail.cardVisual.payload).color]
+      : []
+  );
+  assert.ok(progressColors.some((color) => color == null));
+  assert.ok(
+    progressColors.some(
+      (color) => typeof color === "string" && isSafeColor(color)
+    )
+  );
+  assert.ok(
+    progressColors.some(
+      (color) => typeof color === "string" && !isSafeColor(color)
+    )
+  );
+
+  const pillIcons = details.flatMap((detail) =>
+    detail.cardVisual?.kind === "pill"
+      ? [jsonObject(detail.cardVisual.payload).icon]
+      : []
+  );
+  assert.ok(pillIcons.some((icon) => typeof icon === "string"));
+  assert.ok(pillIcons.some((icon) => icon == null));
+
+  const freeTextPayloads = details.flatMap((detail) =>
+    detail.actions
+      .filter((action) => action.popupKind === "free_text")
+      .map((action) => jsonObject(action.popupPayload))
+  );
+  assert.ok(freeTextPayloads.some((payload) => payload.multiline === true));
+  assert.ok(freeTextPayloads.some((payload) => payload.multiline === false));
+  assert.ok(
+    freeTextPayloads.some(
+      (payload) => typeof payload.default_value === "string"
+    )
+  );
+  assert.ok(freeTextPayloads.some((payload) => payload.default_value == null));
+
+  const datePayloads = details.flatMap((detail) =>
+    detail.actions
+      .filter((action) => action.popupKind === "date_picker")
+      .map((action) => jsonObject(action.popupPayload))
+  );
+  for (const optionalDateField of [
+    "placeholder",
+    "display_timezone",
+    "min_value",
+    "max_value"
+  ]) {
+    assert.ok(
+      datePayloads.some((payload) => payload[optionalDateField] == null),
+      `${optionalDateField} null variation`
+    );
+    assert.ok(
+      datePayloads.some(
+        (payload) => typeof payload[optionalDateField] === "string"
+      ),
+      `${optionalDateField} string variation`
+    );
+  }
+
+  const filePayloads = details.flatMap((detail) =>
+    detail.actions
+      .filter((action) => action.popupKind === "file_upload")
+      .map((action) => jsonObject(action.popupPayload))
+  );
+  assert.ok(
+    filePayloads.some((payload) => Array.isArray(payload.accept_mime_types))
+  );
+  assert.ok(filePayloads.some((payload) => payload.accept_mime_types == null));
+
+  const optionIcons = details.flatMap((detail) =>
+    detail.actions.flatMap((action) =>
+      action.options.map((option) => option.icon)
+    )
+  );
+  assert.ok(optionIcons.some((icon) => typeof icon === "string"));
+  assert.ok(optionIcons.some((icon) => icon === null));
+
+  const usedIcons = sortedSet(
+    details.flatMap((detail) => [
+      detail.rowType.icon,
+      ...detail.actions.flatMap((action) => [
+        action.icon,
+        ...action.options
+          .map((option) => option.icon)
+          .filter((icon) => typeof icon === "string")
+      ]),
+      ...detail.bulkActions.map((action) => action.icon),
+      ...detail.linkButtons.map((link) => link.icon),
+      ...pillVisualIcons(detail.cardVisual)
+    ])
+  );
+  /** @type {Set<string>} */
+  const supportedIconNames = new Set(SUPPORTED_LUCIDE_ICON_NAMES);
+  assert.deepEqual(
+    usedIcons.filter((icon) => supportedIconNames.has(icon)),
+    [...SUPPORTED_LUCIDE_ICON_NAMES].sort()
+  );
+  assert.ok(usedIcons.includes("not-a-supported-icon"));
+
+  assert.ok(details.some((detail) => detail.bulkActions.length === 0));
+  assert.ok(details.some((detail) => detail.bulkActions.length === 1));
+  assert.ok(details.some((detail) => detail.bulkActions.length > 1));
+  assert.ok(details.some((detail) => detail.linkButtons.length === 0));
+  assert.ok(details.some((detail) => detail.linkButtons.length === 1));
+  assert.ok(details.some((detail) => detail.linkButtons.length > 1));
+  assert.ok(details.some((detail) => detail.detailsHtml === null));
+  assert.ok(details.some((detail) => detail.detailsHtml !== null));
+  assert.ok(details.some((detail) => detail.cornerHtml === null));
+  assert.ok(details.some((detail) => detail.cornerHtml !== null));
+  assert.ok(details.some((detail) => detail.skipDisabled));
+  assert.ok(details.some((detail) => !detail.skipDisabled));
+  assert.ok(
+    details.some((detail) => detail.actions.some((action) => action.overflow))
+  );
+  assert.ok(
+    details.some((detail) =>
+      detail.actions.some((action) => !action.answerable)
+    )
+  );
+  assert.ok(details.some((detail) => detail.rowAccentColor === null));
+  assert.ok(
+    details.some(
+      (detail) =>
+        detail.rowAccentColor !== null && isSafeColor(detail.rowAccentColor)
+    )
+  );
+  assert.ok(
+    details.some(
+      (detail) =>
+        detail.rowAccentColor !== null && !isSafeColor(detail.rowAccentColor)
+    )
+  );
+
+  const outputs = details.flatMap((detail) =>
+    detail.output ? [detail.output] : []
+  );
+  assert.ok(
+    outputs.some((output) => output.undoEligible && !output.firstReadAt)
+  );
+  assert.ok(
+    outputs.some((output) => !output.undoEligible && output.firstReadAt)
+  );
+
+  const numericPercents = details.flatMap((detail) =>
+    numericVisualPercents(detail.cardVisual)
+  );
+  assert.ok(numericPercents.some((percent) => percent < 50));
+  assert.ok(numericPercents.some((percent) => percent >= 50 && percent < 75));
+  assert.ok(numericPercents.some((percent) => percent >= 75));
+
+  const useCases = scenarios.map((scenario) => scenario.useCase).join("\n");
+  for (const requiredUseCase of [
+    /Email draft approval/,
+    /Email archive labeling/,
+    /LinkedIn connection request approval/,
+    /X post draft approval/,
+    /Financial categorization/,
+    /ambiguity/,
+    /failed automated check/,
+    /SMS reply/
+  ]) {
+    assert.match(useCases, requiredUseCase);
+  }
+});
 
 test("human review list statement scopes rows by account and supports focused filters", () => {
   const statement = humanReviewListStatement(context, {

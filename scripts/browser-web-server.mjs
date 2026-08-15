@@ -153,6 +153,7 @@ function cleanup() {
 }
 
 function waitForPostgres() {
+  let lastStatus = null;
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const result = spawnSync(
       "docker",
@@ -165,14 +166,36 @@ function waitForPostgres() {
         "-d",
         DATABASE_NAME
       ],
-      { stdio: "ignore" }
+      { encoding: "utf8", stdio: "pipe" }
     );
+    lastStatus = result.status;
     if (result.status === 0) {
       return;
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);
   }
-  throw new Error("Timed out waiting for browser test Postgres.");
+  const state = spawnSync(
+    "docker",
+    [
+      "inspect",
+      "--format",
+      "status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} error={{.State.Error}}",
+      CONTAINER_NAME
+    ],
+    { encoding: "utf8", stdio: "pipe" }
+  ).stdout.trim();
+  const logs = spawnSync("docker", ["logs", "--tail", "80", CONTAINER_NAME], {
+    encoding: "utf8",
+    stdio: "pipe"
+  });
+  const logText = [logs.stdout, logs.stderr].filter(Boolean).join("\n").trim();
+  throw new Error(
+    [
+      `Timed out waiting for browser test Postgres (pg_isready status ${lastStatus ?? "unknown"}).`,
+      state || "Container state unavailable.",
+      logText || "Container logs unavailable."
+    ].join("\n")
+  );
 }
 
 function postgresHostPort() {

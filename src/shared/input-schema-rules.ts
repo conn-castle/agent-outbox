@@ -1,18 +1,24 @@
 export const SUPPORTED_LUCIDE_ICON_NAMES = [
   "archive",
+  "at-sign",
   "calendar",
   "check",
   "chevron-down",
   "clock",
+  "credit-card",
   "download",
   "external-link",
   "file",
+  "flask-conical",
   "inbox",
   "mail",
+  "message-square",
   "paperclip",
+  "rocket",
   "send",
   "trash",
   "upload",
+  "user-plus",
   "x"
 ] as const;
 

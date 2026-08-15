@@ -13,6 +13,8 @@ const sentryNextjsEdgeEntry =
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
+  devIndicators:
+    process.env.AGENT_OUTBOX_BROWSER_FIXTURE === "1" ? false : undefined,
   experimental: {
     serverActions: {
       bodySizeLimit: "34mb"
@@ -22,7 +24,10 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/:path*",
-        headers: applicationSecurityHeaders(process.env.APP_ENV)
+        headers: applicationSecurityHeaders(
+          process.env.APP_ENV,
+          process.env.AGENT_OUTBOX_BROWSER_FIXTURE === "1"
+        )
       }
     ];
   },

@@ -1,4 +1,10 @@
-import { expect, test, type Page, type Request } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Request
+} from "@playwright/test";
 
 function rethrowPageError(error: Error) {
   throw error;
@@ -13,7 +19,7 @@ test("first-time self-serve signup fixture lands on a provisioned human account"
 }) => {
   await page.goto("/human");
   await expect(
-    page.getByRole("heading", { name: "Review queue" })
+    page.getByRole("heading", { name: "Pending reviews" })
   ).toBeVisible();
   const existingAccountId = await page
     .getByTestId("fixture-account-id")
@@ -41,7 +47,7 @@ test("first-time self-serve signup fixture lands on a provisioned human account"
 
   await expect(page).toHaveURL(/\/human/);
   await expect(
-    page.getByRole("heading", { name: "Review queue" })
+    page.getByRole("heading", { name: "Pending reviews" })
   ).toBeVisible();
   await expect(page.getByTestId("provisioned-account")).toHaveText("yes");
   await expect(page.getByTestId("fixture-account-id")).not.toHaveText(
@@ -150,17 +156,19 @@ test("upgrade billing actions submit checkout intervals and preserve portal", as
 });
 
 test("authenticated review workspace renders content actions and preserves controls across detail navigation", async ({
-  page
+  page,
+  isMobile
 }) => {
   await page.goto("/human");
 
   await expect(
-    page.getByRole("heading", { name: "Review queue" })
+    page.getByRole("heading", { name: "Pending reviews" })
   ).toBeVisible();
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await expect(
-    page.getByRole("link", { name: /Review neighborhood permit brief/ })
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
   ).toBeVisible();
+  await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
   const detail = page.getByRole("region", { name: "Review detail" });
   await expect(detail.getByText("Confidence")).toBeVisible();
   await expect(detail.getByText("82%")).toBeVisible();
@@ -170,102 +178,226 @@ test("authenticated review workspace renders content actions and preserves contr
   await expect(
     page.getByRole("link", { name: "Open context" })
   ).toHaveAttribute("href", "https://example.com/context/steward-brief-101");
-  await expect(page.getByRole("button", { name: "Approve" })).toBeEnabled();
-  await expect(page.getByText("free text")).toBeVisible();
-  await expect(page.getByText("single select")).toBeVisible();
+  await expect(
+    reviewDecisionSurface(
+      page,
+      isMobile,
+      "Review neighborhood permit brief"
+    ).getByRole("button", { name: "Approve" })
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Request edit" })
+  ).toBeVisible();
+  await openSecondaryActions(page);
+  await expect(
+    page.getByRole("button", { name: "Set review lane" })
+  ).toBeVisible();
+
+  await page.goto("/human");
+  await openReviewTools(page);
 
   await page.getByRole("combobox", { name: "Sort" }).selectOption("updated_at");
   await expect(
     page.getByRole("list", { name: "Review queue" }).getByRole("link").first()
-  ).toContainText("Review neighborhood permit brief");
+  ).toContainText("Payments smoke check failed after deploy");
   await page.getByRole("combobox", { name: "Sort" }).selectOption("priority");
 
-  await page.getByRole("button", { name: "Skip" }).first().click();
+  await page
+    .getByRole("button", { name: /More actions for Review neighborhood/ })
+    .click();
+  await page.getByRole("button", { name: "Skip for now" }).click();
   await expect(
-    page.getByRole("list", { name: "Review queue" }).getByRole("link").first()
-  ).toContainText("Choose follow-up window");
-  await page.getByRole("link", { name: /Choose follow-up window/ }).click();
+    page.locator("article.review-row", {
+      has: reviewLinkByTitle(page, "Review neighborhood permit brief")
+    })
+  ).toContainText("skipped");
+  await reviewLinkByTitle(page, "Choose follow-up window").click();
   await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000512/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await expect(
-    page.getByRole("list", { name: "Review queue" }).getByRole("link").first()
-  ).toContainText("Choose follow-up window");
+    page.getByRole("button", { name: "Pick date", exact: true })
+  ).toBeVisible();
+  await openSecondaryActions(page);
   await expect(
-    page.locator("article.review-row", {
-      has: page.getByRole("link", {
-        name: /Review neighborhood permit brief/
-      })
-    })
-  ).toContainText("skipped");
-  await expect(page.getByText("Displayed timezone: UTC")).toHaveCount(2);
+    page.getByRole("button", { name: "Pick date and time" })
+  ).toBeVisible();
 
+  if (isMobile) {
+    await page
+      .getByRole("link", { name: "Back to queue", exact: true })
+      .click();
+    await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  }
+
+  await openReviewTools(page);
   await page.getByLabel("Search").fill("follow-up");
   await expect(page.getByLabel("Search")).toHaveValue("follow-up");
+  await expect(page).toHaveURL(/search=follow-up/);
   await expect(
-    page.getByRole("link", { name: /Choose follow-up window/ })
+    reviewLinkByTitle(page, "Choose follow-up window")
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: /Review neighborhood permit brief/ })
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
   ).toHaveCount(0);
 
   await page.getByLabel("Search").fill("");
   await page.getByRole("combobox", { name: "Status" }).selectOption("answered");
   await expect(
-    page.getByRole("link", { name: /Answered summary verification/ })
+    reviewLinkByTitle(page, "GitHub security digest for archived repositories")
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: /Review neighborhood permit brief/ })
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
   ).toHaveCount(0);
-  await page
-    .getByRole("link", { name: /Answered summary verification/ })
-    .click();
-  await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000513/);
+  await reviewLinkByTitle(
+    page,
+    "GitHub security digest for archived repositories"
+  ).click();
+  await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000517/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  if (isMobile) {
+    await page
+      .getByRole("link", { name: "Back to queue", exact: true })
+      .click();
+    await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  }
+  await openReviewTools(page);
   await expect(page.getByRole("combobox", { name: "Status" })).toHaveValue(
     "answered"
   );
   await expect(
-    page.getByRole("link", { name: /Answered summary verification/ })
+    reviewLinkByTitle(page, "GitHub security digest for archived repositories")
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: /Review neighborhood permit brief/ })
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
   ).toHaveCount(0);
 });
 
-test("human actions submit undo and narrow bulk actions through server actions", async ({
+test("queue-only workspace keeps pagination visible and rows independently scrollable", async ({
+  page
+}) => {
+  await page.goto("/human?fixture_dataset=pagination&status=all");
+
+  const queue = page.locator(".queue-scroll");
+  const pagination = page.getByRole("navigation", { name: "Review pages" });
+  await expect(queue).toBeVisible();
+  await expect(pagination).toBeVisible();
+  await expect
+    .poll(() =>
+      queue.evaluate((element) => element.scrollHeight > element.clientHeight)
+    )
+    .toBe(true);
+});
+
+test("desktop detail width persists on this device", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "Desktop-only resize controls");
+
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto("/human");
+  await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(640);
+  const initialDetailWidth = await elementWidth(detail);
+  await dragHorizontally(
+    page,
+    page.getByRole("separator", { name: "Resize review detail panel" }),
+    -64
+  );
+  const resizedDetailWidth = await elementWidth(detail);
+  expect(resizedDetailWidth).toBeGreaterThan(initialDetailWidth + 50);
+
+  await page.reload();
+  await expect.poll(() => elementWidth(detail)).toBe(resizedDetailWidth);
+});
+
+test("routine reviews can be completed directly from the queue", async ({
   page
 }) => {
   await page.goto("/human");
+  await openReviewTools(page);
 
-  await page.getByRole("button", { name: "Approve" }).first().click();
+  await expect(page.getByRole("combobox", { name: "Status" })).toHaveValue(
+    "pending"
+  );
+  await expect(page.getByRole("region", { name: "Review detail" })).toHaveCount(
+    0
+  );
+
+  const row = page.locator("article.review-row", {
+    has: reviewLinkByTitle(page, "Review neighborhood permit brief")
+  });
+  await expect(
+    row.getByRole("group", {
+      name: /Quick actions for Review neighborhood permit brief/
+    })
+  ).toBeVisible();
+  await row.getByRole("button", { name: "Approve" }).click();
+
   await expect(page.getByRole("status")).toContainText(
-    "Answer submitted: approve."
+    "Approve completed for “Review neighborhood permit brief”."
+  );
+  await expect(page).not.toHaveURL(/item=/);
+  await expect(
+    page.getByRole("heading", { name: "Pending reviews" })
+  ).toBeVisible();
+});
+
+test("human actions submit undo and narrow bulk actions through server actions", async ({
+  page,
+  isMobile
+}) => {
+  await page.goto("/human");
+
+  await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
+  await reviewDecisionSurface(
+    page,
+    isMobile,
+    "Review neighborhood permit brief"
+  )
+    .getByRole("button", { name: "Approve" })
+    .click();
+  await expect(page.getByRole("status")).toContainText(
+    "Approve completed for “Review neighborhood permit brief”."
   );
 
   await page.goto("/human");
-  const rows = page.locator(".review-row");
-  await rows.nth(0).getByRole("checkbox", { name: "Select review" }).check();
-  await expect(rows.nth(2)).toContainText("Renderer boundary probe");
-  await rows.nth(2).getByRole("checkbox", { name: "Select review" }).check();
+  await openReviewTools(page);
+  await page
+    .getByRole("button", { name: /^(Select items|Bulk select)$/ })
+    .click();
+  const permitRow = reviewRowByTitle(page, "Review neighborhood permit brief");
+  const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
+  await permitRow.getByRole("checkbox", { name: "Select review" }).check();
+  const incompatibleRow = page.locator("article.review-row", {
+    has: reviewLinkByTitle(page, "Payments smoke check failed after deploy")
+  });
+  await incompatibleRow.scrollIntoViewIfNeeded();
+  await incompatibleRow
+    .getByRole("checkbox", { name: "Select review" })
+    .check();
   await expect(page.locator('select[name="bulkActionValue"]')).toBeDisabled();
   await expect(page.getByRole("button", { name: "Apply" })).toBeDisabled();
-  await rows.nth(2).getByRole("checkbox", { name: "Select review" }).uncheck();
-  await rows.nth(1).getByRole("checkbox", { name: "Select review" }).check();
+  await incompatibleRow
+    .getByRole("checkbox", { name: "Select review" })
+    .uncheck();
+  await followUpRow.getByRole("checkbox", { name: "Select review" }).check();
   await page.getByRole("button", { name: "Apply" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Bulk action complete: 2 answered, 0 failed."
   );
 
-  await page.goto("/human?item=00000000-0000-4000-8000-000000000513");
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000517");
   await expect(page.getByLabel("Answered state")).toContainText(
-    "Answered with approve"
+    "Answered with archive"
   );
   await page.getByRole("button", { name: "Undo answer" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Answer undone before caller read."
   );
 
-  await page.goto("/human?item=00000000-0000-4000-8000-000000000514");
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000525");
   await expect(
     page.getByRole("button", { name: "Undo unavailable after caller read" })
   ).toBeDisabled();
@@ -277,12 +409,14 @@ test("failed file upload notice is not re-emitted by the browser", async ({
   const events = await interceptClientEvents(page);
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
+  await openSecondaryActions(page);
+  await page.getByRole("button", { name: "Attach evidence" }).click();
   await page.getByLabel("Evidence file").setInputFiles({
     name: "empty.txt",
     mimeType: "text/plain",
     buffer: Buffer.alloc(0)
   });
-  await page.getByRole("button", { name: "Attach evidence" }).click();
+  await page.getByRole("button", { name: "Submit Attach evidence" }).click();
 
   await expect(page.getByRole("status")).toContainText(
     "Action failed: invalid request."
@@ -295,32 +429,48 @@ test("failed file upload notice is not re-emitted by the browser", async ({
 });
 
 test("reviews beyond the first 100 remain discoverable and reviewable", async ({
-  page
+  page,
+  isMobile
 }) => {
-  await page.goto("/human");
-  await expect(page.getByRole("button", { name: "Next page" })).toBeVisible();
-  await page.getByRole("button", { name: "Next page" }).click();
+  await page.goto("/human?fixture_dataset=pagination");
+  await expect(page.getByRole("button", { name: "Next 100" })).toBeVisible();
+  await page.getByRole("button", { name: "Next 100" }).click();
   await expect(page).toHaveURL(/page=2/);
-  await page.getByRole("link", { name: /Beyond one hundred review/ }).click();
+  await reviewLinkByTitle(page, "Beyond one hundred review").click();
   await expect(
     page.getByRole("region", { name: "Review detail" })
   ).toContainText("Open and approve this item");
-  await expect(page.getByRole("button", { name: "Approve" })).toBeEnabled();
+  const detail = page.getByRole("region", { name: "Review detail" });
+  const decisionSurface = reviewDecisionSurface(
+    page,
+    isMobile,
+    "Beyond one hundred review"
+  );
+  await expect(
+    decisionSurface.getByRole("button", { name: "Approve" })
+  ).toBeEnabled();
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
   // Submitting from page 2 must land back on page 2, not a reset view.
-  await page.getByRole("button", { name: "Approve" }).click();
+  await decisionSurface.getByRole("button", { name: "Approve" }).click();
   await expect(page.getByRole("status")).toContainText(
-    "Answer submitted: approve."
+    "Approve completed for “Beyond one hundred review”."
   );
   await expect(page).toHaveURL(/page=2/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
+  if (isMobile) {
+    await page
+      .getByRole("link", { name: "Back to queue", exact: true })
+      .click();
+    await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  }
+  await openReviewTools(page);
   await page.getByLabel("Search").fill("Beyond one hundred");
   await expect(page).toHaveURL(/search=Beyond\+one\+hundred/);
   await expect(page).not.toHaveURL(/page=2/);
   await expect(
-    page.getByRole("link", { name: /Beyond one hundred review/ })
+    reviewLinkByTitle(page, "Beyond one hundred review")
   ).toBeVisible();
 });
 
@@ -333,6 +483,7 @@ test("review search sends one request after the trailing debounce", async ({
   await page.clock.pauseAt(new Date("2026-07-11T10:00:00Z"));
   const searchRequests = trackHumanSearchRequests(page);
 
+  await openReviewTools(page);
   await page.getByLabel("Search").pressSequentially("follow-up");
   expect(searchRequests).toHaveLength(0);
   await page.clock.runFor(299);
@@ -351,6 +502,7 @@ test("Enter and the Search button submit immediately and cancel debounce", async
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await page.clock.pauseAt(new Date("2026-07-11T10:00:00Z"));
   const searchRequests = trackHumanSearchRequests(page);
+  await openReviewTools(page);
   const searchInput = page.getByLabel("Search");
 
   await searchInput.fill("follow-up");
@@ -360,9 +512,9 @@ test("Enter and the Search button submit immediately and cancel debounce", async
   await page.clock.runFor(300);
   expect(searchRequests).toHaveLength(1);
 
-  await page.getByLabel("Search").fill("Beyond one hundred");
+  await page.getByLabel("Search").fill("neighborhood permit");
   await page.getByRole("button", { name: "Search" }).click();
-  await expect(page).toHaveURL(/search=Beyond\+one\+hundred/);
+  await expect(page).toHaveURL(/search=neighborhood\+permit/);
   await expect.poll(() => searchRequests.length).toBe(2);
   await page.clock.runFor(300);
   expect(searchRequests).toHaveLength(2);
@@ -399,14 +551,22 @@ test("bulk actions only submit selected rows visible in the current filter", asy
   page
 }) => {
   await page.goto("/human");
+  await openReviewTools(page);
 
-  const rows = page.locator(".review-row");
-  await rows.nth(0).getByRole("checkbox", { name: "Select review" }).check();
-  await rows.nth(1).getByRole("checkbox", { name: "Select review" }).check();
+  await page
+    .getByRole("button", { name: /^(Select items|Bulk select)$/ })
+    .click();
+  await reviewRowByTitle(page, "Review neighborhood permit brief")
+    .getByRole("checkbox", { name: "Select review" })
+    .check();
+  await reviewRowByTitle(page, "Choose follow-up window")
+    .getByRole("checkbox", { name: "Select review" })
+    .check();
   await expect(page.locator(".bulk-actions")).toContainText(
     "2 selected pending rows"
   );
 
+  await openReviewTools(page);
   await page.getByLabel("Search").fill("follow-up");
   await expect(page.locator(".bulk-actions")).toContainText(
     "1 selected pending row"
@@ -416,6 +576,43 @@ test("bulk actions only submit selected rows visible in the current filter", asy
     "Bulk action complete: 1 answered, 0 failed."
   );
 });
+
+function reviewRowByTitle(page: Page, title: string) {
+  return page.locator("article.review-row", {
+    has: reviewLinkByTitle(page, title)
+  });
+}
+
+function reviewLinkByTitle(page: Page, title: string) {
+  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return page.getByRole("link", {
+    name: new RegExp(`^${escapedTitle}(?:$|\\s)`)
+  });
+}
+
+function reviewDecisionSurface(page: Page, isMobile: boolean, title: string) {
+  void isMobile;
+  void title;
+  return page.getByRole("region", { name: "Review detail" });
+}
+
+async function elementWidth(locator: Locator) {
+  return locator.evaluate((element) =>
+    Math.round(element.getBoundingClientRect().width)
+  );
+}
+
+async function dragHorizontally(page: Page, locator: Locator, delta: number) {
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) return;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + delta, y);
+  await page.mouse.up();
+}
 
 function deferred() {
   let resolve: () => void = () => {};
@@ -441,6 +638,26 @@ function trackHumanSearchRequests(page: Page) {
   return requests;
 }
 
+async function openReviewTools(page: Page) {
+  const button = page.getByRole("button", { name: "Review tools" });
+  if ((await button.count()) === 0 || !(await button.isVisible())) {
+    return;
+  }
+  if ((await button.getAttribute("aria-expanded")) !== "true") {
+    await button.click();
+  }
+}
+
+async function openSecondaryActions(page: Page) {
+  const disclosure = page.locator(".detail-pane .secondary-actions > summary");
+  const open = await disclosure.evaluate(
+    (summary) => (summary.parentElement as HTMLDetailsElement).open
+  );
+  if (!open) {
+    await disclosure.click();
+  }
+}
+
 async function interceptClientEvents(page: Page) {
   const events: Array<{ name: string; category?: string }> = [];
   await page.route("**/api/client-events", async (route) => {
@@ -461,60 +678,97 @@ async function interceptClientEvents(page: Page) {
 test("popup controls cover typed response kinds", async ({ page }) => {
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
+  await openSecondaryActions(page);
+  await page.getByRole("button", { name: "Attach evidence" }).click();
   await page.getByLabel("Evidence file").setInputFiles({
     name: "evidence.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("browser fixture file")
   });
-  await page.getByRole("button", { name: "Attach evidence" }).click();
+  await page.getByRole("button", { name: "Submit Attach evidence" }).click();
   await expect(page.getByRole("status")).toContainText(
-    "Answer submitted: attach_evidence."
+    "Attach evidence completed"
   );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
+  await page.getByRole("button", { name: "Request edit" }).click();
   await page
     .getByLabel("Requested change")
     .fill("Tighten the handoff language.");
-  await page.getByRole("button", { name: "Request edit" }).click();
+  await page.getByRole("button", { name: "Submit Request edit" }).click();
   await expect(page.getByRole("status")).toContainText(
-    "Answer submitted: request_edit."
+    "Request edit completed"
   );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
-  await page.getByLabel("Operations").check();
+  await openSecondaryActions(page);
   await page.getByRole("button", { name: "Set review lane" }).click();
+  await page.getByLabel("Operations").check();
+  await page.getByRole("button", { name: "Submit Set review lane" }).click();
   await expect(page.getByRole("status")).toContainText(
-    "Answer submitted: set_lane."
+    "Set review lane completed"
   );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
-  await page.getByLabel("Follow-up date").fill("2026-07-15");
   await page.getByRole("button", { name: "Pick date", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "Answer submitted: pick_date."
-  );
+  await page.getByLabel("Follow-up date").fill("2026-07-15");
+  await page.getByRole("button", { name: "Submit Pick date" }).click();
+  await expect(page.getByRole("status")).toContainText("Pick date completed");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
-  await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
+  await openSecondaryActions(page);
   await page.getByRole("button", { name: "Pick date and time" }).click();
+  await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
+  await page.getByRole("button", { name: "Submit Pick date and time" }).click();
   await expect(page.getByRole("status")).toContainText(
-    "Answer submitted: pick_datetime."
+    "Pick date and time completed"
   );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
+  await openSecondaryActions(page);
+  await page.getByRole("button", { name: "Select checks" }).click();
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
-  await page.getByRole("button", { name: "Select checks" }).click();
+  await page.getByRole("button", { name: "Submit Select checks" }).click();
   await expect(page.getByRole("status")).toContainText(
-    "Answer submitted: select_checks."
+    "Select checks completed"
   );
 });
 
-test("security fixture renders hostile caller content inertly", async ({
+test("mobile review navigation preserves the queue view", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(!isMobile, "Mobile-only navigation contract");
+
+  await page.goto("/human?status=pending&sort=updated_at");
+  await expect(
+    page.getByRole("region", { name: "Queue browser" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Review detail" })
+  ).toBeHidden();
+
+  await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
+  await expect(
+    page.getByRole("region", { name: "Review detail" })
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Back to queue", exact: true }).click();
+
+  await expect(page).toHaveURL(/sort=updated_at/);
+  await expect(page.getByLabel("Status", { exact: true })).toHaveValue(
+    "pending"
+  );
+  await expect(
+    page.getByRole("region", { name: "Queue browser" })
+  ).toBeVisible();
+});
+
+test("deployment fixture renders hostile caller content inertly", async ({
   page
 }) => {
-  await page.goto("/human?item=00000000-0000-4000-8000-000000000515");
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000523");
 
   const detail = page.getByRole("region", { name: "Review detail" });
   await expect(detail).toContainText("fixtureUnsafeScript()");
@@ -531,25 +785,85 @@ test("security fixture renders hostile caller content inertly", async ({
   ).toHaveCount(0);
   await expect(detail.locator("caller-injected-widget")).toHaveCount(0);
   await expect(
-    page.getByRole("link", { name: "Blocked javascript link" })
+    page.getByRole("link", { name: "Blocked unsafe link" })
   ).toHaveCount(0);
+  await openSecondaryActions(page);
   await expect(
-    detail.getByRole("button", { name: "Attach file" })
+    detail.getByRole("button", { name: "Unavailable upload" })
   ).toBeDisabled();
-  await expect(detail.getByText("file upload", { exact: true })).toBeVisible();
 
   const securityRow = page.locator("article.review-row", {
-    has: page.getByRole("link", { name: /Renderer boundary probe/ })
+    has: page.locator('a[href*="item=00000000-0000-4000-8000-000000000523"]')
   });
-  await expect(securityRow.locator(".review-accent")).not.toHaveAttribute(
+  await expect(securityRow.locator(".review-accent")).toHaveCount(0);
+  await expect(securityRow).not.toHaveAttribute("style", /url\(/i);
+  await expect(detail.locator(".ring")).not.toHaveAttribute(
     "style",
-    /url\(/i
+    /caller-controlled/i
   );
-  await expect(detail.locator(".pill-visual")).not.toHaveAttribute(
-    "style",
-    /var\(/i
-  );
-  await expect(page.getByText(/api key|manual key|archive|gmail/i)).toHaveCount(
-    0
+  await expect(
+    detail.getByText(/api key|manual key|archive|gmail/i)
+  ).toHaveCount(0);
+});
+
+test("fixture storyboard catalogs every use case at desktop tablet and phone widths", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "The storyboard itself is verified once on desktop.");
+
+  await page.goto("/human/storyboard");
+  await expect(
+    page.getByRole("heading", { name: "Review neighborhood permit brief" })
+  ).toBeVisible();
+  await expect(page.getByText("10 review scenarios")).toBeVisible();
+  for (const useCase of [
+    "Email draft approval",
+    "Email archive labeling",
+    "LinkedIn connection request approval",
+    "X post draft approval",
+    "Financial categorization judgment",
+    "Answer ambiguity without watching the run",
+    "Resolve a failed automated check",
+    "SMS reply and scheduling"
+  ]) {
+    await expect(
+      page.getByRole("link", { name: new RegExp(useCase) })
+    ).toBeVisible();
+  }
+
+  const frames = page.locator(".storyboard-viewport iframe");
+  await expect(frames).toHaveCount(3);
+  await expect(frames.nth(0)).toHaveAttribute("width", "1440");
+  await expect(frames.nth(1)).toHaveAttribute("width", "834");
+  await expect(frames.nth(2)).toHaveAttribute("width", "390");
+  await expect(
+    frames
+      .nth(0)
+      .contentFrame()
+      .locator(".detail-pane")
+      .getByText("Review neighborhood permit brief", { exact: true })
+  ).toBeVisible();
+
+  await page.getByRole("link", { name: /Email draft approval/ }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Reply to Meridian about the renewal delay"
+    })
+  ).toBeVisible();
+  await expect(
+    frames
+      .nth(0)
+      .contentFrame()
+      .locator(".detail-pane")
+      .getByText("Reply to Meridian about the renewal delay", { exact: true })
+  ).toBeVisible();
+  await expect(page.getByText("default text", { exact: true })).toBeVisible();
+
+  await page.getByRole("link", { name: "Queue", exact: true }).click();
+  await expect(page).toHaveURL(/mode=queue/);
+  await expect(frames.nth(0)).toHaveAttribute(
+    "src",
+    /search=email%3Adraft%3Ameridian-renewal/
   );
 });

@@ -9,6 +9,7 @@ import { SiteHeader } from "../src/components/SiteHeader";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate";
 import { cloudflareWebAnalyticsToken } from "../src/server/observability";
 import "./globals.css";
+import "./review-workspace.css";
 
 export const metadata: Metadata = {
   title: "Agent Outbox",
