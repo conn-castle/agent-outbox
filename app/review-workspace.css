@@ -2334,6 +2334,11 @@ body:has(.shell > .human-workspace) {
   -webkit-line-clamp: 2;
 }
 
+.human-workspace .row-proposal code {
+  padding: 0;
+  background: transparent;
+}
+
 .human-workspace .row-context {
   grid-column: 2;
   grid-row: 1;
