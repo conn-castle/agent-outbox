@@ -1102,20 +1102,56 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .progress-ring {
-  grid-template-columns: 1.65rem minmax(0, 1fr);
+  grid-template-columns: 2.5rem minmax(0, 1fr);
   align-items: center;
 }
 
 .human-workspace .ring {
-  display: block;
-  width: 1.65rem;
-  height: 1.65rem;
+  --ring-stroke: 0.3125rem;
+  --ring-edge-softness: 0.03125rem;
+  position: relative;
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
   border-radius: 50%;
+  background: transparent;
+}
+
+.human-workspace .ring::before {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   background: conic-gradient(
     var(--ring-color) var(--ring-progress),
     #dedbd4 var(--ring-progress)
   );
-  mask: radial-gradient(circle, transparent 48%, #000 50%);
+  content: "";
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - var(--ring-stroke) - var(--ring-edge-softness)),
+    #000 calc(100% - var(--ring-stroke) + var(--ring-edge-softness))
+  );
+}
+
+.human-workspace .ring-value {
+  position: relative;
+  z-index: 1;
+  color: var(--review-text);
+  font-size: 0.55rem;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.human-workspace .progress-ring .visual-meta {
+  display: grid;
+  justify-items: start;
+  gap: 0.12rem;
+}
+
+.human-workspace .progress-ring .visual-meta > span,
+.human-workspace .progress-ring .visual-meta > strong {
+  white-space: nowrap;
 }
 
 .human-workspace .pill-visual {
@@ -2428,38 +2464,6 @@ body:has(.shell > .human-workspace) {
 .human-workspace .row-context .progress-ring {
   grid-template-columns: 2.5rem auto;
   gap: 0.65rem;
-}
-
-.human-workspace .row-context .progress-ring .ring {
-  position: relative;
-  display: grid;
-  width: 2.5rem;
-  height: 2.5rem;
-  place-items: center;
-  mask: none;
-}
-
-.human-workspace .row-context .progress-ring .ring::before {
-  position: absolute;
-  inset: 0.24rem;
-  border-radius: 50%;
-  background: var(--review-paper);
-  content: "";
-}
-
-.human-workspace .row-context .progress-ring .ring-value {
-  position: relative;
-  z-index: 1;
-  color: var(--review-text);
-  font-size: 0.55rem;
-  font-weight: 750;
-  line-height: 1;
-}
-
-.human-workspace .row-context .progress-ring .visual-meta {
-  display: grid;
-  justify-items: start;
-  gap: 0.12rem;
 }
 
 .human-workspace .row-context .visual-meta > span {

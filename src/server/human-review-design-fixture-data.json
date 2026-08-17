@@ -127,10 +127,10 @@
         },
         "row_accent_color": "red",
         "title": "Choose a release environment",
-        "subtitle": "Build 8f4c1a passed its required checks",
+        "subtitle": "Build 8f4c1a is clearing its release checks",
         "corner": "Blocking",
         "summary": "Select exactly one destination for this build.",
-        "details": "<h3>Release brief</h3><p><strong>Build 8f4c1a</strong> is ready after <em>18 automated checks</em> passed.<br>Review the <a href=\"https://example.com/releases/8f4c1a\" title=\"Open the release record\">release record</a> or contact <a href=\"mailto:release@example.com\" title=\"Email release engineering\">release engineering</a>.</p><blockquote>Customer-visible downtime is not expected.</blockquote><h4>Required review</h4><ol><li>Confirm the target environment.</li><li>Verify the <code>DATABASE_URL</code> migration guard.</li></ol><h5>Change summary</h5><ul><li><b>Added:</b> durable handoff retries</li><li><i>Changed:</i> queue polling cadence</li><li><u>Watch:</u> elevated cache misses</li></ul><h6>Deployment command</h6><pre>agent-outbox deploy --build 8f4c1a\nagent-outbox verify --environment production</pre><table><thead><tr><th colspan=\"2\">Release checks</th><th>Status</th></tr></thead><tbody><tr><td rowspan=\"2\">Automated</td><td>Unit and browser tests</td><td><span>Passed</span></td></tr><tr><td>Migration dry run</td><td>Passed</td></tr><tr><td>Human</td><td>Environment selection</td><td>Pending</td></tr></tbody></table>",
+        "details": "<h3>Release brief</h3><p><strong>Build 8f4c1a</strong> is ready for environment selection with <em>14 of 18 automated checks</em> complete.<br>Review the <a href=\"https://example.com/releases/8f4c1a\" title=\"Open the release record\">release record</a> or contact <a href=\"mailto:release@example.com\" title=\"Email release engineering\">release engineering</a>.</p><blockquote>Customer-visible downtime is not expected.</blockquote><h4>Required review</h4><ol><li>Confirm the target environment.</li><li>Verify the <code>DATABASE_URL</code> migration guard.</li></ol><h5>Change summary</h5><ul><li><b>Added:</b> durable handoff retries</li><li><i>Changed:</i> queue polling cadence</li><li><u>Watch:</u> elevated cache misses</li></ul><h6>Deployment command</h6><pre>agent-outbox deploy --build 8f4c1a\nagent-outbox verify --environment production</pre><table><thead><tr><th colspan=\"2\">Release checks</th><th>Status</th></tr></thead><tbody><tr><td rowspan=\"2\">Automated</td><td>Unit and browser tests</td><td><span>Passed</span></td></tr><tr><td>Migration dry run</td><td>Running</td></tr><tr><td>Human</td><td>Environment selection</td><td>Pending</td></tr></tbody></table>",
         "link_buttons": [
           {
             "display": "View build",
@@ -141,8 +141,8 @@
         "card_visual": {
           "kind": "progress_ring",
           "label": "Checks passed",
-          "value": 18,
-          "display": "18 of 18",
+          "value": 14,
+          "display": "14 of 18",
           "unit": "checks",
           "min_value": 0,
           "max_value": 18,
