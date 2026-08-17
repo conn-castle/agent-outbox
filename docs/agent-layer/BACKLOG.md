@@ -27,6 +27,18 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
 
 <!-- ENTRIES START -->
 
+- Backlog 2026-08-17 account-limits-status-surface: Complete account limits and usage status
+    Priority: Medium. Area: human review, account status
+    Description: Give users one complete status surface for every configured account limit, current usage where measurable, reset timing, and active blocks instead of compressing partial information into the account menu.
+    Acceptance criteria: Every applicable limit derives from canonical limit metadata, reports its configured state and available live usage accurately, and links active blocks to actionable recovery guidance.
+    Notes: The current account-status contract exposes tier, upload eligibility, storage usage, and active blocks but not live usage for every configured fixed-window limit.
+
+- Backlog 2026-08-17 review-stats-page: Review activity statistics
+    Priority: Low. Area: human review, navigation
+    Description: Add a dedicated statistics page alongside Review queue and History when product usage provides enough evidence to define useful measures.
+    Acceptance criteria: The page reports decision activity from canonical review history without changing queue or undo semantics, and the primary navigation exposes only Review queue, History, and Stats.
+    Notes: Define the actual measures after observing real usage; do not add vanity metrics speculatively.
+
 - Backlog 2026-08-16 always-available-free-form-response: Optional always-visible free-form response
     Priority: Medium. Area: human review, settings
     Description: Add a dedicated setting that lets users keep a free-form response composer visible for every review, independently of caller-defined action buttons.

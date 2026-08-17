@@ -162,7 +162,9 @@ export function CardVisual({
             } as React.CSSProperties
           }
           aria-hidden="true"
-        ></span>
+        >
+          <span className="ring-value">{Math.round(metrics.percent)}%</span>
+        </span>
         <div className="visual-meta">
           <span>{metrics.label}</span>
           <strong>

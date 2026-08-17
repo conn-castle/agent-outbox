@@ -312,6 +312,45 @@ test("authenticated review workspace renders content actions and preserves contr
   ).toHaveCount(0);
 });
 
+test("primary navigation and queue disclosures behave consistently", async ({
+  page
+}) => {
+  await page.goto("/human");
+
+  const primary = page.getByRole("navigation", { name: "Primary" });
+  await expect(
+    primary.getByRole("link", { name: "Review queue" })
+  ).toHaveAttribute("aria-current", "page");
+  await expect(primary.getByRole("link", { name: "History" })).toHaveAttribute(
+    "href",
+    /status=answered/
+  );
+
+  const unavailableMore = page
+    .getByRole("button", { name: /^No more actions for / })
+    .first();
+  await expect(unavailableMore).toHaveAttribute("aria-disabled", "true");
+  await expect(unavailableMore).toHaveAttribute("title", "No more actions");
+
+  const account = page.getByLabel("Account status");
+  await account.locator("summary").click();
+  await expect(account).toHaveAttribute("open", "");
+
+  const rowDisclosure = page.locator("details.row-overflow").first();
+  await rowDisclosure.locator("summary").click();
+  await expect(rowDisclosure).toHaveAttribute("open", "");
+  await expect(account).not.toHaveAttribute("open", "");
+
+  await page.getByRole("heading", { name: "Needs review" }).click();
+  await expect(rowDisclosure).not.toHaveAttribute("open", "");
+
+  const accountSummary = account.locator("summary");
+  await accountSummary.click();
+  await page.keyboard.press("Escape");
+  await expect(account).not.toHaveAttribute("open", "");
+  await expect(accountSummary).toBeFocused();
+});
+
 test("queue-only workspace keeps pagination visible and rows independently scrollable", async ({
   page
 }) => {

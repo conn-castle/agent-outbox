@@ -239,6 +239,15 @@ body:has(.shell > .human-workspace) {
   gap: 1rem;
 }
 
+.human-workspace .account-limit-blocks {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0 0 0 1rem;
+  color: var(--review-red);
+  font-size: 0.67rem;
+}
+
 .human-workspace .human-notice {
   position: relative;
   z-index: 120;
@@ -1763,7 +1772,20 @@ body:has(.shell > .human-workspace) {
   font-weight: 500;
 }
 
-.human-workspace .app-location strong {
+.human-workspace .app-location a {
+  padding: 0.42rem 0.55rem;
+  border-radius: 0.38rem;
+  color: #b7b2a7;
+  text-decoration: none;
+}
+
+.human-workspace .app-location a:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8f5ee;
+}
+
+.human-workspace .app-location a.active {
+  background: rgba(233, 174, 81, 0.12);
   color: #e9ae51;
   font-weight: 700;
 }
@@ -2363,30 +2385,28 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .row-context .pill-visual {
   --visual-color: var(--row-accent);
-  display: grid;
-  grid-template-columns: auto;
-  gap: 0.55rem;
-  min-height: 0;
-  padding: 0;
+  display: inline-flex;
+  gap: 0.4rem;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.65rem;
   border: 0;
-  border-radius: 0;
-  background: transparent;
+  border-radius: 999px;
+  background: var(--visual-color);
   box-shadow: none;
-  color: var(--review-text);
+  color: #fff;
+  white-space: nowrap;
 }
 
 .human-workspace .row-context .pill-visual-with-icon {
-  grid-template-columns: 1.75rem auto;
+  display: inline-flex;
 }
 
 .human-workspace .row-context .pill-visual-icon {
-  display: grid;
-  width: 1.75rem;
-  height: 1.75rem;
+  display: inline-grid;
+  width: auto;
+  height: auto;
   place-items: center;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--visual-color) 12%, var(--review-paper));
-  color: var(--visual-color);
+  color: currentColor;
 }
 
 .human-workspace .row-context .pill-visual-icon svg {
@@ -2395,22 +2415,26 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .row-context .pill-visual > strong {
-  color: var(--visual-color);
+  min-width: 0;
+  overflow: hidden;
+  color: currentColor;
   font-size: var(--queue-type-label);
   font-weight: 700;
   line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .human-workspace .row-context .progress-ring {
-  grid-template-columns: 2.25rem auto;
+  grid-template-columns: 2.5rem auto;
   gap: 0.65rem;
 }
 
 .human-workspace .row-context .progress-ring .ring {
   position: relative;
   display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2.5rem;
+  height: 2.5rem;
   place-items: center;
   mask: none;
 }
@@ -2421,6 +2445,15 @@ body:has(.shell > .human-workspace) {
   border-radius: 50%;
   background: var(--review-paper);
   content: "";
+}
+
+.human-workspace .row-context .progress-ring .ring-value {
+  position: relative;
+  z-index: 1;
+  color: var(--review-text);
+  font-size: 0.55rem;
+  font-weight: 750;
+  line-height: 1;
 }
 
 .human-workspace .row-context .progress-ring .visual-meta {
@@ -2541,11 +2574,13 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .row-utilities .row-overflow,
-.human-workspace .row-utilities .row-overflow > summary {
+.human-workspace .row-utilities .row-overflow > summary,
+.human-workspace .row-utilities .row-overflow-disabled {
   width: auto;
 }
 
-.human-workspace .row-utilities .row-overflow > summary {
+.human-workspace .row-utilities .row-overflow > summary,
+.human-workspace .row-utilities .row-overflow-disabled {
   display: flex;
   box-sizing: border-box;
   width: 1.75rem;
@@ -2560,6 +2595,13 @@ body:has(.shell > .human-workspace) {
   color: var(--review-muted);
 }
 
+.human-workspace .row-utilities .row-overflow-disabled {
+  grid-column: 2;
+  color: var(--review-faint);
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .human-workspace .row-utilities .row-overflow > summary::marker {
   content: "";
 }
@@ -2569,7 +2611,8 @@ body:has(.shell > .human-workspace) {
   color: var(--review-text);
 }
 
-.human-workspace .row-utilities .row-overflow > summary svg {
+.human-workspace .row-utilities .row-overflow > summary svg,
+.human-workspace .row-utilities .row-overflow-disabled svg {
   width: 0.9rem;
   height: 0.9rem;
 }
@@ -2755,6 +2798,10 @@ body:has(.shell > .human-workspace) {
     display: flex;
   }
 
+  .human-workspace .app-brand > span {
+    display: none;
+  }
+
   .human-workspace .app-location > span {
     display: none;
   }
@@ -2864,11 +2911,13 @@ body:has(.shell > .human-workspace) {
   }
 
   .human-workspace .row-utilities .row-skip-button,
-  .human-workspace .row-utilities .row-overflow > summary {
+  .human-workspace .row-utilities .row-overflow > summary,
+  .human-workspace .row-utilities .row-overflow-disabled {
     min-height: 2.75rem;
   }
 
-  .human-workspace .row-utilities .row-overflow > summary {
+  .human-workspace .row-utilities .row-overflow > summary,
+  .human-workspace .row-utilities .row-overflow-disabled {
     width: 2.75rem;
     height: 2.75rem;
   }

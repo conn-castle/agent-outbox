@@ -5,7 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent
+  type KeyboardEvent as ReactKeyboardEvent
 } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -118,6 +118,46 @@ export function ReviewWorkspace({
       skippedIds: [...skippedIds]
     });
   }, [hydratedAccountId, selectedIds, session.accountId, skippedIds]);
+
+  useEffect(() => {
+    const selector = "details[data-dismissible-disclosure]";
+    const closeDisclosures = (except?: HTMLDetailsElement) => {
+      document
+        .querySelectorAll<HTMLDetailsElement>(selector)
+        .forEach((item) => {
+          if (item !== except) item.open = false;
+        });
+    };
+    const handleToggle = (event: Event) => {
+      const disclosure = event.target;
+      if (disclosure instanceof HTMLDetailsElement && disclosure.open) {
+        closeDisclosures(disclosure);
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(selector)) {
+        closeDisclosures();
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const openDisclosure = document.querySelector<HTMLDetailsElement>(
+        `${selector}[open]`
+      );
+      closeDisclosures();
+      openDisclosure?.querySelector<HTMLElement>("summary")?.focus();
+    };
+
+    document.addEventListener("toggle", handleToggle, true);
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("toggle", handleToggle, true);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     const visibleNonPendingIds = new Set(
@@ -266,7 +306,7 @@ export function ReviewWorkspace({
     setSelectionMode((current) => !current);
   }
 
-  function moveQueueFocus(event: KeyboardEvent<HTMLElement>) {
+  function moveQueueFocus(event: ReactKeyboardEvent<HTMLElement>) {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target;
     if (
@@ -315,14 +355,22 @@ export function ReviewWorkspace({
             Agent <b>Outbox</b>
           </span>
         </a>
-        <div className="app-location" aria-label="Current queue summary">
-          <span>Review queue</span>
-          <span aria-hidden="true">/</span>
-          <strong>
-            {pendingCount}
-            {hasNext ? "+" : ""} remaining
-          </strong>
-        </div>
+        <nav className="app-location" aria-label="Primary">
+          <a
+            className={view.status === "answered" ? undefined : "active"}
+            href={humanReviewHref({ ...view, status: "pending", page: 1 })}
+            aria-current={view.status === "answered" ? undefined : "page"}
+          >
+            Review queue
+          </a>
+          <a
+            className={view.status === "answered" ? "active" : undefined}
+            href={humanReviewHref({ ...view, status: "answered", page: 1 })}
+            aria-current={view.status === "answered" ? "page" : undefined}
+          >
+            History
+          </a>
+        </nav>
         <div className="app-account">
           <AccountBanner banner={banner} />
           <span className="sr-only" data-testid="fixture-account-id">

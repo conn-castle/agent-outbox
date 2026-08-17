@@ -1,10 +1,4 @@
-import {
-  Check,
-  MoreHorizontal,
-  MoreVertical,
-  SkipForward,
-  Undo2
-} from "lucide-react";
+import { Check, MoreVertical, SkipForward, Undo2 } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import type { HumanReviewListRow } from "../../server/human-review.ts";
@@ -135,47 +129,55 @@ export function ReviewList({
                     </>
                   }
                   utilities={
-                    row.status === "pending" || row.hasOverflowActions ? (
-                      <>
-                        {row.status === "pending" ? (
-                          <button
-                            className="row-skip-button"
-                            type="button"
-                            disabled={row.skipDisabled}
-                            title={
-                              row.skipDisabled
-                                ? "Skipping is disabled for this review"
-                                : undefined
-                            }
-                            onClick={() => onSkipToggle(row.inputItemId)}
-                          >
-                            {skippedIds.has(row.inputItemId) ? (
-                              <Undo2 aria-hidden="true" />
-                            ) : (
-                              <SkipForward aria-hidden="true" />
-                            )}
-                            <span>
-                              {skippedIds.has(row.inputItemId)
-                                ? "Return"
-                                : "Skip"}
-                            </span>
-                          </button>
-                        ) : null}
-                        {row.hasOverflowActions ? (
-                          <details className="row-overflow">
-                            <summary aria-label={`More actions for ${title}`}>
-                              <MoreVertical aria-hidden="true" />
-                            </summary>
-                            <div className="row-overflow-menu">
-                              <a href={rowHref}>
-                                <MoreHorizontal aria-hidden="true" />
-                                <span>Review remaining outcomes</span>
-                              </a>
-                            </div>
-                          </details>
-                        ) : null}
-                      </>
-                    ) : undefined
+                    <>
+                      {row.status === "pending" ? (
+                        <button
+                          className="row-skip-button"
+                          type="button"
+                          disabled={row.skipDisabled}
+                          title={
+                            row.skipDisabled
+                              ? "Skipping is disabled for this review"
+                              : undefined
+                          }
+                          onClick={() => onSkipToggle(row.inputItemId)}
+                        >
+                          {skippedIds.has(row.inputItemId) ? (
+                            <Undo2 aria-hidden="true" />
+                          ) : (
+                            <SkipForward aria-hidden="true" />
+                          )}
+                          <span>
+                            {skippedIds.has(row.inputItemId)
+                              ? "Return"
+                              : "Skip"}
+                          </span>
+                        </button>
+                      ) : null}
+                      {row.hasOverflowActions ? (
+                        <details
+                          className="row-overflow"
+                          data-dismissible-disclosure
+                        >
+                          <summary aria-label={`More actions for ${title}`}>
+                            <MoreVertical aria-hidden="true" />
+                          </summary>
+                          <div className="row-overflow-menu">
+                            <a href={rowHref}>Review remaining outcomes</a>
+                          </div>
+                        </details>
+                      ) : (
+                        <button
+                          className="row-overflow-disabled"
+                          type="button"
+                          aria-disabled="true"
+                          aria-label={`No more actions for ${title}`}
+                          title="No more actions"
+                        >
+                          <MoreVertical aria-hidden="true" />
+                        </button>
+                      )}
+                    </>
                   }
                 />
               }
