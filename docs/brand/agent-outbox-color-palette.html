@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Outbox — Color Palette</title>
+    <style>
+      :root {
+        --ink: #171612;
+        --canvas: #f6f5f1;
+        --paper: #ffffff;
+        --line: #d9d6cc;
+        --muted: #6c6960;
+        --amber: #cd8b2a;
+        --amber-dark: #8a560b;
+        --amber-soft: #fbf1df;
+        --red: #b52b31;
+        --orange: #a95123;
+        --yellow: #965800;
+        --green: #237a4b;
+        --blue: #326b91;
+        --purple: #745585;
+        --pink: #9e4c67;
+        --teal: #2d716f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family:
+          Geist,
+          Inter,
+          ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .hero {
+        padding: 1.5rem max(1.5rem, calc((100vw - 72rem) / 2)) 5rem;
+        color: #f6f5f1;
+        background:
+          radial-gradient(
+            circle at 78% 4%,
+            rgb(205 139 42 / 18%),
+            transparent 30%
+          ),
+          var(--ink);
+      }
+
+      .wordmark {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.75rem;
+        color: inherit;
+        font-size: 1.35rem;
+        font-weight: 580;
+        letter-spacing: -0.035em;
+        text-decoration: none;
+      }
+
+      .wordmark svg {
+        width: 2.75rem;
+        height: 2.75rem;
+      }
+
+      .wordmark span {
+        transform: translateY(0.25rem);
+      }
+
+      .wordmark b {
+        color: var(--amber);
+        font-weight: 700;
+      }
+
+      .hero-copy {
+        max-width: 56rem;
+        margin-top: clamp(5rem, 12vw, 9rem);
+      }
+
+      .eyebrow,
+      .section-label,
+      .token {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow {
+        color: #e9ae51;
+      }
+
+      h1,
+      h2 {
+        font-family: Georgia, "Times New Roman", serif;
+        font-weight: 400;
+        letter-spacing: -0.045em;
+      }
+
+      h1 {
+        margin: 1rem 0;
+        font-size: clamp(3.5rem, 8vw, 7rem);
+        line-height: 0.93;
+      }
+
+      .hero-copy p:last-child {
+        max-width: 42rem;
+        color: #c9c5ba;
+        font-size: 1.05rem;
+        line-height: 1.65;
+      }
+
+      main {
+        width: min(calc(100% - 3rem), 72rem);
+        margin: 0 auto;
+        padding: 4.5rem 0 7rem;
+      }
+
+      section + section {
+        margin-top: 5rem;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: 9rem 1fr;
+        gap: 2rem;
+        padding-top: 1.25rem;
+        border-top: 1px solid var(--line);
+      }
+
+      .section-label {
+        color: var(--amber-dark);
+      }
+
+      h2 {
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 3.25rem);
+      }
+
+      .section-intro {
+        max-width: 44rem;
+        margin: 0.7rem 0 2rem;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .swatches {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 1rem;
+        background: var(--paper);
+      }
+
+      .swatch {
+        min-width: 0;
+        border-right: 1px solid var(--line);
+      }
+
+      .swatch:nth-child(4n) {
+        border-right: 0;
+      }
+
+      .swatch:nth-child(n + 5) {
+        border-top: 1px solid var(--line);
+      }
+
+      .chip {
+        height: 9rem;
+        background: var(--color);
+      }
+
+      .swatch-copy {
+        min-height: 7.5rem;
+        padding: 1rem;
+      }
+
+      .swatch h3 {
+        margin: 0 0 0.25rem;
+        font-size: 0.95rem;
+      }
+
+      .swatch p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }
+
+      .copy {
+        margin-top: 0.8rem;
+        padding: 0;
+        border: 0;
+        color: var(--amber-dark);
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .usage {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+
+      .usage article {
+        padding: 1.5rem;
+        border: 1px solid var(--line);
+        border-radius: 1rem;
+        background: var(--paper);
+      }
+
+      .usage h3 {
+        margin: 0 0 0.7rem;
+      }
+
+      .usage p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      code {
+        color: var(--ink);
+        background: var(--amber-soft);
+      }
+
+      @media (max-width: 760px) {
+        .section-head,
+        .usage {
+          grid-template-columns: 1fr;
+        }
+
+        .swatches {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .swatch:nth-child(2n) {
+          border-right: 0;
+        }
+
+        .swatch:nth-child(n + 3) {
+          border-top: 1px solid var(--line);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="wordmark">
+        <svg viewBox="0 0 256 256" aria-hidden="true">
+          <defs>
+            <linearGradient
+              id="palette-arrow"
+              x1="92"
+              y1="21"
+              x2="164"
+              y2="132"
+              gradientUnits="userSpaceOnUse"
+            >
+              <stop offset="0" stop-color="#f6bc5f" />
+              <stop offset="1" stop-color="#e6883b" />
+            </linearGradient>
+          </defs>
+          <g transform="translate(0 18)">
+            <rect
+              x="48"
+              y="108"
+              width="160"
+              height="96"
+              rx="16"
+              fill="#495159"
+              stroke="#495159"
+              stroke-width="18"
+            />
+            <path
+              d="M128 132V21M92 57l36-36 36 36"
+              fill="none"
+              stroke="url(#palette-arrow)"
+              stroke-width="28"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </g>
+        </svg>
+        <span>Agent <b>Outbox</b></span>
+      </div>
+      <div class="hero-copy">
+        <div class="eyebrow">Brand color system</div>
+        <h1>Calm by default.<br />Decisive on cue.</h1>
+        <p>
+          Warm paper, near-black ink, and a precise amber accent define the
+          brand. A restrained eight-color UI set adds differentiation without
+          changing its character.
+        </p>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <div class="section-head">
+          <div class="section-label">01 / Core</div>
+          <div>
+            <h2>The recognizable foundation</h2>
+            <p class="section-intro">
+              Use these colors for the product frame, typography, surfaces, and
+              primary brand moments. Let ink and paper dominate; reserve amber
+              for deliberate emphasis.
+            </p>
+            <div class="swatches">
+              <article class="swatch" style="--color: var(--ink)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Outbox Ink</h3>
+                  <p>Primary text and dark surfaces</p>
+                  <button class="copy token" data-copy="#171612">
+                    #171612
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--canvas)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Warm Canvas</h3>
+                  <p>Page background</p>
+                  <button class="copy token" data-copy="#F6F5F1">
+                    #F6F5F1
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--paper)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Paper</h3>
+                  <p>Cards and raised surfaces</p>
+                  <button class="copy token" data-copy="#FFFFFF">
+                    #FFFFFF
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--amber)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Decision Amber</h3>
+                  <p>Brand emphasis and primary action</p>
+                  <button class="copy token" data-copy="#CD8B2A">
+                    #CD8B2A
+                  </button>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="section-label">02 / API colors</div>
+          <div>
+            <h2>Eight named interface colors</h2>
+            <p class="section-intro">
+              These are the only values accepted by
+              <code>row_accent_color</code> and card-visual <code>color</code>.
+              Callers send the name, never the hex value.
+            </p>
+            <div class="swatches">
+              <article class="swatch" style="--color: var(--red)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Red</h3>
+                  <p>Errors and destructive context</p>
+                  <button class="copy token" data-copy="#B52B31">
+                    red · #B52B31
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--orange)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Orange</h3>
+                  <p>Warm attention and review</p>
+                  <button class="copy token" data-copy="#A95123">
+                    orange · #A95123
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--yellow)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Yellow</h3>
+                  <p>Warnings and waiting states</p>
+                  <button class="copy token" data-copy="#965800">
+                    yellow · #965800
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--green)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Green</h3>
+                  <p>Success and resolved states</p>
+                  <button class="copy token" data-copy="#237A4B">
+                    green · #237A4B
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--blue)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Blue</h3>
+                  <p>Information and external context</p>
+                  <button class="copy token" data-copy="#326B91">
+                    blue · #326B91
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--purple)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Purple</h3>
+                  <p>Creative and policy context</p>
+                  <button class="copy token" data-copy="#745585">
+                    purple · #745585
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--pink)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Pink</h3>
+                  <p>People and communication context</p>
+                  <button class="copy token" data-copy="#9E4C67">
+                    pink · #9E4C67
+                  </button>
+                </div>
+              </article>
+              <article class="swatch" style="--color: var(--teal)">
+                <div class="chip"></div>
+                <div class="swatch-copy">
+                  <h3>Teal</h3>
+                  <p>Data and operational context</p>
+                  <button class="copy token" data-copy="#2D716F">
+                    teal · #2D716F
+                  </button>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="section-label">03 / Rules</div>
+          <div>
+            <h2>Keep color purposeful</h2>
+            <p class="section-intro">
+              Named colors may organize caller-supplied content, but they remain
+              supporting signals inside an ink, paper, and amber product.
+            </p>
+            <div class="usage">
+              <article>
+                <h3>Callers choose names</h3>
+                <p>
+                  Use values such as <code>"blue"</code> or
+                  <code>"purple"</code>. Raw hex, RGB, HSL, CSS variables, and
+                  arbitrary CSS color names are not part of the API.
+                </p>
+              </article>
+              <article>
+                <h3>The product chooses values</h3>
+                <p>
+                  The application owns the mapping from each name to its
+                  rendered value. The palette can evolve without requiring
+                  callers to update stored work.
+                </p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      document.querySelectorAll("[data-copy]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const original = button.textContent;
+          try {
+            await navigator.clipboard.writeText(button.dataset.copy);
+            button.textContent = "Copied";
+          } catch {
+            button.textContent = button.dataset.copy;
+          }
+          window.setTimeout(() => {
+            button.textContent = original;
+          }, 1200);
+        });
+      });
+    </script>
+  </body>
+</html>

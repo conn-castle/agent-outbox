@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { submitBulkHumanAnswers } from "../../../app/human/actions";
@@ -20,6 +21,18 @@ export function BulkActions({
   const pendingRows = selectedRows.filter((row) => row.status === "pending");
   const compatibleActions = commonNoPopupActions(pendingRows);
   const disabled = pendingRows.length === 0 || compatibleActions.length === 0;
+  const [selectedValue, setSelectedValue] = useState(
+    compatibleActions[0]?.value ?? ""
+  );
+  const selectedAction =
+    compatibleActions.find((action) => action.value === selectedValue) ??
+    compatibleActions[0];
+
+  useEffect(() => {
+    if (!compatibleActions.some((action) => action.value === selectedValue)) {
+      setSelectedValue(compatibleActions[0]?.value ?? "");
+    }
+  }, [compatibleActions, selectedValue]);
 
   if (pendingRows.length === 0 && offPageSelectedCount === 0) {
     return null;
@@ -59,7 +72,13 @@ export function BulkActions({
       ))}
       <label>
         <span className="sr-only">Compatible quick action</span>
-        <select name="bulkActionValue" disabled={disabled} required>
+        <select
+          name="bulkActionValue"
+          disabled={disabled}
+          required
+          value={selectedAction?.value ?? ""}
+          onChange={(event) => setSelectedValue(event.target.value)}
+        >
           {compatibleActions.map((action) => (
             <option key={action.value} value={action.value}>
               {action.display}
@@ -67,7 +86,7 @@ export function BulkActions({
           ))}
         </select>
       </label>
-      <BulkSubmitButton disabled={disabled} action={compatibleActions[0]} />
+      <BulkSubmitButton disabled={disabled} action={selectedAction} />
     </form>
   );
 }
@@ -87,7 +106,13 @@ function BulkSubmitButton({
       disabled={disabled || status.pending}
     >
       <HumanIcon name={action?.icon ?? "check"} />
-      <span>{status.pending ? "Submitting" : "Apply"}</span>
+      <span>
+        {status.pending
+          ? "Submitting"
+          : action
+            ? `Apply ${action.display}`
+            : "Apply"}
+      </span>
     </button>
   );
 }
@@ -98,14 +123,19 @@ function commonNoPopupActions(rows: HumanReviewListRow[]) {
   }
 
   const [first, ...rest] = rows;
-  return first.bulkActions.filter((candidate) =>
-    rest.every((row) =>
-      row.bulkActions.some(
-        (action) =>
-          action.value === candidate.value &&
-          action.display === candidate.display &&
-          action.icon === candidate.icon
+  return first.bulkActions.filter(
+    (candidate) =>
+      candidate.popupKind === "none" &&
+      !candidate.overflow &&
+      rest.every((row) =>
+        row.bulkActions.some(
+          (action) =>
+            action.popupKind === "none" &&
+            !action.overflow &&
+            action.value === candidate.value &&
+            action.display === candidate.display &&
+            action.icon === candidate.icon
+        )
       )
-    )
   );
 }

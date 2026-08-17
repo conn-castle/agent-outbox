@@ -120,8 +120,8 @@ function responseFromForm(
     case "none":
       return { kind: "none" };
     case "free_text": {
-      const text = stringField(formData, "response.text");
-      return text ? { kind: "free_text", text } : null;
+      const text = rawStringField(formData, "response.text");
+      return text === null ? null : { kind: "free_text", text };
     }
     case "single_select": {
       const value = stringField(formData, "response.value");
@@ -199,6 +199,11 @@ function popupKindField(formData: FormData): PopupKind | null {
 function stringField(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function rawStringField(formData: FormData, key: string) {
+  const value = formData.get(key);
+  return typeof value === "string" ? value : null;
 }
 
 function uuidField(formData: FormData, key: string) {

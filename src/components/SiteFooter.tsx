@@ -50,6 +50,7 @@ export function SiteFooter() {
           </div>
           <div>
             <p>Resources</p>
+            <Link href="/docs/api">API docs</Link>
             <a href="https://github.com/conn-castle/agent-outbox">GitHub</a>
             <Link href="/contact">Contact</Link>
           </div>

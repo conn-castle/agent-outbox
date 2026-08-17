@@ -1,7 +1,17 @@
 import type { AuthorizedHumanAccountContext } from "./authorization.ts";
 import type { TransactionContextStatement } from "./database.ts";
-import type { JsonValue } from "./human-answer.ts";
-import type { PopupKind, QueuePriority } from "./input-schema.ts";
+import type {
+  ActionStyle,
+  ActionTone,
+  NormalizedCardVisual,
+  NormalizedDatePickerPopupPayload,
+  NormalizedFileUploadPopupPayload,
+  NormalizedFreeTextPopupPayload,
+  NormalizedMultiSelectPopupPayload,
+  NormalizedSelectPopupPayload,
+  PopupKind,
+  QueuePriority
+} from "./input-schema.ts";
 import {
   accountStatusInTransaction,
   type AccountStatusData,
@@ -34,6 +44,7 @@ export type HumanReviewCallerAffordance = {
 export type HumanReviewOutputState = {
   outputResultId: string;
   actionValue: string;
+  actionDisplay: string;
   answeredAt: string;
   firstReadAt: string | null;
   readCount: number;
@@ -45,6 +56,10 @@ export type HumanReviewBulkAction = {
   display: string;
   icon: string;
   value: string;
+  tone?: ActionTone | null;
+  style?: ActionStyle | null;
+  popupKind: PopupKind;
+  overflow: boolean;
 };
 
 export type HumanReviewListRow = {
@@ -59,7 +74,7 @@ export type HumanReviewListRow = {
   subtitleHtml: string;
   cornerHtml: string | null;
   summaryHtml: string;
-  cardVisual: { kind: string; payload: JsonValue } | null;
+  cardVisual: NormalizedCardVisual | null;
   skipDisabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -67,6 +82,8 @@ export type HumanReviewListRow = {
   caller: HumanReviewCallerAffordance;
   output: HumanReviewOutputState | null;
   bulkActions: HumanReviewBulkAction[];
+  linkButtons?: HumanReviewLinkButton[];
+  hasOverflowActions?: boolean;
 };
 
 export type HumanReviewLinkButton = {
@@ -76,17 +93,36 @@ export type HumanReviewLinkButton = {
   url: string;
 };
 
-export type HumanReviewAction = {
+type HumanReviewActionBase = {
   displayOrder: number;
   display: string;
   icon: string;
   value: string;
   overflow: boolean;
-  popupKind: PopupKind;
-  popupPayload: JsonValue;
+  tone?: ActionTone | null;
+  style?: ActionStyle | null;
   answerable: boolean;
   options: HumanReviewActionOption[];
 };
+
+export type HumanReviewAction = HumanReviewActionBase &
+  (
+    | { popupKind: "none"; popupPayload: Record<string, never> }
+    | { popupKind: "free_text"; popupPayload: NormalizedFreeTextPopupPayload }
+    | { popupKind: "single_select"; popupPayload: NormalizedSelectPopupPayload }
+    | {
+        popupKind: "multi_select";
+        popupPayload: NormalizedMultiSelectPopupPayload;
+      }
+    | {
+        popupKind: "date_picker";
+        popupPayload: NormalizedDatePickerPopupPayload;
+      }
+    | {
+        popupKind: "file_upload";
+        popupPayload: NormalizedFileUploadPopupPayload;
+      }
+  );
 
 export type HumanReviewActionOption = {
   displayOrder: number;
@@ -127,10 +163,12 @@ type HumanReviewRow = {
   caller_revoked_at: string | Date | null;
   output_result_id: string | null;
   output_action_value: string | null;
+  output_action_display: string | null;
   output_answered_at: string | Date | null;
   output_first_read_at: string | Date | null;
   output_read_count: number | null;
   bulk_actions: HumanReviewBulkAction[];
+  link_buttons: HumanReviewLinkButton[];
 };
 
 type LinkButtonRow = {
@@ -147,6 +185,8 @@ type ActionRow = {
   icon: string;
   action_value: string;
   overflow: boolean;
+  action_tone: ActionTone | null;
+  action_style: ActionStyle | null;
   popup_kind: PopupKind;
   popup_payload: unknown;
 };
@@ -241,19 +281,14 @@ export async function humanReviewDetailInTransaction(
       icon: link.icon,
       url: link.url
     })),
-    actions: actions.rows.map((action) => ({
-      displayOrder: action.display_order,
-      display: action.display,
-      icon: action.icon,
-      value: action.action_value,
-      overflow: action.overflow,
-      popupKind: action.popup_kind,
-      popupPayload: jsonValue(action.popup_payload),
-      answerable:
+    actions: actions.rows.map((action) =>
+      reviewActionFromDatabase(
+        action,
+        optionsByActionId.get(action.input_action_id) ?? [],
         row.status === "pending" &&
-        (action.popup_kind !== "file_upload" || fileUploadAnswerable),
-      options: optionsByActionId.get(action.input_action_id) ?? []
-    }))
+          (action.popup_kind !== "file_upload" || fileUploadAnswerable)
+      )
+    )
   };
 }
 
@@ -371,6 +406,8 @@ export function humanReviewActionsStatement(
         icon,
         action_value,
         overflow,
+        action_tone,
+        action_style,
         popup_kind,
         popup_payload
       from public.agent_outbox_input_actions
@@ -432,10 +469,12 @@ function reviewRowSelect(options: { includeDetails?: boolean } = {}) {
       c.revoked_at as caller_revoked_at,
       o.output_result_id::text as output_result_id,
       o.action_value as output_action_value,
+      answered_action.display as output_action_display,
       o.answered_at as output_answered_at,
       o.first_read_at as output_first_read_at,
       o.read_count as output_read_count,
-      bulk.bulk_actions
+      bulk.bulk_actions,
+      links.link_buttons
     from public.agent_outbox_input_items i
     join public.agent_outbox_callers c
       on c.account_id = i.account_id
@@ -444,6 +483,9 @@ function reviewRowSelect(options: { includeDetails?: boolean } = {}) {
       on o.account_id = i.account_id
      and o.caller_id = i.caller_id
      and o.input_item_id = i.input_item_id
+    left join public.agent_outbox_input_actions answered_action
+      on answered_action.input_item_id = i.input_item_id
+     and answered_action.action_value = o.action_value
     left join lateral (
       select coalesce(
         jsonb_agg(
@@ -451,7 +493,11 @@ function reviewRowSelect(options: { includeDetails?: boolean } = {}) {
             'displayOrder', action.display_order,
             'display', action.display,
             'icon', action.icon,
-            'value', action.action_value
+            'value', action.action_value,
+            'tone', action.action_tone,
+            'style', action.action_style,
+            'popupKind', action.popup_kind,
+            'overflow', action.overflow
           )
           order by action.display_order, action.input_action_id
         ),
@@ -459,8 +505,23 @@ function reviewRowSelect(options: { includeDetails?: boolean } = {}) {
       ) as bulk_actions
       from public.agent_outbox_input_actions action
       where action.input_item_id = i.input_item_id
-        and action.popup_kind = 'none'
     ) bulk on true
+    left join lateral (
+      select coalesce(
+        jsonb_agg(
+          jsonb_build_object(
+            'displayOrder', link.display_order,
+            'display', link.display,
+            'icon', link.icon,
+            'url', link.url
+          )
+          order by link.display_order, link.input_link_button_id
+        ),
+        '[]'::jsonb
+      ) as link_buttons
+      from public.agent_outbox_input_link_buttons link
+      where link.input_item_id = i.input_item_id
+    ) links on true
   `;
 }
 
@@ -498,12 +559,10 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
     subtitleHtml: row.subtitle_html,
     cornerHtml: row.corner_html,
     summaryHtml: row.summary_html,
-    cardVisual: row.card_visual_kind
-      ? {
-          kind: row.card_visual_kind,
-          payload: jsonValue(row.card_visual_payload)
-        }
-      : null,
+    cardVisual: cardVisualFromDatabase(
+      row.card_visual_kind,
+      row.card_visual_payload
+    ),
     skipDisabled: row.skip_disabled,
     createdAt: timestampValue(row.created_at),
     updatedAt: timestampValue(row.updated_at),
@@ -514,12 +573,21 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
       slug: row.caller_slug,
       revoked: row.caller_revoked_at != null
     },
-    bulkActions: row.bulk_actions,
+    bulkActions: (row.bulk_actions ?? []).map((action) => ({
+      ...action,
+      popupKind: action.popupKind ?? "none",
+      overflow: action.overflow ?? false
+    })),
+    linkButtons: row.link_buttons ?? [],
+    hasOverflowActions: (row.bulk_actions ?? []).some(
+      (action) => action.overflow
+    ),
     output:
       row.output_result_id && row.output_action_value && row.output_answered_at
         ? {
             outputResultId: row.output_result_id,
             actionValue: row.output_action_value,
+            actionDisplay: row.output_action_display ?? "Previous response",
             answeredAt: timestampValue(row.output_answered_at),
             firstReadAt: nullableTimestampValue(row.output_first_read_at),
             readCount: row.output_read_count ?? 0,
@@ -536,8 +604,142 @@ function boundedLimit(limit: number | undefined) {
   return Math.min(limit, MAX_REVIEW_LIST_LIMIT);
 }
 
-function jsonValue(value: unknown): JsonValue {
-  return value == null ? {} : (value as JsonValue);
+function reviewActionFromDatabase(
+  action: ActionRow,
+  options: HumanReviewActionOption[],
+  answerable: boolean
+): HumanReviewAction {
+  const base: HumanReviewActionBase = {
+    displayOrder: action.display_order,
+    display: action.display,
+    icon: action.icon,
+    value: action.action_value,
+    overflow: action.overflow,
+    ...(action.action_tone && action.action_style
+      ? { tone: action.action_tone, style: action.action_style }
+      : {}),
+    answerable,
+    options
+  };
+  const payload = recordValue(action.popup_payload);
+  switch (action.popup_kind) {
+    case "none":
+      return { ...base, popupKind: "none", popupPayload: {} };
+    case "free_text":
+      return {
+        ...base,
+        popupKind: "free_text",
+        popupPayload: {
+          label: stringValue(payload.label),
+          placeholder: nullableStringValue(payload.placeholder),
+          default_value: nullableStringValue(payload.default_value),
+          multiline: payload.multiline === true,
+          min_length: nullableNumberValue(payload.min_length),
+          max_length: nullableNumberValue(payload.max_length)
+        }
+      };
+    case "single_select":
+      return {
+        ...base,
+        popupKind: "single_select",
+        popupPayload: { label: stringValue(payload.label) }
+      };
+    case "multi_select":
+      return {
+        ...base,
+        popupKind: "multi_select",
+        popupPayload: {
+          label: stringValue(payload.label),
+          min_selected: numberValue(payload.min_selected),
+          max_selected: numberValue(payload.max_selected)
+        }
+      };
+    case "date_picker":
+      return {
+        ...base,
+        popupKind: "date_picker",
+        popupPayload: {
+          label: stringValue(payload.label),
+          mode: payload.mode === "datetime" ? "datetime" : "date",
+          placeholder: nullableStringValue(payload.placeholder),
+          display_timezone: nullableStringValue(payload.display_timezone),
+          min_value: nullableStringValue(payload.min_value),
+          max_value: nullableStringValue(payload.max_value)
+        }
+      };
+    case "file_upload":
+      return {
+        ...base,
+        popupKind: "file_upload",
+        popupPayload: {
+          label: stringValue(payload.label),
+          accept_mime_types: Array.isArray(payload.accept_mime_types)
+            ? payload.accept_mime_types.filter(
+                (value): value is string => typeof value === "string"
+              )
+            : null
+        }
+      };
+  }
+}
+
+function cardVisualFromDatabase(
+  kind: string | null,
+  rawPayload: unknown
+): NormalizedCardVisual | null {
+  const payload = recordValue(rawPayload);
+  if (kind === "numeric_bar" || kind === "progress_ring") {
+    const numeric = {
+      label: stringValue(payload.label),
+      value: numberValue(payload.value),
+      display: stringValue(payload.display),
+      unit: nullableStringValue(payload.unit),
+      min_value: numberValue(payload.min_value),
+      max_value: numberValue(payload.max_value)
+    };
+    return kind === "numeric_bar"
+      ? { kind, payload: numeric }
+      : {
+          kind,
+          payload: {
+            ...numeric,
+            color: nullableStringValue(payload.color)
+          }
+        };
+  }
+  if (kind === "pill") {
+    return {
+      kind,
+      payload: {
+        text: stringValue(payload.text),
+        icon: nullableStringValue(payload.icon),
+        color: stringValue(payload.color)
+      }
+    };
+  }
+  return null;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function nullableStringValue(value: unknown) {
+  return typeof value === "string" ? value : null;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function nullableNumberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function nullableTimestampValue(value: string | Date | null): string | null {

@@ -1,5 +1,5 @@
 {
-  "verifiedAsOf": "2026-07-07",
+  "verifiedAsOf": "2026-08-15",
   "node": {
     "version": "24.18.0",
     "lts": "Krypton",
@@ -123,6 +123,16 @@
       "version": "22.3.0",
       "package": "stripe",
       "source": "npm view stripe version engines --json"
+    },
+    "marked": {
+      "version": "18.0.9",
+      "package": "marked",
+      "source": "corepack pnpm view marked version engines --json"
+    },
+    "typebox": {
+      "version": "1.3.14",
+      "package": "typebox",
+      "source": "corepack pnpm view typebox version engines --json"
     }
   },
   "runtimeDevTools": {
@@ -155,6 +165,11 @@
       "version": "0.6.6",
       "package": "rclone.js",
       "source": "pnpm view rclone.js version engines --json"
+    },
+    "tsx": {
+      "version": "4.23.12",
+      "package": "tsx",
+      "source": "corepack pnpm view tsx version engines --json"
     }
   },
   "providerCli": {

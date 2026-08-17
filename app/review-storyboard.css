@@ -64,19 +64,10 @@ body:has(.review-storyboard),
 }
 
 .storyboard-brand {
-  gap: 0.55rem;
-  font-size: 0.84rem;
-  font-weight: 680;
-  letter-spacing: -0.025em;
-}
-
-.storyboard-brand img {
-  width: 1.75rem;
-  height: 1.75rem;
-}
-
-.storyboard-brand b {
-  color: #f3a144;
+  --wordmark-mark-size: 1.75rem;
+  --wordmark-type-size: 0.86rem;
+  --wordmark-gap: 0.48rem;
+  --wordmark-baseline-shift: 0.16rem;
 }
 
 .storyboard-brand i {
@@ -387,6 +378,48 @@ body:has(.review-storyboard),
   display: block;
   border: 0;
   background: #f2eee6;
+}
+
+/* The row itself is rendered by the canonical production component. */
+
+.row-layout-stage {
+  min-height: calc(100dvh - 3.5rem);
+  padding: 2rem max(1rem, calc((100vw - 92rem) / 2)) 5rem;
+  overflow-x: auto;
+}
+
+.row-layout-intro {
+  width: min(100%, 90rem);
+  margin: 0 auto 1.5rem;
+}
+
+.row-layout-intro p {
+  margin: 0 0 0.25rem;
+  color: #f3ad5b;
+  font-size: 0.6rem;
+  font-weight: 790;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.row-layout-intro h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 3vw, 2.8rem);
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.row-layout-intro > div > span {
+  display: block;
+  max-width: 50rem;
+  margin-top: 0.55rem;
+  color: #98a09e;
+  font-size: 0.78rem;
+}
+
+.row-layout-storyboard .review-row-anatomy-gallery {
+  width: min(100%, 90rem);
+  margin-inline: auto;
 }
 
 @media (max-width: 800px) {

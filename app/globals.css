@@ -113,30 +113,32 @@ svg {
   color: var(--text-on-ink);
 }
 
-.brand,
-.product-brand {
+.product-wordmark {
+  --wordmark-mark-size: 2.75rem;
+  --wordmark-type-size: 1.35rem;
+  --wordmark-gap: 0.75rem;
+  --wordmark-baseline-shift: 0.25rem;
   display: inline-flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--wordmark-gap);
   color: var(--text-on-ink);
-  font-size: 1.35rem;
+  font-size: var(--wordmark-type-size);
   font-weight: 580;
   letter-spacing: -0.035em;
   text-decoration: none;
   white-space: nowrap;
 }
 
-.brand img {
-  width: 2.75rem;
-  height: 2.75rem;
+.product-wordmark img {
+  width: var(--wordmark-mark-size);
+  height: var(--wordmark-mark-size);
 }
 
-.brand > span {
-  transform: translateY(0.25rem);
+.product-wordmark > span {
+  transform: translateY(var(--wordmark-baseline-shift));
 }
 
-.brand b,
-.product-brand b {
+.product-wordmark b {
   color: var(--amber);
   font-weight: 700;
 }

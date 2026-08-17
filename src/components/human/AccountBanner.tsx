@@ -1,4 +1,8 @@
 import type { AccountStatusData, StatusResult } from "../../server/status.ts";
+import {
+  accountHasHostedBilling,
+  accountStorageLabel
+} from "../../shared/account-display.ts";
 import { formatUtcTimestamp } from "./review-format";
 
 export function AccountBanner({
@@ -26,9 +30,11 @@ export function AccountBanner({
   const summaryLabel = accountLabel.startsWith("Browser fixture account:")
     ? "Demo workspace"
     : accountLabel;
-  const storageLimit = data.storage.limit_bytes
-    ? `${Math.round((data.storage.stored_bytes / data.storage.limit_bytes) * 100)}%`
-    : "unlimited";
+  const storageLimit = accountStorageLabel(
+    data.storage.stored_bytes,
+    data.storage.limit_bytes
+  );
+  const hostedBillingAvailable = accountHasHostedBilling(data);
 
   return (
     <details className="account-banner" aria-label="Account status">
@@ -62,7 +68,7 @@ export function AccountBanner({
           ) : null}
         </dl>
         <div className="account-popover-actions">
-          <a href="/upgrade">Manage plan</a>
+          {hostedBillingAvailable ? <a href="/upgrade">Manage plan</a> : null}
           <a href="/sign-out">Sign out</a>
         </div>
       </div>

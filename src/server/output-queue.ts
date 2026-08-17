@@ -18,6 +18,7 @@ import { runAuthenticatedCallerTransaction } from "./caller-api-auth.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { safeContentType } from "./output-files.ts";
+import { publicOutputReadAllShapeMatches } from "../shared/public-api-contract.ts";
 
 export const OUTPUT_PAGE_DEFAULT_LIMIT = SYSTEM_CONTRACT.outputPageDefaultLimit;
 export const OUTPUT_PAGE_MAX_LIMIT = SYSTEM_CONTRACT.outputPageMaxLimit;
@@ -406,10 +407,19 @@ export function parseOutputReadAllBody(body: unknown): ParsedPageRequest {
     ]);
   }
 
-  return parseOutputPageParameters({
+  const parsed = parseOutputPageParameters({
     limit: body.limit,
     cursor: body.cursor
   });
+  if (!parsed.ok || publicOutputReadAllShapeMatches(body)) return parsed;
+
+  return validationFailed([
+    {
+      path: "",
+      code: "contract_mismatch",
+      message: "Request does not match the public read-all contract."
+    }
+  ]);
 }
 
 export function outputReadyCountStatement(

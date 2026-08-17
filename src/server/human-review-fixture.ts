@@ -10,6 +10,7 @@ import {
   fixtureUuid,
   STORYBOARD_USE_CASES
 } from "./human-review-fixture-scenarios.ts";
+import { browserFixtureDesignReviewDetails } from "./human-review-design-fixture.ts";
 import type { HumanReviewView } from "../shared/human-review-view.ts";
 
 export { humanBrowserFixtureEnabled } from "./human-review-fixture-gate.ts";
@@ -72,7 +73,11 @@ export function browserFixtureReviewRows(
   options: BrowserFixtureReviewOptions = {}
 ): HumanReviewListRow[] {
   return browserFixtureReviewDetails(options).map(
-    ({ detailsHtml: _details, ...row }) => row
+    ({ detailsHtml: _details, actions, linkButtons, ...row }) => ({
+      ...row,
+      linkButtons,
+      hasOverflowActions: actions.some((action) => action.overflow)
+    })
   );
 }
 
@@ -102,15 +107,16 @@ export function browserFixtureReviewPage(
       row.caller.displayName
     ].some((field) => field.toLowerCase().includes(terms));
   });
-  filtered.sort((left, right) => {
-    if (view.sort === "priority") {
-      const weights = { urgent: 0, high: 1, normal: 2, low: 3 };
-      const priority = weights[left.priority] - weights[right.priority];
-      if (priority !== 0) return priority;
-    }
-    const updated = right.updatedAt.localeCompare(left.updatedAt);
-    return updated || left.inputItemId.localeCompare(right.inputItemId);
-  });
+  if (!browserFixtureUsesDesignData())
+    filtered.sort((left, right) => {
+      if (view.sort === "priority") {
+        const weights = { urgent: 0, high: 1, normal: 2, low: 3 };
+        const priority = weights[left.priority] - weights[right.priority];
+        if (priority !== 0) return priority;
+      }
+      const updated = right.updatedAt.localeCompare(left.updatedAt);
+      return updated || left.inputItemId.localeCompare(right.inputItemId);
+    });
   const offset = (view.page - 1) * REVIEW_PAGE_SIZE;
   const window = filtered.slice(offset, offset + REVIEW_PAGE_SIZE + 1);
   return {
@@ -191,7 +197,9 @@ function fixtureProviderSubject(input: BrowserFixtureSessionInput) {
 function browserFixtureReviewDetails(
   options: BrowserFixtureReviewOptions = {}
 ): HumanReviewDetail[] {
-  const details = browserFixtureCoreReviewDetails();
+  const details = browserFixtureUsesDesignData()
+    ? browserFixtureDesignReviewDetails()
+    : browserFixtureCoreReviewDetails();
   if (!options.includePaginationRows) {
     return details;
   }
@@ -279,6 +287,10 @@ function browserFixtureReviewDetails(
     };
   });
   return [...details, ...generated];
+}
+
+function browserFixtureUsesDesignData() {
+  return process.env.AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE !== "1";
 }
 
 function fixtureCoverage(detail: HumanReviewDetail) {

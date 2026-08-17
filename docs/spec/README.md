@@ -1,8 +1,14 @@
 # Agent Outbox API Contract
 
-This directory is the durable HTTP contract for Agent Outbox caller
-integrations. [NORTH_STAR.md](../../NORTH_STAR.md) defines the product boundary,
-and these files are the canonical integration contract.
+This directory contains the public guides and internal durable HTTP contract for
+Agent Outbox caller integrations. [NORTH_STAR.md](../../NORTH_STAR.md) defines
+the product boundary.
+
+The caller-facing reference is generated from the executable TypeBox/OpenAPI
+contract in `src/shared/public-api-contract.ts`. The branded guides under
+`/docs/api` combine that mechanical reference with the intentionally authored
+public Markdown below. `pnpm docs:check` fails when either generated artifact is
+stale.
 
 Raw HTTP is canonical. The `agent-outbox` CLI must be a wrapper over these
 documented endpoints and must not add hidden product behavior, queue semantics,
@@ -10,6 +16,17 @@ or error states that are unavailable through HTTP.
 
 ## Contract Index
 
+- [public-api.md](public-api.md) - public five-minute integration.
+- [public-api-concepts.md](public-api-concepts.md) - purpose, lifecycle,
+  identity, and delivery concepts.
+- [public-api-capabilities.md](public-api-capabilities.md) - public review
+  interaction patterns and design guidance.
+- [public-api-ui.md](public-api-ui.md) - public guidance for UI applications and
+  UI-focused coding agents using the OpenAPI contract safely.
+- [public-api-reliability.md](public-api-reliability.md) - production retries,
+  idempotency, credentials, files, errors, and retention.
+- [../openapi.json](../openapi.json) - generated, allowlisted OpenAPI 3.1 caller
+  contract. Do not edit it directly.
 - [http-api.md](http-api.md) - routes, authentication, request headers, response
   envelopes, status, data-plane commands, file downloads, and human-approved
   caller registration flows.
@@ -19,6 +36,10 @@ or error states that are unavailable through HTTP.
   checks, reads, read-all pagination, acknowledgement, and file metadata.
 - [errors.md](errors.md) - stable success/error envelopes, field errors,
   request/correlation ids, limit metadata, and error-code catalog.
+
+The remaining documents are the broader internal implementation contract. They
+include control-plane and operational details that are intentionally not
+published on the branded documentation site.
 
 ## Contract Principles
 

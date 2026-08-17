@@ -1,0 +1,31 @@
+export const API_ERROR_CODES = [
+  "invalid_request",
+  "invalid_json",
+  "request_too_large",
+  "validation_failed",
+  "unsupported_icon",
+  "unsafe_html",
+  "unsafe_color",
+  "invalid_action_response",
+  "upgrade_required",
+  "authentication_required",
+  "invalid_caller_credentials",
+  "authorization_failed",
+  "not_found",
+  "caller_already_exists",
+  "pending_content_conflict",
+  "answered_unacknowledged",
+  "input_not_pending",
+  "stale_input_revision",
+  "output_already_read",
+  "rate_limit_exceeded",
+  "quota_limit_exceeded",
+  "storage_limit_exceeded",
+  "retention_limit_exceeded",
+  "billing_grace_expired",
+  "authorization_pending",
+  "temporary_unavailable",
+  "internal_error"
+] as const;
+
+export type ApiErrorCode = (typeof API_ERROR_CODES)[number];

@@ -12,10 +12,17 @@ import {
 } from "./limits.ts";
 import { readRawRequestBodyWithLimit } from "./request-body.ts";
 import {
-  isSafeColor,
+  isSupportedColor,
+  SUPPORTED_ACTION_STYLES,
+  SUPPORTED_ACTION_TONES,
+  SUPPORTED_COLORS,
   SUPPORTED_LUCIDE_ICON_NAMES
 } from "../shared/input-schema-rules.ts";
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
+import {
+  publicInputDeleteShapeMatches,
+  publicInputSubmissionShapeMatches
+} from "../shared/public-api-contract.ts";
 
 export const INPUT_REQUEST_BODY_BYTE_LIMIT =
   SYSTEM_CONTRACT.inputSubmissionBodyBytes;
@@ -28,6 +35,8 @@ export type PopupKind =
   | "multi_select"
   | "date_picker"
   | "file_upload";
+export type ActionTone = (typeof SUPPORTED_ACTION_TONES)[number];
+export type ActionStyle = (typeof SUPPORTED_ACTION_STYLES)[number];
 
 export type NormalizedInputSubmission = {
   callerItemId: string;
@@ -99,9 +108,50 @@ export type NormalizedInputAction = {
   icon: string;
   value: string;
   overflow: boolean;
+  tone: ActionTone | null;
+  style: ActionStyle | null;
   popupKind: PopupKind;
-  popupPayload: Record<string, unknown>;
+  popupPayload: NormalizedPopupPayload;
   options: NormalizedPopupOption[];
+};
+
+export type NormalizedPopupPayload =
+  | Record<string, never>
+  | NormalizedFreeTextPopupPayload
+  | NormalizedSelectPopupPayload
+  | NormalizedMultiSelectPopupPayload
+  | NormalizedDatePickerPopupPayload
+  | NormalizedFileUploadPopupPayload;
+
+export type NormalizedFreeTextPopupPayload = {
+  label: string;
+  placeholder: string | null;
+  default_value: string | null;
+  multiline: boolean;
+  min_length: number | null;
+  max_length: number | null;
+};
+
+export type NormalizedSelectPopupPayload = { label: string };
+
+export type NormalizedMultiSelectPopupPayload = {
+  label: string;
+  min_selected: number;
+  max_selected: number;
+};
+
+export type NormalizedDatePickerPopupPayload = {
+  label: string;
+  mode: "date" | "datetime";
+  placeholder: string | null;
+  display_timezone: string | null;
+  min_value: string | null;
+  max_value: string | null;
+};
+
+export type NormalizedFileUploadPopupPayload = {
+  label: string;
+  accept_mime_types: string[] | null;
 };
 
 export type NormalizedPopupOption = {
@@ -140,9 +190,11 @@ const MIME_PATTERN = /^[A-Za-z0-9!#$&^_.+-]+\/(?:[A-Za-z0-9!#$&^_.+-]+|\*)$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const UTC_DATETIME_PATTERN =
   /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/;
-export { isSafeColor, SUPPORTED_LUCIDE_ICON_NAMES };
+export { isSupportedColor, SUPPORTED_COLORS, SUPPORTED_LUCIDE_ICON_NAMES };
 
 const SUPPORTED_LUCIDE_ICONS = new Set<string>(SUPPORTED_LUCIDE_ICON_NAMES);
+const ACTION_TONES = new Set<string>(SUPPORTED_ACTION_TONES);
+const ACTION_STYLES = new Set<string>(SUPPORTED_ACTION_STYLES);
 
 const ALLOWED_HTML_ELEMENTS = new Set([
   "p",
@@ -226,6 +278,19 @@ export function parseInputDeleteBody(value: unknown): InputDeleteParseResult {
     return { ok: false, error: validationError(fields) };
   }
 
+  if (!publicInputDeleteShapeMatches(value)) {
+    return {
+      ok: false,
+      error: validationError([
+        fieldError(
+          "",
+          "contract_mismatch",
+          "Request does not match the public input-delete contract."
+        )
+      ])
+    };
+  }
+
   return { ok: true, callerItemId };
 }
 
@@ -297,6 +362,19 @@ export function parseInputSubmission(
     return { ok: false, error: validationError(fields) };
   }
 
+  if (!publicInputSubmissionShapeMatches(value)) {
+    return {
+      ok: false,
+      error: validationError([
+        fieldError(
+          "",
+          "contract_mismatch",
+          "Request does not match the public input-submission contract."
+        )
+      ])
+    };
+  }
+
   if (
     containsFileUploadAction &&
     options.limitProfile &&
@@ -340,6 +418,8 @@ export function parseInputSubmission(
       icon: action.icon,
       value: action.value,
       overflow: action.overflow,
+      ...(action.tone ? { tone: action.tone } : {}),
+      ...(action.style ? { style: action.style } : {}),
       popup: {
         kind: action.popupKind,
         ...action.popupPayload,
@@ -506,6 +586,7 @@ function parseActions(value: unknown, fields: ApiFieldError[]) {
     seenActionValues.add(actionValue);
 
     const popup = parsePopup(entry.popup, fields, `${path}.popup`);
+    const appearance = parseActionAppearance(entry, fields, path);
 
     return {
       displayOrder: index,
@@ -513,11 +594,43 @@ function parseActions(value: unknown, fields: ApiFieldError[]) {
       icon: requiredIcon(entry, "icon", fields, `${path}.icon`),
       value: actionValue,
       overflow: requiredBoolean(entry, "overflow", fields, `${path}.overflow`),
+      tone: appearance.tone,
+      style: appearance.style,
       popupKind: popup.kind,
       popupPayload: popup.payload,
       options: popup.options
     };
   });
+}
+
+function parseActionAppearance(
+  value: Record<string, unknown>,
+  fields: ApiFieldError[],
+  path: string
+): { tone: ActionTone | null; style: ActionStyle | null } {
+  const hasTone = "tone" in value;
+  const hasStyle = "style" in value;
+  if (hasTone !== hasStyle) {
+    fields.push(
+      fieldError(
+        path,
+        "incomplete_action_appearance",
+        "Action tone and style must be supplied together or both omitted."
+      )
+    );
+  }
+
+  const tone = hasTone
+    ? requiredEnum(value, "tone", ACTION_TONES, fields, `${path}.tone`)
+    : null;
+  const style = hasStyle
+    ? requiredEnum(value, "style", ACTION_STYLES, fields, `${path}.style`)
+    : null;
+
+  return {
+    tone: tone ? (tone as ActionTone) : null,
+    style: style ? (style as ActionStyle) : null
+  };
 }
 
 function parsePopup(value: unknown, fields: ApiFieldError[], path: string) {
@@ -1333,9 +1446,13 @@ function requiredColor(
   path: string
 ) {
   const value = source[key];
-  if (typeof value !== "string" || !isSafeColor(value)) {
+  if (typeof value !== "string" || !isSupportedColor(value)) {
     fields.push(
-      fieldError(path, "unsafe_color", `${path} must be a safe CSS color.`)
+      fieldError(
+        path,
+        "unsafe_color",
+        `${path} must be one of: ${SUPPORTED_COLORS.join(", ")}.`
+      )
     );
     return "";
   }
@@ -1346,12 +1463,12 @@ function optionalColor(value: unknown, fields: ApiFieldError[], path: string) {
   if (value == null) {
     return null;
   }
-  if (typeof value !== "string" || !isSafeColor(value)) {
+  if (typeof value !== "string" || !isSupportedColor(value)) {
     fields.push(
       fieldError(
         path,
         "unsafe_color",
-        `${path} must be a safe CSS color or null.`
+        `${path} must be null or one of: ${SUPPORTED_COLORS.join(", ")}.`
       )
     );
     return null;
@@ -1462,6 +1579,8 @@ function placeholderAction(index: number): NormalizedInputAction {
     icon: "",
     value: "",
     overflow: false,
+    tone: null,
+    style: null,
     popupKind: "none",
     popupPayload: {},
     options: []

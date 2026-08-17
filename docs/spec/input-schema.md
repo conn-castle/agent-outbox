@@ -17,7 +17,7 @@ product data, not authorization data. The server derives `account_id` and
     "display": "Email Draft",
     "icon": "mail"
   },
-  "row_accent_color": "#2563eb",
+  "row_accent_color": "blue",
   "title": "<strong>Reply to Acme Corp</strong>",
   "subtitle": "Draft response prepared by Steward",
   "corner": "2 min ago",
@@ -32,6 +32,8 @@ product data, not authorization data. The server derives `account_id` and
       "icon": "send",
       "value": "send",
       "overflow": false,
+      "tone": "success",
+      "style": "solid",
       "popup": {
         "kind": "none"
       }
@@ -78,6 +80,10 @@ The request must not include `caller_id`.
 - `card_visual.kind` is one of `numeric_bar`, `pill`, or `progress_ring`.
 - `actions` define the choices a human can make. `ActionButton.value` is the
   caller-owned action enum returned in the output result.
+- `tone` and `style` optionally select a fixed semantic appearance. Supply both
+  or omit both. Tones are `neutral`, `brand`, `success`, `warning`, and
+  `danger`; styles are `solid`, `outline`, and `ghost`. Arbitrary colors and CSS
+  are not accepted.
 - `overflow` controls presentation only. It is not a permission boundary.
 - `skip_disabled` controls a front-end-only skip affordance. It does not change
   backend lifecycle, permissions, or output semantics.
@@ -182,7 +188,7 @@ clamped.
 - `icon`
 - `color`
 
-`color` is a sanitized caller-provided CSS color string.
+`color` is a named product-palette color.
 
 ## HTML Safety
 
@@ -202,13 +208,15 @@ scripts, styles, iframes, forms, inputs, buttons, images, media, SVG, MathML,
 event handlers, inline `style`, arbitrary `class`/`id`, `javascript:` URLs, and
 data URLs.
 
-## Color Safety
+## Colors
 
-Accepted color forms include common safe CSS names, hex colors, `rgb()`,
-`rgba()`, `hsl()`, and `hsla()`.
+`row_accent_color` and visual `color` fields accept only these named colors:
 
-Reject anything that can reference external resources or evaluate expressions,
-including `url()`, `var()`, `calc()`, and browser-specific expression syntax.
+`red`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, and `teal`.
+
+The product maps each name to its coordinated brand-palette value. Raw CSS
+colors, including hex, RGB, and HSL values, are rejected. This keeps review UI
+on-brand and lets the palette evolve without changing caller data.
 
 ## Limits
 

@@ -116,6 +116,11 @@ Raw HTTP remains the canonical integration contract in [docs/spec](docs/spec).
 The CLI maps to that HTTP contract and adds local-only utilities such as `docs`,
 `doctor`, `upgrade`, and `version`.
 
+The branded public guides at `/docs/api` combine intentionally written
+integration guidance with a generated OpenAPI 3.1 reference. The executable
+public contract lives in `src/shared/public-api-contract.ts`; generated
+artifacts are checked for drift during normal builds.
+
 ## Input Items
 
 Input items define the review surface. Each item includes:
@@ -141,7 +146,7 @@ Example:
     "display": "Email Draft",
     "icon": "mail"
   },
-  "row_accent_color": "#2563eb",
+  "row_accent_color": "blue",
   "title": "<strong>Reply to Acme Corp</strong>",
   "subtitle": "Draft response prepared by Steward",
   "corner": "2 min ago",
@@ -158,7 +163,7 @@ Example:
     "kind": "pill",
     "text": "Needs review",
     "icon": "alert-circle",
-    "color": "#f59e0b"
+    "color": "orange"
   },
   "skip_disabled": false,
   "actions": [

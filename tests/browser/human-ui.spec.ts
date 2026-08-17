@@ -19,7 +19,7 @@ test("first-time self-serve signup fixture lands on a provisioned human account"
 }) => {
   await page.goto("/human");
   await expect(
-    page.getByRole("heading", { name: "Pending reviews" })
+    page.getByRole("heading", { name: "Needs review" })
   ).toBeVisible();
   const existingAccountId = await page
     .getByTestId("fixture-account-id")
@@ -47,7 +47,7 @@ test("first-time self-serve signup fixture lands on a provisioned human account"
 
   await expect(page).toHaveURL(/\/human/);
   await expect(
-    page.getByRole("heading", { name: "Pending reviews" })
+    page.getByRole("heading", { name: "Needs review" })
   ).toBeVisible();
   await expect(page.getByTestId("provisioned-account")).toHaveText("yes");
   await expect(page.getByTestId("fixture-account-id")).not.toHaveText(
@@ -162,9 +162,56 @@ test("authenticated review workspace renders content actions and preserves contr
   await page.goto("/human");
 
   await expect(
-    page.getByRole("heading", { name: "Pending reviews" })
+    page.getByRole("heading", { name: "Needs review" })
   ).toBeVisible();
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await expect(page.getByLabel("Account status")).toBeVisible();
+  await expect(
+    page.locator(".review-controls .selection-mode-button")
+  ).toBeVisible();
+  await expect(page.locator(".compact-selection-button")).toBeHidden();
+  if (isMobile) {
+    const shellGeometry = await page
+      .locator(".human-workspace")
+      .evaluate(() => {
+        const appBar = document
+          .querySelector(".app-bar")!
+          .getBoundingClientRect();
+        const account = document
+          .querySelector(".app-account")!
+          .getBoundingClientRect();
+        const workspace = document
+          .querySelector(".workspace-body")!
+          .getBoundingClientRect();
+        const search = document
+          .querySelector(".review-search")!
+          .getBoundingClientRect();
+        const filters = document
+          .querySelector(".filter-controls")!
+          .getBoundingClientRect();
+        const selection = document
+          .querySelector(".selection-mode-button")!
+          .getBoundingClientRect();
+        return {
+          accountBottom: account.bottom,
+          appBarBottom: appBar.bottom,
+          filterTop: filters.top,
+          searchTop: search.top,
+          selectionTop: selection.top,
+          workspaceCenter: workspace.left + workspace.width / 2,
+          viewportCenter: window.innerWidth / 2
+        };
+      });
+    expect(shellGeometry.accountBottom).toBeLessThanOrEqual(
+      shellGeometry.appBarBottom
+    );
+    expect(shellGeometry.workspaceCenter).toBeCloseTo(
+      shellGeometry.viewportCenter,
+      0
+    );
+    expect(shellGeometry.filterTop).toBeGreaterThan(shellGeometry.searchTop);
+    expect(shellGeometry.selectionTop).toBeGreaterThan(shellGeometry.filterTop);
+  }
   await expect(
     reviewLinkByTitle(page, "Review neighborhood permit brief")
   ).toBeVisible();
@@ -176,7 +223,7 @@ test("authenticated review workspace renders content actions and preserves contr
     "No source-system action is performed here."
   );
   await expect(
-    page.getByRole("link", { name: "Open context" })
+    detail.getByRole("link", { name: "Open context" })
   ).toHaveAttribute("href", "https://example.com/context/steward-brief-101");
   await expect(
     reviewDecisionSurface(
@@ -185,10 +232,10 @@ test("authenticated review workspace renders content actions and preserves contr
       "Review neighborhood permit brief"
     ).getByRole("button", { name: "Approve" })
   ).toBeEnabled();
+  await openSecondaryActions(page);
   await expect(
     page.getByRole("button", { name: "Request edit" })
   ).toBeVisible();
-  await openSecondaryActions(page);
   await expect(
     page.getByRole("button", { name: "Set review lane" })
   ).toBeVisible();
@@ -196,16 +243,18 @@ test("authenticated review workspace renders content actions and preserves contr
   await page.goto("/human");
   await openReviewTools(page);
 
-  await page.getByRole("combobox", { name: "Sort" }).selectOption("updated_at");
+  await chooseViewOption(page, "Sort", "Recent");
   await expect(
-    page.getByRole("list", { name: "Review queue" }).getByRole("link").first()
-  ).toContainText("Payments smoke check failed after deploy");
-  await page.getByRole("combobox", { name: "Sort" }).selectOption("priority");
+    reviewLinkByTitle(page, "Payments smoke check failed after deploy")
+  ).toBeVisible();
+  await chooseViewOption(page, "Sort", "Priority");
 
   await page
-    .getByRole("button", { name: /More actions for Review neighborhood/ })
+    .locator("article.review-row", {
+      has: reviewLinkByTitle(page, "Review neighborhood permit brief")
+    })
+    .getByRole("button", { name: "Skip" })
     .click();
-  await page.getByRole("button", { name: "Skip for now" }).click();
   await expect(
     page.locator("article.review-row", {
       has: reviewLinkByTitle(page, "Review neighborhood permit brief")
@@ -217,17 +266,12 @@ test("authenticated review workspace renders content actions and preserves contr
   await expect(
     page.getByRole("button", { name: "Pick date", exact: true })
   ).toBeVisible();
-  await openSecondaryActions(page);
   await expect(
     page.getByRole("button", { name: "Pick date and time" })
   ).toBeVisible();
 
-  if (isMobile) {
-    await page
-      .getByRole("link", { name: "Back to queue", exact: true })
-      .click();
-    await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
-  }
+  await page.getByRole("link", { name: "Close detail", exact: true }).click();
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
   await openReviewTools(page);
   await page.getByLabel("Search").fill("follow-up");
@@ -241,7 +285,7 @@ test("authenticated review workspace renders content actions and preserves contr
   ).toHaveCount(0);
 
   await page.getByLabel("Search").fill("");
-  await page.getByRole("combobox", { name: "Status" }).selectOption("answered");
+  await chooseViewOption(page, "Status", "Answered");
   await expect(
     reviewLinkByTitle(page, "GitHub security digest for archived repositories")
   ).toBeVisible();
@@ -255,15 +299,11 @@ test("authenticated review workspace renders content actions and preserves contr
   await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000517/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   if (isMobile) {
-    await page
-      .getByRole("link", { name: "Back to queue", exact: true })
-      .click();
+    await page.getByRole("link", { name: "Close detail", exact: true }).click();
     await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   }
   await openReviewTools(page);
-  await expect(page.getByRole("combobox", { name: "Status" })).toHaveValue(
-    "answered"
-  );
+  await expectViewOption(page, "Status", "Answered");
   await expect(
     reviewLinkByTitle(page, "GitHub security digest for archived repositories")
   ).toBeVisible();
@@ -288,28 +328,75 @@ test("queue-only workspace keeps pagination visible and rows independently scrol
     .toBe(true);
 });
 
-test("desktop detail width persists on this device", async ({
+test("review rows keep the canonical responsive topology across documented breakpoints", async ({
   page,
   isMobile
 }) => {
-  test.skip(isMobile, "Desktop-only resize controls");
+  test.skip(isMobile, "One desktop browser covers explicit viewport changes");
+
+  await page.goto("/human?status=all");
+  const row = reviewRowByTitle(page, "Review neighborhood permit brief");
+
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await expect
+    .poll(() =>
+      row.evaluate((element) => {
+        const body = element
+          .querySelector(".row-body")!
+          .getBoundingClientRect();
+        const actions = element
+          .querySelector(".row-actions")!
+          .getBoundingClientRect();
+        return actions.left >= body.right;
+      })
+    )
+    .toBe(true);
+
+  await page.setViewportSize({ width: 768, height: 900 });
+  await expect
+    .poll(() =>
+      row.evaluate((element) => {
+        const body = element
+          .querySelector(".row-body")!
+          .getBoundingClientRect();
+        const actions = element
+          .querySelector(".row-actions")!
+          .getBoundingClientRect();
+        return actions.top >= body.bottom;
+      })
+    )
+    .toBe(true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() =>
+      row.evaluate((element) => {
+        const visual = element
+          .querySelector(".row-context")!
+          .getBoundingClientRect();
+        const details = element
+          .querySelector(".row-details-link")!
+          .getBoundingClientRect();
+        return Math.abs(
+          visual.top + visual.height / 2 - (details.top + details.height / 2)
+        );
+      })
+    )
+    .toBeLessThan(2);
+});
+
+test("desktop detail modal stays within a readable responsive measure", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "Desktop-only modal measure");
 
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto("/human");
   await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
   const detail = page.getByRole("region", { name: "Review detail" });
-  await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(640);
-  const initialDetailWidth = await elementWidth(detail);
-  await dragHorizontally(
-    page,
-    page.getByRole("separator", { name: "Resize review detail panel" }),
-    -64
-  );
-  const resizedDetailWidth = await elementWidth(detail);
-  expect(resizedDetailWidth).toBeGreaterThan(initialDetailWidth + 50);
-
-  await page.reload();
-  await expect.poll(() => elementWidth(detail)).toBe(resizedDetailWidth);
+  await expect.poll(() => elementWidth(detail)).toBeGreaterThanOrEqual(640);
+  await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(900);
 });
 
 test("routine reviews can be completed directly from the queue", async ({
@@ -318,9 +405,7 @@ test("routine reviews can be completed directly from the queue", async ({
   await page.goto("/human");
   await openReviewTools(page);
 
-  await expect(page.getByRole("combobox", { name: "Status" })).toHaveValue(
-    "pending"
-  );
+  await expectViewOption(page, "Status", "Pending");
   await expect(page.getByRole("region", { name: "Review detail" })).toHaveCount(
     0
   );
@@ -340,7 +425,7 @@ test("routine reviews can be completed directly from the queue", async ({
   );
   await expect(page).not.toHaveURL(/item=/);
   await expect(
-    page.getByRole("heading", { name: "Pending reviews" })
+    page.getByRole("heading", { name: "Needs review" })
   ).toBeVisible();
 });
 
@@ -383,14 +468,14 @@ test("human actions submit undo and narrow bulk actions through server actions",
     .getByRole("checkbox", { name: "Select review" })
     .uncheck();
   await followUpRow.getByRole("checkbox", { name: "Select review" }).check();
-  await page.getByRole("button", { name: "Apply" }).click();
+  await page.getByRole("button", { name: "Apply Approve" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Bulk action complete: 2 answered, 0 failed."
   );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000517");
   await expect(page.getByLabel("Answered state")).toContainText(
-    "Answered with archive"
+    "Answered with Archive"
   );
   await page.getByRole("button", { name: "Undo answer" }).click();
   await expect(page.getByRole("status")).toContainText(
@@ -460,9 +545,6 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
   if (isMobile) {
-    await page
-      .getByRole("link", { name: "Back to queue", exact: true })
-      .click();
     await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   }
   await openReviewTools(page);
@@ -520,7 +602,7 @@ test("Enter and the Search button submit immediately and cancel debounce", async
   expect(searchRequests).toHaveLength(2);
 
   await page.getByLabel("Search").fill("summary");
-  await page.getByRole("combobox", { name: "Status" }).selectOption("answered");
+  await chooseViewOption(page, "Status", "Answered");
   await expect(page).toHaveURL(/search=summary/);
   await expect(page).toHaveURL(/status=answered/);
   await expect.poll(() => searchRequests.length).toBe(3);
@@ -571,7 +653,7 @@ test("bulk actions only submit selected rows visible in the current filter", asy
   await expect(page.locator(".bulk-actions")).toContainText(
     "1 selected pending row"
   );
-  await page.getByRole("button", { name: "Apply" }).click();
+  await page.getByRole("button", { name: "Apply Approve" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Bulk action complete: 1 answered, 0 failed."
   );
@@ -584,9 +666,8 @@ function reviewRowByTitle(page: Page, title: string) {
 }
 
 function reviewLinkByTitle(page: Page, title: string) {
-  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return page.getByRole("link", {
-    name: new RegExp(`^${escapedTitle}(?:$|\\s)`)
+    name: `Open review details for ${title}`
   });
 }
 
@@ -648,6 +729,28 @@ async function openReviewTools(page: Page) {
   }
 }
 
+async function chooseViewOption(
+  page: Page,
+  label: "Status" | "Sort",
+  option: string
+) {
+  await page.getByRole("button", { name: new RegExp(`^${label}:`) }).click();
+  await page
+    .getByRole("menu", { name: label })
+    .getByRole("menuitemradio", { name: option })
+    .click();
+}
+
+async function expectViewOption(
+  page: Page,
+  label: "Status" | "Sort",
+  option: string
+) {
+  await expect(
+    page.getByRole("button", { name: `${label}: ${option}` })
+  ).toBeVisible();
+}
+
 async function openSecondaryActions(page: Page) {
   const disclosure = page.locator(".detail-pane .secondary-actions > summary");
   const open = await disclosure.evaluate(
@@ -692,6 +795,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
+  await openSecondaryActions(page);
   await page.getByRole("button", { name: "Request edit" }).click();
   await page
     .getByLabel("Requested change")
@@ -717,7 +821,6 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await expect(page.getByRole("status")).toContainText("Pick date completed");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
-  await openSecondaryActions(page);
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
   await page.getByRole("button", { name: "Submit Pick date and time" }).click();
@@ -726,7 +829,6 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
-  await openSecondaryActions(page);
   await page.getByRole("button", { name: "Select checks" }).click();
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
@@ -734,6 +836,92 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await expect(page.getByRole("status")).toContainText(
     "Select checks completed"
   );
+});
+
+test("canonical row visuals and popup constraints expose only supported semantics", async ({
+  page,
+  isMobile
+}) => {
+  await page.goto("/human?status=all");
+
+  const numericRow = reviewRowByTitle(page, "Review neighborhood permit brief");
+  await expect(numericRow.locator(".numeric-bar")).not.toHaveAttribute(
+    "class",
+    /signal|risk/
+  );
+  await expect(numericRow.locator(".bar-fill")).toHaveCSS(
+    "background-color",
+    "rgb(108, 105, 96)"
+  );
+  await expect(numericRow.getByText("Urgent priority")).toHaveText(
+    "Urgent priority"
+  );
+  await expect(numericRow.locator(".row-link")).toHaveJSProperty(
+    "tagName",
+    "DIV"
+  );
+  await expect(numericRow.locator(".row-summary-link")).toHaveJSProperty(
+    "tagName",
+    "DIV"
+  );
+
+  const progressRow = reviewRowByTitle(page, "Choose follow-up window");
+  await expect(progressRow.locator(".ring svg")).toHaveCount(0);
+  await expect(progressRow.locator(".visual-unit")).toHaveText("checks");
+
+  const pillRow = reviewRowByTitle(
+    page,
+    "Reply to Meridian about the renewal delay"
+  );
+  await expect(pillRow.locator(".pill-visual > strong")).toHaveText(
+    "External · 3"
+  );
+  await expect(pillRow.locator(".pill-visual")).not.toContainText("Signal");
+
+  const fallbackRow = reviewRowByTitle(
+    page,
+    "Confirm the electrician’s arrival window"
+  );
+  await expect(fallbackRow.locator(".product-fallback-meta")).toBeVisible();
+
+  if (isMobile) {
+    await expect(progressRow.locator(".row-subtitle")).toHaveCSS(
+      "-webkit-line-clamp",
+      "2"
+    );
+  }
+
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000521");
+  await page.getByRole("button", { name: "Choose category" }).click();
+  await expect(
+    page.locator('input[name="response.value"]:checked')
+  ).toHaveCount(0);
+
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
+  await page.getByRole("button", { name: "Pick date and time" }).click();
+  const datetime = page.getByLabel("Follow-up instant");
+  await expect(datetime).toHaveAttribute("min", "2026-07-01T00:00");
+  await expect(datetime).toHaveAttribute("max", "2026-07-31T23:59");
+  await expect(datetime).toHaveAttribute("aria-describedby", /.+/);
+  await expect(page.getByText("UTC datetime", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Close action" }).click();
+
+  await page.getByRole("button", { name: "Select checks" }).click();
+  const multiSubmit = page.getByRole("button", {
+    name: "Submit Select checks"
+  });
+  await expect(page.getByText("Choose 1 to 2. 0 selected.")).toBeVisible();
+  await expect(multiSubmit).toBeDisabled();
+  await page.getByLabel("Facts reviewed").check();
+  await expect(multiSubmit).toBeEnabled();
+  await page.getByLabel("Tone reviewed").check();
+  await expect(page.getByLabel("Sources reviewed")).toBeDisabled();
+
+  await expect(
+    page
+      .getByRole("region", { name: "Review detail" })
+      .getByText("Details", { exact: true })
+  ).toBeVisible();
 });
 
 test("mobile review navigation preserves the queue view", async ({
@@ -754,12 +942,10 @@ test("mobile review navigation preserves the queue view", async ({
   await expect(
     page.getByRole("region", { name: "Review detail" })
   ).toBeVisible();
-  await page.getByRole("link", { name: "Back to queue", exact: true }).click();
+  await page.getByRole("link", { name: "Close detail", exact: true }).click();
 
   await expect(page).toHaveURL(/sort=updated_at/);
-  await expect(page.getByLabel("Status", { exact: true })).toHaveValue(
-    "pending"
-  );
+  await expectViewOption(page, "Status", "Pending");
   await expect(
     page.getByRole("region", { name: "Queue browser" })
   ).toBeVisible();

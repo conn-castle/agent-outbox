@@ -16,6 +16,7 @@ import {
   parseInputSubmission,
   readJsonBodyWithLimit
 } from "../src/server/input-schema.ts";
+import { SUPPORTED_COLORS } from "../src/shared/input-schema-rules.ts";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -41,7 +42,7 @@ function baseInput(overrides = {}) {
       display: "Email Draft",
       icon: "mail"
     },
-    row_accent_color: "#2563eb",
+    row_accent_color: "blue",
     title: "<strong>Reply to Acme</strong>",
     subtitle: "Draft response prepared by Steward",
     corner: "2 min ago",
@@ -243,6 +244,97 @@ test("input parser normalizes safe submissions and computes stable fingerprints"
     "https://example.com/source"
   );
   assert.equal(first.submission.actions[0].popupKind, "none");
+});
+
+test("input parser accepts fixed action appearances and rejects incomplete or unknown values", () => {
+  const styled = parseInputSubmission(
+    baseInput({
+      actions: [
+        {
+          ...baseInput().actions[0],
+          tone: "danger",
+          style: "outline"
+        }
+      ]
+    }),
+    { limitProfile: "hosted-paid" }
+  );
+  assert.equal(styled.ok, true);
+  assert.equal(styled.ok ? styled.submission.actions[0].tone : null, "danger");
+  assert.equal(
+    styled.ok ? styled.submission.actions[0].style : null,
+    "outline"
+  );
+
+  const incomplete = parseInputSubmission(
+    baseInput({
+      actions: [{ ...baseInput().actions[0], tone: "success" }]
+    }),
+    { limitProfile: "hosted-paid" }
+  );
+  assert.equal(incomplete.ok, false);
+  assert.ok(
+    !incomplete.ok &&
+      incomplete.error.fields?.some(
+        (field) => field.code === "incomplete_action_appearance"
+      )
+  );
+
+  const unknown = parseInputSubmission(
+    baseInput({
+      actions: [
+        {
+          ...baseInput().actions[0],
+          tone: "rainbow",
+          style: "glow"
+        }
+      ]
+    }),
+    { limitProfile: "hosted-paid" }
+  );
+  assert.equal(unknown.ok, false);
+  assert.deepEqual(
+    !unknown.ok
+      ? unknown.error.fields
+          ?.filter((field) => field.code === "invalid_enum")
+          .map((field) => field.path)
+          .sort()
+      : [],
+    ["actions[0].style", "actions[0].tone"]
+  );
+});
+
+test("input parser accepts only the named product color allowlist", () => {
+  for (const color of SUPPORTED_COLORS) {
+    const result = parseInputSubmission(
+      baseInput({
+        row_accent_color: color,
+        card_visual: {
+          kind: "pill",
+          text: "Needs review",
+          icon: "check",
+          color
+        }
+      }),
+      { limitProfile: "hosted-paid" }
+    );
+    assert.equal(result.ok, true, color);
+  }
+
+  for (const color of ["neutral", "#326b91", "rgb(50, 107, 145)"]) {
+    const result = parseInputSubmission(
+      baseInput({ row_accent_color: color }),
+      { limitProfile: "hosted-paid" }
+    );
+    assert.equal(result.ok, false, color);
+    assert.ok(
+      !result.ok &&
+        result.error.fields?.some(
+          (field) =>
+            field.path === "row_accent_color" && field.code === "unsafe_color"
+        )
+    );
+  }
 });
 
 test("input parser rejects caller identity, unsafe HTML, unsafe colors, and invalid URLs", () => {

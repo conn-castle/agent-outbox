@@ -22,62 +22,47 @@ export const SUPPORTED_LUCIDE_ICON_NAMES = [
   "x"
 ] as const;
 
-const DISALLOWED_COLOR_TOKENS = [
-  "url(",
-  "var(",
-  "calc(",
-  "expression",
-  "@",
-  "{",
-  "}",
-  ";",
-  "<",
-  ">"
-];
+export const SUPPORTED_ACTION_TONES = [
+  "neutral",
+  "brand",
+  "success",
+  "warning",
+  "danger"
+] as const;
 
-const SAFE_NAMED_COLORS = new Set([
-  "black",
-  "white",
-  "gray",
-  "grey",
+export const SUPPORTED_ACTION_STYLES = ["solid", "outline", "ghost"] as const;
+
+export const SUPPORTED_COLORS = [
   "red",
+  "orange",
+  "yellow",
   "green",
   "blue",
-  "yellow",
-  "orange",
   "purple",
   "pink",
-  "brown",
-  "cyan",
-  "magenta",
-  "lime",
-  "navy",
-  "teal",
-  "olive",
-  "maroon",
-  "silver",
-  "transparent"
-]);
+  "teal"
+] as const;
 
-export function isSafeColor(value: string) {
-  const normalized = value.trim().toLowerCase();
-  if (
-    !normalized ||
-    DISALLOWED_COLOR_TOKENS.some((token) => normalized.includes(token))
-  ) {
-    return false;
-  }
+export type SupportedColor = (typeof SUPPORTED_COLORS)[number];
 
-  return (
-    SAFE_NAMED_COLORS.has(normalized) ||
-    /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(
-      normalized
-    ) ||
-    /^rgba?\(\s*(?:25[0-5]|2[0-4]\d|1?\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1?\d?\d)\s*,\s*(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/.test(
-      normalized
-    ) ||
-    /^hsla?\(\s*(?:360|3[0-5]\d|[12]?\d?\d)\s*,\s*(?:100|[1-9]?\d)%\s*,\s*(?:100|[1-9]?\d)%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/.test(
-      normalized
-    )
-  );
+export const SUPPORTED_COLOR_VALUES: Readonly<Record<SupportedColor, string>> =
+  {
+    red: "#b52b31",
+    orange: "#a95123",
+    yellow: "#965800",
+    green: "#237a4b",
+    blue: "#326b91",
+    purple: "#745585",
+    pink: "#9e4c67",
+    teal: "#2d716f"
+  };
+
+const SUPPORTED_COLOR_SET = new Set<string>(SUPPORTED_COLORS);
+
+export function isSupportedColor(value: string): value is SupportedColor {
+  return SUPPORTED_COLOR_SET.has(value);
+}
+
+export function resolveSupportedColor(value: string): string | null {
+  return isSupportedColor(value) ? SUPPORTED_COLOR_VALUES[value] : null;
 }
