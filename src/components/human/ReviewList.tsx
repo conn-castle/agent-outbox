@@ -86,7 +86,8 @@ export function ReviewList({
               style={
                 rowAccentColor
                   ? ({
-                      "--row-accent": rowAccentColor
+                      "--row-accent": rowAccentColor,
+                      "--row-hover-accent": rowAccentColor
                     } as CSSProperties)
                   : undefined
               }

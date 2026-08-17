@@ -29,7 +29,8 @@ export function ReviewRowAnatomyFrame({
             className={`review-row review-row-anatomy row-priority-high ${annotated ? "annotated" : "review-row-example"}`}
             style={
               {
-                "--row-accent": accent
+                "--row-accent": accent,
+                "--row-hover-accent": accent
               } as CSSProperties
             }
             heading={

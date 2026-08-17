@@ -2015,9 +2015,10 @@ body:has(.shell > .human-workspace) {
 .human-workspace .review-row,
 .human-workspace .review-row.selected {
   --row-accent: var(--review-line);
+  --row-hover-accent: var(--review-accent);
   --row-accent-mix: 9%;
   --row-visual-column: 9.5rem;
-  --row-action-button-max: 12rem;
+  --row-action-button-width: 11.25rem;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 11.5rem;
@@ -2050,6 +2051,15 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .review-row.row-priority-low {
   --row-accent-mix: 7%;
+}
+
+.human-workspace .review-row:hover {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--row-hover-accent) 12%, var(--review-paper)) 0,
+    color-mix(in srgb, var(--row-hover-accent) 4%, var(--review-paper)) 44%,
+    var(--review-paper) 72%
+  );
 }
 
 .human-workspace .review-row::before,
@@ -2472,7 +2482,7 @@ body:has(.shell > .human-workspace) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-self: stretch;
-  align-content: center;
+  align-content: start;
   justify-items: end;
   gap: 0.25rem;
   width: 100%;
@@ -2491,9 +2501,13 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .inline-action-form {
   flex: 0 1 auto;
-  width: fit-content;
+  width: min(100%, var(--row-action-button-width));
   max-width: 100%;
   justify-self: end;
+}
+
+.human-workspace .inline-action-form .inline-action-button {
+  width: 100%;
 }
 
 .human-workspace .row-actions > .inline-actions {
@@ -2573,8 +2587,7 @@ body:has(.shell > .human-workspace) {
 .human-workspace .inline-action-button {
   justify-content: flex-start;
   min-height: 2.25rem;
-  width: fit-content;
-  max-width: var(--row-action-button-max);
+  width: min(100%, var(--row-action-button-width));
   padding-inline: 0.65rem;
   overflow: hidden;
   font-size: var(--queue-type-meta);
