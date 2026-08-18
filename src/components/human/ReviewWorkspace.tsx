@@ -680,7 +680,11 @@ function ViewSelect({
   const selected = options.find((option) => option.value === value);
 
   return (
-    <details className="view-select" ref={detailsRef}>
+    <details
+      className="view-select"
+      ref={detailsRef}
+      data-dismissible-disclosure
+    >
       <summary
         role="button"
         aria-label={`${label}: ${selected?.label ?? value}`}

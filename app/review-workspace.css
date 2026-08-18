@@ -709,7 +709,7 @@ body:has(.shell > .human-workspace) {
 .human-workspace .detail-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 1rem 1.35rem 2.25rem;
+  padding: 1.25rem 1.5rem 2rem;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -720,10 +720,10 @@ body:has(.shell > .human-workspace) {
   align-items: center;
   gap: 0.35rem;
   min-height: 2.75rem;
-  padding: 0 0.55rem;
+  padding: 0 0.65rem;
   border: 1px solid var(--review-line);
   border-radius: 0.42rem;
-  background: var(--review-paper-soft);
+  background: var(--review-paper);
   margin: 0;
   color: var(--review-muted);
   font-size: 0.65rem;
@@ -736,9 +736,16 @@ body:has(.shell > .human-workspace) {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding-bottom: 0.3rem;
-  border-bottom: 1px solid var(--review-line);
-  margin-bottom: 0.75rem;
+  padding: 0.35rem;
+  border: 1px solid var(--review-line);
+  border-radius: 0.58rem;
+  margin-bottom: 1.25rem;
+  background: var(--review-paper-soft);
+}
+
+.human-workspace .mobile-back:hover {
+  background: var(--review-accent-soft);
+  color: var(--review-accent-dark);
 }
 
 .human-workspace .detail-stepper {
@@ -754,7 +761,7 @@ body:has(.shell > .human-workspace) {
 .human-workspace .detail-stepper .detail-position {
   min-height: auto;
   padding-inline: 0.3rem;
-  color: var(--review-faint);
+  color: var(--review-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -764,7 +771,7 @@ body:has(.shell > .human-workspace) {
   align-items: center;
   gap: 0.18rem;
   min-height: 2.75rem;
-  padding-inline: 0.38rem;
+  padding-inline: 0.5rem;
   border-radius: 0;
   color: var(--review-muted);
   font-size: 0.61rem;
@@ -788,7 +795,7 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .detail-stepper a {
   border: 1px solid var(--review-line);
-  background: var(--review-paper-soft);
+  background: var(--review-paper);
   color: #4f595b;
 }
 
@@ -896,11 +903,29 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .detail-meta .pill-visual {
-  --visual-color: var(--row-accent);
-  min-height: 1.3rem;
-  padding-inline: 0;
-  background: transparent !important;
-  color: var(--visual-color) !important;
+  display: inline-flex;
+  gap: 0.32rem;
+  min-height: 1.65rem;
+  padding: 0.22rem 0.58rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--visual-color);
+  box-shadow: none;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.human-workspace .detail-meta .pill-visual-icon {
+  display: inline-grid;
+  width: auto;
+  height: auto;
+  place-items: center;
+  color: currentColor;
+}
+
+.human-workspace .detail-meta .pill-visual > strong {
+  color: currentColor;
+  font-weight: 700;
 }
 
 .human-workspace .detail-revision {
@@ -922,12 +947,22 @@ body:has(.shell > .human-workspace) {
   min-height: 1.3rem;
   padding: 0 0.4rem;
   border-radius: 0.3rem;
-  background: #e8eff2;
-  color: #3f6170;
+  background: #eeece7;
+  color: var(--review-muted);
 }
 
 .human-workspace .detail-meta .priority::before {
   content: none;
+}
+
+.human-workspace .detail-meta .priority-high {
+  background: var(--review-accent-soft);
+  color: var(--review-accent-dark);
+}
+
+.human-workspace .detail-meta .priority-urgent {
+  background: var(--review-red-soft);
+  color: var(--review-red);
 }
 
 .human-workspace .detail-content {
@@ -964,6 +999,15 @@ body:has(.shell > .human-workspace) {
   font-size: 0.76rem;
   line-height: 1.6;
   overflow-wrap: anywhere;
+}
+
+.human-workspace .detail-body > :first-child {
+  margin-top: 0;
+}
+
+.human-workspace .detail-summary code {
+  padding: 0;
+  background: transparent;
 }
 
 .human-workspace .detail-summary :where(p, ul, ol),
@@ -1181,11 +1225,12 @@ body:has(.shell > .human-workspace) {
   display: grid;
   gap: 0.55rem;
   margin: 0;
-  padding: 0.8rem 1.35rem 1.35rem;
+  padding: 0.8rem 1.5rem 1.35rem;
   border: 0;
   border-top: 0;
   border-radius: 0;
-  background: rgba(255, 253, 248, 0.96);
+  background: rgba(250, 246, 238, 0.97);
+  box-shadow: 0 -0.45rem 1rem rgba(50, 43, 36, 0.035);
   backdrop-filter: blur(18px) saturate(130%);
 }
 
@@ -1252,18 +1297,27 @@ body:has(.shell > .human-workspace) {
 .human-workspace .primary-actions,
 .human-workspace .secondary-actions-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(10rem, 14rem));
+  justify-content: end;
   gap: 0.75rem;
 }
 
 .human-workspace .secondary-direct {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(10rem, 14rem));
+  justify-content: end;
   gap: 0.75rem;
 }
 
-.human-workspace .secondary-direct > :only-child {
-  grid-column: 1;
+.human-workspace
+  .primary-actions
+  > :only-child
+  :where(.action-button, .secondary-button),
+.human-workspace
+  .secondary-direct
+  > :only-child
+  :where(.action-button, .secondary-button) {
+  grid-column: 2;
 }
 
 .human-workspace .action-button,
@@ -3365,10 +3419,10 @@ body:has(.shell > .human-workspace) {
    supplies focus containment and Escape handling while the queue stays intact
    behind it. */
 .human-workspace .detail-modal {
-  width: min(54rem, calc(100vw - 2rem));
-  height: min(48rem, calc(100dvh - 2rem));
+  width: min(48rem, calc(100vw - 2rem));
+  height: auto;
   max-width: none;
-  max-height: none;
+  max-height: min(48rem, calc(100dvh - 2rem));
   margin: auto;
   padding: 0;
   overflow: hidden;
@@ -3387,7 +3441,8 @@ body:has(.shell > .human-workspace) {
   position: relative;
   inset: auto;
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-height: min(48rem, calc(100dvh - 2rem));
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--review-line-strong);
@@ -3399,6 +3454,50 @@ body:has(.shell > .human-workspace) {
 @media (max-width: 520px) {
   .human-workspace .detail-modal {
     width: calc(100vw - 0.75rem);
-    height: calc(100dvh - 0.75rem);
+    max-height: calc(100dvh - 0.75rem);
+  }
+
+  .human-workspace .detail-modal .detail-pane {
+    max-height: calc(100dvh - 0.75rem);
+  }
+
+  .human-workspace .detail-topbar {
+    gap: 0.35rem;
+  }
+
+  .human-workspace .mobile-back {
+    width: 2.75rem;
+    flex: 0 0 2.75rem;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .human-workspace .mobile-back .close-copy {
+    display: none;
+  }
+
+  .human-workspace .detail-stepper {
+    gap: 0.25rem;
+  }
+
+  .human-workspace .detail-stepper .detail-position {
+    padding-inline: 0.2rem;
+  }
+
+  .human-workspace .primary-actions,
+  .human-workspace .secondary-actions-grid,
+  .human-workspace .secondary-direct {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .human-workspace
+    .primary-actions
+    > :only-child
+    :where(.action-button, .secondary-button),
+  .human-workspace
+    .secondary-direct
+    > :only-child
+    :where(.action-button, .secondary-button) {
+    grid-column: auto;
   }
 }

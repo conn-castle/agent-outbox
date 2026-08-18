@@ -336,6 +336,23 @@ test("primary navigation and queue disclosures behave consistently", async ({
   await account.locator("summary").click();
   await expect(account).toHaveAttribute("open", "");
 
+  const statusDisclosure = page.locator("details.view-select").filter({
+    has: page.getByRole("button", { name: /^Status:/ })
+  });
+  const sortDisclosure = page.locator("details.view-select").filter({
+    has: page.getByRole("button", { name: /^Sort:/ })
+  });
+  await account.locator("summary").click();
+  await expect(account).not.toHaveAttribute("open", "");
+  await statusDisclosure.locator("summary").click();
+  await expect(statusDisclosure).toHaveAttribute("open", "");
+  await expect(account).not.toHaveAttribute("open", "");
+  await sortDisclosure.locator("summary").click();
+  await expect(sortDisclosure).toHaveAttribute("open", "");
+  await expect(statusDisclosure).not.toHaveAttribute("open", "");
+  await sortDisclosure.locator("summary").click();
+  await expect(sortDisclosure).not.toHaveAttribute("open", "");
+
   const rowDisclosure = page.locator("details.row-overflow").first();
   await rowDisclosure.locator("summary").click();
   await expect(rowDisclosure).toHaveAttribute("open", "");
