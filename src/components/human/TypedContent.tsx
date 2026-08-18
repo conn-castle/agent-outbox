@@ -136,7 +136,9 @@ export function CardVisual({
           <strong>
             {metrics.display}
             {metrics.unit ? (
-              <span className="visual-unit">{metrics.unit}</span>
+              <span className="visual-unit">
+                {metrics.unit === "%" ? metrics.unit : ` ${metrics.unit}`}
+              </span>
             ) : null}
           </strong>
         </div>
@@ -170,7 +172,9 @@ export function CardVisual({
           <strong>
             {metrics.display}
             {metrics.unit ? (
-              <span className="visual-unit">{metrics.unit}</span>
+              <span className="visual-unit">
+                {metrics.unit === "%" ? metrics.unit : ` ${metrics.unit}`}
+              </span>
             ) : null}
           </strong>
         </div>

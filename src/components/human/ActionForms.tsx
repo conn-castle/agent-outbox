@@ -185,7 +185,7 @@ export function ActionComposer({
         <SubmitButton
           className={actionAppearanceClass("action-button", action)}
           icon={action.icon}
-          label={`Submit ${action.display}`}
+          label={action.display}
           disabled={!responseValid}
         />
       </footer>

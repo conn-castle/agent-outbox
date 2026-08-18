@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -101,55 +100,46 @@ export function ReviewDetail({
       onClick={handleBackdropClick}
     >
       <section className="detail-pane" aria-label="Review detail">
-        <div className="detail-scroll">
-          <div className="detail-topbar">
-            <a
-              className="mobile-back"
-              href={closeHref}
-              aria-label="Close detail"
-            >
-              <ArrowLeft className="back-arrow" aria-hidden="true" />
-              <X className="close-icon" aria-hidden="true" />
-              <span className="back-copy">Back to queue</span>
-              <span className="close-copy">Close detail</span>
-            </a>
-            <nav className="detail-stepper" aria-label="Review navigation">
+        <div className="detail-topbar">
+          <a className="mobile-back" href={closeHref} aria-label="Close detail">
+            <X className="close-icon" aria-hidden="true" />
+            <span className="close-copy">Close</span>
+          </a>
+          <nav className="detail-stepper" aria-label="Review navigation">
+            <div className="detail-stepper-buttons">
+              {previousItem ? (
+                <a
+                  href={previousItem.href}
+                  aria-label={`Previous: ${previousItem.label}`}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                  <span>Previous</span>
+                </a>
+              ) : (
+                <span className="disabled">
+                  <ChevronLeft aria-hidden="true" />
+                  <span>Previous</span>
+                </span>
+              )}
               {positionLabel ? (
                 <span className="detail-position">{positionLabel}</span>
               ) : null}
-              <div className="detail-stepper-buttons">
-                {previousItem ? (
-                  <a
-                    href={previousItem.href}
-                    aria-label={`Previous: ${previousItem.label}`}
-                  >
-                    <ChevronLeft aria-hidden="true" />
-                    <span>Previous</span>
-                  </a>
-                ) : (
-                  <span className="disabled">
-                    <ChevronLeft aria-hidden="true" />
-                    <span>Previous</span>
-                  </span>
-                )}
-                {nextItem ? (
-                  <a
-                    href={nextItem.href}
-                    aria-label={`Next: ${nextItem.label}`}
-                  >
-                    <span>Next</span>
-                    <ChevronRight aria-hidden="true" />
-                  </a>
-                ) : (
-                  <span className="disabled">
-                    <span>Next</span>
-                    <ChevronRight aria-hidden="true" />
-                  </span>
-                )}
-              </div>
-            </nav>
-          </div>
+              {nextItem ? (
+                <a href={nextItem.href} aria-label={`Next: ${nextItem.label}`}>
+                  <span>Next</span>
+                  <ChevronRight aria-hidden="true" />
+                </a>
+              ) : (
+                <span className="disabled">
+                  <span>Next</span>
+                  <ChevronRight aria-hidden="true" />
+                </span>
+              )}
+            </div>
+          </nav>
+        </div>
 
+        <div className="detail-scroll">
           <header className="detail-header">
             <div className="detail-heading-copy">
               <p className="detail-kicker">
@@ -218,16 +208,11 @@ export function ReviewDetail({
           ) : null}
         </div>
 
-        <div className="action-section">
-          <header>
-            <div>
-              <span className="response-label">Your response</span>
-            </div>
-          </header>
+        <div className="action-section" aria-label="Your response">
           {!showActions ? (
             <p className="muted">This review has no pending actions.</p>
-          ) : (
-            <>
+          ) : !activeAction ? (
+            <div className="action-triggers">
               <div className="primary-actions" aria-label="Primary actions">
                 {primaryActions.map((action) => (
                   <ActionTrigger
@@ -289,8 +274,8 @@ export function ReviewDetail({
                   </details>
                 </div>
               ) : null}
-            </>
-          )}
+            </div>
+          ) : null}
           {activeAction && activeAction.popupKind !== "none" ? (
             <ActionComposer
               detail={detail}

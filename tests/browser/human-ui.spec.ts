@@ -557,7 +557,7 @@ test("failed file upload notice is not re-emitted by the browser", async ({
     mimeType: "text/plain",
     buffer: Buffer.alloc(0)
   });
-  await page.getByRole("button", { name: "Submit Attach evidence" }).click();
+  await page.getByRole("button", { name: "Attach evidence" }).click();
 
   await expect(page.getByRole("status")).toContainText(
     "Action failed: invalid request."
@@ -844,7 +844,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     mimeType: "text/plain",
     buffer: Buffer.from("browser fixture file")
   });
-  await page.getByRole("button", { name: "Submit Attach evidence" }).click();
+  await page.getByRole("button", { name: "Attach evidence" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Attach evidence completed"
   );
@@ -856,7 +856,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await page
     .getByLabel("Requested change")
     .fill("Tighten the handoff language.");
-  await page.getByRole("button", { name: "Submit Request edit" }).click();
+  await page.getByRole("button", { name: "Request edit" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Request edit completed"
   );
@@ -865,7 +865,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await openSecondaryActions(page);
   await page.getByRole("button", { name: "Set review lane" }).click();
   await page.getByLabel("Operations").check();
-  await page.getByRole("button", { name: "Submit Set review lane" }).click();
+  await page.getByRole("button", { name: "Set review lane" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Set review lane completed"
   );
@@ -873,13 +873,13 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date", exact: true }).click();
   await page.getByLabel("Follow-up date").fill("2026-07-15");
-  await page.getByRole("button", { name: "Submit Pick date" }).click();
+  await page.getByRole("button", { name: "Pick date" }).click();
   await expect(page.getByRole("status")).toContainText("Pick date completed");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
-  await page.getByRole("button", { name: "Submit Pick date and time" }).click();
+  await page.getByRole("button", { name: "Pick date and time" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Pick date and time completed"
   );
@@ -888,7 +888,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await page.getByRole("button", { name: "Select checks" }).click();
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
-  await page.getByRole("button", { name: "Submit Select checks" }).click();
+  await page.getByRole("button", { name: "Select checks" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Select checks completed"
   );
@@ -964,7 +964,7 @@ test("canonical row visuals and popup constraints expose only supported semantic
 
   await page.getByRole("button", { name: "Select checks" }).click();
   const multiSubmit = page.getByRole("button", {
-    name: "Submit Select checks"
+    name: "Select checks"
   });
   await expect(page.getByText("Choose 1 to 2. 0 selected.")).toBeVisible();
   await expect(multiSubmit).toBeDisabled();
