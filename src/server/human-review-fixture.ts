@@ -64,9 +64,17 @@ export function browserFixtureHumanSession(
   };
 }
 
+export type BrowserFixtureResolvedItem = {
+  actionDisplay: string;
+  callerId: string;
+  answeredAt: string;
+};
+
 type BrowserFixtureReviewOptions = {
   includePaginationRows?: boolean;
   resolvedItemId?: string;
+  resolvedItems?: Record<string, BrowserFixtureResolvedItem>;
+  answeredOverlay?: boolean;
 };
 
 export function browserFixtureReviewRows(
@@ -95,9 +103,18 @@ export function browserFixtureReviewPage(
   // Mirrors the production SQL exactly: tag-stripped matching over the three
   // HTML columns plus plain matching on caller item id and caller display name.
   const stripTags = (html: string) => html.replaceAll(/<[^>]*>/g, " ");
+  const resolvedItems = options.resolvedItems ?? {};
+  const resolvedIds = new Set(
+    [options.resolvedItemId, ...Object.keys(resolvedItems)].filter(
+      (id): id is string => Boolean(id)
+    )
+  );
   const filtered = browserFixtureReviewRows(effectiveOptions).filter((row) => {
-    if (row.inputItemId === options.resolvedItemId) return false;
-    if (view.status !== "all" && row.status !== view.status) return false;
+    const resolved = resolvedIds.has(row.inputItemId);
+    if (resolved && view.status === "pending") return false;
+    if (!resolved && view.status !== "all" && row.status !== view.status) {
+      return false;
+    }
     if (!terms) return true;
     return [
       stripTags(row.titleHtml),
@@ -117,8 +134,11 @@ export function browserFixtureReviewPage(
       const updated = right.updatedAt.localeCompare(left.updatedAt);
       return updated || left.inputItemId.localeCompare(right.inputItemId);
     });
+  const overlayed = filtered.map((row) =>
+    applyFixtureResolvedState(row, resolvedItems[row.inputItemId])
+  );
   const offset = (view.page - 1) * REVIEW_PAGE_SIZE;
-  const window = filtered.slice(offset, offset + REVIEW_PAGE_SIZE + 1);
+  const window = overlayed.slice(offset, offset + REVIEW_PAGE_SIZE + 1);
   return {
     rows: window.slice(0, REVIEW_PAGE_SIZE),
     hasNext: window.length > REVIEW_PAGE_SIZE
@@ -133,10 +153,49 @@ export function browserFixtureReviewDetail(
   // details addressable so pagination navigation and server-action redirects
   // exercise the same item URL shape as production.
   const details = browserFixtureReviewDetails({ includePaginationRows: true });
-  if (inputItemId) {
-    return details.find((detail) => detail.inputItemId === inputItemId) ?? null;
+  const detail = inputItemId
+    ? (details.find((candidate) => candidate.inputItemId === inputItemId) ??
+      null)
+    : (details[0] ?? null);
+  if (!detail || !_options.answeredOverlay) {
+    return detail;
   }
-  return details[0] ?? null;
+  return applyFixtureResolvedState(
+    detail,
+    _options.resolvedItems?.[detail.inputItemId]
+  );
+}
+
+function applyFixtureResolvedState<T extends HumanReviewListRow>(
+  row: T,
+  resolved: BrowserFixtureResolvedItem | undefined
+): T {
+  if (!resolved) {
+    return row;
+  }
+  return {
+    ...row,
+    status: "answered",
+    answeredAt: resolved.answeredAt,
+    output: {
+      outputResultId: fixtureUuid(`fixture-resolved-output:${row.inputItemId}`),
+      actionValue: "fixture_resolved",
+      actionDisplay: resolved.actionDisplay,
+      answeredAt: resolved.answeredAt,
+      firstReadAt: null,
+      readCount: 0,
+      undoEligible: true
+    },
+    bulkActions: [],
+    hasOverflowActions: false,
+    ...("actions" in row
+      ? {
+          actions: (
+            row as T & { actions: HumanReviewDetail["actions"] }
+          ).actions.map((action) => ({ ...action, answerable: false }))
+        }
+      : {})
+  };
 }
 
 export function browserFixtureStoryboardDetails(): HumanReviewDetail[] {

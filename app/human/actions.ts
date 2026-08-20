@@ -49,10 +49,21 @@ export async function submitHumanAnswer(formData: FormData) {
   }
 
   if (humanBrowserFixtureEnabled()) {
+    const actionDisplay =
+      noticeText(formData, "noticeAction") ?? parsed.actionValue;
+    const { recordFixtureResolvedItems } =
+      await import("../../src/server/human-review-fixture-state");
+    await recordFixtureResolvedItems([
+      {
+        inputItemId: parsed.inputItemId,
+        callerId: parsed.callerId,
+        actionDisplay
+      }
+    ]);
     refreshHumanPage(formData, {
       ...(returnsToQueue(formData) ? {} : { item: parsed.inputItemId }),
       notice: "answer_submitted",
-      action: noticeText(formData, "noticeAction") ?? parsed.actionValue,
+      action: actionDisplay,
       subject: noticeText(formData, "noticeSubject") ?? "this review",
       resolved: parsed.inputItemId,
       undo_target: parsed.inputItemId,
@@ -142,6 +153,15 @@ export async function submitBulkHumanAnswers(formData: FormData) {
   }
 
   if (humanBrowserFixtureEnabled()) {
+    const { recordFixtureResolvedItems } =
+      await import("../../src/server/human-review-fixture-state");
+    await recordFixtureResolvedItems(
+      parsed.items.map((item) => ({
+        inputItemId: item.inputItemId,
+        callerId: item.callerId,
+        actionDisplay: parsed.actionValue
+      }))
+    );
     refreshHumanPage(formData, {
       notice: "bulk_answered",
       answered: String(parsed.items.length),
@@ -193,6 +213,9 @@ export async function undoHumanAnswer(formData: FormData) {
   }
 
   if (humanBrowserFixtureEnabled()) {
+    const { forgetFixtureResolvedItem } =
+      await import("../../src/server/human-review-fixture-state");
+    await forgetFixtureResolvedItem(parsed.inputItemId);
     refreshHumanPage(formData, {
       item: parsed.inputItemId,
       notice: "answer_undone"

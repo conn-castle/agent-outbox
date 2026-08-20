@@ -74,16 +74,14 @@ export function ReviewList({
         return (
           <li key={row.inputItemId}>
             <ReviewRowFrame
-              className={`review-row row-priority-${row.priority}${selected ? " selected" : ""}${
+              className={`review-row row-priority-${row.priority}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
                 selectionMode ? " selection-mode" : ""
               }`}
               style={
-                rowAccentColor
-                  ? ({
-                      "--row-accent": rowAccentColor,
-                      "--row-hover-accent": rowAccentColor
-                    } as CSSProperties)
-                  : undefined
+                {
+                  "--row-accent": rowAccentColor ?? "#7a746c",
+                  "--row-hover-accent": rowAccentColor ?? "#7a746c"
+                } as CSSProperties
               }
               selection={
                 selectionMode ? (
@@ -222,7 +220,11 @@ export function ReviewList({
                           <a
                             key={action.value}
                             className={quickActionClass(action)}
-                            href={rowHref}
+                            href={humanReviewHref(
+                              view,
+                              row.inputItemId,
+                              action.value
+                            )}
                             title={action.display}
                           >
                             <HumanIcon name={action.icon} />

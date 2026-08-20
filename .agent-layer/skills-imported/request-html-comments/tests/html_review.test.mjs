@@ -171,6 +171,25 @@ test('the overlay has no browser-tab identity or lifecycle endpoints', () => {
   assert.doesNotMatch(OVERLAY_SCRIPT, /sessionStorage|client_id|\/heartbeat|\/abandon/)
 })
 
+test('the overlay observes modal visibility attributes and targets dialog hosts', () => {
+  assert.match(OVERLAY_SCRIPT, /attributeFilter:\s*\['open',\s*'role',\s*'aria-modal',\s*'class',\s*'style',\s*'hidden'\]/)
+  assert.match(OVERLAY_SCRIPT, /const hostForNode =/)
+  assert.match(OVERLAY_SCRIPT, /const pointInHost =/)
+})
+
+test('the overlay refreshes comment positions when nested sections scroll', () => {
+  assert.match(OVERLAY_SCRIPT, /document\.addEventListener\('scroll',\s*scheduleCommentRefresh,\s*true\)/)
+  assert.match(OVERLAY_SCRIPT, /refreshCommentsFrame = requestAnimationFrame/)
+})
+
+test('the overlay reserves modal chrome and drags in host coordinates', () => {
+  assert.match(OVERLAY_SCRIPT, /#steward-review-root\.sr-in-modal/)
+  assert.match(OVERLAY_SCRIPT, /root\.classList\.toggle\('sr-in-modal'/)
+  assert.match(OVERLAY_SCRIPT, /dataset\.srChrome/)
+  assert.match(OVERLAY_SCRIPT, /const box = toolbarOffsetParent\(\)/)
+  assert.match(OVERLAY_SCRIPT, /rect\.left - box\.left/)
+})
+
 test('file review serves relative local assets, persists drafts, and accepts feedback', async t => {
   const directory = temporaryDirectory(t)
   const html = join(directory, 'page.html')

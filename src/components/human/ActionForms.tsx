@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
@@ -457,18 +457,104 @@ function FileUploadFields({
 }) {
   const payload = action.popupPayload;
   const acceptMimeTypes = payload.accept_mime_types ?? [];
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function assignFile(file: File | null) {
+    const input = inputRef.current;
+    if (!input) return;
+    const transfer = new DataTransfer();
+    if (file) transfer.items.add(file);
+    input.files = transfer.files;
+    setFileName(file?.name ?? null);
+    setError(null);
+  }
 
   return (
-    <label className="action-field">
-      <span>{popupLabel(action)}</span>
-      <input
-        type="file"
-        name="response.file"
-        accept={acceptMimeTypes.join(",")}
-        required
-      />
-    </label>
+    <div className={`action-field file-drop${dragging ? " dragging" : ""}`}>
+      <label>
+        <span>{popupLabel(action)}</span>
+        <input
+          ref={inputRef}
+          type="file"
+          name="response.file"
+          accept={acceptMimeTypes.join(",")}
+          required
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0] ?? null;
+            setFileName(file?.name ?? null);
+            setError(null);
+          }}
+        />
+        <span
+          className="file-drop-target"
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={(event) => {
+            event.preventDefault();
+            if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+              setDragging(false);
+            }
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            const file = event.dataTransfer.files[0];
+            if (!file) return;
+            if (fileMatchesAccept(file, acceptMimeTypes)) {
+              assignFile(file);
+              return;
+            }
+            setError("That file type is not accepted for this action.");
+          }}
+        >
+          <strong>{fileName ?? "Drop a file here"}</strong>
+          <span>
+            {fileName
+              ? "Drop a replacement or choose another"
+              : "or choose one"}
+          </span>
+        </span>
+      </label>
+      {error ? (
+        <p className="form-note file-drop-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {fileName ? (
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => assignFile(null)}
+        >
+          Remove file
+        </button>
+      ) : null}
+    </div>
   );
+}
+
+function fileMatchesAccept(file: File, acceptMimeTypes: string[]) {
+  if (acceptMimeTypes.length === 0) {
+    return true;
+  }
+  return acceptMimeTypes.some((type) => {
+    if (type.endsWith("/*")) {
+      return file.type.startsWith(type.slice(0, -1));
+    }
+    if (type.startsWith(".")) {
+      return file.name.toLowerCase().endsWith(type.toLowerCase());
+    }
+    return file.type === type;
+  });
 }
 
 function SubmitButton({

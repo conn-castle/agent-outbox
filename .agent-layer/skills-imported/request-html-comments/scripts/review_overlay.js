@@ -13,7 +13,8 @@
 
   const overlayCss = String.raw`
 .steward-review-ui, .steward-review-ui * { box-sizing: border-box; }
-#steward-review-root { position: fixed; z-index: 2147483647; top: 22px; left: 50%; display: flex; align-items: center; gap: 5px; min-height: 50px; padding: 6px; color: #f8fafc; background: rgba(15,23,42,.96); border: 1px solid rgba(255,255,255,.18); border-radius: 999px; box-shadow: 0 16px 44px rgba(15,23,42,.28), 0 2px 8px rgba(15,23,42,.18); transform: translateX(-50%); animation: steward-review-enter .18s ease-out; font: 14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; backdrop-filter: blur(14px); user-select: none; }
+#steward-review-root { position: fixed; z-index: 2147483647; top: 22px; left: 50%; display: flex; align-items: center; gap: 5px; min-height: 50px; padding: 6px; color: #f8fafc; background: rgba(15,23,42,.96); border: 1px solid rgba(255,255,255,.18); border-radius: 999px; box-shadow: 0 16px 44px rgba(15,23,42,.28), 0 2px 8px rgba(15,23,42,.18); transform: translateX(-50%); font: 14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; backdrop-filter: blur(14px); user-select: none; }
+#steward-review-root.steward-review-enter { animation: steward-review-enter .18s ease-out; }
 #steward-review-root button, .steward-review-popup button { appearance: none; margin: 0; text-transform: none; letter-spacing: normal; white-space: nowrap; }
 #steward-review-root button { appearance: none; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: auto; min-width: 0; max-width: none; height: 38px; cursor: pointer; margin: 0; border: 0; border-radius: 999px; padding: 0 13px; color: #e2e8f0; background: transparent; transition: background .14s ease, color .14s ease, box-shadow .14s ease, transform .14s ease; font: inherit; font-size: 13px; font-weight: 650; line-height: 1; text-transform: none; letter-spacing: normal; white-space: nowrap; }
 #steward-review-root button:hover { color: #fff; background: rgba(255,255,255,.1); }
@@ -76,6 +77,7 @@
 @keyframes steward-review-popup-in { from { opacity: 0; transform: translateY(-5px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes steward-review-pin-in { from { opacity: 0; transform: translate(-50%,-50%) scale(.55); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
 @media (max-width: 520px) { #steward-review-root .sr-send-label { display: none; } #steward-review-root .sr-send { width: 38px; padding: 0; } .steward-review-popup .sr-hint { display: none; } }
+#steward-review-root.sr-in-modal { position: absolute; top: 8px; left: 50%; max-width: calc(100% - 16px); transform: translateX(-50%); }
 @media (prefers-reduced-motion: reduce) { #steward-review-root, .steward-review-pin, .steward-review-popup, .steward-review-info, #steward-review-root .sr-status { animation: none; transition: none; } }
 `;
 
@@ -87,7 +89,7 @@
   const endpoint = __ENDPOINT__;
   const root = document.createElement('div');
   root.id = 'steward-review-root';
-  root.className = 'steward-review-ui';
+  root.className = 'steward-review-ui steward-review-enter';
   root.innerHTML = `
     <button class="sr-drag" aria-label="Drag toolbar" title="Drag toolbar"></button>
     <button class="sr-add" aria-pressed="false">
@@ -107,6 +109,8 @@
     <div class="sr-status" role="status"></div>
   `;
   document.documentElement.appendChild(root);
+  root.addEventListener('animationend', () => root.classList.remove('steward-review-enter'), {once: true});
+  setTimeout(() => root.classList.remove('steward-review-enter'), 250);
 
   const status = root.querySelector('.sr-status');
   const addButton = root.querySelector('.sr-add');
@@ -127,6 +131,12 @@
   let draftSaveTimer = null;
   let draftSavePromise = Promise.resolve();
   let finished = false;
+  // Modal-host synchronization runs during startup, before saved comment
+  // positioning is fully wired. Use a safe callback until the real refresher
+  // is assigned below; referencing a later `const` here would throw in its
+  // temporal dead zone and abort every annotation event handler.
+  let refreshComments = () => {};
+  let refreshCommentsFrame = null;
 
   const clamp = (value, minimum, maximum) => Math.min(Math.max(minimum, value), maximum);
   const isOverlay = (node) => node instanceof Element && Boolean(node.closest('.steward-review-ui'));
@@ -159,6 +169,96 @@
     if (focusedDialog && visible(focusedDialog)) return focusedDialog;
     return [...document.querySelectorAll(MODAL_HOST_SELECTOR)].filter(visible).at(-1) || null;
   };
+  const hostForNode = (node) => {
+    if (!(node instanceof Element)) return document.documentElement;
+    const host = node.closest(MODAL_HOST_SELECTOR);
+    return (host && visible(host)) ? host : document.documentElement;
+  };
+  const pointInHost = (clientX, clientY, host) => {
+    if (!host || host === document.documentElement) {
+      return {
+        x: Math.round(clientX + window.scrollX),
+        y: Math.round(clientY + window.scrollY)
+      };
+    }
+    const rect = host.getBoundingClientRect();
+    return {
+      x: Math.round(clientX - rect.left - host.clientLeft + host.scrollLeft),
+      y: Math.round(clientY - rect.top - host.clientTop + host.scrollTop)
+    };
+  };
+  const resetToolbarPosition = () => {
+    root.style.left = '';
+    root.style.top = '';
+    root.style.right = '';
+    root.style.bottom = '';
+    root.style.transform = '';
+  };
+  const clearHostChrome = (host) => {
+    if (!host || host === document.documentElement) return;
+    const marked = host.querySelector('[data-sr-chrome]');
+    if (!marked) return;
+    marked.style.paddingTop = marked.dataset.srChromeOrigPad || '';
+    delete marked.dataset.srChrome;
+    delete marked.dataset.srChromeOrigPad;
+  };
+  const applyHostChrome = (host) => {
+    if (!host || host === document.documentElement) return;
+    const first = [...host.children].find((node) => node !== root && !isOverlay(node));
+    if (!first || !(first instanceof HTMLElement)) return;
+    if (first.dataset.srChrome !== '1') {
+      first.dataset.srChromeOrigPad = first.style.paddingTop;
+    }
+    first.dataset.srChrome = '1';
+    first.style.paddingTop = `${Math.round(root.getBoundingClientRect().height + 16)}px`;
+  };
+  const toolbarOffsetParent = () => {
+    const host = root.parentElement;
+    if (!host || host === document.documentElement || host === document.body) {
+      return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    }
+    const rect = host.getBoundingClientRect();
+    return {
+      left: rect.left + host.clientLeft,
+      top: rect.top + host.clientTop,
+      width: host.clientWidth,
+      height: host.clientHeight
+    };
+  };
+  // Native modal dialogs live in the browser's top layer and make the rest of
+  // the document inert. A z-index cannot cross that boundary, so keep the
+  // review controls inside the active modal until it closes or is removed.
+  const syncOverlayHost = () => {
+    if (finished) return;
+    const host = activeModalHost() || document.documentElement;
+    const previous = root.parentElement;
+    if (previous && previous !== host) clearHostChrome(previous);
+    if (root.parentElement !== host) {
+      host.appendChild(root);
+      resetToolbarPosition();
+    }
+    if (infoPanel && infoPanel.parentElement !== host) host.appendChild(infoPanel);
+    if (popup && popup.parentElement !== host) host.appendChild(popup);
+    root.classList.toggle('sr-in-modal', host !== document.documentElement);
+    applyHostChrome(host);
+    refreshComments();
+  };
+  const isOverlayMutation = (record) =>
+    isOverlay(record.target) ||
+    (record.type === 'childList' &&
+      [...record.addedNodes, ...record.removedNodes].length > 0 &&
+      [...record.addedNodes, ...record.removedNodes].every(isOverlay));
+  const modalHostObserver = new MutationObserver((records) => {
+    if (records.every(isOverlayMutation)) return;
+    syncOverlayHost();
+  });
+  modalHostObserver.observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['open', 'role', 'aria-modal', 'class', 'style', 'hidden']
+  });
+  syncOverlayHost();
   const esc = (value) => window.CSS && CSS.escape ? CSS.escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
   const cssPath = (node) => {
     const parts = [];
@@ -232,7 +332,7 @@
     shieldReviewUi(infoPanel);
     // Keep fixed positioning outside the transformed toolbar; that transform
     // would otherwise create a different containing block before first drag.
-    document.documentElement.appendChild(infoPanel);
+    (activeModalHost() || document.documentElement).appendChild(infoPanel);
 
     const buttonRect = infoButton.getBoundingClientRect();
     const maximumLeft = window.innerWidth - infoPanel.offsetWidth - 12;
@@ -336,25 +436,27 @@
     for (const node of highlights.get(id) || []) node.remove();
     highlights.delete(id);
   };
-  const drawHighlight = (id, range) => {
+  const drawHighlight = (id, range, host = document.documentElement) => {
     removeHighlight(id);
     const nodes = rangeRects(range).map(rect => {
       const highlight = document.createElement('div');
       highlight.className = 'steward-review-ui steward-review-highlight';
-      highlight.style.left = `${Math.round(rect.left + window.scrollX)}px`;
-      highlight.style.top = `${Math.round(rect.top + window.scrollY)}px`;
+      const point = pointInHost(rect.left, rect.top, host);
+      highlight.style.left = `${point.x}px`;
+      highlight.style.top = `${point.y}px`;
       highlight.style.width = `${Math.round(rect.width)}px`;
       highlight.style.height = `${Math.round(rect.height)}px`;
-      document.documentElement.appendChild(highlight);
+      shieldReviewUi(highlight);
+      host.appendChild(highlight);
       return highlight;
     });
     highlights.set(id, nodes);
     return nodes;
   };
-  const anchorForRange = (range) => {
+  const anchorForRange = (range, host = document.documentElement) => {
     const rects = rangeRects(range);
     const rect = rects.at(-1);
-    return rect ? { x: Math.round(rect.right + window.scrollX), y: Math.round(rect.top + window.scrollY) } : null;
+    return rect ? pointInHost(rect.right, rect.top, host) : null;
   };
 
   // Draft persistence includes unsaved textarea content so an interrupted tab
@@ -441,24 +543,30 @@
   const anchorForComment = (item) => {
     if (item.target_type === 'text' && item.selection) {
       const range = resolveRange(item.selection);
-      if (!range) return item.anchor;
-      drawHighlight(item.id, range);
-      return anchorForRange(range) || item.anchor;
+      if (!range) return item.anchor ? { ...item.anchor, host: document.documentElement } : null;
+      const commonElement = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
+      const host = hostForNode(commonElement);
+      drawHighlight(item.id, range, host);
+      const anchor = anchorForRange(range, host);
+      return anchor ? { ...anchor, host } : (item.anchor ? { ...item.anchor, host: document.documentElement } : null);
     }
     if (item.target_type === 'element' && item.anchor_ratio) {
       const target = resolveElement(item.element);
-      if (!target) return item.anchor;
+      if (!target) return item.anchor ? { ...item.anchor, host: document.documentElement } : null;
+      const host = hostForNode(target);
       const rect = target.getBoundingClientRect();
-      return {
-        x: Math.round(rect.left + window.scrollX + rect.width * item.anchor_ratio.x),
-        y: Math.round(rect.top + window.scrollY + rect.height * item.anchor_ratio.y)
-      };
+      const clientX = rect.left + rect.width * item.anchor_ratio.x;
+      const clientY = rect.top + rect.height * item.anchor_ratio.y;
+      return { ...pointInHost(clientX, clientY, host), host };
     }
-    return item.anchor;
+    return item.anchor ? { ...item.anchor, host: document.documentElement } : null;
   };
   const pinFor = (item) => {
     const anchor = anchorForComment(item);
     if (!anchor) return;
+    const host = anchor.host || document.documentElement;
     const pin = document.createElement('button');
     pin.className = 'steward-review-ui steward-review-pin';
     pin.type = 'button';
@@ -468,7 +576,7 @@
     pin.setAttribute('aria-label', `Open comment ${comments.indexOf(item) + 1}`);
     shieldReviewUi(pin);
     pin.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); openPopup(item, event.clientX, event.clientY); });
-    document.documentElement.appendChild(pin);
+    host.appendChild(pin);
     pins.set(item.id, pin);
     updateCount();
   };
@@ -544,29 +652,21 @@
       id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
       created_at: new Date().toISOString()
     };
-    const placePopup = (left, top) => {
-      const hostRect = popupHost === document.documentElement
-        ? { left: 0, top: 0 }
-        : popupHost.getBoundingClientRect();
-      const scrollLeft = popupHost === document.documentElement ? 0 : popupHost.scrollLeft;
-      const scrollTop = popupHost === document.documentElement ? 0 : popupHost.scrollTop;
-      const hostWidth = popupHost === document.documentElement ? window.innerWidth : popupHost.clientWidth;
-      const hostHeight = popupHost === document.documentElement ? window.innerHeight : popupHost.clientHeight;
-      const minimumX = scrollLeft + 12;
-      const minimumY = scrollTop + 12;
-      const maximumX = Math.max(minimumX, scrollLeft + hostWidth - popup.offsetWidth - 12);
-      const maximumY = Math.max(minimumY, scrollTop + hostHeight - popup.offsetHeight - 12);
-      const position = {
-        x: Math.round(clamp(left - hostRect.left + scrollLeft, minimumX, maximumX)),
-        y: Math.round(clamp(top - hostRect.top + scrollTop, minimumY, maximumY))
-      };
-      popup.style.left = `${position.x}px`;
-      popup.style.top = `${position.y}px`;
+    const placePopup = (clientX, clientY) => {
+      const minX = 12;
+      const minY = 12;
+      const maxX = Math.max(minX, window.innerWidth - popup.offsetWidth - 12);
+      const maxY = Math.max(minY, window.innerHeight - popup.offsetHeight - 12);
+      popup.style.left = `${Math.round(clamp(clientX, minX, maxX))}px`;
+      popup.style.top = `${Math.round(clamp(clientY, minY, maxY))}px`;
     };
     placePopup(clientX + 14, clientY + 14);
     if (!item && target?.range) {
       draft.provisionalId = `draft-${draft.id}`;
-      drawHighlight(draft.provisionalId, target.range);
+      const commonElement = target.range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+        ? target.range.commonAncestorContainer
+        : target.range.commonAncestorContainer.parentElement;
+      drawHighlight(draft.provisionalId, target.range, hostForNode(commonElement));
       delete draft.range;
     }
     const textarea = popup.querySelector('textarea');
@@ -637,7 +737,8 @@
     event.stopImmediatePropagation();
     const target = event.target;
     const element = elementReference(target);
-    const anchor = { x: Math.round(event.pageX), y: Math.round(event.pageY) };
+    const host = hostForNode(target);
+    const anchor = pointInHost(event.clientX, event.clientY, host);
     const rect = target.getBoundingClientRect();
     const anchorRatio = {
       x: clamp((event.clientX - rect.left) / rect.width, 0, 1),
@@ -656,7 +757,11 @@
     }
     const range = selection.getRangeAt(0).cloneRange();
     const reference = rangeReference(range);
-    const anchor = anchorForRange(range);
+    const commonElement = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement;
+    const host = hostForNode(commonElement);
+    const anchor = anchorForRange(range, host);
     if (!reference || !reference.selected_text.trim() || !anchor) {
       status.textContent = 'That selection cannot be annotated. Select page text outside the review controls.';
       return;
@@ -680,19 +785,35 @@
     if (event.key === 'Escape' && mode !== 'interact') { event.preventDefault(); setMode('interact'); }
   }, true);
 
-  const refreshComments = () => {
+  refreshComments = () => {
     for (const item of comments) {
       const anchor = anchorForComment(item);
       const pin = pins.get(item.id);
-      if (anchor && pin) {
-        pin.style.left = `${anchor.x}px`;
-        pin.style.top = `${anchor.y}px`;
+      if (!pin) continue;
+      if (!anchor) {
+        pin.hidden = true;
+        continue;
       }
+      pin.hidden = false;
+      const host = anchor.host || document.documentElement;
+      if (pin.parentElement !== host) host.appendChild(pin);
+      pin.style.left = `${anchor.x}px`;
+      pin.style.top = `${anchor.y}px`;
     }
   };
+  const scheduleCommentRefresh = () => {
+    if (refreshCommentsFrame !== null) return;
+    refreshCommentsFrame = requestAnimationFrame(() => {
+      refreshCommentsFrame = null;
+      refreshComments();
+    });
+  };
+  // Element scroll events do not bubble, so listen during capture to keep
+  // comments anchored when any nested scrollable section moves its content.
+  document.addEventListener('scroll', scheduleCommentRefresh, true);
   window.addEventListener('resize', () => {
     closeInfo();
-    requestAnimationFrame(refreshComments);
+    scheduleCommentRefresh();
   });
   if (document.fonts?.ready) document.fonts.ready.then(refreshComments);
 
@@ -704,15 +825,17 @@
     const rect = root.getBoundingClientRect();
     const offsetX = event.clientX - rect.left;
     const offsetY = event.clientY - rect.top;
+    const box = toolbarOffsetParent();
     // The initial CSS position is centered with a transform. Convert it to
     // equivalent pixel coordinates before removing that transform, otherwise
-    // the toolbar jumps on the first drag.
-    root.style.left = `${rect.left}px`;
-    root.style.top = `${rect.top}px`;
+    // the toolbar jumps on the first drag. Inside a modal, `position: absolute`
+    // is relative to the dialog, not the viewport.
+    root.style.left = `${rect.left - box.left}px`;
+    root.style.top = `${rect.top - box.top}px`;
     root.style.transform = 'none';
     const move = (moveEvent) => {
-      root.style.left = `${clamp(moveEvent.clientX - offsetX, 8, window.innerWidth - root.offsetWidth - 8)}px`;
-      root.style.top = `${clamp(moveEvent.clientY - offsetY, 8, window.innerHeight - root.offsetHeight - 8)}px`;
+      root.style.left = `${clamp(moveEvent.clientX - offsetX - box.left, 8, box.width - root.offsetWidth - 8)}px`;
+      root.style.top = `${clamp(moveEvent.clientY - offsetY - box.top, 8, box.height - root.offsetHeight - 8)}px`;
     };
     const end = () => { dragHandle.removeEventListener('pointermove', move); dragHandle.removeEventListener('pointerup', end); dragHandle.removeEventListener('pointercancel', end); };
     dragHandle.addEventListener('pointermove', move);

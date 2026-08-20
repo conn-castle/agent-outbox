@@ -77,6 +77,7 @@ export function ReviewWorkspace({
   view,
   hasNext,
   detailOpen,
+  composeAction,
   renderedAt
 }: {
   session: HumanAccountSession;
@@ -87,6 +88,7 @@ export function ReviewWorkspace({
   view: HumanReviewView;
   hasNext: boolean;
   detailOpen: boolean;
+  composeAction?: string | null;
   renderedAt: string;
 }) {
   const router = useRouter();
@@ -197,6 +199,7 @@ export function ReviewWorkspace({
     params.delete("undo_result");
     params.delete("resolved");
     params.delete("subject");
+    params.delete("compose");
     // Seed from the URL, not the `view` prop: the prop lags router.replace
     // until the server round-trip completes, so rapid successive control
     // changes would silently revert earlier ones.
@@ -659,6 +662,7 @@ export function ReviewWorkspace({
                 }
               : null
           }
+          composeAction={composeAction}
         />
       ) : null}
     </main>

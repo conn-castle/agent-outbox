@@ -26,8 +26,7 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
-const REVIEW_SAFETY_TIMEOUT_MS = 60 * 60 * 1000
-const UPSTREAM_RESPONSE_TIMEOUT_MS = 30_000
+const REVIEW_SAFETY_TIMEOUT_MS = 12 * 60 * 60 * 1000
 const FORCE_CLOSE_GRACE_MS = 250
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -46,6 +45,8 @@ const MIME_TYPES = new Map([
   ['.woff', 'font/woff'],
   ['.woff2', 'font/woff2'],
 ])
+
+const UPSTREAM_RESPONSE_TIMEOUT_MS = 30_000
 
 // Source identity is persisted with drafts and submissions so comments cannot
 // be restored onto a different file or application route by accident.

@@ -223,8 +223,18 @@ test("authenticated review workspace renders content actions and preserves contr
     "No source-system action is performed here."
   );
   await expect(
-    detail.getByRole("link", { name: "Open context" })
+    detail.locator(".detail-meta").getByRole("link", { name: "Open context" })
   ).toHaveAttribute("href", "https://example.com/context/steward-brief-101");
+  await expect(detail.locator(".link-buttons")).toHaveCount(0);
+  const closeBox = await detail
+    .getByRole("link", { name: "Close detail" })
+    .boundingBox();
+  const stepperBox = await detail
+    .getByRole("navigation", { name: "Review navigation" })
+    .boundingBox();
+  expect(closeBox).not.toBeNull();
+  expect(stepperBox).not.toBeNull();
+  expect(closeBox?.x ?? 0).toBeGreaterThan(stepperBox?.x ?? 0);
   await expect(
     reviewDecisionSurface(
       page,
@@ -483,26 +493,28 @@ test("routine reviews can be completed directly from the queue", async ({
   await expect(
     page.getByRole("heading", { name: "Needs review" })
   ).toBeVisible();
+  await expect(
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
+  ).toHaveCount(0);
+
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "History" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Answered reviews" })
+  ).toBeVisible();
+  await expect(
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
+  ).toBeVisible();
+  await expect(
+    reviewRowByTitle(page, "Review neighborhood permit brief")
+  ).toContainText("Answered Approve");
 });
 
 test("human actions submit undo and narrow bulk actions through server actions", async ({
-  page,
-  isMobile
+  page
 }) => {
-  await page.goto("/human");
-
-  await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
-  await reviewDecisionSurface(
-    page,
-    isMobile,
-    "Review neighborhood permit brief"
-  )
-    .getByRole("button", { name: "Approve" })
-    .click();
-  await expect(page.getByRole("status")).toContainText(
-    "Approve completed for “Review neighborhood permit brief”."
-  );
-
   await page.goto("/human");
   await openReviewTools(page);
   await page
@@ -607,6 +619,14 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
   await page.getByLabel("Search").fill("Beyond one hundred");
   await expect(page).toHaveURL(/search=Beyond\+one\+hundred/);
   await expect(page).not.toHaveURL(/page=2/);
+  await expect(
+    reviewLinkByTitle(page, "Beyond one hundred review")
+  ).toHaveCount(0);
+
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "History" })
+    .click();
   await expect(
     reviewLinkByTitle(page, "Beyond one hundred review")
   ).toBeVisible();
@@ -839,6 +859,9 @@ test("popup controls cover typed response kinds", async ({ page }) => {
 
   await openSecondaryActions(page);
   await page.getByRole("button", { name: "Attach evidence" }).click();
+  await expect(page.locator(".file-drop-target")).toContainText(
+    "Drop a file here"
+  );
   await page.getByLabel("Evidence file").setInputFiles({
     name: "evidence.txt",
     mimeType: "text/plain",
@@ -894,6 +917,23 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   );
 });
 
+test("row popup actions open a focused composer instead of the full detail", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await reviewRowByTitle(page, "Choose follow-up window")
+    .getByRole("link", { name: "Pick date", exact: true })
+    .click();
+
+  await expect(page).toHaveURL(/compose=pick_date/);
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect(detail.getByLabel("Follow-up date")).toBeVisible();
+  await expect(detail.getByText("Review summary")).toHaveCount(0);
+  await expect(
+    detail.getByRole("navigation", { name: "Review navigation" })
+  ).toHaveCount(0);
+});
+
 test("canonical row visuals and popup constraints expose only supported semantics", async ({
   page,
   isMobile
@@ -920,6 +960,18 @@ test("canonical row visuals and popup constraints expose only supported semantic
     "tagName",
     "DIV"
   );
+
+  const uncoloredRow = reviewRowByTitle(
+    page,
+    "Which cost denominator should the benchmark use?"
+  );
+  await expect
+    .poll(() =>
+      uncoloredRow.evaluate((element) =>
+        getComputedStyle(element).getPropertyValue("--row-accent").trim()
+      )
+    )
+    .toBe("#7a746c");
 
   const progressRow = reviewRowByTitle(page, "Choose follow-up window");
   await expect(progressRow.locator(".ring svg")).toHaveCount(0);

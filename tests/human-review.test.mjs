@@ -16,6 +16,7 @@ import {
   humanReviewListStatement
 } from "../src/server/human-review.ts";
 import {
+  browserFixtureReviewPage,
   browserFixtureStoryboardDetails,
   browserFixtureStoryboardScenarios,
   humanBrowserFixtureEnabled
@@ -85,6 +86,10 @@ test("human review view parsing and links share canonical defaults", () => {
     humanReviewHref(parsed, inputItemId),
     `/human?search=invoice&status=answered&sort=updated_at&page=3&item=${inputItemId}`
   );
+  assert.equal(
+    humanReviewHref(parsed, inputItemId, "attach_signed_nda"),
+    `/human?search=invoice&status=answered&sort=updated_at&page=3&item=${inputItemId}&compose=attach_signed_nda`
+  );
 
   const retained = new URLSearchParams("fixture_signup=1&status=all&page=7");
   writeHumanReviewView(retained, {
@@ -102,6 +107,42 @@ test("human review view parsing and links share canonical defaults", () => {
       invalidPage
     );
   }
+});
+
+test("fixture resolved items leave pending and appear as answered history", () => {
+  /** @type {import("../src/shared/human-review-view.ts").HumanReviewView} */
+  const pendingView = {
+    search: "",
+    status: "pending",
+    sort: "priority",
+    page: 1
+  };
+  const target = browserFixtureReviewPage(pendingView).rows[0];
+  assert.ok(target);
+  const resolvedItems = {
+    [target.inputItemId]: {
+      actionDisplay: "Approve",
+      callerId: target.caller.callerId,
+      answeredAt: "2026-08-19T01:00:00.000Z"
+    }
+  };
+
+  const pending = browserFixtureReviewPage(pendingView, { resolvedItems });
+  assert.equal(
+    pending.rows.some((row) => row.inputItemId === target.inputItemId),
+    false
+  );
+
+  const answered = browserFixtureReviewPage(
+    { ...pendingView, status: "answered" },
+    { resolvedItems }
+  );
+  const historyRow = answered.rows.find(
+    (row) => row.inputItemId === target.inputItemId
+  );
+  assert.ok(historyRow);
+  assert.equal(historyRow.status, "answered");
+  assert.equal(historyRow.output?.actionDisplay, "Approve");
 });
 
 test("account banner distinguishes zero, unlimited, and self-hosted billing", () => {

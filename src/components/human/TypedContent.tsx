@@ -92,9 +92,36 @@ export function HumanIcon({
   return <Icon className={className ?? "human-icon"} aria-hidden="true" />;
 }
 
-export function LinkButtons({ links }: { links: HumanReviewLinkButton[] }) {
+export function LinkButtons({
+  links,
+  variant = "buttons"
+}: {
+  links: HumanReviewLinkButton[];
+  variant?: "buttons" | "context";
+}) {
   if (links.length === 0) {
     return null;
+  }
+
+  if (variant === "context") {
+    return (
+      <span className="context-links" aria-label="Context links">
+        {links.map((link) => {
+          const href = safeHref(link.url);
+          return href ? (
+            <a
+              key={`${link.displayOrder}-${link.url}`}
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <HumanIcon name={link.icon} />
+              <span>{link.display}</span>
+            </a>
+          ) : null;
+        })}
+      </span>
+    );
   }
 
   return (
