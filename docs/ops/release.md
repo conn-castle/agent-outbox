@@ -72,7 +72,7 @@ second merge phase. It fails when a pull request exceeds the megachange cap
 (more than 30 non-allowlisted files or 1000 non-allowlisted lines), contains
 destructive Flyway SQL, or changes the published Privacy Policy, Terms of
 Service, or shared legal identity, unless a human applies the matching
-human-only label in GitHub: `megachange-approved`,
+human-only label through the GitHub web interface: `megachange-approved`,
 `migration-destructive-approved`, or `legal-policy-approved`. Agents must never
 apply those labels. Applying a label retriggers only Policy gates.
 

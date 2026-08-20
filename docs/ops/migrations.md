@@ -28,7 +28,7 @@ The canonical migration source is `db/migrations/`.
     representative RLS, app-role, and cleanup behavior.
 11. Destructive SQL (`DROP TABLE`, `DROP COLUMN`, `DROP INDEX` including
     `CONCURRENTLY`, column/table renames, type changes, and `SET NOT NULL`
-    without a same-statement `DEFAULT`) requires the human-only
+    without a same-column `DEFAULT`) requires the human-only
     `migration-destructive-approved` label. CI: Enforced by Policy gates.
 
 ## Online Index Migrations

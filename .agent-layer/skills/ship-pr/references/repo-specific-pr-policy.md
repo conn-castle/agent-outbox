@@ -24,9 +24,9 @@ the current PR head SHA.
   | Destructive migration scanner | `migration-destructive-approved` |
   | Public legal-policy gate | `legal-policy-approved` |
 
-  Report the exact gate and wait for the user to apply its label in GitHub or
-  direct a code or scope change. Never apply these labels. Their application
-  retriggers Policy gates; do not manually rerun it.
+  Report the exact gate and wait for the user to apply its label through the
+  GitHub web interface or direct a code or scope change. Never apply these
+  labels. Their application retriggers Policy gates; do not manually rerun it.
 - Route every other diagnosed hosted failure through `/fix-ci`.
 - For a stuck or cancelled run that left no successful exact-head required
   check, rerun interrupted failed jobs with `gh run rerun <run-id> --failed`.

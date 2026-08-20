@@ -15,11 +15,11 @@ jobs:
     name: Policy gates
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v6
@@ -56,18 +56,26 @@ jobs:
 
       - name: Collect changed files
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           mkdir -p tmp
-          gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
-            --jq '.[] | {filename, previous_filename, additions, deletions}' \
-            > tmp/policy-gates-files.jsonl
-          jq -r '[.filename, .previous_filename?] | .[] | select(. != null and . != "")' \
-            < tmp/policy-gates-files.jsonl \
-            | sort -u \
-            > tmp/policy-gates-changed-paths.txt
+          if ! git cat-file -e "${BASE_SHA}^{commit}"; then
+            git fetch --no-tags origin "${BASE_SHA}"
+          fi
+          if ! git cat-file -e "${HEAD_SHA}^{commit}"; then
+            git fetch --no-tags origin "${HEAD_SHA}"
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" || ! git cat-file -e "${HEAD_SHA}^{commit}"; then
+            echo "Unable to resolve complete base-to-head revisions; failing closed." >&2
+            exit 1
+          fi
+          node scripts/policy-gates/collect-changed-files.mjs \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --files-jsonl tmp/policy-gates-files.jsonl \
+            --paths-file tmp/policy-gates-changed-paths.txt
           echo "Changed files: $(wc -l < tmp/policy-gates-files.jsonl)"
 
       - name: Self-validate policy fixtures

@@ -17,7 +17,7 @@ const OPERATIONS = [
   },
   {
     name: "ALTER COLUMN TYPE",
-    re: /\bALTER\s+COLUMN\b\s+(?:"[^"]+"|\S+)\s+\bTYPE\b/i
+    re: /\bALTER\s+COLUMN\b\s+(?:"[^"]+"|\S+)\s+(?:SET\s+DATA\s+)?\bTYPE\b/i
   },
   { name: "DROP INDEX", re: /\bDROP\s+INDEX\b/i }
 ];
@@ -33,19 +33,125 @@ const SET_NOT_NULL = {
  */
 
 /**
- * @param {string} line
+ * Strip `--` and block comments while preserving newlines and string/identifier
+ * literals. This closes comment-based DEFAULT bypasses without a full SQL
+ * tokenizer.
+ *
+ * @param {string} sql
  * @returns {string}
  */
-function stripFullLineComment(line) {
-  return line.trimStart().startsWith("--") ? "" : line;
+function stripSqlComments(sql) {
+  let out = "";
+  let i = 0;
+  let inSingle = false;
+  let inDouble = false;
+  while (i < sql.length) {
+    const c = sql[i];
+    const next = sql[i + 1];
+    if (inSingle) {
+      out += c;
+      if (c === "'" && next === "'") {
+        out += next;
+        i += 2;
+        continue;
+      }
+      if (c === "'") {
+        inSingle = false;
+      }
+      i += 1;
+      continue;
+    }
+    if (inDouble) {
+      out += c;
+      if (c === '"' && next === '"') {
+        out += next;
+        i += 2;
+        continue;
+      }
+      if (c === '"') {
+        inDouble = false;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === "'") {
+      inSingle = true;
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === '"') {
+      inDouble = true;
+      out += c;
+      i += 1;
+      continue;
+    }
+    if (c === "-" && next === "-") {
+      i += 2;
+      while (i < sql.length && sql[i] !== "\n") {
+        i += 1;
+      }
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      i += 2;
+      while (i < sql.length) {
+        if (sql[i] === "*" && sql[i + 1] === "/") {
+          i += 2;
+          break;
+        }
+        out += sql[i] === "\n" ? "\n" : " ";
+        i += 1;
+      }
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
 }
 
 /**
- * @param {string} line
+ * @param {string} raw
+ * @returns {string}
+ */
+function columnNameKey(raw) {
+  return raw.replaceAll('"', "").toLowerCase();
+}
+
+/**
+ * True when at least one `ALTER COLUMN ... SET NOT NULL` lacks `SET DEFAULT`
+ * on that same column in the same statement.
+ *
+ * @param {string} statementText
  * @returns {boolean}
  */
-function hasTerminator(line) {
-  return line.includes(";");
+function hasSetNotNullWithoutSameColumnDefault(statementText) {
+  /** @type {Set<string>} */
+  const notNullColumns = new Set();
+  /** @type {Set<string>} */
+  const defaultColumns = new Set();
+  const clauseRe =
+    /\bALTER\s+COLUMN\s+("[^"]+"|\S+)([\s\S]*?)(?=\bALTER\s+COLUMN\b|$)/gi;
+  for (const match of statementText.matchAll(clauseRe)) {
+    const column = columnNameKey(match[1] ?? "");
+    const body = match[2] ?? "";
+    if (/\bSET\s+NOT\s+NULL\b/i.test(body)) {
+      notNullColumns.add(column);
+    }
+    if (/\bSET\s+DEFAULT\b/i.test(body)) {
+      defaultColumns.add(column);
+    }
+  }
+  if (notNullColumns.size === 0) {
+    return SET_NOT_NULL.re.test(statementText);
+  }
+  for (const column of notNullColumns) {
+    if (!defaultColumns.has(column)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -80,10 +186,7 @@ function scanStatement(statementText, statementLines, filePath) {
     }
   }
 
-  if (
-    SET_NOT_NULL.re.test(statementText) &&
-    !/\bDEFAULT\b/i.test(statementText)
-  ) {
+  if (hasSetNotNullWithoutSameColumnDefault(statementText)) {
     const line = findLine(statementLines, SET_NOT_NULL.re);
     violations.push({
       filePath,
@@ -102,28 +205,36 @@ function scanStatement(statementText, statementLines, filePath) {
  * @returns {MigrationViolation[]}
  */
 function scanSql(sql, filePath) {
-  const lines = sql.split(/\r?\n/);
+  const lines = stripSqlComments(sql).split(/\r?\n/);
   /** @type {MigrationViolation[]} */
   const violations = [];
   let statementText = "";
   /** @type {StatementLine[]} */
   let statementLines = [];
 
-  for (const [index, rawLine] of lines.entries()) {
-    const text = stripFullLineComment(rawLine);
-    statementText += `${text}\n`;
-    statementLines.push({ lineNumber: index + 1, text });
+  const flush = () => {
+    violations.push(...scanStatement(statementText, statementLines, filePath));
+    statementText = "";
+    statementLines = [];
+  };
 
-    if (hasTerminator(text)) {
-      violations.push(
-        ...scanStatement(statementText, statementLines, filePath)
-      );
-      statementText = "";
-      statementLines = [];
+  for (const [index, line] of lines.entries()) {
+    const lineNumber = index + 1;
+    const segments = line.split(";");
+    for (const [segIndex, segment] of segments.entries()) {
+      const isLast = segIndex === segments.length - 1;
+      statementText += isLast ? `${segment}\n` : `${segment};`;
+      statementLines.push({
+        lineNumber,
+        text: isLast ? segment : `${segment};`
+      });
+      if (!isLast) {
+        flush();
+      }
     }
   }
 
-  violations.push(...scanStatement(statementText, statementLines, filePath));
+  flush();
   return violations;
 }
 
