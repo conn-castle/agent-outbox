@@ -104,6 +104,7 @@ const REQUIRED_FILES = [
   "scripts/flyway.mjs",
   ".github/workflows/ci.yml",
   ".github/workflows/release-check.yml",
+  ".github/workflows/policy-gates.yml",
   ".github/workflows/deploy-production.yml",
   ".github/workflows/rollback-production.yml"
 ];
@@ -1312,6 +1313,69 @@ export function validateMigrationReplayWorkflow(workflowContentsByPath) {
   return failures;
 }
 
+const HUMAN_ONLY_APPROVAL_LABELS = [
+  "megachange-approved",
+  "migration-destructive-approved",
+  "legal-policy-approved"
+];
+
+/**
+ * @param {Record<string, string>} workflowContentsByPath
+ * @returns {string[]}
+ */
+export function validatePolicyGatesWorkflow(workflowContentsByPath) {
+  const failures = [];
+  const workflowPath = ".github/workflows/policy-gates.yml";
+  const content = workflowContentsByPath[workflowPath] ?? "";
+  const job = workflowJobContent(content, "policy-gates");
+  const requirements = [
+    [
+      "a Policy gates workflow name",
+      /^name:\s*Policy gates\s*$/m.test(content)
+    ],
+    [
+      "pull_request label retrigger types",
+      /^\s+types:\s*\[opened, synchronize, reopened, labeled, unlabeled\]\s*$/m.test(
+        content
+      )
+    ],
+    ["a policy-gates job", job !== ""],
+    [
+      "megachange evaluation",
+      job.includes("scripts/policy-gates/megachange-eval.mjs")
+    ],
+    [
+      "destructive migration scan",
+      job.includes("scripts/policy-gates/migration-discipline-scan.mjs")
+    ],
+    [
+      "public legal-policy gate",
+      job.includes("scripts/policy-gates/legal-policy-gate.mjs")
+    ]
+  ];
+
+  for (const [requirement, ok] of requirements) {
+    if (!ok) {
+      failures.push(`${workflowPath} must include ${requirement}`);
+    }
+  }
+
+  if (/^\s+push:/m.test(content)) {
+    failures.push(`${workflowPath} must not run on push`);
+  }
+
+  for (const label of HUMAN_ONLY_APPROVAL_LABELS) {
+    if (content.includes(`--add-label ${label}`)) {
+      failures.push(
+        `${workflowPath} must not apply human-only approval labels`
+      );
+      break;
+    }
+  }
+
+  return failures;
+}
+
 /**
  * @param {PackageJson} packageJson
  * @param {string} makefileContent
@@ -1621,6 +1685,7 @@ function readWorkflowContents() {
   for (const relativePath of [
     ".github/workflows/ci.yml",
     ".github/workflows/release-check.yml",
+    ".github/workflows/policy-gates.yml",
     ".github/workflows/deploy-production.yml",
     ".github/workflows/rollback-production.yml"
   ]) {
@@ -2026,6 +2091,14 @@ function smoke() {
     migrationWorkflowFailures,
     [],
     migrationWorkflowFailures.join("\n")
+  );
+  const policyGatesWorkflowFailures = validatePolicyGatesWorkflow(
+    readWorkflowContents()
+  );
+  assert.deepEqual(
+    policyGatesWorkflowFailures,
+    [],
+    policyGatesWorkflowFailures.join("\n")
   );
 
   const scopeFailures = validateRuntimeProofScope(

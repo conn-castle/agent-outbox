@@ -24,6 +24,7 @@ import {
   validateGoReleaserTooling,
   validateGoModuleTooling,
   validateMigrationReplayWorkflow,
+  validatePolicyGatesWorkflow,
   validatePhase3FoundationSourceContents,
   validatePhase4ContractDocContents,
   validateRequiredEnvExample,
@@ -1495,6 +1496,60 @@ jobs:
       description
     );
   }
+});
+
+test("validatePolicyGatesWorkflow requires label-retriggered PR policy checks", () => {
+  const validWorkflow = `
+name: Policy gates
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+jobs:
+  policy-gates:
+    steps:
+      - run: node scripts/policy-gates/megachange-eval.mjs
+      - run: node scripts/policy-gates/migration-discipline-scan.mjs
+      - run: node scripts/policy-gates/legal-policy-gate.mjs
+`;
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow
+    }),
+    []
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "types: [opened, synchronize, reopened, labeled, unlabeled]",
+        "types: [opened, synchronize, reopened]"
+      )
+    }),
+    [
+      ".github/workflows/policy-gates.yml must include pull_request label retrigger types"
+    ]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": `${validWorkflow}\n  push:\n    branches:\n      - main\n`
+    }),
+    [".github/workflows/policy-gates.yml must not run on push"]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "node scripts/policy-gates/legal-policy-gate.mjs",
+        "gh pr edit 1 --add-label legal-policy-approved"
+      )
+    }),
+    [
+      ".github/workflows/policy-gates.yml must include public legal-policy gate",
+      ".github/workflows/policy-gates.yml must not apply human-only approval labels"
+    ]
+  );
 });
 
 test("validateDatabaseTestCommand enforces the serialized root test command chain", () => {

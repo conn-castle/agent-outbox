@@ -1,0 +1,19 @@
+# Megachange-cap self-validation fixtures (JSON Lines).
+#
+# Each non-empty, non-comment row is a JSON object with fields:
+#   name           — human-readable label (used in failure messages)
+#   file_count     — synthetic non-allowlisted file count
+#   line_total     — synthetic non-allowlisted added+removed line total
+#   label_present  — boolean; whether megachange-approved is applied
+#   expected       — "pass" | "fail"
+
+{"name":"under-threshold no label","file_count":5,"line_total":50,"label_present":false,"expected":"pass"}
+{"name":"over-files no label","file_count":35,"line_total":50,"label_present":false,"expected":"fail"}
+{"name":"over-lines no label","file_count":5,"line_total":1500,"label_present":false,"expected":"fail"}
+{"name":"over-both with label","file_count":35,"line_total":1500,"label_present":true,"expected":"pass"}
+{"name":"zero-file (empty diff)","file_count":0,"line_total":0,"label_present":false,"expected":"pass"}
+{"name":"allowlist-only diff","file_count":0,"line_total":0,"label_present":false,"expected":"pass"}
+{"name":"exactly at file threshold","file_count":30,"line_total":100,"label_present":false,"expected":"pass"}
+{"name":"exactly at line threshold","file_count":5,"line_total":1000,"label_present":false,"expected":"pass"}
+{"name":"one over file threshold","file_count":31,"line_total":100,"label_present":false,"expected":"fail"}
+{"name":"one over line threshold","file_count":5,"line_total":1001,"label_present":false,"expected":"fail"}

@@ -1,0 +1,19 @@
+# Public legal-policy gate self-validation fixtures (JSON Lines).
+#
+# Each non-empty, non-comment row is a JSON object with fields:
+#   name           - human-readable label
+#   paths          - array of changed paths
+#   label_present  - whether legal-policy-approved is applied
+#   expected       - "pass" | "fail"
+
+{"name":"unrelated files changed","paths":["app/page.tsx","docs/README.md"],"label_present":false,"expected":"pass"}
+{"name":"privacy policy changed without label","paths":["app/privacy-policy/page.tsx"],"label_present":false,"expected":"fail"}
+{"name":"privacy policy changed with label","paths":["app/privacy-policy/page.tsx"],"label_present":true,"expected":"pass"}
+{"name":"terms changed without label","paths":["app/terms-of-service/page.tsx"],"label_present":false,"expected":"fail"}
+{"name":"terms changed with label","paths":["app/terms-of-service/page.tsx"],"label_present":true,"expected":"pass"}
+{"name":"shared legal identity changed without label","paths":["src/components/legal/LegalDocument.tsx"],"label_present":false,"expected":"fail"}
+{"name":"shared legal identity changed with label","paths":["src/components/legal/LegalDocument.tsx"],"label_present":true,"expected":"pass"}
+{"name":"engineering privacy inventory remains editable","paths":["docs/ops/privacy-data-inventory.md"],"label_present":false,"expected":"pass"}
+{"name":"legal page tests remain editable","paths":["tests/browser/legal-pages.spec.ts"],"label_present":false,"expected":"pass"}
+{"name":"multiple legal surfaces changed without label","paths":["app/privacy-policy/page.tsx","app/terms-of-service/page.tsx"],"label_present":false,"expected":"fail"}
+{"name":"multiple legal surfaces changed with label","paths":["app/privacy-policy/page.tsx","src/components/legal/LegalDocument.tsx"],"label_present":true,"expected":"pass"}

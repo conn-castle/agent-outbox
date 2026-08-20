@@ -115,3 +115,8 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: License Agent Outbox source under PolyForm Perimeter License 1.0.1, allowing internal use and modification, including commercial internal operations, while prohibiting providing others a product that competes with Agent Outbox, including a competing hosted service.
     Reason: Nick selected this boundary so individuals and companies can adapt Agent Outbox for their own operations without enabling competing products or hosted services.
     Tradeoffs: Commercial internal operation is allowed, but the source license cannot be used to provide others a competing product; access to hosted free and paid services remains governed by the Terms and plan limits.
+
+- Decision 2026-08-20 human-only-pr-policy-gates: Enforce human-only PR labels without a merge-CI phase
+    Decision: Policy gates run in a dedicated PR workflow for megachange, destructive migrations, and public legal-policy changes. Agents must never apply `megachange-approved`, `migration-destructive-approved`, or `legal-policy-approved`. There is no `ready-for-merge` label or second merge-CI phase.
+    Reason: Ordinary PR CI already covers the full verification surface, so a label-gated merge phase would add delay without a faster inner loop. Human-only labels still need a required check that fails until a person applies them in GitHub.
+    Tradeoffs: Applying an approval label retriggers only Policy gates, not the heavier CI jobs; a real-user-journey certification gate is deferred until that harness exists.

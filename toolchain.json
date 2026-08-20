@@ -52,6 +52,11 @@
       "package": "markdownlint-cli2",
       "source": "npm view markdownlint-cli2 version engines --json"
     },
+    "ignore": {
+      "version": "7.0.6",
+      "package": "ignore",
+      "source": "npm view ignore version engines --json"
+    },
     "typescript": {
       "version": "6.0.3",
       "package": "typescript",

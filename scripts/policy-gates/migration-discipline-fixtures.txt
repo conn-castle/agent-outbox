@@ -1,0 +1,21 @@
+# Migration-discipline self-validation fixtures (JSON Lines).
+#
+# Each non-empty, non-comment row is a JSON object with fields:
+#   name           - human-readable label
+#   sql            - SQL snippet to scan
+#   label_present  - whether migration-destructive-approved is applied
+#   expected       - "pass" | "fail"
+
+{"name":"add-column additive","sql":"ALTER TABLE \"users\" ADD COLUMN \"preferred_locale\" text;","label_present":false,"expected":"pass"}
+{"name":"line-comment ignored","sql":"-- ALTER TABLE users DROP COLUMN legacy_id;\nALTER TABLE \"users\" ADD COLUMN \"timezone\" text;","label_present":false,"expected":"pass"}
+{"name":"drop-column blocked","sql":"ALTER TABLE \"users\" DROP COLUMN \"legacy_id\";","label_present":false,"expected":"fail"}
+{"name":"drop-table blocked","sql":"DROP TABLE \"legacy_events\";","label_present":false,"expected":"fail"}
+{"name":"rename-column blocked","sql":"ALTER TABLE \"users\" RENAME COLUMN \"handle\" TO \"username\";","label_present":false,"expected":"fail"}
+{"name":"rename-table blocked","sql":"ALTER TABLE \"users\" RENAME TO \"accounts\";","label_present":false,"expected":"fail"}
+{"name":"alter-column-type blocked","sql":"ALTER TABLE \"users\" ALTER COLUMN \"age\" TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"set-not-null blocked without default","sql":"ALTER TABLE \"users\" ALTER COLUMN \"email\" SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"set-not-null allowed with default same statement","sql":"ALTER TABLE \"users\" ALTER COLUMN \"email\" SET DEFAULT 'unknown', ALTER COLUMN \"email\" SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"drop-index blocked","sql":"DROP INDEX \"users_email_idx\";","label_present":false,"expected":"fail"}
+{"name":"drop-index concurrently still blocked","sql":"DROP INDEX CONCURRENTLY IF EXISTS users_email_idx;","label_present":false,"expected":"fail"}
+{"name":"create-index concurrently additive","sql":"CREATE INDEX CONCURRENTLY IF NOT EXISTS users_email_idx ON users (email);","label_present":false,"expected":"pass"}
+{"name":"destructive label override","sql":"ALTER TABLE \"users\" DROP COLUMN \"legacy_id\";","label_present":true,"expected":"pass"}

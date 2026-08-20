@@ -1,0 +1,44 @@
+# Megachange-cap allowlist (gitignore-style globs).
+#
+# Paths matching any pattern below are excluded from the megachange-cap
+# threshold computation (file count and added+removed line count). The
+# allowlist is the only adjustable surface for the megachange threshold —
+# the >30 files / >1000 lines numbers are pinned and are not changed here.
+#
+# Matched via the `ignore` npm package (gitignore semantics) in
+# scripts/policy-gates/megachange-eval.mjs — pinned single implementation.
+# Do NOT mix `grep -F`, `git check-ignore`, or hand-rolled shell loops:
+# their globbing semantics drift from `ignore`'s in subtle ways.
+
+# Lockfiles
+pnpm-lock.yaml
+cli/go.sum
+package-lock.json
+bun.lockb
+yarn.lock
+
+# Documentation updates
+docs/**
+*.md
+
+# Agent-layer tooling and generated client copies — not product code.
+.agent-layer/**
+.agents/**
+.claude/**
+.claude-config/**
+.codex/**
+.copilot/**
+.grok/**
+.grok-config/**
+.agy/**
+
+# Generated artifacts
+src/shared/api-docs.generated.json
+cli/internal/foundation/system_contract_generated.go
+
+# Large test-only refactors: megachange thresholds target product code churn.
+tests/**/*.test.mjs
+tests/**/*.spec.ts
+cli/**/*_test.go
+scripts/**/*.test.mjs
+scripts/**/*.test.sh

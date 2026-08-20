@@ -52,6 +52,7 @@ The current pull-request CI gate names are:
 - `make go-check`
 - `make browser`
 - `make migration-replay`
+- `Policy gates`
 
 The release-check workflow also exposes:
 
@@ -65,6 +66,15 @@ workflow run confirms the exact check name is green for the current tree.
 migration jobs intentionally overlap ordinary CI: this repository prioritizes
 independent automated certification and early release-specific feedback over
 minimizing runner consumption.
+
+`.github/workflows/policy-gates.yml` is a separate required PR workflow, not a
+second merge phase. It fails when a pull request exceeds the megachange cap
+(more than 30 non-allowlisted files or 1000 non-allowlisted lines), contains
+destructive Flyway SQL, or changes the published Privacy Policy, Terms of
+Service, or shared legal identity, unless a human applies the matching
+human-only label in GitHub: `megachange-approved`,
+`migration-destructive-approved`, or `legal-policy-approved`. Agents must never
+apply those labels. Applying a label retriggers only Policy gates.
 
 ## Production Deploy
 
@@ -208,7 +218,7 @@ Current policy:
 - require a pull request before merging;
 - require branches to be up to date before merge;
 - require status checks `make check`, `make go-check`, `make browser`,
-  `make migration-replay`, and `make release-check`;
+  `make migration-replay`, `make release-check`, and `Policy gates`;
 - require conversation resolution;
 - block force pushes and branch deletion;
 - leave admin enforcement disabled so the owner can override when necessary;
@@ -219,6 +229,10 @@ After enabling, verify the rule with read-only `gh` inspection and record only
 the public policy shape in docs.
 
 ## Public Legal Gate
+
+Pull requests that change `app/privacy-policy/page.tsx`,
+`app/terms-of-service/page.tsx`, or `src/components/legal/LegalDocument.tsx`
+fail Policy gates until a human applies `legal-policy-approved` in GitHub.
 
 For every public release, verify:
 

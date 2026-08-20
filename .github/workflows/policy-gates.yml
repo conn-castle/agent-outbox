@@ -1,0 +1,151 @@
+name: Policy gates
+
+# Independent of ordinary CI so applying a human-only approval label retriggers
+# these checks without skipping or replacing make check / browser / replay runs.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  policy-gates:
+    name: Policy gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Set up dependencies
+        run: make setup
+
+      - name: Resolve label state
+        id: ctx
+        env:
+          PR_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
+        run: |
+          set -euo pipefail
+          megachange_label_present=false
+          migration_label_present=false
+          legal_policy_label_present=false
+          printf '%s' "$PR_LABELS_JSON" > /tmp/labels.json
+          if jq -e '. | map(.name) | index("megachange-approved")' /tmp/labels.json >/dev/null; then
+            megachange_label_present=true
+          fi
+          if jq -e '. | map(.name) | index("migration-destructive-approved")' /tmp/labels.json >/dev/null; then
+            migration_label_present=true
+          fi
+          if jq -e '. | map(.name) | index("legal-policy-approved")' /tmp/labels.json >/dev/null; then
+            legal_policy_label_present=true
+          fi
+          {
+            echo "megachange_label_present=$megachange_label_present"
+            echo "migration_label_present=$migration_label_present"
+            echo "legal_policy_label_present=$legal_policy_label_present"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Collect changed files
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          mkdir -p tmp
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | {filename, previous_filename, additions, deletions}' \
+            > tmp/policy-gates-files.jsonl
+          jq -r '[.filename, .previous_filename?] | .[] | select(. != null and . != "")' \
+            < tmp/policy-gates-files.jsonl \
+            | sort -u \
+            > tmp/policy-gates-changed-paths.txt
+          echo "Changed files: $(wc -l < tmp/policy-gates-files.jsonl)"
+
+      - name: Self-validate policy fixtures
+        run: |
+          set -euo pipefail
+          node scripts/policy-gates/megachange-eval.test.mjs \
+            --fixtures scripts/policy-gates/megachange-cap-fixtures.txt
+          node scripts/policy-gates/migration-discipline-scan.mjs \
+            --fixtures scripts/policy-gates/migration-discipline-fixtures.txt
+          node scripts/policy-gates/legal-policy-gate.mjs \
+            --fixtures scripts/policy-gates/legal-policy-fixtures.txt
+
+      - name: Evaluate megachange cap
+        env:
+          LABEL_PRESENT: ${{ steps.ctx.outputs.megachange_label_present }}
+        run: |
+          set -euo pipefail
+          extra_flags=()
+          if [[ "$LABEL_PRESENT" == "true" ]]; then
+            extra_flags+=(--label-present)
+          fi
+          node scripts/policy-gates/megachange-eval.mjs \
+            --allowlist scripts/policy-gates/megachange-allowlist.txt \
+            --files-jsonl tmp/policy-gates-files.jsonl \
+            --max-files 30 --max-lines 1000 \
+            "${extra_flags[@]}" \
+            > /tmp/megachange-eval.json
+          cat /tmp/megachange-eval.json
+          verdict=$(jq -r '.verdict' /tmp/megachange-eval.json)
+          if [[ "$verdict" != "pass" ]]; then
+            echo "" >&2
+            echo "Megachange cap exceeded:" >&2
+            jq -r '.reason' /tmp/megachange-eval.json >&2
+            echo "" >&2
+            echo "Sample non-allowlisted files (first 20):" >&2
+            jq -r '.non_allowlisted_files[0:20] | .[]' /tmp/megachange-eval.json >&2
+            echo "" >&2
+            echo "A human must apply the 'megachange-approved' label via the GitHub UI." >&2
+            exit 1
+          fi
+          echo "OK - under thresholds (or override label present)."
+
+      - name: Scan changed migrations
+        env:
+          LABEL_PRESENT: ${{ steps.ctx.outputs.migration_label_present }}
+        run: |
+          set -euo pipefail
+          grep -E '^db/migrations/.*\.sql$' \
+            tmp/policy-gates-changed-paths.txt \
+            > /tmp/migration-files.txt || true
+          count="$(sed '/^$/d' /tmp/migration-files.txt | wc -l | tr -d ' ')"
+          if [[ "$count" == "0" ]]; then
+            echo "No migration files changed."
+          else
+            echo "Changed migration files:"
+            sed 's/^/- /' /tmp/migration-files.txt
+          fi
+          label_flag=()
+          if [[ "$LABEL_PRESENT" == "true" ]]; then
+            label_flag+=(--label-present)
+          fi
+          node scripts/policy-gates/migration-discipline-scan.mjs \
+            --paths-file /tmp/migration-files.txt \
+            "${label_flag[@]}"
+
+      - name: Gate public legal-policy changes
+        env:
+          LABEL_PRESENT: ${{ steps.ctx.outputs.legal_policy_label_present }}
+        run: |
+          set -euo pipefail
+          label_flag=()
+          if [[ "$LABEL_PRESENT" == "true" ]]; then
+            label_flag+=(--label-present)
+          fi
+          if ! node scripts/policy-gates/legal-policy-gate.mjs \
+            --paths-file tmp/policy-gates-changed-paths.txt \
+            "${label_flag[@]}"; then
+            echo "" >&2
+            echo "A human must apply the 'legal-policy-approved' label via the GitHub UI." >&2
+            exit 1
+          fi

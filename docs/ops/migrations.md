@@ -26,6 +26,10 @@ The canonical migration source is `db/migrations/`.
    enforced.
 10. Run database behavior tests against the replayed schema. CI: Enforced for
     representative RLS, app-role, and cleanup behavior.
+11. Destructive SQL (`DROP TABLE`, `DROP COLUMN`, `DROP INDEX` including
+    `CONCURRENTLY`, column/table renames, type changes, and `SET NOT NULL`
+    without a same-statement `DEFAULT`) requires the human-only
+    `migration-destructive-approved` label. CI: Enforced by Policy gates.
 
 ## Online Index Migrations
 
