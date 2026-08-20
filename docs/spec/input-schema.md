@@ -54,12 +54,12 @@ Required top-level fields:
 
 Optional top-level fields:
 
-- `priority`, default `normal`
+- `priority`, default `normal` when omitted or JSON `null`
 - `row_accent_color`
 - `corner`
 - `details`
 - `card_visual`
-- `skip_disabled`, default `false`
+- `skip_disabled`, default `false` when omitted or JSON `null`
 
 The request must not include `caller_id`.
 

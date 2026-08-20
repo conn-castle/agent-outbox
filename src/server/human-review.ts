@@ -187,7 +187,7 @@ type ActionRow = {
   overflow: boolean;
   action_tone: ActionTone | null;
   action_style: ActionStyle | null;
-  popup_kind: PopupKind;
+  popup_kind: string;
   popup_payload: unknown;
 };
 
@@ -680,6 +680,10 @@ function reviewActionFromDatabase(
             : null
         }
       };
+    default:
+      throw new Error(
+        `Unsupported persisted popup_kind: ${JSON.stringify(action.popup_kind)}`
+      );
   }
 }
 

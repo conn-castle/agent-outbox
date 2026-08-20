@@ -22,6 +22,7 @@ import {
   humanBrowserFixtureEnabled
 } from "../src/server/human-review-fixture.ts";
 import { browserFixtureDesignReviewDetails } from "../src/server/human-review-design-fixture.ts";
+import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
 import {
   isSupportedColor,
   SUPPORTED_LUCIDE_ICON_NAMES
@@ -107,6 +108,30 @@ test("human review view parsing and links share canonical defaults", () => {
       invalidPage
     );
   }
+});
+
+test("fixture resolved-item cookies keep the newest entries within a byte budget", () => {
+  /** @type {Record<string, import("../src/server/human-review-fixture-state.ts").FixtureResolvedItem>} */
+  const items = {};
+  for (let index = 0; index < 50; index += 1) {
+    const inputItemId = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+    items[inputItemId] = {
+      actionDisplay: "A".repeat(160),
+      callerId,
+      answeredAt: "2026-08-20T00:00:00.000Z"
+    };
+  }
+
+  const serialized = fixtureResolvedItemsCookieValue(items);
+  assert.ok(serialized);
+  assert.ok(Buffer.byteLength(serialized, "utf8") <= 3500);
+  const parsed = JSON.parse(serialized);
+  const ids = Object.keys(parsed);
+  assert.ok(ids.length > 0);
+  assert.ok(ids.length < 50);
+  assert.equal(ids.includes("00000000-0000-4000-8000-000000000049"), true);
+  assert.equal(ids.includes("00000000-0000-4000-8000-000000000000"), false);
+  assert.equal(fixtureResolvedItemsCookieValue({}), null);
 });
 
 test("fixture resolved items leave pending and appear as answered history", () => {
@@ -767,6 +792,44 @@ test("human review detail lazily shapes links actions options and answerable sta
   assert.deepEqual(
     query.calls[0],
     humanReviewDetailStatement(context, inputItemId)
+  );
+});
+
+test("human review detail fails loudly for an unrecognized persisted popup kind", async () => {
+  const query = fakeQuery([
+    [reviewRow({ details_html: "<p>Details</p>" })],
+    [],
+    [
+      {
+        input_action_id: "action-1",
+        display_order: 0,
+        display: "Approve",
+        icon: "check",
+        action_value: "approve",
+        overflow: false,
+        action_tone: null,
+        action_style: null,
+        popup_kind: "mystery",
+        popup_payload: {}
+      }
+    ],
+    [],
+    [
+      {
+        account_id: context.accountId,
+        label: "Review account",
+        tier: "hosted_paid",
+        billing_status: "active",
+        billing_grace_ends_at: null
+      }
+    ],
+    [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
+    []
+  ]);
+
+  await assert.rejects(
+    () => humanReviewDetailInTransaction(query, context, inputItemId),
+    /Unsupported persisted popup_kind: "mystery"/
   );
 });
 

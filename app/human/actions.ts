@@ -159,7 +159,8 @@ export async function submitBulkHumanAnswers(formData: FormData) {
       parsed.items.map((item) => ({
         inputItemId: item.inputItemId,
         callerId: item.callerId,
-        actionDisplay: parsed.actionValue
+        actionDisplay:
+          noticeText(formData, "noticeAction") ?? parsed.actionValue
       }))
     );
     refreshHumanPage(formData, {

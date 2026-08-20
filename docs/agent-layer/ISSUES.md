@@ -65,7 +65,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-08-17 queue-count-scope: Page-scoped counts are presented as queue totals
     Priority: Medium. Area: Human review / Pagination
-    Description: Pagination can present values such as `100+ of 100 remaining`, later pages expose only local row counts, and answered views can show misleading remaining totals.
+    Description: Pagination can present values such as `100+ of 100 remaining`, and later pages expose only local row counts rather than queue totals.
     Next step: Audit available count semantics and ensure every displayed label accurately communicates its scope.
 
 - Issue 2026-08-17 summary-html-margins: Supported paragraph markup changes summary clamp geometry

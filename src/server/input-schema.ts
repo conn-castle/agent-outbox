@@ -20,8 +20,11 @@ import {
 } from "../shared/input-schema-rules.ts";
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
+  InputDeleteSchema,
+  InputSubmissionSchema,
   publicInputDeleteShapeMatches,
-  publicInputSubmissionShapeMatches
+  publicInputSubmissionShapeMatches,
+  publicSchemaFieldErrors
 } from "../shared/public-api-contract.ts";
 
 export const INPUT_REQUEST_BODY_BYTE_LIMIT =
@@ -281,13 +284,13 @@ export function parseInputDeleteBody(value: unknown): InputDeleteParseResult {
   if (!publicInputDeleteShapeMatches(value)) {
     return {
       ok: false,
-      error: validationError([
-        fieldError(
-          "",
-          "contract_mismatch",
+      error: validationError(
+        publicSchemaFieldErrors(
+          InputDeleteSchema,
+          value,
           "Request does not match the public input-delete contract."
         )
-      ])
+      )
     };
   }
 
@@ -365,13 +368,13 @@ export function parseInputSubmission(
   if (!publicInputSubmissionShapeMatches(value)) {
     return {
       ok: false,
-      error: validationError([
-        fieldError(
-          "",
-          "contract_mismatch",
+      error: validationError(
+        publicSchemaFieldErrors(
+          InputSubmissionSchema,
+          value,
           "Request does not match the public input-submission contract."
         )
-      ])
+      )
     };
   }
 

@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
@@ -37,6 +43,7 @@ export function ReviewDetail({
 }) {
   const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const backdropPressRef = useRef(false);
   const requestedCompose = composeAction
     ? (detail?.actions.find(
         (action) =>
@@ -60,7 +67,13 @@ export function ReviewDetail({
     router.push(closeHref);
   }
 
+  function handleBackdropPointerDown(event: PointerEvent<HTMLDialogElement>) {
+    backdropPressRef.current = event.target === event.currentTarget;
+  }
+
   function handleBackdropClick(event: MouseEvent<HTMLDialogElement>) {
+    if (!backdropPressRef.current) return;
+    backdropPressRef.current = false;
     if (event.target === event.currentTarget) closeDetail();
   }
 
@@ -75,6 +88,7 @@ export function ReviewDetail({
           event.preventDefault();
           closeDetail();
         }}
+        onPointerDown={handleBackdropPointerDown}
         onClick={handleBackdropClick}
       >
         <section className="detail-pane empty-state" aria-label="Review detail">
@@ -108,6 +122,7 @@ export function ReviewDetail({
         event.preventDefault();
         closeDetail();
       }}
+      onPointerDown={handleBackdropPointerDown}
       onClick={handleBackdropClick}
     >
       <section

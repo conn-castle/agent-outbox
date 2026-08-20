@@ -504,6 +504,9 @@ test("routine reviews can be completed directly from the queue", async ({
   await expect(
     page.getByRole("heading", { name: "Answered reviews" })
   ).toBeVisible();
+  await expect(page.getByLabel("Current view summary")).toHaveText(
+    /\d+\+?\s*answered/
+  );
   await expect(
     reviewLinkByTitle(page, "Review neighborhood permit brief")
   ).toBeVisible();
@@ -539,6 +542,16 @@ test("human actions submit undo and narrow bulk actions through server actions",
   await page.getByRole("button", { name: "Apply Approve" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Bulk action complete: 2 answered, 0 failed."
+  );
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "History" })
+    .click();
+  await expect(
+    reviewRowByTitle(page, "Review neighborhood permit brief")
+  ).toContainText("Answered Approve");
+  await expect(reviewRowByTitle(page, "Choose follow-up window")).toContainText(
+    "Answered Approve"
   );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000517");
@@ -927,11 +940,22 @@ test("row popup actions open a focused composer instead of the full detail", asy
 
   await expect(page).toHaveURL(/compose=pick_date/);
   const detail = page.getByRole("region", { name: "Review detail" });
-  await expect(detail.getByLabel("Follow-up date")).toBeVisible();
+  const field = detail.getByLabel("Follow-up date");
+  await expect(field).toBeVisible();
   await expect(detail.getByText("Review summary")).toHaveCount(0);
   await expect(
     detail.getByRole("navigation", { name: "Review navigation" })
   ).toHaveCount(0);
+
+  await field.fill("2026-07-20");
+  const paneBox = await detail.boundingBox();
+  expect(paneBox).not.toBeNull();
+  await page.mouse.move(paneBox!.x + paneBox!.width / 2, paneBox!.y + 24);
+  await page.mouse.down();
+  await page.mouse.move(8, 8);
+  await page.mouse.up();
+  await expect(page).toHaveURL(/compose=pick_date/);
+  await expect(field).toHaveValue("2026-07-20");
 });
 
 test("canonical row visuals and popup constraints expose only supported semantics", async ({

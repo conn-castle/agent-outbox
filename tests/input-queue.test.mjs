@@ -17,6 +17,10 @@ import {
   readJsonBodyWithLimit
 } from "../src/server/input-schema.ts";
 import { SUPPORTED_COLORS } from "../src/shared/input-schema-rules.ts";
+import {
+  InputSubmissionSchema,
+  publicSchemaFieldErrors
+} from "../src/shared/public-api-contract.ts";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -244,6 +248,33 @@ test("input parser normalizes safe submissions and computes stable fingerprints"
     "https://example.com/source"
   );
   assert.equal(first.submission.actions[0].popupKind, "none");
+});
+
+test("input parser treats JSON null optional fields as omitted defaults", () => {
+  const result = parseInputSubmission(
+    baseInput({ priority: null, skip_disabled: null }),
+    { limitProfile: "hosted-paid" }
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.submission.priority : null, "normal");
+  assert.equal(result.ok ? result.submission.skipDisabled : null, false);
+});
+
+test("input contract mismatches report the offending field path", () => {
+  const fields = publicSchemaFieldErrors(
+    InputSubmissionSchema,
+    baseInput({ priority: 1 }),
+    "Request does not match the public input-submission contract."
+  );
+  assert.ok(
+    fields.some(
+      (field) => field.path === "priority" && field.code === "contract_mismatch"
+    )
+  );
+  assert.equal(
+    fields.some((field) => field.path === ""),
+    false
+  );
 });
 
 test("input parser accepts fixed action appearances and rejects incomplete or unknown values", () => {

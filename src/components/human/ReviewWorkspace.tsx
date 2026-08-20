@@ -268,6 +268,12 @@ export function ReviewWorkspace({
     return count;
   }, [rows, selectedIds]);
   const pendingCount = rows.filter((row) => row.status === "pending").length;
+  const queueCount = queueCountCopy(
+    view.status,
+    pendingCount,
+    rows.length,
+    hasNext
+  );
   const detailIndex = detail
     ? visibleRows.findIndex((row) => row.inputItemId === detail.inputItemId)
     : -1;
@@ -428,11 +434,8 @@ export function ReviewWorkspace({
                     : "Answered reviews"}
               </h2>
               <div className="queue-count" aria-label="Current view summary">
-                <strong>
-                  {pendingCount}
-                  {hasNext ? "+" : ""}
-                </strong>
-                <span>of {rows.length} remaining</span>
+                <strong>{queueCount.value}</strong>
+                <span>{queueCount.label}</span>
               </div>
               <span
                 className="queue-heading-shortcuts"
@@ -817,4 +820,28 @@ function plainText(html: string) {
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function queueCountCopy(
+  status: HumanReviewView["status"],
+  pendingCount: number,
+  rowCount: number,
+  hasNext: boolean
+): { value: string; label: string } {
+  if (status === "answered") {
+    return {
+      value: `${rowCount}${hasNext ? "+" : ""}`,
+      label: "answered"
+    };
+  }
+  if (status === "all") {
+    return {
+      value: String(pendingCount),
+      label: `pending of ${rowCount}${hasNext ? "+" : ""} shown`
+    };
+  }
+  return {
+    value: `${pendingCount}${hasNext ? "+" : ""}`,
+    label: `of ${rowCount} remaining`
+  };
 }

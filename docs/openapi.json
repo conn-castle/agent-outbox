@@ -2039,20 +2039,27 @@
           "priority": {
             "oneOf": [
               {
-                "type": "string",
-                "const": "low"
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "const": "low"
+                  },
+                  {
+                    "type": "string",
+                    "const": "normal"
+                  },
+                  {
+                    "type": "string",
+                    "const": "high"
+                  },
+                  {
+                    "type": "string",
+                    "const": "urgent"
+                  }
+                ]
               },
               {
-                "type": "string",
-                "const": "normal"
-              },
-              {
-                "type": "string",
-                "const": "high"
-              },
-              {
-                "type": "string",
-                "const": "urgent"
+                "type": "null"
               }
             ]
           },
@@ -2382,7 +2389,14 @@
             ]
           },
           "skip_disabled": {
-            "type": "boolean"
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "actions": {
             "type": "array",
@@ -2811,10 +2825,17 @@
         "type": "object",
         "properties": {
           "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 100,
-            "default": 25
+            "oneOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 25
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "cursor": {
             "oneOf": [

@@ -323,12 +323,14 @@ export const InputSubmissionSchema = openObject(
   {
     caller_item_id: Type.String({ minLength: 1 }),
     priority: Type.Optional(
-      Type.Union([
-        Type.Literal("low"),
-        Type.Literal("normal"),
-        Type.Literal("high"),
-        Type.Literal("urgent")
-      ])
+      nullable(
+        Type.Union([
+          Type.Literal("low"),
+          Type.Literal("normal"),
+          Type.Literal("high"),
+          Type.Literal("urgent")
+        ])
+      )
     ),
     row_type: openObject({
       display: Type.String({ minLength: 1 }),
@@ -349,7 +351,7 @@ export const InputSubmissionSchema = openObject(
     details: Type.Optional(nullable(Type.String())),
     link_buttons: Type.Array(LinkButtonSchema, { maxItems: 32 }),
     card_visual: Type.Optional(nullable(CardVisualSchema)),
-    skip_disabled: Type.Optional(Type.Boolean()),
+    skip_disabled: Type.Optional(nullable(Type.Boolean())),
     actions: Type.Array(InputActionSchema, { minItems: 1, maxItems: 32 })
   },
   {
@@ -368,11 +370,13 @@ export const InputDeleteSchema = openObject(
 export const OutputReadAllRequestSchema = openObject(
   {
     limit: Type.Optional(
-      Type.Integer({
-        minimum: 1,
-        maximum: SYSTEM_CONTRACT.outputPageMaxLimit,
-        default: SYSTEM_CONTRACT.outputPageDefaultLimit
-      })
+      nullable(
+        Type.Integer({
+          minimum: 1,
+          maximum: SYSTEM_CONTRACT.outputPageMaxLimit,
+          default: SYSTEM_CONTRACT.outputPageDefaultLimit
+        })
+      )
     ),
     cursor: Type.Optional(nullable(Type.String({ minLength: 1 })))
   },
@@ -919,6 +923,47 @@ export const PUBLIC_API_OPERATIONS = [
 export const PUBLIC_API_ROUTE_KEYS = PUBLIC_API_OPERATIONS.map(
   ({ method, path }) => `${method.toUpperCase()} ${path}`
 );
+
+function jsonPointerToFieldPath(pointer: string | undefined): string {
+  if (!pointer) {
+    return "";
+  }
+  return pointer
+    .split("/")
+    .slice(1)
+    .map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"))
+    .reduce((path, segment) => {
+      if (/^\d+$/.test(segment)) {
+        return `${path}[${segment}]`;
+      }
+      return path ? `${path}.${segment}` : segment;
+    }, "");
+}
+
+export function publicSchemaFieldErrors(
+  schema: TSchema,
+  value: unknown,
+  fallbackMessage: string
+): Array<{ path: string; code: "contract_mismatch"; message: string }> {
+  const byPath = new Map<string, string>();
+  for (const error of Value.Errors(schema, value)) {
+    byPath.set(jsonPointerToFieldPath(error.instancePath), error.message);
+  }
+  if (byPath.size === 0) {
+    return [
+      {
+        path: "",
+        code: "contract_mismatch",
+        message: fallbackMessage
+      }
+    ];
+  }
+  return [...byPath.entries()].map(([path, message]) => ({
+    path,
+    code: "contract_mismatch",
+    message
+  }));
+}
 
 export function publicInputSubmissionShapeMatches(value: unknown): boolean {
   return Value.Check(InputSubmissionSchema, value);

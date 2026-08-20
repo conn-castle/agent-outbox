@@ -41,6 +41,11 @@ export function BulkActions({
   return (
     <form className="bulk-actions" action={submitBulkHumanAnswers}>
       <ViewStateFields />
+      <input
+        type="hidden"
+        name="noticeAction"
+        value={selectedAction?.display ?? ""}
+      />
       <div>
         <strong>
           {pendingRows.length} selected pending{" "}

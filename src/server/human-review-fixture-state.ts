@@ -1,7 +1,6 @@
-import { cookies } from "next/headers";
-
 const COOKIE_NAME = "agent_outbox_fixture_resolved";
 const MAX_RESOLVED_ITEMS = 50;
+const MAX_COOKIE_BYTES = 3500;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -14,7 +13,7 @@ export type FixtureResolvedItem = {
 export async function readFixtureResolvedItems(): Promise<
   Record<string, FixtureResolvedItem>
 > {
-  const store = await cookies();
+  const store = await cookieStore();
   return parseResolvedItems(store.get(COOKIE_NAME)?.value);
 }
 
@@ -28,7 +27,7 @@ export async function recordFixtureResolvedItems(
   if (items.length === 0) {
     return;
   }
-  const store = await cookies();
+  const store = await cookieStore();
   const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
   const answeredAt = new Date().toISOString();
   for (const item of items) {
@@ -51,7 +50,7 @@ export async function forgetFixtureResolvedItem(inputItemId: string) {
   if (!UUID_PATTERN.test(inputItemId)) {
     return;
   }
-  const store = await cookies();
+  const store = await cookieStore();
   const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
   if (!(inputItemId in current)) {
     return;
@@ -101,19 +100,44 @@ function isResolvedItem(value: unknown): value is FixtureResolvedItem {
   );
 }
 
-function writeResolvedItems(
-  store: Awaited<ReturnType<typeof cookies>>,
+export function fixtureResolvedItemsCookieValue(
   items: Record<string, FixtureResolvedItem>
-) {
+): string | null {
   const ids = Object.keys(items);
   if (ids.length === 0) {
+    return null;
+  }
+  let retained = ids.slice(-MAX_RESOLVED_ITEMS);
+  let serialized = JSON.stringify(
+    Object.fromEntries(retained.map((id) => [id, items[id]]))
+  );
+  while (
+    retained.length > 1 &&
+    Buffer.byteLength(serialized, "utf8") > MAX_COOKIE_BYTES
+  ) {
+    retained = retained.slice(1);
+    serialized = JSON.stringify(
+      Object.fromEntries(retained.map((id) => [id, items[id]]))
+    );
+  }
+  return serialized;
+}
+
+async function cookieStore() {
+  const { cookies } = await import("next/headers");
+  return cookies();
+}
+
+function writeResolvedItems(
+  store: Awaited<ReturnType<typeof cookieStore>>,
+  items: Record<string, FixtureResolvedItem>
+) {
+  const serialized = fixtureResolvedItemsCookieValue(items);
+  if (serialized == null) {
     store.delete(COOKIE_NAME);
     return;
   }
-  const kept = Object.fromEntries(
-    ids.slice(-MAX_RESOLVED_ITEMS).map((id) => [id, items[id]])
-  );
-  store.set(COOKIE_NAME, JSON.stringify(kept), {
+  store.set(COOKIE_NAME, serialized, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
