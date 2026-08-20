@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
 import type { HumanReviewDetail } from "./human-review.ts";
+import { detailFromNormalizedSubmission } from "./human-review-design-fixture.ts";
+import { parseInputSubmission } from "./input-schema.ts";
 
 const fixtureCallerId = "00000000-0000-4000-8000-000000000503";
 
@@ -21,7 +23,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       priority: "urgent",
       currentRevision: 3,
       rowType: { display: "Steward Brief", icon: "message-square" },
-      rowAccentColor: "#0f766e",
+      rowAccentColor: "teal",
       titleHtml: "<strong>Review neighborhood permit brief</strong>",
       subtitleHtml: "A resident-facing summary needs a final human check.",
       cornerHtml: "Rev 3",
@@ -33,7 +35,6 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
         kind: "numeric_bar",
         payload: {
           label: "Confidence",
-          queue_risk: "low",
           value: 82,
           display: "82",
           unit: "%",
@@ -47,14 +48,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       answeredAt: null,
       caller: fixtureCaller(),
       output: null,
-      bulkActions: [
-        {
-          displayOrder: 0,
-          display: "Approve",
-          icon: "check",
-          value: "approve"
-        }
-      ],
+      bulkActions: [],
       linkButtons: [
         {
           displayOrder: 0,
@@ -70,6 +64,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "check",
           value: "approve",
           overflow: false,
+          tone: "success",
+          style: "solid",
           popupKind: "none",
           popupPayload: {},
           answerable: true,
@@ -80,11 +76,14 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           display: "Request edit",
           icon: "send",
           value: "request_edit",
-          overflow: false,
+          overflow: true,
+          tone: "neutral",
+          style: "outline",
           popupKind: "free_text",
           popupPayload: {
             label: "Requested change",
             placeholder: "Name the one change needed before handoff.",
+            default_value: null,
             multiline: true,
             min_length: 4,
             max_length: 240
@@ -97,7 +96,9 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           display: "Attach evidence",
           icon: "upload",
           value: "attach_evidence",
-          overflow: false,
+          overflow: true,
+          tone: "brand",
+          style: "outline",
           popupKind: "file_upload",
           popupPayload: {
             label: "Evidence file",
@@ -139,7 +140,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       priority: "high",
       currentRevision: 1,
       rowType: { display: "Decision Check", icon: "calendar" },
-      rowAccentColor: "hsl(32, 86%, 43%)",
+      rowAccentColor: "orange",
       titleHtml: "Choose follow-up window",
       subtitleHtml: "The caller needs a review date before continuing.",
       cornerHtml: "Scheduling task",
@@ -151,14 +152,12 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
         kind: "progress_ring",
         payload: {
           label: "Readiness",
-          queue_risk: "medium",
           value: 6,
           display: "6 of 10",
-          unit: null,
+          unit: "checks",
           min_value: 0,
           max_value: 10,
-          color: null,
-          tone: "caution"
+          color: null
         }
       },
       skipDisabled: true,
@@ -167,14 +166,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       answeredAt: null,
       caller: fixtureCaller(),
       output: null,
-      bulkActions: [
-        {
-          displayOrder: 0,
-          display: "Approve",
-          icon: "check",
-          value: "approve"
-        }
-      ],
+      bulkActions: [],
       linkButtons: [],
       actions: [
         {
@@ -249,6 +241,12 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
               display: "Tone reviewed",
               value: "tone_reviewed",
               icon: "check"
+            },
+            {
+              displayOrder: 2,
+              display: "Sources reviewed",
+              value: "sources_reviewed",
+              icon: "check"
             }
           ]
         }
@@ -261,7 +259,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       priority: "urgent",
       currentRevision: 4,
       rowType: { display: "Email Draft", icon: "mail" },
-      rowAccentColor: "#c86e2d",
+      rowAccentColor: "orange",
       titleHtml: "<strong>Reply to Meridian about the renewal delay</strong>",
       subtitleHtml:
         "Exact outbound copy prepared from the contract thread and latest delivery note.",
@@ -273,11 +271,9 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       cardVisual: {
         kind: "pill",
         payload: {
-          label: "Recipients",
-          queue_risk: "high",
           text: "External · 3",
           icon: "send",
-          color: "#c86e2d"
+          color: "orange"
         }
       },
       skipDisabled: false,
@@ -286,14 +282,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       answeredAt: null,
       caller: fixtureCaller("Steward Email", "steward-email"),
       output: null,
-      bulkActions: [
-        {
-          displayOrder: 0,
-          display: "Approve to send",
-          icon: "send",
-          value: "approve_draft"
-        }
-      ],
+      bulkActions: [],
       linkButtons: [
         {
           displayOrder: 0,
@@ -358,7 +347,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       priority: "normal",
       currentRevision: 1,
       rowType: { display: "Email Triage", icon: "archive" },
-      rowAccentColor: "rgb(79, 118, 82)",
+      rowAccentColor: "green",
       titleHtml: "GitHub security digest for archived repositories",
       subtitleHtml:
         "GitHub &lt;noreply@github.com&gt; · received 18 minutes ago",
@@ -386,6 +375,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       output: {
         outputResultId: "00000000-0000-4000-8000-000000000597",
         actionValue: "archive",
+        actionDisplay: "Archive",
         answeredAt: "2026-08-14T13:57:00.000Z",
         firstReadAt: null,
         readCount: 0,
@@ -443,7 +433,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       priority: "normal",
       currentRevision: 1,
       rowType: { display: "LinkedIn Request", icon: "user-plus" },
-      rowAccentColor: "hsl(202, 72%, 36%)",
+      rowAccentColor: "blue",
       titleHtml: "Maya Chen wants to connect",
       subtitleHtml: "Staff engineer · Retrieval systems",
       cornerHtml: "Profile context",
@@ -454,12 +444,9 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       cardVisual: {
         kind: "pill",
         payload: {
-          label: "Connections",
-          queue_risk: "low",
           text: "6 mutual",
           icon: null,
-          color: "#176b87",
-          tone: "neutral"
+          color: "blue"
         }
       },
       skipDisabled: false,
@@ -468,10 +455,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       answeredAt: null,
       caller: fixtureCaller("LinkedIn Steward", "linkedin-steward"),
       output: null,
-      bulkActions: [
-        { displayOrder: 0, display: "Accept", icon: "check", value: "accept" },
-        { displayOrder: 1, display: "Ignore", icon: "x", value: "ignore" }
-      ],
+      bulkActions: [],
       linkButtons: [
         {
           displayOrder: 0,
@@ -530,7 +514,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       priority: "high",
       currentRevision: 3,
       rowType: { display: "X Post Draft", icon: "at-sign" },
-      rowAccentColor: "#101416",
+      rowAccentColor: "purple",
       titleHtml: "Publish the instruction-ablation result",
       subtitleHtml: "Exact public copy · 252 of 280 characters",
       cornerHtml: "Rev 3",
@@ -542,14 +526,12 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
         kind: "progress_ring",
         payload: {
           label: "Character use",
-          queue_risk: "high",
           value: 252,
           display: "252 / 280",
           unit: null,
           min_value: 0,
           max_value: 280,
-          color: "#c86e2d",
-          tone: "neutral"
+          color: "orange"
         }
       },
       skipDisabled: true,
@@ -558,14 +540,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       answeredAt: null,
       caller: fixtureCaller("X Publishing", "x-publishing"),
       output: null,
-      bulkActions: [
-        {
-          displayOrder: 0,
-          display: "Approve post",
-          icon: "send",
-          value: "approve_post"
-        }
-      ],
+      bulkActions: [],
       linkButtons: [
         {
           displayOrder: 0,
@@ -596,6 +571,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           popupPayload: {
             label: "Revision direction",
             placeholder: "Call out the exact sentence or claim to change.",
+            default_value: null,
             multiline: true,
             min_length: 3,
             max_length: 400
@@ -653,7 +629,6 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
         kind: "numeric_bar",
         payload: {
           label: "Category confidence",
-          queue_risk: "high",
           value: 34,
           display: "34",
           unit: "%",
@@ -723,6 +698,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           popupPayload: {
             label: "Transaction note",
             placeholder: "Why is this category correct?",
+            default_value: null,
             multiline: false,
             min_length: 1,
             max_length: 240
@@ -750,12 +726,9 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       cardVisual: {
         kind: "pill",
         payload: {
-          label: "Status",
-          queue_risk: "high",
           text: "Agent blocked",
           icon: null,
-          color: "#ad463b",
-          tone: "critical"
+          color: "red"
         }
       },
       skipDisabled: true,
@@ -814,6 +787,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           popupPayload: {
             label: "Direction for the analysis",
             placeholder: "Describe the denominator and why.",
+            default_value: null,
             multiline: true,
             min_length: 4,
             max_length: 800
@@ -830,7 +804,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       priority: "urgent",
       currentRevision: 2,
       rowType: { display: "Deployment Exception", icon: "rocket" },
-      rowAccentColor: "url(javascript:alert(1))",
+      rowAccentColor: "red",
       titleHtml: "Payments smoke check failed after deploy",
       subtitleHtml: "Production · checkout session test",
       cornerHtml: "Failed status",
@@ -842,13 +816,12 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
         kind: "progress_ring",
         payload: {
           label: "Blocking checks",
-          queue_risk: "high",
           value: 0,
           display: "1 failed",
           unit: null,
           min_value: 0,
           max_value: 1,
-          color: "var(--caller-controlled-color)"
+          color: "red"
         }
       },
       skipDisabled: true,
@@ -873,9 +846,9 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
         },
         {
           displayOrder: 2,
-          display: "Blocked unsafe link",
-          icon: "not-a-supported-icon",
-          url: "javascript:alert(1)"
+          display: "Open safety note",
+          icon: "external-link",
+          url: "https://example.com/safety-note"
         }
       ],
       actions: [
@@ -970,7 +943,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
         {
           displayOrder: 4,
           display: "Unavailable upload",
-          icon: "not-a-supported-icon",
+          icon: "upload",
           value: "unavailable_upload",
           overflow: true,
           popupKind: "file_upload",
@@ -1006,6 +979,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       output: {
         outputResultId: "00000000-0000-4000-8000-000000000599",
         actionValue: "approve_reply",
+        actionDisplay: "Approve reply",
         answeredAt: "2026-08-14T09:06:00.000Z",
         firstReadAt: "2026-08-14T09:07:00.000Z",
         readCount: 1,
@@ -1064,20 +1038,77 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       ]
     }
   ];
-  return details.map((detail) => ({
-    ...detail,
-    // Production derives queue-safe actions from every no-popup action. Keep
-    // fixtures on that same source of truth so screenshots cannot hide an
-    // available one-click alternative.
-    bulkActions: detail.actions
-      .filter((action) => action.popupKind === "none")
-      .map(({ displayOrder, display, icon, value }) => ({
-        displayOrder,
-        display,
-        icon,
-        value
-      }))
-  }));
+  return details.map(normalizeCoreFixture);
+}
+
+function normalizeCoreFixture(detail: HumanReviewDetail): HumanReviewDetail {
+  const publicInput = {
+    caller_item_id: detail.callerItemId,
+    priority: detail.priority,
+    row_type: detail.rowType,
+    row_accent_color: detail.rowAccentColor,
+    title: detail.titleHtml,
+    subtitle: detail.subtitleHtml,
+    corner: detail.cornerHtml,
+    summary: detail.summaryHtml,
+    details: detail.detailsHtml,
+    link_buttons: detail.linkButtons.map(({ display, icon, url }) => ({
+      display,
+      icon,
+      url
+    })),
+    card_visual: detail.cardVisual
+      ? { kind: detail.cardVisual.kind, ...detail.cardVisual.payload }
+      : null,
+    skip_disabled: detail.skipDisabled,
+    actions: detail.actions.map((action) => ({
+      display: action.display,
+      icon: action.icon,
+      value: action.value,
+      overflow: action.overflow,
+      ...(action.tone && action.style
+        ? { tone: action.tone, style: action.style }
+        : {}),
+      popup: {
+        kind: action.popupKind,
+        ...action.popupPayload,
+        ...(action.options.length > 0
+          ? {
+              options: action.options.map(({ display, value, icon }) => ({
+                display,
+                value,
+                icon
+              }))
+            }
+          : {})
+      }
+    }))
+  };
+  const parsed = parseInputSubmission(publicInput);
+  if (!parsed.ok) {
+    throw new Error(
+      `Invalid canonical core fixture ${detail.callerItemId}: ${JSON.stringify(parsed.error)}`
+    );
+  }
+  const normalized = detailFromNormalizedSubmission(parsed.submission, {
+    inputItemId: detail.inputItemId,
+    updatedAt: detail.updatedAt
+  });
+  return {
+    ...normalized,
+    status: detail.status,
+    currentRevision: detail.currentRevision,
+    createdAt: detail.createdAt,
+    answeredAt: detail.answeredAt,
+    caller: detail.caller,
+    output: detail.output,
+    actions: normalized.actions.map((action) => ({
+      ...action,
+      answerable:
+        detail.actions.find((candidate) => candidate.value === action.value)
+          ?.answerable ?? false
+    }))
+  };
 }
 
 function fixtureCaller(

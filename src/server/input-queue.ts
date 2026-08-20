@@ -576,10 +576,12 @@ export function insertActionStatement(
         icon,
         action_value,
         overflow,
+        action_tone,
+        action_style,
         popup_kind,
         popup_payload
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
       returning input_action_id
     `,
     values: [
@@ -589,6 +591,8 @@ export function insertActionStatement(
       action.icon,
       action.value,
       action.overflow,
+      action.tone,
+      action.style,
       action.popupKind,
       JSON.stringify(action.popupPayload)
     ]

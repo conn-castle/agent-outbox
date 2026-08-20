@@ -1,8 +1,14 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
 import {
-  ArrowLeft,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent
+} from "react";
+import { useRouter } from "next/navigation";
+import {
   Check,
   ChevronDown,
   ChevronLeft,
@@ -26,59 +32,108 @@ export function ReviewDetail({
   positionLabel,
   previousItem,
   nextItem,
-  resizeHandle
+  composeAction
 }: {
   detail: HumanReviewDetailDto | null;
   view: HumanReviewView;
   positionLabel: string | null;
   previousItem: { href: string; label: string } | null;
   nextItem: { href: string; label: string } | null;
-  resizeHandle?: ReactNode;
+  composeAction?: string | null;
 }) {
+  const router = useRouter();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const backdropPressRef = useRef(false);
+  const requestedCompose = composeAction
+    ? (detail?.actions.find(
+        (action) =>
+          action.value === composeAction && action.popupKind !== "none"
+      ) ?? null)
+    : null;
   const [activeActionValue, setActiveActionValue] = useState<string | null>(
-    null
+    requestedCompose?.value ?? null
   );
+  const closeHref = humanReviewHref(view);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    dialog.showModal();
+    dialog.focus();
+    return () => dialog.close();
+  }, []);
+
+  function closeDetail() {
+    router.push(closeHref);
+  }
+
+  function handleBackdropPointerDown(event: PointerEvent<HTMLDialogElement>) {
+    backdropPressRef.current = event.target === event.currentTarget;
+  }
+
+  function handleBackdropClick(event: MouseEvent<HTMLDialogElement>) {
+    if (!backdropPressRef.current) return;
+    backdropPressRef.current = false;
+    if (event.target === event.currentTarget) closeDetail();
+  }
 
   if (!detail) {
     return (
-      <section className="detail-pane empty-state">
-        {resizeHandle}
-        <span className="empty-state-icon">
-          <CircleDot aria-hidden="true" />
-        </span>
-        <h2>Choose a review</h2>
-        <p>Select an item from the queue to see its context and respond.</p>
-      </section>
+      <dialog
+        ref={dialogRef}
+        className="detail-modal"
+        aria-label="Review detail"
+        tabIndex={-1}
+        onCancel={(event) => {
+          event.preventDefault();
+          closeDetail();
+        }}
+        onPointerDown={handleBackdropPointerDown}
+        onClick={handleBackdropClick}
+      >
+        <section className="detail-pane empty-state" aria-label="Review detail">
+          <span className="empty-state-icon">
+            <CircleDot aria-hidden="true" />
+          </span>
+          <h2>Review unavailable</h2>
+          <p>This review could not be loaded.</p>
+          <a className="mobile-back" href={closeHref} aria-label="Close detail">
+            Close
+          </a>
+        </section>
+      </dialog>
     );
   }
 
-  const primaryActions = detail.actions
-    .filter((action) => !action.overflow)
-    .slice(0, 2);
-  const secondaryActions = detail.actions.filter(
-    (action) => action.overflow || !primaryActions.includes(action)
-  );
+  const primaryActions = detail.actions.filter((action) => !action.overflow);
+  const secondaryActions = detail.actions.filter((action) => action.overflow);
   const showActions = detail.status === "pending" && detail.actions.length > 0;
   const activeAction = detail.actions.find(
     (action) => action.value === activeActionValue
   );
 
   return (
-    <section className="detail-pane" aria-label="Review detail">
-      {resizeHandle}
-      <div className="detail-scroll">
+    <dialog
+      ref={dialogRef}
+      className={`detail-modal${requestedCompose ? " compose-modal" : ""}`}
+      aria-label={requestedCompose ? requestedCompose.display : "Review detail"}
+      tabIndex={-1}
+      onCancel={(event) => {
+        event.preventDefault();
+        closeDetail();
+      }}
+      onPointerDown={handleBackdropPointerDown}
+      onClick={handleBackdropClick}
+    >
+      <section
+        className={`detail-pane${requestedCompose ? " compose-pane" : ""}`}
+        aria-label="Review detail"
+      >
         <div className="detail-topbar">
-          <a className="mobile-back" href={humanReviewHref(view)}>
-            <ArrowLeft className="back-arrow" aria-hidden="true" />
-            <X className="close-icon" aria-hidden="true" />
-            <span className="back-copy">Back to queue</span>
-            <span className="close-copy">Close detail</span>
-          </a>
-          <nav className="detail-stepper" aria-label="Review navigation">
-            {positionLabel ? (
-              <span className="detail-position">{positionLabel}</span>
-            ) : null}
-            <div className="detail-stepper-buttons">
+          {requestedCompose ? (
+            <p className="compose-kicker">{requestedCompose.display}</p>
+          ) : (
+            <nav className="detail-stepper" aria-label="Review navigation">
               {previousItem ? (
                 <a
                   href={previousItem.href}
@@ -93,6 +148,9 @@ export function ReviewDetail({
                   <span>Previous</span>
                 </span>
               )}
+              {positionLabel ? (
+                <span className="detail-position">{positionLabel}</span>
+              ) : null}
               {nextItem ? (
                 <a href={nextItem.href} aria-label={`Next: ${nextItem.label}`}>
                   <span>Next</span>
@@ -104,135 +162,116 @@ export function ReviewDetail({
                   <ChevronRight aria-hidden="true" />
                 </span>
               )}
+            </nav>
+          )}
+          <a className="mobile-back" href={closeHref} aria-label="Close detail">
+            <X className="close-icon" aria-hidden="true" />
+            <span className="close-copy">Close</span>
+          </a>
+        </div>
+
+        <div className="detail-scroll">
+          <header className="detail-header">
+            <div className="detail-heading-copy">
+              <p className="detail-kicker">
+                <HumanIcon name={detail.rowType.icon} />
+                <span>{detail.rowType.display}</span>
+                <span aria-hidden="true">·</span>
+                <span>{detail.caller.displayName}</span>
+              </p>
+              <SafeHtml html={detail.titleHtml} className="detail-title" />
+              {requestedCompose ? null : (
+                <SafeHtml
+                  html={detail.subtitleHtml}
+                  className="detail-subtitle"
+                />
+              )}
             </div>
-          </nav>
-        </div>
+          </header>
 
-        <header className="detail-header">
-          <div className="detail-heading-copy">
-            <p className="detail-kicker">
-              <HumanIcon name={detail.rowType.icon} />
-              <span>{detail.rowType.display}</span>
-              <span aria-hidden="true">·</span>
-              <span>{detail.caller.displayName}</span>
-            </p>
-            <SafeHtml html={detail.titleHtml} className="detail-title" />
-            <SafeHtml html={detail.subtitleHtml} className="detail-subtitle" />
-          </div>
-        </header>
-
-        <div className="detail-meta">
-          <span className={`priority priority-${detail.priority}`}>
-            {formatReviewPriority(detail.priority)}
-          </span>
-          <span className={`detail-risk risk-${reviewRisk(detail)}`}>
-            {formatReviewRisk(reviewRisk(detail))}
-          </span>
-          <CardVisual visual={detail.cardVisual} />
-          <span className={`detail-status status-${detail.status}`}>
-            {detail.status}
-          </span>
-          <span className="detail-revision">Rev {detail.currentRevision}</span>
-          {detail.output ? (
-            <span>
-              Answered {detail.output.actionValue}
-              {detail.output.firstReadAt
-                ? ` · read ${detail.output.readCount} ${
-                    detail.output.readCount === 1 ? "time" : "times"
-                  }`
-                : " · unread by caller"}
-            </span>
-          ) : null}
-        </div>
-
-        <article className="detail-content">
-          <section>
-            <p className="detail-section-label">Review summary</p>
+          {requestedCompose ? (
             <SafeHtml html={detail.summaryHtml} className="detail-summary" />
-          </section>
-          {detail.detailsHtml ? (
-            <section>
-              <p className="detail-section-label">Context and evidence</p>
-              <SafeHtml html={detail.detailsHtml} className="detail-body" />
-            </section>
-          ) : null}
-        </article>
-
-        <LinkButtons links={detail.linkButtons} />
-
-        {detail.output ? (
-          <div className="answered-state" aria-label="Answered state">
-            <span className="answered-icon">
-              <Check aria-hidden="true" />
-            </span>
-            <div>
-              <strong>Answered with {detail.output.actionValue}</strong>
-              <span>{formatUtcTimestamp(detail.output.answeredAt)}</span>
-            </div>
-            <UndoAnswerForm detail={detail} />
-          </div>
-        ) : null}
-      </div>
-
-      <div className="action-section">
-        <header>
-          <div>
-            <span className="response-label">Your response</span>
-          </div>
-        </header>
-        {!showActions ? (
-          <p className="muted">This review has no pending actions.</p>
-        ) : (
-          <>
-            <div className="primary-actions" aria-label="Primary actions">
-              {primaryActions.map((action) => (
-                <ActionTrigger
-                  key={action.value}
-                  detail={detail}
-                  action={action}
-                  variant="primary"
-                  active={activeActionValue === action.value}
-                  onActivate={() =>
-                    setActiveActionValue((current) =>
-                      current === action.value ? null : action.value
-                    )
-                  }
-                />
-              ))}
-            </div>
-            {secondaryActions.length === 1 ? (
-              <div className="secondary-direct">
-                <ActionTrigger
-                  detail={detail}
-                  action={secondaryActions[0]}
-                  variant="overflow"
-                  active={activeActionValue === secondaryActions[0].value}
-                  onActivate={() =>
-                    setActiveActionValue((current) =>
-                      current === secondaryActions[0].value
-                        ? null
-                        : secondaryActions[0].value
-                    )
-                  }
-                />
+          ) : (
+            <>
+              <div className="detail-meta">
+                <span className={`priority priority-${detail.priority}`}>
+                  {formatReviewPriority(detail.priority)}
+                </span>
+                <CardVisual visual={detail.cardVisual} />
+                <span className={`detail-status status-${detail.status}`}>
+                  {detail.status}
+                </span>
+                <span className="detail-revision">
+                  Rev {detail.currentRevision}
+                </span>
+                <LinkButtons links={detail.linkButtons} variant="context" />
+                {detail.output ? (
+                  <span>
+                    Answered {detail.output.actionDisplay}
+                    {detail.output.firstReadAt
+                      ? ` · read ${detail.output.readCount} ${
+                          detail.output.readCount === 1 ? "time" : "times"
+                        }`
+                      : " · unread by caller"}
+                  </span>
+                ) : null}
               </div>
-            ) : secondaryActions.length > 1 ? (
-              <div className="response-support">
-                <details className="secondary-actions">
-                  <summary aria-label="More actions">
-                    <span>Other responses</span>
-                    <ChevronDown aria-hidden="true" />
-                  </summary>
-                  <div
-                    className="secondary-actions-grid"
-                    aria-label="More actions"
-                  >
-                    {secondaryActions.map((action) => (
+
+              <article className="detail-content">
+                <section>
+                  <p className="detail-section-label">Review summary</p>
+                  <SafeHtml
+                    html={detail.summaryHtml}
+                    className="detail-summary"
+                  />
+                </section>
+                {detail.detailsHtml ? (
+                  <section>
+                    <p className="detail-section-label">Details</p>
+                    <SafeHtml
+                      html={detail.detailsHtml}
+                      className="detail-body"
+                    />
+                  </section>
+                ) : null}
+              </article>
+
+              {detail.output ? (
+                <div className="answered-state" aria-label="Answered state">
+                  <span className="answered-icon">
+                    <Check aria-hidden="true" />
+                  </span>
+                  <div>
+                    <strong>Answered with {detail.output.actionDisplay}</strong>
+                    <span>{formatUtcTimestamp(detail.output.answeredAt)}</span>
+                  </div>
+                  <UndoAnswerForm detail={detail} />
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        <div className="action-section" aria-label="Your response">
+          {requestedCompose ? (
+            <ActionComposer
+              detail={detail}
+              action={requestedCompose}
+              onCancel={closeDetail}
+            />
+          ) : (
+            <>
+              {!showActions ? (
+                <p className="muted">This review has no pending actions.</p>
+              ) : !activeAction ? (
+                <div className="action-triggers">
+                  <div className="primary-actions" aria-label="Primary actions">
+                    {primaryActions.map((action) => (
                       <ActionTrigger
                         key={action.value}
                         detail={detail}
                         action={action}
-                        variant="overflow"
+                        variant="primary"
                         active={activeActionValue === action.value}
                         onActivate={() =>
                           setActiveActionValue((current) =>
@@ -242,34 +281,64 @@ export function ReviewDetail({
                       />
                     ))}
                   </div>
-                </details>
-              </div>
-            ) : null}
-          </>
-        )}
-        {activeAction && activeAction.popupKind !== "none" ? (
-          <ActionComposer
-            detail={detail}
-            action={activeAction}
-            onCancel={() => setActiveActionValue(null)}
-          />
-        ) : null}
-      </div>
-    </section>
+                  {secondaryActions.length === 1 ? (
+                    <div className="secondary-direct">
+                      <ActionTrigger
+                        detail={detail}
+                        action={secondaryActions[0]}
+                        variant="overflow"
+                        active={activeActionValue === secondaryActions[0].value}
+                        onActivate={() =>
+                          setActiveActionValue((current) =>
+                            current === secondaryActions[0].value
+                              ? null
+                              : secondaryActions[0].value
+                          )
+                        }
+                      />
+                    </div>
+                  ) : secondaryActions.length > 1 ? (
+                    <div className="response-support">
+                      <details className="secondary-actions">
+                        <summary aria-label="More actions">
+                          <span>Other responses</span>
+                          <ChevronDown aria-hidden="true" />
+                        </summary>
+                        <div
+                          className="secondary-actions-grid"
+                          aria-label="More actions"
+                        >
+                          {secondaryActions.map((action) => (
+                            <ActionTrigger
+                              key={action.value}
+                              detail={detail}
+                              action={action}
+                              variant="overflow"
+                              active={activeActionValue === action.value}
+                              onActivate={() =>
+                                setActiveActionValue((current) =>
+                                  current === action.value ? null : action.value
+                                )
+                              }
+                            />
+                          ))}
+                        </div>
+                      </details>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {activeAction && activeAction.popupKind !== "none" ? (
+                <ActionComposer
+                  detail={detail}
+                  action={activeAction}
+                  onCancel={() => setActiveActionValue(null)}
+                />
+              ) : null}
+            </>
+          )}
+        </div>
+      </section>
+    </dialog>
   );
-}
-
-function reviewRisk(detail: HumanReviewDetailDto) {
-  const payload = detail.cardVisual?.payload;
-  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-    const value = payload.queue_risk;
-    if (value === "high" || value === "medium" || value === "low") {
-      return value;
-    }
-  }
-  return "medium";
-}
-
-function formatReviewRisk(value: "high" | "medium" | "low") {
-  return `${value.charAt(0).toUpperCase()}${value.slice(1)} risk`;
 }

@@ -13,6 +13,8 @@ ignores:
   - ".copilot/**"
   - ".claude/**"
   - ".claude-config/**"
+  - ".grok/**"
+  - ".grok-config/**"
   - ".agy/**"
   - ".next/**"
   - ".open-next/**"

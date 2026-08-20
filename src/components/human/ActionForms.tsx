@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 
 import { submitHumanAnswer, undoHumanAnswer } from "../../../app/human/actions";
-import type { JsonValue } from "../../server/human-answer.ts";
 import type {
   HumanReviewAction,
   HumanReviewBulkAction,
@@ -15,6 +14,7 @@ import type {
 } from "../../server/human-review.ts";
 import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../shared/human-review-view";
 import { HumanIcon } from "./TypedContent";
+import { actionAppearanceClass } from "./action-appearance";
 
 /**
  * Hidden inputs carrying the current URL view state (search/status/sort/page)
@@ -41,9 +41,6 @@ export function InlineQuickAction({
   row: HumanReviewListRow;
   action: HumanReviewBulkAction;
 }) {
-  const semanticClass = destructiveActionValues.has(action.value)
-    ? " destructive"
-    : "";
   return (
     <form className="inline-action-form" action={submitHumanAnswer}>
       <ViewStateFields />
@@ -56,7 +53,7 @@ export function InlineQuickAction({
         returnToQueue
       />
       <SubmitButton
-        className={`inline-action-button${semanticClass}`}
+        className={actionAppearanceClass("inline-action-button", action)}
         icon={action.icon}
         label={action.display}
       />
@@ -77,16 +74,15 @@ export function ActionTrigger({
   active: boolean;
   onActivate: () => void;
 }) {
-  const semanticClass = destructiveActionValues.has(action.value)
-    ? " destructive"
-    : "";
+  const baseClass =
+    variant === "primary" ? "action-button" : "secondary-button";
+  const className = actionAppearanceClass(baseClass, action);
   if (!action.answerable) {
     return (
       <button
-        className={`${
-          variant === "primary" ? "action-button" : "secondary-button"
-        }${semanticClass}`}
+        className={className}
         type="button"
+        title={action.display}
         disabled
       >
         <HumanIcon name={action.icon} />
@@ -98,12 +94,9 @@ export function ActionTrigger({
   if (action.popupKind !== "none") {
     return (
       <button
-        className={
-          variant === "primary"
-            ? `action-button action-trigger${semanticClass}${active ? " active" : ""}`
-            : `secondary-button action-trigger${semanticClass}${active ? " active" : ""}`
-        }
+        className={`${className} action-trigger${active ? " active" : ""}`}
         type="button"
+        title={action.display}
         aria-expanded={active}
         onClick={onActivate}
       >
@@ -122,26 +115,16 @@ export function ActionTrigger({
         popupKind={action.popupKind}
         actionLabel={action.display}
         noticeSubject={plainText(detail.titleHtml)}
+        returnToQueue
       />
       <SubmitButton
-        className={`${
-          variant === "primary" ? "action-button" : "secondary-button"
-        }${semanticClass}`}
+        className={className}
         icon={action.icon}
         label={action.display}
       />
     </form>
   );
 }
-
-const destructiveActionValues = new Set([
-  "decline_post",
-  "delete",
-  "delete_draft",
-  "ignore",
-  "reject_send",
-  "roll_back"
-]);
 
 export function ActionComposer({
   detail,
@@ -152,6 +135,18 @@ export function ActionComposer({
   action: HumanReviewAction;
   onCancel: () => void;
 }) {
+  const minimumSelection =
+    action.popupKind === "multi_select"
+      ? action.popupPayload.min_selected
+      : null;
+  const [responseValid, setResponseValid] = useState(
+    minimumSelection === null || minimumSelection === 0
+  );
+
+  useEffect(() => {
+    setResponseValid(minimumSelection === null || minimumSelection === 0);
+  }, [action.value, minimumSelection]);
+
   return (
     <form className="action-composer" action={submitHumanAnswer}>
       <ViewStateFields />
@@ -161,6 +156,7 @@ export function ActionComposer({
         popupKind={action.popupKind}
         actionLabel={action.display}
         noticeSubject={plainText(detail.titleHtml)}
+        returnToQueue
       />
       <header>
         <div>
@@ -177,16 +173,20 @@ export function ActionComposer({
         </button>
       </header>
       <div className="composer-fields">
-        <ActionResponseFields action={action} />
+        <ActionResponseFields
+          action={action}
+          onValidityChange={setResponseValid}
+        />
       </div>
       <footer>
         <button className="secondary-button" type="button" onClick={onCancel}>
           Cancel
         </button>
         <SubmitButton
-          className="action-button"
+          className={actionAppearanceClass("action-button", action)}
           icon={action.icon}
-          label={`Submit ${action.display}`}
+          label={action.display}
+          disabled={!responseValid}
         />
       </footer>
     </form>
@@ -241,7 +241,13 @@ export function UndoNoticeForm({
   );
 }
 
-function ActionResponseFields({ action }: { action: HumanReviewAction }) {
+function ActionResponseFields({
+  action,
+  onValidityChange
+}: {
+  action: HumanReviewAction;
+  onValidityChange: (valid: boolean) => void;
+}) {
   switch (action.popupKind) {
     case "none":
       return null;
@@ -250,7 +256,12 @@ function ActionResponseFields({ action }: { action: HumanReviewAction }) {
     case "single_select":
       return <SingleSelectFields action={action} />;
     case "multi_select":
-      return <MultiSelectFields action={action} />;
+      return (
+        <MultiSelectFields
+          action={action}
+          onValidityChange={onValidityChange}
+        />
+      );
     case "date_picker":
       return <DatePickerFields action={action} />;
     case "file_upload":
@@ -293,38 +304,45 @@ function HumanAnswerFields({
   );
 }
 
-function FreeTextFields({ action }: { action: HumanReviewAction }) {
-  const payload = recordValue(action.popupPayload);
+function FreeTextFields({
+  action
+}: {
+  action: Extract<HumanReviewAction, { popupKind: "free_text" }>;
+}) {
+  const payload = action.popupPayload;
   const multiline = payload.multiline === true;
   const props = {
     name: "response.text",
-    placeholder: stringValue(payload.placeholder),
-    defaultValue: stringValue(payload.default_value),
-    minLength: numberOrUndefined(payload.min_length),
-    maxLength: numberOrUndefined(payload.max_length),
-    required: true
+    placeholder: payload.placeholder ?? undefined,
+    defaultValue: payload.default_value ?? undefined,
+    minLength: payload.min_length ?? undefined,
+    maxLength: payload.max_length ?? undefined,
+    required: (payload.min_length ?? 0) > 0
   };
 
   return (
     <label className="action-field">
-      <span>{stringValue(payload.label) || "Response"}</span>
+      <span>{payload.label}</span>
       {multiline ? <textarea {...props} rows={4} /> : <input {...props} />}
     </label>
   );
 }
 
-function SingleSelectFields({ action }: { action: HumanReviewAction }) {
+function SingleSelectFields({
+  action
+}: {
+  action: Extract<HumanReviewAction, { popupKind: "single_select" }>;
+}) {
   return (
     <fieldset className="choice-group">
       <legend>{popupLabel(action)}</legend>
-      {action.options.map((option, index) => (
+      {action.options.map((option) => (
         <label key={option.value} className="choice-row">
           <input
             type="radio"
             name="response.value"
             value={option.value}
             required
-            defaultChecked={index === 0}
           />
           <HumanIcon name={option.icon} />
           <span>{option.display}</span>
@@ -334,13 +352,46 @@ function SingleSelectFields({ action }: { action: HumanReviewAction }) {
   );
 }
 
-function MultiSelectFields({ action }: { action: HumanReviewAction }) {
+function MultiSelectFields({
+  action,
+  onValidityChange
+}: {
+  action: Extract<HumanReviewAction, { popupKind: "multi_select" }>;
+  onValidityChange: (valid: boolean) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const { min_selected: min, max_selected: max } = action.popupPayload;
+  const guidance = selectionGuidance(min, max);
+
+  useEffect(() => setSelected(new Set()), [action.value]);
+
+  useEffect(() => {
+    onValidityChange(selected.size >= min && selected.size <= max);
+  }, [max, min, onValidityChange, selected]);
+
   return (
     <fieldset className="choice-group">
       <legend>{popupLabel(action)}</legend>
+      <p className="form-note" aria-live="polite">
+        {guidance} {selected.size} selected.
+      </p>
       {action.options.map((option) => (
         <label key={option.value} className="choice-row">
-          <input type="checkbox" name="response.values" value={option.value} />
+          <input
+            type="checkbox"
+            name="response.values"
+            value={option.value}
+            checked={selected.has(option.value)}
+            disabled={!selected.has(option.value) && selected.size >= max}
+            onChange={(event) => {
+              setSelected((current) => {
+                const next = new Set(current);
+                if (event.target.checked) next.add(option.value);
+                else next.delete(option.value);
+                return next;
+              });
+            }}
+          />
           <HumanIcon name={option.icon} />
           <span>{option.display}</span>
         </label>
@@ -349,10 +400,16 @@ function MultiSelectFields({ action }: { action: HumanReviewAction }) {
   );
 }
 
-function DatePickerFields({ action }: { action: HumanReviewAction }) {
-  const payload = recordValue(action.popupPayload);
-  const mode = payload.mode === "datetime" ? "datetime" : "date";
+function DatePickerFields({
+  action
+}: {
+  action: Extract<HumanReviewAction, { popupKind: "date_picker" }>;
+}) {
+  const payload = action.popupPayload;
+  const mode = payload.mode;
   const timezone = useDisplayTimezone(payload.display_timezone);
+  const helperId = useId();
+  const helper = payload.placeholder;
 
   return (
     <div className="date-fields">
@@ -366,61 +423,166 @@ function DatePickerFields({ action }: { action: HumanReviewAction }) {
             name="response.value_date"
             min={stringValue(payload.min_value)}
             max={stringValue(payload.max_value)}
+            aria-describedby={helper ? helperId : undefined}
             required
           />
         </label>
       ) : (
         <label className="action-field">
           <span>{popupLabel(action)}</span>
-          <input type="datetime-local" name="response.value_local" required />
+          <input
+            type="datetime-local"
+            name="response.value_local"
+            min={localDateTimeBound(payload.min_value, timezone)}
+            max={localDateTimeBound(payload.max_value, timezone)}
+            aria-describedby={helper ? helperId : undefined}
+            required
+          />
         </label>
       )}
+      {helper ? (
+        <p className="form-note" id={helperId}>
+          {helper}
+        </p>
+      ) : null}
       <p className="form-note">Displayed timezone: {timezone}</p>
     </div>
   );
 }
 
-function FileUploadFields({ action }: { action: HumanReviewAction }) {
-  const payload = recordValue(action.popupPayload);
-  const acceptMimeTypes = Array.isArray(payload.accept_mime_types)
-    ? payload.accept_mime_types.filter(
-        (value): value is string => typeof value === "string"
-      )
-    : [];
+function FileUploadFields({
+  action
+}: {
+  action: Extract<HumanReviewAction, { popupKind: "file_upload" }>;
+}) {
+  const payload = action.popupPayload;
+  const acceptMimeTypes = payload.accept_mime_types ?? [];
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function assignFile(file: File | null) {
+    const input = inputRef.current;
+    if (!input) return;
+    const transfer = new DataTransfer();
+    if (file) transfer.items.add(file);
+    input.files = transfer.files;
+    setFileName(file?.name ?? null);
+    setError(null);
+  }
 
   return (
-    <label className="action-field">
-      <span>{popupLabel(action)}</span>
-      <input
-        type="file"
-        name="response.file"
-        accept={acceptMimeTypes.join(",")}
-        required
-      />
-    </label>
+    <div className={`action-field file-drop${dragging ? " dragging" : ""}`}>
+      <label>
+        <span>{popupLabel(action)}</span>
+        <input
+          ref={inputRef}
+          type="file"
+          name="response.file"
+          accept={acceptMimeTypes.join(",")}
+          required
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0] ?? null;
+            setFileName(file?.name ?? null);
+            setError(null);
+          }}
+        />
+        <span
+          className="file-drop-target"
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={(event) => {
+            event.preventDefault();
+            if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+              setDragging(false);
+            }
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            const file = event.dataTransfer.files[0];
+            if (!file) return;
+            if (fileMatchesAccept(file, acceptMimeTypes)) {
+              assignFile(file);
+              return;
+            }
+            setError("That file type is not accepted for this action.");
+          }}
+        >
+          <strong>{fileName ?? "Drop a file here"}</strong>
+          <span>
+            {fileName
+              ? "Drop a replacement or choose another"
+              : "or choose one"}
+          </span>
+        </span>
+      </label>
+      {error ? (
+        <p className="form-note file-drop-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {fileName ? (
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => assignFile(null)}
+        >
+          Remove file
+        </button>
+      ) : null}
+    </div>
   );
+}
+
+function fileMatchesAccept(file: File, acceptMimeTypes: string[]) {
+  if (acceptMimeTypes.length === 0) {
+    return true;
+  }
+  return acceptMimeTypes.some((type) => {
+    if (type.endsWith("/*")) {
+      return file.type.startsWith(type.slice(0, -1));
+    }
+    if (type.startsWith(".")) {
+      return file.name.toLowerCase().endsWith(type.toLowerCase());
+    }
+    return file.type === type;
+  });
 }
 
 function SubmitButton({
   className,
   icon,
-  label
+  label,
+  disabled = false
 }: {
   className: string;
   icon?: string | null;
   label: string;
+  disabled?: boolean;
 }) {
   const status = useFormStatus();
   return (
-    <button className={className} type="submit" disabled={status.pending}>
+    <button
+      className={className}
+      type="submit"
+      title={label}
+      disabled={disabled || status.pending}
+    >
       {icon ? <HumanIcon name={icon} /> : null}
       <span>{status.pending ? "Submitting" : label}</span>
     </button>
   );
 }
 
-function useDisplayTimezone(configured: JsonValue | undefined) {
-  const configuredTimezone = stringValue(configured);
+function useDisplayTimezone(configured: string | null) {
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
   useEffect(() => {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -428,20 +590,16 @@ function useDisplayTimezone(configured: JsonValue | undefined) {
       setBrowserTimezone(timezone);
     }
   }, []);
-  return configuredTimezone || browserTimezone;
+  return configured || browserTimezone;
 }
 
 function popupLabel(action: HumanReviewAction) {
-  return stringValue(recordValue(action.popupPayload).label) || action.display;
+  return action.popupKind === "none"
+    ? action.display
+    : action.popupPayload.label || action.display;
 }
 
-function recordValue(value: JsonValue): Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value
-    : {};
-}
-
-function stringValue(value: JsonValue | undefined) {
+function stringValue(value: string | null | undefined) {
   return typeof value === "string" ? value : "";
 }
 
@@ -458,8 +616,26 @@ function plainText(html: string) {
     .trim();
 }
 
-function numberOrUndefined(value: JsonValue | undefined) {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
+function selectionGuidance(min: number, max: number) {
+  if (min === max) return `Choose exactly ${min}.`;
+  if (min === 0) return `Choose up to ${max}.`;
+  return `Choose ${min} to ${max}.`;
+}
+
+function localDateTimeBound(value: string | null, timezone: string) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
 }

@@ -14,7 +14,7 @@ function GitHubMark() {
 export function SiteHeader() {
   return (
     <header className="topbar">
-      <Link className="brand" href="/">
+      <Link className="brand product-wordmark" href="/">
         <img src="/agent-outbox-mark.svg" alt="" width="44" height="44" />
         <span>
           Agent <b>Outbox</b>

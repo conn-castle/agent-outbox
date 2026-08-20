@@ -409,6 +409,31 @@ test("output pagination parsing fails loudly on invalid limits and cursors", () 
     limit: 25,
     cursor: null
   });
+  assert.deepEqual(parseOutputPageQuery(new URLSearchParams("limit=10")), {
+    ok: true,
+    limit: 10,
+    cursor: null
+  });
+  assert.deepEqual(parseOutputReadAllBody({ limit: null, cursor: null }), {
+    ok: true,
+    limit: 25,
+    cursor: null
+  });
+  assert.deepEqual(parseOutputReadAllBody({ limit: "10", cursor: null }), {
+    ok: false,
+    error: {
+      status: 422,
+      code: "validation_failed",
+      message: "Output queue request failed validation.",
+      fields: [
+        {
+          path: "limit",
+          code: "invalid_limit",
+          message: "limit must be an integer from 1 through 100."
+        }
+      ]
+    }
+  });
   assert.deepEqual(parseOutputReadAllBody({ limit: 101, cursor: null }), {
     ok: false,
     error: {

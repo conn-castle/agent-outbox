@@ -13,6 +13,7 @@ import {
   browserFixtureReviewPage,
   humanBrowserFixtureEnabled
 } from "../../src/server/human-review-fixture";
+import { readFixtureResolvedItems } from "../../src/server/human-review-fixture-state";
 import {
   humanReviewAccountBannerInTransaction,
   humanReviewDetailInTransaction,
@@ -41,14 +42,18 @@ export default async function HumanReviewPage({
   const params = await searchParams;
   const renderedAt = new Date().toISOString();
   const selectedItem = firstSearchParam(params?.item);
+  const composeAction = firstSearchParam(params?.compose);
   const notice = humanReviewNotice(params);
   const view = humanReviewViewFromRecord(params);
 
   if (humanBrowserFixtureEnabled()) {
+    const resolvedItems = await readFixtureResolvedItems();
     const fixtureOptions = {
       includePaginationRows:
         firstSearchParam(params?.fixture_dataset) === "pagination",
-      resolvedItemId: firstSearchParam(params?.resolved)
+      resolvedItemId: firstSearchParam(params?.resolved),
+      resolvedItems,
+      answeredOverlay: view.status === "answered"
     };
     const session = browserFixtureHumanSession({
       firstTimeSignup: firstSearchParam(params?.fixture_signup) === "1",
@@ -70,6 +75,7 @@ export default async function HumanReviewPage({
         view={view}
         hasNext={fixturePage.hasNext}
         detailOpen={selectedItem !== undefined}
+        composeAction={composeAction}
         renderedAt={renderedAt}
       />
     );
@@ -138,6 +144,7 @@ export default async function HumanReviewPage({
       view={view}
       hasNext={pageData.hasNext}
       detailOpen={selectedItem !== undefined}
+      composeAction={composeAction}
       renderedAt={renderedAt}
     />
   );

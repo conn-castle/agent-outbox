@@ -41,13 +41,15 @@
     "smoke-runtime": "node scripts/runtime-smoke.mjs",
     "hosted-health": "node scripts/hosted-health.mjs",
     "billing-smoke": "node scripts/billing-smoke.mjs",
+    "docs:generate": "tsx scripts/api-docs.ts generate",
+    "docs:check": "tsx scripts/api-docs.ts check",
     "migration:validate": "node scripts/flyway.mjs validate",
     "migration:validate-pre-migrate": "node scripts/flyway.mjs validate --ignore-pending",
     "migration:migrate": "node scripts/flyway.mjs migrate",
     "migration:replay": "corepack pnpm run migration:validate-pre-migrate && corepack pnpm run migration:migrate && corepack pnpm run migration:validate",
-    "build": "node scripts/foundation.mjs build && corepack pnpm run next:build",
+    "build": "corepack pnpm run docs:check && node scripts/foundation.mjs build && corepack pnpm run next:build",
     "doctor": "node scripts/foundation.mjs doctor",
-    "check": "corepack pnpm run contract:check && corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test && corepack pnpm run build && corepack pnpm run smoke",
+    "check": "corepack pnpm run contract:check && corepack pnpm run docs:check && corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test && corepack pnpm run build && corepack pnpm run smoke",
     "release-check": "make release-check",
     "clean": "node scripts/foundation.mjs clean"
   },
@@ -64,6 +66,7 @@
     "prettier": "3.9.3",
     "rclone.js": "0.6.6",
     "supabase": "2.108.0",
+    "tsx": "4.23.12",
     "typescript": "6.0.3",
     "wrangler": "4.107.0"
   },
@@ -72,11 +75,13 @@
     "@sentry/nextjs": "10.62.0",
     "@supabase/supabase-js": "2.108.2",
     "lucide-react": "1.23.0",
+    "marked": "18.0.9",
     "next": "16.2.9",
     "pg": "8.22.0",
     "pg-cloudflare": "1.4.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "stripe": "22.3.0"
+    "stripe": "22.3.0",
+    "typebox": "1.3.14"
   }
 }

@@ -40,11 +40,18 @@ export function writeHumanReviewView(
   setOrDelete(params, "page", view.page === 1 ? "" : String(view.page));
 }
 
-export function humanReviewHref(view: HumanReviewView, inputItemId?: string) {
+export function humanReviewHref(
+  view: HumanReviewView,
+  inputItemId?: string,
+  composeAction?: string
+) {
   const params = new URLSearchParams();
   writeHumanReviewView(params, view);
   if (inputItemId) {
     params.set("item", inputItemId);
+    if (composeAction) {
+      params.set("compose", composeAction);
+    }
   }
   const query = params.toString();
   return query ? `/human?${query}` : "/human";

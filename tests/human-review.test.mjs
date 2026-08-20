@@ -16,12 +16,15 @@ import {
   humanReviewListStatement
 } from "../src/server/human-review.ts";
 import {
+  browserFixtureReviewPage,
   browserFixtureStoryboardDetails,
   browserFixtureStoryboardScenarios,
   humanBrowserFixtureEnabled
 } from "../src/server/human-review-fixture.ts";
+import { browserFixtureDesignReviewDetails } from "../src/server/human-review-design-fixture.ts";
+import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
 import {
-  isSafeColor,
+  isSupportedColor,
   SUPPORTED_LUCIDE_ICON_NAMES
 } from "../src/shared/input-schema-rules.ts";
 import {
@@ -30,6 +33,10 @@ import {
   humanReviewViewFromSearchParams,
   writeHumanReviewView
 } from "../src/shared/human-review-view.ts";
+import {
+  accountHasHostedBilling,
+  accountStorageLabel
+} from "../src/shared/account-display.ts";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -80,6 +87,10 @@ test("human review view parsing and links share canonical defaults", () => {
     humanReviewHref(parsed, inputItemId),
     `/human?search=invoice&status=answered&sort=updated_at&page=3&item=${inputItemId}`
   );
+  assert.equal(
+    humanReviewHref(parsed, inputItemId, "attach_signed_nda"),
+    `/human?search=invoice&status=answered&sort=updated_at&page=3&item=${inputItemId}&compose=attach_signed_nda`
+  );
 
   const retained = new URLSearchParams("fixture_signup=1&status=all&page=7");
   writeHumanReviewView(retained, {
@@ -97,6 +108,90 @@ test("human review view parsing and links share canonical defaults", () => {
       invalidPage
     );
   }
+});
+
+test("fixture resolved-item cookies keep the newest entries within a byte budget", () => {
+  /** @type {Record<string, import("../src/server/human-review-fixture-state.ts").FixtureResolvedItem>} */
+  const items = {};
+  for (let index = 0; index < 50; index += 1) {
+    const inputItemId = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+    items[inputItemId] = {
+      actionDisplay: "A".repeat(160),
+      callerId,
+      answeredAt: "2026-08-20T00:00:00.000Z"
+    };
+  }
+
+  const serialized = fixtureResolvedItemsCookieValue(items);
+  assert.ok(serialized);
+  assert.ok(Buffer.byteLength(serialized, "utf8") <= 3500);
+  const parsed = JSON.parse(serialized);
+  const ids = Object.keys(parsed);
+  assert.ok(ids.length > 0);
+  assert.ok(ids.length < 50);
+  assert.equal(ids.includes("00000000-0000-4000-8000-000000000049"), true);
+  assert.equal(ids.includes("00000000-0000-4000-8000-000000000000"), false);
+  assert.equal(fixtureResolvedItemsCookieValue({}), null);
+});
+
+test("fixture resolved items leave pending and appear as answered history", () => {
+  /** @type {import("../src/shared/human-review-view.ts").HumanReviewView} */
+  const pendingView = {
+    search: "",
+    status: "pending",
+    sort: "priority",
+    page: 1
+  };
+  const target = browserFixtureReviewPage(pendingView).rows[0];
+  assert.ok(target);
+  const resolvedItems = {
+    [target.inputItemId]: {
+      actionDisplay: "Approve",
+      callerId: target.caller.callerId,
+      answeredAt: "2026-08-19T01:00:00.000Z"
+    }
+  };
+
+  const pending = browserFixtureReviewPage(pendingView, { resolvedItems });
+  assert.equal(
+    pending.rows.some((row) => row.inputItemId === target.inputItemId),
+    false
+  );
+
+  const answered = browserFixtureReviewPage(
+    { ...pendingView, status: "answered" },
+    { resolvedItems }
+  );
+  const historyRow = answered.rows.find(
+    (row) => row.inputItemId === target.inputItemId
+  );
+  assert.ok(historyRow);
+  assert.equal(historyRow.status, "answered");
+  assert.equal(historyRow.output?.actionDisplay, "Approve");
+});
+
+test("account banner distinguishes zero, unlimited, and self-hosted billing", () => {
+  assert.equal(accountStorageLabel(0, 0), "0 byte capacity");
+  assert.equal(accountStorageLabel(42, null), "Unlimited");
+  assert.equal(accountStorageLabel(25, 100), "25%");
+  assert.equal(
+    accountHasHostedBilling({
+      tier: "self_hosted",
+      billing_status: "not_applicable"
+    }),
+    false
+  );
+  assert.equal(
+    accountHasHostedBilling({
+      tier: "hosted_free",
+      billing_status: "not_applicable"
+    }),
+    false
+  );
+  assert.equal(
+    accountHasHostedBilling({ tier: "hosted_paid", billing_status: "active" }),
+    true
+  );
 });
 
 /** @param {string[]} values */
@@ -140,6 +235,50 @@ function numericVisualPercents(visual) {
   }
   return [((value - min) / (max - min)) * 100];
 }
+
+test("design review fixture preserves the exported mock rows and controls", () => {
+  const details = browserFixtureDesignReviewDetails();
+
+  assert.deepEqual(
+    details.map((detail) => detail.titleHtml),
+    [
+      "Re: Order 1042 delivery date and support coverage",
+      "Review the homepage headline",
+      "Choose a release environment",
+      "Choose checks to rerun",
+      "Set the invoice due date",
+      "Schedule the autumn campaign",
+      "Attach the signed vendor NDA"
+    ]
+  );
+  assert.deepEqual(
+    details.map((detail) => detail.actions.map((action) => action.display)),
+    [
+      ["Approve to send", "Reject"],
+      ["Request changes", "Approve copy"],
+      ["Choose environment", "Hold release", "Cancel release"],
+      ["Select checks", "Rerun all", "Cancel rerun"],
+      ["Set due date", "Use Net 30", "Hold invoice"],
+      ["Schedule launch", "Launch now", "Cancel campaign"],
+      ["Upload signed PDF", "Request new signature", "Cancel onboarding"]
+    ]
+  );
+  assert.deepEqual(
+    details.map((detail) => detail.linkButtons.map((link) => link.display)),
+    [
+      ["Open conversation", "View customer record"],
+      [],
+      ["View build"],
+      [],
+      [],
+      [],
+      ["View unsigned NDA"]
+    ]
+  );
+  assert.ok(details[0].cardVisual);
+  assert.equal(jsonObject(details[0].cardVisual.payload).display, "92");
+  assert.equal(jsonObject(details[0].cardVisual.payload).unit, "%");
+});
 
 test("browser fixture storyboards cover every declared review renderer option and product use case", () => {
   const details = browserFixtureStoryboardDetails();
@@ -216,13 +355,21 @@ test("browser fixture storyboards cover every declared review renderer option an
   );
   assert.ok(progressColors.some((color) => color == null));
   assert.ok(
-    progressColors.some(
-      (color) => typeof color === "string" && isSafeColor(color)
+    details.some(
+      (detail) =>
+        detail.cardVisual?.kind === "progress_ring" &&
+        detail.cardVisual.payload.unit === "checks"
     )
   );
   assert.ok(
     progressColors.some(
-      (color) => typeof color === "string" && !isSafeColor(color)
+      (color) => typeof color === "string" && isSupportedColor(color)
+    )
+  );
+  assert.ok(
+    progressColors.every(
+      (color) =>
+        color == null || (typeof color === "string" && isSupportedColor(color))
     )
   );
 
@@ -309,11 +456,14 @@ test("browser fixture storyboards cover every declared review renderer option an
     usedIcons.filter((icon) => supportedIconNames.has(icon)),
     [...SUPPORTED_LUCIDE_ICON_NAMES].sort()
   );
-  assert.ok(usedIcons.includes("not-a-supported-icon"));
+  assert.ok(usedIcons.every((icon) => supportedIconNames.has(icon)));
 
-  assert.ok(details.some((detail) => detail.bulkActions.length === 0));
-  assert.ok(details.some((detail) => detail.bulkActions.length === 1));
-  assert.ok(details.some((detail) => detail.bulkActions.length > 1));
+  const primaryActionCounts = details.map(
+    (detail) => detail.bulkActions.filter((action) => !action.overflow).length
+  );
+  assert.ok(primaryActionCounts.some((count) => count === 1));
+  assert.ok(primaryActionCounts.some((count) => count === 2));
+  assert.ok(primaryActionCounts.some((count) => count > 2));
   assert.ok(details.some((detail) => detail.linkButtons.length === 0));
   assert.ok(details.some((detail) => detail.linkButtons.length === 1));
   assert.ok(details.some((detail) => detail.linkButtons.length > 1));
@@ -328,6 +478,13 @@ test("browser fixture storyboards cover every declared review renderer option an
   );
   assert.ok(
     details.some((detail) =>
+      detail.actions.some(
+        (action) => action.tone === "success" && action.style === "solid"
+      )
+    )
+  );
+  assert.ok(
+    details.some((detail) =>
       detail.actions.some((action) => !action.answerable)
     )
   );
@@ -335,13 +492,15 @@ test("browser fixture storyboards cover every declared review renderer option an
   assert.ok(
     details.some(
       (detail) =>
-        detail.rowAccentColor !== null && isSafeColor(detail.rowAccentColor)
+        detail.rowAccentColor !== null &&
+        isSupportedColor(detail.rowAccentColor)
     )
   );
   assert.ok(
-    details.some(
+    details.every(
       (detail) =>
-        detail.rowAccentColor !== null && !isSafeColor(detail.rowAccentColor)
+        detail.rowAccentColor === null ||
+        isSupportedColor(detail.rowAccentColor)
     )
   );
 
@@ -399,7 +558,12 @@ test("human review list statement scopes rows by account and supports focused fi
     /left join public\.agent_outbox_output_results o/
   );
   assert.match(statement.sql, /left join lateral/);
-  assert.match(statement.sql, /action\.popup_kind = 'none'/);
+  assert.match(statement.sql, /'popupKind', action\.popup_kind/);
+  assert.match(statement.sql, /'overflow', action\.overflow/);
+  assert.match(
+    statement.sql,
+    /from public\.agent_outbox_input_link_buttons link/
+  );
   assert.match(statement.sql, /where i\.account_id = \$1/);
   assert.match(statement.sql, /i\.status = \$2/);
   assert.match(
@@ -456,6 +620,7 @@ test("human review list shapes caller affordances and output read state", async 
         answered_at: "2026-07-01T12:00:00.000Z",
         output_result_id: "00000000-0000-4000-8000-000000000004",
         output_action_value: "approve",
+        output_action_display: "Approve",
         output_answered_at: "2026-07-01T12:00:00.000Z",
         output_first_read_at: null,
         output_read_count: 0
@@ -475,12 +640,15 @@ test("human review list shapes caller affordances and output read state", async 
       priority: "high",
       currentRevision: 2,
       rowType: { display: "Email Draft", icon: "mail" },
-      rowAccentColor: "#2563eb",
+      rowAccentColor: "blue",
       titleHtml: "<strong>Title</strong>",
       subtitleHtml: "Subtitle",
       cornerHtml: "2 min",
       summaryHtml: "Summary",
-      cardVisual: { kind: "pill", payload: { text: "Needs review" } },
+      cardVisual: {
+        kind: "pill",
+        payload: { text: "Needs review", icon: null, color: "blue" }
+      },
       skipDisabled: false,
       createdAt: "2026-07-01T10:00:00.000Z",
       updatedAt: "2026-07-01T11:00:00.000Z",
@@ -496,12 +664,17 @@ test("human review list shapes caller affordances and output read state", async 
           displayOrder: 0,
           display: "Approve",
           icon: "check",
-          value: "approve"
+          value: "approve",
+          popupKind: "none",
+          overflow: false
         }
       ],
+      linkButtons: [],
+      hasOverflowActions: false,
       output: {
         outputResultId: "00000000-0000-4000-8000-000000000004",
         actionValue: "approve",
+        actionDisplay: "Approve",
         answeredAt: "2026-07-01T12:00:00.000Z",
         firstReadAt: null,
         readCount: 0,
@@ -530,6 +703,8 @@ test("human review detail lazily shapes links actions options and answerable sta
         icon: "check",
         action_value: "approve",
         overflow: false,
+        action_tone: "success",
+        action_style: "solid",
         popup_kind: "none",
         popup_payload: {}
       },
@@ -588,6 +763,8 @@ test("human review detail lazily shapes links actions options and answerable sta
       icon: "check",
       value: "approve",
       overflow: false,
+      tone: "success",
+      style: "solid",
       popupKind: "none",
       popupPayload: {},
       answerable: true,
@@ -607,7 +784,7 @@ test("human review detail lazily shapes links actions options and answerable sta
       value: "upload",
       overflow: true,
       popupKind: "file_upload",
-      popupPayload: {},
+      popupPayload: { label: "", accept_mime_types: null },
       answerable: true,
       options: []
     }
@@ -615,6 +792,44 @@ test("human review detail lazily shapes links actions options and answerable sta
   assert.deepEqual(
     query.calls[0],
     humanReviewDetailStatement(context, inputItemId)
+  );
+});
+
+test("human review detail fails loudly for an unrecognized persisted popup kind", async () => {
+  const query = fakeQuery([
+    [reviewRow({ details_html: "<p>Details</p>" })],
+    [],
+    [
+      {
+        input_action_id: "action-1",
+        display_order: 0,
+        display: "Approve",
+        icon: "check",
+        action_value: "approve",
+        overflow: false,
+        action_tone: null,
+        action_style: null,
+        popup_kind: "mystery",
+        popup_payload: {}
+      }
+    ],
+    [],
+    [
+      {
+        account_id: context.accountId,
+        label: "Review account",
+        tier: "hosted_paid",
+        billing_status: "active",
+        billing_grace_ends_at: null
+      }
+    ],
+    [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
+    []
+  ]);
+
+  await assert.rejects(
+    () => humanReviewDetailInTransaction(query, context, inputItemId),
+    /Unsupported persisted popup_kind: "mystery"/
   );
 });
 
@@ -696,6 +911,17 @@ test("human action form parser rejects malformed hidden fields before database w
     expectedRevision: 2,
     actionValue: "approve",
     response: { kind: "free_text", text: "Approved with one edit." }
+  });
+
+  const emptyTextAnswer = answerForm();
+  emptyTextAnswer.set("response.text", "");
+  assert.deepEqual(parseHumanAnswerForm(emptyTextAnswer), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "approve",
+    response: { kind: "free_text", text: "" }
   });
 
   const invalidAnswer = answerForm();
@@ -917,14 +1143,14 @@ function reviewRow(overrides = {}) {
     current_revision: 2,
     row_type_display: "Email Draft",
     row_type_icon: "mail",
-    row_accent_color: "#2563eb",
+    row_accent_color: "blue",
     title_html: "<strong>Title</strong>",
     subtitle_html: "Subtitle",
     corner_html: "2 min",
     summary_html: "Summary",
     details_html: null,
     card_visual_kind: "pill",
-    card_visual_payload: { text: "Needs review" },
+    card_visual_payload: { text: "Needs review", icon: null, color: "blue" },
     skip_disabled: false,
     created_at: "2026-07-01T10:00:00.000Z",
     updated_at: "2026-07-01T11:00:00.000Z",
@@ -935,6 +1161,7 @@ function reviewRow(overrides = {}) {
     caller_revoked_at: null,
     output_result_id: null,
     output_action_value: null,
+    output_action_display: null,
     output_answered_at: null,
     output_first_read_at: null,
     output_read_count: null,
@@ -943,9 +1170,12 @@ function reviewRow(overrides = {}) {
         displayOrder: 0,
         display: "Approve",
         icon: "check",
-        value: "approve"
+        value: "approve",
+        popupKind: "none",
+        overflow: false
       }
     ],
+    link_buttons: [],
     ...overrides
   };
 }

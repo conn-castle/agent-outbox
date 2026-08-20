@@ -49,12 +49,12 @@ export function formatUtcTimestamp(value: string) {
 export function formatReviewPriority(value: string) {
   switch (value) {
     case "urgent":
-      return "Due now";
+      return "Urgent priority";
     case "high":
       return "High priority";
     case "low":
       return "Low priority";
     default:
-      return "Routine";
+      return "Normal priority";
   }
 }

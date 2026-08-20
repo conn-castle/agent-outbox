@@ -4,6 +4,8 @@
 .copilot/
 .claude/
 .claude-config/
+.grok/
+.grok-config/
 .agy/
 .git/
 node_modules/

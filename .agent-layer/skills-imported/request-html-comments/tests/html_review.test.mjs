@@ -171,6 +171,76 @@ test('the overlay has no browser-tab identity or lifecycle endpoints', () => {
   assert.doesNotMatch(OVERLAY_SCRIPT, /sessionStorage|client_id|\/heartbeat|\/abandon/)
 })
 
+test('the overlay observes modal visibility attributes and targets dialog hosts', () => {
+  assert.match(OVERLAY_SCRIPT, /attributeFilter:\s*\['open',\s*'role',\s*'aria-modal',\s*'class',\s*'style',\s*'hidden',\s*'inert'\]/)
+  assert.match(OVERLAY_SCRIPT, /const composedClosest =/)
+  assert.match(OVERLAY_SCRIPT, /active\?\.shadowRoot\?\.activeElement/)
+  assert.match(OVERLAY_SCRIPT, /if \(node\.shadowRoot\) visit\(node\.shadowRoot\)/)
+  assert.match(OVERLAY_SCRIPT, /document\.addEventListener\('focusin', syncOverlayHost, true\)/)
+  assert.match(OVERLAY_SCRIPT, /const activeModalHost =/)
+})
+
+test('the overlay refreshes comment positions when nested sections scroll', () => {
+  assert.match(OVERLAY_SCRIPT, /document\.addEventListener\('scroll',\s*scheduleCommentRefresh,\s*true\)/)
+  assert.match(OVERLAY_SCRIPT, /refreshCommentsFrame = requestAnimationFrame/)
+})
+
+test('element and text references can cross open shadow-root boundaries', () => {
+  assert.match(OVERLAY_SCRIPT, /const shadowPath =/)
+  assert.match(OVERLAY_SCRIPT, /shadow_path: shadowPath\(node\)/)
+  assert.match(OVERLAY_SCRIPT, /parent_shadow_path: shadowPath\(parent\)/)
+  assert.match(OVERLAY_SCRIPT, /const resolveSelectorReference =/)
+  assert.match(OVERLAY_SCRIPT, /scope = node\.shadowRoot/)
+  assert.match(OVERLAY_SCRIPT, /const eventOrigin = \(event\) => event\.composedPath\(\)/)
+})
+
+test('new fallback anchors use explicit viewport coordinates across modal reparenting', () => {
+  assert.match(OVERLAY_SCRIPT, /anchor_coordinate_space: draft\.anchorCoordinateSpace/)
+  assert.match(OVERLAY_SCRIPT, /anchorCoordinateSpace: 'viewport'/)
+  assert.match(OVERLAY_SCRIPT, /item\.anchor_coordinate_space === 'viewport'/)
+  assert.match(OVERLAY_SCRIPT, /toContainingBlock\(item\.anchor\.x, item\.anchor\.y\)/)
+})
+
+test('the overlay mounts isolated controls in a zero-size popover layer and never pads the host page', () => {
+  assert.match(OVERLAY_SCRIPT, /className = 'steward-review-ui sr-layer'/)
+  assert.match(OVERLAY_SCRIPT, /setAttribute\('popover', 'manual'\)/)
+  assert.match(OVERLAY_SCRIPT, /attachShadow\(\{mode: 'open'\}\)/)
+  assert.match(OVERLAY_SCRIPT, /overlayShadow\.appendChild\(overlayStyle\)/)
+  assert.match(OVERLAY_SCRIPT, /overlayShadow\.appendChild\(root\)/)
+  assert.match(OVERLAY_SCRIPT, /pageStyle\.textContent = '\.steward-review-hover/)
+  assert.match(OVERLAY_SCRIPT, /document\.head\.appendChild\(pageStyle\)/)
+  assert.match(OVERLAY_SCRIPT, /pointer-events:none!important/)
+  assert.match(OVERLAY_SCRIPT, /overlayLayer\.showPopover|showAsPopover\(overlayLayer\)/)
+  assert.match(OVERLAY_SCRIPT, /:host, :host\(:popover-open\)/)
+  assert.doesNotMatch(OVERLAY_SCRIPT, /dataset\.srChrome/)
+  assert.doesNotMatch(OVERLAY_SCRIPT, /paddingTop/)
+  assert.match(OVERLAY_SCRIPT, /overlayShadow\.appendChild\(popup\)/)
+})
+
+test('the comment editor is a popover and falls back if showPopover fails', () => {
+  assert.match(OVERLAY_SCRIPT, /popup\.setAttribute\('popover', 'manual'\)/)
+  assert.match(OVERLAY_SCRIPT, /showAsPopover\(popup\)/)
+  assert.match(OVERLAY_SCRIPT, /removeAttribute\('popover'\)/)
+  assert.match(OVERLAY_SCRIPT, /const visibleClipRect =/)
+  assert.match(OVERLAY_SCRIPT, /placeFixedElement\(popup/)
+})
+
+test('overlay chrome is clipped to the viewport, not the host dialog', () => {
+  assert.match(OVERLAY_SCRIPT, /const visibleClipRect = \(\) => viewportClipRect\(\)/)
+  assert.doesNotMatch(OVERLAY_SCRIPT, /style\.overflow !== 'visible'/)
+})
+
+test('reparenting into a modal keeps overlay screen position and does not replay enter animations', () => {
+  assert.match(OVERLAY_SCRIPT, /const toolbarRect = copyRect\(root\)/)
+  assert.match(OVERLAY_SCRIPT, /restoreFixedPosition\(root, toolbarRect\)/)
+  assert.match(OVERLAY_SCRIPT, /\.steward-review-popup\.sr-enter/)
+  assert.match(OVERLAY_SCRIPT, /\.steward-review-pin\.sr-enter/)
+  assert.doesNotMatch(
+    OVERLAY_SCRIPT,
+    /\.steward-review-popup \{[^}]*animation:/
+  )
+})
+
 test('file review serves relative local assets, persists drafts, and accepts feedback', async t => {
   const directory = temporaryDirectory(t)
   const html = join(directory, 'page.html')

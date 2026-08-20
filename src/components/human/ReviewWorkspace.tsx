@@ -5,12 +5,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type KeyboardEvent,
-  type PointerEvent
+  type KeyboardEvent as ReactKeyboardEvent
 } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Filter,
@@ -43,24 +43,19 @@ type PersistedWorkspaceState = {
   skippedIds?: unknown;
 };
 
-type WorkspaceLayout = {
-  detailWidth: number;
-};
-
-type DetailResize = {
-  pointerId: number;
-  startX: number;
-  startWidth: number;
-};
-
 const WORKSPACE_STATE_KEY_PREFIX = "agent-outbox:human-review-workspace:v1";
-const WORKSPACE_LAYOUT_KEY_PREFIX = "agent-outbox:human-review-layout:v5";
 const WORKSPACE_ID_LIMIT = 100;
-const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
-  detailWidth: 440
-};
-const DETAIL_MIN_WIDTH = 380;
-const DETAIL_MAX_WIDTH = 640;
+
+const STATUS_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "pending", label: "Pending" },
+  { value: "answered", label: "Answered" }
+] as const;
+
+const SORT_OPTIONS = [
+  { value: "priority", label: "Priority" },
+  { value: "updated_at", label: "Recent" }
+] as const;
 
 export type HumanReviewNotice = {
   kind: "notice" | "error";
@@ -82,6 +77,7 @@ export function ReviewWorkspace({
   view,
   hasNext,
   detailOpen,
+  composeAction,
   renderedAt
 }: {
   session: HumanAccountSession;
@@ -92,6 +88,7 @@ export function ReviewWorkspace({
   view: HumanReviewView;
   hasNext: boolean;
   detailOpen: boolean;
+  composeAction?: string | null;
   renderedAt: string;
 }) {
   const router = useRouter();
@@ -101,17 +98,10 @@ export function ReviewWorkspace({
   const [selectionMode, setSelectionMode] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
-  const [layout, setLayout] = useState<WorkspaceLayout>(
-    DEFAULT_WORKSPACE_LAYOUT
-  );
   const [hydratedAccountId, setHydratedAccountId] = useState<string | null>(
     null
   );
-  const [layoutHydratedAccountId, setLayoutHydratedAccountId] = useState<
-    string | null
-  >(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const detailResizeRef = useRef<DetailResize | null>(null);
 
   useEffect(() => {
     const persisted = readWorkspaceState(session.accountId);
@@ -119,11 +109,6 @@ export function ReviewWorkspace({
     setSkippedIds(new Set(persisted?.skippedIds ?? []));
     setSelectionMode((persisted?.selectedIds.length ?? 0) > 0);
     setHydratedAccountId(session.accountId);
-  }, [session.accountId]);
-
-  useEffect(() => {
-    setLayout(readWorkspaceLayout(session.accountId));
-    setLayoutHydratedAccountId(session.accountId);
   }, [session.accountId]);
 
   useEffect(() => {
@@ -137,11 +122,44 @@ export function ReviewWorkspace({
   }, [hydratedAccountId, selectedIds, session.accountId, skippedIds]);
 
   useEffect(() => {
-    if (layoutHydratedAccountId !== session.accountId) {
-      return;
-    }
-    writeWorkspaceLayout(session.accountId, layout);
-  }, [layout, layoutHydratedAccountId, session.accountId]);
+    const selector = "details[data-dismissible-disclosure]";
+    const closeDisclosures = (except?: HTMLDetailsElement) => {
+      document
+        .querySelectorAll<HTMLDetailsElement>(selector)
+        .forEach((item) => {
+          if (item !== except) item.open = false;
+        });
+    };
+    const handleToggle = (event: Event) => {
+      const disclosure = event.target;
+      if (disclosure instanceof HTMLDetailsElement && disclosure.open) {
+        closeDisclosures(disclosure);
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(selector)) {
+        closeDisclosures();
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const openDisclosure = document.querySelector<HTMLDetailsElement>(
+        `${selector}[open]`
+      );
+      closeDisclosures();
+      openDisclosure?.querySelector<HTMLElement>("summary")?.focus();
+    };
+
+    document.addEventListener("toggle", handleToggle, true);
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("toggle", handleToggle, true);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     const visibleNonPendingIds = new Set(
@@ -181,6 +199,7 @@ export function ReviewWorkspace({
     params.delete("undo_result");
     params.delete("resolved");
     params.delete("subject");
+    params.delete("compose");
     // Seed from the URL, not the `view` prop: the prop lags router.replace
     // until the server round-trip completes, so rapid successive control
     // changes would silently revert earlier ones.
@@ -249,6 +268,12 @@ export function ReviewWorkspace({
     return count;
   }, [rows, selectedIds]);
   const pendingCount = rows.filter((row) => row.status === "pending").length;
+  const queueCount = queueCountCopy(
+    view.status,
+    pendingCount,
+    rows.length,
+    hasNext
+  );
   const detailIndex = detail
     ? visibleRows.findIndex((row) => row.inputItemId === detail.inputItemId)
     : -1;
@@ -290,7 +315,7 @@ export function ReviewWorkspace({
     setSelectionMode((current) => !current);
   }
 
-  function moveQueueFocus(event: KeyboardEvent<HTMLElement>) {
+  function moveQueueFocus(event: ReactKeyboardEvent<HTMLElement>) {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target;
     if (
@@ -326,75 +351,37 @@ export function ReviewWorkspace({
     links[nextIndex]?.focus();
   }
 
-  function startDetailResize(event: PointerEvent<HTMLButtonElement>) {
-    detailResizeRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startWidth: layout.detailWidth
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function moveDetailResize(event: PointerEvent<HTMLButtonElement>) {
-    const resize = detailResizeRef.current;
-    if (!resize || resize.pointerId !== event.pointerId) return;
-    setLayout((current) => ({
-      ...current,
-      detailWidth: clamp(
-        resize.startWidth + resize.startX - event.clientX,
-        DETAIL_MIN_WIDTH,
-        Math.min(DETAIL_MAX_WIDTH, window.innerWidth - 320)
-      )
-    }));
-  }
-
-  function finishDetailResize(event: PointerEvent<HTMLButtonElement>) {
-    if (detailResizeRef.current?.pointerId !== event.pointerId) return;
-    detailResizeRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }
-
-  function resizeDetailWithKeyboard(event: KeyboardEvent<HTMLButtonElement>) {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    event.preventDefault();
-    const delta = event.key === "ArrowLeft" ? 16 : -16;
-    setLayout((current) => ({
-      ...current,
-      detailWidth: clamp(
-        current.detailWidth + delta,
-        DETAIL_MIN_WIDTH,
-        DETAIL_MAX_WIDTH
-      )
-    }));
-  }
-
-  const workspaceStyle = {
-    "--detail-pane-width": `${layout.detailWidth}px`
-  } as CSSProperties;
-
   return (
-    <main
-      className="human-workspace"
-      style={workspaceStyle}
-      onKeyDown={moveQueueFocus}
-    >
+    <main className="human-workspace" onKeyDown={moveQueueFocus}>
       <header className="app-bar">
-        <a className="app-brand" href="/human" aria-label="Agent Outbox home">
+        <a
+          className="app-brand product-wordmark"
+          href="/human"
+          aria-label="Agent Outbox home"
+        >
           <img src="/agent-outbox-mark.svg" alt="" width="36" height="36" />
           <span>
             Agent <b>Outbox</b>
           </span>
         </a>
-        <div className="app-location" aria-label="Current workspace">
-          Review queue
-        </div>
+        <nav className="app-location" aria-label="Primary">
+          <a
+            className={view.status === "answered" ? undefined : "active"}
+            href={humanReviewHref({ ...view, status: "pending", page: 1 })}
+            aria-current={view.status === "answered" ? undefined : "page"}
+          >
+            Review queue
+          </a>
+          <a
+            className={view.status === "answered" ? "active" : undefined}
+            href={humanReviewHref({ ...view, status: "answered", page: 1 })}
+            aria-current={view.status === "answered" ? "page" : undefined}
+          >
+            History
+          </a>
+        </nav>
         <div className="app-account">
           <AccountBanner banner={banner} />
-          <a className="app-sign-out" href="/sign-out">
-            Sign out
-          </a>
           <span className="sr-only" data-testid="fixture-account-id">
             {session.account.accountId}
           </span>
@@ -431,26 +418,24 @@ export function ReviewWorkspace({
         </div>
       ) : null}
 
-      <div
-        className={detailOpen ? "workspace-body" : "workspace-body queue-only"}
-      >
+      <div className="workspace-body queue-only">
         <section
           className={`queue-pane${view.page > 1 || hasNext ? " paginated" : ""}`}
           aria-label="Queue browser"
         >
           <header className="queue-header">
             <div className="queue-heading">
+              <span className="queue-eyebrow">Human review</span>
               <h2>
                 {view.status === "all"
                   ? "All reviews"
-                  : `${capitalize(view.status)} reviews`}
+                  : view.status === "pending"
+                    ? "Needs review"
+                    : "Answered reviews"}
               </h2>
               <div className="queue-count" aria-label="Current view summary">
-                <strong>
-                  {pendingCount}
-                  {hasNext ? "+" : ""}
-                </strong>
-                <span>pending</span>
+                <strong>{queueCount.value}</strong>
+                <span>{queueCount.label}</span>
               </div>
               <span
                 className="queue-heading-shortcuts"
@@ -534,45 +519,34 @@ export function ReviewWorkspace({
                       setSearch(event.target.value);
                       applyDebouncedSearch(event.target.value);
                     }}
-                    placeholder="Search reviews"
+                    placeholder="Search title, customer, or summary"
                   />
                 </label>
               </form>
               <div className="filter-controls">
                 <SlidersHorizontal aria-hidden="true" />
-                <label>
-                  <span className="control-label">Status</span>
-                  <select
-                    aria-label="Status"
-                    value={view.status}
-                    onChange={(event) =>
-                      updateViewImmediately({
-                        status: event.target.value as HumanReviewView["status"],
-                        page: 1
-                      })
-                    }
-                  >
-                    <option value="all">Status: All</option>
-                    <option value="pending">Status: Pending</option>
-                    <option value="answered">Status: Answered</option>
-                  </select>
-                </label>
-                <label>
-                  <span className="control-label">Sort</span>
-                  <select
-                    aria-label="Sort"
-                    value={view.sort}
-                    onChange={(event) =>
-                      updateViewImmediately({
-                        sort: event.target.value as HumanReviewView["sort"],
-                        page: 1
-                      })
-                    }
-                  >
-                    <option value="priority">Sort: Priority</option>
-                    <option value="updated_at">Sort: Recent</option>
-                  </select>
-                </label>
+                <ViewSelect
+                  label="Status"
+                  value={view.status}
+                  options={STATUS_OPTIONS}
+                  onChange={(status) =>
+                    updateViewImmediately({
+                      status: status as HumanReviewView["status"],
+                      page: 1
+                    })
+                  }
+                />
+                <ViewSelect
+                  label="Sort"
+                  value={view.sort}
+                  options={SORT_OPTIONS}
+                  onChange={(sort) =>
+                    updateViewImmediately({
+                      sort: sort as HumanReviewView["sort"],
+                      page: 1
+                    })
+                  }
+                />
               </div>
               <button
                 className={
@@ -663,61 +637,90 @@ export function ReviewWorkspace({
             </nav>
           ) : null}
         </section>
-
-        {detailOpen ? (
-          <ReviewDetail
-            key={detail?.inputItemId ?? "empty"}
-            detail={detail}
-            view={view}
-            positionLabel={
-              detailIndex >= 0
-                ? `${detailIndex + 1} of ${visibleRows.length}`
-                : null
-            }
-            previousItem={
-              previousDetailRow
-                ? {
-                    href: humanReviewHref(view, previousDetailRow.inputItemId),
-                    label: plainText(previousDetailRow.titleHtml)
-                  }
-                : null
-            }
-            nextItem={
-              nextDetailRow
-                ? {
-                    href: humanReviewHref(view, nextDetailRow.inputItemId),
-                    label: plainText(nextDetailRow.titleHtml)
-                  }
-                : null
-            }
-            resizeHandle={
-              <button
-                className="detail-resize-handle"
-                type="button"
-                role="separator"
-                aria-label="Resize review detail panel"
-                aria-orientation="vertical"
-                aria-valuemin={DETAIL_MIN_WIDTH}
-                aria-valuemax={DETAIL_MAX_WIDTH}
-                aria-valuenow={Math.round(layout.detailWidth)}
-                title="Drag to resize detail panel"
-                onDoubleClick={() =>
-                  setLayout((current) => ({
-                    ...current,
-                    detailWidth: DEFAULT_WORKSPACE_LAYOUT.detailWidth
-                  }))
-                }
-                onPointerDown={startDetailResize}
-                onPointerMove={moveDetailResize}
-                onPointerUp={finishDetailResize}
-                onPointerCancel={finishDetailResize}
-                onKeyDown={resizeDetailWithKeyboard}
-              />
-            }
-          />
-        ) : null}
       </div>
+
+      {detailOpen ? (
+        <ReviewDetail
+          key={detail?.inputItemId ?? "empty"}
+          detail={detail}
+          view={view}
+          positionLabel={
+            detailIndex >= 0
+              ? `${detailIndex + 1} of ${visibleRows.length}`
+              : null
+          }
+          previousItem={
+            previousDetailRow
+              ? {
+                  href: humanReviewHref(view, previousDetailRow.inputItemId),
+                  label: plainText(previousDetailRow.titleHtml)
+                }
+              : null
+          }
+          nextItem={
+            nextDetailRow
+              ? {
+                  href: humanReviewHref(view, nextDetailRow.inputItemId),
+                  label: plainText(nextDetailRow.titleHtml)
+                }
+              : null
+          }
+          composeAction={composeAction}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function ViewSelect({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const selected = options.find((option) => option.value === value);
+
+  return (
+    <details
+      className="view-select"
+      ref={detailsRef}
+      data-dismissible-disclosure
+    >
+      <summary
+        role="button"
+        aria-label={`${label}: ${selected?.label ?? value}`}
+      >
+        <span>{label}</span>
+        <strong>{selected?.label ?? value}</strong>
+        <ChevronDown aria-hidden="true" />
+      </summary>
+      <div className="view-select-menu" role="menu" aria-label={label}>
+        {options.map((option) => {
+          const active = option.value === value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="menuitemradio"
+              aria-checked={active}
+              onClick={() => {
+                detailsRef.current?.removeAttribute("open");
+                onChange(option.value);
+              }}
+            >
+              <span>{option.label}</span>
+              {active ? <Check aria-hidden="true" /> : null}
+            </button>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 
@@ -781,52 +784,6 @@ function writeWorkspaceState(
   }
 }
 
-function workspaceLayoutKey(accountId: string) {
-  return `${WORKSPACE_LAYOUT_KEY_PREFIX}:${accountId}`;
-}
-
-function readWorkspaceLayout(accountId: string): WorkspaceLayout {
-  try {
-    const raw = window.localStorage.getItem(workspaceLayoutKey(accountId));
-    if (!raw) return DEFAULT_WORKSPACE_LAYOUT;
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      parsed === null ||
-      typeof parsed !== "object" ||
-      Array.isArray(parsed)
-    ) {
-      return DEFAULT_WORKSPACE_LAYOUT;
-    }
-    const candidate = parsed as Partial<WorkspaceLayout>;
-    if (
-      typeof candidate.detailWidth !== "number" ||
-      !Number.isFinite(candidate.detailWidth)
-    ) {
-      return DEFAULT_WORKSPACE_LAYOUT;
-    }
-    return {
-      detailWidth: clamp(
-        candidate.detailWidth,
-        DETAIL_MIN_WIDTH,
-        DETAIL_MAX_WIDTH
-      )
-    };
-  } catch {
-    return DEFAULT_WORKSPACE_LAYOUT;
-  }
-}
-
-function writeWorkspaceLayout(accountId: string, layout: WorkspaceLayout) {
-  try {
-    window.localStorage.setItem(
-      workspaceLayoutKey(accountId),
-      JSON.stringify(layout)
-    );
-  } catch {
-    // Browsers can disable local storage; resizing still works for this view.
-  }
-}
-
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
 }
@@ -863,4 +820,28 @@ function plainText(html: string) {
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function queueCountCopy(
+  status: HumanReviewView["status"],
+  pendingCount: number,
+  rowCount: number,
+  hasNext: boolean
+): { value: string; label: string } {
+  if (status === "answered") {
+    return {
+      value: `${rowCount}${hasNext ? "+" : ""}`,
+      label: "answered"
+    };
+  }
+  if (status === "all") {
+    return {
+      value: String(pendingCount),
+      label: `pending of ${rowCount}${hasNext ? "+" : ""} shown`
+    };
+  }
+  return {
+    value: `${pendingCount}${hasNext ? "+" : ""}`,
+    label: `of ${rowCount} remaining`
+  };
 }

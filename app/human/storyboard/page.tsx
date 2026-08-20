@@ -2,6 +2,7 @@ import { ArrowLeft, ExternalLink, Rows3 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { ReviewRowAnatomyGallery } from "../../../src/components/docs/ReviewRowAnatomyGallery";
 import {
   browserFixtureStoryboardScenarios,
   humanBrowserFixtureEnabled
@@ -10,7 +11,7 @@ import { firstSearchParam } from "../../../src/shared/human-review-view";
 
 export const dynamic = "force-dynamic";
 
-type StoryboardMode = "queue" | "detail";
+type StoryboardMode = "queue" | "detail" | "layout";
 
 const viewports = [
   {
@@ -46,6 +47,9 @@ export default async function HumanStoryboardPage({
   }
 
   const params = await searchParams;
+  if (firstSearchParam(params?.mode) === "layout") {
+    return <RowLayoutStoryboard />;
+  }
   const scenarios = browserFixtureStoryboardScenarios();
   const requestedScenario = firstSearchParam(params?.scenario);
   const selected =
@@ -64,7 +68,7 @@ export default async function HumanStoryboardPage({
   return (
     <main className="review-storyboard">
       <header className="storyboard-header">
-        <div className="storyboard-brand">
+        <div className="storyboard-brand product-wordmark">
           <img src="/agent-outbox-mark.svg" alt="" width="34" height="34" />
           <span>
             Agent <b>Outbox</b>
@@ -179,6 +183,41 @@ export default async function HumanStoryboardPage({
           </div>
         </section>
       </div>
+    </main>
+  );
+}
+
+function RowLayoutStoryboard() {
+  return (
+    <main className="review-storyboard row-layout-storyboard">
+      <header className="storyboard-header">
+        <div className="storyboard-brand product-wordmark">
+          <img src="/agent-outbox-mark.svg" alt="" width="34" height="34" />
+          <span>
+            Agent <b>Outbox</b>
+          </span>
+          <i>Row anatomy</i>
+        </div>
+        <div className="storyboard-header-actions">
+          <Link href="/human">
+            <ArrowLeft aria-hidden="true" /> Back to queue
+          </Link>
+        </div>
+      </header>
+
+      <section className="row-layout-stage" aria-labelledby="row-layout-title">
+        <header className="row-layout-intro">
+          <div>
+            <p>Responsive layout diagnostic</p>
+            <h1 id="row-layout-title">Review row slots</h1>
+            <span>
+              Placeholder labels and temporary colors expose alignment,
+              truncation, and responsive behavior.
+            </span>
+          </div>
+        </header>
+        <ReviewRowAnatomyGallery />
+      </section>
     </main>
   );
 }

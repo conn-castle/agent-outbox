@@ -1,0 +1,468 @@
+{
+  "rows": [
+    {
+      "scenario_id": "pending-immediate-action",
+      "input": {
+        "caller_item_id": "email:thread_1042",
+        "priority": "normal",
+        "row_type": {
+          "display": "Email draft",
+          "icon": "mail"
+        },
+        "row_accent_color": "blue",
+        "title": "Re: Order 1042 delivery date and support coverage",
+        "subtitle": "Maya Chen at Northstar Labs · reply drafted for Alex Morgan",
+        "corner": "Received 42 min ago",
+        "summary": "Maya needs a firm delivery update before Monday's lab opening. The draft confirms what is known, separates the carrier estimate from a guarantee, and answers her support question.",
+        "details": "<h3>Email reply</h3><table><tbody><tr><th>From</th><td>Alex Morgan &lt;alex@agent-outbox.example&gt;</td></tr><tr><th>To</th><td>Maya Chen &lt;maya@northstar-labs.example&gt;</td></tr><tr><th>Subject</th><td>Re: Order 1042 delivery date and support coverage</td></tr></tbody></table><blockquote><p>Hi Alex — we are opening the new lab on Monday and need to know whether order 1042 will arrive beforehand. Can you also confirm whether installation help is included, and who we should contact if anything is damaged in transit?</p><p>Thanks,<br>Maya</p></blockquote><h3>Prepared response</h3><p>Hi Maya,</p><p>Thanks for checking in. Order 1042 left our warehouse this morning and the carrier currently estimates delivery by <strong>Friday, August 21</strong>. That estimate gives you a business day before the lab opening, but it is not yet a guaranteed appointment. I have asked the carrier to add an appointment window and will send it as soon as they confirm.</p><p>Your order includes remote installation support for the first 30 days. Once the equipment arrives, reply to this thread and our implementation team will schedule the setup session. If any package is visibly damaged, please photograph the carton before opening it and contact support@agent-outbox.example with the order number; we will coordinate the carrier claim and replacement.</p><p>I will follow up by Thursday afternoon even if the appointment window is still pending, so you are not left waiting for an update.</p><p>Best,<br>Alex</p>",
+        "link_buttons": [
+          {
+            "display": "Open conversation",
+            "icon": "external-link",
+            "url": "https://example.com/inbox/thread_1042"
+          },
+          {
+            "display": "View customer record",
+            "icon": "external-link",
+            "url": "https://example.com/customers/northstar-labs"
+          }
+        ],
+        "card_visual": {
+          "kind": "numeric_bar",
+          "label": "Confidence",
+          "value": 92,
+          "display": "92",
+          "unit": "%",
+          "min_value": 0,
+          "max_value": 100
+        },
+        "actions": [
+          {
+            "display": "Approve to send",
+            "icon": "send",
+            "value": "approve_send",
+            "overflow": false,
+            "tone": "success",
+            "style": "solid",
+            "popup": {
+              "kind": "none"
+            }
+          },
+          {
+            "display": "Reject",
+            "icon": "x",
+            "value": "reject",
+            "overflow": true,
+            "tone": "danger",
+            "style": "outline",
+            "popup": {
+              "kind": "none"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario_id": "pending-free-text",
+      "input": {
+        "caller_item_id": "copy:homepage_hero_v3",
+        "priority": "high",
+        "row_type": {
+          "display": "Copy review",
+          "icon": "message-square"
+        },
+        "row_accent_color": "orange",
+        "title": "Review the homepage headline",
+        "subtitle": "Brand language changed in the latest draft",
+        "corner": "Homepage",
+        "summary": "Suggest a correction or approve the current <code>hero_headline</code> wording.",
+        "details": "<h3>Homepage context</h3><p>The current headline is <strong>Decisions arrive when your agent is ready.</strong> It appears above a product animation showing an approval request moving from an agent into a human review queue.</p><p>The revision should keep the promise concrete: agents can pause for judgment, people can respond without learning a new workflow, and the originating system receives a structured answer. Avoid claims about fully autonomous operation or guaranteed response times.</p><blockquote>Primary audience: engineering leaders evaluating whether agent workflows can be made safe enough for production.</blockquote>",
+        "link_buttons": [],
+        "card_visual": {
+          "kind": "pill",
+          "text": "Brand review",
+          "icon": "check",
+          "color": "purple"
+        },
+        "actions": [
+          {
+            "display": "Request changes",
+            "icon": "message-square",
+            "value": "request_changes",
+            "overflow": false,
+            "tone": "neutral",
+            "style": "outline",
+            "popup": {
+              "kind": "free_text",
+              "label": "What should change?",
+              "placeholder": "Be specific about tone or factual corrections.",
+              "default_value": null,
+              "multiline": true,
+              "min_length": 1,
+              "max_length": 2000
+            }
+          },
+          {
+            "display": "Approve copy",
+            "icon": "check",
+            "value": "approve_copy",
+            "overflow": false,
+            "tone": "success",
+            "style": "solid",
+            "popup": {
+              "kind": "none"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario_id": "pending-single-select",
+      "input": {
+        "caller_item_id": "release:web_2026_08_15",
+        "priority": "urgent",
+        "row_type": {
+          "display": "Release",
+          "icon": "rocket"
+        },
+        "row_accent_color": "red",
+        "title": "Choose a release environment",
+        "subtitle": "Build 8f4c1a is clearing its release checks",
+        "corner": "Blocking",
+        "summary": "Select exactly one destination for this build.",
+        "details": "<h3>Release brief</h3><p><strong>Build 8f4c1a</strong> is ready for environment selection with <em>14 of 18 automated checks</em> complete.<br>Review the <a href=\"https://example.com/releases/8f4c1a\" title=\"Open the release record\">release record</a> or contact <a href=\"mailto:release@example.com\" title=\"Email release engineering\">release engineering</a>.</p><blockquote>Customer-visible downtime is not expected.</blockquote><h4>Required review</h4><ol><li>Confirm the target environment.</li><li>Verify the <code>DATABASE_URL</code> migration guard.</li></ol><h5>Change summary</h5><ul><li><b>Added:</b> durable handoff retries</li><li><i>Changed:</i> queue polling cadence</li><li><u>Watch:</u> elevated cache misses</li></ul><h6>Deployment command</h6><pre>agent-outbox deploy --build 8f4c1a\nagent-outbox verify --environment production</pre><table><thead><tr><th colspan=\"2\">Release checks</th><th>Status</th></tr></thead><tbody><tr><td rowspan=\"2\">Automated</td><td>Unit and browser tests</td><td><span>Passed</span></td></tr><tr><td>Migration dry run</td><td>Running</td></tr><tr><td>Human</td><td>Environment selection</td><td>Pending</td></tr></tbody></table>",
+        "link_buttons": [
+          {
+            "display": "View build",
+            "icon": "external-link",
+            "url": "https://example.com/builds/8f4c1a"
+          }
+        ],
+        "card_visual": {
+          "kind": "progress_ring",
+          "label": "Checks passed",
+          "value": 14,
+          "display": "14 of 18",
+          "unit": "checks",
+          "min_value": 0,
+          "max_value": 18,
+          "color": "green"
+        },
+        "actions": [
+          {
+            "display": "Choose environment",
+            "icon": "inbox",
+            "value": "choose_environment",
+            "overflow": false,
+            "tone": "brand",
+            "style": "solid",
+            "popup": {
+              "kind": "single_select",
+              "label": "Where should this build deploy?",
+              "options": [
+                {
+                  "display": "Staging",
+                  "value": "staging",
+                  "icon": "flask-conical"
+                },
+                {
+                  "display": "Production",
+                  "value": "production",
+                  "icon": "rocket"
+                }
+              ]
+            }
+          },
+          {
+            "display": "Hold release",
+            "icon": "clock",
+            "value": "hold_release",
+            "overflow": false,
+            "tone": "warning",
+            "style": "outline",
+            "popup": {
+              "kind": "none"
+            }
+          },
+          {
+            "display": "Cancel release",
+            "icon": "x",
+            "value": "cancel_release",
+            "overflow": true,
+            "tone": "danger",
+            "style": "ghost",
+            "popup": {
+              "kind": "none"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario_id": "pending-multi-select",
+      "input": {
+        "caller_item_id": "ci:rerun_884",
+        "priority": "low",
+        "row_type": {
+          "display": "CI task",
+          "icon": "check"
+        },
+        "title": "Choose checks to rerun",
+        "subtitle": "A flaky dependency affected part of the suite",
+        "corner": "Optional",
+        "summary": "Select one or more checks for another run.",
+        "details": "<h3>Failure context</h3><p>The first run stopped after the shared browser image registry returned intermittent <code>503</code> responses. Unit tests completed successfully, while browser and accessibility jobs never received a runner.</p><p>Rerunning only affected checks should take about 12 minutes. A full rerun takes roughly 28 minutes and will consume the remaining shared-runner allowance for this billing period.</p><ul><li><strong>Unit tests:</strong> passed on commit <code>5f913ab</code></li><li><strong>Browser tests:</strong> 0 of 146 executed</li><li><strong>Accessibility:</strong> audit did not start</li></ul>",
+        "link_buttons": [],
+        "card_visual": null,
+        "skip_disabled": false,
+        "actions": [
+          {
+            "display": "Select checks",
+            "icon": "check",
+            "value": "rerun_checks",
+            "overflow": false,
+            "tone": "brand",
+            "style": "solid",
+            "popup": {
+              "kind": "multi_select",
+              "label": "Which checks should run again?",
+              "options": [
+                {
+                  "display": "Unit tests",
+                  "value": "unit",
+                  "icon": "check"
+                },
+                {
+                  "display": "Browser tests",
+                  "value": "browser",
+                  "icon": "check"
+                },
+                {
+                  "display": "Accessibility",
+                  "value": "accessibility",
+                  "icon": "check"
+                }
+              ],
+              "min_selected": 1,
+              "max_selected": 3
+            }
+          },
+          {
+            "display": "Rerun all",
+            "icon": "check",
+            "value": "rerun_all",
+            "overflow": false,
+            "tone": "success",
+            "style": "outline",
+            "popup": {
+              "kind": "none"
+            }
+          },
+          {
+            "display": "Cancel rerun",
+            "icon": "x",
+            "value": "cancel_rerun",
+            "overflow": true,
+            "tone": "danger",
+            "style": "ghost",
+            "popup": {
+              "kind": "none"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario_id": "pending-civil-date",
+      "input": {
+        "caller_item_id": "invoice:due_2048",
+        "priority": "normal",
+        "row_type": {
+          "display": "Invoice",
+          "icon": "credit-card"
+        },
+        "title": "Set the invoice due date",
+        "subtitle": "Invoice #2048 is ready to issue",
+        "corner": "$12,480",
+        "summary": "Choose a calendar date; no time-of-day conversion applies.",
+        "details": "<h3>Invoice terms</h3><p>Invoice <strong>#2048</strong> covers the August implementation milestone for Northstar Labs. The statement of work allows payment terms between Net 15 and Net 45, but the customer purchase order requests Net 30.</p><table><thead><tr><th>Line item</th><th>Amount</th></tr></thead><tbody><tr><td>Implementation milestone</td><td>$10,800</td></tr><tr><td>Usage adjustment</td><td>$1,680</td></tr></tbody></table><p>Choose a civil calendar date. The date must remain the same for the customer and finance team regardless of their local timezone.</p>",
+        "link_buttons": [],
+        "card_visual": {
+          "kind": "pill",
+          "text": "Net terms required",
+          "icon": "calendar",
+          "color": "blue"
+        },
+        "actions": [
+          {
+            "display": "Set due date",
+            "icon": "calendar",
+            "value": "set_due_date",
+            "overflow": false,
+            "tone": "brand",
+            "style": "solid",
+            "popup": {
+              "kind": "date_picker",
+              "label": "When is payment due?",
+              "mode": "date",
+              "placeholder": "Choose a date",
+              "display_timezone": null,
+              "min_value": "2026-08-16",
+              "max_value": "2026-11-15"
+            }
+          },
+          {
+            "display": "Use Net 30",
+            "icon": "check",
+            "value": "use_net_30",
+            "overflow": false,
+            "tone": "success",
+            "style": "outline",
+            "popup": {
+              "kind": "none"
+            }
+          },
+          {
+            "display": "Hold invoice",
+            "icon": "clock",
+            "value": "hold_invoice",
+            "overflow": true,
+            "tone": "warning",
+            "style": "ghost",
+            "popup": {
+              "kind": "none"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario_id": "pending-datetime",
+      "input": {
+        "caller_item_id": "campaign:launch_autumn",
+        "priority": "high",
+        "row_type": {
+          "display": "Campaign",
+          "icon": "send"
+        },
+        "title": "Schedule the autumn campaign",
+        "subtitle": "All channels are prepared",
+        "corner": "4 channels",
+        "summary": "Pick the exact publish time shown in New York.",
+        "details": "<h3>Coordinated launch</h3><p>Email, web, social, and partner announcements are prepared to launch together. Scheduling creates four downstream jobs and locks localized email copy 30 minutes before publication.</p><ul><li><strong>Email:</strong> 84,230 subscribed recipients across six segments</li><li><strong>Web:</strong> homepage hero and pricing-page banner</li><li><strong>Social:</strong> three posts staged for review-complete publishing</li><li><strong>Partners:</strong> 12 co-marketing contacts receive a private briefing</li></ul><p>Times are entered in New York and returned to the caller as a UTC instant.</p>",
+        "link_buttons": [],
+        "card_visual": null,
+        "actions": [
+          {
+            "display": "Schedule launch",
+            "icon": "calendar",
+            "value": "schedule_launch",
+            "overflow": false,
+            "tone": "brand",
+            "style": "solid",
+            "popup": {
+              "kind": "date_picker",
+              "label": "When should this publish?",
+              "mode": "datetime",
+              "placeholder": "Choose a date and time",
+              "display_timezone": "America/New_York",
+              "min_value": "2026-08-16T12:00:00Z",
+              "max_value": "2026-08-31T23:59:59Z"
+            }
+          },
+          {
+            "display": "Launch now",
+            "icon": "send",
+            "value": "launch_now",
+            "overflow": false,
+            "tone": "success",
+            "style": "outline",
+            "popup": {
+              "kind": "none"
+            }
+          },
+          {
+            "display": "Cancel campaign",
+            "icon": "x",
+            "value": "cancel_campaign",
+            "overflow": true,
+            "tone": "danger",
+            "style": "ghost",
+            "popup": {
+              "kind": "none"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario_id": "pending-file-upload",
+      "input": {
+        "caller_item_id": "legal:vendor_nda_731",
+        "priority": "high",
+        "row_type": {
+          "display": "Legal document",
+          "icon": "file"
+        },
+        "row_accent_color": "purple",
+        "title": "Attach the signed vendor NDA",
+        "subtitle": "Signature is required before onboarding",
+        "corner": "Due Friday",
+        "summary": "Upload one signed PDF to release the vendor setup task.",
+        "details": "<h3>Document requirements</h3><p>The vendor has completed security review and tax verification. Onboarding is blocked until a countersigned NDA is attached to the record.</p><ul><li>Upload exactly one PDF.</li><li>The legal entity must read <strong>Northstar Data Services, LLC</strong>.</li><li>Both signature blocks and the effective date must be visible.</li><li>Scanned signatures are accepted; editable source documents are not.</li></ul><p>If the signature is incomplete or the entity name is wrong, request a corrected document and explain the issue so procurement can follow up.</p>",
+        "link_buttons": [
+          {
+            "display": "View unsigned NDA",
+            "icon": "file",
+            "url": "https://example.com/legal/vendor_nda_731"
+          }
+        ],
+        "card_visual": null,
+        "skip_disabled": true,
+        "actions": [
+          {
+            "display": "Upload signed PDF",
+            "icon": "upload",
+            "value": "attach_signed_nda",
+            "overflow": false,
+            "tone": "brand",
+            "style": "solid",
+            "popup": {
+              "kind": "file_upload",
+              "label": "Signed NDA",
+              "accept_mime_types": ["application/pdf"]
+            }
+          },
+          {
+            "display": "Request new signature",
+            "icon": "message-square",
+            "value": "request_new_signature",
+            "overflow": false,
+            "tone": "warning",
+            "style": "outline",
+            "popup": {
+              "kind": "free_text",
+              "label": "What needs to be corrected?",
+              "placeholder": "Explain the missing or invalid signature.",
+              "default_value": null,
+              "multiline": true,
+              "min_length": 1,
+              "max_length": 1000
+            }
+          },
+          {
+            "display": "Cancel onboarding",
+            "icon": "x",
+            "value": "cancel_onboarding",
+            "overflow": true,
+            "tone": "danger",
+            "style": "ghost",
+            "popup": {
+              "kind": "none"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

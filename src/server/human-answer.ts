@@ -968,10 +968,10 @@ function validateFreeTextResponse(
   popupPayload: unknown,
   response: Record<string, unknown>
 ): StoredPayload | HumanAnswerFailure {
-  if (typeof response.text !== "string" || response.text.trim() === "") {
+  if (typeof response.text !== "string") {
     return invalidActionResponse(
       "response.text",
-      "Free-text responses require non-empty text."
+      "Free-text responses require text."
     );
   }
 

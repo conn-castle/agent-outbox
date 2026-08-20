@@ -162,16 +162,10 @@ test("human answer response validation enforces selected popup options and bound
       { kind: "free_text", text: "   " }
     ),
     {
-      ok: false,
-      code: "invalid_action_response",
-      message: "Action response does not match the selected action.",
-      fields: [
-        {
-          path: "response.text",
-          code: "invalid_action_response",
-          message: "Free-text responses require non-empty text."
-        }
-      ]
+      ok: true,
+      responseKind: "free_text",
+      responsePayload: { text: "   " },
+      responsePayloadBytes: 14
     }
   );
 

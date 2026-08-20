@@ -22,14 +22,14 @@ import {
   X,
   type LucideIcon
 } from "lucide-react";
+import type { CSSProperties } from "react";
 
-import type { JsonValue } from "../../server/human-answer.ts";
 import type {
   HumanReviewLinkButton,
   HumanReviewListRow
 } from "../../server/human-review.ts";
 import {
-  isSafeColor,
+  resolveSupportedColor,
   SUPPORTED_LUCIDE_ICON_NAMES
 } from "../../shared/input-schema-rules.ts";
 
@@ -92,9 +92,36 @@ export function HumanIcon({
   return <Icon className={className ?? "human-icon"} aria-hidden="true" />;
 }
 
-export function LinkButtons({ links }: { links: HumanReviewLinkButton[] }) {
+export function LinkButtons({
+  links,
+  variant = "buttons"
+}: {
+  links: HumanReviewLinkButton[];
+  variant?: "buttons" | "context";
+}) {
   if (links.length === 0) {
     return null;
+  }
+
+  if (variant === "context") {
+    return (
+      <span className="context-links" aria-label="Context links">
+        {links.map((link) => {
+          const href = safeHref(link.url);
+          return href ? (
+            <a
+              key={`${link.displayOrder}-${link.url}`}
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <HumanIcon name={link.icon} />
+              <span>{link.display}</span>
+            </a>
+          ) : null;
+        })}
+      </span>
+    );
   }
 
   return (
@@ -123,20 +150,23 @@ export function CardVisual({
 }: {
   visual: HumanReviewListRow["cardVisual"];
 }) {
-  if (!visual || !isRecord(visual.payload)) {
+  if (!visual) {
     return null;
   }
 
   if (visual.kind === "numeric_bar") {
     const metrics = numericVisualMetrics(visual.payload);
-    const tone = visualTone(visual.payload, metrics.percent);
     return (
-      <div className={`card-visual numeric-bar signal-${tone}`}>
+      <div className="card-visual numeric-bar">
         <div className="visual-meta">
           <span>{metrics.label}</span>
           <strong>
             {metrics.display}
-            {metrics.unit}
+            {metrics.unit ? (
+              <span className="visual-unit">
+                {metrics.unit === "%" ? metrics.unit : ` ${metrics.unit}`}
+              </span>
+            ) : null}
           </strong>
         </div>
         <div className="bar-track" aria-hidden="true">
@@ -148,17 +178,8 @@ export function CardVisual({
 
   if (visual.kind === "progress_ring") {
     const metrics = numericVisualMetrics(visual.payload);
-    const color = stringOrNull(visual.payload.color);
-    const safeColor = color && isSafeColor(color) ? color : null;
-    const tone = visualTone(visual.payload, metrics.percent);
-    const fallbackColor =
-      tone === "positive"
-        ? "#39714f"
-        : tone === "caution"
-          ? "#906000"
-          : tone === "critical"
-            ? "#ad463b"
-            : "#667074";
+    const color = visual.payload.color;
+    const paletteColor = color ? resolveSupportedColor(color) : null;
     return (
       <div className="card-visual progress-ring">
         <span
@@ -166,147 +187,69 @@ export function CardVisual({
           style={
             {
               "--ring-progress": `${metrics.percent}%`,
-              "--ring-color": safeColor ?? fallbackColor
+              "--ring-color": paletteColor ?? "#326b91"
             } as React.CSSProperties
           }
           aria-hidden="true"
-        />
+        >
+          <span className="ring-value">{Math.round(metrics.percent)}%</span>
+        </span>
         <div className="visual-meta">
           <span>{metrics.label}</span>
-          <strong>{metrics.display}</strong>
+          <strong>
+            {metrics.display}
+            {metrics.unit ? (
+              <span className="visual-unit">
+                {metrics.unit === "%" ? metrics.unit : ` ${metrics.unit}`}
+              </span>
+            ) : null}
+          </strong>
         </div>
       </div>
     );
   }
 
   if (visual.kind === "pill") {
-    const color = stringOrNull(visual.payload.color);
-    const safeColor = color && isSafeColor(color) ? color : null;
+    const color = visual.payload.color;
+    const paletteColor = color ? resolveSupportedColor(color) : null;
+    const icon = visual.payload.icon;
     return (
-      <span
-        className={`card-visual pill-visual signal-${visualTone(visual.payload, null)}`}
-        style={safeColor ? { borderColor: safeColor, color: safeColor } : {}}
+      <div
+        className={`card-visual pill-visual${icon ? " pill-visual-with-icon" : ""}`}
+        style={
+          paletteColor
+            ? ({ "--visual-color": paletteColor } as CSSProperties)
+            : undefined
+        }
       >
-        <HumanIcon name={stringOrNull(visual.payload.icon)} />
-        {stringValue(visual.payload.text)}
-      </span>
+        {icon ? (
+          <span className="pill-visual-icon" aria-hidden="true">
+            <HumanIcon name={icon} />
+          </span>
+        ) : null}
+        <strong>{visual.payload.text}</strong>
+      </div>
     );
   }
 
   return null;
 }
 
-export function ReviewSignal({
-  visual
-}: {
-  visual: HumanReviewListRow["cardVisual"];
-}) {
-  if (!visual || !isRecord(visual.payload)) {
-    return <span className="review-signal-empty">No signal</span>;
-  }
-
-  if (visual.kind === "numeric_bar" || visual.kind === "progress_ring") {
-    const metrics = numericVisualMetrics(visual.payload);
-    const tone = visualTone(visual.payload, metrics.percent);
-    const risk = queueRisk(visual.payload, tone);
-    const state = queueRiskLabel(risk);
-    return (
-      <div
-        className={`review-signal signal-risk-${risk}`}
-        aria-label={`${state}. ${metrics.label || "Signal"}: ${metrics.display}${metrics.unit}`}
-        title={metrics.label || "Signal"}
-      >
-        <span className="signal-state">{state}</span>
-        <strong>
-          {metrics.label || "Signal"} · {metrics.display}
-          {metrics.unit}
-        </strong>
-      </div>
-    );
-  }
-
-  if (visual.kind === "pill") {
-    const tone = visualTone(visual.payload, null);
-    const risk = queueRisk(visual.payload, tone);
-    const state = queueRiskLabel(risk);
-    const label = stringValue(visual.payload.label) || "Signal";
-    const value = stringValue(visual.payload.text);
-    return (
-      <div
-        className={`review-signal signal-risk-${risk}`}
-        aria-label={`${state}. ${label}: ${value}`}
-        title={label}
-      >
-        <span className="signal-state">{state}</span>
-        <strong>
-          {label} · {value}
-        </strong>
-      </div>
-    );
-  }
-
-  return <span className="review-signal-empty">No signal</span>;
-}
-
-function queueRisk(
-  payload: Record<string, JsonValue>,
-  tone: ReturnType<typeof visualTone>
+function numericVisualMetrics(
+  payload: Extract<
+    NonNullable<HumanReviewListRow["cardVisual"]>,
+    { kind: "numeric_bar" | "progress_ring" }
+  >["payload"]
 ) {
-  const explicitRisk = stringOrNull(payload.queue_risk);
-  if (
-    explicitRisk === "high" ||
-    explicitRisk === "medium" ||
-    explicitRisk === "low"
-  ) {
-    return explicitRisk;
-  }
-  if (tone === "critical") return "high";
-  if (tone === "positive") return "low";
-  return "medium";
-}
-
-function queueRiskLabel(risk: ReturnType<typeof queueRisk>) {
-  if (risk === "high") return "High risk";
-  if (risk === "low") return "Low risk";
-  return "Medium risk";
-}
-
-function signalTone(percent: number) {
-  if (percent >= 75) return "positive";
-  if (percent >= 50) return "caution";
-  return "critical";
-}
-
-function visualTone(
-  payload: Record<string, JsonValue>,
-  percent: number | null
-) {
-  const explicitTone = stringOrNull(payload.tone);
-  if (
-    explicitTone === "positive" ||
-    explicitTone === "caution" ||
-    explicitTone === "critical" ||
-    explicitTone === "neutral"
-  ) {
-    return explicitTone;
-  }
-  return percent === null ? "neutral" : signalTone(percent);
-}
-
-function numericVisualMetrics(payload: Record<string, JsonValue>) {
   return {
-    label: stringValue(payload.label),
-    display: stringValue(payload.display),
-    unit: stringValue(payload.unit),
-    percent: boundedPercent(
-      numericValue(payload.value),
-      numericValue(payload.min_value),
-      numericValue(payload.max_value)
-    )
+    label: payload.label,
+    display: payload.display,
+    unit: payload.unit,
+    percent: boundedPercent(payload.value, payload.min_value, payload.max_value)
   };
 }
 
-function safeHref(url: string) {
+export function safeHref(url: string) {
   try {
     const parsed = new URL(url);
     return ["http:", "https:", "mailto:"].includes(parsed.protocol)
@@ -315,22 +258,6 @@ function safeHref(url: string) {
   } catch {
     return null;
   }
-}
-
-function isRecord(value: JsonValue): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringValue(value: JsonValue | undefined) {
-  return typeof value === "string" ? value : "";
-}
-
-function stringOrNull(value: JsonValue | undefined) {
-  return typeof value === "string" ? value : null;
-}
-
-function numericValue(value: JsonValue | undefined) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function boundedPercent(value: number, min: number, max: number) {

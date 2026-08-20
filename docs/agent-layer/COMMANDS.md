@@ -95,6 +95,26 @@ resources, mutate external services, or perform schema changes.
 
 ## Verification Gates
 
+- Regenerate the public OpenAPI document and branded documentation bundle
+
+```bash
+corepack pnpm run docs:generate
+```
+
+Run from: repo root. Notes: Reads the executable public contract and curated
+`docs/spec/public-api*.md` guides, then rewrites `docs/openapi.json` and the
+checked-in browser bundle used by `/docs/api` routes.
+
+- Check the public API contract and documentation for generated drift
+
+```bash
+corepack pnpm run docs:check
+```
+
+Run from: repo root. Notes: Fails when the executable contract or a curated
+guide changes without regenerating both public artifacts. The normal build and
+check workflows include this gate.
+
 - Format files
 
 ```bash

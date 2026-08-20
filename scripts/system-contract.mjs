@@ -403,6 +403,22 @@ export function systemContractDriftFailures(contract = readSystemContract()) {
     `poll_interval_seconds: ${contract.defaultDevicePollIntervalSeconds}`
   ]);
   requireMarkers(failures, "docs/spec/README.md", [contract.hostedAppBaseUrl]);
+  requireMarkers(failures, "docs/spec/public-api.md", [
+    contract.hostedAppBaseUrl,
+    `limit=${contract.outputPageDefaultLimit}`,
+    `"page_limit": ${contract.outputPageDefaultLimit}`
+  ]);
+  requireMarkers(failures, "docs/spec/public-api-capabilities.md", [
+    contract.hostedAppBaseUrl,
+    contract.inputSubmissionBodyBytes.toLocaleString("en-US")
+  ]);
+  requireMarkers(failures, "docs/spec/public-api-reliability.md", [
+    `"limit": ${contract.outputPageDefaultLimit}`,
+    `${contract.unacknowledgedOutputTimeoutDays} days`
+  ]);
+  requireMarkers(failures, "src/components/docs/ApiDocsPage.tsx", [
+    "SYSTEM_CONTRACT.hostedAppBaseUrl"
+  ]);
   requireMarkers(failures, "docs/ops/resources.md", [
     contract.hostedAppBaseUrl,
     contract.scheduledCleanupCron
