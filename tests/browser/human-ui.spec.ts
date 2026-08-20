@@ -519,6 +519,7 @@ test("human actions submit undo and narrow bulk actions through server actions",
   page
 }) => {
   await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await openReviewTools(page);
   await page
     .getByRole("button", { name: /^(Select items|Bulk select)$/ })
@@ -722,6 +723,7 @@ test("bulk actions only submit selected rows visible in the current filter", asy
   page
 }) => {
   await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await openReviewTools(page);
 
   await page
