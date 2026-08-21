@@ -561,6 +561,21 @@ separate `make browser` job, plus a separate `make migration-replay` job against
 a raw `postgres:17` service followed by the canonical serialized database
 verification suite.
 
+- GitHub Actions Policy gates
+
+```bash
+node scripts/policy-gates/megachange-eval.test.mjs
+node scripts/policy-gates/migration-discipline-scan.mjs --fixtures scripts/policy-gates/migration-discipline-fixtures.txt
+node scripts/policy-gates/legal-policy-gate.mjs --fixtures scripts/policy-gates/legal-policy-fixtures.txt
+```
+
+Run from: repo root Prerequisites: `make setup` has completed. Notes:
+`.github/workflows/policy-gates.yml` runs these fixture checks, then evaluates
+the PR diff for megachange, destructive migrations, and public legal-policy
+changes. Human-only labels `megachange-approved`,
+`migration-destructive-approved`, and `legal-policy-approved` are the only
+overrides. `make test` also runs the fixture self-checks.
+
 - GitHub Actions release-check gate
 
 ```bash

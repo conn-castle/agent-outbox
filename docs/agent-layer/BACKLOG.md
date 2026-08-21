@@ -27,6 +27,12 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
 
 <!-- ENTRIES START -->
 
+- Backlog 2026-08-20 real-user-journey-certification: Real-user-journey certification gate
+    Priority: Low. Area: CI, browser
+    Description: Add a real-user-journey certification harness and a human-only `real-user-journey-approved` label that Policy gates require when that harness changes.
+    Acceptance criteria: Changing the certification harness fails Policy gates until a human applies `real-user-journey-approved`; ordinary product tests remain editable without that label.
+    Notes: Deferred until the product has a certification harness. Mirror Agent Panel's real-user-journey gate.
+
 - Backlog 2026-08-17 account-limits-status-surface: Complete account limits and usage status
     Priority: Medium. Area: human review, account status
     Description: Give users one complete status surface for every configured account limit, current usage where measurable, reset timing, and active blocks instead of compressing partial information into the account menu.

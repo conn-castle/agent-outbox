@@ -24,6 +24,7 @@ import {
   validateGoReleaserTooling,
   validateGoModuleTooling,
   validateMigrationReplayWorkflow,
+  validatePolicyGatesWorkflow,
   validatePhase3FoundationSourceContents,
   validatePhase4ContractDocContents,
   validateRequiredEnvExample,
@@ -1495,6 +1496,127 @@ jobs:
       description
     );
   }
+});
+
+test("validatePolicyGatesWorkflow requires label-retriggered PR policy checks", () => {
+  const validWorkflow = `
+name: Policy gates
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  policy-gates:
+    steps:
+      - run: node scripts/policy-gates/collect-changed-files.mjs
+      - run: node scripts/policy-gates/megachange-eval.mjs
+      - run: node scripts/policy-gates/migration-discipline-scan.mjs
+      - run: node scripts/policy-gates/legal-policy-gate.mjs
+`;
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow
+    }),
+    []
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "types: [opened, synchronize, reopened, labeled, unlabeled]",
+        "types: [opened, synchronize, reopened]"
+      )
+    }),
+    [
+      ".github/workflows/policy-gates.yml must include pull_request label retrigger types"
+    ]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": `${validWorkflow}\n  push:\n    branches:\n      - main\n`
+    }),
+    [".github/workflows/policy-gates.yml must not run on push"]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "node scripts/policy-gates/legal-policy-gate.mjs",
+        "gh pr edit 1 --add-label legal-policy-approved"
+      )
+    }),
+    [
+      ".github/workflows/policy-gates.yml must include public legal-policy gate",
+      ".github/workflows/policy-gates.yml must not apply human-only approval labels"
+    ]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "permissions:\n  contents: read\n  pull-requests: read\n",
+        ""
+      )
+    }),
+    [".github/workflows/policy-gates.yml must declare read-only permissions"]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "permissions:\n  contents: read\n  pull-requests: read\n",
+        "permissions:\n  contents: read\n  pull-requests: write\n"
+      )
+    }),
+    [".github/workflows/policy-gates.yml must declare read-only permissions"]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "permissions:\n  contents: read\n  pull-requests: read\n",
+        "permissions: write-all\n"
+      )
+    }),
+    [".github/workflows/policy-gates.yml must declare read-only permissions"]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "    steps:",
+        "    permissions:\n      pull-requests: write\n    steps:"
+      )
+    }),
+    [".github/workflows/policy-gates.yml must declare read-only permissions"]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "    steps:",
+        "    permissions: write-all\n    steps:"
+      )
+    }),
+    [".github/workflows/policy-gates.yml must declare read-only permissions"]
+  );
+
+  assert.deepEqual(
+    validatePolicyGatesWorkflow({
+      ".github/workflows/policy-gates.yml": validWorkflow.replace(
+        "node scripts/policy-gates/collect-changed-files.mjs",
+        'gh api "repos/x/y/pulls/${PR_NUMBER}/files"'
+      )
+    }),
+    [
+      ".github/workflows/policy-gates.yml must include complete base-to-head changed-path enumeration",
+      ".github/workflows/policy-gates.yml must not use the capped pull request files API"
+    ]
+  );
 });
 
 test("validateDatabaseTestCommand enforces the serialized root test command chain", () => {

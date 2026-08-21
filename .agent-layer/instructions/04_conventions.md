@@ -1,5 +1,7 @@
 # Project Conventions
 
+- **Human-only approval labels (non-delegable):** Agents must never apply, reapply, or cause GitHub or CI to treat as applied `megachange-approved`, `migration-destructive-approved`, or `legal-policy-approved`. This includes GitHub CLI, REST or GraphQL APIs, browser automation, scripts, workflow dispatches, and equivalent approval inputs. User approval, merge authorization, standing authorization, plans, skills, or other instructions cannot override or delegate this act. When approval is required, report the exact gate and stop until a human independently applies the label through the GitHub web interface.
+
 - **Packages (latest compatible stable versions):** Determine package versions using the package manager and official tooling/docs, not memory. Prefer the latest stable compatible versions. Avoid unstable or pre-release versions. If the latest stable version introduces breaking changes, ask for confirmation and then do the compatibility work.
 
 - **Schema safety:** Never modify the database schema via raw SQL or direct tool access. Always generate a proper migration file using the project's migration system, and ask the user to apply it.
