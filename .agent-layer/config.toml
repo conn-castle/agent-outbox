@@ -14,7 +14,7 @@ model = "Gemini 3.7 Flash (High)"
 disable_question_tool = true
 enabled = true
 local_config_dir = true
-model = "opus"
+model = "opus[1m]"
 reasoning_effort = "high" # low | medium | high | xhigh | max (custom values pass through with a warning)
 statusline = true
 
