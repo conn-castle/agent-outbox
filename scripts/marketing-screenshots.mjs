@@ -248,7 +248,7 @@ function verifyFreshCapture() {
 function approveScreenshots(version) {
   const preflight = verifyRepositoryReleaseTarget(version);
   console.log(
-    `current=${preflight.currentVersion} latest_tag=${preflight.latestTag} target=${preflight.targetVersion}`
+    `current=${preflight.currentVersion} main=${preflight.mainVersion} latest_tag=${preflight.latestTag} target=${preflight.targetVersion}`
   );
   const manifest = readJson(MANIFEST_PATH);
   if (!Array.isArray(manifest.assets)) {

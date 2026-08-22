@@ -7,6 +7,7 @@ import {
 import { createCorrelationId } from "../../src/server/correlation";
 import type { ProductTransactionQuery } from "../../src/server/database";
 import {
+  BROWSER_FIXTURE_REFERENCE_TIME,
   browserFixtureAccountBanner,
   browserFixtureHumanSession,
   browserFixtureReviewDetail,
@@ -40,13 +41,19 @@ export default async function HumanReviewPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const renderedAt = new Date().toISOString();
+  const fixtureEnabled = humanBrowserFixtureEnabled();
+  // Fixture renders must stay byte-stable: the release gate re-captures the
+  // marketing screenshots and compares hashes, so relative row timestamps
+  // cannot follow the wall clock.
+  const renderedAt = fixtureEnabled
+    ? BROWSER_FIXTURE_REFERENCE_TIME
+    : new Date().toISOString();
   const selectedItem = firstSearchParam(params?.item);
   const composeAction = firstSearchParam(params?.compose);
   const notice = humanReviewNotice(params);
   const view = humanReviewViewFromRecord(params);
 
-  if (humanBrowserFixtureEnabled()) {
+  if (fixtureEnabled) {
     const resolvedItems = await readFixtureResolvedItems();
     const fixtureOptions = {
       includePaginationRows:

@@ -33,14 +33,25 @@ export function compareStableVersions(left, right) {
  * @param {string} targetVersion
  * @param {string} currentVersion
  * @param {string[]} tags
+ * @param {string} mainVersion package version on the fetched origin/main
  */
-export function verifyReleaseTarget(targetVersion, currentVersion, tags) {
+export function verifyReleaseTarget(
+  targetVersion,
+  currentVersion,
+  tags,
+  mainVersion
+) {
   if (!STABLE_RELEASE_VERSION.test(targetVersion)) {
     throw new Error(`release target ${targetVersion} must be stable X.Y.Z`);
   }
   if (!STABLE_RELEASE_VERSION.test(currentVersion)) {
     throw new Error(
       `current package version ${currentVersion} is not stable X.Y.Z`
+    );
+  }
+  if (!STABLE_RELEASE_VERSION.test(mainVersion)) {
+    throw new Error(
+      `origin/main package version ${mainVersion} is not stable X.Y.Z`
     );
   }
 
@@ -57,6 +68,13 @@ export function verifyReleaseTarget(targetVersion, currentVersion, tags) {
   if (compareStableVersions(targetVersion, currentVersion) <= 0) {
     throw new Error(
       `release target ${targetVersion} must be newer than current package version ${currentVersion}`
+    );
+  }
+  // A clean but stale branch can carry an old package.json, so an untagged
+  // release already merged to main would otherwise pass the check above.
+  if (compareStableVersions(targetVersion, mainVersion) <= 0) {
+    throw new Error(
+      `release target ${targetVersion} must be newer than origin/main package version ${mainVersion}`
     );
   }
 
@@ -76,6 +94,7 @@ export function verifyReleaseTarget(targetVersion, currentVersion, tags) {
 
   return {
     currentVersion,
+    mainVersion,
     latestTag: latest?.tag ?? "<none>",
     targetVersion
   };
@@ -83,12 +102,23 @@ export function verifyReleaseTarget(targetVersion, currentVersion, tags) {
 
 /** @param {string} targetVersion */
 export function verifyRepositoryReleaseTarget(targetVersion) {
+  // `git fetch` records the fetched branch tip in FETCH_HEAD, which is the only
+  // trustworthy view of main here: origin/main may be stale or absent, and the
+  // working tree package.json belongs to the current branch.
   runGit(["fetch", "--tags", "origin", "main"]);
   const packageJson = JSON.parse(
     readFileSync(path.join(ROOT, "package.json"), "utf8")
   );
+  const mainPackageJson = JSON.parse(
+    runGit(["show", "FETCH_HEAD:package.json"])
+  );
   const tags = runGit(["tag", "--list", "v*"]).split("\n").filter(Boolean);
-  return verifyReleaseTarget(targetVersion, packageJson.version, tags);
+  return verifyReleaseTarget(
+    targetVersion,
+    packageJson.version,
+    tags,
+    mainPackageJson.version
+  );
 }
 
 /** @param {string[]} args */
@@ -113,7 +143,7 @@ function main() {
   const targetVersion = process.argv[2] ?? "";
   const result = verifyRepositoryReleaseTarget(targetVersion);
   console.log(
-    `current=${result.currentVersion} latest_tag=${result.latestTag} target=${result.targetVersion}`
+    `current=${result.currentVersion} main=${result.mainVersion} latest_tag=${result.latestTag} target=${result.targetVersion}`
   );
   console.log("Release version preflight passed.");
 }

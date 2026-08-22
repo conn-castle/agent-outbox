@@ -19,9 +19,12 @@ capturing screenshots:
 make release-preflight VERSION=<new-version>
 ```
 
-The preflight fetches `main` and numbered tags, prints the current package
-version, latest tag, and requested target, and rejects a target that is not
-newer than both existing versions or whose tag already exists.
+The preflight fetches `main` and numbered tags, prints the working-tree package
+version, the fetched `main` package version, the latest tag, and the requested
+target, and rejects a target that is not newer than all three existing versions
+or whose tag already exists. Comparing against the fetched `main` revision
+rather than only the working tree keeps a stale branch from re-releasing a
+version that `main` already carries but has not tagged yet.
 
 Before changing `package.json`, capture the landing-page product screenshots:
 
@@ -31,8 +34,10 @@ make marketing
 
 The command renders every asset in `marketing/screenshots.json` from the
 deterministic human-review fixture inside the pinned Linux/amd64 Playwright
-container. It writes the regenerated screenshots directly under `public/` and
-leaves them unstaged; the visual comparison report is written under
+container. The fixture renders against a frozen reference time rather than the
+wall clock, so identical code produces identical pixels on any capture date. It
+writes the regenerated screenshots directly under `public/` and leaves them
+unstaged; the visual comparison report is written under
 `.agent-layer/tmp/marketing-capture/review/`. A human must review every tracked
 screenshot for every release, including a pixel-identical capture. After
 approval, attest that exact working-tree set and then make the matching

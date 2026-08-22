@@ -21,7 +21,11 @@ import {
   browserFixtureStoryboardScenarios,
   humanBrowserFixtureEnabled
 } from "../src/server/human-review-fixture.ts";
-import { browserFixtureDesignReviewDetails } from "../src/server/human-review-design-fixture.ts";
+import {
+  BROWSER_FIXTURE_REFERENCE_TIME,
+  browserFixtureDesignReviewDetails
+} from "../src/server/human-review-design-fixture.ts";
+import { formatQueueTimestamp } from "../src/components/human/review-format.ts";
 import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
 import {
   isSupportedColor,
@@ -1095,6 +1099,23 @@ test("human action form parser rejects malformed hidden fields before database w
   const invalidUndo = undoForm();
   invalidUndo.set("outputResultId", "not-a-uuid");
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
+});
+
+test("browser fixture renders queue timestamps against a frozen reference", () => {
+  // Marketing screenshots are hash-attested per release and re-captured by
+  // make release-check, so fixture renders must not read the wall clock.
+  const labels = browserFixtureDesignReviewDetails().map((detail) =>
+    formatQueueTimestamp(detail.updatedAt, BROWSER_FIXTURE_REFERENCE_TIME)
+  );
+  assert.deepEqual(labels, [
+    "42 min. ago",
+    "43 min. ago",
+    "44 min. ago",
+    "45 min. ago",
+    "46 min. ago",
+    "47 min. ago",
+    "48 min. ago"
+  ]);
 });
 
 function answerForm() {
