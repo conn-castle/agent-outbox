@@ -437,6 +437,12 @@ test("review-row anatomy uses the live structure and exposes content sizing", as
   );
 
   const titleSlot = page.locator(".review-row-anatomy .row-link");
+  await expect(titleSlot).toHaveJSProperty("tagName", "A");
+  await expect(titleSlot).toHaveAttribute("href", "#review-row-anatomy");
+  await expect(titleSlot).toHaveAttribute(
+    "aria-label",
+    "Review row anatomy details"
+  );
   const initialTitleBox = await titleSlot.boundingBox();
   expect(initialTitleBox).not.toBeNull();
   await page.locator(".review-row-anatomy .row-title").evaluate((title) => {

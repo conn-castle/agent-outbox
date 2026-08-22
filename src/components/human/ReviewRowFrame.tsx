@@ -41,10 +41,14 @@ export function ReviewRowFrame({
         <div className="row-heading">{heading}</div>
         <div className="row-copy">
           <div className="row-primary">
-            <div className={classes("row-link", slotClassNames?.title)}>
+            <a
+              className={classes("row-link", slotClassNames?.title)}
+              href={href}
+              aria-label={ariaLabel}
+            >
               <span className="row-link-heading">{title}</span>
               {subtitle}
-            </div>
+            </a>
             <div className="row-side">
               {visual ? (
                 <aside

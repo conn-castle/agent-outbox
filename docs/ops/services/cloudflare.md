@@ -50,17 +50,18 @@ operations.
 ## Configuration To Verify
 
 - The selected Cloudflare account and zone belong to Agent Outbox.
-- The Worker name is `agent-outbox`, the custom domain is
-  `app.agent-outbox.dev`, and the cron schedule is `17 * * * *`.
+- The Worker name is `agent-outbox`, the custom domains are `agent-outbox.dev`
+  and `app.agent-outbox.dev`, and the cron schedule is `17 * * * *`.
 - The account plan or approved limit must support the built OpenNext Worker
   size. The current Agent Outbox OpenNext bundle is above the Cloudflare Workers
   Free 3 MB Worker-size limit and must either run on a plan/limit that supports
   it or be reduced before production deploy.
-- `wrangler.jsonc` owns the Worker custom-domain route via
+- `wrangler.jsonc` owns the Worker custom-domain routes via
   `routes[].custom_domain=true`; do not create a separate proxied DNS record for
-  `app.agent-outbox.dev` unless the Cloudflare custom-domain flow changes.
-- `workers.dev` is disabled for the production Worker; `app.agent-outbox.dev` is
-  the only intended hosted app/API surface.
+  `agent-outbox.dev` or `app.agent-outbox.dev` unless the Cloudflare
+  custom-domain flow changes.
+- `workers.dev` is disabled for the production Worker; `agent-outbox.dev` is the
+  public website origin and `app.agent-outbox.dev` is the hosted app/API origin.
 - Local `.env` uses project-specific Cloudflare variable names for operator
   convenience and does not define generic `CLOUDFLARE_API_TOKEN`.
 - GitHub Actions deploy environments map the Worker deploy token into

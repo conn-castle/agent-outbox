@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
@@ -315,44 +309,73 @@ export function ReviewWorkspace({
     setSelectionMode((current) => !current);
   }
 
-  function moveQueueFocus(event: ReactKeyboardEvent<HTMLElement>) {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    const target = event.target;
-    if (
-      target instanceof HTMLElement &&
-      target.closest("input, select, textarea, button, summary")
-    ) {
-      return;
+  useEffect(() => {
+    function moveQueueFocus(event: KeyboardEvent) {
+      if (
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.defaultPrevented
+      ) {
+        return;
+      }
+      const target = event.target;
+      if (
+        !(target instanceof HTMLElement) ||
+        target.closest("input, select, textarea, button, summary, dialog")
+      ) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      const rows = [
+        ...document.querySelectorAll<HTMLElement>(".review-list .row-link")
+      ];
+      if (key === "enter") {
+        const focused = document.activeElement;
+        if (
+          focused instanceof HTMLAnchorElement &&
+          focused.classList.contains("row-link")
+        ) {
+          const href = focused.getAttribute("href");
+          if (href) {
+            event.preventDefault();
+            router.push(href);
+          }
+        }
+        return;
+      }
+      if (
+        key !== "j" &&
+        key !== "k" &&
+        key !== "arrowdown" &&
+        key !== "arrowup"
+      ) {
+        return;
+      }
+      if (rows.length === 0) return;
+      const activeIndex = rows.findIndex(
+        (row) => row === document.activeElement
+      );
+      const moveForward = key === "j" || key === "arrowdown";
+      const nextIndex =
+        activeIndex < 0
+          ? moveForward
+            ? 0
+            : rows.length - 1
+          : activeIndex + (moveForward ? 1 : -1);
+      if (nextIndex < 0 || nextIndex >= rows.length) return;
+      const nextRow = rows[nextIndex];
+      if (!nextRow) return;
+      event.preventDefault();
+      nextRow.focus();
     }
-    const key = event.key.toLowerCase();
-    if (
-      key !== "j" &&
-      key !== "k" &&
-      key !== "arrowdown" &&
-      key !== "arrowup"
-    ) {
-      return;
-    }
-    const links = [
-      ...document.querySelectorAll<HTMLAnchorElement>(".review-list .row-link")
-    ];
-    if (links.length === 0) return;
-    const activeIndex = links.findIndex(
-      (link) => link === document.activeElement
-    );
-    const moveForward = key === "j" || key === "arrowdown";
-    const nextIndex =
-      activeIndex < 0
-        ? moveForward
-          ? 0
-          : links.length - 1
-        : clamp(activeIndex + (moveForward ? 1 : -1), 0, links.length - 1);
-    event.preventDefault();
-    links[nextIndex]?.focus();
-  }
+
+    window.addEventListener("keydown", moveQueueFocus);
+    return () => window.removeEventListener("keydown", moveQueueFocus);
+  }, [router]);
 
   return (
-    <main className="human-workspace" onKeyDown={moveQueueFocus}>
+    <main className="human-workspace">
       <header className="app-bar">
         <a
           className="app-brand product-wordmark"
@@ -782,10 +805,6 @@ function writeWorkspaceState(
   } catch {
     // Browsers can disable session storage; the queue still works with defaults.
   }
-}
-
-function clamp(value: number, minimum: number, maximum: number) {
-  return Math.min(Math.max(value, minimum), maximum);
 }
 
 function boundedStringIds(values: unknown[]) {

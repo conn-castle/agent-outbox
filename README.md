@@ -19,10 +19,9 @@ For repository navigation, see [TOC.md](TOC.md).
 
 ## Hosted Service
 
-Agent Outbox is not publicly released yet. The planned public hosted service
-will use:
+Agent Outbox is not publicly released yet. The hosted service uses:
 
-- `https://agent-outbox.dev` for product documentation
+- `https://agent-outbox.dev` for the product landing page and API documentation
 - `https://app.agent-outbox.dev` for the human app and caller API
 
 The current repository implements:
@@ -44,8 +43,8 @@ The current repository implements:
   deletion audit paths
 - Sentry, Cloudflare, and Supabase/Postgres-backed observability foundations
 
-The hosted service has one app/API origin. Caller API routes live under
-`https://app.agent-outbox.dev/api/...`.
+The hosted service has one deployable app and two hostnames. Caller API routes
+live under `https://app.agent-outbox.dev/api/...`.
 
 ## Target Product Flow
 

@@ -16,6 +16,7 @@ import {
 test("system contract has the approved stable external values", () => {
   assert.deepEqual(SYSTEM_CONTRACT, {
     hostedAppBaseUrl: "https://app.agent-outbox.dev",
+    hostedWebsiteBaseUrl: "https://agent-outbox.dev",
     scheduledCleanupCron: "17 * * * *",
     inputSubmissionBodyBytes: 128_000,
     humanAnswerResponseBodyBytes: 128_000,
@@ -54,6 +55,7 @@ test("JSONC comment stripping preserves comment-like text in strings", () => {
 test("both system-contract readers reject invalid schema and invariants", () => {
   const valid = {
     hosted_app_base_url: "https://app.agent-outbox.dev",
+    hosted_website_base_url: "https://agent-outbox.dev",
     scheduled_cleanup_cron: "17 * * * *",
     input_submission_body_bytes: 128_000,
     human_answer_response_body_bytes: 128_000,
@@ -79,6 +81,12 @@ test("both system-contract readers reject invalid schema and invariants", () => 
   };
   assert.throws(() => validateSystemContract(insecure));
   assert.throws(() => validateTypeScriptSystemContract(insecure));
+  const overlappingOrigins = {
+    ...valid,
+    hosted_website_base_url: valid.hosted_app_base_url
+  };
+  assert.throws(() => validateSystemContract(overlappingOrigins));
+  assert.throws(() => validateTypeScriptSystemContract(overlappingOrigins));
 
   const impossiblePolling = {
     ...valid,

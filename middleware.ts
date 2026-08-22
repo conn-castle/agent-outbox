@@ -7,6 +7,7 @@ import {
   shouldFailClosedForMissingClerkConfiguration
 } from "./src/server/middleware-clerk-readiness";
 import { middlewareFixtureBypassEnabled } from "./src/server/middleware-fixture-bypass";
+import { hostedHostRedirect } from "./src/shared/hosted-origins";
 
 // OpenNext Cloudflare 1.20 rejects Next 16's Node.js proxy build output.
 // Keep middleware.ts until this pinned adapter supports proxy.ts.
@@ -38,6 +39,15 @@ export default function middleware(
   request: NextRequest,
   event: NextFetchEvent
 ) {
+  const hostRedirect = hostedHostRedirect(
+    request.url,
+    request.headers.get("host") ?? ""
+  );
+  if (hostRedirect) {
+    const sameOrigin = hostRedirect.origin === new URL(request.url).origin;
+    return NextResponse.redirect(hostRedirect, sameOrigin ? 307 : 308);
+  }
+
   if (middlewareFixtureBypassEnabled(request.nextUrl.pathname)) {
     return NextResponse.next();
   }

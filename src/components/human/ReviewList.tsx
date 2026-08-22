@@ -57,6 +57,9 @@ export function ReviewList({
           ? resolveSupportedColor(row.rowAccentColor)
           : null;
         const rowHref = humanReviewHref(view, row.inputItemId);
+        const overflowActions = row.bulkActions.filter(
+          (action) => action.overflow
+        );
         const contextLinks = (row.linkButtons ?? []).flatMap((link) => {
           const href = safeHref(link.url);
           return href
@@ -152,7 +155,8 @@ export function ReviewList({
                           </span>
                         </button>
                       ) : null}
-                      {row.hasOverflowActions ? (
+                      {row.status === "pending" &&
+                      overflowActions.length > 0 ? (
                         <details
                           className="row-overflow"
                           data-dismissible-disclosure
@@ -161,7 +165,29 @@ export function ReviewList({
                             <MoreVertical aria-hidden="true" />
                           </summary>
                           <div className="row-overflow-menu">
-                            <a href={rowHref}>Review remaining outcomes</a>
+                            {overflowActions.map((action) =>
+                              action.popupKind !== "none" ? (
+                                <a
+                                  key={action.value}
+                                  className="row-overflow-item"
+                                  href={humanReviewHref(
+                                    view,
+                                    row.inputItemId,
+                                    action.value
+                                  )}
+                                >
+                                  <HumanIcon name={action.icon} />
+                                  <span>{action.display}</span>
+                                </a>
+                              ) : (
+                                <InlineQuickAction
+                                  key={action.value}
+                                  row={row}
+                                  action={action}
+                                  className="row-overflow-item"
+                                />
+                              )
+                            )}
                           </div>
                         </details>
                       ) : (
@@ -181,9 +207,17 @@ export function ReviewList({
               }
               href={rowHref}
               ariaLabel={`Open review details for ${title}`}
-              title={<SafeHtml html={row.titleHtml} className="row-title" />}
+              title={
+                <SafeHtml
+                  html={htmlWithoutAnchors(row.titleHtml)}
+                  className="row-title"
+                />
+              }
               subtitle={
-                <SafeHtml html={row.subtitleHtml} className="row-subtitle" />
+                <SafeHtml
+                  html={htmlWithoutAnchors(row.subtitleHtml)}
+                  className="row-subtitle"
+                />
               }
               visual={
                 row.cardVisual ? <CardVisual visual={row.cardVisual} /> : null
@@ -258,4 +292,9 @@ function plainText(html: string) {
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function htmlWithoutAnchors(html: string) {
+  // The queue title is itself a link; keep caller HTML from nesting <a> tags.
+  return html.replace(/<\/?a\b[^>]*>/gi, "");
 }
