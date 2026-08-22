@@ -1,6 +1,15 @@
 import { ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
 
+import marketingScreenshotManifest from "../marketing/screenshots.json";
+
+const marketingScreenshots = Object.fromEntries(
+  marketingScreenshotManifest.assets.map((asset) => [asset.id, asset])
+) as Record<
+  "detailTablet" | "queueDesktop" | "queueMobile",
+  (typeof marketingScreenshotManifest.assets)[number]
+>;
+
 const handoffSteps = [
   {
     number: "01",
@@ -114,15 +123,15 @@ export default function HomePage() {
           <picture>
             <source
               media="(max-width: 720px)"
-              srcSet="/product-review-mobile.png"
-              width="430"
-              height="932"
+              srcSet={marketingScreenshots.queueMobile.publicPath}
+              width={marketingScreenshots.queueMobile.width}
+              height={marketingScreenshots.queueMobile.height}
             />
             <img
-              src="/product-review-queue.png"
+              src={marketingScreenshots.queueDesktop.publicPath}
               alt="Agent Outbox review queue with pending requests and an open neighborhood permit review"
-              width="1440"
-              height="960"
+              width={marketingScreenshots.queueDesktop.width}
+              height={marketingScreenshots.queueDesktop.height}
             />
           </picture>
         </div>
@@ -237,10 +246,10 @@ export default function HomePage() {
             <span className="landing-tablet-camera" aria-hidden="true" />
             <div className="landing-tablet-screen">
               <img
-                src="/product-review-ipad.png"
+                src={marketingScreenshots.detailTablet.publicPath}
                 alt="Agent Outbox request detail with structured context and response actions"
-                width="768"
-                height="1024"
+                width={marketingScreenshots.detailTablet.width}
+                height={marketingScreenshots.detailTablet.height}
               />
             </div>
           </div>
@@ -277,10 +286,10 @@ export default function HomePage() {
           <div className="landing-phone-frame">
             <div className="landing-phone-speaker" aria-hidden="true" />
             <img
-              src="/product-review-mobile.png"
+              src={marketingScreenshots.queueMobile.publicPath}
               alt="Agent Outbox review queue on a mobile screen"
-              width="430"
-              height="932"
+              width={marketingScreenshots.queueMobile.width}
+              height={marketingScreenshots.queueMobile.height}
             />
           </div>
         </div>

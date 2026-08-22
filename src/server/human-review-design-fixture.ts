@@ -9,6 +9,18 @@ import {
 } from "./input-schema.ts";
 
 const DESIGN_CALLER_ID = "00000000-0000-4000-8000-000000000504";
+const DESIGN_FIXTURE_ANCHOR_MS = Date.UTC(2026, 7, 15, 18, 0, 0);
+
+/**
+ * Frozen "now" for every browser-fixture render. Marketing screenshots are
+ * hash-attested per release and re-captured by `make release-check`, so any
+ * wall-clock input to the page would change the captured pixels on a later
+ * date without a code change. Anchored 42 minutes after the newest fixture row
+ * to match the leading row's authored corner copy.
+ */
+export const BROWSER_FIXTURE_REFERENCE_TIME = new Date(
+  DESIGN_FIXTURE_ANCHOR_MS + 42 * 60_000
+).toISOString();
 
 export function browserFixtureDesignReviewDetails(): HumanReviewDetail[] {
   return designFixture.rows.map((fixture, rowIndex) => {
@@ -19,7 +31,7 @@ export function browserFixtureDesignReviewDetails(): HumanReviewDetail[] {
       );
     }
     const updatedAt = new Date(
-      Date.UTC(2026, 7, 15, 18, 0, 0) - rowIndex * 60_000
+      DESIGN_FIXTURE_ANCHOR_MS - rowIndex * 60_000
     ).toISOString();
     return detailFromNormalizedSubmission(parsed.submission, {
       inputItemId: designUuid(fixture.scenario_id),

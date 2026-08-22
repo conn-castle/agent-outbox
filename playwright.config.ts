@@ -22,6 +22,7 @@ process.env.AGENT_OUTBOX_BROWSER_RUN_ID = runId;
 
 export default defineConfig({
   testDir: "./tests/browser",
+  testIgnore: "marketing-capture.spec.ts",
   globalTeardown: "./scripts/browser-test-cleanup.mjs",
   timeout: 30_000,
   expect: {

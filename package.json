@@ -1,6 +1,6 @@
 {
   "name": "agent-outbox",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "Hosted human-review queue and CLI for agent-prepared work.",
@@ -31,6 +31,10 @@
     "test": "node --test tests/*.test.mjs",
     "test:database": "node --test --test-concurrency=1 tests/*.test.mjs",
     "browser": "playwright test",
+    "release:preflight": "node scripts/release-version.mjs",
+    "marketing": "node scripts/marketing-screenshots.mjs capture",
+    "marketing:check": "node scripts/marketing-screenshots.mjs check",
+    "marketing:verify": "node scripts/marketing-screenshots.mjs verify",
     "next:build": "next build",
     "worker:build": "opennextjs-cloudflare build",
     "worker:dry-run": "corepack pnpm run worker:build && wrangler deploy --dry-run --env-file /dev/null",

@@ -392,6 +392,56 @@ Worker bundle, custom domain route config, disabled workers.dev route, cron
 config, observability config, and static assets without uploading or mutating
 Cloudflare state.
 
+- Validate a numbered release target
+
+```bash
+make release-preflight VERSION=<new-version>
+```
+
+Run from: repo root. Prerequisites: the operator supplied the exact stable
+version and the `origin` remote is reachable. Notes: Fetches `main` and numbered
+tags, reports the working-tree package version, the fetched `main` package
+version, latest numbered tag, and target, then rejects an existing tag or a
+target that is not newer than all three existing versions. Run before capturing
+release screenshots.
+
+- Capture landing-page screenshots for release review
+
+```bash
+make marketing
+```
+
+Run from: repo root. Prerequisites: Docker is running. Notes: Builds and runs
+the pinned Linux/amd64 Playwright capture environment, regenerates the tracked
+screenshots directly in `public/`, and writes a before/after/overlay/difference
+report under `.agent-layer/tmp/marketing-capture/review/`. Review the unstaged
+working-tree changes before approval or commit.
+
+- Attest a human-approved screenshot set
+
+```bash
+make marketing-approve VERSION=<new-version>
+```
+
+Run from: repo root. Prerequisites: `make marketing` completed and the owner
+explicitly approved every regenerated tracked screenshot. Notes: Updates
+`marketing/screenshots.json` with the approved version and SHA-256 hashes after
+repeating the fetched-tag release preflight; the PNGs remain in their final
+`public/` locations. Run before the matching `package.json` version bump.
+
+- Verify committed release screenshots
+
+```bash
+make marketing-check
+make marketing-verify
+```
+
+Run from: repo root. Prerequisites: Docker is required only for
+`marketing-verify`. Notes: `marketing-check` validates the package/manifest
+version and committed hashes. `marketing-verify` performs a pinned fresh
+capture into ignored scratch space and fails on pixel drift without modifying
+committed assets.
+
 - Dispatch a certified production release
 
 ```bash

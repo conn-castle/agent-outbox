@@ -11,6 +11,7 @@ import {
   STORYBOARD_USE_CASES
 } from "./human-review-fixture-scenarios.ts";
 import { browserFixtureDesignReviewDetails } from "./human-review-design-fixture.ts";
+export { BROWSER_FIXTURE_REFERENCE_TIME } from "./human-review-design-fixture.ts";
 import type { HumanReviewView } from "../shared/human-review-view.ts";
 
 export { humanBrowserFixtureEnabled } from "./human-review-fixture-gate.ts";

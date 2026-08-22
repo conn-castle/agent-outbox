@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "releaseVersion": "0.2.1",
+  "assets": [
+    {
+      "id": "queueDesktop",
+      "file": "public/product-review-queue.png",
+      "publicPath": "/product-review-queue.png",
+      "route": "/human?status=all",
+      "width": 1440,
+      "height": 960,
+      "sha256": "194b40070240acab959e7383e21f2215af65738bf93476e0951997fa2ac7a8fd"
+    },
+    {
+      "id": "detailTablet",
+      "file": "public/product-review-ipad.png",
+      "publicPath": "/product-review-ipad.png",
+      "route": "/human?status=all&item=c685b264-dc53-478d-8326-df3438613f11",
+      "width": 768,
+      "height": 1024,
+      "sha256": "436038a2f50e6886d618454078e0ddaeb1c2942eba4601079d383bee05c525ec"
+    },
+    {
+      "id": "queueMobile",
+      "file": "public/product-review-mobile.png",
+      "publicPath": "/product-review-mobile.png",
+      "route": "/human?status=all",
+      "width": 430,
+      "height": 932,
+      "sha256": "b2af432c4d0eb68bfd0386e16a452deb57e466ee2ad0d40789fb9d833e6c4120"
+    }
+  ]
+}
