@@ -259,16 +259,11 @@ test("authenticated review workspace renders content actions and preserves contr
   ).toBeVisible();
   await chooseViewOption(page, "Sort", "Priority");
 
-  await page
-    .locator("article.review-row", {
-      has: reviewLinkByTitle(page, "Review neighborhood permit brief")
-    })
+  await reviewRowByTitle(page, "Review neighborhood permit brief")
     .getByRole("button", { name: "Skip" })
     .click();
   await expect(
-    page.locator("article.review-row", {
-      has: reviewLinkByTitle(page, "Review neighborhood permit brief")
-    })
+    reviewRowByTitle(page, "Review neighborhood permit brief")
   ).toContainText("skipped");
   await reviewLinkByTitle(page, "Choose follow-up window").click();
   await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000512/);
@@ -476,9 +471,7 @@ test("routine reviews can be completed directly from the queue", async ({
     0
   );
 
-  const row = page.locator("article.review-row", {
-    has: reviewLinkByTitle(page, "Review neighborhood permit brief")
-  });
+  const row = reviewRowByTitle(page, "Review neighborhood permit brief");
   await expect(
     row.getByRole("group", {
       name: /Quick actions for Review neighborhood permit brief/
@@ -527,9 +520,10 @@ test("human actions submit undo and narrow bulk actions through server actions",
   const permitRow = reviewRowByTitle(page, "Review neighborhood permit brief");
   const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
   await permitRow.getByRole("checkbox", { name: "Select review" }).check();
-  const incompatibleRow = page.locator("article.review-row", {
-    has: reviewLinkByTitle(page, "Payments smoke check failed after deploy")
-  });
+  const incompatibleRow = reviewRowByTitle(
+    page,
+    "Payments smoke check failed after deploy"
+  );
   await incompatibleRow.scrollIntoViewIfNeeded();
   await incompatibleRow
     .getByRole("checkbox", { name: "Select review" })
@@ -757,7 +751,12 @@ function reviewRowByTitle(page: Page, title: string) {
 }
 
 function reviewLinkByTitle(page: Page, title: string) {
-  return reviewRowByTitle(page, title).locator("a.row-details-link");
+  return page.locator("a.row-details-link").and(
+    page.getByRole("link", {
+      name: `Open review details for ${title}`,
+      exact: true
+    })
+  );
 }
 
 function reviewDecisionSurface(page: Page, isMobile: boolean, title: string) {
