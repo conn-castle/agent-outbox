@@ -114,7 +114,7 @@ scrollbar gutter is browser-owned width reserved outside the row content.
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Classification chip | `row_type.display` and `row_type.icon`.                                                                                                                          |
 | Corner metadata     | Optional `corner` context such as an amount, environment, or count. When absent, Agent Outbox shows a visually distinct product-owned update timestamp fallback. |
-| Title block         | Required `title` and `subtitle`.                                                                                                                                 |
+| Title block         | Required `title` and `subtitle`. The queue title opens details, so nested links in those fields are flattened to text in the row.                                |
 | Summary             | Required `summary` describing the decision being requested.                                                                                                      |
 | Visual              | No visual, or one `numeric_bar`, `progress_ring`, or `pill` card visual.                                                                                         |
 | Context links       | Zero to 32 `link_buttons`, each with `display`, `icon`, and HTTP(S) `url`.                                                                                       |
@@ -126,8 +126,9 @@ Product controls are not caller-content slots:
   optional caller `details` supplies a rich-content section inside that surface,
   labeled **Details**.
 - **Skip** is product-owned; `skip_disabled` controls whether it is available.
-- **More actions** is product-owned and appears when one or more actions use
-  `overflow: true`.
+- **More actions** is product-owned and appears on pending rows when one or more
+  actions use `overflow: true`. Answered rows keep the result and undo flow
+  instead of live overflow decision controls.
 
 The stable scrollbar gutter is responsive infrastructure, not caller content.
 

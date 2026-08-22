@@ -751,15 +751,13 @@ test("bulk actions only submit selected rows visible in the current filter", asy
 });
 
 function reviewRowByTitle(page: Page, title: string) {
-  return page.locator("article.review-row", {
-    has: reviewLinkByTitle(page, title)
+  return page.locator("article.review-row").filter({
+    has: page.locator(".row-title", { hasText: title })
   });
 }
 
 function reviewLinkByTitle(page: Page, title: string) {
-  return page.getByRole("link", {
-    name: `Open review details for ${title}`
-  });
+  return reviewRowByTitle(page, title).locator("a.row-details-link");
 }
 
 function reviewDecisionSurface(page: Page, isMobile: boolean, title: string) {
@@ -980,8 +978,17 @@ test("canonical row visuals and popup constraints expose only supported semantic
   );
   await expect(numericRow.locator(".row-link")).toHaveJSProperty(
     "tagName",
-    "DIV"
+    "A"
   );
+  await expect(numericRow.locator("a.row-link")).toHaveAttribute(
+    "aria-label",
+    "Open review details for Review neighborhood permit brief"
+  );
+  await expect(numericRow.locator("a.row-link")).toHaveAttribute(
+    "href",
+    /item=00000000-0000-4000-8000-000000000511/
+  );
+  await expect(numericRow.locator("a.row-link a")).toHaveCount(0);
   await expect(numericRow.locator(".row-summary-link")).toHaveJSProperty(
     "tagName",
     "DIV"
@@ -1077,6 +1084,23 @@ test("queue More menu lists caller overflow actions", async ({ page }) => {
   await expect(
     page.getByRole("dialog", { name: "Request edit" })
   ).toBeVisible();
+});
+
+test("answered queue rows hide overflow decision actions", async ({ page }) => {
+  await page.goto("/human?status=answered");
+  const row = reviewRowByTitle(
+    page,
+    "GitHub security digest for archived repositories"
+  );
+  await expect(row.locator("details.row-overflow")).toHaveCount(0);
+  await expect(row.locator(".inline-actions")).toHaveCount(0);
+  await expect(
+    row.getByRole("button", {
+      name: "No more actions for GitHub security digest for archived repositories"
+    })
+  ).toBeVisible();
+  await expect(row).toContainText("Answered Archive");
+  await expect(row.locator("a.row-link a")).toHaveCount(0);
 });
 
 test("queue J and K move between rows and Enter opens details", async ({

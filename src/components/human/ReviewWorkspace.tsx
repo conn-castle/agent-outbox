@@ -333,12 +333,14 @@ export function ReviewWorkspace({
       if (key === "enter") {
         const focused = document.activeElement;
         if (
-          focused instanceof HTMLElement &&
-          focused.classList.contains("row-link") &&
-          focused.dataset.href
+          focused instanceof HTMLAnchorElement &&
+          focused.classList.contains("row-link")
         ) {
-          event.preventDefault();
-          router.push(focused.dataset.href);
+          const href = focused.getAttribute("href");
+          if (href) {
+            event.preventDefault();
+            router.push(href);
+          }
         }
         return;
       }

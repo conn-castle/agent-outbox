@@ -155,7 +155,8 @@ export function ReviewList({
                           </span>
                         </button>
                       ) : null}
-                      {overflowActions.length > 0 ? (
+                      {row.status === "pending" &&
+                      overflowActions.length > 0 ? (
                         <details
                           className="row-overflow"
                           data-dismissible-disclosure
@@ -206,9 +207,17 @@ export function ReviewList({
               }
               href={rowHref}
               ariaLabel={`Open review details for ${title}`}
-              title={<SafeHtml html={row.titleHtml} className="row-title" />}
+              title={
+                <SafeHtml
+                  html={htmlWithoutAnchors(row.titleHtml)}
+                  className="row-title"
+                />
+              }
               subtitle={
-                <SafeHtml html={row.subtitleHtml} className="row-subtitle" />
+                <SafeHtml
+                  html={htmlWithoutAnchors(row.subtitleHtml)}
+                  className="row-subtitle"
+                />
               }
               visual={
                 row.cardVisual ? <CardVisual visual={row.cardVisual} /> : null
@@ -283,4 +292,9 @@ function plainText(html: string) {
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function htmlWithoutAnchors(html: string) {
+  // The queue title is itself a link; keep caller HTML from nesting <a> tags.
+  return html.replace(/<\/?a\b[^>]*>/gi, "");
 }

@@ -2519,6 +2519,8 @@ body:has(.shell > .human-workspace) {
   grid-row: 1;
   gap: 0.25rem;
   min-width: 0;
+  color: inherit;
+  text-decoration: none;
 }
 
 .human-workspace .row-summary-link {

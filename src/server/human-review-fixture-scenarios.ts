@@ -348,7 +348,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       currentRevision: 1,
       rowType: { display: "Email Triage", icon: "archive" },
       rowAccentColor: "green",
-      titleHtml: "GitHub security digest for archived repositories",
+      titleHtml:
+        '<a href="https://example.com/digest">GitHub security digest for archived repositories</a>',
       subtitleHtml:
         "GitHub &lt;noreply@github.com&gt; · received 18 minutes ago",
       cornerHtml: "Inbox label",
