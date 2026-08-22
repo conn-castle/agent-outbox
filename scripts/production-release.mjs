@@ -3,6 +3,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { verifyCommittedMarketingReleaseFiles } from "./marketing-screenshots.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WORKER_NAME = "agent-outbox";
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
@@ -342,6 +344,7 @@ function delay(ms) {
 
 function prepareRelease() {
   requireProductionWorkflowContext("deploy-production.yml");
+  verifyCommittedMarketingReleaseFiles();
   const metadata = releaseMetadata(
     JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"))
   );

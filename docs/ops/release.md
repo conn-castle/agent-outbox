@@ -12,6 +12,46 @@ versions, and non-`main` refs fail before deployment. The committed package
 version is the single source for the numbered `v<version>` tag and GitHub
 Release.
 
+After the operator chooses the exact next stable version, validate it before
+capturing screenshots:
+
+```bash
+make release-preflight VERSION=<new-version>
+```
+
+The preflight fetches `main` and numbered tags, prints the current package
+version, latest tag, and requested target, and rejects a target that is not
+newer than both existing versions or whose tag already exists.
+
+Before changing `package.json`, capture the landing-page product screenshots:
+
+```bash
+make marketing
+```
+
+The command renders every asset in `marketing/screenshots.json` from the
+deterministic human-review fixture inside the pinned Linux/amd64 Playwright
+container. It writes the regenerated screenshots directly under `public/` and
+leaves them unstaged; the visual comparison report is written under
+`.agent-layer/tmp/marketing-capture/review/`. A human must review every tracked
+screenshot for every release, including a pixel-identical capture. After
+approval, attest that exact working-tree set and then make the matching
+package-version change:
+
+```bash
+make marketing-approve VERSION=<new-version>
+```
+
+The approval command repeats the fetched-tag preflight and updates only the
+manifest's hashes and release version; the regenerated PNGs are already in their
+tracked final locations awaiting the release-prep commit. It must run during
+release preparation, never from the production release workflow.
+`make marketing-check` verifies the package version, manifest attestation, asset
+inventory, and hashes without launching a browser. `make marketing-verify`
+recaptures into scratch space and compares the committed pixels without
+modifying them. Production preparation repeats the fast attestation check and
+fails before certification or deployment if stale.
+
 Run these local gates from the repo root before a production deploy or branch
 protection change:
 
@@ -20,6 +60,8 @@ make check
 make browser
 make go-check
 make package-check
+make marketing-check
+make marketing-verify
 make release-check
 corepack pnpm run worker:dry-run
 ```

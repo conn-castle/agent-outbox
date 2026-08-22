@@ -1,4 +1,4 @@
-.PHONY: help bootstrap setup doctor dev fix format lint typecheck test test-database browser build smoke smoke-runtime hosted-health billing-smoke migration-validate migration-migrate migration-replay contract-generate contract-check go-build go-test go-lint go-fmt go-fmt-check go-check package-check check release-check clean
+.PHONY: help bootstrap setup doctor dev fix format lint typecheck test test-database browser release-preflight marketing marketing-approve marketing-check marketing-verify build smoke smoke-runtime hosted-health billing-smoke migration-validate migration-migrate migration-replay contract-generate contract-check go-build go-test go-lint go-fmt go-fmt-check go-check package-check check release-check clean
 
 GORELEASER_MODULE := github.com/goreleaser/goreleaser/v2@v2.16.0
 CLI_VERSION ?= 0.0.0-dev
@@ -22,6 +22,11 @@ help:
 	@printf '%s\n' '  make test-database  Run serialized database verification; caller supplies'
 	@printf '%s\n' '                      AGENT_OUTBOX_ENABLE_DATABASE_TESTS and DATABASE_MIGRATION_URL.'
 	@printf '%s\n' '  make browser        Run browser smoke tests.'
+	@printf '%s\n' '  make release-preflight VERSION=X.Y.Z  Validate a new release version.'
+	@printf '%s\n' '  make marketing      Capture landing-page screenshots for human review.'
+	@printf '%s\n' '  make marketing-approve VERSION=X.Y.Z  Record approval of tracked screenshots.'
+	@printf '%s\n' '  make marketing-check  Verify screenshot hashes and release attestation.'
+	@printf '%s\n' '  make marketing-verify Re-capture and compare without modifying screenshots.'
 	@printf '%s\n' '  make build          Build the app with Next.js.'
 	@printf '%s\n' '  make smoke          Run structural smoke checks.'
 	@printf '%s\n' '  make smoke-runtime  Run provider-backed runtime canary smoke checks.'
@@ -73,6 +78,23 @@ test-database:
 
 browser:
 	corepack pnpm run browser
+
+release-preflight:
+	@test -n "$(VERSION)" || { echo 'VERSION=X.Y.Z is required' >&2; exit 64; }
+	node scripts/release-version.mjs "$(VERSION)"
+
+marketing:
+	node scripts/marketing-screenshots.mjs capture
+
+marketing-approve:
+	@test -n "$(VERSION)" || { echo 'VERSION=X.Y.Z is required' >&2; exit 64; }
+	node scripts/marketing-screenshots.mjs approve "$(VERSION)"
+
+marketing-check:
+	node scripts/marketing-screenshots.mjs check
+
+marketing-verify:
+	node scripts/marketing-screenshots.mjs verify
 
 build:
 	corepack pnpm run build
@@ -129,7 +151,7 @@ package-check:
 check:
 	corepack pnpm run check
 
-release-check: check go-check package-check
+release-check: check go-check package-check marketing-verify
 
 clean:
 	corepack pnpm run clean
