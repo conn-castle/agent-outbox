@@ -7,12 +7,12 @@ Markdown.
 
 ## Public Surfaces
 
-| Surface                             | Location                               | Notes                                                                                                  |
-| ----------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Public website and docs             | `https://agent-outbox.dev`             | Public product and documentation surface.                                                              |
-| Hosted app and caller API           | `https://app.agent-outbox.dev`         | Cloudflare Worker route for the app, auth-adjacent pages, caller registration, and `/api/...` routes.  |
-| Caller API base                     | `https://app.agent-outbox.dev/api`     | HTTP is the canonical caller contract.                                                                 |
-| Support, privacy, and abuse contact | `https://app.agent-outbox.dev/contact` | Public contact form delivered through Cloudflare Email Service to the Agent Outbox inbox in Zoho Mail. |
+| Surface                             | Location                           | Notes                                                                                                  |
+| ----------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Public website and docs             | `https://agent-outbox.dev`         | Public product and documentation surface.                                                              |
+| Hosted app and caller API           | `https://app.agent-outbox.dev`     | Cloudflare Worker route for the app, auth-adjacent pages, caller registration, and `/api/...` routes.  |
+| Caller API base                     | `https://app.agent-outbox.dev/api` | HTTP is the canonical caller contract.                                                                 |
+| Support, privacy, and abuse contact | `https://agent-outbox.dev/contact` | Public contact form delivered through Cloudflare Email Service to the Agent Outbox inbox in Zoho Mail. |
 
 ## Service Resources
 
@@ -51,11 +51,12 @@ flows, scheduled cleanup routes, and caller API endpoints deploy as one Next.js
 app on Cloudflare Workers through OpenNext.
 
 The production Worker is configured in `wrangler.jsonc` as `agent-outbox`.
-`app.agent-outbox.dev` is the intended Worker Custom Domain, and the scheduled
-Worker cron is `17 * * * *`. The Worker `workers.dev` route is disabled so the
-custom domain remains the only hosted app/API surface. Exact account, zone,
-token, deployment, and secret values stay in Cloudflare, GitHub environment
-secrets, and Systems Manager Parameter Store rather than tracked Markdown.
+`agent-outbox.dev` is the public website Custom Domain, `app.agent-outbox.dev`
+is the app/API Custom Domain, and the scheduled Worker cron is `17 * * * *`. The
+Worker `workers.dev` route is disabled so those custom domains remain the only
+hosted website and app/API surfaces. Exact account, zone, token, deployment, and
+secret values stay in Cloudflare, GitHub environment secrets, and Systems
+Manager Parameter Store rather than tracked Markdown.
 
 GitHub Actions is the canonical deployment path. This file records targets and
 ownership; it does not duplicate workflow steps.

@@ -4,6 +4,7 @@ package foundation
 
 const (
 	SystemContractHostedAppBaseURL                   = "https://app.agent-outbox.dev"
+	SystemContractHostedWebsiteBaseURL               = "https://agent-outbox.dev"
 	SystemContractScheduledCleanupCron               = "17 * * * *"
 	SystemContractInputSubmissionBodyBytes           = 128000
 	SystemContractHumanAnswerResponseBodyBytes       = 128000

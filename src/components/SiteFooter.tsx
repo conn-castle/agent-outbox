@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import packageJson from "../../package.json";
 import { formatVersionLabel } from "../server/app-version";
+import { websiteHref } from "../server/hosted-hrefs";
 
 function GitHubMark() {
   return (
@@ -14,7 +15,24 @@ function GitHubMark() {
   );
 }
 
-export function SiteFooter() {
+export async function SiteFooter() {
+  const [
+    installationHref,
+    howItWorksHref,
+    pricingHref,
+    docsHref,
+    contactHref,
+    privacyHref,
+    termsHref
+  ] = await Promise.all([
+    websiteHref("/#installation"),
+    websiteHref("/#how-it-works"),
+    websiteHref("/#pricing"),
+    websiteHref("/docs/api"),
+    websiteHref("/contact"),
+    websiteHref("/privacy-policy"),
+    websiteHref("/terms-of-service")
+  ]);
   return (
     <footer className="site-footer">
       <div className="footer-main">
@@ -44,15 +62,15 @@ export function SiteFooter() {
         <nav className="footer-navigation" aria-label="Footer">
           <div>
             <p>Product</p>
-            <Link href="/#installation">Installation</Link>
-            <Link href="/#how-it-works">How it works</Link>
-            <Link href="/#pricing">Pricing</Link>
+            <Link href={installationHref}>Installation</Link>
+            <Link href={howItWorksHref}>How it works</Link>
+            <Link href={pricingHref}>Pricing</Link>
           </div>
           <div>
             <p>Resources</p>
-            <Link href="/docs/api">API docs</Link>
+            <Link href={docsHref}>API docs</Link>
             <a href="https://github.com/conn-castle/agent-outbox">GitHub</a>
-            <Link href="/contact">Contact</Link>
+            <Link href={contactHref}>Contact</Link>
           </div>
         </nav>
       </div>
@@ -63,8 +81,8 @@ export function SiteFooter() {
         </p>
         <div className="footer-meta-links">
           <nav className="footer-legal-links" aria-label="Legal">
-            <Link href="/privacy-policy">Privacy Policy</Link>
-            <Link href="/terms-of-service">Terms of Service</Link>
+            <Link href={privacyHref}>Privacy Policy</Link>
+            <Link href={termsHref}>Terms of Service</Link>
             <a href="https://github.com/conn-castle/agent-outbox/blob/main/LICENSE">
               Software License
             </a>

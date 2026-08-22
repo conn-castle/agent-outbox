@@ -36,10 +36,12 @@ export function ViewStateFields() {
 
 export function InlineQuickAction({
   row,
-  action
+  action,
+  className
 }: {
   row: HumanReviewListRow;
   action: HumanReviewBulkAction;
+  className?: string;
 }) {
   return (
     <form className="inline-action-form" action={submitHumanAnswer}>
@@ -53,7 +55,9 @@ export function InlineQuickAction({
         returnToQueue
       />
       <SubmitButton
-        className={actionAppearanceClass("inline-action-button", action)}
+        className={
+          className ?? actionAppearanceClass("inline-action-button", action)
+        }
         icon={action.icon}
         label={action.display}
       />

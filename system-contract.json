@@ -1,5 +1,6 @@
 {
   "hosted_app_base_url": "https://app.agent-outbox.dev",
+  "hosted_website_base_url": "https://agent-outbox.dev",
   "scheduled_cleanup_cron": "17 * * * *",
   "input_submission_body_bytes": 128000,
   "human_answer_response_body_bytes": 128000,

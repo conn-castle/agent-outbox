@@ -120,3 +120,8 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: Policy gates run in a dedicated PR workflow for megachange, destructive migrations, and public legal-policy changes. Agents must never apply `megachange-approved`, `migration-destructive-approved`, or `legal-policy-approved`. There is no `ready-for-merge` label or second merge-CI phase.
     Reason: Ordinary PR CI already covers the full verification surface, so a label-gated merge phase would add delay without a faster inner loop. Human-only labels still need a required check that fails until a person applies them in GitHub.
     Tradeoffs: Applying an approval label retriggers only Policy gates, not the heavier CI jobs; a real-user-journey certification gate is deferred until that harness exists.
+
+- Decision 2026-08-21 public-website-app-subdomain: Keep marketing on the apex and the app on the app subdomain
+    Decision: `https://agent-outbox.dev` is the public landing/docs origin. `https://app.agent-outbox.dev` remains the human app and caller API origin. Do not serve the app under `/app` on the apex.
+    Reason: The landing page must be the googled root URL, while the caller API, CLI default, Clerk session cookies, and existing production origin already use the app subdomain.
+    Tradeoffs: One Worker still serves both hostnames, so host redirects and nav links have to stay aligned; this avoids a breaking API origin change and keeps auth cookies off the marketing site.

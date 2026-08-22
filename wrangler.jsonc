@@ -10,6 +10,10 @@
     {
       "pattern": "app.agent-outbox.dev",
       "custom_domain": true
+    },
+    {
+      "pattern": "agent-outbox.dev",
+      "custom_domain": true
     }
   ],
   "triggers": {

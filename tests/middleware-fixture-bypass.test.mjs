@@ -24,7 +24,7 @@ const resolveMiddlewareTestSpecifier = (specifier, context, nextResolve) => {
 
   if (
     context.parentURL?.endsWith("/middleware.ts") &&
-    specifier.startsWith("./src/server/")
+    specifier.startsWith("./src/")
   ) {
     return nextResolve(new URL(`${specifier}.ts`, context.parentURL).href);
   }
@@ -235,6 +235,59 @@ test("middleware passes through unprotected routes when Clerk config is missing"
   }
 });
 
+test("middleware sends website-host app paths to the app origin", async () => {
+  const previous = captureMiddlewareEnv();
+  try {
+    setEnv("NODE_ENV", "production");
+    setEnv("APP_ENV", "production");
+    delete process.env.CLERK_SECRET_KEY;
+    delete process.env.CLERK_PUBLISHABLE_KEY;
+    const response = await middlewareResponse(
+      "https://agent-outbox.dev/sign-up"
+    );
+    assert.equal(response.status, 308);
+    assert.equal(
+      response.headers.get("location"),
+      "https://app.agent-outbox.dev/sign-up"
+    );
+  } finally {
+    restoreEnv(previous);
+  }
+});
+
+test("middleware keeps the marketing page on the website root", async () => {
+  const previous = captureMiddlewareEnv();
+  try {
+    setEnv("NODE_ENV", "production");
+    setEnv("APP_ENV", "production");
+    delete process.env.CLERK_SECRET_KEY;
+    delete process.env.CLERK_PUBLISHABLE_KEY;
+    const response = await middlewareResponse("https://agent-outbox.dev/");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-middleware-next"), "1");
+  } finally {
+    restoreEnv(previous);
+  }
+});
+
+test("middleware sends the app origin root to the review queue", async () => {
+  const previous = captureMiddlewareEnv();
+  try {
+    setEnv("NODE_ENV", "production");
+    setEnv("APP_ENV", "production");
+    delete process.env.CLERK_SECRET_KEY;
+    delete process.env.CLERK_PUBLISHABLE_KEY;
+    const response = await middlewareResponse("https://app.agent-outbox.dev/");
+    assert.equal(response.status, 307);
+    assert.equal(
+      response.headers.get("location"),
+      "https://app.agent-outbox.dev/human"
+    );
+  } finally {
+    restoreEnv(previous);
+  }
+});
+
 test("middleware fixture bypass passes through protected routes before Clerk", async () => {
   const previous = captureMiddlewareEnv();
 
@@ -272,8 +325,13 @@ function captureMiddlewareEnv() {
  * @returns {Promise<Response>}
  */
 async function middlewareResponse(url) {
+  const parsed = new URL(url);
   const result = await middleware(
-    new NextRequest(url),
+    new NextRequest(url, {
+      headers: {
+        host: parsed.host
+      }
+    }),
     /** @type {import("next/server").NextFetchEvent} */ ({})
   );
 

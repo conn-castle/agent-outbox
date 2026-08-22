@@ -2,6 +2,7 @@ import rawSystemContract from "../../system-contract.json" with { type: "json" }
 
 export type SystemContract = Readonly<{
   hostedAppBaseUrl: string;
+  hostedWebsiteBaseUrl: string;
   scheduledCleanupCron: string;
   inputSubmissionBodyBytes: number;
   humanAnswerResponseBodyBytes: number;
@@ -19,6 +20,7 @@ const SYSTEM_CONTRACT_JSON_FIELDS = [
   "control_plane_setup_code_expiry_seconds",
   "default_device_poll_interval_seconds",
   "hosted_app_base_url",
+  "hosted_website_base_url",
   "human_answer_response_body_bytes",
   "input_submission_body_bytes",
   "output_page_default_limit",
@@ -53,6 +55,29 @@ function nonEmptyString(value: unknown, name: string): string {
   return value;
 }
 
+function httpsOrigin(value: unknown, name: string): string {
+  const origin = nonEmptyString(value, name);
+  try {
+    const url = new URL(origin);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash ||
+      origin !== url.origin
+    ) {
+      throw new TypeError();
+    }
+  } catch {
+    throw new TypeError(
+      `system-contract.json ${name} must be an absolute HTTPS origin without credentials or a trailing slash.`
+    );
+  }
+  return origin;
+}
+
 export function validateSystemContract(value: unknown): SystemContract {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("system-contract.json must contain an object.");
@@ -68,26 +93,17 @@ export function validateSystemContract(value: unknown): SystemContract {
   ) {
     throw new TypeError("system-contract.json fields must be exact.");
   }
-  const hostedAppBaseUrl = nonEmptyString(
+  const hostedAppBaseUrl = httpsOrigin(
     contract.hosted_app_base_url,
     "hosted_app_base_url"
   );
-  try {
-    const url = new URL(hostedAppBaseUrl);
-    if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      url.pathname !== "/" ||
-      url.search ||
-      url.hash ||
-      hostedAppBaseUrl !== url.origin
-    ) {
-      throw new TypeError();
-    }
-  } catch {
+  const hostedWebsiteBaseUrl = httpsOrigin(
+    contract.hosted_website_base_url,
+    "hosted_website_base_url"
+  );
+  if (hostedWebsiteBaseUrl === hostedAppBaseUrl) {
     throw new TypeError(
-      "system-contract.json hosted_app_base_url must be an absolute HTTPS origin without credentials or a trailing slash."
+      "system-contract.json hosted_website_base_url must differ from hosted_app_base_url."
     );
   }
 
@@ -126,6 +142,7 @@ export function validateSystemContract(value: unknown): SystemContract {
 
   return Object.freeze({
     hostedAppBaseUrl,
+    hostedWebsiteBaseUrl,
     scheduledCleanupCron: nonEmptyString(
       contract.scheduled_cleanup_cron,
       "scheduled_cleanup_cron"

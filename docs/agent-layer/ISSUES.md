@@ -28,16 +28,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-08-17 review-keyboard-navigation: Advertised review-queue keyboard navigation is broken
-    Priority: High. Area: Human review / Accessibility
-    Description: The workspace tries to focus `.row-link` elements for keyboard navigation, but the row frame renders them as unfocusable divs; the shortcut can also prevent native page scrolling without moving focus.
-    Next step: Align the shortcut behavior and focus targets with the documented keyboard contract, including native scrolling when no eligible target exists.
-
-- Issue 2026-08-17 overflow-menu-actions: The More menu omits caller-provided overflow actions
-    Priority: High. Area: Human review / Actions
-    Description: The menu shows the invented `Review remaining outcomes` item instead of the caller's named actions marked `overflow: true`, contrary to the canonical compact-action placement.
-    Next step: Render the canonical overflow actions in the More menu and remove content not supplied or defined by the contract.
-
 - Issue 2026-08-17 row-popup-action-selection: Popup-bearing row actions lose their selected action
     Priority: High. Area: Human review / Actions
     Description: Selecting a row action such as `Request changes` opens Details without its composer active, forcing the person to locate and select the same action again.

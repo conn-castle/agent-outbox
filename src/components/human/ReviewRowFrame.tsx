@@ -41,7 +41,11 @@ export function ReviewRowFrame({
         <div className="row-heading">{heading}</div>
         <div className="row-copy">
           <div className="row-primary">
-            <div className={classes("row-link", slotClassNames?.title)}>
+            <div
+              className={classes("row-link", slotClassNames?.title)}
+              tabIndex={0}
+              data-href={href}
+            >
               <span className="row-link-heading">{title}</span>
               {subtitle}
             </div>

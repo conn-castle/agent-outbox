@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { appHref, websiteHref } from "../server/hosted-hrefs";
+
 function GitHubMark() {
   return (
     <svg aria-hidden="true" viewBox="0 0 16 16">
@@ -11,19 +13,27 @@ function GitHubMark() {
   );
 }
 
-export function SiteHeader() {
+export async function SiteHeader() {
+  const [homeHref, signInHref, signUpHref] = await Promise.all([
+    websiteHref("/"),
+    appHref("/sign-in"),
+    appHref("/sign-up")
+  ]);
+  const installationHref = await websiteHref("/#installation");
+  const howItWorksHref = await websiteHref("/#how-it-works");
+  const pricingHref = await websiteHref("/#pricing");
   return (
     <header className="topbar">
-      <Link className="brand product-wordmark" href="/">
+      <Link className="brand product-wordmark" href={homeHref}>
         <img src="/agent-outbox-mark.svg" alt="" width="44" height="44" />
         <span>
           Agent <b>Outbox</b>
         </span>
       </Link>
       <nav className="nav" aria-label="Primary">
-        <Link href="/#installation">Installation</Link>
-        <Link href="/#how-it-works">How it works</Link>
-        <Link href="/#pricing">Pricing</Link>
+        <Link href={installationHref}>Installation</Link>
+        <Link href={howItWorksHref}>How it works</Link>
+        <Link href={pricingHref}>Pricing</Link>
         <a
           className="nav-icon-link"
           href="https://github.com/conn-castle/agent-outbox"
@@ -31,8 +41,8 @@ export function SiteHeader() {
         >
           <GitHubMark />
         </a>
-        <Link href="/sign-in">Sign in</Link>
-        <Link className="nav-cta" href="/sign-up">
+        <Link href={signInHref}>Sign in</Link>
+        <Link className="nav-cta" href={signUpHref}>
           Get started
         </Link>
       </nav>

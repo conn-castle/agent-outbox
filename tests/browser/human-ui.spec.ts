@@ -1058,6 +1058,70 @@ test("canonical row visuals and popup constraints expose only supported semantic
   ).toBeVisible();
 });
 
+test("queue More menu lists caller overflow actions", async ({ page }) => {
+  await page.goto("/human?status=all");
+  const row = reviewRowByTitle(page, "Review neighborhood permit brief");
+  await row.locator("details.row-overflow > summary").click();
+  const menu = row.locator(".row-overflow-menu");
+  await expect(menu.getByRole("link", { name: "Request edit" })).toBeVisible();
+  await expect(
+    menu.getByRole("link", { name: "Attach evidence" })
+  ).toBeVisible();
+  await expect(
+    menu.getByRole("link", { name: "Set review lane" })
+  ).toBeVisible();
+  await expect(menu.getByText("Review remaining outcomes")).toHaveCount(0);
+
+  await menu.getByRole("link", { name: "Request edit" }).click();
+  await expect(page).toHaveURL(/compose=request_edit/);
+  await expect(
+    page.getByRole("dialog", { name: "Request edit" })
+  ).toBeVisible();
+});
+
+test("queue J and K move between rows and Enter opens details", async ({
+  page
+}) => {
+  await page.goto("/human?status=all");
+  const rows = page.locator(".review-list .row-link");
+  await expect(rows.first()).toBeVisible();
+
+  await page.keyboard.press("j");
+  await expect(rows.first()).toBeFocused();
+
+  await page.keyboard.press("j");
+  await expect(rows.nth(1)).toBeFocused();
+
+  await page.keyboard.press("k");
+  await expect(rows.first()).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/item=/);
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
+
+test("queue J does not steal typing from search or move past the last row", async ({
+  page
+}) => {
+  await page.goto("/human?status=all");
+  await openReviewTools(page);
+  const search = page.getByLabel("Search");
+  await search.click();
+  await page.keyboard.press("j");
+  await expect(search).toHaveValue("j");
+  await expect(
+    page.locator(".review-list .row-link").first()
+  ).not.toBeFocused();
+
+  await page.goto("/human?status=all");
+  const rows = page.locator(".review-list .row-link");
+  await expect(rows.first()).toBeVisible();
+  const count = await rows.count();
+  await rows.last().focus();
+  await page.keyboard.press("j");
+  await expect(rows.nth(count - 1)).toBeFocused();
+});
+
 test("mobile review navigation preserves the queue view", async ({
   page,
   isMobile
