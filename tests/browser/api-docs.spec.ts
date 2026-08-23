@@ -482,3 +482,93 @@ test("review-row anatomy uses the live structure and exposes content sizing", as
     });
   expect(compactHeaderOverlap).toBe(0);
 });
+
+test("API docs are reachable from the primary navigation", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "The compact header reaches docs through its menu");
+
+  await page.goto("/");
+
+  const primaryNav = page.getByRole("navigation", { name: "Primary" });
+  await expect(primaryNav.getByRole("button", { name: "Menu" })).toBeHidden();
+  await expect(primaryNav.getByRole("link", { name: "Docs" })).toHaveAttribute(
+    "href",
+    "/docs/api"
+  );
+
+  await primaryNav.getByRole("link", { name: "Docs" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Build your first human checkpoint",
+      level: 1
+    })
+  ).toBeVisible();
+});
+
+test("the compact header reaches every destination through its menu", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(!isMobile, "Compact-header contract");
+
+  await page.goto("/");
+
+  const primaryNav = page.getByRole("navigation", { name: "Primary" });
+  const toggle = primaryNav.getByRole("button", { name: "Menu" });
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
+  await expect(
+    primaryNav.getByRole("link", { name: "Get started" })
+  ).toBeVisible();
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  for (const name of [
+    "Installation",
+    "How it works",
+    "Pricing",
+    "Docs",
+    "Sign in"
+  ]) {
+    await expect(primaryNav.getByRole("link", { name })).toBeVisible();
+  }
+
+  await page.keyboard.press("Escape");
+  await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
+
+  await toggle.click();
+  await page.locator(".landing-hero").click({ position: { x: 5, y: 5 } });
+  await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
+
+  await toggle.click();
+  await primaryNav.getByRole("link", { name: "Docs" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Build your first human checkpoint",
+      level: 1
+    })
+  ).toBeVisible();
+  await expect(
+    primaryNav.getByRole("button", { name: "Menu" })
+  ).toHaveAttribute("aria-expanded", "false");
+});
+
+test("the compact legal header keeps its navigation inside the menu", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(!isMobile, "Compact-header contract");
+
+  await page.goto("/privacy-policy");
+
+  const primaryNav = page.getByRole("navigation", { name: "Primary" });
+  const toggle = primaryNav.getByRole("button", { name: "Menu" });
+  await expect(toggle).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
+
+  await toggle.click();
+  await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeVisible();
+});

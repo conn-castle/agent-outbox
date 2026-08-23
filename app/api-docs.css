@@ -486,10 +486,6 @@
     padding: 0.85rem 1rem;
   }
 
-  .shell:has(.api-docs-page) .nav a:not(.nav-cta) {
-    display: none;
-  }
-
   .api-docs-hero {
     grid-template-columns: 1fr;
     gap: 2.5rem;
