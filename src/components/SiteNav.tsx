@@ -35,7 +35,9 @@ export function SiteNav({
   const navRef = useRef<HTMLElement | null>(null);
   const pathname = usePathname();
 
-  // Any navigation resolves to a new pathname, so the menu must not outlive it.
+  // Covers navigation the panel itself does not originate, such as history
+  // traversal. Same-page fragment links keep the pathname, so the panel also
+  // closes itself on link activation below.
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
@@ -79,7 +81,17 @@ export function SiteNav({
         <span className="nav-toggle-bars" aria-hidden="true" />
         Menu
       </button>
-      <div className="nav-links" id={panelId}>
+      <div
+        className="nav-links"
+        id={panelId}
+        onClick={(event) => {
+          // Fragment links keep the pathname unchanged, so the panel would
+          // otherwise stay open over the section the user just selected.
+          if ((event.target as HTMLElement).closest("a")) {
+            setOpen(false);
+          }
+        }}
+      >
         <Link href={installationHref}>Installation</Link>
         <Link href={howItWorksHref}>How it works</Link>
         <Link href={pricingHref}>Pricing</Link>

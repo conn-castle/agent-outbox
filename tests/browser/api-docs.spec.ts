@@ -544,6 +544,12 @@ test("the compact header reaches every destination through its menu", async ({
   await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
 
   await toggle.click();
+  await primaryNav.getByRole("link", { name: "Installation" }).click();
+  await expect(page).toHaveURL(/#installation$/);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
+
+  await toggle.click();
   await primaryNav.getByRole("link", { name: "Docs" }).click();
   await expect(
     page.getByRole("heading", {
