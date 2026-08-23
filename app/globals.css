@@ -182,6 +182,21 @@ svg {
   color: var(--amber-light);
 }
 
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: clamp(1rem, 2.5vw, 2rem);
+}
+
+/* The toggle only exists in the compact header; desktop shows the links inline. */
+.nav-toggle {
+  display: none;
+}
+
+.nav-icon-label {
+  display: none;
+}
+
 .shell:has(.human-workspace) .topbar,
 .shell:has(.legal-main) .topbar {
   color: var(--text);
@@ -1899,6 +1914,90 @@ code {
 }
 
 @media (max-width: 760px) {
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.55rem;
+    padding: 0.58rem 0.9rem;
+    border: 1px solid var(--nav-panel-line, var(--line-on-ink));
+    border-radius: 999px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .nav-toggle-bars,
+  .nav-toggle-bars::before,
+  .nav-toggle-bars::after {
+    display: block;
+    width: 1rem;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+    content: "";
+  }
+
+  .nav-toggle-bars {
+    position: relative;
+  }
+
+  .nav-toggle-bars::before {
+    position: absolute;
+    top: -5px;
+  }
+
+  .nav-toggle-bars::after {
+    position: absolute;
+    top: 5px;
+  }
+
+  .nav {
+    position: relative;
+  }
+
+  .nav-links {
+    position: absolute;
+    top: calc(100% + 0.75rem);
+    right: 0;
+    z-index: 30;
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    min-width: 12rem;
+    padding: 0.4rem;
+    border: 1px solid var(--nav-panel-line, var(--line-on-ink));
+    border-radius: 0.9rem;
+    background: var(--nav-panel-bg, var(--ink-raised));
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  }
+
+  .nav[data-menu-open="true"] .nav-links {
+    display: flex;
+  }
+
+  .nav-links a {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 2.75rem;
+    padding: 0 0.75rem;
+    border-radius: 0.6rem;
+  }
+
+  .nav-icon-label {
+    display: inline;
+  }
+
+  .shell:has(.legal-main) .nav-links {
+    --nav-panel-bg: var(--paper);
+    --nav-panel-line: #ddd6ca;
+  }
+
   .shell:has(.landing) .topbar,
   .shell:has(.legal-main) .topbar {
     align-items: center;
@@ -1909,10 +2008,6 @@ code {
 
   .shell:has(.landing) .brand span {
     display: inline;
-  }
-
-  .shell:has(.landing) .nav a:not(.nav-cta) {
-    display: none;
   }
 
   .landing-hero {
