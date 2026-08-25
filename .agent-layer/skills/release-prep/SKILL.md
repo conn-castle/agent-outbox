@@ -1,92 +1,184 @@
 ---
 name: release-prep
 description: >-
-  Prepare an Agent Outbox numbered release locally: obtain the operator's exact
-  version, capture every landing-page product screenshot, require human review,
-  attest the reviewed images, bump package metadata, verify, and create the
-  local release-prep commit. Does not push, merge, or deploy.
+  Prepare or ship an Agent Outbox numbered release. Handles fresh and resumed
+  preparation, mandatory human review of new marketing captures, verification,
+  the release commit, an explicitly requested push to main, production workflow
+  dispatch, monitoring, and final tag/release proof.
 ---
 
-# release-prep
+# Agent Outbox numbered release
 
-Invoking this skill authorizes the local release-prep edits and one local
-release-prep commit. It does not authorize pushing, opening or merging a pull
-request, dispatching production, or approving screenshots on the operator's
-behalf.
+Use [the release runbook](../../../docs/ops/release.md) as the canonical source
+for repository and recovery details. This skill supplies the execution order,
+authorization boundaries, and completion checks an agent must not infer.
 
-## Workflow
+## Authorization
 
-1. Require a clean worktree and read the current `package.json` version.
+Match mutations to the operator's request:
 
-2. Always ask the operator:
+- **Prepare** or **prep** authorizes release files and one local release commit.
+- **Push** authorizes pushing the prepared commits to `main` only when the
+  operator says to push or otherwise explicitly names that remote mutation.
+- **Release**, **ship**, or **deploy** authorizes dispatching the production
+  workflow and monitoring it. Production dispatch requires the candidate to be
+  on `origin/main`; it does not by itself authorize pushing local commits.
 
-   *"`current=<current> latest_tag=<latest_tag>`. What should the new version
-   be?"*
+Never approve marketing screenshots for the operator, approve a protected
+GitHub environment, apply a human-only label, deploy with Wrangler locally, or
+create the numbered tag/release by hand. The production workflow owns deploy,
+rollback, tagging, and GitHub Release creation.
 
-   Strip a leading `v` from the response and require stable `X.Y.Z`. Version
-   selection belongs to the operator; semver history may support a bump-type
-   recommendation but never supplies the answer.
+## Release driver
 
-3. Run the executable version gate before capture:
+Run the checked driver from the repository root instead of reconstructing the
+push, dispatch, run-selection, or proof commands:
 
-   ```bash
-   make release-preflight VERSION=<version>
-   ```
+```bash
+release_driver=.agent-layer/skills/release-prep/scripts/release.sh
+```
 
-   This fetches `main` and numbered tags and reports `current`, `latest_tag`,
-   and `target`. The target may equal the package version to resume preparation
-   for an unpublished release. Stop if it is older than the package or fetched
-   `main` version, is not newer than the latest tag, or its numbered tag exists.
+Its commands are intentionally fail-fast and composable:
 
-4. Before editing `package.json`, run `make marketing`. This regenerates every
-   tracked screenshot directly in `public/` and writes the comparison report to
-   `.agent-layer/tmp/marketing-capture/review/review.html`. Git is the review
-   boundary: do not stage or commit the regenerated files yet.
+- `"$release_driver" verify <version>` verifies an approved release diff before
+  commit.
+- `"$release_driver" prepared <version>` proves that the attestation and PNGs
+  are committed and deterministic.
+- `"$release_driver" certify <version>` runs the complete local release and
+  Worker dry-run gates against a committed release.
+- `"$release_driver" push <version>` certifies, pushes `main`, and proves the
+  remote SHA.
+- `"$release_driver" dispatch <version>` dispatches production for the exact
+  `origin/main` SHA and prints the selected run ID and URL.
+- `"$release_driver" prove <version> <candidate-sha>` proves the final tag and
+  GitHub Release.
+- `"$release_driver" ship <version>` performs certify, push, dispatch, wait, and
+  final proof as one operation when all those mutations are explicitly
+  authorized.
 
-5. Report the three tracked PNG paths and the review report, then ask:
+Do not replace a driver failure with unchecked manual commands. Inspect the
+failure and use the runbook's recovery procedure. The only intentionally manual
+preparation steps are screenshot review, attestation, the version edit, diff
+review, and commit creation.
 
-   *"Marketing screenshots regenerated for `<version>`. Review every tracked
-   image and confirm to attest them, or tell me what to fix."*
+## Establish the candidate
 
-   This checkpoint is unconditional, including when regenerated pixels are
-   unchanged. Never infer approval from a prior release, a clean diff, test
-   output, or an agent-authored attestation. On rejection, stop or make the
-   requested product/capture fixes and regenerate the tracked images.
+1. Use the exact version in the operator's request when supplied. Otherwise
+   report `current=<package version> latest_tag=<latest numbered tag>` and ask
+   for the exact stable version. Strip one leading `v`; require `X.Y.Z`. Never
+   choose the version from semver history.
+2. Inspect `git status --short --branch`, the current branch, and recent commits.
+   Preserve unrelated work. Stop if pre-existing changes overlap release files
+   or make the candidate ambiguous. Production releases must ultimately use the
+   exact tip of `origin/main`.
+3. Run `make release-preflight VERSION=<version>`. It fetches `main` and
+   numbered tags. Stop on any version-gate failure; do not work around it.
 
-6. Only after explicit approval, run:
+The preflight intentionally accepts a target equal to `package.json` and
+fetched `main` when its numbered tag is absent. That is the supported resume
+path for an unpublished prepared release.
 
-   ```bash
-   make marketing-approve VERSION=<version>
-   ```
+## Classify preparation state
 
-   This repeats the fetched-tag version gate, then records the reviewed hashes
-   and release version in the manifest. Set `package.json` to the same version.
-   Do not regenerate, replace, or edit screenshots during the remaining release
-   workflow.
+After preflight, choose exactly one path:
 
-7. Run `make marketing-check`, `make marketing-verify`, and the repository's
-   complete required release verification. The verify command may write only
-   ignored evidence under `.agent-layer/tmp`; it must not modify committed
-   marketing files.
+### Already prepared
 
-8. Create one local `chore: release <version>` commit containing the version,
-   marketing manifest, and approved screenshot changes. When fresh captures are
-   pixel-identical, the manifest version is the release-specific attestation and
-   the PNGs need not have artificial byte changes.
+Treat the target as already prepared only when all of these are true:
 
-9. Report the commit SHA and verification result. Stop without pushing,
-   opening a pull request, merging, or dispatching production; those require a
-   separate explicit request and the repository's normal controls.
+- `package.json` and `marketing/screenshots.json` both contain the target;
+- `make marketing-check` succeeds;
+- the attestation and tracked PNGs are committed; and
+- no release-file change is needed for this request.
 
-## Failure boundaries
+Run `"$release_driver" prepared <version>`, but do **not** run `make marketing`, request a new
+visual approval, rewrite the attestation, or manufacture a second release
+commit. The committed manifest is the evidence that the current pixels were
+already reviewed for this exact release.
 
-- Missing screenshots, incomplete manifests, hash disagreement, fresh-capture
-  drift, or a package/manifest version mismatch is a release blocker.
-- A target older than the current package or fetched `main` version, not newer
-  than the latest fetched tag, or whose numbered tag exists, is a release
-  blocker. Equality with the package and `main` version is a supported resume
-  path while the numbered tag remains absent.
-- Never call `marketing-approve` before the operator approves the current
-  tracked screenshots.
-- Never bypass the marketing check in `scripts/production-release.mjs`; the
-  production workflow intentionally fails before certification or deployment.
+### Needs preparation
+
+For a new target or an incomplete/uncommitted attestation:
+
+1. Before changing `package.json`, run `make marketing`. It regenerates all
+   tracked PNGs in `public/` and writes
+   `.agent-layer/tmp/marketing-capture/review/review.html`.
+2. Report the review HTML and these three files:
+   `public/product-review-queue.png`, `public/product-review-ipad.png`, and
+   `public/product-review-mobile.png`.
+3. Stop and ask the operator to review every image and explicitly approve the
+   current capture. This checkpoint applies even when the pixel diff is empty.
+4. Only after that approval, run
+   `make marketing-approve VERSION=<version>` and set `package.json` to the same
+   version. Do not alter the PNGs after approval.
+5. Run `"$release_driver" verify <version>`. A real failure blocks release; a
+   genuinely unavailable external prerequisite must be reported rather than
+   disguised as success.
+6. Review the diff and create one `chore: release <version>` commit containing
+   only the required version, manifest, and approved screenshot changes. If the
+   release files were committed as part of the candidate already, do not create
+   an empty or artificial release commit.
+
+Do not continue from rejected screenshots, capture drift, hash disagreement,
+package/manifest mismatch, a dirty release-file diff, or failed verification.
+
+## Push when authorized
+
+Before pushing, inspect the commits that will enter `main` and confirm they are
+all in scope. Then run:
+
+```bash
+"$release_driver" push <version>
+```
+
+Record the emitted `CANDIDATE_SHA`. The driver fails unless
+`refs/remotes/origin/main` equals that SHA.
+
+## Dispatch and monitor when authorized
+
+Immediately before dispatch, rerun
+`make release-preflight VERSION=<version>` and confirm:
+
+- the worktree is clean;
+- local `HEAD` and `origin/main` equal the recorded candidate;
+- `package.json` and the marketing manifest contain the target; and
+- `v<version>` still does not exist.
+
+Dispatch only from `main` using the driver:
+
+```bash
+"$release_driver" dispatch <version>
+```
+
+It selects the newly created **Release Production** run whose `headSha` equals
+the candidate and whose event is `workflow_dispatch`, then prints `RUN_ID` and
+`RUN_URL`. Monitor that exact run with `gh run watch <id> --exit-status`.
+
+If GitHub reports that protected-environment approval is required, give the
+operator the exact run URL and wait. Never approve it on their behalf. If the
+workflow fails, inspect the failed job logs, follow the recovery rules in the
+release runbook, and redispatch only when the failure is safely retryable. Do
+not create or move tags manually to turn a failed run green.
+
+## Prove completion
+
+The release is complete only after the workflow is green and all of these
+checks agree:
+
+- `refs/tags/v<version>` resolves to the recorded candidate SHA;
+- `gh release view v<version>` reports a published, non-draft GitHub Release;
+- `origin/main` still resolves to the candidate; and
+- the production workflow's deploy and live runtime verification succeeded.
+
+Use `"$release_driver" prove <version> <candidate-sha>` for the tag, release, and
+remote-SHA checks. When certify, push, dispatch, and release are all authorized
+at once, prefer `"$release_driver" ship <version>` so the same candidate SHA is
+carried through the whole operation automatically.
+
+When configured operator env files are available, also run the post-release
+`make smoke-runtime` and `make hosted-health` checks from the runbook. Report an
+exit code `2` as missing owner evidence, not success.
+
+Report the candidate SHA, pushed branch, workflow URL/result, tag, GitHub
+Release URL, and post-release check results. Never report completion merely
+because dispatch succeeded.
