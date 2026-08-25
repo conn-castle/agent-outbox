@@ -33,11 +33,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Selecting a row action such as `Request changes` opens Details without its composer active, forcing the person to locate and select the same action again.
     Next step: Preserve action identity when routing into Details and open the selected action's popup directly.
 
-- Issue 2026-08-17 row-accent-fallback: Missing row accents fall back to a neutral divider
-    Priority: High. Area: Human review / Visual design
-    Description: Rows without `row_accent_color` use `--review-line` at rest instead of the accepted product-accent fallback.
-    Next step: Make the no-caller-color state use the canonical product accent.
-
 - Issue 2026-08-17 queue-priority-treatment: Queue priority lacks a meaningful visible treatment
     Priority: Medium. Area: Human review / Visual design
     Description: Priority is conveyed mainly through screen-reader text and a very small background-mix change that shares the caller-accent channel, so Low, Normal, High, and Urgent are not visibly distinct as documented.

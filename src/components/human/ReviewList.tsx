@@ -77,14 +77,16 @@ export function ReviewList({
         return (
           <li key={row.inputItemId}>
             <ReviewRowFrame
-              className={`review-row row-priority-${row.priority}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
+              className={`review-row row-status-${row.status} row-priority-${row.priority}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
                 selectionMode ? " selection-mode" : ""
               }`}
               style={
-                {
-                  "--row-accent": rowAccentColor ?? "#7a746c",
-                  "--row-hover-accent": rowAccentColor ?? "#7a746c"
-                } as CSSProperties
+                rowAccentColor
+                  ? ({
+                      "--row-accent": rowAccentColor,
+                      "--row-hover-accent": rowAccentColor
+                    } as CSSProperties)
+                  : undefined
               }
               selection={
                 selectionMode ? (
@@ -234,7 +236,9 @@ export function ReviewList({
                       </span>
                     ) : null}
                     {row.output ? (
-                      <span>Answered {row.output.actionDisplay}</span>
+                      <span className="row-result">
+                        Decision: {row.output.actionDisplay}
+                      </span>
                     ) : null}
                   </>
                 ) : undefined

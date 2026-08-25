@@ -27,6 +27,7 @@ type BrowserFixtureSessionInput = {
 export type BrowserFixtureStoryboardScenario = {
   inputItemId: string;
   callerItemId: string;
+  status: HumanReviewListRow["status"];
   title: string;
   rowType: string;
   caller: string;
@@ -112,10 +113,8 @@ export function browserFixtureReviewPage(
   );
   const filtered = browserFixtureReviewRows(effectiveOptions).filter((row) => {
     const resolved = resolvedIds.has(row.inputItemId);
-    if (resolved && view.status === "pending") return false;
-    if (!resolved && view.status !== "all" && row.status !== view.status) {
-      return false;
-    }
+    const effectiveStatus = resolved ? "answered" : row.status;
+    if (effectiveStatus !== view.status) return false;
     if (!terms) return true;
     return [
       stripTags(row.titleHtml),
@@ -136,7 +135,11 @@ export function browserFixtureReviewPage(
       return updated || left.inputItemId.localeCompare(right.inputItemId);
     });
   const overlayed = filtered.map((row) =>
-    applyFixtureResolvedState(row, resolvedItems[row.inputItemId])
+    applyFixtureResolvedState(
+      row,
+      resolvedItems[row.inputItemId],
+      resolvedIds.has(row.inputItemId)
+    )
   );
   const offset = (view.page - 1) * REVIEW_PAGE_SIZE;
   const window = overlayed.slice(offset, offset + REVIEW_PAGE_SIZE + 1);
@@ -169,31 +172,38 @@ export function browserFixtureReviewDetail(
 
 function applyFixtureResolvedState<T extends HumanReviewListRow>(
   row: T,
-  resolved: BrowserFixtureResolvedItem | undefined
+  resolved: BrowserFixtureResolvedItem | undefined,
+  isResolved = Boolean(resolved)
 ): T {
-  if (!resolved) {
+  if (!isResolved) {
     return row;
   }
   return {
     ...row,
     status: "answered",
-    answeredAt: resolved.answeredAt,
-    output: {
-      outputResultId: fixtureUuid(`fixture-resolved-output:${row.inputItemId}`),
-      actionValue: "fixture_resolved",
-      actionDisplay: resolved.actionDisplay,
-      answeredAt: resolved.answeredAt,
-      firstReadAt: null,
-      readCount: 0,
-      undoEligible: true
-    },
-    bulkActions: [],
-    hasOverflowActions: false,
-    ...("actions" in row
+    ...(resolved
       ? {
-          actions: (
-            row as T & { actions: HumanReviewDetail["actions"] }
-          ).actions.map((action) => ({ ...action, answerable: false }))
+          answeredAt: resolved.answeredAt,
+          output: {
+            outputResultId: fixtureUuid(
+              `fixture-resolved-output:${row.inputItemId}`
+            ),
+            actionValue: "fixture_resolved",
+            actionDisplay: resolved.actionDisplay,
+            answeredAt: resolved.answeredAt,
+            firstReadAt: null,
+            readCount: 0,
+            undoEligible: true
+          },
+          bulkActions: [],
+          hasOverflowActions: false,
+          ...("actions" in row
+            ? {
+                actions: (
+                  row as T & { actions: HumanReviewDetail["actions"] }
+                ).actions.map((action) => ({ ...action, answerable: false }))
+              }
+            : {})
         }
       : {})
   };
@@ -214,6 +224,7 @@ export function browserFixtureStoryboardScenarios(): BrowserFixtureStoryboardSce
     return {
       inputItemId: detail.inputItemId,
       callerItemId: detail.callerItemId,
+      status: detail.status,
       title: plainFixtureText(detail.titleHtml),
       rowType: detail.rowType.display,
       caller: detail.caller.displayName,

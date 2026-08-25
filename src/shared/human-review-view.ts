@@ -7,7 +7,7 @@ export const HUMAN_REVIEW_VIEW_PARAM_KEYS = [
 
 export type HumanReviewView = {
   search: string;
-  status: "all" | "pending" | "answered";
+  status: "pending" | "answered";
   sort: "priority" | "updated_at";
   page: number;
 };
@@ -69,7 +69,7 @@ function parseHumanReviewView(
 
   return {
     search: read("search")?.trim() ?? "",
-    status: status === "all" || status === "answered" ? status : "pending",
+    status: status === "answered" ? "answered" : "pending",
     sort: sort === "updated_at" ? "updated_at" : "priority",
     page: Number.isSafeInteger(parsedPage) && parsedPage >= 1 ? parsedPage : 1
   };

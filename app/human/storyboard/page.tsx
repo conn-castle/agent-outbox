@@ -223,10 +223,14 @@ function RowLayoutStoryboard() {
 }
 
 function humanPreviewHref(
-  scenario: { inputItemId: string; callerItemId: string },
+  scenario: {
+    inputItemId: string;
+    callerItemId: string;
+    status: "pending" | "answered";
+  },
   mode: StoryboardMode
 ) {
-  const params = new URLSearchParams({ status: "all" });
+  const params = new URLSearchParams({ status: scenario.status });
   if (mode === "detail") {
     params.set("item", scenario.inputItemId);
   } else {

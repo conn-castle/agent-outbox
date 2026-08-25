@@ -104,6 +104,11 @@ test("human review view parsing and links share canonical defaults", () => {
     page: 1
   });
   assert.equal(retained.toString(), "fixture_signup=1");
+  assert.equal(
+    humanReviewViewFromRecord({ status: "all" }).status,
+    "pending",
+    "the removed mixed-status view must resolve to the review queue"
+  );
 
   for (const invalidPage of ["0", "-1", "1.5", "not-a-page"]) {
     assert.equal(
@@ -172,6 +177,35 @@ test("fixture resolved items leave pending and appear as answered history", () =
   assert.ok(historyRow);
   assert.equal(historyRow.status, "answered");
   assert.equal(historyRow.output?.actionDisplay, "Approve");
+});
+
+test("fixture resolved marker leaves pending and appears as answered history", () => {
+  /** @type {import("../src/shared/human-review-view.ts").HumanReviewView} */
+  const pendingView = {
+    search: "",
+    status: "pending",
+    sort: "priority",
+    page: 1
+  };
+  const target = browserFixtureReviewPage(pendingView).rows[0];
+  assert.ok(target);
+
+  const options = { resolvedItemId: target.inputItemId };
+  const pending = browserFixtureReviewPage(pendingView, options);
+  assert.equal(
+    pending.rows.some((row) => row.inputItemId === target.inputItemId),
+    false
+  );
+
+  const answered = browserFixtureReviewPage(
+    { ...pendingView, status: "answered" },
+    options
+  );
+  const historyRow = answered.rows.find(
+    (row) => row.inputItemId === target.inputItemId
+  );
+  assert.ok(historyRow);
+  assert.equal(historyRow.status, "answered");
 });
 
 test("account banner distinguishes zero, unlimited, and self-hosted billing", () => {
