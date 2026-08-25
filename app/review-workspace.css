@@ -984,7 +984,7 @@ body:has(.shell > .human-workspace) {
   border-radius: 999px;
   background: var(--visual-color);
   box-shadow: none;
-  color: #fff;
+  color: var(--visual-foreground);
   white-space: nowrap;
 }
 
@@ -2653,7 +2653,6 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .row-context .pill-visual {
-  --visual-color: var(--row-accent);
   display: inline-flex;
   gap: 0.4rem;
   min-height: 1.75rem;
@@ -2662,7 +2661,7 @@ body:has(.shell > .human-workspace) {
   border-radius: 999px;
   background: var(--visual-color);
   box-shadow: none;
-  color: #fff;
+  color: var(--visual-foreground);
   white-space: nowrap;
 }
 

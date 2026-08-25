@@ -1043,6 +1043,14 @@ test("canonical row visuals and popup constraints expose only supported semantic
     "External · 3"
   );
   await expect(pillRow.locator(".pill-visual")).not.toContainText("Signal");
+  await expect(pillRow.locator(".pill-visual")).toHaveCSS(
+    "background-color",
+    "rgb(169, 81, 35)"
+  );
+  await expect(pillRow.locator(".pill-visual")).toHaveCSS(
+    "color",
+    "rgb(255, 255, 255)"
+  );
 
   const categoryVisual = reviewRowByTitle(
     page,

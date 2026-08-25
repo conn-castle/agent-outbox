@@ -217,9 +217,10 @@ export function CardVisual({
       <div
         className={`card-visual pill-visual${icon ? " pill-visual-with-icon" : ""}`}
         style={
-          paletteColor
-            ? ({ "--visual-color": paletteColor } as CSSProperties)
-            : undefined
+          {
+            "--visual-color": paletteColor ?? "var(--review-accent)",
+            "--visual-foreground": paletteColor ? "#fff" : "var(--review-ink)"
+          } as CSSProperties
         }
       >
         {icon ? (
