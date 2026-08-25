@@ -47,7 +47,7 @@ docker run --rm --platform linux/amd64 \
     marketing_store="$(mktemp -d /workspace/.agent-layer/tmp/marketing-pnpm-store.XXXXXX)"
     cleanup() { rm -rf -- "$marketing_store"; }
     trap cleanup EXIT
-    pnpm install --frozen-lockfile --store-dir "$marketing_store"
+    pnpm install --frozen-lockfile --store-dir "$marketing_store" --config.confirmModulesPurge=false
     cleanup
     trap - EXIT
     pnpm exec playwright test --config playwright.marketing.config.ts
