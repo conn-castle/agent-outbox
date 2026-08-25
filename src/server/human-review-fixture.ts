@@ -135,7 +135,11 @@ export function browserFixtureReviewPage(
       return updated || left.inputItemId.localeCompare(right.inputItemId);
     });
   const overlayed = filtered.map((row) =>
-    applyFixtureResolvedState(row, resolvedItems[row.inputItemId])
+    applyFixtureResolvedState(
+      row,
+      resolvedItems[row.inputItemId],
+      resolvedIds.has(row.inputItemId)
+    )
   );
   const offset = (view.page - 1) * REVIEW_PAGE_SIZE;
   const window = overlayed.slice(offset, offset + REVIEW_PAGE_SIZE + 1);
@@ -168,31 +172,38 @@ export function browserFixtureReviewDetail(
 
 function applyFixtureResolvedState<T extends HumanReviewListRow>(
   row: T,
-  resolved: BrowserFixtureResolvedItem | undefined
+  resolved: BrowserFixtureResolvedItem | undefined,
+  isResolved = Boolean(resolved)
 ): T {
-  if (!resolved) {
+  if (!isResolved) {
     return row;
   }
   return {
     ...row,
     status: "answered",
-    answeredAt: resolved.answeredAt,
-    output: {
-      outputResultId: fixtureUuid(`fixture-resolved-output:${row.inputItemId}`),
-      actionValue: "fixture_resolved",
-      actionDisplay: resolved.actionDisplay,
-      answeredAt: resolved.answeredAt,
-      firstReadAt: null,
-      readCount: 0,
-      undoEligible: true
-    },
-    bulkActions: [],
-    hasOverflowActions: false,
-    ...("actions" in row
+    ...(resolved
       ? {
-          actions: (
-            row as T & { actions: HumanReviewDetail["actions"] }
-          ).actions.map((action) => ({ ...action, answerable: false }))
+          answeredAt: resolved.answeredAt,
+          output: {
+            outputResultId: fixtureUuid(
+              `fixture-resolved-output:${row.inputItemId}`
+            ),
+            actionValue: "fixture_resolved",
+            actionDisplay: resolved.actionDisplay,
+            answeredAt: resolved.answeredAt,
+            firstReadAt: null,
+            readCount: 0,
+            undoEligible: true
+          },
+          bulkActions: [],
+          hasOverflowActions: false,
+          ...("actions" in row
+            ? {
+                actions: (
+                  row as T & { actions: HumanReviewDetail["actions"] }
+                ).actions.map((action) => ({ ...action, answerable: false }))
+              }
+            : {})
         }
       : {})
   };

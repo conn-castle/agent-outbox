@@ -179,6 +179,35 @@ test("fixture resolved items leave pending and appear as answered history", () =
   assert.equal(historyRow.output?.actionDisplay, "Approve");
 });
 
+test("fixture resolved marker leaves pending and appears as answered history", () => {
+  /** @type {import("../src/shared/human-review-view.ts").HumanReviewView} */
+  const pendingView = {
+    search: "",
+    status: "pending",
+    sort: "priority",
+    page: 1
+  };
+  const target = browserFixtureReviewPage(pendingView).rows[0];
+  assert.ok(target);
+
+  const options = { resolvedItemId: target.inputItemId };
+  const pending = browserFixtureReviewPage(pendingView, options);
+  assert.equal(
+    pending.rows.some((row) => row.inputItemId === target.inputItemId),
+    false
+  );
+
+  const answered = browserFixtureReviewPage(
+    { ...pendingView, status: "answered" },
+    options
+  );
+  const historyRow = answered.rows.find(
+    (row) => row.inputItemId === target.inputItemId
+  );
+  assert.ok(historyRow);
+  assert.equal(historyRow.status, "answered");
+});
+
 test("account banner distinguishes zero, unlimited, and self-hosted billing", () => {
   assert.equal(accountStorageLabel(0, 0), "0 byte capacity");
   assert.equal(accountStorageLabel(42, null), "Unlimited");
