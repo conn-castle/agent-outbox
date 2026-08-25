@@ -34,8 +34,9 @@ behalf.
    ```
 
    This fetches `main` and numbered tags and reports `current`, `latest_tag`,
-   and `target`. Stop if the target is not newer than both the package version
-   and latest tag, or if its numbered tag already exists.
+   and `target`. The target may equal the package version to resume preparation
+   for an unpublished release. Stop if it is older than the package or fetched
+   `main` version, is not newer than the latest tag, or its numbered tag exists.
 
 4. Before editing `package.json`, run `make marketing`. This regenerates every
    tracked screenshot directly in `public/` and writes the comparison report to
@@ -81,8 +82,10 @@ behalf.
 
 - Missing screenshots, incomplete manifests, hash disagreement, fresh-capture
   drift, or a package/manifest version mismatch is a release blocker.
-- A target that is not newer than the current package and latest fetched tag,
-  or whose numbered tag exists, is a release blocker.
+- A target older than the current package or fetched `main` version, not newer
+  than the latest fetched tag, or whose numbered tag exists, is a release
+  blocker. Equality with the package and `main` version is a supported resume
+  path while the numbered tag remains absent.
 - Never call `marketing-approve` before the operator approves the current
   tracked screenshots.
 - Never bypass the marketing check in `scripts/production-release.mjs`; the

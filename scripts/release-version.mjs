@@ -65,16 +65,17 @@ export function verifyReleaseTarget(
       `release target ${targetVersion} already has tag ${targetTag}`
     );
   }
-  if (compareStableVersions(targetVersion, currentVersion) <= 0) {
+  if (compareStableVersions(targetVersion, currentVersion) < 0) {
     throw new Error(
-      `release target ${targetVersion} must be newer than current package version ${currentVersion}`
+      `release target ${targetVersion} is older than current package version ${currentVersion}`
     );
   }
-  // A clean but stale branch can carry an old package.json, so an untagged
-  // release already merged to main would otherwise pass the check above.
-  if (compareStableVersions(targetVersion, mainVersion) <= 0) {
+  // A clean but stale branch can carry an old package.json, so a target older
+  // than the version prepared on main would otherwise pass the check above.
+  // Equality is valid: it resumes preparation for an unpublished version.
+  if (compareStableVersions(targetVersion, mainVersion) < 0) {
     throw new Error(
-      `release target ${targetVersion} must be newer than origin/main package version ${mainVersion}`
+      `release target ${targetVersion} is older than origin/main package version ${mainVersion}`
     );
   }
 

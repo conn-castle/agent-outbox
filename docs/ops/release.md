@@ -21,10 +21,11 @@ make release-preflight VERSION=<new-version>
 
 The preflight fetches `main` and numbered tags, prints the working-tree package
 version, the fetched `main` package version, the latest tag, and the requested
-target, and rejects a target that is not newer than all three existing versions
-or whose tag already exists. Comparing against the fetched `main` revision
-rather than only the working tree keeps a stale branch from re-releasing a
-version that `main` already carries but has not tagged yet.
+target. The target may equal the package and fetched `main` version so an
+unpublished prepared release can be resumed. It rejects a target older than
+either package version, not newer than the latest tag, or whose tag already
+exists. Comparing against the fetched `main` revision rather than only the
+working tree keeps a stale branch from preparing an older version.
 
 Before changing `package.json`, capture the landing-page product screenshots:
 

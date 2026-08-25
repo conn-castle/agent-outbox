@@ -23,27 +23,35 @@ test("release version preflight accepts a target newer than package, main, and t
   );
 });
 
-test("release version preflight rejects the current or an older package version", () => {
-  assert.throws(
-    () => verifyReleaseTarget("0.2.0", "0.2.0", ["v0.1.2"], "0.1.2"),
-    /must be newer than current package version 0\.2\.0/
-  );
+test("release version preflight accepts an unpublished prepared version", () => {
+  assert.deepEqual(verifyReleaseTarget("0.2.2", "0.2.2", ["v0.2.1"], "0.2.2"), {
+    currentVersion: "0.2.2",
+    mainVersion: "0.2.2",
+    latestTag: "v0.2.1",
+    targetVersion: "0.2.2"
+  });
+});
+
+test("release version preflight rejects a target older than the package version", () => {
   assert.throws(
     () => verifyReleaseTarget("0.1.9", "0.2.0", ["v0.1.2"], "0.1.2"),
-    /must be newer than current package version 0\.2\.0/
+    /is older than current package version 0\.2\.0/
   );
 });
 
-test("release version preflight rejects a target already released on main without a tag", () => {
-  // Stale-but-clean branch: the working tree still carries 0.2.0 while main
-  // already merged 0.2.1, and no v0.2.1 tag exists yet.
-  assert.throws(
-    () => verifyReleaseTarget("0.2.1", "0.2.0", ["v0.2.0"], "0.2.1"),
-    /must be newer than origin\/main package version 0\.2\.1/
-  );
+test("release version preflight accepts the unpublished version prepared on main", () => {
+  assert.deepEqual(verifyReleaseTarget("0.2.1", "0.2.0", ["v0.2.0"], "0.2.1"), {
+    currentVersion: "0.2.0",
+    mainVersion: "0.2.1",
+    latestTag: "v0.2.0",
+    targetVersion: "0.2.1"
+  });
+});
+
+test("release version preflight rejects a target older than the version on main", () => {
   assert.throws(
     () => verifyReleaseTarget("0.2.1", "0.2.0", ["v0.2.0"], "0.3.0"),
-    /must be newer than origin\/main package version 0\.3\.0/
+    /is older than origin\/main package version 0\.3\.0/
   );
 });
 

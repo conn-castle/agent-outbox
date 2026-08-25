@@ -401,9 +401,10 @@ make release-preflight VERSION=<new-version>
 Run from: repo root. Prerequisites: the operator supplied the exact stable
 version and the `origin` remote is reachable. Notes: Fetches `main` and numbered
 tags, reports the working-tree package version, the fetched `main` package
-version, latest numbered tag, and target, then rejects an existing tag or a
-target that is not newer than all three existing versions. Run before capturing
-release screenshots.
+version, latest numbered tag, and target. It accepts equality with the package
+and `main` version to resume an unpublished prepared release, and rejects an
+existing tag, a target older than either package version, or a target not newer
+than the latest tag. Run before capturing release screenshots.
 
 - Capture landing-page screenshots for release review
 
