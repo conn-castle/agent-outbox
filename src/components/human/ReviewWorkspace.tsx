@@ -40,12 +40,6 @@ type PersistedWorkspaceState = {
 const WORKSPACE_STATE_KEY_PREFIX = "agent-outbox:human-review-workspace:v1";
 const WORKSPACE_ID_LIMIT = 100;
 
-const STATUS_OPTIONS = [
-  { value: "all", label: "All" },
-  { value: "pending", label: "Pending" },
-  { value: "answered", label: "Answered" }
-] as const;
-
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority" },
   { value: "updated_at", label: "Recent" }
@@ -390,14 +384,24 @@ export function ReviewWorkspace({
         <nav className="app-location" aria-label="Primary">
           <a
             className={view.status === "answered" ? undefined : "active"}
-            href={humanReviewHref({ ...view, status: "pending", page: 1 })}
+            href={humanReviewHref({
+              ...view,
+              search,
+              status: "pending",
+              page: 1
+            })}
             aria-current={view.status === "answered" ? undefined : "page"}
           >
             Review queue
           </a>
           <a
             className={view.status === "answered" ? "active" : undefined}
-            href={humanReviewHref({ ...view, status: "answered", page: 1 })}
+            href={humanReviewHref({
+              ...view,
+              search,
+              status: "answered",
+              page: 1
+            })}
             aria-current={view.status === "answered" ? "page" : undefined}
           >
             History
@@ -450,11 +454,9 @@ export function ReviewWorkspace({
             <div className="queue-heading">
               <span className="queue-eyebrow">Human review</span>
               <h2>
-                {view.status === "all"
-                  ? "All reviews"
-                  : view.status === "pending"
-                    ? "Needs review"
-                    : "Answered reviews"}
+                {view.status === "pending"
+                  ? "Needs review"
+                  : "Answered reviews"}
               </h2>
               <div className="queue-count" aria-label="Current view summary">
                 <strong>{queueCount.value}</strong>
@@ -486,14 +488,14 @@ export function ReviewWorkspace({
               <span className="mobile-tools-state">
                 {mobileToolsOpen
                   ? "Close filters"
-                  : `Search · ${capitalize(view.status)} · ${
+                  : `Search · ${
                       view.sort === "priority" ? "Priority" : "Newest"
                     }`}
               </span>
               <span className="mobile-tools-copy">
                 {mobileToolsOpen
                   ? "Close filters"
-                  : `Search · ${capitalize(view.status)} · ${
+                  : `Search · ${
                       view.sort === "priority" ? "Priority" : "Newest"
                     }`}
               </span>
@@ -548,17 +550,6 @@ export function ReviewWorkspace({
               </form>
               <div className="filter-controls">
                 <SlidersHorizontal aria-hidden="true" />
-                <ViewSelect
-                  label="Status"
-                  value={view.status}
-                  options={STATUS_OPTIONS}
-                  onChange={(status) =>
-                    updateViewImmediately({
-                      status: status as HumanReviewView["status"],
-                      page: 1
-                    })
-                  }
-                />
                 <ViewSelect
                   label="Sort"
                   value={view.sort}
@@ -616,16 +607,29 @@ export function ReviewWorkspace({
                   <kbd>J</kbd>
                   <kbd>K</kbd> move · <kbd>Enter</kbd> open
                 </span>
-                <a
-                  href={humanReviewHref({
-                    ...view,
-                    search: "",
-                    status: "answered",
-                    page: 1
-                  })}
-                >
-                  Review answered decisions
-                </a>
+                {view.status === "pending" ? (
+                  <a
+                    href={humanReviewHref({
+                      ...view,
+                      search: "",
+                      status: "answered",
+                      page: 1
+                    })}
+                  >
+                    Review answered decisions
+                  </a>
+                ) : (
+                  <a
+                    href={humanReviewHref({
+                      ...view,
+                      search: "",
+                      status: "pending",
+                      page: 1
+                    })}
+                  >
+                    Return to review queue
+                  </a>
+                )}
               </div>
             ) : null}
           </div>
@@ -747,10 +751,6 @@ function ViewSelect({
   );
 }
 
-function capitalize(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
 function workspaceStateKey(accountId: string) {
   return `${WORKSPACE_STATE_KEY_PREFIX}:${accountId}`;
 }
@@ -851,12 +851,6 @@ function queueCountCopy(
     return {
       value: `${rowCount}${hasNext ? "+" : ""}`,
       label: "answered"
-    };
-  }
-  if (status === "all") {
-    return {
-      value: String(pendingCount),
-      label: `pending of ${rowCount}${hasNext ? "+" : ""} shown`
     };
   }
   return {

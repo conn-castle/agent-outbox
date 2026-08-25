@@ -104,6 +104,11 @@ test("human review view parsing and links share canonical defaults", () => {
     page: 1
   });
   assert.equal(retained.toString(), "fixture_signup=1");
+  assert.equal(
+    humanReviewViewFromRecord({ status: "all" }).status,
+    "pending",
+    "the removed mixed-status view must resolve to the review queue"
+  );
 
   for (const invalidPage of ["0", "-1", "1.5", "not-a-page"]) {
     assert.equal(

@@ -27,6 +27,7 @@ type BrowserFixtureSessionInput = {
 export type BrowserFixtureStoryboardScenario = {
   inputItemId: string;
   callerItemId: string;
+  status: HumanReviewListRow["status"];
   title: string;
   rowType: string;
   caller: string;
@@ -112,10 +113,8 @@ export function browserFixtureReviewPage(
   );
   const filtered = browserFixtureReviewRows(effectiveOptions).filter((row) => {
     const resolved = resolvedIds.has(row.inputItemId);
-    if (resolved && view.status === "pending") return false;
-    if (!resolved && view.status !== "all" && row.status !== view.status) {
-      return false;
-    }
+    const effectiveStatus = resolved ? "answered" : row.status;
+    if (effectiveStatus !== view.status) return false;
     if (!terms) return true;
     return [
       stripTags(row.titleHtml),
@@ -214,6 +213,7 @@ export function browserFixtureStoryboardScenarios(): BrowserFixtureStoryboardSce
     return {
       inputItemId: detail.inputItemId,
       callerItemId: detail.callerItemId,
+      status: detail.status,
       title: plainFixtureText(detail.titleHtml),
       rowType: detail.rowType.display,
       caller: detail.caller.displayName,

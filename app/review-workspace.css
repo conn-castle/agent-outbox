@@ -1945,17 +1945,18 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace {
-  --review-ink: #171612;
-  --review-paper: #fff;
+  --review-ink: #101416;
+  --review-paper: #fcfcfa;
   --review-paper-soft: #f6f5f1;
   --review-canvas: #f6f5f1;
-  --review-line: #d9d6cc;
+  --review-line: #d4cdc1;
   --review-line-strong: #c9c5ba;
-  --review-text: #171612;
-  --review-muted: #6c6960;
-  --review-faint: #77736a;
-  --review-accent: #cd8b2a;
-  --review-accent-dark: #8a560b;
+  --review-text: #23282c;
+  --review-muted: #5f676b;
+  --review-faint: #687078;
+  --review-accent: #f2a347;
+  --review-accent-light: #f7bd69;
+  --review-accent-dark: #a85722;
   --review-accent-soft: #fbf1df;
   --review-green: #237a4b;
   --review-green-soft: #eaf4ee;
@@ -2006,8 +2007,8 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .app-location a.active {
-  background: rgba(233, 174, 81, 0.12);
-  color: #e9ae51;
+  background: rgba(242, 163, 71, 0.12);
+  color: var(--review-accent-light);
   font-weight: 700;
 }
 
@@ -2213,6 +2214,11 @@ body:has(.shell > .human-workspace) {
   box-shadow: 0 0.75rem 2rem rgba(23, 22, 18, 0.16);
 }
 
+.human-workspace .view-select:first-of-type .view-select-menu {
+  right: auto;
+  left: 0;
+}
+
 .human-workspace .view-select-menu button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 1rem;
@@ -2257,7 +2263,7 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .review-row,
 .human-workspace .review-row.selected {
-  --row-accent: #7a746c;
+  --row-accent: var(--review-accent);
   --row-hover-accent: var(--review-accent);
   --row-accent-mix: 9%;
   --row-visual-column: 9.5rem;
@@ -2298,6 +2304,7 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .review-row.row-accent-default {
   --row-accent-mix: 9%;
+  --row-hover-accent: var(--review-accent);
 }
 
 .human-workspace .review-row:hover {
@@ -2322,6 +2329,14 @@ body:has(.shell > .human-workspace) {
 .human-workspace .review-row.selection-mode,
 .human-workspace .review-row.selection-mode.selected {
   padding-left: 3rem;
+}
+
+.human-workspace .review-row.row-status-answered {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.human-workspace .review-row.row-status-answered .row-actions {
+  display: none;
 }
 
 .human-workspace .review-row.selected .row-actions {
@@ -2606,15 +2621,30 @@ body:has(.shell > .human-workspace) {
   display: flex;
   width: var(--row-visual-column);
   min-width: 0;
+  overflow: hidden;
   justify-content: flex-end;
   align-items: center;
 }
 
 .human-workspace .row-context .numeric-bar {
-  width: 7.5rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.human-workspace .row-context .numeric-bar .visual-meta {
+  width: 100%;
+  min-width: 0;
+}
+
+.human-workspace .row-context .numeric-bar .visual-meta > :where(span, strong) {
+  min-width: 0;
 }
 
 .human-workspace .row-context .bar-track {
+  width: 100%;
+  max-width: 100%;
   height: 0.2rem;
 }
 
@@ -2715,6 +2745,20 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .row-footer {
   display: flex;
+  grid-column: 1 / -1;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.human-workspace .row-result {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--review-muted);
+  font-size: var(--queue-type-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .human-workspace .row-time {

@@ -290,7 +290,7 @@ test("authenticated review workspace renders content actions and preserves contr
   ).toHaveCount(0);
 
   await page.getByLabel("Search").fill("");
-  await chooseViewOption(page, "Status", "Answered");
+  await page.getByRole("link", { name: "History" }).click();
   await expect(
     reviewLinkByTitle(page, "GitHub security digest for archived repositories")
   ).toBeVisible();
@@ -307,8 +307,10 @@ test("authenticated review workspace renders content actions and preserves contr
     await page.getByRole("link", { name: "Close detail", exact: true }).click();
     await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   }
-  await openReviewTools(page);
-  await expectViewOption(page, "Status", "Answered");
+  await expect(page.getByRole("link", { name: "History" })).toHaveAttribute(
+    "aria-current",
+    "page"
+  );
   await expect(
     reviewLinkByTitle(page, "GitHub security digest for archived repositories")
   ).toBeVisible();
@@ -341,20 +343,13 @@ test("primary navigation and queue disclosures behave consistently", async ({
   await account.locator("summary").click();
   await expect(account).toHaveAttribute("open", "");
 
-  const statusDisclosure = page.locator("details.view-select").filter({
-    has: page.getByRole("button", { name: /^Status:/ })
-  });
   const sortDisclosure = page.locator("details.view-select").filter({
     has: page.getByRole("button", { name: /^Sort:/ })
   });
   await account.locator("summary").click();
   await expect(account).not.toHaveAttribute("open", "");
-  await statusDisclosure.locator("summary").click();
-  await expect(statusDisclosure).toHaveAttribute("open", "");
-  await expect(account).not.toHaveAttribute("open", "");
   await sortDisclosure.locator("summary").click();
   await expect(sortDisclosure).toHaveAttribute("open", "");
-  await expect(statusDisclosure).not.toHaveAttribute("open", "");
   await sortDisclosure.locator("summary").click();
   await expect(sortDisclosure).not.toHaveAttribute("open", "");
 
@@ -373,10 +368,41 @@ test("primary navigation and queue disclosures behave consistently", async ({
   await expect(accountSummary).toBeFocused();
 });
 
+test("review queue and history remain disjoint", async ({ page }) => {
+  await page.goto("/human?status=all");
+
+  await expect(
+    page.getByRole("heading", { name: "Needs review" })
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Status:/ })).toHaveCount(0);
+  await expect(
+    reviewLinkByTitle(page, "GitHub security digest for archived repositories")
+  ).toHaveCount(0);
+
+  const queueRows = page.locator("article.review-row");
+  await expect(queueRows).toHaveCount(8);
+  await expect(queueRows.locator(".inline-actions")).toHaveCount(8);
+
+  await page.getByRole("link", { name: "History" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Answered reviews" })
+  ).toBeVisible();
+  await expect(page.locator("article.review-row")).toHaveCount(2);
+  await expect(page.locator(".inline-actions")).toHaveCount(0);
+  await expect(page.locator(".row-actions")).toHaveCount(2);
+  await expect(page.locator(".row-actions").first()).toBeHidden();
+  await expect(
+    page.getByRole("link", { name: "Return to review queue" })
+  ).toBeVisible();
+  await expect(
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
+  ).toHaveCount(0);
+});
+
 test("queue-only workspace keeps pagination visible and rows independently scrollable", async ({
   page
 }) => {
-  await page.goto("/human?fixture_dataset=pagination&status=all");
+  await page.goto("/human?fixture_dataset=pagination");
 
   const queue = page.locator(".queue-scroll");
   const pagination = page.getByRole("navigation", { name: "Review pages" });
@@ -395,7 +421,7 @@ test("review rows keep the canonical responsive topology across documented break
 }) => {
   test.skip(isMobile, "One desktop browser covers explicit viewport changes");
 
-  await page.goto("/human?status=all");
+  await page.goto("/human");
   const row = reviewRowByTitle(page, "Review neighborhood permit brief");
 
   await page.setViewportSize({ width: 1024, height: 900 });
@@ -466,7 +492,9 @@ test("routine reviews can be completed directly from the queue", async ({
   await page.goto("/human");
   await openReviewTools(page);
 
-  await expectViewOption(page, "Status", "Pending");
+  await expect(
+    page.getByRole("link", { name: "Review queue" })
+  ).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("region", { name: "Review detail" })).toHaveCount(
     0
   );
@@ -505,7 +533,7 @@ test("routine reviews can be completed directly from the queue", async ({
   ).toBeVisible();
   await expect(
     reviewRowByTitle(page, "Review neighborhood permit brief")
-  ).toContainText("Answered Approve");
+  ).toContainText("answeredDecision: Approve");
 });
 
 test("human actions submit undo and narrow bulk actions through server actions", async ({
@@ -544,9 +572,9 @@ test("human actions submit undo and narrow bulk actions through server actions",
     .click();
   await expect(
     reviewRowByTitle(page, "Review neighborhood permit brief")
-  ).toContainText("Answered Approve");
+  ).toContainText("answeredDecision: Approve");
   await expect(reviewRowByTitle(page, "Choose follow-up window")).toContainText(
-    "Answered Approve"
+    "answeredDecision: Approve"
   );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000517");
@@ -686,9 +714,9 @@ test("Enter and the Search button submit immediately and cancel debounce", async
   expect(searchRequests).toHaveLength(2);
 
   await page.getByLabel("Search").fill("summary");
-  await chooseViewOption(page, "Status", "Answered");
+  await chooseViewOption(page, "Sort", "Recent");
   await expect(page).toHaveURL(/search=summary/);
-  await expect(page).toHaveURL(/status=answered/);
+  await expect(page).toHaveURL(/sort=updated_at/);
   await expect.poll(() => searchRequests.length).toBe(3);
   await page.clock.runFor(300);
   expect(searchRequests).toHaveLength(3);
@@ -817,26 +845,12 @@ async function openReviewTools(page: Page) {
   }
 }
 
-async function chooseViewOption(
-  page: Page,
-  label: "Status" | "Sort",
-  option: string
-) {
+async function chooseViewOption(page: Page, label: "Sort", option: string) {
   await page.getByRole("button", { name: new RegExp(`^${label}:`) }).click();
   await page
     .getByRole("menu", { name: label })
     .getByRole("menuitemradio", { name: option })
     .click();
-}
-
-async function expectViewOption(
-  page: Page,
-  label: "Status" | "Sort",
-  option: string
-) {
-  await expect(
-    page.getByRole("button", { name: `${label}: ${option}` })
-  ).toBeVisible();
 }
 
 async function openSecondaryActions(page: Page) {
@@ -961,7 +975,19 @@ test("canonical row visuals and popup constraints expose only supported semantic
   page,
   isMobile
 }) => {
-  await page.goto("/human?status=all");
+  await page.goto("/human");
+
+  await expect
+    .poll(() =>
+      page.locator(".human-workspace").evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          canvas: style.getPropertyValue("--review-canvas").trim(),
+          paper: style.getPropertyValue("--review-paper").trim()
+        };
+      })
+    )
+    .toEqual({ canvas: "#f6f5f1", paper: "#fcfcfa" });
 
   const numericRow = reviewRowByTitle(page, "Review neighborhood permit brief");
   await expect(numericRow.locator(".numeric-bar")).not.toHaveAttribute(
@@ -1003,7 +1029,7 @@ test("canonical row visuals and popup constraints expose only supported semantic
         getComputedStyle(element).getPropertyValue("--row-accent").trim()
       )
     )
-    .toBe("#7a746c");
+    .toBe("#f2a347");
 
   const progressRow = reviewRowByTitle(page, "Choose follow-up window");
   await expect(progressRow.locator(".ring svg")).toHaveCount(0);
@@ -1018,11 +1044,17 @@ test("canonical row visuals and popup constraints expose only supported semantic
   );
   await expect(pillRow.locator(".pill-visual")).not.toContainText("Signal");
 
-  const fallbackRow = reviewRowByTitle(
+  const categoryVisual = reviewRowByTitle(
     page,
-    "Confirm the electrician’s arrival window"
-  );
-  await expect(fallbackRow.locator(".product-fallback-meta")).toBeVisible();
+    "Categorize Cloudflare · $240.00"
+  ).locator(".row-context .numeric-bar");
+  await expect
+    .poll(() =>
+      categoryVisual.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth
+      )
+    )
+    .toBe(true);
 
   if (isMobile) {
     await expect(progressRow.locator(".row-subtitle")).toHaveCSS(
@@ -1030,6 +1062,41 @@ test("canonical row visuals and popup constraints expose only supported semantic
       "2"
     );
   }
+
+  await page.goto("/human?status=answered");
+  const fallbackRow = reviewRowByTitle(
+    page,
+    "Confirm the electrician’s arrival window"
+  );
+  await expect(fallbackRow.locator(".product-fallback-meta")).toBeVisible();
+  await expect(fallbackRow.locator(".row-footer")).toContainText(
+    "Decision: Approve reply"
+  );
+  const archiveVisual = reviewRowByTitle(
+    page,
+    "GitHub security digest for archived repositories"
+  ).locator(".row-context .numeric-bar");
+  await expect
+    .poll(() =>
+      archiveVisual.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth
+      )
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      fallbackRow.evaluate((row) => {
+        const copy = row.querySelector(".row-copy")!.getBoundingClientRect();
+        const footer = row
+          .querySelector(".row-footer")!
+          .getBoundingClientRect();
+        return {
+          leftAligned: Math.abs(copy.left - footer.left) < 1,
+          rightAligned: Math.abs(copy.right - footer.right) < 1
+        };
+      })
+    )
+    .toEqual({ leftAligned: true, rightAligned: true });
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000521");
   await page.getByRole("button", { name: "Choose category" }).click();
@@ -1065,7 +1132,7 @@ test("canonical row visuals and popup constraints expose only supported semantic
 });
 
 test("queue More menu lists caller overflow actions", async ({ page }) => {
-  await page.goto("/human?status=all");
+  await page.goto("/human");
   const row = reviewRowByTitle(page, "Review neighborhood permit brief");
   await row.locator("details.row-overflow > summary").click();
   const menu = row.locator(".row-overflow-menu");
@@ -1098,14 +1165,14 @@ test("answered queue rows hide overflow decision actions", async ({ page }) => {
       name: "No more actions for GitHub security digest for archived repositories"
     })
   ).toBeVisible();
-  await expect(row).toContainText("Answered Archive");
+  await expect(row).toContainText("Decision: Archive");
   await expect(row.locator("a.row-link a")).toHaveCount(0);
 });
 
 test("queue J and K move between rows and Enter opens details", async ({
   page
 }) => {
-  await page.goto("/human?status=all");
+  await page.goto("/human");
   const rows = page.locator(".review-list .row-link");
   await expect(rows.first()).toBeVisible();
 
@@ -1126,7 +1193,7 @@ test("queue J and K move between rows and Enter opens details", async ({
 test("queue J does not steal typing from search or move past the last row", async ({
   page
 }) => {
-  await page.goto("/human?status=all");
+  await page.goto("/human");
   await openReviewTools(page);
   const search = page.getByLabel("Search");
   await search.click();
@@ -1136,7 +1203,7 @@ test("queue J does not steal typing from search or move past the last row", asyn
     page.locator(".review-list .row-link").first()
   ).not.toBeFocused();
 
-  await page.goto("/human?status=all");
+  await page.goto("/human");
   const rows = page.locator(".review-list .row-link");
   await expect(rows.first()).toBeVisible();
   const count = await rows.count();
@@ -1166,7 +1233,9 @@ test("mobile review navigation preserves the queue view", async ({
   await page.getByRole("link", { name: "Close detail", exact: true }).click();
 
   await expect(page).toHaveURL(/sort=updated_at/);
-  await expectViewOption(page, "Status", "Pending");
+  await expect(
+    page.getByRole("link", { name: "Review queue" })
+  ).toHaveAttribute("aria-current", "page");
   await expect(
     page.getByRole("region", { name: "Queue browser" })
   ).toBeVisible();
