@@ -2,19 +2,22 @@
 
 ## Policy
 
-AWS Systems Manager Parameter Store is the durable recovery source for hosted
-service secrets. Service-native stores are still the runtime injection path.
+AWS Systems Manager Parameter Store is the canonical project source of truth for
+all managed, recoverable secrets and environment-owned provider configuration.
+Service-native and GitHub stores are downstream runtime or deployment copies;
+they are not an alternative authority.
 
 Do not make GitHub Actions fetch from Systems Manager Parameter Store during
-normal deploys. Continuous integration and deployment use GitHub secrets.
-Systems Manager Parameter Store exists so hosted environments can be recovered
-and rotations do not depend on one service retaining the only copy.
+normal deploys. Continuous integration and deployment use GitHub secrets. The
+deploy path does not read AWS at runtime because GitHub and Cloudflare need
+locally available copies, but every copied value must match SSM.
 
-Every secret provision or rotation must update both:
+Every secret provision or rotation must update, in this order:
 
-- the service runtime or continuous deployment secret store that consumes the
-  value; and
-- the matching Systems Manager Parameter Store parameter.
+- the source provider when the provider issues the credential;
+- the matching Systems Manager Parameter Store parameter, making the new value
+  canonical for Agent Outbox; and
+- each service runtime or continuous deployment store that consumes a copy.
 
 A service-only or GitHub-only secret has no recovery path and is treated as
 incomplete setup.
@@ -31,22 +34,23 @@ Naming convention:
 Development secrets may be stored in Systems Manager Parameter Store only when
 they are not disposable.
 
-Use the configured Agent Outbox AWS account, region, KMS posture, and local
-profile. Do not copy another project's AWS account or profile unless the owner
-explicitly chooses that account for Agent Outbox.
+Use local AWS SSO profile `conn`; its configured region and account select the
+Agent Outbox Parameter Store. The stable parameter prefixes are
+`/agent-outbox/environments/<stage>/` and `/agent-outbox/shared/`. Do not record
+the AWS account id, region, KMS key id, or parameter values in tracked docs.
 
 ## Ownership Matrix
 
-| Secret class                                                | Runtime owner                                                 | Durable recovery owner                                         | Notes                                                                                                                                                     |
-| ----------------------------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cloudflare Worker runtime secrets                           | Cloudflare Workers                                            | Systems Manager Parameter Store                                | Install only the Worker runtime inventory below; [../../.env.example](../../.env.example) also includes local, operator, deploy, and migration variables. |
-| Deploy credentials                                          | GitHub Actions secrets                                        | Systems Manager Parameter Store when not trivially re-mintable | Use least-scoped Cloudflare tokens for configured resources.                                                                                              |
-| Supabase database URLs and role passwords                   | Supabase plus Cloudflare runtime/Flyway migration environment | Systems Manager Parameter Store                                | Use [migrations.md](migrations.md) for schema changes.                                                                                                    |
-| Clerk secret keys                                           | Clerk plus Cloudflare runtime                                 | Systems Manager Parameter Store                                | Publishable keys may be GitHub/Cloudflare environment config, mirrored if needed for recovery.                                                            |
-| Stripe secret key, webhook secret, price ids, portal config | Stripe plus Cloudflare runtime                                | Systems Manager Parameter Store                                | Test and live values are separate. Production uses live mode.                                                                                             |
-| Sentry data source names and auth token                     | Sentry plus Cloudflare/GitHub as needed                       | Systems Manager Parameter Store                                | Runtime uses data source names only. Auth token is for source maps/operator tooling.                                                                      |
-| Caller key hash secret (`CALLER_KEY_HASH_SECRET`)           | Cloudflare Worker runtime                                     | Systems Manager Parameter Store                                | Required to hash display-once caller API keys. Losing or changing it requires caller credential rotation or rehashing.                                    |
-| Caller API keys                                             | Agent Outbox database hash plus local caller secure store     | Not Systems Manager Parameter Store                            | Plaintext caller keys are display-once and never recovered. Rotate instead.                                                                               |
+| Secret class                                                | Runtime/deploy consumer                                       | Canonical project source            | Notes                                                                                                                                                     |
+| ----------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloudflare Worker runtime secrets                           | Cloudflare Workers                                            | Systems Manager Parameter Store     | Install only the Worker runtime inventory below; [../../.env.example](../../.env.example) also includes local, operator, deploy, and migration variables. |
+| Deploy credentials                                          | GitHub Actions secrets                                        | Systems Manager Parameter Store     | Use least-scoped Cloudflare tokens for configured resources.                                                                                              |
+| Supabase database URLs and role passwords                   | Supabase plus Cloudflare runtime/Flyway migration environment | Systems Manager Parameter Store     | Use [migrations.md](migrations.md) for schema changes.                                                                                                    |
+| Clerk secret keys                                           | Clerk plus Cloudflare runtime                                 | Systems Manager Parameter Store     | Publishable keys may be GitHub/Cloudflare environment config, mirrored if needed for recovery.                                                            |
+| Stripe secret key, webhook secret, price ids, portal config | Stripe plus Cloudflare runtime                                | Systems Manager Parameter Store     | Test and live values are separate. Production uses live mode.                                                                                             |
+| Sentry data source names, project metadata, and auth token  | Sentry plus Cloudflare/GitHub as needed                       | Systems Manager Parameter Store     | Runtime uses data source names only. Auth token is for source maps/operator tooling.                                                                      |
+| Caller key hash secret (`CALLER_KEY_HASH_SECRET`)           | Cloudflare Worker runtime                                     | Systems Manager Parameter Store     | Required to hash display-once caller API keys. Losing or changing it requires caller credential rotation or rehashing.                                    |
+| Caller API keys                                             | Agent Outbox database hash plus local caller secure store     | Not Systems Manager Parameter Store | Plaintext caller keys are display-once and never recovered. Rotate instead.                                                                               |
 
 ## Environment Variables
 
@@ -137,10 +141,11 @@ variables into the Worker runtime. Excluded examples include `AWS_PROFILE`,
 `AGENT_OUTBOX_HOSTED_HEALTH_*`, `AGENT_OUTBOX_BILLING_SMOKE_*`, other
 `AGENT_OUTBOX_*`, and `PORT`.
 
-`CLOUDFLARE_WAF_API_TOKEN` is an activation-time operator token for
-`scripts/cloudflare-ratelimit.mjs`. It is not a Worker runtime secret and should
-only be minted with the narrow WAF/Rulesets permissions needed to apply and
-verify the prepared `/api/client-events` rate-limit rule.
+`CLOUDFLARE_WAF_API_TOKEN` is the operator credential for maintaining the
+always-on `/api/client-events` rule through `scripts/cloudflare-ratelimit.mjs`.
+It is not a Worker runtime secret. Store its narrow WAF/Rulesets token in SSM at
+`/agent-outbox/environments/production/cloudflare-waf-api-token` and decrypt it
+only into the operator process that applies or verifies the rule.
 
 ## Stripe Production Recovery Names
 
@@ -186,8 +191,7 @@ List parameter names without decrypting values:
 ```bash
 aws ssm describe-parameters \
   --parameter-filters "Key=Name,Option=BeginsWith,Values=/agent-outbox/" \
-  --profile <agent-outbox-aws-profile> \
-  --region <agent-outbox-aws-region> \
+  --profile conn \
   --query 'Parameters[].Name' --output text
 ```
 
@@ -206,16 +210,32 @@ gh variable list -R <owner>/<agent-outbox-repo> --env production
 Decrypt values only during recovery or rotation. Do not paste decrypted values
 into chat, issues, logs, or docs.
 
+## Direct SSM-backed operator commands
+
+Use `scripts/run-with-ssm-secrets.mjs` when a local operator command needs a
+managed production secret. Named sets load only the required parameters into the
+child process from SSM; they do not create a plaintext cache.
+
+Inspect unresolved production Sentry issues:
+
+```bash
+pnpm run sentry -- issues list --status unresolved --max-rows 100
+```
+
+Production database credentials are not exposed through this local wrapper.
+Production Flyway migrations run only inside the protected formal release
+workflow; see [migrations.md](migrations.md).
+
 ## Recovery Flow
 
-When a runtime secret is lost:
+When a runtime or deployment copy is lost or differs from SSM:
 
 1. Confirm which service consumes the value and whether the source service can
    safely regenerate it.
-2. Prefer regeneration at the source service when it has no operational cost.
-3. If recovery is needed, read the parameter with decryption in a private
-   operator shell.
-4. Set the value into the consuming service's secret store.
+2. Treat the current SSM value as authoritative unless a deliberate provider
+   rotation is in progress.
+3. Read the parameter with decryption only inside a private operator process.
+4. Set the value into the consuming service's downstream secret store.
 5. Redeploy or restart the runtime only as required by that service.
 6. If the value was exposed outside an operator-controlled shell, rotate it at
    the source service and update Systems Manager Parameter Store in the same
@@ -237,9 +257,10 @@ back to development values.
 ## Rotation Rules
 
 - Rotate Clerk, Stripe, Sentry, Cloudflare, GitHub deploy, and Supabase
-  credentials at the source service.
-- Update Systems Manager Parameter Store immediately after rotation.
-- Verify the runtime consumes the new value.
+  credentials at the issuing provider.
+- Update Systems Manager Parameter Store before updating downstream copies.
+- Update and verify every runtime or deployment copy against the new canonical
+  value.
 - Revoke the old value after the new value is live.
 - Caller API keys are never recovered. Use `agent-outbox caller rotate` after
   the CLI exists.

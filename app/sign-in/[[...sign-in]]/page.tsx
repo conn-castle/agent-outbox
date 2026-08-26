@@ -1,6 +1,7 @@
 import { SignIn } from "@clerk/nextjs";
 
 import { LegalAcknowledgement } from "../../../src/components/legal/LegalDocument";
+import { GitHubSignInButton } from "../../../src/components/auth/GitHubSignInButton";
 import { MissingConfigurationPanel } from "../../../src/server/ui";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,21 @@ export default function SignInPage() {
 
   return (
     <main className="main auth-main">
-      <SignIn routing="path" path="/sign-in" fallbackRedirectUrl="/human" />
+      <div className="auth-clerk-stack">
+        <GitHubSignInButton />
+        <SignIn
+          routing="path"
+          path="/sign-in"
+          fallbackRedirectUrl="/human"
+          appearance={{
+            elements: {
+              socialButtonsBlockButton: { display: "none" },
+              socialButtonsIconButton: { display: "none" },
+              dividerRow: { display: "none" }
+            }
+          }}
+        />
+      </div>
       <LegalAcknowledgement action="continuing" />
     </main>
   );

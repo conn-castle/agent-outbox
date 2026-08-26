@@ -69,18 +69,24 @@ operator-actionable handled failures. Useful fields include:
 - `limit_name` for quota and rate-limit denials
 - `sentry_captured` on every 5xx failure log: whether this failure reached
   Sentry
+- `sentry_capture_rate_limited` when a low-trust browser operation was kept as a
+  warning log but not sent to Sentry because that Worker isolate had attempted
+  another browser capture within the preceding minute
 
 Use stable low-cardinality fields. Do not use high-cardinality caller display
 strings as log dimensions.
 
 Sentry capture policy for server failures: unexpected exceptions are always
-captured (`reportRuntimeFailure`) regardless of status code. Non-exception
-handled failures are captured only for internal `500` responses; expected
-operational non-500 5xx failures (for example `503` missing-configuration or
-temporary-unavailable) are log-only and carry an explicit
-`sentry_captured: false`. Alert on error-level logs, not on `sentry_captured`
-alone; `sentry_captured: false` on a `500` indicates capture was attempted but
-disabled or failed (for example a missing production DSN or release).
+captured (`reportRuntimeFailure`) regardless of status code. Sanitized GitHub
+sign-in launch-failure beacons use the same capture path after the server
+validates their allowlisted event name and derives its canonical category.
+Non-exception handled failures are captured only for internal `500` responses;
+expected operational non-500 5xx failures (for example `503`
+missing-configuration or temporary-unavailable) are log-only and carry an
+explicit `sentry_captured: false`. Alert on error-level logs, not on
+`sentry_captured` alone; `sentry_captured: false` on a `500` indicates capture
+was attempted but disabled or failed (for example a missing production DSN or
+release).
 
 ## Log Safety
 
@@ -145,24 +151,30 @@ browser through the shared client-event contract:
 - no form values, review content, or uploaded file metadata beyond coarse
   failure category.
 
-It accepts only client errors, hydration failures, failed human-action
-submissions, upload failures, and major UI state inconsistencies. Browser
-exception and hydration reports use `operation_kind=browser` and remain
-low-trust. Human-action and upload failures originate from the canonical server
-action outcome and use `operation_kind=server_action`; rendering or sharing an
-error-notice URL does not emit them. No stable, client-detectable
-`ui_state_inconsistent` invariant exists yet. Event delivery is best-effort and
-never gates product flows. Do not turn it into a general product analytics
-firehose.
+It accepts only client errors, hydration failures, GitHub sign-in launch
+failures, failed human-action submissions, upload failures, and major UI state
+inconsistencies. Browser exception, hydration, and GitHub sign-in reports use
+`operation_kind=browser` and remain low-trust. Only the named GitHub sign-in
+launch failures are eligible for Sentry. Each Worker isolate permits at most one
+capture attempt across all such names per minute; further events remain
+warning-level structured logs. GitHub sign-in owns the provider launch so it can
+reset abandoned Clerk state, bound a pending Clerk call, and report a
+resolved-without-navigation stall; these handled failures would not be visible
+to a global browser exception listener. Human-action and upload failures
+originate from the canonical server action outcome and use
+`operation_kind=server_action`; rendering or sharing an error-notice URL does
+not emit them. No stable, client-detectable `ui_state_inconsistent` invariant
+exists yet. Event delivery is best-effort and never gates product flows. Do not
+turn it into a general product analytics firehose.
 
 For events accepted by the browser endpoint, the same-origin check is a browser
-safety boundary, not authentication: non-browser clients can forge `Origin`. A
-prepared-but-inactive Cloudflare Rulesets API rate limit exists in
-`scripts/cloudflare-ratelimit.mjs`; verify the prepared disabled rule with
-`node scripts/cloudflare-ratelimit.mjs --check` when reviewing launch posture or
-abuse response readiness. Keep the rule disabled during normal launch-readiness
-checks unless the owner explicitly approves activating or modifying it for abuse
-response. Until then, the accepted risk is spoofed `client_event.*` volume
-causing noisy logs rather than product-flow failure. If signal quality degrades,
-filter client-event logs separately from server failure logs while preserving
-server-side Sentry and API error signals as the higher-trust source.
+safety boundary, not authentication: non-browser clients can forge `Origin`. The
+always-on Cloudflare Rulesets API rate limit in
+`scripts/cloudflare-ratelimit.mjs` blocks more than 120 requests per 10 seconds
+per source IP and Cloudflare location before they reach the application. Verify
+the rule is present and enabled with `pnpm run cloudflare:ratelimit --check`.
+The one-minute per-isolate application limiter separately bounds both Sentry
+ingestion and error-level alert amplification even when Sentry capture is
+unavailable; later genuine failures become eligible again. If signal quality
+still degrades, filter client-event logs separately from higher-trust server API
+and runtime failures.

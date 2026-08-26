@@ -4,7 +4,7 @@
 
 - **Packages (latest compatible stable versions):** Determine package versions using the package manager and official tooling/docs, not memory. Prefer the latest stable compatible versions. Avoid unstable or pre-release versions. If the latest stable version introduces breaking changes, ask for confirmation and then do the compatibility work.
 
-- **Schema safety:** Never modify the database schema via raw SQL or direct tool access. Always generate a proper migration file using the project's migration system, and ask the user to apply it.
+- **Schema safety:** Never modify the database schema via raw SQL or direct tool access. Always generate a proper migration file using the project's migration system. Production migrations must run only as part of the formal protected GitHub Actions release workflow after certification and before application deployment; never apply them from a local operator or agent shell. Every production migration must remain compatible with both the outgoing and incoming application release because automatic rollback restores application code only, never schema. Local migration commands are only for local or disposable databases.
 
 - **UTC-only internals:** Store, compute, and transport time in UTC; local time display is presentation-only.
 

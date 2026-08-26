@@ -392,6 +392,20 @@ Worker bundle, custom domain route config, disabled workers.dev route, cron
 config, observability config, and static assets without uploading or mutating
 Cloudflare state.
 
+- Check or reconcile the always-on client-events edge rate limit
+
+```bash
+pnpm run cloudflare:ratelimit --check
+pnpm run cloudflare:ratelimit --apply
+```
+
+Run from: repo root. Prerequisites: AWS SSO profile `conn` is authenticated and
+canonical SSM contains the production zone id and narrow WAF/Rulesets token.
+Notes: `--check` is read-only and fails unless the rule is present and enabled.
+`--apply` preserves unrelated `http_ratelimit` phase rules while reconciling the
+canonical 120-request/10-second `/api/client-events` rule as enabled. The wrapper
+loads secrets directly into the child process without caching or printing them.
+
 - Validate a numbered release target
 
 ```bash
@@ -505,8 +519,10 @@ make migration-migrate
 Run from: repo root Prerequisites: `make setup` has completed and Docker is
 running. `DATABASE_MIGRATION_URL` must point at the target Postgres database.
 Notes: Applies pending host-agnostic Flyway migrations from `db/migrations/`.
-Do not use provider dashboards or provider-specific migration commands for
-schema changes. When the target database listens on the host, either set
+This local command is only for local or disposable databases; production
+migrations run exclusively through the protected formal release workflow. Do
+not use provider dashboards or provider-specific migration commands for schema
+changes. When the target database listens on the host, either set
 `FLYWAY_DOCKER_NETWORK=host` where Docker supports host networking or use a
 Docker-reachable host such as `host.docker.internal` in
 `DATABASE_MIGRATION_URL`. Online index migrations must use the documented

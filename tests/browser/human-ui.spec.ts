@@ -736,9 +736,7 @@ test("uncaught browser error emits a content-safe client event", async ({
     );
   });
 
-  await expect
-    .poll(() => events)
-    .toEqual([{ name: "client_error", category: "browser_exception" }]);
+  await expect.poll(() => events).toEqual([{ name: "client_error" }]);
 });
 
 test("bulk actions only submit selected rows visible in the current filter", async ({

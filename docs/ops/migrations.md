@@ -30,6 +30,27 @@ The canonical migration source is `db/migrations/`.
     `CONCURRENTLY`, column/table renames, type changes, and `SET NOT NULL`
     without a same-column `DEFAULT`) requires the human-only
     `migration-destructive-approved` label. CI: Enforced by Policy gates.
+12. Every production migration must be compatible with both the outgoing and
+    incoming application release. Use expand/contract sequencing because the
+    outgoing Worker serves traffic after migrations apply and automatic rollback
+    restores Worker code only, never schema. CI: Code review enforced.
+
+## Production Application
+
+Production migrations run only within the protected manual release workflow in
+`.github/workflows/deploy-production.yml`. The workflow certifies the exact
+release SHA, verifies the current rollback target, validates existing Flyway
+history while allowing pending checked-in migrations, applies those migrations,
+strictly validates the resulting history, and only then deploys the Worker. The
+outgoing Worker remains live against the migrated schema during deployment, and
+a failed deploy restores only that Worker version. This makes rule 12 a release
+requirement, not optional rollback advice.
+
+`DATABASE_MIGRATION_URL` in the GitHub `production` environment is a downstream
+copy of the canonical SSM parameter. Missing credentials or any Flyway failure
+must stop the release before application deployment. Never apply production
+migrations from a local operator or agent shell. Local `migration:migrate` and
+`migration:replay` commands are only for local or disposable databases.
 
 ## Online Index Migrations
 

@@ -16,22 +16,31 @@ export default function ErrorBoundary({
 }) {
   useEffect(() => {
     if (classifyReactError(error) === "hydration") {
-      emitClientEvent("hydration_error", "hydration");
+      emitClientEvent("hydration_error");
     } else {
-      emitClientEvent("client_error", "browser_exception");
+      emitClientEvent("client_error");
     }
   }, [error]);
 
   return (
-    <main className="main">
-      <section className="panel">
-        <h1>Something went wrong</h1>
-        <p>
-          The review workspace can be retried without changing submitted work.
+    <main className="error-main">
+      <section className="error-card" aria-labelledby="error-title">
+        <p className="error-eyebrow">
+          <span aria-hidden="true" /> Recovery page
         </p>
-        <button className="action-button" type="button" onClick={reset}>
-          Try again
-        </button>
+        <h1 id="error-title">Something went wrong</h1>
+        <p>
+          We couldn&apos;t load the review workspace. Trying again won&apos;t
+          change any submitted work.
+        </p>
+        <div className="error-actions">
+          <button className="button" type="button" onClick={reset}>
+            Try again
+          </button>
+          <a className="button secondary" href="/contact">
+            Contact us
+          </a>
+        </div>
       </section>
     </main>
   );

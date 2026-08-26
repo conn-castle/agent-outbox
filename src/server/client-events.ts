@@ -1,14 +1,14 @@
 import {
   CLIENT_EVENT_BATCH_LIMIT,
   CLIENT_EVENT_BODY_BYTE_LIMIT,
-  CLIENT_EVENT_CATEGORY_SET,
+  CLIENT_EVENT_CATEGORY_BY_NAME,
   CLIENT_EVENT_NAME_SET,
   type ClientEvent,
-  type ClientEventCategory,
   type ClientEventName
 } from "../shared/client-events-contract.ts";
 import { createCorrelationId } from "./correlation.ts";
 import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 export type ClientEventProcessResult = {
   accepted: number;
@@ -25,6 +25,19 @@ type ClientEventsRequestContext = {
 
 type ClientEventProducer = "browser" | "server_action";
 
+const ALERTABLE_BROWSER_EVENT_NAMES = new Set<ClientEventName>([
+  "github_sign_in_not_ready",
+  "github_sign_in_clerk_error",
+  "github_sign_in_clerk_timeout",
+  "github_sign_in_same_page_stall"
+]);
+// This endpoint is intentionally unauthenticated and Origin is forgeable by
+// non-browser clients. Bound capture attempts across every alertable browser
+// event so attacker-selected event names cannot permanently suppress one
+// operation or create an unlimited Sentry/error-alert ingest path.
+const BROWSER_SENTRY_CAPTURE_INTERVAL_MS = 60_000;
+let nextBrowserSentryCaptureAtMs = 0;
+
 export function emitClientEventLog(
   event: ClientEvent,
   context: {
@@ -37,11 +50,11 @@ export function emitClientEventLog(
     eventCount?: number;
   }
 ) {
-  return emitRuntimeLog({
-    level: "warn",
-    error_id: createCorrelationId("client"),
+  const errorId = createCorrelationId("client");
+  const category = CLIENT_EVENT_CATEGORY_BY_NAME[event.name];
+  const eventFields = {
     request_id: context.requestId,
-    surface: "app",
+    surface: "app" as const,
     route: context.route,
     method: context.method,
     status_code: context.statusCode,
@@ -49,10 +62,45 @@ export function emitClientEventLog(
     operation: `client_event.${event.name}`,
     operation_kind: context.producer,
     client_event_name: event.name,
-    client_event_category: event.category,
+    client_event_category: category,
     event_count: context.eventCount,
     message: "client event received"
+  };
+
+  if (isAlertableBrowserEvent(event, context.producer)) {
+    const now = Date.now();
+    if (now >= nextBrowserSentryCaptureAtMs) {
+      nextBrowserSentryCaptureAtMs = now + BROWSER_SENTRY_CAPTURE_INTERVAL_MS;
+      const report = reportRuntimeFailure(new Error("Browser client failure"), {
+        ...eventFields,
+        errorId
+      });
+      return report.log;
+    }
+
+    return emitRuntimeLog({
+      ...eventFields,
+      level: "warn",
+      error_id: errorId,
+      sentry_captured: false,
+      sentry_capture_rate_limited: true
+    });
+  }
+
+  return emitRuntimeLog({
+    ...eventFields,
+    level: "warn",
+    error_id: errorId
   });
+}
+
+function isAlertableBrowserEvent(
+  event: ClientEvent,
+  producer: ClientEventProducer
+) {
+  return (
+    producer === "browser" && ALERTABLE_BROWSER_EVENT_NAMES.has(event.name)
+  );
 }
 
 export async function handleClientEventsRequest(
@@ -202,19 +250,16 @@ function parseClientEvent(entry: unknown): ClientEvent | null {
     return null;
   }
 
-  const categoryInput =
-    typeof input.category === "string" ? input.category : null;
-  const category =
-    categoryInput &&
-    CLIENT_EVENT_CATEGORY_SET.has(categoryInput as ClientEventCategory)
-      ? (categoryInput as ClientEventCategory)
-      : undefined;
-
   return {
-    name: name as ClientEventName,
-    category
+    name: name as ClientEventName
   };
 }
+
+export const clientEventServerTestInternals = {
+  resetBrowserSentryCaptureLimiter() {
+    nextBrowserSentryCaptureAtMs = 0;
+  }
+};
 
 function emitClientEventDrop(
   context: ClientEventsRequestContext,

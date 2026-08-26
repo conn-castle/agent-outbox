@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-08-25 production-migration-drift: Production is missing six committed migrations
+    Priority: Critical. Area: Database / Production
+    Description: Read-only Flyway inspection ends at V20260706193001; six later migrations are pending, including function-auth hardening and the action appearance columns whose absence caused Sentry issue AGENT-OUTBOX-4 on GET /human.
+    Next step: Provision the production GitHub environment's migration URL from canonical SSM, then dispatch the formal release workflow so it applies and validates the pending migrations before deploying; verify `/human` afterward.
+
 - Issue 2026-08-17 row-popup-action-selection: Popup-bearing row actions lose their selected action
     Priority: High. Area: Human review / Actions
     Description: Selecting a row action such as `Request changes` opens Details without its composer active, forcing the person to locate and select the same action again.

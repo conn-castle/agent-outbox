@@ -1024,6 +1024,26 @@ export function validateProductionDeployWorkflow(
     "finalize-release"
   );
   const deployStep = workflowNamedStepContent(deployJob, "Deploy Worker");
+  const requireMigrationCredentialStep = workflowNamedStepContent(
+    deployJob,
+    "Require production migration credential"
+  );
+  const migrationStep = workflowNamedStepContent(
+    deployJob,
+    "Apply production database migrations"
+  );
+  const preMigrationValidationStep = workflowNamedStepContent(
+    deployJob,
+    "Validate production migration history before apply"
+  );
+  const postMigrationValidationStep = workflowNamedStepContent(
+    deployJob,
+    "Validate production migration history after apply"
+  );
+  const verifyRollbackTargetStep = workflowNamedStepContent(
+    deployJob,
+    "Verify rollback target before deploy"
+  );
   const verifyStep = workflowNamedStepContent(
     deployJob,
     "Verify deployed release"
@@ -1082,6 +1102,11 @@ export function validateProductionDeployWorkflow(
         deployWorkflowContent,
         /^\s*group:\s*production-deploy\s*$/
       )
+    ],
+    ["rollback-target verification step", Boolean(verifyRollbackTargetStep)],
+    [
+      "production migration credential requirement step",
+      Boolean(requireMigrationCredentialStep)
     ]
   ];
   for (const [description, present] of requirements) {
@@ -1108,6 +1133,57 @@ export function validateProductionDeployWorkflow(
   if (!workflowRunStepIncludes(deployStep, "corepack pnpm run worker:deploy")) {
     failures.push(
       ".github/workflows/deploy-production.yml must deploy through worker:deploy"
+    );
+  }
+  if (
+    !requireMigrationCredentialStep.includes(
+      "DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}"
+    ) ||
+    !requireMigrationCredentialStep.includes(
+      'if [[ -z "${DATABASE_MIGRATION_URL:-}" ]]'
+    ) ||
+    !migrationStep.includes(
+      "DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}"
+    ) ||
+    !workflowRunStepIncludes(
+      preMigrationValidationStep,
+      "corepack pnpm run migration:validate-pre-migrate"
+    ) ||
+    !preMigrationValidationStep.includes(
+      "DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}"
+    ) ||
+    !workflowRunStepIncludes(
+      migrationStep,
+      "corepack pnpm run migration:migrate"
+    ) ||
+    !workflowRunStepIncludes(
+      postMigrationValidationStep,
+      "corepack pnpm run migration:validate"
+    ) ||
+    !postMigrationValidationStep.includes(
+      "DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}"
+    ) ||
+    (Boolean(
+      verifyRollbackTargetStep &&
+      requireMigrationCredentialStep &&
+      preMigrationValidationStep &&
+      migrationStep &&
+      postMigrationValidationStep &&
+      deployStep
+    ) &&
+      (deployJob.indexOf(requireMigrationCredentialStep) <
+        deployJob.indexOf(verifyRollbackTargetStep) ||
+        deployJob.indexOf(preMigrationValidationStep) <
+          deployJob.indexOf(requireMigrationCredentialStep) ||
+        deployJob.indexOf(migrationStep) <
+          deployJob.indexOf(preMigrationValidationStep) ||
+        deployJob.indexOf(postMigrationValidationStep) <
+          deployJob.indexOf(migrationStep) ||
+        deployJob.indexOf(postMigrationValidationStep) >
+          deployJob.indexOf(deployStep)))
+  ) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must apply and validate production migrations through the protected release job before deploy"
     );
   }
   if (

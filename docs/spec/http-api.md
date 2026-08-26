@@ -92,19 +92,23 @@ Behavior:
 
 - Accepts best-effort browser event batches for narrow frontend failure
   visibility only. The browser emitter reports uncaught client errors and React
-  boundary-classified hydration failures. Canonical human server actions report
-  failed human-action and file-upload submissions directly as trusted
-  `server_action` events.
+  boundary-classified hydration failures, and the GitHub sign-in controller
+  reports provider-launch failures. Canonical human server actions report failed
+  human-action and file-upload submissions directly as trusted `server_action`
+  events.
 - Requires a same-origin `Origin` header and `Content-Type: application/json`.
-- Allows only client errors, hydration failures, failed human-action
-  submissions, upload failures, and major UI state inconsistencies.
+- Allows only client errors, hydration failures, GitHub sign-in launch failures,
+  failed human-action submissions, upload failures, and major UI state
+  inconsistencies.
 - Enforces small batch and body limits.
 - Emits content-safe structured logs with server-generated request ids and the
-  endpoint route label.
+  endpoint route label. GitHub sign-in launch failures also create a bounded
+  Sentry issue signal.
 - Does not require caller bearer credentials or Clerk session state.
 - Treats same-origin as a browser constraint, not as authentication; server
-  operators should rate-limit or filter this route separately from trusted API
-  failure logs if public signal quality degrades.
+  operators enforce the canonical always-on Cloudflare edge rate limit and may
+  filter this route separately from trusted API failure logs if signal quality
+  degrades.
 - Does not log arbitrary client messages, stack traces, form values, review
   content, uploaded file metadata, caller-supplied request ids, or payload route
   labels.
@@ -117,12 +121,14 @@ Body:
 {
   "events": [
     {
-      "name": "client_error",
-      "category": "browser_exception"
+      "name": "client_error"
     }
   ]
 }
 ```
+
+The server derives the canonical category from the event name. Clients do not
+send category or routing metadata.
 
 ## Public Contact Route
 

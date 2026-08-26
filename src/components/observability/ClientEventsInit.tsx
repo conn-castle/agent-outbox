@@ -11,11 +11,11 @@ export function ClientEventsInit() {
   useEffect(() => {
     const onError = (event: Event) => {
       if (event instanceof ErrorEvent && event.error != null) {
-        emitClientEvent("client_error", "browser_exception");
+        emitClientEvent("client_error");
       }
     };
     const onUnhandledRejection = () => {
-      emitClientEvent("client_error", "browser_exception");
+      emitClientEvent("client_error");
     };
 
     window.addEventListener("error", onError, { capture: true });

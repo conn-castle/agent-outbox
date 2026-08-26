@@ -35,8 +35,8 @@ Hosted Agent Outbox has one deployable app boundary:
 - **Billing:** Stripe, scoped to Agent Outbox accounts.
 - **Observability:** Sentry, Cloudflare native logs, Supabase native logs, and
   Cloudflare Web Analytics.
-- **Secret recovery:** AWS Systems Manager Parameter Store. Service-native
-  secret stores remain the runtime injection path.
+- **Secret authority:** AWS Systems Manager Parameter Store. Service-native and
+  GitHub stores hold downstream runtime and deployment copies.
 
 The single deployable app still has hard internal boundaries: human UI server
 code, caller API code, registration flows, storage access, authorization,
@@ -276,8 +276,9 @@ Rules:
 
 Architecture-level responsibilities:
 
-- AWS Systems Manager Parameter Store is the durable recovery source for hosted
-  secrets; service-native secret stores hold runtime values.
+- AWS Systems Manager Parameter Store is the canonical project source for
+  managed, recoverable secrets; service-native and GitHub stores hold downstream
+  runtime and deployment copies.
 - Unexpected or operator-actionable failures get a stable `error_id` shared by
   structured logs and Sentry.
 - Logs, audit events, and frontend telemetry are content-safe.

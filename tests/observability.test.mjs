@@ -35,6 +35,7 @@ import {
 import { CLIENT_EVENT_BODY_BYTE_LIMIT } from "../src/shared/client-events-contract.ts";
 import { SYSTEM_CONTRACT } from "../src/shared/system-contract.ts";
 import {
+  clientEventServerTestInternals,
   emitClientEventLog,
   handleClientEventsRequest
 } from "../src/server/client-events.ts";
@@ -1523,7 +1524,7 @@ test("caller approval deny actions pass stable route labels to session logging",
 });
 
 test("human review server actions emit failure telemetry only on failure paths", async () => {
-  /** @type {Array<{ name: string, category?: string, producer?: string }>} */
+  /** @type {Array<{ name: string, producer?: string }>} */
   const emitted = [];
   /** @type {string[]} */
   const redirects = [];
@@ -1564,13 +1565,12 @@ test("human review server actions emit failure telemetry only on failure paths",
         },
         "../../src/server/client-events": {
           /**
-           * @param {{ name: string, category?: string }} event
+           * @param {{ name: string }} event
            * @param {{ producer?: string }} context
            */
           emitClientEventLog(event, context) {
             emitted.push({
               name: event.name,
-              category: event.category,
               producer: context.producer
             });
           }
@@ -1635,7 +1635,6 @@ test("human review server actions emit failure telemetry only on failure paths",
   assert.deepEqual(emitted, [
     {
       name: "human_action_failed",
-      category: "submission",
       producer: "server_action"
     }
   ]);
@@ -1667,7 +1666,6 @@ test("human review server actions emit failure telemetry only on failure paths",
   assert.deepEqual(emitted, [
     {
       name: "file_upload_failed",
-      category: "upload",
       producer: "server_action"
     }
   ]);
@@ -1691,7 +1689,6 @@ test("human review server actions emit failure telemetry only on failure paths",
   assert.deepEqual(emitted, [
     {
       name: "human_action_failed",
-      category: "submission",
       producer: "server_action"
     }
   ]);
@@ -1730,7 +1727,6 @@ test("human review server actions emit failure telemetry only on failure paths",
     assert.deepEqual(emitted, [
       {
         name: "human_action_failed",
-        category: "submission",
         producer: "server_action"
       }
     ]);
@@ -3152,14 +3148,86 @@ test("client event endpoint logs only allowlisted content-safe fields", async ()
   assert.equal(logs[0].client_event_name, "client_error");
   assert.equal(logs[0].client_event_category, "browser_exception");
   assert.equal(logs[0].event_count, 1);
+  assert.equal(logs[0].sentry_captured, undefined);
   assert.equal(JSON.stringify(logs).includes("raw review content"), false);
   assert.equal(JSON.stringify(logs).includes("secret stack trace"), false);
+});
+
+test("GitHub sign-in failures reach the alertable browser-event path", async () => {
+  clientEventServerTestInternals.resetBrowserSentryCaptureLimiter();
+  const request = new Request(
+    "https://app.agent-outbox.dev/api/client-events",
+    {
+      method: "POST",
+      headers: {
+        origin: "https://app.agent-outbox.dev",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        events: [
+          {
+            name: "github_sign_in_clerk_timeout",
+            category: "browser_exception",
+            message: "client-controlled detail must not survive"
+          }
+        ]
+      })
+    }
+  );
+
+  const logs = await captureStructuredLogs(async () => {
+    assert.deepEqual(await handleClientEventsRequest(request), {
+      accepted: 1,
+      dropped: 0
+    });
+  });
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, "error");
+  assert.equal(logs[0].operation, "client_event.github_sign_in_clerk_timeout");
+  assert.equal(logs[0].client_event_category, "authentication");
+  assert.equal(logs[0].sentry_captured, false);
+  assert.equal(
+    JSON.stringify(logs).includes("client-controlled detail"),
+    false
+  );
+});
+
+test("GitHub sign-in Sentry capture attempts are rate limited per isolate", async () => {
+  clientEventServerTestInternals.resetBrowserSentryCaptureLimiter();
+  try {
+    const logs = await captureStructuredLogs(async () => {
+      for (const name of /** @type {const} */ ([
+        "github_sign_in_clerk_error",
+        "github_sign_in_clerk_timeout"
+      ])) {
+        emitClientEventLog(
+          { name },
+          {
+            requestId: "req-client-event-rate-limit",
+            route: "/api/client-events",
+            producer: "browser"
+          }
+        );
+      }
+    });
+
+    assert.equal(logs.length, 2);
+    assert.equal(logs[0].client_event_category, "authentication");
+    assert.equal(logs[0].sentry_captured, false);
+    assert.equal(logs[0].sentry_capture_rate_limited, undefined);
+    assert.equal(logs[1].level, "warn");
+    assert.equal(logs[1].sentry_captured, false);
+    assert.equal(logs[1].sentry_capture_rate_limited, true);
+  } finally {
+    clientEventServerTestInternals.resetBrowserSentryCaptureLimiter();
+  }
 });
 
 test("server action failure events use trusted producer context without HTTP ingress fields", async () => {
   const logs = await captureStructuredLogs(async () => {
     emitClientEventLog(
-      { name: "human_action_failed", category: "submission" },
+      { name: "human_action_failed" },
       {
         requestId: "human-action-request",
         route: "/human",
@@ -3167,7 +3235,7 @@ test("server action failure events use trusted producer context without HTTP ing
       }
     );
     emitClientEventLog(
-      { name: "file_upload_failed", category: "upload" },
+      { name: "file_upload_failed" },
       {
         requestId: "file-action-request",
         route: "/human",

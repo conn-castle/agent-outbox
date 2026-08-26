@@ -142,11 +142,16 @@ The workflow applies one serialized release sequence:
    tests, and migration replay/database policy checks.
 3. Capture the one current 100%-traffic Cloudflare Worker version and its live
    runtime release SHA, then run runtime smoke against that rollback target.
-4. Build once with production public configuration, dry-run the generated
+4. Validate the durable production Flyway history, apply every pending
+   checked-in migration using `DATABASE_MIGRATION_URL` from the protected
+   `production` GitHub environment, and validate the resulting history. A
+   missing credential or failed migration stops the release before Worker
+   deployment.
+5. Build once with production public configuration, dry-run the generated
    artifact with its Hyperdrive and secret inventory, stamp the Worker version
    with `v<package.json version>`, and deploy that artifact.
-5. Retry runtime smoke until the exact candidate SHA is serving successfully.
-6. Only after live verification, publish `v<package.json version>` and its
+6. Retry runtime smoke until the exact candidate SHA is serving successfully.
+7. Only after live verification, publish `v<package.json version>` and its
    GitHub Release on the certified SHA. Finalization is idempotent: it
    reconciles the current tag/release state, adopts a tag a prior partial run
    already created on this SHA, treats an already-published release as success,
@@ -170,6 +175,11 @@ The project-owned `worker:deploy` command is an internal workflow step and fails
 outside `deploy-production.yml` on GitHub Actions. Do not load production
 credentials locally to bypass it and do not run mutating Wrangler deploy
 commands from an operator shell.
+
+Production Flyway migration application follows the same boundary: it runs only
+inside `deploy-production.yml`, after rollback-target verification and before
+Worker deployment. Never populate a local shell from production SSM and invoke
+`migration:migrate` against the durable database.
 
 After the workflow publishes the numbered release, inspect the run and rerun
 hosted runtime smoke and hosted health before broader rollout or accepting
@@ -307,10 +317,13 @@ and the matching GitHub `production` environment secret or variable, then
 redeploy through the approved workflow. Do not use raw SQL or dashboard schema
 edits for rollback.
 
-The release workflow automatically rolls back only when its deploy or
-live-verification steps fail; a tagging-only failure leaves the verified deploy
-live. For a problem found after a workflow completed, inspect recent deployments
-read-only to identify the Cloudflare version id for a previously tagged release:
+The release workflow automatically rolls back only Worker code and configuration
+when its deploy or live-verification steps fail; it never reverts Flyway schema
+history. Every production migration must therefore remain compatible with both
+the outgoing and incoming Worker through expand/contract sequencing. A
+tagging-only failure leaves the verified deploy live. For a problem found after
+a workflow completed, inspect recent deployments read-only to identify the
+Cloudflare version id for a previously tagged release:
 
 ```bash
 corepack pnpm exec wrangler deployments list --name agent-outbox --env-file /dev/null
