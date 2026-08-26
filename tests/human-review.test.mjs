@@ -40,7 +40,8 @@ import {
 import {
   accountCanManageBilling,
   accountCanUpgrade,
-  accountStorageLabel
+  accountStorageLabel,
+  humanAccountIdentityOrFallback
 } from "../src/shared/account-display.ts";
 
 /**
@@ -233,6 +234,34 @@ test("account banner distinguishes storage and hosted billing actions", () => {
   );
   assert.equal(accountCanUpgrade({ tier: "hosted_free" }), true);
   assert.equal(accountCanUpgrade({ tier: "hosted_paid" }), false);
+});
+
+test("account identity keeps workspace fallback when Clerk profile is missing", () => {
+  assert.deepEqual(
+    humanAccountIdentityOrFallback(
+      {
+        name: "Alex Morgan",
+        emailAddress: "alex@example.com",
+        signInMethods: ["GitHub"]
+      },
+      "Demo workspace"
+    ),
+    {
+      name: "Alex Morgan",
+      emailAddress: "alex@example.com",
+      signInMethods: ["GitHub"]
+    }
+  );
+  assert.deepEqual(humanAccountIdentityOrFallback(null, "Demo workspace"), {
+    name: "Demo workspace",
+    emailAddress: null,
+    signInMethods: []
+  });
+  assert.deepEqual(humanAccountIdentityOrFallback(null, null), {
+    name: null,
+    emailAddress: null,
+    signInMethods: []
+  });
 });
 
 /** @param {string[]} values */

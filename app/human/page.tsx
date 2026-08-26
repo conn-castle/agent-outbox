@@ -33,7 +33,10 @@ import {
   humanReviewViewFromRecord,
   type HumanReviewView
 } from "../../src/shared/human-review-view";
-import type { HumanAccountIdentityDisplay } from "../../src/shared/account-display";
+import {
+  humanAccountIdentityOrFallback,
+  type HumanAccountIdentityDisplay
+} from "../../src/shared/account-display";
 
 export const dynamic = "force-dynamic";
 
@@ -105,7 +108,7 @@ export default async function HumanReviewPage({
   }
 
   const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
-  const [transaction, clerkUser] = await Promise.all([
+  const [transaction, clerkIdentity] = await Promise.all([
     runHumanAccountTransaction(
       {
         clerkUserId: session.userId,
@@ -121,7 +124,7 @@ export default async function HumanReviewPage({
           view
         )
     ),
-    (await clerkClient()).users.getUser(session.userId)
+    loadClerkAccountIdentity(session.userId)
   ]);
 
   if (!transaction.ok) {
@@ -153,7 +156,10 @@ export default async function HumanReviewPage({
     <ReviewWorkspace
       key={humanSession.accountId}
       session={humanSession}
-      identity={humanAccountIdentity(clerkUser)}
+      identity={humanAccountIdentityOrFallback(
+        clerkIdentity,
+        humanSession.account.label
+      )}
       rows={pageData.rows}
       detail={pageData.detail}
       banner={pageData.banner}
@@ -165,6 +171,18 @@ export default async function HumanReviewPage({
       renderedAt={renderedAt}
     />
   );
+}
+
+async function loadClerkAccountIdentity(
+  userId: string
+): Promise<HumanAccountIdentityDisplay | null> {
+  try {
+    return humanAccountIdentity(
+      await (await clerkClient()).users.getUser(userId)
+    );
+  } catch {
+    return null;
+  }
 }
 
 function humanAccountIdentity(user: User): HumanAccountIdentityDisplay {

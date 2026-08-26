@@ -181,12 +181,27 @@ test("account popup identifies the user, shows free usage, and links to upgrade"
   );
   await expect(popup.locator(".account-usage-track")).toHaveCount(0);
   const closeButton = popup.getByRole("button", { name: "Close account menu" });
+  const backdrop = page.getByRole("button", { name: "Dismiss account menu" });
   if (isMobile) {
     await expect(closeButton).toBeVisible();
+    await expect(backdrop).toBeVisible();
+    const urlBefore = page.url();
+    const viewport = page.viewportSize();
+    await backdrop.click({
+      position: {
+        x: 8,
+        y: Math.floor((viewport?.height ?? 800) / 2)
+      }
+    });
+    await expect(popup).toBeHidden();
+    await expect(page).toHaveURL(urlBefore);
+    await page.getByLabel("Account status").locator("summary").click();
+    await expect(popup).toBeVisible();
     await closeButton.click();
     await expect(popup).toBeHidden();
   } else {
     await expect(closeButton).toBeHidden();
+    await expect(backdrop).toBeHidden();
   }
 });
 

@@ -238,7 +238,8 @@ body:has(.shell > .human-workspace) {
   padding: 0.1rem 0.1rem 0.85rem;
 }
 
-.human-workspace .account-popover-close {
+.human-workspace .account-popover-close,
+.human-workspace .account-popover-backdrop {
   display: none;
 }
 
@@ -520,13 +521,16 @@ body:has(.shell > .human-workspace) {
 }
 
 @media (max-width: 520px) {
-  .human-workspace .account-banner[open]::before {
+  .human-workspace .account-banner[open] .account-popover-backdrop {
+    display: block;
     position: fixed;
     z-index: 90;
     inset: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
     background: rgba(17, 22, 23, 0.24);
-    content: "";
-    pointer-events: none;
+    cursor: pointer;
   }
 
   .human-workspace .account-popover {

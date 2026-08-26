@@ -26,3 +26,15 @@ export type HumanAccountIdentityDisplay = {
   emailAddress: string | null;
   signInMethods: string[];
 };
+
+export function humanAccountIdentityOrFallback(
+  profile: HumanAccountIdentityDisplay | null,
+  accountLabel: string | null
+): HumanAccountIdentityDisplay {
+  if (profile) return profile;
+  return {
+    name: accountLabel,
+    emailAddress: null,
+    signInMethods: []
+  };
+}

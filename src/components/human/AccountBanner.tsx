@@ -40,6 +40,7 @@ export function AccountBanner({
           <span className="account-avatar">!</span>
           <span>Account</span>
         </summary>
+        <AccountMenuBackdrop />
         <div className="account-popover account-popover-error">
           <strong>Account details unavailable</strong>
           <span>{banner.error.message}</span>
@@ -65,6 +66,7 @@ export function AccountBanner({
         <span className="account-avatar">{avatarLetter(summaryLabel)}</span>
         <span>{summaryLabel}</span>
       </summary>
+      <AccountMenuBackdrop />
       <div className="account-popover">
         <header className="account-profile">
           <span className="account-profile-avatar" aria-hidden="true">
@@ -272,6 +274,18 @@ function accountTierLabel(tier: HumanAccountBannerData["tier"]) {
 
 function avatarLetter(value: string) {
   return value.trim().charAt(0).toUpperCase() || "A";
+}
+
+function AccountMenuBackdrop() {
+  return (
+    <button
+      type="button"
+      className="account-popover-backdrop"
+      tabIndex={-1}
+      aria-label="Dismiss account menu"
+      onClick={closeAccountMenu}
+    />
+  );
 }
 
 function closeAccountMenu(event: MouseEvent<HTMLButtonElement>) {
