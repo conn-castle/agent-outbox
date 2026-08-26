@@ -38,7 +38,8 @@ import {
   writeHumanReviewView
 } from "../src/shared/human-review-view.ts";
 import {
-  accountHasHostedBilling,
+  accountCanManageBilling,
+  accountCanUpgrade,
   accountStorageLabel
 } from "../src/shared/account-display.ts";
 
@@ -208,28 +209,30 @@ test("fixture resolved marker leaves pending and appears as answered history", (
   assert.equal(historyRow.status, "answered");
 });
 
-test("account banner distinguishes zero, unlimited, and self-hosted billing", () => {
+test("account banner distinguishes storage and hosted billing actions", () => {
   assert.equal(accountStorageLabel(0, 0), "0 byte capacity");
   assert.equal(accountStorageLabel(42, null), "Unlimited");
   assert.equal(accountStorageLabel(25, 100), "25%");
   assert.equal(
-    accountHasHostedBilling({
+    accountCanManageBilling({
       tier: "self_hosted",
       billing_status: "not_applicable"
     }),
     false
   );
   assert.equal(
-    accountHasHostedBilling({
+    accountCanManageBilling({
       tier: "hosted_free",
       billing_status: "not_applicable"
     }),
     false
   );
   assert.equal(
-    accountHasHostedBilling({ tier: "hosted_paid", billing_status: "active" }),
+    accountCanManageBilling({ tier: "hosted_paid", billing_status: "active" }),
     true
   );
+  assert.equal(accountCanUpgrade({ tier: "hosted_free" }), true);
+  assert.equal(accountCanUpgrade({ tier: "hosted_paid" }), false);
 });
 
 /** @param {string[]} values */
@@ -895,8 +898,18 @@ test("human account banner metadata reuses account status shaping under human ac
         billing_grace_ends_at: null
       }
     ],
-    [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
-    []
+    [
+      {
+        queued_input_items: "9",
+        non_file_stored_bytes: "100",
+        overall_stored_bytes: "100"
+      }
+    ],
+    [],
+    [{ used_units: "17" }],
+    [{ used_units: "3" }],
+    [{ used_units: "450" }],
+    [{ queued_input_items: "9" }]
   ]);
 
   const banner = await humanReviewAccountBannerInTransaction(query, context);
@@ -904,6 +917,33 @@ test("human account banner metadata reuses account status shaping under human ac
   assert.equal(banner.ok, true);
   assert.equal(banner.ok ? banner.data.account_id : null, context.accountId);
   assert.equal(banner.ok ? banner.data.file_upload_enabled : null, false);
+  assert.deepEqual(
+    banner.ok
+      ? banner.data.usage.map(({ limitName, used, limit }) => ({
+          limitName,
+          used,
+          limit
+        }))
+      : null,
+    [
+      {
+        limitName: "input_submissions_per_calendar_month",
+        used: 17,
+        limit: 5_000
+      },
+      {
+        limitName: "input_submissions_per_day",
+        used: 3,
+        limit: 1_000
+      },
+      {
+        limitName: "authenticated_caller_api_requests_per_calendar_month",
+        used: 450,
+        limit: 100_000
+      },
+      { limitName: "queued_input_items", used: 9, limit: 1_000 }
+    ]
+  );
   assert.deepEqual(query.calls[0].values, [context.accountId]);
 });
 

@@ -897,7 +897,7 @@ function limitStatus(profile: LimitProfileSelector, limitName: LimitName) {
   return limit;
 }
 
-function quotaWindow(
+export function quotaWindow(
   limit: LimitStatusMetadata & { windowKind: LimitWindowKind },
   now: Date
 ) {

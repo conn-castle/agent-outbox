@@ -157,6 +157,26 @@ body:has(.shell > .human-workspace) {
   font-size: 0.64rem;
   font-weight: 640;
   list-style: none;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 100ms ease-out;
+}
+
+.human-workspace .account-banner > summary:hover,
+.human-workspace .account-banner[open] > summary {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.human-workspace .account-banner > summary:active {
+  transform: scale(0.97);
+}
+
+.human-workspace .account-banner > summary:focus-visible {
+  outline: 2px solid var(--review-accent-light);
+  outline-offset: 2px;
 }
 
 .human-workspace .account-banner > summary::-webkit-details-marker {
@@ -185,58 +205,290 @@ body:has(.shell > .human-workspace) {
 .human-workspace .account-popover {
   position: absolute;
   z-index: 100;
-  top: calc(100% + 0.45rem);
+  top: calc(100% + 0.9rem);
   right: 0;
   display: grid;
-  width: min(19rem, calc(100vw - 1.5rem));
-  gap: 0.9rem;
-  padding: 1rem;
+  width: min(25rem, calc(100vw - 1.25rem));
+  max-height: calc(100dvh - 4.75rem);
+  gap: 0;
+  padding: 0.95rem;
+  overflow-y: auto;
   border: 1px solid var(--review-line-strong);
   border-radius: 0.75rem;
-  background: rgba(255, 253, 248, 0.98);
+  background: rgba(255, 253, 248, 0.94);
   color: var(--review-text);
   box-shadow: 0 1.2rem 3rem rgba(17, 22, 23, 0.22);
   backdrop-filter: blur(20px) saturate(145%);
+  transform-origin: top right;
+  animation: account-popover-arrive 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.human-workspace .account-popover header,
-.human-workspace .account-popover dl,
-.human-workspace .account-popover dl > div {
+@keyframes account-popover-arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-0.25rem);
+  }
+}
+
+.human-workspace .account-profile {
   display: grid;
-  gap: 0.25rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.1rem 0.1rem 0.85rem;
 }
 
-.human-workspace .account-popover header span,
-.human-workspace .account-popover dt {
+.human-workspace .account-popover-close {
+  display: none;
+}
+
+.human-workspace .account-profile-avatar {
+  display: grid;
+  width: 2.35rem;
+  height: 2.35rem;
+  place-items: center;
+  border-radius: 50%;
+  background: #f5cf9f;
+  color: #743712;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.human-workspace .account-profile-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.14rem;
+}
+
+.human-workspace .account-profile-copy strong,
+.human-workspace .account-profile-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.human-workspace .account-profile-copy strong {
+  color: var(--review-text);
+  font-size: 0.83rem;
+  font-weight: 760;
+  letter-spacing: -0.01em;
+}
+
+.human-workspace .account-profile-copy span,
+.human-workspace .account-popover small,
+.human-workspace .account-identity-details dt {
   color: var(--review-muted);
-  font-size: 0.66rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
 }
 
-.human-workspace .account-popover dl {
+.human-workspace .account-plan-badge {
+  padding: 0.26rem 0.48rem;
+  border: 1px solid #ddd5c8;
+  border-radius: 999px;
+  background: #f0ece4;
+  color: var(--review-text);
+  font-size: 0.63rem;
+  font-weight: 750;
+}
+
+.human-workspace .account-identity-details {
+  display: grid;
+  gap: 0.48rem;
   margin: 0;
+  padding: 0.75rem 0.1rem;
+  border-block: 1px solid var(--review-line);
+}
+
+.human-workspace .account-identity-details > div {
+  display: grid;
+  grid-template-columns: 4.2rem minmax(0, 1fr);
+  gap: 0.7rem;
+}
+
+.human-workspace .account-identity-details dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--review-text);
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.human-workspace .account-identity-details > div:first-child dd {
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.human-workspace .account-identity-details > div:first-child {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.18rem;
+}
+
+.human-workspace .account-upgrade-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid rgba(196, 100, 29, 0.24);
+  border-radius: 0.58rem;
+  background: linear-gradient(135deg, #fff3df, #fffaf0);
+}
+
+.human-workspace .account-upgrade-card > span,
+.human-workspace .account-inclusions > div > span:last-child {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.human-workspace .account-upgrade-card strong,
+.human-workspace .account-usage header strong,
+.human-workspace .account-inclusions strong {
+  color: var(--review-text);
+  font-size: 0.73rem;
+  font-weight: 750;
+}
+
+.human-workspace .account-upgrade-card a {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.22rem;
+  padding: 0.4rem 0.58rem;
+  border-radius: 0.42rem;
+  background: var(--review-accent-dark);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 760;
+  text-decoration: none;
+}
+
+.human-workspace .account-upgrade-card a:hover {
+  background: #78390f;
+}
+
+.human-workspace .account-upgrade-card a:active,
+.human-workspace .account-popover-actions a:active {
+  transform: scale(0.97);
+}
+
+.human-workspace .account-usage {
+  display: grid;
+  gap: 0.62rem;
+  padding: 0.9rem 0.1rem 0.75rem;
+}
+
+.human-workspace .account-usage > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.human-workspace .account-usage > header span {
+  padding: 0.2rem 0.42rem;
+  border: 1px solid #cdddcf;
+  border-radius: 999px;
+  background: #edf4ee;
+  color: #397254;
+  font-size: 0.68rem;
+  font-weight: 720;
+}
+
+.human-workspace .account-usage-row {
+  display: block;
+}
+
+.human-workspace .account-usage-row > span:first-child {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 0.55rem;
 }
 
-.human-workspace .account-popover dl > div {
-  grid-template-columns: 1fr auto;
-}
-
-.human-workspace .account-popover dd {
-  margin: 0;
-  font-size: 0.67rem;
-  font-weight: 700;
-}
-
-.human-workspace .account-popover a {
-  color: var(--review-accent-dark);
+.human-workspace .account-usage-row strong {
+  overflow: hidden;
+  color: var(--review-text);
   font-size: 0.7rem;
-  font-weight: 740;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.human-workspace .account-usage-row small {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.human-workspace .account-inclusions {
+  padding: 0.68rem 0.1rem;
+  border-top: 1px solid var(--review-line);
+}
+
+.human-workspace .account-inclusions > div {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.human-workspace .account-inclusions > div + div {
+  margin-top: 0.55rem;
+}
+
+.human-workspace .account-inclusions > div > span:first-child {
+  display: grid;
+  width: 1.3rem;
+  height: 1.3rem;
+  place-items: center;
+  border-radius: 50%;
+  background: #edf4ee;
+  color: #397254;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.human-workspace .account-inclusions > div > span.excluded {
+  background: #f0ece4;
+  color: var(--review-muted);
 }
 
 .human-workspace .account-popover-actions {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  padding: 0.72rem 0.1rem 0.05rem;
+  border-top: 1px solid var(--review-line);
+}
+
+.human-workspace .account-popover-actions a,
+.human-workspace .account-popover-error a {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--review-accent-dark);
+  font-size: 0.72rem;
+  font-weight: 720;
+  text-decoration: none;
+}
+
+.human-workspace .account-popover-actions a {
+  padding-inline: 0.25rem;
+}
+
+.human-workspace .account-popover-actions a:last-child {
+  color: var(--review-muted);
+}
+
+.human-workspace .account-popover-error {
+  gap: 0.45rem;
 }
 
 .human-workspace .account-limit-blocks {
@@ -246,6 +498,68 @@ body:has(.shell > .human-workspace) {
   padding: 0 0 0 1rem;
   color: var(--review-red);
   font-size: 0.67rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .human-workspace .account-popover {
+    animation: none;
+  }
+
+  .human-workspace .account-banner > summary,
+  .human-workspace .account-upgrade-card a,
+  .human-workspace .account-popover-actions a {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .human-workspace .account-popover {
+    background: #fffdf8;
+    backdrop-filter: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .human-workspace .account-banner[open]::before {
+    position: fixed;
+    z-index: 90;
+    inset: 0;
+    background: rgba(17, 22, 23, 0.24);
+    content: "";
+    pointer-events: none;
+  }
+
+  .human-workspace .account-popover {
+    position: fixed;
+    top: 4.25rem;
+    right: 0.75rem;
+    left: 0.75rem;
+    width: auto;
+    max-height: calc(100dvh - 5rem);
+    transform-origin: top center;
+  }
+
+  .human-workspace .account-profile {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: 0.55rem;
+  }
+
+  .human-workspace .account-popover-close {
+    display: grid;
+    width: 2.75rem;
+    height: 2.75rem;
+    padding: 0;
+    place-items: center;
+    border: 1px solid var(--review-line);
+    border-radius: 50%;
+    background: var(--review-paper-soft);
+    color: var(--review-muted);
+    cursor: pointer;
+  }
+
+  .human-workspace .account-popover-close:active {
+    transform: scale(0.96);
+  }
 }
 
 .human-workspace .human-notice {
@@ -2021,16 +2335,6 @@ body:has(.shell > .human-workspace) {
 .human-workspace .account-avatar {
   font-size: var(--queue-type-label);
   font-weight: 700;
-}
-
-.human-workspace .account-popover header span,
-.human-workspace .account-popover dt {
-  font-size: var(--queue-type-label);
-}
-
-.human-workspace .account-popover dd,
-.human-workspace .account-popover a {
-  font-size: var(--queue-type-meta);
 }
 
 .human-workspace .human-notice,

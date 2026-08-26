@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, clerkClient, type User } from "@clerk/nextjs/server";
 
 import {
   type HumanReviewNotice,
@@ -9,6 +9,7 @@ import type { ProductTransactionQuery } from "../../src/server/database";
 import {
   BROWSER_FIXTURE_REFERENCE_TIME,
   browserFixtureAccountBanner,
+  browserFixtureAccountIdentity,
   browserFixtureHumanSession,
   browserFixtureReviewDetail,
   browserFixtureReviewPage,
@@ -32,6 +33,7 @@ import {
   humanReviewViewFromRecord,
   type HumanReviewView
 } from "../../src/shared/human-review-view";
+import type { HumanAccountIdentityDisplay } from "../../src/shared/account-display";
 
 export const dynamic = "force-dynamic";
 
@@ -71,13 +73,17 @@ export default async function HumanReviewPage({
       <ReviewWorkspace
         key={session.accountId}
         session={session}
+        identity={browserFixtureAccountIdentity()}
         rows={fixturePage.rows}
         detail={
           selectedItem
             ? browserFixtureReviewDetail(selectedItem, fixtureOptions)
             : null
         }
-        banner={browserFixtureAccountBanner(session)}
+        banner={browserFixtureAccountBanner(
+          session,
+          firstSearchParam(params?.fixture_plan) === "free" ? "free" : "paid"
+        )}
         notice={notice}
         view={view}
         hasNext={fixturePage.hasNext}
@@ -99,21 +105,24 @@ export default async function HumanReviewPage({
   }
 
   const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
-  const transaction = await runHumanAccountTransaction(
-    {
-      clerkUserId: session.userId,
-      requestId: createCorrelationId("human_req"),
-      route: "/human",
-      method: "GET"
-    },
-    (query, humanSession) =>
-      loadHumanReviewPageDataInTransaction(
-        query,
-        humanSession,
-        selectedItem ?? null,
-        view
-      )
-  );
+  const [transaction, clerkUser] = await Promise.all([
+    runHumanAccountTransaction(
+      {
+        clerkUserId: session.userId,
+        requestId: createCorrelationId("human_req"),
+        route: "/human",
+        method: "GET"
+      },
+      (query, humanSession) =>
+        loadHumanReviewPageDataInTransaction(
+          query,
+          humanSession,
+          selectedItem ?? null,
+          view
+        )
+    ),
+    (await clerkClient()).users.getUser(session.userId)
+  ]);
 
   if (!transaction.ok) {
     return (
@@ -144,6 +153,7 @@ export default async function HumanReviewPage({
     <ReviewWorkspace
       key={humanSession.accountId}
       session={humanSession}
+      identity={humanAccountIdentity(clerkUser)}
       rows={pageData.rows}
       detail={pageData.detail}
       banner={pageData.banner}
@@ -154,6 +164,40 @@ export default async function HumanReviewPage({
       composeAction={composeAction}
       renderedAt={renderedAt}
     />
+  );
+}
+
+function humanAccountIdentity(user: User): HumanAccountIdentityDisplay {
+  const emailAddress = user.primaryEmailAddress?.emailAddress ?? null;
+  const name =
+    [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+    user.username ||
+    emailAddress;
+  const signInMethods = [
+    ...new Set(
+      user.externalAccounts.map((account) => providerLabel(account.provider))
+    ),
+    ...(user.passwordEnabled ? ["Password"] : [])
+  ];
+  return { name, emailAddress, signInMethods };
+}
+
+function providerLabel(provider: string) {
+  const normalized = provider.replace(/^oauth_/, "");
+  const known: Record<string, string> = {
+    github: "GitHub",
+    google: "Google",
+    apple: "Apple",
+    microsoft: "Microsoft",
+    linkedin_oidc: "LinkedIn"
+  };
+  return (
+    known[normalized] ??
+    normalized
+      .split("_")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ")
   );
 }
 

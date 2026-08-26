@@ -9,10 +9,20 @@ export function accountStorageLabel(
   return `${Math.round((storedBytes / limitBytes) * 100)}%`;
 }
 
-export function accountHasHostedBilling(
+export function accountCanUpgrade(data: Pick<AccountStatusData, "tier">) {
+  return data.tier === "hosted_free";
+}
+
+export function accountCanManageBilling(
   data: Pick<AccountStatusData, "tier" | "billing_status">
 ) {
   return (
-    data.tier !== "self_hosted" && data.billing_status !== "not_applicable"
+    data.tier === "hosted_paid" && data.billing_status !== "not_applicable"
   );
 }
+
+export type HumanAccountIdentityDisplay = {
+  name: string | null;
+  emailAddress: string | null;
+  signInMethods: string[];
+};
