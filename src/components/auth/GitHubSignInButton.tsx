@@ -30,17 +30,34 @@ export function GitHubSignInButton() {
   const { signIn } = useSignIn();
   const [starting, setStarting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const activeAttemptRef = useRef(false);
+  const attemptCountRef = useRef(0);
+  const activeAttemptRef = useRef<number | null>(null);
+  const recoveryTimeoutRef = useRef<number | null>(null);
+
+  // Ends whichever attempt is currently active and disarms its recovery timer.
+  // Only refs are touched, so the mount-time closure stays correct forever.
+  const endActiveAttempt = () => {
+    activeAttemptRef.current = null;
+    if (recoveryTimeoutRef.current !== null) {
+      window.clearTimeout(recoveryTimeoutRef.current);
+      recoveryTimeoutRef.current = null;
+    }
+  };
 
   useEffect(() => {
     const recoverRestoredPage = () => {
-      if (!activeAttemptRef.current) return;
-      activeAttemptRef.current = false;
+      if (activeAttemptRef.current === null) return;
+      endActiveAttempt();
       setStarting(false);
       setMessage(null);
     };
     window.addEventListener("pageshow", recoverRestoredPage);
-    return () => window.removeEventListener("pageshow", recoverRestoredPage);
+    return () => {
+      window.removeEventListener("pageshow", recoverRestoredPage);
+      // Without this a client-side route change leaves the recovery timer armed
+      // and it reports a stall for an attempt nobody can see any more.
+      endActiveAttempt();
+    };
   }, []);
 
   if (isSsoCallbackPath(pathname)) {
@@ -57,21 +74,23 @@ export function GitHubSignInButton() {
 
     setMessage(null);
     setStarting(true);
-    activeAttemptRef.current = true;
+    const attemptId = ++attemptCountRef.current;
+    // Recovery, unmount and a retry all end an attempt while its Clerk promises
+    // may still be pending, so every step re-checks that it still owns the flow.
+    const ownsAttempt = () => activeAttemptRef.current === attemptId;
+    endActiveAttempt();
+    activeAttemptRef.current = attemptId;
     const navigation = createNavigationMonitor();
-    const recoveryTimeoutId = window.setTimeout(() => {
-      if (!activeAttemptRef.current) return;
-      activeAttemptRef.current = false;
-      fail("github_sign_in_same_page_stall", setStarting, setMessage);
-    }, ACTIVE_ATTEMPT_RECOVERY_MS);
 
     const failAttempt = (event: GitHubSignInFailure) => {
-      activeAttemptRef.current = false;
+      if (!ownsAttempt()) return;
+      endActiveAttempt();
       fail(event, setStarting, setMessage);
     };
 
     try {
-      const reset = await signIn.reset();
+      const reset = await withTimeout(signIn.reset());
+      if (!ownsAttempt()) return;
       if (reset.error) {
         throw new Error("Clerk sign-in reset failed.");
       }
@@ -83,10 +102,23 @@ export function GitHubSignInButton() {
           redirectCallbackUrl: "/sign-in/sso-callback"
         })
       );
+      if (!ownsAttempt()) return;
       if (result.error) {
         failAttempt("github_sign_in_clerk_error");
         return;
       }
+
+      // Clerk took the launch, so the page is expected to leave and never come
+      // back. Nothing bounds the attempt from here: waitForSamePageFailure
+      // returns straight away once a navigation starts, and the attempt then
+      // stays open on a page that may still be sitting there. Arming earlier
+      // instead races the reset and sso deadlines, which already bound their
+      // own calls, and reports their timeouts as stalls.
+      recoveryTimeoutRef.current = window.setTimeout(() => {
+        if (!ownsAttempt()) return;
+        endActiveAttempt();
+        fail("github_sign_in_same_page_stall", setStarting, setMessage);
+      }, ACTIVE_ATTEMPT_RECOVERY_MS);
 
       if (await navigation.waitForSamePageFailure(SAME_PAGE_FAILURE_DELAY_MS)) {
         failAttempt("github_sign_in_same_page_stall");
@@ -95,17 +127,15 @@ export function GitHubSignInButton() {
       if (error instanceof ClerkCallTimeoutError) {
         // Promise.race cannot cancel Clerk's request. Reset its mutable local
         // attempt before enabling retry so a late settlement cannot poison the
-        // next provider click.
-        await signIn.reset().catch(() => undefined);
+        // next provider click. Bound that reset too: an unbounded one would keep
+        // the button disabled for as long as Clerk stays stuck.
+        await withTimeout(signIn.reset()).catch(() => undefined);
         failAttempt("github_sign_in_clerk_timeout");
       } else {
         failAttempt("github_sign_in_clerk_error");
       }
     } finally {
       navigation.cleanup();
-      if (!activeAttemptRef.current) {
-        window.clearTimeout(recoveryTimeoutId);
-      }
     }
   }
 

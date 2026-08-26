@@ -27,6 +27,7 @@ export default function SignInPage() {
           appearance={{
             elements: {
               socialButtonsBlockButton: { display: "none" },
+              socialButtonsIconButton: { display: "none" },
               dividerRow: { display: "none" }
             }
           }}
