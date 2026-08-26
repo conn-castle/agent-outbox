@@ -173,15 +173,39 @@ export default async function HumanReviewPage({
   );
 }
 
+const CLERK_ACCOUNT_IDENTITY_TIMEOUT_MS = 3_000;
+
 async function loadClerkAccountIdentity(
   userId: string
 ): Promise<HumanAccountIdentityDisplay | null> {
   try {
     return humanAccountIdentity(
-      await (await clerkClient()).users.getUser(userId)
+      await withDeadline(
+        (async () => (await clerkClient()).users.getUser(userId))(),
+        CLERK_ACCOUNT_IDENTITY_TIMEOUT_MS
+      )
     );
   } catch {
     return null;
+  }
+}
+
+async function withDeadline<T>(
+  operation: Promise<T>,
+  timeoutMs: number
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error("clerk_account_identity_timeout"));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
 }
 

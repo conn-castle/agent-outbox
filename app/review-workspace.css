@@ -521,6 +521,15 @@ body:has(.shell > .human-workspace) {
 }
 
 @media (max-width: 520px) {
+  .human-workspace .account-banner[open] {
+    z-index: 110;
+  }
+
+  .human-workspace .account-banner[open] > summary {
+    position: relative;
+    z-index: 101;
+  }
+
   .human-workspace .account-banner[open] .account-popover-backdrop {
     display: block;
     position: fixed;

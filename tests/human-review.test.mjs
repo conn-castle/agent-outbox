@@ -937,8 +937,7 @@ test("human account banner metadata reuses account status shaping under human ac
     [],
     [{ used_units: "17" }],
     [{ used_units: "3" }],
-    [{ used_units: "450" }],
-    [{ queued_input_items: "9" }]
+    [{ used_units: "450" }]
   ]);
 
   const banner = await humanReviewAccountBannerInTransaction(query, context);
@@ -948,8 +947,9 @@ test("human account banner metadata reuses account status shaping under human ac
   assert.equal(banner.ok ? banner.data.file_upload_enabled : null, false);
   assert.deepEqual(
     banner.ok
-      ? banner.data.usage.map(({ limitName, used, limit }) => ({
+      ? banner.data.usage.map(({ limitName, label, used, limit }) => ({
           limitName,
+          label,
           used,
           limit
         }))
@@ -957,23 +957,40 @@ test("human account banner metadata reuses account status shaping under human ac
     [
       {
         limitName: "input_submissions_per_calendar_month",
+        label: "Monthly input submissions",
         used: 17,
         limit: 5_000
       },
       {
         limitName: "input_submissions_per_day",
+        label: "Daily input submissions",
         used: 3,
         limit: 1_000
       },
       {
         limitName: "authenticated_caller_api_requests_per_calendar_month",
+        label: "Monthly caller API requests",
         used: 450,
         limit: 100_000
       },
-      { limitName: "queued_input_items", used: 9, limit: 1_000 }
+      {
+        limitName: "queued_input_items",
+        label: "Queued input items",
+        used: 9,
+        limit: 1_000
+      }
     ]
   );
+  assert.equal(query.calls.length, 6);
   assert.deepEqual(query.calls[0].values, [context.accountId]);
+  assert.match(query.calls[1].sql, /agent_outbox_account_stock_usage\(\$1\)/);
+  assert.equal(
+    query.calls.filter((call) =>
+      /agent_outbox_account_stock_usage/.test(call.sql)
+    ).length,
+    1
+  );
+  assert.equal("queued_input_items" in (banner.ok ? banner.data : {}), false);
 });
 
 test("browser fixture bypass requires test environment and explicit fixture gate", () => {

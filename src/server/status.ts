@@ -40,6 +40,10 @@ export type AccountStatusData = {
   active_limit_blocks: ActiveLimitBlockData[];
 };
 
+export type AccountStatusSnapshot = AccountStatusData & {
+  queued_input_items: number | null;
+};
+
 export type CallerStatusData = {
   caller: {
     caller_id: string;
@@ -138,7 +142,8 @@ export async function handleAccountStatusRequest(
     request,
     context,
     "Account status is temporarily unavailable.",
-    async (query, identity) => accountStatusInTransaction(query, identity)
+    async (query, identity) =>
+      publicAccountStatus(await accountStatusInTransaction(query, identity))
   );
 }
 
@@ -161,6 +166,10 @@ export async function callerStatusInTransaction(
   if (!account.ok) {
     return account;
   }
+  const publishedAccount = publicAccountStatus(account);
+  if (!publishedAccount.ok) {
+    return publishedAccount;
+  }
 
   return {
     ok: true,
@@ -178,7 +187,7 @@ export async function callerStatusInTransaction(
           last_used_at: nullableTimestampValue(callerRow.last_used_at)
         }
       },
-      account: account.data
+      account: publishedAccount.data
     }
   };
 }
@@ -186,7 +195,7 @@ export async function callerStatusInTransaction(
 export async function accountStatusInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity
-): Promise<StatusResult<AccountStatusData>> {
+): Promise<StatusResult<AccountStatusSnapshot>> {
   const accountResult = await query<AccountStatusRow>(
     accountStatusStatement(identity)
   );
@@ -231,6 +240,9 @@ export async function accountStatusInTransaction(
       file_upload_enabled:
         accountLimitStatusMetadata(profile).fileUploadEnabled,
       storage,
+      queued_input_items: databaseNonNegativeInteger(
+        storageRow.queued_input_items
+      ),
       active_limit_blocks: blocksResult.rows
         .map(activeLimitBlockFromRow)
         .map((block) =>
@@ -389,6 +401,14 @@ async function withAuthenticatedCallerStatusTransaction<TData>(
       reported: true
     });
   }
+}
+
+function publicAccountStatus(
+  result: StatusResult<AccountStatusSnapshot>
+): StatusResult<AccountStatusData> {
+  if (!result.ok) return result;
+  const { queued_input_items: _queuedInputItems, ...data } = result.data;
+  return { ok: true, data };
 }
 
 function accountStorageStatus(

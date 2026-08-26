@@ -139,7 +139,7 @@ export function AccountBanner({
           {data.usage.map((metric) => (
             <UsageRow
               key={metric.limitName}
-              label={usageLabel(metric)}
+              label={metric.label}
               used={metric.used}
               limit={metric.limit}
               unit={metric.unit}
@@ -232,18 +232,6 @@ function UsageRow({
       </span>
     </div>
   );
-}
-
-function usageLabel(metric: HumanAccountUsageMetric) {
-  if (metric.limitName === "input_submissions_per_calendar_month")
-    return "Submissions this month";
-  if (metric.limitName === "input_submissions_per_day")
-    return "Submissions today";
-  if (
-    metric.limitName === "authenticated_caller_api_requests_per_calendar_month"
-  )
-    return "API requests this month";
-  return "Items in queue";
 }
 
 function usageValue(

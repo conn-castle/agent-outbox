@@ -195,7 +195,12 @@ test("account popup identifies the user, shows free usage, and links to upgrade"
     });
     await expect(popup).toBeHidden();
     await expect(page).toHaveURL(urlBefore);
-    await page.getByLabel("Account status").locator("summary").click();
+    const accountSummary = page.getByLabel("Account status").locator("summary");
+    await accountSummary.click();
+    await expect(popup).toBeVisible();
+    await accountSummary.click();
+    await expect(popup).toBeHidden();
+    await accountSummary.click();
     await expect(popup).toBeVisible();
     await closeButton.click();
     await expect(popup).toBeHidden();

@@ -383,12 +383,8 @@ export async function humanReviewAccountBannerInTransaction(
     });
   }
 
-  const stockResult = await query<{ queued_input_items: string | number }>({
-    sql: "select queued_input_items from public.agent_outbox_account_stock_usage($1)",
-    values: [context.accountId]
-  });
-  const queuedItems = Number(stockResult.rows[0]?.queued_input_items);
-  if (!Number.isSafeInteger(queuedItems) || queuedItems < 0) {
+  const queuedItems = status.data.queued_input_items;
+  if (queuedItems == null) {
     return {
       ok: false,
       error: {
@@ -411,7 +407,8 @@ export async function humanReviewAccountBannerInTransaction(
     resetsAt: null
   });
 
-  return { ok: true, data: { ...status.data, usage } };
+  const { queued_input_items: _queuedInputItems, ...account } = status.data;
+  return { ok: true, data: { ...account, usage } };
 }
 
 const ACCOUNT_POPOVER_QUOTA_LIMITS = [
