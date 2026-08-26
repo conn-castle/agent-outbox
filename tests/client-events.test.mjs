@@ -26,7 +26,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /**
  * @typedef {{ name: string, category?: string }} TestClientEvent
  * @typedef {{ url: string, init: RequestInit & { headers: Record<string, string>, body?: BodyInit | null } }} FetchCall
- * @typedef {{ classifyReactError: (error: unknown) => "hydration" | "other", emitClientEvent: (name: string, category?: string) => void }} ClientEventsStub
+ * @typedef {{ classifyReactError: (error: unknown) => "hydration" | "other", emitClientEvent: (name: string) => void }} ClientEventsStub
  */
 
 test("classifyReactError detects React hydration failures without matching unrelated errors", () => {
@@ -70,7 +70,7 @@ test("emitClientEvent buffers a burst and drains it across bounded batches", asy
   try {
     clientEventsTestInternals.queue.length = 0;
     for (let index = 0; index < 10; index += 1) {
-      emitClientEvent("client_error", "browser_exception");
+      emitClientEvent("client_error");
     }
     // A 10-event burst exceeds the per-flush batch size, so the first flush
     // sends one bounded batch and reschedules for the remainder.
@@ -83,10 +83,7 @@ test("emitClientEvent buffers a burst and drains it across bounded batches", asy
     assert.equal(requests[0].init.headers["Content-Type"], "application/json");
     const firstBody = JSON.parse(String(requests[0].init.body));
     assert.equal(firstBody.events.length, 8);
-    assert.deepEqual(firstBody.events[0], {
-      name: "client_error",
-      category: "browser_exception"
-    });
+    assert.deepEqual(firstBody.events[0], { name: "client_error" });
 
     // The remaining 2 events are drained by the rescheduled flush, not dropped
     // at the batch boundary.
@@ -158,7 +155,7 @@ test("registerClientEventFlushListeners flushes on pagehide and hidden visibilit
 
     // pagehide flushes the queued batch.
     clientEventsTestInternals.queue.length = 0;
-    emitClientEvent("client_error", "browser_exception");
+    emitClientEvent("client_error");
     windowHandlers.get("pagehide")?.(new Event("pagehide"));
     await tick();
     assert.equal(posts.length, 1);
@@ -167,7 +164,7 @@ test("registerClientEventFlushListeners flushes on pagehide and hidden visibilit
 
     // visibilitychange while hidden flushes.
     clientEventsTestInternals.queue.length = 0;
-    emitClientEvent("client_error", "browser_exception");
+    emitClientEvent("client_error");
     fakeDocument.visibilityState = "hidden";
     documentHandlers.get("visibilitychange")?.(new Event("visibilitychange"));
     await tick();
@@ -175,7 +172,7 @@ test("registerClientEventFlushListeners flushes on pagehide and hidden visibilit
 
     // visibilitychange while visible does not flush.
     clientEventsTestInternals.queue.length = 0;
-    emitClientEvent("client_error", "browser_exception");
+    emitClientEvent("client_error");
     fakeDocument.visibilityState = "visible";
     documentHandlers.get("visibilitychange")?.(new Event("visibilitychange"));
     await tick();
@@ -197,14 +194,11 @@ test("app error boundary emits hydration_error or client_error from classified R
     classifyReactError: () => "hydration",
     /**
      * @param {string} name
-     * @param {string} [category]
      */
-    emitClientEvent: (name, category) => emissions.push({ name, category })
+    emitClientEvent: (name) => emissions.push({ name })
   });
   ErrorBoundary({ error: new Error("fixture"), reset: () => {} });
-  assert.deepEqual(emissions, [
-    { name: "hydration_error", category: "hydration" }
-  ]);
+  assert.deepEqual(emissions, [{ name: "hydration_error" }]);
 
   /** @type {TestClientEvent[]} */
   const otherEmissions = [];
@@ -212,14 +206,11 @@ test("app error boundary emits hydration_error or client_error from classified R
     classifyReactError: () => "other",
     /**
      * @param {string} name
-     * @param {string} [category]
      */
-    emitClientEvent: (name, category) => otherEmissions.push({ name, category })
+    emitClientEvent: (name) => otherEmissions.push({ name })
   });
   OtherBoundary({ error: new Error("fixture"), reset: () => {} });
-  assert.deepEqual(otherEmissions, [
-    { name: "client_error", category: "browser_exception" }
-  ]);
+  assert.deepEqual(otherEmissions, [{ name: "client_error" }]);
 });
 
 test("app error boundary drives the real classifyReactError from the thrown error", () => {
@@ -229,18 +220,14 @@ test("app error boundary drives the real classifyReactError from the thrown erro
     classifyReactError,
     /**
      * @param {string} name
-     * @param {string} [category]
      */
-    emitClientEvent: (name, category) =>
-      hydrationEmissions.push({ name, category })
+    emitClientEvent: (name) => hydrationEmissions.push({ name })
   });
   HydrationBoundary({
     error: new Error("Minified React error #418; see docs"),
     reset: () => {}
   });
-  assert.deepEqual(hydrationEmissions, [
-    { name: "hydration_error", category: "hydration" }
-  ]);
+  assert.deepEqual(hydrationEmissions, [{ name: "hydration_error" }]);
 
   /** @type {TestClientEvent[]} */
   const otherEmissions = [];
@@ -248,14 +235,11 @@ test("app error boundary drives the real classifyReactError from the thrown erro
     classifyReactError,
     /**
      * @param {string} name
-     * @param {string} [category]
      */
-    emitClientEvent: (name, category) => otherEmissions.push({ name, category })
+    emitClientEvent: (name) => otherEmissions.push({ name })
   });
   OtherBoundary({ error: new Error("plain failure"), reset: () => {} });
-  assert.deepEqual(otherEmissions, [
-    { name: "client_error", category: "browser_exception" }
-  ]);
+  assert.deepEqual(otherEmissions, [{ name: "client_error" }]);
 });
 
 test("global error boundary renders a document shell and emits classified telemetry", () => {
@@ -264,7 +248,7 @@ test("global error boundary renders a document shell and emits classified teleme
   const GlobalError = loadErrorBoundaryForTest(
     {
       classifyReactError,
-      emitClientEvent: (name, category) => emissions.push({ name, category })
+      emitClientEvent: (name) => emissions.push({ name })
     },
     "app/global-error.tsx"
   );
@@ -277,17 +261,14 @@ test("global error boundary renders a document shell and emits classified teleme
     );
   assert.equal(rendered.type, "html");
   assert.equal(rendered.props.children.type, "body");
-  assert.deepEqual(emissions, [
-    { name: "client_error", category: "browser_exception" }
-  ]);
+  assert.deepEqual(emissions, [{ name: "client_error" }]);
 
   /** @type {TestClientEvent[]} */
   const hydrationEmissions = [];
   const HydrationGlobalError = loadErrorBoundaryForTest(
     {
       classifyReactError,
-      emitClientEvent: (name, category) =>
-        hydrationEmissions.push({ name, category })
+      emitClientEvent: (name) => hydrationEmissions.push({ name })
     },
     "app/global-error.tsx"
   );
@@ -295,9 +276,7 @@ test("global error boundary renders a document shell and emits classified teleme
     error: new Error("Minified React error #418; see docs"),
     reset: () => {}
   });
-  assert.deepEqual(hydrationEmissions, [
-    { name: "hydration_error", category: "hydration" }
-  ]);
+  assert.deepEqual(hydrationEmissions, [{ name: "hydration_error" }]);
 });
 
 test("Cloudflare rate-limit check and apply build Rulesets API requests", async () => {
@@ -316,7 +295,11 @@ test("Cloudflare rate-limit check and apply build Rulesets API requests", async 
           rules: [
             {
               description: RATE_LIMIT_RULE_DESCRIPTION,
-              enabled: false
+              enabled: true
+            },
+            {
+              description: "Unrelated rate limit",
+              enabled: true
             }
           ]
         }
@@ -331,7 +314,7 @@ test("Cloudflare rate-limit check and apply build Rulesets API requests", async 
       token: "token",
       fetchImpl
     }),
-    { ok: true, present: true, enabled: false }
+    { ok: true, present: true, enabled: true }
   );
   const payload = await applyRateLimitRule({
     zoneId: "zone_123",
@@ -349,8 +332,9 @@ test("Cloudflare rate-limit check and apply build Rulesets API requests", async 
   assert.equal(calls[2].init.headers.Authorization, "Bearer token");
   assert.ok(calls.every((call) => call.init.signal instanceof AbortSignal));
   const appliedBody = JSON.parse(String(calls[2].init.body));
-  assert.equal(appliedBody.rules.length, 1);
-  assert.equal(appliedBody.rules.at(-1).enabled, false);
+  assert.equal(appliedBody.rules.length, 2);
+  assert.equal(appliedBody.rules[0].description, "Unrelated rate limit");
+  assert.equal(appliedBody.rules.at(-1).enabled, true);
   // The phase entrypoint PUT must not carry immutable ruleset fields; Cloudflare
   // rejects name/kind and the phase is implied by the URL.
   assert.ok(!("name" in appliedBody));
@@ -408,7 +392,7 @@ test("Cloudflare rate-limit check and apply handle a fresh zone without the rule
   assert.ok(putCall);
   const appliedBody = JSON.parse(String(putCall.init.body));
   assert.equal(appliedBody.rules.length, 1);
-  assert.equal(appliedBody.rules[0].enabled, false);
+  assert.equal(appliedBody.rules[0].enabled, true);
   assert.equal(appliedBody.rules[0].description, RATE_LIMIT_RULE_DESCRIPTION);
   assert.ok(payload.rules);
   assert.equal(payload.rules.length, 1);

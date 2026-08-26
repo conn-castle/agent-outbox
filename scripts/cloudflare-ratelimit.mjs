@@ -10,6 +10,8 @@ import { pathToFileURL } from "node:url";
  */
 
 export const RATE_LIMIT_RULE_DESCRIPTION =
+  "Agent Outbox client events rate limit";
+const LEGACY_RATE_LIMIT_RULE_DESCRIPTION =
   "Prepared inactive rate limit for Agent Outbox client events";
 export const RATE_LIMIT_PHASE = "http_ratelimit";
 export const CLIENT_EVENTS_RATE_LIMIT_EXPRESSION =
@@ -27,7 +29,7 @@ export function buildClientEventsRateLimitRuleset(existingRules = []) {
     description: RATE_LIMIT_RULE_DESCRIPTION,
     expression: CLIENT_EVENTS_RATE_LIMIT_EXPRESSION,
     action: "block",
-    enabled: false,
+    enabled: true,
     ratelimit: {
       characteristics: ["cf.colo.id", "ip.src"],
       period: 10,
@@ -45,7 +47,9 @@ export function buildClientEventsRateLimitRuleset(existingRules = []) {
   };
   const rules = [
     ...existingRules.filter(
-      (rule) => rule?.description !== RATE_LIMIT_RULE_DESCRIPTION
+      (rule) =>
+        rule?.description !== RATE_LIMIT_RULE_DESCRIPTION &&
+        rule?.description !== LEGACY_RATE_LIMIT_RULE_DESCRIPTION
     ),
     nextRule
   ];
@@ -54,7 +58,7 @@ export function buildClientEventsRateLimitRuleset(existingRules = []) {
   // Cloudflare rejects them in the request body.
   return {
     description:
-      "Prepared-but-inactive Agent Outbox rate limits. Source checked against Cloudflare Rulesets API docs on 2026-07-07.",
+      "Agent Outbox edge rate limits. Source checked against Cloudflare Rulesets API docs on 2026-07-07.",
     rules
   };
 }
@@ -210,22 +214,21 @@ async function main(argv) {
         enabled: result.enabled
       })
     );
-    // The prepared rule must exist and stay disabled; fail the check if it is
-    // missing or has been activated so the runbook's present:true / enabled:false
-    // expectation is enforced by exit code, not just reported in the JSON.
-    if (!result.present || result.enabled) {
+    // The production rule must exist and stay enabled. Enforce that posture by
+    // exit code instead of relying on an operator to inspect the JSON.
+    if (!result.present || !result.enabled) {
       process.exitCode = 1;
     }
     return;
   }
 
   const payload = await applyRateLimitRule({ zoneId, token });
-  const preparedRule = findPreparedRule(payload);
+  const rateLimitRule = findPreparedRule(payload);
   console.log(
     JSON.stringify({
       ok: true,
-      prepared_rule_present: Boolean(preparedRule),
-      prepared_rule_enabled: preparedRule?.enabled === true
+      rate_limit_rule_present: Boolean(rateLimitRule),
+      rate_limit_rule_enabled: rateLimitRule?.enabled === true
     })
   );
 }

@@ -7,6 +7,7 @@ export type RuntimeLogEvent = {
   error_id?: string;
   error_name?: string;
   sentry_captured?: boolean;
+  sentry_capture_rate_limited?: boolean;
   request_id?: string;
   environment?: string | null;
   release?: string | null;
@@ -36,6 +37,7 @@ const SAFE_LOG_KEYS = new Set([
   "error_id",
   "error_name",
   "sentry_captured",
+  "sentry_capture_rate_limited",
   "request_id",
   "environment",
   "release",

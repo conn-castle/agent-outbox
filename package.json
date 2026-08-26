@@ -51,6 +51,8 @@
     "migration:validate-pre-migrate": "node scripts/flyway.mjs validate --ignore-pending",
     "migration:migrate": "node scripts/flyway.mjs migrate",
     "migration:replay": "corepack pnpm run migration:validate-pre-migrate && corepack pnpm run migration:migrate && corepack pnpm run migration:validate",
+    "cloudflare:ratelimit": "node scripts/run-with-ssm-secrets.mjs --set cloudflare-ratelimit-production -- node scripts/cloudflare-ratelimit.mjs",
+    "sentry": "node scripts/run-with-ssm-secrets.mjs --set sentry-production -- sentry-cli",
     "build": "corepack pnpm run docs:check && node scripts/foundation.mjs build && corepack pnpm run next:build",
     "doctor": "node scripts/foundation.mjs doctor",
     "check": "corepack pnpm run contract:check && corepack pnpm run docs:check && corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test && corepack pnpm run build && corepack pnpm run smoke",

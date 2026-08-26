@@ -2,7 +2,6 @@ import {
   CLIENT_EVENT_BATCH_LIMIT,
   CLIENT_EVENT_BODY_BYTE_LIMIT,
   type ClientEvent,
-  type ClientEventCategory,
   type ClientEventName
 } from "../shared/client-events-contract.ts";
 
@@ -18,15 +17,9 @@ const queue: ClientEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
 
-export function emitClientEvent(
-  name: ClientEventName,
-  category?: ClientEventCategory
-) {
+export function emitClientEvent(name: ClientEventName) {
   try {
     const event: ClientEvent = { name };
-    if (category) {
-      event.category = category;
-    }
     if (queue.length >= CLIENT_EVENT_QUEUE_LIMIT) {
       return;
     }

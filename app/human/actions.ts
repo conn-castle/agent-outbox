@@ -372,8 +372,8 @@ function refreshHumanFailurePage(
 function emitHumanActionFailure(requestId: string, kind?: "file_upload") {
   emitClientEventLog(
     kind === "file_upload"
-      ? { name: "file_upload_failed", category: "upload" }
-      : { name: "human_action_failed", category: "submission" },
+      ? { name: "file_upload_failed" }
+      : { name: "human_action_failed" },
     { requestId, route: humanPath, producer: "server_action" }
   );
 }

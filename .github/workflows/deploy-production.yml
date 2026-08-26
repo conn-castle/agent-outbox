@@ -86,6 +86,30 @@ jobs:
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
         run: corepack pnpm run smoke-runtime
 
+      - name: Require production migration credential
+        env:
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+        run: |
+          if [[ -z "${DATABASE_MIGRATION_URL:-}" ]]; then
+            echo "DATABASE_MIGRATION_URL is required in the production GitHub environment secrets." >&2
+            exit 1
+          fi
+
+      - name: Validate production migration history before apply
+        env:
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+        run: corepack pnpm run migration:validate-pre-migrate
+
+      - name: Apply production database migrations
+        env:
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+        run: corepack pnpm run migration:migrate
+
+      - name: Validate production migration history after apply
+        env:
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+        run: corepack pnpm run migration:validate
+
       - name: Mark deployment attempt
         id: deploy-attempt
         run: echo "attempted=true" >> "$GITHUB_OUTPUT"

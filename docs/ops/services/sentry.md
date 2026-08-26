@@ -2,10 +2,18 @@
 
 ## Tool
 
-Use the official Sentry CLI: `sentry-cli`.
+Use the official Sentry CLI through the repository wrapper:
 
-Run `sentry-cli --help` first, then run command-specific help before using flags
-that are not already proven in this repository.
+```bash
+pnpm run sentry -- --help
+```
+
+The wrapper reads the auth token, organization slug, and project slug directly
+from their canonical production SSM parameters with AWS SSO profile `conn` and
+injects them only into the child process. It does not print or cache values.
+
+Run wrapper help first, then run command-specific help before using flags that
+are not already proven in this repository.
 
 ## Owns
 
@@ -23,9 +31,15 @@ that are not already proven in this repository.
   `sentry-cli organizations list`: Sentry's current organization response makes
   the pinned CLI fail to deserialize. Obtain the organization slug from its
   Sentry dashboard URL and pass it explicitly to commands, for example
-  `sentry-cli issues list --org <organization-slug>`.
+  `pnpm run sentry -- issues list`.
 - Cross-check user-visible `error_id` values with Cloudflare Workers logs when
   investigating runtime failures.
+- GitHub sign-in launch failures are grouped by the safe
+  `client_event.github_sign_in_*` operation. Use the corresponding Cloudflare
+  log row for the server-generated `error_id` and capture outcome. The server
+  derives categories from event names, permits one capture attempt per Worker
+  isolate per minute across all GitHub launch names, and never forwards browser
+  messages or Clerk/provider text.
 - During release verification, confirm whether source-map upload is
   intentionally enabled or disabled for the deploy path. Missing source maps are
   acceptable only when the owner accepts that posture for the release window.

@@ -44,10 +44,14 @@ Only once #1 and all agents from #2 say that the version is ready for me to revi
 
 ## Provider Setup
 
-- Exact provider inventory values belong in approved operator-controlled secret
-  stores; tracked docs should keep provider ids, account ids, project refs,
-  database hosts, secret-store paths, current environment posture, and secret
-  values out of public Markdown.
+- AWS Systems Manager Parameter Store is the canonical Agent Outbox store for
+  managed, recoverable secrets and environment-owned provider configuration.
+  Local access uses AWS SSO profile `conn`; stable parameter names live below
+  `/agent-outbox/environments/<stage>/` and `/agent-outbox/shared/`.
+- Tracked docs should keep provider ids, account ids, project refs, database
+  hosts, individual parameter names, current environment posture, and secret
+  values out of public Markdown unless an operator runbook requires a stable
+  non-secret name.
 - GitHub uses `conn-castle/agent-outbox`.
 - Cloudflare setup separates local Wrangler OAuth, DNS management tokens,
   Worker deploy tokens, and token-management credentials by purpose.
@@ -58,6 +62,6 @@ Only once #1 and all agents from #2 say that the version is ready for me to revi
   webhooks, and a database webhook idempotency ledger. Keep tracked docs free of
   provider account ids, customer ids, subscription ids, price ids, webhook ids,
   and secret values.
-- Sentry is the error-monitoring provider for the Next.js app. Organization and
-  project metadata belongs in approved operator-controlled systems, not tracked
-  docs.
+- Sentry is the error-monitoring provider for the Next.js app. Its organization,
+  project, and credential values come from SSM and are injected into operator
+  commands by `scripts/run-with-ssm-secrets.mjs`.

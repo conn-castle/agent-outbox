@@ -29,7 +29,7 @@ when temporary project state is needed.
 | Stripe                              | Account-scoped billing                                                                          | account mode, product, price, portal, and webhook posture                |
 | Sentry                              | Application exception grouping, releases, source maps                                           | organization, project, data source, and release posture                  |
 | Zoho Mail                           | Public support, privacy, legal, and abuse contact inbox                                         | domain, mailbox, and contact-form delivery posture                       |
-| AWS Systems Manager Parameter Store | Durable hosted-secret recovery                                                                  | AWS account, region, profile, parameter prefix, and KMS posture          |
+| AWS Systems Manager Parameter Store | Canonical managed-secret and environment-config inventory                                       | AWS account, region, profile, parameter prefix, and KMS posture          |
 
 Use [services/cloudflare.md](services/cloudflare.md),
 [services/supabase.md](services/supabase.md),
