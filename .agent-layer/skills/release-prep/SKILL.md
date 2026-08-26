@@ -2,9 +2,10 @@
 name: release-prep
 description: >-
   Prepare or ship an Agent Outbox numbered release. Handles fresh and resumed
-  preparation, mandatory human review of new marketing captures, verification,
-  the release commit, an explicitly requested push to main, production workflow
-  dispatch, monitoring, and final tag/release proof.
+  preparation, mandatory human review of marketing captures that are not proven
+  pixel-identical, verification, the release commit, an explicitly requested
+  push to main, production workflow dispatch, monitoring, and final tag/release
+  proof.
 ---
 
 # Agent Outbox numbered release
@@ -24,10 +25,11 @@ Match mutations to the operator's request:
   workflow and monitoring it. Production dispatch requires the candidate to be
   on `origin/main`; it does not by itself authorize pushing local commits.
 
-Never approve marketing screenshots for the operator, approve a protected
-GitHub environment, apply a human-only label, deploy with Wrangler locally, or
-create the numbered tag/release by hand. The production workflow owns deploy,
-rollback, tagging, and GitHub Release creation.
+Never supply required human approval for marketing screenshots that are not
+proven pixel-identical on the operator's behalf, approve a protected GitHub
+environment, apply a human-only label, deploy with Wrangler locally, or create
+the numbered tag/release by hand. The production workflow owns deploy, rollback,
+tagging, and GitHub Release creation.
 
 ## Release driver
 
@@ -103,14 +105,23 @@ For a new target or an incomplete/uncommitted attestation:
 1. Before changing `package.json`, run `make marketing`. It regenerates all
    tracked PNGs in `public/` and writes
    `.agent-layer/tmp/marketing-capture/review/review.html`.
-2. Report the review HTML and these three files:
-   `public/product-review-queue.png`, `public/product-review-ipad.png`, and
+2. Inspect the command result. If it succeeds and reports
+   `All regenerated pixels match the previous screenshots.`, with no other
+   evidence that the capture state is not pixel-identical, report the review
+   HTML and these three files but do not stop for or request explicit human
+   approval: `public/product-review-queue.png`,
+   `public/product-review-ipad.png`, and
    `public/product-review-mobile.png`.
-3. Stop and ask the operator to review every image and explicitly approve the
-   current capture. This checkpoint applies even when the pixel diff is empty.
-4. Only after that approval, run
+3. If `make marketing` fails, any screenshot has a pixel diff, the command does
+   not report that all regenerated pixels match, or the capture state is
+   otherwise not proven pixel-identical, report any available review HTML and
+   the three files, then stop and ask the operator to review every image and
+   explicitly approve the current capture. A failed command remains blocking
+   and must succeed on rerun before preparation continues.
+4. After the approval required by step 3 for a successful differing capture, or
+   immediately after the proven pixel-identical result in step 2, run
    `make marketing-approve VERSION=<version>` and set `package.json` to the same
-   version. Do not alter the PNGs after approval.
+   version. Do not alter the PNGs after this attestation.
 5. Run `"$release_driver" verify <version>`. A real failure blocks release; a
    genuinely unavailable external prerequisite must be reported rather than
    disguised as success.
