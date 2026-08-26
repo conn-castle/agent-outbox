@@ -325,14 +325,7 @@ export async function humanReviewAccountBannerInTransaction(
 
   const profile = limitProfileSelectorForAccountTier(status.data.tier);
   if (!profile) {
-    return {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Account usage is temporarily unavailable."
-      }
-    };
+    return accountUsageUnavailable();
   }
 
   const metadata = accountLimitStatusMetadata(profile);
@@ -364,14 +357,7 @@ export async function humanReviewAccountBannerInTransaction(
     );
     const used = Number(result.rows[0]?.used_units ?? 0);
     if (!Number.isSafeInteger(used) || used < 0) {
-      return {
-        ok: false,
-        error: {
-          status: 503,
-          code: "temporary_unavailable",
-          message: "Account usage is temporarily unavailable."
-        }
-      };
+      return accountUsageUnavailable();
     }
     usage.push({
       limitName,
@@ -385,14 +371,7 @@ export async function humanReviewAccountBannerInTransaction(
 
   const queuedItems = status.data.queued_input_items;
   if (queuedItems == null) {
-    return {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Account usage is temporarily unavailable."
-      }
-    };
+    return accountUsageUnavailable();
   }
   const queueLimit = metadata.limits.find(
     (limit) => limit.limitName === "queued_input_items"
@@ -421,6 +400,17 @@ function isUsageUnit(
   unit: LimitStatusMetadata["unit"]
 ): unit is HumanAccountUsageMetric["unit"] {
   return unit === "requests" || unit === "submissions" || unit === "items";
+}
+
+function accountUsageUnavailable(): StatusResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message: "Account usage is temporarily unavailable."
+    }
+  };
 }
 
 export function humanReviewListStatement(

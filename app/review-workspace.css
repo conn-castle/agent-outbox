@@ -158,20 +158,12 @@ body:has(.shell > .human-workspace) {
   font-weight: 640;
   list-style: none;
   cursor: pointer;
-  transition:
-    background 140ms ease,
-    border-color 140ms ease,
-    transform 100ms ease-out;
 }
 
 .human-workspace .account-banner > summary:hover,
 .human-workspace .account-banner[open] > summary {
   border-color: rgba(255, 255, 255, 0.24);
   background: rgba(255, 255, 255, 0.1);
-}
-
-.human-workspace .account-banner > summary:active {
-  transform: scale(0.97);
 }
 
 .human-workspace .account-banner > summary:focus-visible {
@@ -219,15 +211,6 @@ body:has(.shell > .human-workspace) {
   color: var(--review-text);
   box-shadow: 0 1.2rem 3rem rgba(17, 22, 23, 0.22);
   backdrop-filter: blur(20px) saturate(145%);
-  transform-origin: top right;
-  animation: account-popover-arrive 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-@keyframes account-popover-arrive {
-  from {
-    opacity: 0;
-    transform: scale(0.97) translateY(-0.25rem);
-  }
 }
 
 .human-workspace .account-profile {
@@ -373,11 +356,6 @@ body:has(.shell > .human-workspace) {
   background: #78390f;
 }
 
-.human-workspace .account-upgrade-card a:active,
-.human-workspace .account-popover-actions a:active {
-  transform: scale(0.97);
-}
-
 .human-workspace .account-usage {
   display: grid;
   gap: 0.62rem;
@@ -501,18 +479,6 @@ body:has(.shell > .human-workspace) {
   font-size: 0.67rem;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .human-workspace .account-popover {
-    animation: none;
-  }
-
-  .human-workspace .account-banner > summary,
-  .human-workspace .account-upgrade-card a,
-  .human-workspace .account-popover-actions a {
-    transition: none;
-  }
-}
-
 @media (prefers-reduced-transparency: reduce) {
   .human-workspace .account-popover {
     background: #fffdf8;
@@ -549,7 +515,6 @@ body:has(.shell > .human-workspace) {
     left: 0.75rem;
     width: auto;
     max-height: calc(100dvh - 5rem);
-    transform-origin: top center;
   }
 
   .human-workspace .account-profile {
@@ -568,10 +533,6 @@ body:has(.shell > .human-workspace) {
     background: var(--review-paper-soft);
     color: var(--review-muted);
     cursor: pointer;
-  }
-
-  .human-workspace .account-popover-close:active {
-    transform: scale(0.96);
   }
 }
 
