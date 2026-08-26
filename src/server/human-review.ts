@@ -18,6 +18,14 @@ import {
   type StatusResult
 } from "./status.ts";
 import type { ProductTransactionQuery } from "./database.ts";
+import { quotaWindow, quotaWindowUsageStatement } from "./caller-api-limits.ts";
+import {
+  accountLimitStatusMetadata,
+  limitProfileSelectorForAccountTier,
+  type LimitName,
+  type LimitStatusMetadata,
+  type LimitWindowKind
+} from "./limits.ts";
 
 export type HumanReviewStatus = "pending" | "answered";
 
@@ -32,6 +40,19 @@ export type HumanReviewListOptions = {
 export type HumanReviewPage = {
   rows: HumanReviewListRow[];
   hasNext: boolean;
+};
+
+export type HumanAccountUsageMetric = {
+  limitName: LimitName;
+  label: string;
+  used: number;
+  limit: number | null;
+  unit: "requests" | "submissions" | "items";
+  resetsAt: string | null;
+};
+
+export type HumanAccountBannerData = AccountStatusData & {
+  usage: HumanAccountUsageMetric[];
 };
 
 export type HumanReviewCallerAffordance = {
@@ -295,11 +316,101 @@ export async function humanReviewDetailInTransaction(
 export async function humanReviewAccountBannerInTransaction(
   query: ProductTransactionQuery,
   context: AuthorizedHumanAccountContext
-): Promise<StatusResult<AccountStatusData>> {
-  return accountStatusInTransaction(query, {
+): Promise<StatusResult<HumanAccountBannerData>> {
+  const status = await accountStatusInTransaction(query, {
     accountId: context.accountId,
     callerId: ""
   });
+  if (!status.ok) return status;
+
+  const profile = limitProfileSelectorForAccountTier(status.data.tier);
+  if (!profile) {
+    return accountUsageUnavailable();
+  }
+
+  const metadata = accountLimitStatusMetadata(profile);
+  const now = new Date();
+  const usage: HumanAccountUsageMetric[] = [];
+  for (const limitName of ACCOUNT_POPOVER_QUOTA_LIMITS) {
+    const limit = metadata.limits.find(
+      (candidate) => candidate.limitName === limitName
+    );
+    if (
+      !limit ||
+      !limit.windowKind ||
+      limit.setting.mode !== "enabled" ||
+      !isUsageUnit(limit.unit)
+    )
+      continue;
+
+    const window = quotaWindow(
+      limit as LimitStatusMetadata & { windowKind: LimitWindowKind },
+      now
+    );
+    const result = await query<{ used_units: string | number }>(
+      quotaWindowUsageStatement({
+        identity: { accountId: context.accountId },
+        limitName,
+        windowKind: window.windowKind,
+        windowStartUtc: window.windowStartUtc
+      })
+    );
+    const used = Number(result.rows[0]?.used_units ?? 0);
+    if (!Number.isSafeInteger(used) || used < 0) {
+      return accountUsageUnavailable();
+    }
+    usage.push({
+      limitName,
+      label: limit.statusLabel,
+      used,
+      limit: limit.setting.value,
+      unit: limit.unit,
+      resetsAt: window.windowEndUtc
+    });
+  }
+
+  const queuedItems = status.data.queued_input_items;
+  if (queuedItems == null) {
+    return accountUsageUnavailable();
+  }
+  const queueLimit = metadata.limits.find(
+    (limit) => limit.limitName === "queued_input_items"
+  );
+  usage.push({
+    limitName: "queued_input_items",
+    label: queueLimit?.statusLabel ?? "Queued input items",
+    used: queuedItems,
+    limit:
+      queueLimit?.setting.mode === "enabled" ? queueLimit.setting.value : null,
+    unit: "items",
+    resetsAt: null
+  });
+
+  const { queued_input_items: _queuedInputItems, ...account } = status.data;
+  return { ok: true, data: { ...account, usage } };
+}
+
+const ACCOUNT_POPOVER_QUOTA_LIMITS = [
+  "input_submissions_per_calendar_month",
+  "input_submissions_per_day",
+  "authenticated_caller_api_requests_per_calendar_month"
+] as const satisfies readonly LimitName[];
+
+function isUsageUnit(
+  unit: LimitStatusMetadata["unit"]
+): unit is HumanAccountUsageMetric["unit"] {
+  return unit === "requests" || unit === "submissions" || unit === "items";
+}
+
+function accountUsageUnavailable(): StatusResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message: "Account usage is temporarily unavailable."
+    }
+  };
 }
 
 export function humanReviewListStatement(

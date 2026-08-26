@@ -38,8 +38,10 @@ import {
   writeHumanReviewView
 } from "../src/shared/human-review-view.ts";
 import {
-  accountHasHostedBilling,
-  accountStorageLabel
+  accountCanManageBilling,
+  accountCanUpgrade,
+  accountStorageLabel,
+  humanAccountIdentityOrFallback
 } from "../src/shared/account-display.ts";
 
 /**
@@ -208,28 +210,58 @@ test("fixture resolved marker leaves pending and appears as answered history", (
   assert.equal(historyRow.status, "answered");
 });
 
-test("account banner distinguishes zero, unlimited, and self-hosted billing", () => {
+test("account banner distinguishes storage and hosted billing actions", () => {
   assert.equal(accountStorageLabel(0, 0), "0 byte capacity");
   assert.equal(accountStorageLabel(42, null), "Unlimited");
   assert.equal(accountStorageLabel(25, 100), "25%");
   assert.equal(
-    accountHasHostedBilling({
+    accountCanManageBilling({
       tier: "self_hosted",
       billing_status: "not_applicable"
     }),
     false
   );
   assert.equal(
-    accountHasHostedBilling({
+    accountCanManageBilling({
       tier: "hosted_free",
       billing_status: "not_applicable"
     }),
     false
   );
   assert.equal(
-    accountHasHostedBilling({ tier: "hosted_paid", billing_status: "active" }),
+    accountCanManageBilling({ tier: "hosted_paid", billing_status: "active" }),
     true
   );
+  assert.equal(accountCanUpgrade({ tier: "hosted_free" }), true);
+  assert.equal(accountCanUpgrade({ tier: "hosted_paid" }), false);
+});
+
+test("account identity keeps workspace fallback when Clerk profile is missing", () => {
+  assert.deepEqual(
+    humanAccountIdentityOrFallback(
+      {
+        name: "Alex Morgan",
+        emailAddress: "alex@example.com",
+        signInMethods: ["GitHub"]
+      },
+      "Demo workspace"
+    ),
+    {
+      name: "Alex Morgan",
+      emailAddress: "alex@example.com",
+      signInMethods: ["GitHub"]
+    }
+  );
+  assert.deepEqual(humanAccountIdentityOrFallback(null, "Demo workspace"), {
+    name: "Demo workspace",
+    emailAddress: null,
+    signInMethods: []
+  });
+  assert.deepEqual(humanAccountIdentityOrFallback(null, null), {
+    name: null,
+    emailAddress: null,
+    signInMethods: []
+  });
 });
 
 /** @param {string[]} values */
@@ -895,8 +927,17 @@ test("human account banner metadata reuses account status shaping under human ac
         billing_grace_ends_at: null
       }
     ],
-    [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
-    []
+    [
+      {
+        queued_input_items: "9",
+        non_file_stored_bytes: "100",
+        overall_stored_bytes: "100"
+      }
+    ],
+    [],
+    [{ used_units: "17" }],
+    [{ used_units: "3" }],
+    [{ used_units: "450" }]
   ]);
 
   const banner = await humanReviewAccountBannerInTransaction(query, context);
@@ -904,7 +945,52 @@ test("human account banner metadata reuses account status shaping under human ac
   assert.equal(banner.ok, true);
   assert.equal(banner.ok ? banner.data.account_id : null, context.accountId);
   assert.equal(banner.ok ? banner.data.file_upload_enabled : null, false);
+  assert.deepEqual(
+    banner.ok
+      ? banner.data.usage.map(({ limitName, label, used, limit }) => ({
+          limitName,
+          label,
+          used,
+          limit
+        }))
+      : null,
+    [
+      {
+        limitName: "input_submissions_per_calendar_month",
+        label: "Monthly input submissions",
+        used: 17,
+        limit: 5_000
+      },
+      {
+        limitName: "input_submissions_per_day",
+        label: "Daily input submissions",
+        used: 3,
+        limit: 1_000
+      },
+      {
+        limitName: "authenticated_caller_api_requests_per_calendar_month",
+        label: "Monthly caller API requests",
+        used: 450,
+        limit: 100_000
+      },
+      {
+        limitName: "queued_input_items",
+        label: "Queued input items",
+        used: 9,
+        limit: 1_000
+      }
+    ]
+  );
+  assert.equal(query.calls.length, 6);
   assert.deepEqual(query.calls[0].values, [context.accountId]);
+  assert.match(query.calls[1].sql, /agent_outbox_account_stock_usage\(\$1\)/);
+  assert.equal(
+    query.calls.filter((call) =>
+      /agent_outbox_account_stock_usage/.test(call.sql)
+    ).length,
+    1
+  );
+  assert.equal("queued_input_items" in (banner.ok ? banner.data : {}), false);
 });
 
 test("browser fixture bypass requires test environment and explicit fixture gate", () => {

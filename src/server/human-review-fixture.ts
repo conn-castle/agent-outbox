@@ -4,7 +4,9 @@ import {
   type HumanReviewDetail,
   type HumanReviewListRow
 } from "./human-review.ts";
-import type { AccountStatusData, StatusResult } from "./status.ts";
+import type { StatusResult } from "./status.ts";
+import type { HumanAccountBannerData } from "./human-review.ts";
+import type { HumanAccountIdentityDisplay } from "../shared/account-display.ts";
 import {
   browserFixtureCoreReviewDetails,
   fixtureUuid,
@@ -235,25 +237,76 @@ export function browserFixtureStoryboardScenarios(): BrowserFixtureStoryboardSce
 }
 
 export function browserFixtureAccountBanner(
-  session: HumanAccountSession
-): StatusResult<AccountStatusData> {
+  session: HumanAccountSession,
+  plan: "free" | "paid" = "paid"
+): StatusResult<HumanAccountBannerData> {
+  const free = plan === "free";
   return {
     ok: true,
     data: {
       account_id: session.accountId,
       label: session.account.label,
-      tier: "hosted_paid",
-      effective_tier: "paid",
-      billing_status: "active",
+      tier: free ? "hosted_free" : "hosted_paid",
+      effective_tier: free ? "free" : "paid",
+      billing_status: free ? "not_applicable" : "active",
       grace_ends_at: null,
-      file_upload_enabled: true,
+      file_upload_enabled: !free,
       storage: {
-        stored_bytes: 24_000,
-        limit_name: "overall_stored_account_data_bytes",
-        limit_bytes: 1_000_000_000
+        stored_bytes: free ? 1_280_000 : 24_000,
+        limit_name: free
+          ? "stored_non_file_queue_payload_bytes"
+          : "overall_stored_account_data_bytes",
+        limit_bytes: free ? 32_000_000 : 1_000_000_000
       },
-      active_limit_blocks: []
+      active_limit_blocks: [],
+      usage: [
+        ...(free
+          ? [
+              {
+                limitName: "input_submissions_per_calendar_month" as const,
+                label: "Monthly input submissions",
+                used: 184,
+                limit: 5_000,
+                unit: "submissions" as const,
+                resetsAt: "2026-08-01T00:00:00.000Z"
+              },
+              {
+                limitName: "input_submissions_per_day" as const,
+                label: "Daily input submissions",
+                used: 12,
+                limit: 1_000,
+                unit: "submissions" as const,
+                resetsAt: "2026-07-16T00:00:00.000Z"
+              },
+              {
+                limitName:
+                  "authenticated_caller_api_requests_per_calendar_month" as const,
+                label: "Monthly caller API requests",
+                used: 4628,
+                limit: 100_000,
+                unit: "requests" as const,
+                resetsAt: "2026-08-01T00:00:00.000Z"
+              }
+            ]
+          : []),
+        {
+          limitName: "queued_input_items",
+          label: "Queued input items",
+          used: 8,
+          limit: free ? 1_000 : null,
+          unit: "items",
+          resetsAt: null
+        }
+      ]
     }
+  };
+}
+
+export function browserFixtureAccountIdentity(): HumanAccountIdentityDisplay {
+  return {
+    name: "Alex Morgan",
+    emailAddress: "alex@example.com",
+    signInMethods: ["GitHub"]
   };
 }
 

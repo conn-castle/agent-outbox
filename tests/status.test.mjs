@@ -90,6 +90,7 @@ test("account status reports free-tier non-file storage and active limit blocks"
         limit_name: "stored_non_file_queue_payload_bytes",
         limit_bytes: 32_000_000
       },
+      queued_input_items: 1000,
       active_limit_blocks: [
         {
           operation_kind: "input_submission",
@@ -142,6 +143,7 @@ test("account status reports paid-tier overall storage cap", async () => {
     limit_name: "overall_stored_account_data_bytes",
     limit_bytes: 1_000_000_000
   });
+  assert.equal(result.data.queued_input_items, 0);
   assert.equal(result.data.effective_tier, "paid");
   assert.equal(result.data.file_upload_enabled, true);
   assert.equal(result.data.grace_ends_at, "2026-07-07T00:00:00.000Z");

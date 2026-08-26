@@ -16,10 +16,12 @@ import {
 
 import type { HumanAccountSession } from "../../server/human-session.ts";
 import type {
+  HumanAccountBannerData,
   HumanReviewDetail,
   HumanReviewListRow
 } from "../../server/human-review.ts";
-import type { AccountStatusData, StatusResult } from "../../server/status.ts";
+import type { StatusResult } from "../../server/status.ts";
+import type { HumanAccountIdentityDisplay } from "../../shared/account-display.ts";
 import {
   humanReviewHref,
   humanReviewViewFromSearchParams,
@@ -58,6 +60,7 @@ export type HumanReviewNotice = {
 
 export function ReviewWorkspace({
   session,
+  identity,
   rows,
   detail,
   banner,
@@ -69,9 +72,10 @@ export function ReviewWorkspace({
   renderedAt
 }: {
   session: HumanAccountSession;
+  identity: HumanAccountIdentityDisplay;
   rows: HumanReviewListRow[];
   detail: HumanReviewDetail | null;
-  banner: StatusResult<AccountStatusData>;
+  banner: StatusResult<HumanAccountBannerData>;
   notice: HumanReviewNotice | null;
   view: HumanReviewView;
   hasNext: boolean;
@@ -408,7 +412,7 @@ export function ReviewWorkspace({
           </a>
         </nav>
         <div className="app-account">
-          <AccountBanner banner={banner} />
+          <AccountBanner banner={banner} identity={identity} />
           <span className="sr-only" data-testid="fixture-account-id">
             {session.account.accountId}
           </span>

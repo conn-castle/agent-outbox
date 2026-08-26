@@ -9,7 +9,7 @@
       "route": "/human?status=all",
       "width": 1440,
       "height": 960,
-      "sha256": "1b72d3cf82fa17a0b3975ca46ed51dcbacb8ab6f54039125aca97ae5ea9811af"
+      "sha256": "ed2c2e0b74abd5356f5dd46a1eb6c8079c7a7c3582bfcb2fec772db1e818c280"
     },
     {
       "id": "detailTablet",
@@ -27,7 +27,7 @@
       "route": "/human?status=all",
       "width": 430,
       "height": 932,
-      "sha256": "9fb113c754590e6f9f98a8093994a19b11be1864d2bf80fe7f0bf4b621e2cab9"
+      "sha256": "c143c5caf7e38f64c1b2cc41fbefac00e2af6b8997909dc110252ea98de0547d"
     }
   ]
 }

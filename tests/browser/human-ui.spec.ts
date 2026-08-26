@@ -155,6 +155,61 @@ test("upgrade billing actions submit checkout intervals and preserve portal", as
   );
 });
 
+test("account popup identifies the user, shows free usage, and links to upgrade", async ({
+  page,
+  isMobile
+}) => {
+  await page.goto("/human?fixture_plan=free");
+  await page.getByLabel("Account status").locator("summary").click();
+
+  const popup = page.locator(".account-popover");
+  await expect(popup).toBeVisible();
+  await expect(popup).toContainText("Alex Morgan");
+  await expect(popup).toContainText("alex@example.com");
+  await expect(popup).toContainText("GitHub");
+  await expect(popup).toContainText("Free");
+  await expect(popup).toContainText("184 of 5,000");
+  await expect(popup).toContainText("4,628 of 100,000");
+  await expect(popup).toContainText("1.3 MB of 32 MB");
+  await expect(popup.getByRole("link", { name: "Upgrade" })).toHaveAttribute(
+    "href",
+    "/upgrade"
+  );
+  await expect(popup.getByRole("link", { name: "Sign out" })).toHaveAttribute(
+    "href",
+    "/sign-out"
+  );
+  await expect(popup.locator(".account-usage-track")).toHaveCount(0);
+  const closeButton = popup.getByRole("button", { name: "Close account menu" });
+  const backdrop = page.getByRole("button", { name: "Dismiss account menu" });
+  if (isMobile) {
+    await expect(closeButton).toBeVisible();
+    await expect(backdrop).toBeVisible();
+    const urlBefore = page.url();
+    const viewport = page.viewportSize();
+    await backdrop.click({
+      position: {
+        x: 8,
+        y: Math.floor((viewport?.height ?? 800) / 2)
+      }
+    });
+    await expect(popup).toBeHidden();
+    await expect(page).toHaveURL(urlBefore);
+    const accountSummary = page.getByLabel("Account status").locator("summary");
+    await accountSummary.click();
+    await expect(popup).toBeVisible();
+    await accountSummary.click();
+    await expect(popup).toBeHidden();
+    await accountSummary.click();
+    await expect(popup).toBeVisible();
+    await closeButton.click();
+    await expect(popup).toBeHidden();
+  } else {
+    await expect(closeButton).toBeHidden();
+    await expect(backdrop).toBeHidden();
+  }
+});
+
 test("authenticated review workspace renders content actions and preserves controls across detail navigation", async ({
   page,
   isMobile
