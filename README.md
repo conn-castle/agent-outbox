@@ -19,7 +19,10 @@ For repository navigation, see [TOC.md](TOC.md).
 
 ## Hosted Service
 
-Agent Outbox is not publicly released yet. The hosted service uses:
+This repository is public and source-available under the
+[PolyForm Perimeter License 1.0.1](LICENSE). The hosted product is still
+pre-release: caller connection is invite-only, and the `agent-outbox` CLI is not
+yet published for public installation. The hosted service uses:
 
 - `https://agent-outbox.dev` for the product landing page and API documentation
 - `https://app.agent-outbox.dev` for the human app and caller API

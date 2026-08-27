@@ -113,7 +113,7 @@ it is not installed into the Worker runtime as an environment variable.
 
 ## GitHub Storage Of Non-Secret Provider Ids
 
-When the repository is publicly readable, GitHub Actions run logs follow that
+The repository is publicly readable, and GitHub Actions run logs follow that
 visibility. Actions masks registered secrets in logs but prints the resolved
 `env:` block of every step, so an environment _variable_ referenced by a step
 appears in cleartext in a public log.
