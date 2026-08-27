@@ -71,7 +71,7 @@ const freePlanDetails = [
 const paidPlanDetails = [
   "No monthly submission or queue caps",
   "Pending requests stay until resolved",
-  "File uploads in requests and responses",
+  "File uploads in human responses",
   "1 GB total account storage"
 ];
 
@@ -122,7 +122,7 @@ export default function HomePage() {
           </div>
           <picture>
             <source
-              media="(max-width: 720px)"
+              media="(max-width: 900px)"
               srcSet={marketingScreenshots.queueMobile.publicPath}
               width={marketingScreenshots.queueMobile.width}
               height={marketingScreenshots.queueMobile.height}
@@ -145,23 +145,28 @@ export default function HomePage() {
 
       <section className="landing-connect" id="installation">
         <div className="landing-connect-heading">
-          <p className="landing-index">01 / Installation</p>
+          <p className="landing-index">01 / Caller access</p>
           <h2>Connect once. Then step away.</h2>
           <p className="landing-install-note">
-            Install the CLI and connect an agent to your account. It can send a
-            review request whenever human input is required—even when nobody is
-            watching the run.
+            Caller connection is invite-only during this pre-release. Request
+            test CLI access, then connect your agent so it can send a review
+            request whenever human input is required—even when nobody is
+            watching the run. The browser flow asks you to sign in or create an
+            account before approving the caller.
           </p>
+          <Link className="button" href="/contact">
+            Request test CLI access <ArrowRight aria-hidden="true" />
+          </Link>
         </div>
         <div className="landing-connect-body">
           <div className="landing-install-panel">
             <ol
               className="landing-install-steps"
-              aria-label="Installation steps"
+              aria-label="Caller access steps"
             >
               <li>
                 <span>01</span>
-                <p>Install with Homebrew</p>
+                <p>Request test CLI access</p>
               </li>
               <li>
                 <span>02</span>
@@ -169,26 +174,25 @@ export default function HomePage() {
               </li>
               <li>
                 <span>03</span>
-                <p>Approve in browser</p>
+                <p>Sign in and approve</p>
               </li>
             </ol>
             <div
               className="landing-terminal"
-              aria-label="Agent Outbox installation commands"
+              aria-label="Agent Outbox caller connect command"
             >
               <div className="landing-terminal-bar">
                 <span>agent-outbox / zsh</span>
-                <span>Homebrew</span>
+                <span>Test CLI</span>
               </div>
               <pre>
                 <code>
-                  <span>$</span>
-                  {" brew install --cask conn-castle/tap/agent-outbox\n"}
                   <span>$</span> agent-outbox caller connect my-agent
                 </code>
               </pre>
             </div>
             <p className="landing-terminal-help">
+              Invited testers run this after receiving CLI access.{" "}
               <code>my-agent</code> is a local label you choose. The connect
               command opens Agent Outbox so you can review and approve the
               caller in your browser.
@@ -202,8 +206,7 @@ export default function HomePage() {
           <p className="landing-index">02 / The handoff</p>
           <h2>
             Agents should ask.
-            <br />
-            Not guess.
+            <br /> Not guess.
           </h2>
         </div>
         <div className="landing-thesis-copy landing-section-deck">
@@ -312,8 +315,7 @@ export default function HomePage() {
           <p className="landing-index">06 / Pricing</p>
           <h2>
             Start free.
-            <br />
-            Scale with Pro.
+            <br /> Scale with Pro.
           </h2>
           <p className="landing-section-deck">
             Build and run complete review workflows on the free plan. Choose Pro
@@ -382,8 +384,7 @@ export default function HomePage() {
         </p>
         <h2>
           Keep agents moving.
-          <br />
-          Review when it works for you.
+          <br /> Review when it works for you.
         </h2>
         <Link className="button" href="/sign-up">
           Create your free account <ArrowRight aria-hidden="true" />

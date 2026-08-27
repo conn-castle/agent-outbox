@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { limitErrorMetadata } from "../src/server/limits.ts";
 import { PUBLIC_CALLER_API_ERRORS } from "../src/shared/public-api-contract.ts";
+import { SYSTEM_CONTRACT } from "../src/shared/system-contract.ts";
 
 const repositoryRoot = new URL("../", import.meta.url);
 /** @type {any} */
@@ -139,6 +140,10 @@ test("branded docs bundle has curated guides and generated reference", () => {
   ).source;
   assert.doesNotMatch(quickstart, /brew install/);
   assert.match(quickstart, /public CLI installer is not published yet/);
+  assert.ok(
+    quickstart.includes(`${SYSTEM_CONTRACT.hostedWebsiteBaseUrl}/contact`)
+  );
+  assert.match(quickstart, /Request test CLI access/);
 
   const uiGuide = generatedDocs.documents.find(
     (/** @type {any} */ document) => document.slug === "ui"
