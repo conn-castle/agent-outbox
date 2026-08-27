@@ -57,7 +57,9 @@ import {
   runtimeDatabaseEnv
 } from "../worker/hyperdrive.mjs";
 import {
+  assertRuntimeDatabaseCanary,
   assertRuntimeCanaryEnvironment,
+  missingRuntimeSmokeEnvNames,
   readRuntimeSmokeEnv,
   runtimeSmokeAttemptCount
 } from "../scripts/runtime-smoke.mjs";
@@ -579,6 +581,7 @@ test("runtime smoke process-env mode reads only remote smoke client inputs", () 
       AGENT_OUTBOX_EXPECTED_RELEASE: "release-sha",
       APP_BASE_URL: "https://app.agent-outbox.dev",
       SMOKE_OR_CLEANUP_TOKEN: "smoke-token",
+      AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1",
       STRIPE_SECRET_KEY: "must-not-be-copied"
     }
   });
@@ -586,6 +589,7 @@ test("runtime smoke process-env mode reads only remote smoke client inputs", () 
   assert.deepEqual(Object.fromEntries(values), {
     APP_BASE_URL: "https://app.agent-outbox.dev",
     SMOKE_OR_CLEANUP_TOKEN: "smoke-token",
+    AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1",
     AGENT_OUTBOX_EXPECTED_RELEASE: "release-sha"
   });
   assert.throws(
@@ -634,6 +638,52 @@ test("runtime smoke rejects a healthy response from the wrong release", () => {
       AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
     }),
     6
+  );
+});
+
+test("runtime smoke requires the production human review query canary", () => {
+  assert.deepEqual(
+    missingRuntimeSmokeEnvNames(
+      new Map([
+        ["APP_BASE_URL", "https://app.agent-outbox.dev"],
+        ["SMOKE_OR_CLEANUP_TOKEN", "smoke-token"]
+      ])
+    ),
+    [],
+    "the post-deploy query flag must remain optional for outgoing releases"
+  );
+  assert.doesNotThrow(() =>
+    assertRuntimeDatabaseCanary({
+      transaction_context_matched: true,
+      restricted_role_matched: true
+    })
+  );
+  assert.doesNotThrow(() =>
+    assertRuntimeDatabaseCanary({
+      transaction_context_matched: true,
+      restricted_role_matched: true,
+      human_review_query_matched: true
+    })
+  );
+  assert.throws(
+    () =>
+      assertRuntimeDatabaseCanary({
+        transaction_context_matched: true,
+        restricted_role_matched: true,
+        human_review_query_matched: false
+      }),
+    /did not prove the human review query/
+  );
+  assert.throws(
+    () =>
+      assertRuntimeDatabaseCanary(
+        {
+          transaction_context_matched: true,
+          restricted_role_matched: true
+        },
+        { requireHumanReviewQuery: true }
+      ),
+    /did not prove the human review query/
   );
 });
 
@@ -924,9 +974,68 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     "production migrations must remain inside the protected release sequence"
   );
 
+  const withoutPostDeployHumanQueryProof = deployWorkflow.replace(
+    '          AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"\n',
+    ""
+  );
+  assert.notEqual(
+    withoutPostDeployHumanQueryProof,
+    deployWorkflow,
+    "post-deploy human-query regression fixture must modify the workflow"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(
+      withoutPostDeployHumanQueryProof,
+      "24.18.0"
+    ).includes(
+      ".github/workflows/deploy-production.yml must verify the deployed SHA after deploy"
+    ),
+    true,
+    "the candidate release must prove the deployed human review query"
+  );
+
+  const nMinusOneIncompatibleSmoke = deployWorkflow.replace(
+    '          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"',
+    '          AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"\n' +
+      '          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"'
+  );
+  assert.notEqual(
+    nMinusOneIncompatibleSmoke,
+    deployWorkflow,
+    "N-1 smoke regression fixture must modify the workflow"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(
+      nMinusOneIncompatibleSmoke,
+      "24.18.0"
+    ).includes(
+      ".github/workflows/deploy-production.yml must keep rollback-target smoke compatible with the outgoing release contract"
+    ),
+    true,
+    "rollback-target smoke must tolerate fields absent from the outgoing release"
+  );
+
+  const firstAtHostMask = deployWorkflow.replace(
+    'host="${host##*@}"',
+    'host="${host#*@}"'
+  );
+  assert.notEqual(
+    firstAtHostMask,
+    deployWorkflow,
+    "migration-host-mask regression fixture must modify the workflow"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(firstAtHostMask, "24.18.0").includes(
+      ".github/workflows/deploy-production.yml must apply and validate production migrations through the protected release job before deploy"
+    ),
+    true,
+    "migration host masking must follow URL parsing through the final at-sign"
+  );
+
   for (const stepName of [
     "Verify rollback target before deploy",
-    "Require production migration credential"
+    "Require production migration credential",
+    "Require publicly downloadable release assets"
   ]) {
     const withoutRequiredStep = deployWorkflow.replace(
       new RegExp(`      - name: ${stepName}[\\s\\S]*?(?=\\n      - name:)`),
@@ -943,6 +1052,26 @@ test("production deploy workflow guard accepts only the manual deploy contract",
       `${stepName} must remain required by the production workflow guard`
     );
   }
+
+  const withoutHomebrewPublication = deployWorkflow.replace(
+    /\n  publish-cli-homebrew:[\s\S]*$/,
+    ""
+  );
+  assert.notEqual(
+    withoutHomebrewPublication,
+    deployWorkflow,
+    "Homebrew-publication regression fixture must modify the workflow"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(
+      withoutHomebrewPublication,
+      "24.18.0"
+    ).includes(
+      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+    ),
+    true,
+    "numbered releases must retain CLI asset and Homebrew cask publication"
+  );
 });
 
 test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {
@@ -1897,6 +2026,9 @@ package-check:
 \tgo run $(GORELEASER_MODULE) check .goreleaser.yaml
 \tgo run $(GORELEASER_MODULE) release --snapshot --clean
 
+cli-release-dist:
+\tgo run $(GORELEASER_MODULE) release --clean --skip=publish
+
 release-check: check go-check package-check
 `;
   const goreleaser = `homebrew_casks:
@@ -1940,6 +2072,7 @@ release:
       "Makefile package-check must use pinned GoReleaser github.com/goreleaser/goreleaser/v2@v2.16.0",
       "Makefile package-check must validate .goreleaser.yaml",
       "Makefile package-check must build a clean snapshot release",
+      "Makefile cli-release-dist must build a clean tagged release without publishing",
       "Makefile release-check must run check, go-check, and package-check",
       ".goreleaser.yaml must disable release publishing",
       ".goreleaser.yaml Homebrew cask config must set skip_upload: true"

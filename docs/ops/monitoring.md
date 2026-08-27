@@ -117,7 +117,8 @@ credentials. The command checks:
 - Clerk auth-adjacent pages and the protected human route are reachable or
   redirect safely;
 - caller API bearer auth works;
-- Supabase connectivity works through the restricted app role;
+- Supabase connectivity works through the restricted app role, and the
+  account-scoped human-review queue query executes against the deployed schema;
 - Sentry and native logs receive canary records;
 - scheduled-trigger handling responds through the route canary;
 - structured runtime error correlation returns a safe `error_id`.

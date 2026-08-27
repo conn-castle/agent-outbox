@@ -159,7 +159,9 @@ export async function runHostedHealthChecks(env, options = {}) {
       timeoutMs,
       validate: (body) =>
         body.transaction_context_matched === true &&
-        body.restricted_role_matched === true
+        body.restricted_role_matched === true &&
+        (body.human_review_query_matched === undefined ||
+          body.human_review_query_matched === true)
     })
   );
   checks.push(

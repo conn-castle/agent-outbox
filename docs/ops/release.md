@@ -12,6 +12,24 @@ versions, and non-`main` refs fail before deployment. The committed package
 version is the single source for the numbered `v<version>` tag and GitHub
 Release.
 
+Before the first public CLI release, complete these one-time Homebrew
+preconditions:
+
+- finish the repository-history review and make `conn-castle/agent-outbox`
+  public so unauthenticated Homebrew clients can download GitHub release assets;
+- mirror `HOMEBREW_TAP_APP_ID` and `HOMEBREW_TAP_PRIVATE_KEY` from the canonical
+  `conn` / `us-east-1` SSM parameters `/conn-castle/homebrew-tap/github-app-id`
+  and `/conn-castle/homebrew-tap/github-app-private-key` into repository-level
+  GitHub Actions secrets (the publication job has no production environment);
+  never create an independent GitHub-only value;
+- add `agent-outbox` to the tap repository's guarded binary-cask auto-merge
+  allowlist.
+
+The release workflow checks every uploaded asset without authentication before
+it requests a tap change. A private repository therefore fails explicitly after
+the verified app release is finalized and cannot publish an unusable Homebrew
+cask.
+
 After the operator chooses the exact next stable version, validate it before
 capturing screenshots:
 
@@ -158,6 +176,12 @@ The workflow applies one serialized release sequence:
    already created on this SHA, treats an already-published release as success,
    retries only transient GitHub API failures, and proves the tag resolves to
    the certified SHA before reporting success.
+8. Build the four tagged macOS/Linux CLI archives with the pinned GoReleaser,
+   upload them and `checksums.txt` to that release idempotently, and prove each
+   asset is publicly downloadable.
+9. Use the Homebrew tap GitHub App to open or refresh `bump-agent-outbox-vX.Y.Z`
+   with the generated `Casks/agent-outbox.rb`. The tap's own checks and guarded
+   automation own the merge; do not merge the tap pull request manually.
 
 The pipeline deploys only when current production is a single Worker version at
 100% traffic that passes runtime smoke (step 3). During a broad production
@@ -167,10 +191,12 @@ manual rollback workflow below rather than this deploy workflow.
 If the deploy or its live verification fails after the deploy attempt starts,
 the workflow restores the captured Worker version, verifies the captured release
 SHA, and remains red. Because the Worker is already smoke-verified before
-finalization, a tagging-only failure does NOT roll back: the verified code stays
-live, the run goes red, and re-dispatching the same version re-runs
-finalization, which adopts the existing tag. A failed rollback stays visible in
-the workflow step outcomes and requires the manual rollback procedure below.
+finalization, a tagging, CLI-upload, public-download, or tap-publication failure
+does NOT roll back: the verified code stays live, the run goes red, and
+re-dispatching the same version reconciles the existing tag, replaces the
+release assets, and refreshes the tap pull request. A failed rollback stays
+visible in the workflow step outcomes and requires the manual rollback procedure
+below.
 
 The project-owned `worker:deploy` command is an internal workflow step and fails
 outside `deploy-production.yml` on GitHub Actions. Do not load production
@@ -190,6 +216,22 @@ provider-only evidence:
 AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE=<production-smoke-env> make smoke-runtime
 AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE=<production-health-env> make hosted-health
 ```
+
+## Homebrew CLI Publication
+
+The release-owned cask is generated from `.goreleaser.yaml`; do not maintain a
+second cask template in this repository. The release workflow copies that exact
+cask into `conn-castle/homebrew-tap` through a bot-authored pull request. After
+the tap workflow merges it, verify from an unauthenticated machine:
+
+```bash
+brew install --cask conn-castle/tap/agent-outbox
+agent-outbox version
+```
+
+Do not advertise the command on the landing page or public API quickstart until
+that tap change is merged and the installation smoke passes. The current
+invite-only installer copy remains intentional during the first publication run.
 
 ## Manual CLI Connect Smoke
 

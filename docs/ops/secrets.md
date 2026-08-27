@@ -52,6 +52,10 @@ the AWS account id, region, KMS key id, or parameter values in tracked docs.
 | Caller key hash secret (`CALLER_KEY_HASH_SECRET`)           | Cloudflare Worker runtime                                     | Systems Manager Parameter Store     | Required to hash display-once caller API keys. Losing or changing it requires caller credential rotation or rehashing.                                    |
 | Caller API keys                                             | Agent Outbox database hash plus local caller secure store     | Not Systems Manager Parameter Store | Plaintext caller keys are display-once and never recovered. Rotate instead.                                                                               |
 
+The CLI publication job does not use the protected production environment. Store
+`HOMEBREW_TAP_APP_ID` and `HOMEBREW_TAP_PRIVATE_KEY` as repository-level GitHub
+Actions secrets, mirrored from their canonical shared SSM parameters.
+
 ## Environment Variables
 
 [../../.env.example](../../.env.example) is the tracked template and canonical
@@ -106,6 +110,41 @@ CLOUDFLARE_HYPERDRIVE_ID
 `CLOUDFLARE_HYPERDRIVE_ID` is consumed by the deploy wrapper to generate a
 temporary Wrangler config with the `AGENT_OUTBOX_DATABASE` Hyperdrive binding;
 it is not installed into the Worker runtime as an environment variable.
+
+## GitHub Storage Of Non-Secret Provider Ids
+
+When the repository is publicly readable, GitHub Actions run logs follow that
+visibility. Actions masks registered secrets in logs but prints the resolved
+`env:` block of every step, so an environment _variable_ referenced by a step
+appears in cleartext in a public log.
+
+These four values are non-secret Worker configuration, but they are internal
+provider resource ids that this runbook keeps out of public surfaces. Store them
+as GitHub **environment secrets**, not environment variables, so Actions masks
+them:
+
+```text
+CLOUDFLARE_HYPERDRIVE_ID
+STRIPE_PAID_MONTHLY_PRICE_ID
+STRIPE_PAID_YEARLY_PRICE_ID
+STRIPE_BILLING_PORTAL_CONFIGURATION_ID
+```
+
+This changes only where GitHub stores them. They remain non-secret Worker
+configuration and are still passed to Wrangler as deploy-time `--var` bindings,
+and Systems Manager Parameter Store remains their canonical source.
+
+`CLERK_PUBLISHABLE_KEY`, `SENTRY_BROWSER_DSN`, and
+`NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN` stay GitHub environment variables:
+all three are served to browsers, so masking them in logs would protect nothing.
+`SENTRY_ORG` and `SENTRY_PROJECT` also stay variables; their values are
+`conn-castle` and `agent-outbox`, and registering strings that common as log
+masks would redact unrelated log output.
+
+The production database host is not an environment value at all — Flyway prints
+its own connection banner. The deploy workflow derives the host from
+`DATABASE_MIGRATION_URL` and registers it with `::add-mask::` before the first
+Flyway step, and fails closed if the host cannot be parsed.
 
 Runtime secrets:
 

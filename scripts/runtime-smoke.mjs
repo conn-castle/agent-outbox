@@ -9,9 +9,15 @@ import { parseEnv } from "./foundation.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PROCESS_ENV_MODE_NAME = "AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV";
 const EXPECTED_RELEASE_ENV_NAME = "AGENT_OUTBOX_EXPECTED_RELEASE";
-const RUNTIME_SMOKE_CLIENT_ENV_NAMES = [
+const REQUIRE_HUMAN_REVIEW_QUERY_ENV_NAME =
+  "AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY";
+const REQUIRED_RUNTIME_SMOKE_CLIENT_ENV_NAMES = [
   "APP_BASE_URL",
   "SMOKE_OR_CLEANUP_TOKEN"
+];
+const PROCESS_ENV_NAMES = [
+  ...REQUIRED_RUNTIME_SMOKE_CLIENT_ENV_NAMES,
+  REQUIRE_HUMAN_REVIEW_QUERY_ENV_NAME
 ];
 const RUNTIME_SMOKE_HEADERS = {
   "x-agent-outbox-runtime-smoke": "1"
@@ -38,10 +44,7 @@ export function readRuntimeSmokeEnv(options = {}) {
       );
     }
     const values = new Map();
-    for (const name of [
-      ...RUNTIME_SMOKE_CLIENT_ENV_NAMES,
-      EXPECTED_RELEASE_ENV_NAME
-    ]) {
+    for (const name of [...PROCESS_ENV_NAMES, EXPECTED_RELEASE_ENV_NAME]) {
       const value = env[name];
       if (typeof value === "string" && value !== "") {
         values.set(name, value);
@@ -144,19 +147,51 @@ export function assertRuntimeCanaryEnvironment(runtimeCanary, expectedRelease) {
 }
 
 /**
+ * @param {Record<string, any>} databaseCanary
+ * @param {{ requireHumanReviewQuery?: boolean }} [options]
+ */
+export function assertRuntimeDatabaseCanary(databaseCanary, options = {}) {
+  assert.equal(
+    databaseCanary.transaction_context_matched,
+    true,
+    "/api/runtime/database did not prove transaction context"
+  );
+  assert.equal(
+    databaseCanary.restricted_role_matched,
+    true,
+    "/api/runtime/database did not prove the restricted app role"
+  );
+  if (
+    options.requireHumanReviewQuery === true ||
+    databaseCanary.human_review_query_matched !== undefined
+  ) {
+    assert.equal(
+      databaseCanary.human_review_query_matched,
+      true,
+      "/api/runtime/database did not prove the human review query"
+    );
+  }
+}
+
+/**
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
  */
 export function runtimeSmokeAttemptCount(env) {
   return env[PROCESS_ENV_MODE_NAME] === "1" ? DEPLOY_SMOKE_ATTEMPTS : 1;
 }
 
+/** @param {Map<string, string>} env */
+export function missingRuntimeSmokeEnvNames(env) {
+  return REQUIRED_RUNTIME_SMOKE_CLIENT_ENV_NAMES.filter(
+    (name) => !env.get(name)
+  );
+}
+
 /**
  * @param {Map<string, string>} env
  */
 async function runRuntimeSmoke(env) {
-  const missing = RUNTIME_SMOKE_CLIENT_ENV_NAMES.filter(
-    (name) => !env.get(name)
-  );
+  const missing = missingRuntimeSmokeEnvNames(env);
 
   if (missing.length > 0) {
     console.error(
@@ -203,16 +238,10 @@ async function runRuntimeSmoke(env) {
     new URL("/api/runtime/database", baseUrl),
     { headers: smokeAuth }
   );
-  assert.equal(
-    databaseCanary.transaction_context_matched,
-    true,
-    "/api/runtime/database did not prove transaction context"
-  );
-  assert.equal(
-    databaseCanary.restricted_role_matched,
-    true,
-    "/api/runtime/database did not prove the restricted app role"
-  );
+  assertRuntimeDatabaseCanary(databaseCanary, {
+    requireHumanReviewQuery:
+      env.get(REQUIRE_HUMAN_REVIEW_QUERY_ENV_NAME) === "1"
+  });
   await expectCanaryOk(new URL("/api/runtime/log", baseUrl), {
     headers: smokeAuth
   });
