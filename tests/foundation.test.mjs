@@ -1072,6 +1072,43 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     true,
     "numbered releases must retain CLI asset and Homebrew cask publication"
   );
+
+  const clobberingCliAssets = deployWorkflow.replace(
+    'gh release upload "$RELEASE_TAG" "$artifact"',
+    'gh release upload "$RELEASE_TAG" "$artifact" --clobber'
+  );
+  assert.notEqual(
+    clobberingCliAssets,
+    deployWorkflow,
+    "CLI asset clobber regression fixture must modify the workflow"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(clobberingCliAssets, "24.18.0").includes(
+      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+    ),
+    true,
+    "published CLI assets must never be deleted before replacement upload succeeds"
+  );
+
+  const withoutCliAssetIdentityCheck = deployWorkflow.replace(
+    'if ! cmp -s "$artifact" "$existing_dir/$asset"; then',
+    "if false; then"
+  );
+  assert.notEqual(
+    withoutCliAssetIdentityCheck,
+    deployWorkflow,
+    "CLI asset identity-check regression fixture must modify the workflow"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(
+      withoutCliAssetIdentityCheck,
+      "24.18.0"
+    ).includes(
+      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+    ),
+    true,
+    "release reconciliation must retain only byte-identical existing CLI assets"
+  );
 });
 
 test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {

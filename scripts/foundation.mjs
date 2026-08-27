@@ -1263,8 +1263,12 @@ export function validateProductionDeployWorkflow(
       buildCliStep,
       'make cli-release-dist RELEASE_TAG="${RELEASE_TAG}"'
     ) ||
+    !uploadCliStep.includes("gh release view") ||
+    !uploadCliStep.includes("--json assets") ||
+    !uploadCliStep.includes("gh release download") ||
+    !uploadCliStep.includes("cmp -s") ||
     !uploadCliStep.includes("gh release upload") ||
-    !uploadCliStep.includes("--clobber") ||
+    uploadCliStep.includes("--clobber") ||
     !publicAssetsStep.includes("curl -fsSL") ||
     !publicAssetsStep.includes("cmp -s") ||
     !publicAssetsStep.includes(

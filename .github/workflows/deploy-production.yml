@@ -255,9 +255,25 @@ jobs:
       - name: Upload CLI release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release upload "${RELEASE_TAG}" dist/*.tar.gz dist/checksums.txt
-          --clobber
+        run: |
+          set -euo pipefail
+          existing_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          existing_dir="$(mktemp -d)"
+          trap 'rm -rf "$existing_dir"' EXIT
+          for artifact in dist/*.tar.gz dist/checksums.txt; do
+            asset="$(basename "$artifact")"
+            if grep -Fqx -- "$asset" <<<"$existing_assets"; then
+              gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$existing_dir"
+              if ! cmp -s "$artifact" "$existing_dir/$asset"; then
+                echo "::error::Existing CLI release asset differs from the tagged build: $asset"
+                echo "::error::Refusing to delete a published asset during reconciliation."
+                exit 1
+              fi
+              echo "Retaining identical existing CLI release asset: $asset"
+              continue
+            fi
+            gh release upload "$RELEASE_TAG" "$artifact"
+          done
 
       - name: Require publicly downloadable release assets
         run: |

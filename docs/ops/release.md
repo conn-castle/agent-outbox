@@ -177,8 +177,9 @@ The workflow applies one serialized release sequence:
    retries only transient GitHub API failures, and proves the tag resolves to
    the certified SHA before reporting success.
 8. Build the four tagged macOS/Linux CLI archives with the pinned GoReleaser,
-   upload them and `checksums.txt` to that release idempotently, and prove each
-   asset is publicly downloadable.
+   upload missing archives and `checksums.txt`, retain byte-identical existing
+   assets on reruns, fail rather than replace a conflicting published asset, and
+   prove each asset is publicly downloadable.
 9. Use the Homebrew tap GitHub App to open or refresh `bump-agent-outbox-vX.Y.Z`
    with the generated `Casks/agent-outbox.rb`. The tap's own checks and guarded
    automation own the merge; do not merge the tap pull request manually.
