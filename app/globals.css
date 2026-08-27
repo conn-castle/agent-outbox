@@ -239,8 +239,10 @@ svg {
 }
 
 .shell:has(.landing) .topbar {
-  border-bottom: 1px solid var(--line-on-ink);
-  background: var(--ink);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--paper-bright) 10%, transparent);
+  background: color-mix(in srgb, var(--ink) 88%, transparent);
+  backdrop-filter: blur(16px) saturate(125%);
 }
 
 .shell:has(.legal-main) .topbar {
@@ -1203,6 +1205,12 @@ body > .error-main {
   color: var(--text-on-ink);
 }
 
+.landing .button:active,
+.landing-plan-link:active,
+.landing-text-link:active {
+  transform: scale(0.98);
+}
+
 .landing-product {
   width: min(100% - 3rem, 1320px);
   margin: 0 auto clamp(6rem, 8vw, 8rem);
@@ -1515,11 +1523,23 @@ body > .error-main {
 }
 
 .landing-tablet-screen {
+  position: relative;
   overflow: hidden;
   width: 100%;
   height: 100%;
   border-radius: 1.3rem;
   background: #f7f3eb;
+}
+
+.landing-tablet-screen::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 12%;
+  background: linear-gradient(transparent, rgba(247, 243, 235, 0.96));
+  content: "";
+  pointer-events: none;
 }
 
 .landing-tablet-screen img {
@@ -1570,7 +1590,7 @@ body > .error-main {
 
 .landing-use-case-list article {
   display: grid;
-  grid-template-columns: 4rem minmax(18rem, 0.7fr) minmax(24rem, 0.75fr);
+  grid-template-columns: 4rem minmax(18rem, 0.85fr) minmax(20rem, 0.65fr);
   gap: clamp(1.5rem, 5vw, 5rem);
   align-items: start;
   padding: 2.1rem 0;
@@ -1766,11 +1786,11 @@ body > .error-main {
   gap: 0.65rem;
   min-height: 5.25rem;
   padding: 1rem 0.8rem;
-  background: rgba(255, 255, 255, 0.025);
+  background: transparent;
 }
 
 .landing-install-steps li + li {
-  border-left: 1px solid var(--line-on-ink);
+  border-left: 0;
 }
 
 .landing-install-steps p {
@@ -2049,8 +2069,13 @@ body > .error-main {
   background: var(--amber-light);
 }
 
+.landing-plan-link-secondary {
+  border-color: rgba(242, 163, 71, 0.62);
+  color: var(--amber-light);
+}
+
 .landing-plan-link-secondary:hover {
-  border-color: rgba(255, 255, 255, 0.6);
+  border-color: var(--amber-light);
   background: rgba(255, 255, 255, 0.05);
 }
 
@@ -2290,7 +2315,8 @@ body > .error-main {
   .landing-browser-frame {
     aspect-ratio: 430 / 610;
     overflow: hidden;
-    width: min(100%, 28rem);
+    width: 100%;
+    max-width: 62rem;
     margin: 0 auto;
     border-radius: 1.4rem;
   }
@@ -2413,7 +2439,7 @@ body > .error-main {
 
   .landing-phone-frame {
     aspect-ratio: 430 / 610;
-    width: min(82vw, 19rem);
+    width: min(92vw, 22rem);
   }
 
   .landing-connect {
@@ -2438,8 +2464,8 @@ body > .error-main {
   }
 
   .landing-terminal pre {
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
+    overflow-wrap: normal;
+    white-space: pre;
     font-size: 0.8rem;
   }
 
@@ -2447,6 +2473,18 @@ body > .error-main {
   .landing-terminal code .landing-command-comment {
     padding-left: 1.4ch;
     text-indent: -1.4ch;
+  }
+
+  .landing-terminal
+    code
+    .landing-command-line:first-child
+    .landing-command-argument {
+    display: block;
+    padding-left: 1.4ch;
+  }
+
+  .landing-pricing-note {
+    font-size: 0.8rem;
   }
 
   .landing-terminal-help {
@@ -2470,6 +2508,25 @@ body > .error-main {
 
   .landing-final-cta h2 {
     font-size: 2.8rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .landing-hero {
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .landing-kicker {
+    justify-content: flex-start;
+  }
+
+  .landing-hero-copy {
+    max-width: 42rem;
+  }
+
+  .landing-actions {
+    align-items: flex-start;
   }
 }
 
@@ -2528,10 +2585,6 @@ body > .error-main {
     min-height: 29rem;
   }
 
-  .landing-detail-figure {
-    display: none;
-  }
-
   .landing-thesis-heading h2 br {
     display: none;
   }
@@ -2570,8 +2623,26 @@ body > .error-main {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
   .button {
     transition: none;
+  }
+
+  .landing .button:active,
+  .landing-plan-link:active,
+  .landing-text-link:active {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .shell:has(.landing) .topbar {
+    border-bottom-color: var(--line-on-ink);
+    background: var(--ink);
+    backdrop-filter: none;
   }
 }
 

@@ -149,7 +149,7 @@ export default function HomePage() {
           <h2>Connect once. Then step away.</h2>
           <p className="landing-install-note">
             Install the public CLI with Homebrew. Caller connection remains
-            invite-only during this pre-release, so request caller access before
+            invite-only during this prerelease, so request caller access before
             connecting an agent. The browser flow asks you to sign in or create
             an account before approving the caller.
           </p>
@@ -356,7 +356,7 @@ export default function HomePage() {
               className="landing-plan-link landing-plan-link-secondary"
               href="/sign-up"
             >
-              Start for free <ArrowRight aria-hidden="true" />
+              Get started free <ArrowRight aria-hidden="true" />
             </Link>
           </article>
           <article className="landing-plan landing-plan-paid">
@@ -399,7 +399,7 @@ export default function HomePage() {
           <br /> Review when it works for you.
         </h2>
         <Link className="button" href="/sign-up">
-          Create your free account <ArrowRight aria-hidden="true" />
+          Get started free <ArrowRight aria-hidden="true" />
         </Link>
         <p>Free to start · No credit card required</p>
       </section>
