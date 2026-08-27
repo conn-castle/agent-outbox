@@ -1191,6 +1191,7 @@ body > .error-main {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  min-height: 2.75rem;
   color: var(--muted-on-ink);
   font-size: 0.84rem;
   font-weight: 680;
@@ -1453,6 +1454,7 @@ body > .error-main {
 
 .landing-review-copy h2 {
   font-size: clamp(3rem, 4.2vw, 3.75rem);
+  text-wrap: balance;
 }
 
 .landing-review-copy > p:not(.landing-index) {
@@ -1542,17 +1544,6 @@ body > .error-main {
   background: #f7f3eb;
 }
 
-.landing-tablet-screen::after {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 12%;
-  background: linear-gradient(transparent, rgba(247, 243, 235, 0.96));
-  content: "";
-  pointer-events: none;
-}
-
 .landing-tablet-screen img {
   display: block;
   width: 100%;
@@ -1564,6 +1555,17 @@ body > .error-main {
 
 .landing-detail-mobile-card {
   display: none;
+  padding: 0.6rem 0.6rem 1rem;
+  border: 1px solid #53595b;
+  border-radius: 1.5rem;
+  background: linear-gradient(145deg, #303638, #171b1d 46%, #080a0b);
+  box-shadow: 0 1.5rem 3rem rgba(49, 40, 31, 0.2);
+}
+
+.landing-detail-mobile-surface {
+  padding: 1.1rem;
+  border-radius: 1rem;
+  background: #fffdf9;
 }
 
 .landing-detail-mobile-meta,
@@ -1582,7 +1584,7 @@ body > .error-main {
   text-transform: uppercase;
 }
 
-.landing-detail-mobile-card h3 {
+.landing-detail-mobile-surface h3 {
   margin: 1.1rem 0 0;
   color: var(--text);
   font-size: 1.35rem;
@@ -1590,7 +1592,7 @@ body > .error-main {
   line-height: 1.12;
 }
 
-.landing-detail-mobile-card > p:not(.landing-detail-mobile-label) {
+.landing-detail-mobile-surface > p:not(.landing-detail-mobile-label) {
   margin: 0.55rem 0 0;
   color: var(--slate-text);
   font-size: 0.92rem;
@@ -1704,6 +1706,7 @@ body > .error-main {
   letter-spacing: -0.04em;
   line-height: 1.18;
   color: var(--text-on-ink);
+  text-wrap: balance;
 }
 
 .landing-use-case-copy {
@@ -1932,13 +1935,44 @@ body > .error-main {
   font-size: 0.66rem;
 }
 
+.landing-terminal-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.landing-copy-button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--line-on-ink);
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--muted-on-ink);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.landing-copy-button:hover {
+  border-color: var(--amber);
+  color: var(--amber-light);
+}
+
+.landing-copy-button svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
 .landing-terminal pre {
   margin: 0;
   padding: clamp(1.5rem, 4vw, 3rem);
   overflow-x: auto;
   color: var(--muted-on-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: clamp(0.72rem, 1.05vw, 0.9rem);
+  font-size: 0.9rem;
   line-height: 1.9;
 }
 
@@ -2229,6 +2263,10 @@ body > .error-main {
     max-width: 42rem;
   }
 
+  .landing-connect-heading {
+    max-width: none;
+  }
+
   .landing-detail-figure {
     width: min(100%, 46rem);
     margin-inline: auto;
@@ -2396,10 +2434,10 @@ body > .error-main {
   }
 
   .landing-browser-frame {
-    aspect-ratio: auto;
+    aspect-ratio: 430 / 610;
     overflow: hidden;
-    width: 100%;
-    max-width: 62rem;
+    width: min(100%, 30rem);
+    max-width: 30rem;
     margin: 0 auto;
     border-radius: 1.4rem;
   }
@@ -2566,6 +2604,14 @@ body > .error-main {
     padding-left: 1.4ch;
   }
 
+  .landing-terminal
+    code
+    .landing-command-line:first-child
+    .landing-command-argument::before {
+    color: var(--amber);
+    content: "↳ ";
+  }
+
   .landing-pricing-note {
     font-size: 0.8rem;
   }
@@ -2594,10 +2640,20 @@ body > .error-main {
   }
 }
 
+@media (min-width: 641px) and (max-width: 900px) {
+  .landing-product-meta,
+  .landing-product-footnote {
+    width: min(100%, 30rem);
+    margin-right: auto;
+    margin-left: auto;
+  }
+}
+
 @media (max-width: 640px) {
   .landing-browser-frame {
     aspect-ratio: 430 / 610;
     width: min(100%, 28rem);
+    max-width: 28rem;
   }
 }
 
@@ -2682,11 +2738,14 @@ body > .error-main {
   .landing-detail-mobile-card {
     display: block;
     width: 100%;
-    padding: 1.25rem;
-    border: 1px solid #d7d0c5;
-    border-radius: 1rem;
-    background: #fffdf9;
-    box-shadow: 0 1.5rem 3rem rgba(49, 40, 31, 0.14);
+  }
+
+  .landing-actions {
+    align-items: center;
+  }
+
+  .footer-legal-links {
+    row-gap: 0.25rem;
   }
 
   .landing-thesis-heading h2 br {

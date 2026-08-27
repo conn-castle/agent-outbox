@@ -2,6 +2,7 @@ import { ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
 
 import marketingScreenshotManifest from "../marketing/screenshots.json";
+import { CopyCommandButton } from "../src/components/CopyCommandButton";
 
 const marketingScreenshots = Object.fromEntries(
   marketingScreenshotManifest.assets.map((asset) => [asset.id, asset])
@@ -122,7 +123,7 @@ export default function HomePage() {
           </div>
           <picture>
             <source
-              media="(max-width: 640px)"
+              media="(max-width: 900px)"
               srcSet={marketingScreenshots.queueMobile.publicPath}
               width={marketingScreenshots.queueMobile.width}
               height={marketingScreenshots.queueMobile.height}
@@ -182,7 +183,14 @@ export default function HomePage() {
             >
               <div className="landing-terminal-bar">
                 <span>agent-outbox / zsh</span>
-                <span>Public CLI</span>
+                <div>
+                  <span>Public CLI</span>
+                  <CopyCommandButton
+                    command={`brew install --cask conn-castle/tap/agent-outbox
+
+agent-outbox caller connect my-agent`}
+                  />
+                </div>
               </div>
               <pre>
                 <code>
@@ -269,19 +277,21 @@ export default function HomePage() {
             </div>
           </div>
           <div className="landing-detail-mobile-card" aria-hidden="true">
-            <div className="landing-detail-mobile-meta">
-              <span>Email draft</span>
-              <span>Normal priority</span>
-            </div>
-            <h3>Re: Order 1042 delivery date</h3>
-            <p className="landing-detail-mobile-label">Review summary</p>
-            <p>
-              Maya needs a firm delivery update before Monday&apos;s lab
-              opening.
-            </p>
-            <div className="landing-detail-mobile-actions">
-              <span>Approve to send</span>
-              <span>Reject</span>
+            <div className="landing-detail-mobile-surface">
+              <div className="landing-detail-mobile-meta">
+                <span>Email draft</span>
+                <span>Normal priority</span>
+              </div>
+              <h3>Re: Order 1042 delivery date</h3>
+              <p className="landing-detail-mobile-label">Review summary</p>
+              <p>
+                Maya needs a firm delivery update before Monday&apos;s lab
+                opening.
+              </p>
+              <div className="landing-detail-mobile-actions">
+                <span>Approve to send</span>
+                <span>Reject</span>
+              </div>
             </div>
           </div>
         </figure>
@@ -333,7 +343,7 @@ export default function HomePage() {
             and actions in view.
           </p>
           <p className="landing-proof-label">
-            Actual responsive product · 430px viewport
+            Actual responsive product · mobile view
           </p>
         </div>
       </section>
