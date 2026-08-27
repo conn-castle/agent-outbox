@@ -248,7 +248,7 @@ agent-outbox version
 The landing page, README, and public API quickstart must advertise this exact
 verified command. Keep the separate product-access statement accurate: the CLI
 installer is public, while caller connection remains invite-only during the
-hosted pre-release.
+hosted prerelease.
 
 ## Manual CLI Connect Smoke
 

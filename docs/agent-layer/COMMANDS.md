@@ -348,10 +348,10 @@ make package-check
 Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Runs
 pinned GoReleaser `github.com/goreleaser/goreleaser/v2@v2.16.0` through
 `go run`, validates `.goreleaser.yaml`, and builds a local
-`release --snapshot --clean` package set. Project-owned Homebrew cask rendering
-is covered by `make go-check` and runs against exact numbered-release checksums,
-not snapshot names. This command must not publish, tag, upload, deploy, or
-require private provider credentials.
+`release --snapshot --clean` package set. Renderer unit tests are covered by
+`make go-check`; exact numbered-release cask rendering runs in
+`make cli-release-dist` against `checksums.txt`, not snapshot names. This command
+must not publish, tag, upload, deploy, or require private provider credentials.
 
 - Build tagged CLI release artifacts without publishing
 
