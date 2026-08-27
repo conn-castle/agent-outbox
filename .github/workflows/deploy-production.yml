@@ -37,6 +37,9 @@ jobs:
         with:
           node-version: 24.18.0
 
+      - name: Set up dependencies
+        run: make setup
+
       - name: Resolve release metadata
         id: release
         run: node scripts/production-release.mjs prepare
