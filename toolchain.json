@@ -161,6 +161,11 @@
       "package": "@playwright/test",
       "source": "corepack pnpm view @playwright/test version"
     },
+    "sharp": {
+      "version": "0.35.4",
+      "package": "sharp",
+      "source": "corepack pnpm view sharp version engines --json"
+    },
     "cloudflareOpenNext": {
       "version": "1.20.1",
       "package": "@opennextjs/cloudflare",
