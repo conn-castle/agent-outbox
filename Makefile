@@ -1,4 +1,4 @@
-.PHONY: help bootstrap setup doctor dev fix format lint typecheck test test-database browser release-preflight marketing marketing-approve marketing-check marketing-verify build smoke smoke-runtime hosted-health billing-smoke migration-validate migration-migrate migration-replay contract-generate contract-check go-build go-test go-lint go-fmt go-fmt-check go-check package-check check release-check clean
+.PHONY: help bootstrap setup doctor dev fix format lint typecheck test test-database browser release-preflight marketing marketing-approve marketing-check marketing-verify build smoke smoke-runtime hosted-health billing-smoke migration-validate migration-migrate migration-replay contract-generate contract-check go-build go-test go-lint go-fmt go-fmt-check go-check package-check cli-release-dist check release-check clean
 
 GORELEASER_MODULE := github.com/goreleaser/goreleaser/v2@v2.16.0
 CLI_VERSION ?= 0.0.0-dev
@@ -43,6 +43,7 @@ help:
 	@printf '%s\n' '  make go-fmt        Format Go CLI source.'
 	@printf '%s\n' '  make go-check      Run Go CLI format/lint/test/build gates.'
 	@printf '%s\n' '  make package-check Validate non-publishing CLI release/package artifacts.'
+	@printf '%s\n' '  make cli-release-dist RELEASE_TAG=vX.Y.Z  Build tagged CLI release artifacts.'
 	@printf '%s\n' '  make check          Run the single local/CI verification gate.'
 	@printf '%s\n' '  make release-check  Run the non-deploying release/package gate.'
 	@printf '%s\n' '  make clean          Remove bounded reproducible generated artifacts.'
@@ -147,6 +148,12 @@ go-check: go-fmt-check go-lint go-test go-build
 package-check:
 	go run $(GORELEASER_MODULE) check .goreleaser.yaml
 	go run $(GORELEASER_MODULE) release --snapshot --clean
+
+cli-release-dist:
+	@test -n "$(RELEASE_TAG)" || { echo 'RELEASE_TAG=vX.Y.Z is required' >&2; exit 64; }
+	@printf '%s' "$(RELEASE_TAG)" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { echo 'RELEASE_TAG must be a stable vX.Y.Z tag' >&2; exit 64; }
+	@test "$$(git rev-list -n 1 "$(RELEASE_TAG)")" = "$$(git rev-parse HEAD)" || { echo 'RELEASE_TAG must point at HEAD' >&2; exit 64; }
+	go run $(GORELEASER_MODULE) release --clean --skip=publish
 
 check:
 	corepack pnpm run check

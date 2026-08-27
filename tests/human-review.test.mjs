@@ -13,7 +13,8 @@ import {
   humanReviewDetailStatement,
   humanReviewListInTransaction,
   humanReviewPageInTransaction,
-  humanReviewListStatement
+  humanReviewListStatement,
+  runHumanReviewQueryCanary
 } from "../src/server/human-review.ts";
 import {
   browserFixtureReviewPage,
@@ -666,6 +667,34 @@ test("human review page trims its private sentinel and reports another page", as
   assert.deepEqual(call.values.slice(-2), [101, 100]);
   assert.match(call.sql, /order by i\.updated_at desc, i\.input_item_id/);
   assert.match(call.sql, /limit \$3\s+offset \$4/);
+});
+
+test("human review runtime canary executes the production queue query in an isolated human context", async () => {
+  /** @type {import("../src/server/database.ts").ProductTransactionContext[]} */
+  const transactionContexts = [];
+  const query = fakeQuery([[]]);
+  await runHumanReviewQueryCanary(
+    "postgresql://app-role",
+    "req-human-review-canary",
+    {
+      async runTransaction(connectionString, context, callback) {
+        assert.equal(connectionString, "postgresql://app-role");
+        transactionContexts.push(context);
+        return callback(query);
+      }
+    }
+  );
+
+  const transactionContext = transactionContexts[0];
+  const statement = query.calls[0];
+  assert.ok(transactionContext);
+  assert.ok(statement);
+  assert.equal(transactionContext.requestId, "req-human-review-canary");
+  assert.equal(transactionContext?.authSurface, "human");
+  assert.equal(transactionContext?.accountId, statement?.values?.[0]);
+  assert.match(transactionContext?.userId ?? "", /^[0-9a-f-]+$/);
+  assert.match(statement?.sql ?? "", /action\.action_tone/);
+  assert.match(statement?.sql ?? "", /action\.action_style/);
 });
 
 test("human review search treats LIKE metacharacters as literal text", () => {

@@ -83,7 +83,8 @@ function healthFetch() {
           ok: true,
           code: "database_canary_ok",
           transaction_context_matched: true,
-          restricted_role_matched: true
+          restricted_role_matched: true,
+          human_review_query_matched: true
         });
       }
       if (pathname === "/api/runtime/log") {
@@ -217,4 +218,60 @@ test("hosted health reports status when a JSON endpoint returns non-JSON", async
     }
   );
   assert.equal(exitCodeForHostedHealth(checks), 1);
+});
+
+test("hosted health fails when the human review database query is not proven", async () => {
+  const fake = healthFetch();
+  const checks = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: /** @type {any} */ (
+      async (
+        /** @type {string | URL} */ url,
+        /** @type {{ headers?: Record<string, string> }} */ init = {}
+      ) => {
+        if (new URL(url).pathname === "/api/runtime/database") {
+          return jsonResponse(200, {
+            ok: true,
+            code: "database_canary_ok",
+            transaction_context_matched: true,
+            restricted_role_matched: true,
+            human_review_query_matched: false
+          });
+        }
+        return fake.fetch(url, init);
+      }
+    )
+  });
+
+  assert.equal(
+    checks.find((entry) => entry.name === "database")?.status,
+    "fail"
+  );
+  assert.equal(exitCodeForHostedHealth(checks), 1);
+});
+
+test("hosted health accepts the outgoing database canary contract during rollout", async () => {
+  const fake = healthFetch();
+  const checks = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: /** @type {any} */ (
+      async (
+        /** @type {string | URL} */ url,
+        /** @type {{ headers?: Record<string, string> }} */ init = {}
+      ) => {
+        if (new URL(url).pathname === "/api/runtime/database") {
+          return jsonResponse(200, {
+            ok: true,
+            code: "database_canary_ok",
+            transaction_context_matched: true,
+            restricted_role_matched: true
+          });
+        }
+        return fake.fetch(url, init);
+      }
+    )
+  });
+
+  assert.equal(
+    checks.find((entry) => entry.name === "database")?.status,
+    "pass"
+  );
 });

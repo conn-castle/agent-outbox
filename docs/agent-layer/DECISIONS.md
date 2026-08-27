@@ -66,6 +66,11 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Reason: GoReleaser v2.16 validates the current Homebrew binary artifact path through `homebrew_casks`; the phase requires non-publishing Homebrew-oriented package verification, not tap publication.
     Tradeoffs: The local gate proves cask metadata and archives rather than a Homebrew formula; intentional tap publication or formula support remains future release work.
 
+- Decision 2026-08-27 homebrew-cask-release-publication: Publish the generated CLI cask through the shared tap after production verification
+    Decision: After the Worker deploy is certified and its numbered GitHub release is finalized, build the exact tagged GoReleaser archives without publisher credentials, upload them idempotently to that release, require anonymous download access, and open a bot-authored `conn-castle/homebrew-tap` cask PR. Keep tap merging under the tap repository's guarded automation.
+    Reason: The existing GoReleaser cask is the package source of truth, the hosted app and CLI share one release version, and ordinary Homebrew clients—not only the tap workflow—must be able to fetch every archive without credentials.
+    Tradeoffs: The repository must become public before the first CLI publication; a CLI or tap failure after a verified deploy leaves production live and requires an idempotent release-workflow rerun rather than rollback.
+
 - Decision 2026-07-03 connect-deny-preview-unscoped: Connect deny/preview is bearer-capability, not account-scoped
     Decision: Connect setup-request deny/preview (`denySetupRequestStatement`, `getConnect*ApprovalPreview` in src/server/caller-connect.ts) is authorized by possession of the unguessable UUIDv4 approval link, not by account ownership; rotate/revoke deny/preview stay account-scoped (`EXISTS (... callers WHERE caller.account_id = ...)`).
     Reason: A new connect request has no owning account until approved, so authority follows possession of the link (device-flow bearer-capability norm), whereas rotate/revoke act on an existing account-owned caller.

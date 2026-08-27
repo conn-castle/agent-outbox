@@ -3545,6 +3545,8 @@ test("runtime canary failure routes include server request ids in reports", asyn
     missingConfigurationResponse: (missing) =>
       Response.json({ ok: false, missing }, { status: 503 })
   };
+  /** @type {string[]} */
+  const humanReviewCanaryRequestIds = [];
 
   const errorRoute =
     /** @type {{ GET(request: Request): Promise<Response> }} */ (
@@ -3581,9 +3583,44 @@ test("runtime canary failure routes include server request ids in reports", asyn
             throw new Error("raw database canary detail");
           }
         },
+        "../../../../src/server/human-review": {
+          async runHumanReviewQueryCanary() {
+            return true;
+          }
+        },
         "../../../../src/server/http": http,
         "../../../../src/server/logging": { durationSinceMs },
         "../../../../src/server/sentry": { reportRuntimeFailure },
+        "next/server": nextServer
+      })
+    );
+  const databaseHumanReviewFailureRoute =
+    /** @type {{ GET(request: Request): Promise<Response> }} */ (
+      loadCommonJsModuleForTest("app/api/runtime/database/route.ts", {
+        "../../../../src/server/correlation": { createCorrelationId },
+        "../../../../src/server/database": {
+          async runTransactionContextCanary() {
+            return {
+              transactionContextMatched: true,
+              restrictedRoleMatched: true
+            };
+          }
+        },
+        "../../../../src/server/human-review": {
+          /**
+           * @param {string} _connectionString
+           * @param {string} requestId
+           */
+          async runHumanReviewQueryCanary(_connectionString, requestId) {
+            humanReviewCanaryRequestIds.push(requestId);
+            throw new Error("human review query failed");
+          }
+        },
+        "../../../../src/server/http": http,
+        "../../../../src/server/logging": { durationSinceMs },
+        "../../../../src/server/sentry": {
+          reportRuntimeFailure() {}
+        },
         "next/server": nextServer
       })
     );
@@ -3621,8 +3658,20 @@ test("runtime canary failure routes include server request ids in reports", asyn
         ).status,
         502
       );
+      const humanReviewFailureResponse =
+        await databaseHumanReviewFailureRoute.GET(
+          new Request("https://app.agent-outbox.dev/api/runtime/database")
+        );
+      assert.equal(humanReviewFailureResponse.status, 502);
+      const humanReviewFailureBody = await humanReviewFailureResponse.json();
+      assert.equal(humanReviewFailureBody.ok, false);
+      assert.equal(humanReviewFailureBody.code, "database_canary_failed");
+      assert.match(humanReviewFailureBody.error_id, /^db_runtime_canary_/);
     }
   );
+
+  assert.equal(humanReviewCanaryRequestIds.length, 1);
+  assert.match(humanReviewCanaryRequestIds[0] ?? "", /^req_runtime_canary_/);
 
   assert.deepEqual(
     reports.map((report) => report.route),

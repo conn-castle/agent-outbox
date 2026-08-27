@@ -17,7 +17,10 @@ import {
   type AccountStatusData,
   type StatusResult
 } from "./status.ts";
-import type { ProductTransactionQuery } from "./database.ts";
+import {
+  runProductTransaction,
+  type ProductTransactionQuery
+} from "./database.ts";
 import { quotaWindow, quotaWindowUsageStatement } from "./caller-api-limits.ts";
 import {
   accountLimitStatusMetadata,
@@ -250,6 +253,38 @@ export async function humanReviewPageInTransaction(
       .map(reviewListRowFromDatabase),
     hasNext: result.rows.length > MAX_REVIEW_LIST_LIMIT
   };
+}
+
+/**
+ * Exercise the production human queue query through the restricted application
+ * role without relying on an expiring Clerk browser session or persisted smoke
+ * fixtures.
+ */
+export async function runHumanReviewQueryCanary(
+  connectionString: string,
+  requestId: string,
+  options: { runTransaction?: typeof runProductTransaction } = {}
+) {
+  const accountId = crypto.randomUUID();
+  const userId = crypto.randomUUID();
+  const context: AuthorizedHumanAccountContext = {
+    surface: "human",
+    accountId,
+    userId,
+    role: "owner"
+  };
+  const runTransaction = options.runTransaction ?? runProductTransaction;
+
+  await runTransaction(
+    connectionString,
+    {
+      requestId,
+      authSurface: "human",
+      accountId,
+      userId
+    },
+    (query) => humanReviewPageInTransaction(query, context)
+  );
 }
 
 export async function humanReviewDetailInTransaction(

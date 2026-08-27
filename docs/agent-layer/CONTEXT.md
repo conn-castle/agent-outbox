@@ -48,6 +48,15 @@ Only once #1 and all agents from #2 say that the version is ready for me to revi
   managed, recoverable secrets and environment-owned provider configuration.
   Local access uses AWS SSO profile `conn`; stable parameter names live below
   `/agent-outbox/environments/<stage>/` and `/agent-outbox/shared/`.
+- The shared Homebrew tap GitHub App is the exception to the Agent Outbox path:
+  its canonical `conn` / `us-east-1` parameters are
+  `/conn-castle/homebrew-tap/github-app-id` and
+  `/conn-castle/homebrew-tap/github-app-private-key`. Repository Actions secrets
+  in `homebrew-tap`, `agent-layer`, `personal-context`, and `agent-outbox` are
+  mirrors. The old `/personal-context/homebrew-tap-app-*` parameters are
+  retained legacy mirrors because unknown consumers may still depend on them.
+- The next numbered release is planned as `v0.3.0`; it is the first intended
+  public Homebrew CLI release.
 - Tracked docs should keep provider ids, account ids, project refs, database
   hosts, individual parameter names, current environment posture, and secret
   values out of public Markdown unless an operator runbook requires a stable

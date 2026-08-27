@@ -1,5 +1,6 @@
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { runTransactionContextCanary } from "../../../../src/server/database";
+import { runHumanReviewQueryCanary } from "../../../../src/server/human-review";
 import {
   missingConfigurationResponse,
   smokeBearerFailureResponse
@@ -25,17 +26,19 @@ export async function GET(request: Request) {
   const requestId = createCorrelationId("req");
   try {
     const canary = await runTransactionContextCanary(connectionString);
+    await runHumanReviewQueryCanary(connectionString, requestId);
     const ok = canary.transactionContextMatched && canary.restrictedRoleMatched;
     return NextResponse.json(
       {
         ok,
         code: ok
           ? "database_canary_ok"
-          : canary.restrictedRoleMatched
-            ? "database_transaction_context_mismatch"
-            : "database_restricted_role_mismatch",
+          : !canary.restrictedRoleMatched
+            ? "database_restricted_role_mismatch"
+            : "database_transaction_context_mismatch",
         transaction_context_matched: canary.transactionContextMatched,
-        restricted_role_matched: canary.restrictedRoleMatched
+        restricted_role_matched: canary.restrictedRoleMatched,
+        human_review_query_matched: true
       },
       { status: ok ? 200 : 502 }
     );

@@ -32,8 +32,9 @@ The current repository implements:
   output-file download routes
 - A Go `agent-outbox` CLI for caller setup, caller/account status, input,
   output, diagnostics, terminal docs, upgrade URL opening, and version metadata
-- Non-publishing GoReleaser package verification that builds Homebrew cask
-  artifacts for the CLI
+- GoReleaser package verification plus post-deploy automation that attaches
+  tagged CLI archives to the numbered GitHub release and opens a guarded
+  Homebrew tap cask PR
 - Free-tier queue caps, caller limits, retention primitives, cleanup primitives,
   and runtime canaries
 - Account-scoped Stripe checkout, billing portal, webhook idempotency, billing
@@ -337,3 +338,7 @@ operations, but prohibits providing others a product that competes with Agent
 Outbox, including a competing hosted service. The hosted free and paid services
 remain governed by the [Terms of Service](/terms-of-service) and their plan
 limits.
+
+That license covers Agent Outbox itself. Third-party components vendored into
+this repository stay under their own licenses and copyright holders; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

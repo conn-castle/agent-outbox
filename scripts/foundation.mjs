@@ -1023,6 +1023,10 @@ export function validateProductionDeployWorkflow(
     deployWorkflowContent,
     "finalize-release"
   );
+  const homebrewJob = workflowJobContent(
+    deployWorkflowContent,
+    "publish-cli-homebrew"
+  );
   const deployStep = workflowNamedStepContent(deployJob, "Deploy Worker");
   const requireMigrationCredentialStep = workflowNamedStepContent(
     deployJob,
@@ -1055,6 +1059,30 @@ export function validateProductionDeployWorkflow(
   const verifyRestoredStep = workflowNamedStepContent(
     deployJob,
     "Verify restored release"
+  );
+  const buildCliStep = workflowNamedStepContent(
+    homebrewJob,
+    "Build tagged CLI release artifacts"
+  );
+  const uploadCliStep = workflowNamedStepContent(
+    homebrewJob,
+    "Upload CLI release assets"
+  );
+  const publicAssetsStep = workflowNamedStepContent(
+    homebrewJob,
+    "Require publicly downloadable release assets"
+  );
+  const tapTokenStep = workflowNamedStepContent(
+    homebrewJob,
+    "Create GitHub App token for tap repo"
+  );
+  const updateCaskStep = workflowNamedStepContent(
+    homebrewJob,
+    "Update Homebrew cask"
+  );
+  const tapPullRequestStep = workflowNamedStepContent(
+    homebrewJob,
+    "Create PR in tap repo"
   );
   /** @type {[string, boolean][]} */
   const requirements = [
@@ -1142,6 +1170,7 @@ export function validateProductionDeployWorkflow(
     !requireMigrationCredentialStep.includes(
       'if [[ -z "${DATABASE_MIGRATION_URL:-}" ]]'
     ) ||
+    !requireMigrationCredentialStep.includes('host="${host##*@}"') ||
     !migrationStep.includes(
       "DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}"
     ) ||
@@ -1189,10 +1218,23 @@ export function validateProductionDeployWorkflow(
   if (
     !workflowRunStepIncludes(verifyStep, "corepack pnpm run smoke-runtime") ||
     !verifyStep.includes("AGENT_OUTBOX_EXPECTED_RELEASE: ${{ github.sha }}") ||
+    !verifyStep.includes(
+      'AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"'
+    ) ||
     deployJob.indexOf(verifyStep) < deployJob.indexOf(deployStep)
   ) {
     failures.push(
       ".github/workflows/deploy-production.yml must verify the deployed SHA after deploy"
+    );
+  }
+  const requireHumanReviewQueryCanary =
+    'AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"';
+  if (
+    verifyRollbackTargetStep.includes(requireHumanReviewQueryCanary) ||
+    verifyRestoredStep.includes(requireHumanReviewQueryCanary)
+  ) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must keep rollback-target smoke compatible with the outgoing release contract"
     );
   }
   if (
@@ -1210,6 +1252,39 @@ export function validateProductionDeployWorkflow(
   ) {
     failures.push(
       ".github/workflows/deploy-production.yml must finalize one numbered release through production-release.mjs after deploy"
+    );
+  }
+  if (
+    !/^\s*needs:\s*\[prepare-release, finalize-release\]\s*$/m.test(
+      homebrewJob
+    ) ||
+    !/^\s*contents:\s*write\s*$/m.test(homebrewJob) ||
+    !workflowRunStepIncludes(
+      buildCliStep,
+      'make cli-release-dist RELEASE_TAG="${RELEASE_TAG}"'
+    ) ||
+    !uploadCliStep.includes("gh release view") ||
+    !uploadCliStep.includes("--json assets") ||
+    !uploadCliStep.includes("gh release download") ||
+    !uploadCliStep.includes("cmp -s") ||
+    !uploadCliStep.includes("gh release upload") ||
+    uploadCliStep.includes("--clobber") ||
+    !publicAssetsStep.includes("curl -fsSL") ||
+    !publicAssetsStep.includes("cmp -s") ||
+    !publicAssetsStep.includes(
+      "Make conn-castle/agent-outbox public before publishing its Homebrew cask."
+    ) ||
+    !tapTokenStep.includes("secrets.HOMEBREW_TAP_APP_ID") ||
+    !tapTokenStep.includes("secrets.HOMEBREW_TAP_PRIVATE_KEY") ||
+    !tapTokenStep.includes("repositories: homebrew-tap") ||
+    !updateCaskStep.includes("dist/homebrew/Casks/agent-outbox.rb") ||
+    !updateCaskStep.includes("homebrew-tap/Casks/agent-outbox.rb") ||
+    !tapPullRequestStep.includes(
+      "branch: bump-agent-outbox-${{ env.RELEASE_TAG }}"
+    )
+  ) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
     );
   }
   // Automatic rollback must run inside the already-approved deploy job (so it is
@@ -1692,6 +1767,15 @@ export function validateGoReleaserTooling(
     )
   ) {
     errors.push("Makefile package-check must build a clean snapshot release");
+  }
+  if (
+    !makefileContent.includes(
+      "go run $(GORELEASER_MODULE) release --clean --skip=publish"
+    )
+  ) {
+    errors.push(
+      "Makefile cli-release-dist must build a clean tagged release without publishing"
+    );
   }
   if (
     !makefileContent.includes("release-check: check go-check package-check")

@@ -42,9 +42,14 @@ Production migrations run only within the protected manual release workflow in
 release SHA, verifies the current rollback target, validates existing Flyway
 history while allowing pending checked-in migrations, applies those migrations,
 strictly validates the resulting history, and only then deploys the Worker. The
-outgoing Worker remains live against the migrated schema during deployment, and
-a failed deploy restores only that Worker version. This makes rule 12 a release
-requirement, not optional rollback advice.
+post-deploy runtime smoke also executes the production human-review list query
+through the restricted application role under an isolated human account context,
+so a release cannot finalize when its deployed schema cannot serve the queue.
+Pre-deploy and restored-release smoke tolerate the field being absent from an
+outgoing release that predates this canary, but reject a failed result whenever
+the deployed Worker exposes it. The outgoing Worker remains live against the
+migrated schema during deployment, and a failed deploy restores only that Worker
+version. This makes rule 12 a release requirement, not optional rollback advice.
 
 `DATABASE_MIGRATION_URL` in the GitHub `production` environment is a downstream
 copy of the canonical SSM parameter. Missing credentials or any Flyway failure
