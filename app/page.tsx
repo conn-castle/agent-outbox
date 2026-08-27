@@ -7,7 +7,7 @@ import { CopyCommandButton } from "../src/components/CopyCommandButton";
 const marketingScreenshots = Object.fromEntries(
   marketingScreenshotManifest.assets.map((asset) => [asset.id, asset])
 ) as Record<
-  "detailTablet" | "queueDesktop" | "queueMobile",
+  "detailMobile" | "detailTablet" | "queueDesktop" | "queueMobile",
   (typeof marketingScreenshotManifest.assets)[number]
 >;
 
@@ -123,7 +123,7 @@ export default function HomePage() {
           </div>
           <picture>
             <source
-              media="(max-width: 900px)"
+              media="(max-width: 768px)"
               srcSet={marketingScreenshots.queueMobile.publicPath}
               width={marketingScreenshots.queueMobile.width}
               height={marketingScreenshots.queueMobile.height}
@@ -268,12 +268,20 @@ agent-outbox caller connect my-agent`}
           <div className="landing-tablet-frame">
             <span className="landing-tablet-camera" aria-hidden="true" />
             <div className="landing-tablet-screen">
-              <img
-                src={marketingScreenshots.detailTablet.publicPath}
-                alt="Agent Outbox request detail with structured context and response actions"
-                width={marketingScreenshots.detailTablet.width}
-                height={marketingScreenshots.detailTablet.height}
-              />
+              <picture>
+                <source
+                  media="(max-width: 640px)"
+                  srcSet={marketingScreenshots.detailMobile.publicPath}
+                  width={marketingScreenshots.detailMobile.width}
+                  height={marketingScreenshots.detailMobile.height}
+                />
+                <img
+                  src={marketingScreenshots.detailTablet.publicPath}
+                  alt="Agent Outbox request detail with structured context and response actions"
+                  width={marketingScreenshots.detailTablet.width}
+                  height={marketingScreenshots.detailTablet.height}
+                />
+              </picture>
             </div>
           </div>
           <div className="landing-detail-mobile-card" aria-hidden="true">
