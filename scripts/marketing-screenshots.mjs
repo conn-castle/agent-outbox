@@ -15,6 +15,11 @@ import {
   STABLE_RELEASE_VERSION,
   verifyRepositoryReleaseTarget
 } from "./release-version.mjs";
+import {
+  comparePng,
+  DEFAULT_THRESHOLDS,
+  describeSummary
+} from "./marketing-asset-gate.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST_PATH = path.join(ROOT, "marketing", "screenshots.json");
@@ -180,7 +185,7 @@ function capture(mode, outputDir) {
   return outputDir;
 }
 
-function captureForReview() {
+async function captureForReview() {
   const manifest = readJson(MANIFEST_PATH);
   const packageJson = readJson(path.join(ROOT, "package.json"));
   const assets = verifyMarketingReleaseFiles(
@@ -198,16 +203,36 @@ function captureForReview() {
       readCommittedFile(file)
     );
   }
-  capture("capture", ROOT);
-  const changed = compareAndWriteReport(reviewDir, assets, ROOT, true);
+  const generatedDir = path.join(reviewDir, "generated");
+  mkdirSync(generatedDir, { recursive: true });
+  capture("capture", generatedDir);
+  const report = await compareAndWriteReport(
+    reviewDir,
+    assets,
+    generatedDir,
+    true
+  );
+
+  for (const result of report.results) {
+    const destination = path.join(ROOT, String(result.asset.file));
+    if (isSubstantive(result.comparison)) {
+      copyFileSync(result.generated, destination);
+    } else {
+      // Keep the committed baseline bytes when capture drift is insignificant.
+      // This is the important distinction between a fresh capture and a
+      // screenshot change that should enter a PR or release review.
+      copyFileSync(result.baselineCopy, destination);
+    }
+  }
+
   console.log("Marketing screenshots regenerated in public/ for review.");
   console.log(
     `Review report: ${path.relative(ROOT, path.join(reviewDir, "review.html"))}`
   );
   console.log(
-    changed.length === 0
-      ? "All regenerated pixels match the previous screenshots."
-      : `Changed screenshots: ${changed.join(", ")}`
+    report.changed.length === 0
+      ? "No substantive screenshot changes; insignificant capture drift was discarded."
+      : `Substantively changed screenshots: ${report.changed.join(", ")}`
   );
 }
 
@@ -229,19 +254,26 @@ function readCommittedFile(file) {
   return result.stdout;
 }
 
-function verifyFreshCapture() {
+async function verifyFreshCapture() {
   const assets = verifyCommittedMarketingReleaseFiles();
   const outputDir = path.join(CAPTURE_ROOT, "verify");
   rmSync(outputDir, { recursive: true, force: true });
   mkdirSync(outputDir, { recursive: true });
   capture("verify", outputDir);
-  const changed = compareAndWriteReport(outputDir, assets, outputDir, false);
-  if (changed.length > 0) {
+  const report = await compareAndWriteReport(
+    outputDir,
+    assets,
+    outputDir,
+    false
+  );
+  if (report.changed.length > 0) {
     throw new Error(
-      `committed marketing screenshots do not match a fresh capture: ${changed.join(", ")}; inspect ${path.relative(ROOT, path.join(outputDir, "review.html"))}`
+      `committed marketing screenshots have substantive differences from a fresh capture: ${report.changed.join(", ")}; inspect ${path.relative(ROOT, path.join(outputDir, "review.html"))}`
     );
   }
-  console.log("Committed marketing screenshots match a fresh pinned capture.");
+  console.log(
+    "Committed marketing screenshots match a fresh pinned capture within the configured tolerance."
+  );
 }
 
 /** @param {string} version */
@@ -294,7 +326,7 @@ function approveScreenshots(version) {
  * @param {string} [generatedRoot]
  * @param {boolean} [baselineReady]
  */
-function compareAndWriteReport(
+async function compareAndWriteReport(
   outputDir,
   validatedAssets,
   generatedRoot = outputDir,
@@ -305,8 +337,11 @@ function compareAndWriteReport(
     validatedAssets ??
     /** @type {Array<Record<string, unknown>>} */ (manifest.assets);
   const baselineDir = path.join(outputDir, "baseline");
+  const diffDir = path.join(outputDir, "diff");
   mkdirSync(baselineDir, { recursive: true });
+  mkdirSync(diffDir, { recursive: true });
   const changed = [];
+  const results = [];
   const sections = [];
   for (const asset of assets) {
     const file = String(asset.file);
@@ -319,17 +354,26 @@ function compareAndWriteReport(
     if (!baselineReady) {
       copyFileSync(baseline, baselineCopy);
     }
-    const baselineHash = sha256(readFileSync(baselineCopy));
-    const generatedHash = sha256(readFileSync(generated));
-    if (baselineHash !== generatedHash) {
+    const comparison = await comparePng(
+      baselineCopy,
+      generated,
+      DEFAULT_THRESHOLDS,
+      {
+        writeOverlayTo: path.join(diffDir, `${path.basename(file)}.diff.png`)
+      }
+    );
+    if (isSubstantive(comparison)) {
       changed.push(String(asset.id));
     }
+    results.push({ asset, baselineCopy, generated, comparison });
+    const status = describeComparison(comparison);
     const before = `baseline/${path.basename(file)}`;
     const after = path.relative(outputDir, generated);
     sections.push(`
       <section>
-        <h2>${escapeHtml(String(asset.id))} ${baselineHash === generatedHash ? "(unchanged)" : "(changed)"}</h2>
+        <h2>${escapeHtml(String(asset.id))} ${escapeHtml(status.label)}</h2>
         <p><code>${escapeHtml(file)}</code></p>
+        <p>${escapeHtml(status.detail)}</p>
         <div class="grid">
           <figure><figcaption>Committed</figcaption><img src="${escapeHtml(before)}" alt="Committed ${escapeHtml(String(asset.id))}"></figure>
           <figure><figcaption>Regenerated</figcaption><img src="${escapeHtml(after)}" alt="Regenerated ${escapeHtml(String(asset.id))}"></figure>
@@ -340,10 +384,44 @@ function compareAndWriteReport(
   }
   writeFileSync(
     path.join(outputDir, "review.html"),
-    `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Marketing screenshot review</title><style>body{font:16px system-ui;margin:2rem;background:#f5f2eb;color:#202427}section{margin:3rem 0;padding-top:1rem;border-top:1px solid #bbb}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem}figure{margin:0;overflow:auto}figcaption{font-weight:700;margin-bottom:.5rem}img{display:block;width:100%;height:auto}.stack{display:grid;align-content:start}.stack figcaption{grid-area:1/1}.stack img{grid-area:2/1}.stack .overlay{opacity:.5}.difference .overlay{opacity:1;mix-blend-mode:difference}</style><body><h1>Marketing screenshot review</h1><p>Review every regenerated screenshot in its tracked <code>public/</code> location before running the approval command.</p>${sections.join("\n")}</body></html>`,
+    `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Marketing screenshot review</title><style>body{font:16px system-ui;margin:2rem;background:#f5f2eb;color:#202427}section{margin:3rem 0;padding-top:1rem;border-top:1px solid #bbb}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem}figure{margin:0;overflow:auto}figcaption{font-weight:700;margin-bottom:.5rem}img{display:block;width:100%;height:auto}.stack{display:grid;align-content:start}.stack figcaption{grid-area:1/1}.stack img{grid-area:2/1}.stack .overlay{opacity:.5}.difference .overlay{opacity:1;mix-blend-mode:difference}</style><body><h1>Marketing screenshot review</h1><p>Review substantive screenshot changes; insignificant capture drift is discarded before it reaches <code>public/</code>.</p>${sections.join("\n")}</body></html>`,
     "utf8"
   );
-  return changed;
+  return { changed, results };
+}
+
+/** @param {Awaited<ReturnType<typeof comparePng>>} comparison */
+function isSubstantive(comparison) {
+  return !["identical", "within-threshold"].includes(comparison.verdict);
+}
+
+/** @param {Awaited<ReturnType<typeof comparePng>>} comparison */
+function describeComparison(comparison) {
+  if (comparison.verdict === "identical") {
+    return { label: "(unchanged)", detail: "Byte-identical pixels." };
+  }
+  if (comparison.verdict === "within-threshold") {
+    return {
+      label: "(unchanged; within tolerance)",
+      detail: `Insignificant capture drift discarded: ${describeSummary(comparison.summary)}.`
+    };
+  }
+  if (comparison.verdict === "size-mismatch") {
+    return {
+      label: "(changed; size mismatch)",
+      detail: `Baseline ${comparison.baseline.width}x${comparison.baseline.height}; candidate ${comparison.candidate.width}x${comparison.candidate.height}.`
+    };
+  }
+  if (comparison.verdict === "missing-baseline") {
+    return {
+      label: "(changed; missing baseline)",
+      detail: "Baseline is missing."
+    };
+  }
+  return {
+    label: "(changed)",
+    detail: `Substantive pixel difference: ${describeSummary(comparison.summary)}.`
+  };
 }
 
 /** @param {string} file */
@@ -369,7 +447,7 @@ function escapeHtml(value) {
 async function main() {
   switch (process.argv[2]) {
     case "capture":
-      captureForReview();
+      await captureForReview();
       break;
     case "approve":
       approveScreenshots(process.argv[3] ?? "");
@@ -379,7 +457,7 @@ async function main() {
       console.log("Marketing release attestation is current.");
       break;
     case "verify":
-      verifyFreshCapture();
+      await verifyFreshCapture();
       break;
     default:
       throw new Error(

@@ -37,11 +37,12 @@ The command renders every asset in `marketing/screenshots.json` from the
 deterministic human-review fixture inside the pinned Linux/amd64 Playwright
 container. The fixture renders against a frozen reference time rather than the
 wall clock, so identical code produces identical pixels on any capture date. It
-writes the regenerated screenshots directly under `public/` and leaves them
-unstaged; the visual comparison report is written under
-`.agent-layer/tmp/marketing-capture/review/`. A human must review every tracked
-screenshot for every release, including a pixel-identical capture. After
-approval, attest that exact working-tree set and then make the matching
+writes candidates under `.agent-layer/tmp/marketing-capture/review/` and
+compares decoded pixels against the committed baseline. Differences at or below
+the capture tolerance (a maximum channel delta of 5 and at most 0.1% of pixels)
+are discarded, so they do not create a noisy working-tree diff. Only substantive
+differences are copied into `public/` and require human review. After that
+review, attest the exact working-tree set and then make the matching
 package-version change:
 
 ```bash
@@ -54,9 +55,9 @@ tracked final locations awaiting the release-prep commit. It must run during
 release preparation, never from the production release workflow.
 `make marketing-check` verifies the package version, manifest attestation, asset
 inventory, and hashes without launching a browser. `make marketing-verify`
-recaptures into scratch space and compares the committed pixels without
-modifying them. Production preparation repeats the fast attestation check and
-fails before certification or deployment if stale.
+recaptures into scratch space and fails only when a substantive difference is
+found, without modifying committed files. Production preparation repeats the
+fast attestation check and fails before certification or deployment if stale.
 
 Run these local gates from the repo root before a production deploy or branch
 protection change:
