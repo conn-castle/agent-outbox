@@ -201,6 +201,9 @@ jobs:
         with:
           node-version: 24.18.0
 
+      - name: Set up dependencies
+        run: make setup
+
       - name: Create numbered GitHub release and tag
         env:
           GH_TOKEN: ${{ github.token }}
