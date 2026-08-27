@@ -678,7 +678,12 @@ Body:
 Pending approval returns `202` with `authorization_pending`. Successful approval
 returns the display-once pending credential response documented under Connect
 Exchange below and marks the device code used. Repeating the same device-code
-poll after success does not replay the credential.
+poll after success does not replay the credential. The signed-in approval page
+is idempotent for the account that approved the request: an immediately repeated
+submission or navigation after approval or exchange shows the persisted success
+state instead of reporting a non-pending request as an error. This never replays
+the display-once credential and never exposes another account's completed
+request.
 
 ### Connect Exchange
 

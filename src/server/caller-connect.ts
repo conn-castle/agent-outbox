@@ -90,6 +90,13 @@ type SetupApprovalTargetRow = {
   expires_at: string | Date;
 };
 
+type DeviceSetupApprovalTargetRow = SetupApprovalTargetRow & {
+  account_id: string | null;
+  caller_id: string | null;
+  caller_slug: string | null;
+  caller_display_name: string | null;
+};
+
 type SetupExchangeContextRow = {
   setup_request_id: string;
   status: SetupRequestStatus;
@@ -751,19 +758,28 @@ export async function getConnectBrowserApprovalPreview(
 
 export async function getConnectDeviceApprovalPreview(
   query: ProductTransactionQuery,
-  input: { userCode: string; now?: Date }
+  input: { userCode: string; accountId: string; now?: Date }
 ): Promise<ConnectResult<ConnectApprovalPreviewData>> {
-  const targetResult = await query<SetupApprovalTargetRow>(
+  const targetResult = await query<DeviceSetupApprovalTargetRow>(
     deviceApprovalTargetStatement(
       callerSetupCodeDigest(normalizeUserCode(input.userCode))
     )
   );
 
-  return connectApprovalPreviewFromTarget(
-    query,
-    targetResult.rows[0] ?? null,
-    input.now
-  );
+  const target = targetResult.rows[0] ?? null;
+  if (
+    target &&
+    (target.status === "approved" || target.status === "exchanged")
+  ) {
+    if (target.account_id !== input.accountId) {
+      return invalidRequestError(
+        "Caller connect setup request is not pending approval."
+      );
+    }
+    return connectApprovalPreviewData(target);
+  }
+
+  return connectApprovalPreviewFromTarget(query, target, input.now);
 }
 
 export async function getConnectTerminalSetupState(
@@ -890,7 +906,7 @@ export async function approveConnectDeviceSetupRequest(
     now?: Date;
   }
 ): Promise<ConnectResult<ConnectDeviceApprovalData>> {
-  const targetResult = await query<SetupApprovalTargetRow>(
+  const targetResult = await query<DeviceSetupApprovalTargetRow>(
     deviceApprovalTargetStatement(
       callerSetupCodeDigest(normalizeUserCode(input.userCode))
     )
@@ -898,6 +914,30 @@ export async function approveConnectDeviceSetupRequest(
   const target = targetResult.rows[0];
   if (!target) {
     return notFoundError("Caller connect setup request was not found.");
+  }
+
+  if (target.status === "approved" || target.status === "exchanged") {
+    if (target.account_id !== input.accountId) {
+      return invalidRequestError(
+        "Caller connect setup request is not pending approval."
+      );
+    }
+    if (!target.caller_id || !target.caller_display_name) {
+      throw new Error(
+        "Completed caller connect setup request is missing its caller."
+      );
+    }
+    return {
+      ok: true,
+      data: {
+        setup_request_id: target.setup_request_id,
+        caller: {
+          caller_id: target.caller_id,
+          caller_slug: target.caller_slug,
+          display_name: target.caller_display_name
+        }
+      }
+    };
   }
 
   const available = await ensurePendingApprovalTarget(query, target, input.now);
@@ -1110,6 +1150,12 @@ async function connectApprovalPreviewFromTarget(
     return available;
   }
 
+  return connectApprovalPreviewData(target);
+}
+
+function connectApprovalPreviewData(
+  target: SetupApprovalTargetRow
+): ConnectResult<ConnectApprovalPreviewData> {
   return {
     ok: true,
     data: {
@@ -1591,23 +1637,30 @@ function deviceApprovalTargetStatement(
   return {
     sql: `
       select
-        setup_request_id::text as setup_request_id,
-        operation,
-        flow,
-        status,
-        local_caller_name,
-        display_name,
-        callback_url,
-        expires_at
-      from public.agent_outbox_caller_setup_requests
-      where user_code_hash = $1
-        and operation = 'connect'
-        and flow = 'device'
-        and status in ('pending', 'approved')
-        and expires_at > now()
-      order by expires_at desc, created_at desc
+        setup.setup_request_id::text as setup_request_id,
+        setup.operation,
+        setup.flow,
+        setup.status,
+        setup.local_caller_name,
+        setup.display_name,
+        setup.callback_url,
+        setup.expires_at,
+        setup.account_id::text as account_id,
+        setup.caller_id::text as caller_id,
+        caller.caller_slug,
+        caller.display_name as caller_display_name
+      from public.agent_outbox_caller_setup_requests setup
+      left join public.agent_outbox_callers caller
+        on caller.account_id = setup.account_id
+       and caller.caller_id = setup.caller_id
+      where setup.user_code_hash = $1
+        and setup.operation = 'connect'
+        and setup.flow = 'device'
+        and setup.status in ('pending', 'approved', 'exchanged')
+        and setup.expires_at > now()
+      order by setup.expires_at desc, setup.created_at desc
       limit 1
-      for update
+      for update of setup
     `,
     values: [userCodeHash]
   };

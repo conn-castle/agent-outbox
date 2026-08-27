@@ -1,7 +1,7 @@
 # Agent Outbox
 
-> Status: Agent Outbox is under active development and has not been publicly
-> released yet.
+> Status: Agent Outbox is under active development. Its CLI is publicly
+> available through Homebrew; hosted caller connection remains invite-only.
 
 Agent Outbox is a hosted, source-available review queue for agent-prepared work.
 
@@ -21,8 +21,8 @@ For repository navigation, see [TOC.md](TOC.md).
 
 This repository is public and source-available under the
 [PolyForm Perimeter License 1.0.1](LICENSE). The hosted product is still
-pre-release: caller connection is invite-only, and the `agent-outbox` CLI is not
-yet published for public installation. The hosted service uses:
+pre-release and caller connection is invite-only. The `agent-outbox` CLI is
+available for public installation through Homebrew. The hosted service uses:
 
 - `https://agent-outbox.dev` for the product landing page and API documentation
 - `https://app.agent-outbox.dev` for the human app and caller API
@@ -78,7 +78,17 @@ item.
 
 ## Quickstart
 
-Set up the current repository:
+Install the public CLI:
+
+```bash
+brew install --cask conn-castle/tap/agent-outbox
+```
+
+Caller connection remains invite-only during pre-release. Request caller access
+at [agent-outbox.dev/contact](https://agent-outbox.dev/contact) before running
+`agent-outbox caller connect my-agent`.
+
+For repository development, set up the current checkout:
 
 ```bash
 make setup

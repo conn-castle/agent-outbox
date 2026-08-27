@@ -55,8 +55,9 @@ Only once #1 and all agents from #2 say that the version is ready for me to revi
   in `homebrew-tap`, `agent-layer`, `personal-context`, and `agent-outbox` are
   mirrors. The old `/personal-context/homebrew-tap-app-*` parameters are
   retained legacy mirrors because unknown consumers may still depend on them.
-- The next numbered release is planned as `v0.3.0`; it is the first intended
-  public Homebrew CLI release.
+- `v0.2.6` is the first public Homebrew CLI release. Exact release archives and
+  checksums come from GoReleaser; Agent Outbox owns deterministic cask rendering
+  and validates Ruby/Homebrew style before production deployment.
 - Tracked docs should keep provider ids, account ids, project refs, database
   hosts, individual parameter names, current environment posture, and secret
   values out of public Markdown unless an operator runbook requires a stable

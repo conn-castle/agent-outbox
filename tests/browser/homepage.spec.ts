@@ -12,7 +12,7 @@ test("the Pro plan describes the supported file upload direction", async ({
   );
 });
 
-test("the homepage offers invite-only caller access instead of a public installer", async ({
+test("the homepage separates public CLI installation from invite-only caller access", async ({
   page
 }) => {
   await page.goto("/");
@@ -24,13 +24,12 @@ test("the homepage offers invite-only caller access instead of a public installe
     })
   ).toBeVisible();
   await expect(accessSection).toContainText("invite-only");
-  await expect(page.locator("body")).not.toContainText("brew install");
-  await expect(page.locator("body")).not.toContainText(
-    "conn-castle/tap/agent-outbox"
+  await expect(accessSection).toContainText(
+    "brew install --cask conn-castle/tap/agent-outbox"
   );
 
   const requestAccess = accessSection.getByRole("link", {
-    name: "Request test CLI access"
+    name: "Request caller access"
   });
   await expect(requestAccess).toHaveAttribute("href", "/contact");
 
@@ -42,7 +41,9 @@ test("the homepage offers invite-only caller access instead of a public installe
       level: 1
     })
   ).toBeVisible();
-  await expect(page.getByRole("option", { name: "CLI access" })).toHaveCount(1);
+  await expect(page.getByRole("option", { name: "Caller access" })).toHaveCount(
+    1
+  );
 });
 
 test("the homepage stays inside the viewport at tablet and phone widths", async ({

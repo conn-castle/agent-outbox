@@ -148,14 +148,13 @@ export default function HomePage() {
           <p className="landing-index">01 / Caller access</p>
           <h2>Connect once. Then step away.</h2>
           <p className="landing-install-note">
-            Caller connection is invite-only during this pre-release. Request
-            test CLI access, then connect your agent so it can send a review
-            request whenever human input is required—even when nobody is
-            watching the run. The browser flow asks you to sign in or create an
-            account before approving the caller.
+            Install the public CLI with Homebrew. Caller connection remains
+            invite-only during this pre-release, so request caller access before
+            connecting an agent. The browser flow asks you to sign in or create
+            an account before approving the caller.
           </p>
           <Link className="button" href="/contact">
-            Request test CLI access <ArrowRight aria-hidden="true" />
+            Request caller access <ArrowRight aria-hidden="true" />
           </Link>
         </div>
         <div className="landing-connect-body">
@@ -166,36 +165,49 @@ export default function HomePage() {
             >
               <li>
                 <span>01</span>
-                <p>Request test CLI access</p>
+                <p>Install the CLI</p>
               </li>
               <li>
                 <span>02</span>
-                <p>Connect your agent</p>
+                <p>Request caller access</p>
               </li>
               <li>
                 <span>03</span>
-                <p>Sign in and approve</p>
+                <p>Connect and approve</p>
               </li>
             </ol>
             <div
               className="landing-terminal"
-              aria-label="Agent Outbox caller connect command"
+              aria-label="Agent Outbox installation and caller connect commands"
             >
               <div className="landing-terminal-bar">
                 <span>agent-outbox / zsh</span>
-                <span>Test CLI</span>
+                <span>Public CLI</span>
               </div>
               <pre>
                 <code>
-                  <span>$</span> agent-outbox caller connect my-agent
+                  <span className="landing-command-line">
+                    <span className="landing-command-prompt">$</span> brew
+                    install --cask{" "}
+                    <span className="landing-command-argument">
+                      conn-castle/tap/agent-outbox
+                    </span>
+                  </span>
+                  <span className="landing-command-comment">
+                    # After your caller invitation arrives:
+                  </span>
+                  <span className="landing-command-line">
+                    <span className="landing-command-prompt">$</span>{" "}
+                    agent-outbox caller connect my-agent
+                  </span>
                 </code>
               </pre>
             </div>
             <p className="landing-terminal-help">
-              Invited testers run this after receiving CLI access.{" "}
-              <code>my-agent</code> is a local label you choose. The connect
-              command opens Agent Outbox so you can review and approve the
-              caller in your browser.
+              Homebrew installs the public CLI. Once you receive caller access,
+              run the connect command; <code>my-agent</code> is a local label
+              you choose. Agent Outbox then opens so you can review and approve
+              the caller in your browser.
             </p>
           </div>
         </div>

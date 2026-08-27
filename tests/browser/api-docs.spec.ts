@@ -19,7 +19,10 @@ test("API docs teach the workflow and expose the generated contract", async ({
   ).toBeVisible();
   await expect(page.getByText("<caller_api_key>").first()).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Request test CLI access" })
+    page.getByText("brew install --cask conn-castle/tap/agent-outbox")
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Request caller access" })
   ).toHaveAttribute("href", "https://agent-outbox.dev/contact");
 
   const docsNavigation = page.getByRole("navigation", {

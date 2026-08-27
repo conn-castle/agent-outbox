@@ -159,45 +159,57 @@ The workflow applies one serialized release sequence:
    stable version from `package.json`.
 2. Rerun the reusable release gate on that SHA: `make release-check`, browser
    tests, and migration replay/database policy checks.
-3. Capture the one current 100%-traffic Cloudflare Worker version and its live
+3. Create or verify an ephemeral local `v<package.json version>` tag on the
+   exact candidate, build the four macOS/Linux archives and `checksums.txt` with
+   pinned GoReleaser, render `Casks/agent-outbox.rb` from those checksums
+   through the project-owned Go renderer, require Ruby syntax and Homebrew style
+   checks, and retain those exact files as the certified workflow artifact.
+4. Capture the one current 100%-traffic Cloudflare Worker version and its live
    runtime release SHA, then run runtime smoke against that rollback target.
-4. Validate the durable production Flyway history, apply every pending
+5. Validate the durable production Flyway history, apply every pending
    checked-in migration using `DATABASE_MIGRATION_URL` from the protected
    `production` GitHub environment, and validate the resulting history. A
    missing credential or failed migration stops the release before Worker
    deployment.
-5. Build once with production public configuration, dry-run the generated
+6. Build once with production public configuration, dry-run the generated
    artifact with its Hyperdrive and secret inventory, stamp the Worker version
    with `v<package.json version>`, and deploy that artifact.
-6. Retry runtime smoke until the exact candidate SHA is serving successfully.
-7. Only after live verification, publish `v<package.json version>` and its
+7. Retry runtime smoke until the exact candidate SHA is serving successfully.
+8. Only after live verification, publish `v<package.json version>` and its
    GitHub Release on the certified SHA. Finalization is idempotent: it
    reconciles the current tag/release state, adopts a tag a prior partial run
    already created on this SHA, treats an already-published release as success,
    retries only transient GitHub API failures, and proves the tag resolves to
    the certified SHA before reporting success.
-8. Build the four tagged macOS/Linux CLI archives with the pinned GoReleaser,
-   upload missing archives and `checksums.txt`, retain byte-identical existing
-   assets on reruns, fail rather than replace a conflicting published asset, and
-   prove each asset is publicly downloadable.
-9. Use the Homebrew tap GitHub App to open or refresh `bump-agent-outbox-vX.Y.Z`
-   with the generated `Casks/agent-outbox.rb`. The tap's own checks and guarded
-   automation own the merge; do not merge the tap pull request manually.
+9. Download the pre-deploy certified workflow artifact, upload missing archives
+   and `checksums.txt`, retain byte-identical existing assets on same-run
+   failed-job retries, fail rather than replace a conflicting published asset,
+   and prove each asset is publicly downloadable.
+10. Use the Homebrew tap GitHub App to open or refresh
+    `bump-agent-outbox-vX.Y.Z` with the certified project-rendered
+    `Casks/agent-outbox.rb`. The tap's own checks and guarded automation own the
+    merge; do not merge the tap pull request manually.
 
 The pipeline deploys only when current production is a single Worker version at
-100% traffic that passes runtime smoke (step 3). During a broad production
+100% traffic that passes runtime smoke (step 4). During a broad production
 outage, or a split/gradual rollout, it refuses to deploy; recover with the
 manual rollback workflow below rather than this deploy workflow.
 
-If the deploy or its live verification fails after the deploy attempt starts,
-the workflow restores the captured Worker version, verifies the captured release
-SHA, and remains red. Because the Worker is already smoke-verified before
-finalization, a tagging, CLI-upload, public-download, or tap-publication failure
-does NOT roll back: the verified code stays live, the run goes red, and
-re-dispatching the same version reconciles the existing tag, replaces the
-release assets, and refreshes the tap pull request. A failed rollback stays
-visible in the workflow step outcomes and requires the manual rollback procedure
-below.
+CLI packaging, cask rendering, Ruby syntax, and Homebrew style failures stop the
+workflow before the protected production job begins. If the deploy or its live
+verification fails after the deploy attempt starts, the workflow restores the
+captured Worker version, verifies the captured release SHA, and remains red.
+Because the Worker is already smoke-verified before finalization, a tagging,
+CLI-upload, public-download, or tap-publication failure does NOT roll back: the
+verified code stays live and the run goes red. Within the certified artifact's
+seven-day retention window, choose **Re-run failed jobs** on the original
+workflow run; this reuses the exact artifact, reconciles the existing tag and
+release assets, and refreshes the tap pull request. Do not re-dispatch the
+workflow or choose **Re-run all jobs** for this recovery: a fresh build embeds a
+new build date and may not be byte-identical. After artifact expiry, stop and
+prepare an explicit release-repair change rather than rebuilding under the
+existing tag. A failed rollback stays visible in the workflow step outcomes and
+requires the manual rollback procedure below.
 
 The project-owned `worker:deploy` command is an internal workflow step and fails
 outside `deploy-production.yml` on GitHub Actions. Do not load production
@@ -220,19 +232,23 @@ AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE=<production-health-env> make hosted-health
 
 ## Homebrew CLI Publication
 
-The release-owned cask is generated from `.goreleaser.yaml`; do not maintain a
-second cask template in this repository. The release workflow copies that exact
-cask into `conn-castle/homebrew-tap` through a bot-authored pull request. After
-the tap workflow merges it, verify from an unauthenticated machine:
+GoReleaser owns only the release archives and checksums. The project-owned
+`cli/internal/tools/rendercask` tool is the single cask template and derives all
+four platform checksums from that exact release set. The production workflow
+requires Ruby syntax and Homebrew style checks before deployment, then copies
+the certified cask into `conn-castle/homebrew-tap` through a bot-authored pull
+request. After the tap workflow merges it, verify from an unauthenticated
+machine:
 
 ```bash
 brew install --cask conn-castle/tap/agent-outbox
 agent-outbox version
 ```
 
-Do not advertise the command on the landing page or public API quickstart until
-that tap change is merged and the installation smoke passes. The current
-invite-only installer copy remains intentional during the first publication run.
+The landing page, README, and public API quickstart must advertise this exact
+verified command. Keep the separate product-access statement accurate: the CLI
+installer is public, while caller connection remains invite-only during the
+hosted pre-release.
 
 ## Manual CLI Connect Smoke
 

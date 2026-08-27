@@ -348,10 +348,10 @@ make package-check
 Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Runs
 pinned GoReleaser `github.com/goreleaser/goreleaser/v2@v2.16.0` through
 `go run`, validates `.goreleaser.yaml`, and builds a local
-`release --snapshot --clean` package set including Homebrew cask metadata under
-`dist/homebrew/Casks/`. The GoReleaser config also sets cask `skip_upload:
-true`. It must not publish, tag, upload, deploy, or require private provider
-credentials.
+`release --snapshot --clean` package set. Project-owned Homebrew cask rendering
+is covered by `make go-check` and runs against exact numbered-release checksums,
+not snapshot names. This command must not publish, tag, upload, deploy, or
+require private provider credentials.
 
 - Build tagged CLI release artifacts without publishing
 
@@ -362,10 +362,12 @@ make cli-release-dist RELEASE_TAG=vX.Y.Z
 Run from: repo root. Prerequisites: Go `1.26.4` must be available, the stable
 tag must exist locally, and it must point at `HEAD`. Notes: Runs pinned
 GoReleaser for the exact tag with publishing disabled, producing four platform
-archives, `checksums.txt`, and `dist/homebrew/Casks/agent-outbox.rb`. The
-production release workflow runs this only after the numbered GitHub release is
-finalized, then separately uploads the artifacts and opens the tap pull
-request. This command itself performs no remote mutation.
+archives and `checksums.txt`, then renders
+`dist/homebrew/Casks/agent-outbox.rb` through the project-owned Go renderer.
+The production release workflow creates or verifies an ephemeral exact local
+tag, runs this command plus Ruby and Homebrew style checks before deployment,
+and passes the same certified files to post-deploy publication. This command
+itself performs no remote mutation.
 
 - Release verification gate
 

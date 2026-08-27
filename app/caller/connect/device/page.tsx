@@ -1,4 +1,4 @@
-import { unstable_rethrow } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectDeviceApprovalPreview } from "../../../../src/server/caller-connect";
@@ -98,7 +98,10 @@ export default async function CallerConnectDevicePage({
       },
       (query, humanSession) => {
         session = humanSession;
-        return getConnectDeviceApprovalPreview(query, { userCode });
+        return getConnectDeviceApprovalPreview(query, {
+          userCode,
+          accountId: humanSession.accountId
+        });
       }
     );
     if (!transaction.ok) {
@@ -132,6 +135,20 @@ export default async function CallerConnectDevicePage({
 
   if (!session) {
     throw new Error("Human session is required after device approval setup.");
+  }
+
+  if (
+    preview.ok &&
+    (preview.data.status === "approved" || preview.data.status === "exchanged")
+  ) {
+    const query = new URLSearchParams({
+      flow: "device",
+      setup_request_id: preview.data.setup_request_id
+    });
+    if (fixtureClerkUserId) {
+      query.set(CALLER_CONNECT_FIXTURE_USER_ID_PARAM, fixtureClerkUserId);
+    }
+    redirect(`/caller/connect/success?${query.toString()}`);
   }
 
   return (
