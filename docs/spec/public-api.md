@@ -15,10 +15,13 @@ own display-once API credential.
 
 During this pre-release, caller connection is available to invited testers; the
 public CLI installer is not published yet. Do not depend on an unpublished
-Homebrew command. The connection flow asks a signed-in person to approve the
-caller, displays its credential once, and stores it through the test CLI's local
-secure storage. Public installation instructions will replace this notice when
-the signed CLI package is available.
+Homebrew command. [Request test CLI access](https://agent-outbox.dev/contact)
+through the public contact form. An account is not required to send that
+request, and creating an account does not provision a caller credential. The
+connection flow asks a signed-in person to approve the caller, displays its
+credential once, and stores it through the test CLI's local secure storage.
+Public installation instructions will replace this notice when the signed CLI
+package is available.
 
 If you already have a connected caller, the raw HTTP examples below are fully
 usable: substitute its display-once value where `<caller_api_key>` appears.

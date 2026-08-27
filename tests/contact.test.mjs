@@ -25,8 +25,8 @@ import {
 const VALID_SUBMISSION = {
   name: "Ada Lovelace",
   email: "Ada@Example.com",
-  topic: "Product question",
-  message: "I would like to understand how team review works.",
+  topic: "CLI access",
+  message: "I would like test CLI access for my first caller.",
   company: ""
 };
 
@@ -84,15 +84,15 @@ test("contact submissions send a bounded message to the studio inbox", async () 
     to: CONTACT_DESTINATION,
     from: CONTACT_SENDER,
     replyTo: "ada@example.com",
-    subject: "Agent Outbox contact — Product question",
+    subject: "Agent Outbox contact — CLI access",
     text: [
       "New Agent Outbox website message",
       "",
       "Name: Ada Lovelace",
       "Email: ada@example.com",
-      "Topic: Product question",
+      "Topic: CLI access",
       "",
-      "I would like to understand how team review works."
+      "I would like test CLI access for my first caller."
     ].join("\n")
   });
 });

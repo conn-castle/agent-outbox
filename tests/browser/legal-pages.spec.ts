@@ -37,7 +37,7 @@ test("public legal and contact routes are reachable from the global footer", asy
 
   const primaryNav = page.getByRole("navigation", { name: "Primary" });
   await expect(primaryNav.locator('a[href="/#installation"]')).toHaveText(
-    "Installation"
+    "Caller access"
   );
   await expect(primaryNav.locator('a[href="/#how-it-works"]')).toHaveText(
     "How it works"
@@ -48,6 +48,9 @@ test("public legal and contact routes are reachable from the global footer", asy
   ).toHaveAttribute("href", "/sign-up");
 
   const footer = page.getByRole("contentinfo");
+  await expect(
+    footer.getByRole("link", { name: "Caller access" })
+  ).toHaveAttribute("href", "/#installation");
   await expect(footer.getByRole("link", { name: "Contact" })).toBeVisible();
   await expect(footer.getByRole("link", { name: "Privacy" })).toBeVisible();
   await expect(footer.getByRole("link", { name: "Terms" })).toBeVisible();

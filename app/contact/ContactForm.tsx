@@ -82,6 +82,7 @@ export function ContactForm() {
           <option value="" disabled>
             Select a topic
           </option>
+          <option>CLI access</option>
           <option>Product question</option>
           <option>Billing</option>
           <option>Partnership</option>

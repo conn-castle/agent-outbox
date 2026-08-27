@@ -62,7 +62,7 @@ export async function SiteFooter() {
         <nav className="footer-navigation" aria-label="Footer">
           <div>
             <p>Product</p>
-            <Link href={installationHref}>Installation</Link>
+            <Link href={installationHref}>Caller access</Link>
             <Link href={howItWorksHref}>How it works</Link>
             <Link href={pricingHref}>Pricing</Link>
           </div>

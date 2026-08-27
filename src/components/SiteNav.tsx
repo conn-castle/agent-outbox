@@ -92,7 +92,7 @@ export function SiteNav({
           }
         }}
       >
-        <Link href={installationHref}>Installation</Link>
+        <Link href={installationHref}>Caller access</Link>
         <Link href={howItWorksHref}>How it works</Link>
         <Link href={pricingHref}>Pricing</Link>
         <Link href={docsHref}>Docs</Link>
