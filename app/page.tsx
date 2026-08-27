@@ -122,7 +122,7 @@ export default function HomePage() {
           </div>
           <picture>
             <source
-              media="(max-width: 900px)"
+              media="(max-width: 640px)"
               srcSet={marketingScreenshots.queueMobile.publicPath}
               width={marketingScreenshots.queueMobile.width}
               height={marketingScreenshots.queueMobile.height}
@@ -266,6 +266,22 @@ export default function HomePage() {
                 width={marketingScreenshots.detailTablet.width}
                 height={marketingScreenshots.detailTablet.height}
               />
+            </div>
+          </div>
+          <div className="landing-detail-mobile-card" aria-hidden="true">
+            <div className="landing-detail-mobile-meta">
+              <span>Email draft</span>
+              <span>Normal priority</span>
+            </div>
+            <h3>Re: Order 1042 delivery date</h3>
+            <p className="landing-detail-mobile-label">Review summary</p>
+            <p>
+              Maya needs a firm delivery update before Monday&apos;s lab
+              opening.
+            </p>
+            <div className="landing-detail-mobile-actions">
+              <span>Approve to send</span>
+              <span>Reject</span>
             </div>
           </div>
         </figure>

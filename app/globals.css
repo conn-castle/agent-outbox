@@ -1252,6 +1252,17 @@ body > .error-main {
     0 0 0 0.45rem rgba(255, 255, 255, 0.025);
 }
 
+.landing-browser-frame::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 10%;
+  background: linear-gradient(transparent, rgba(233, 227, 215, 0.95));
+  content: "";
+  pointer-events: none;
+}
+
 .landing-browser-bar {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -1549,6 +1560,77 @@ body > .error-main {
   object-fit: cover;
   object-position: top center;
   transform: scale(1.012);
+}
+
+.landing-detail-mobile-card {
+  display: none;
+}
+
+.landing-detail-mobile-meta,
+.landing-detail-mobile-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.landing-detail-mobile-meta {
+  color: var(--amber-dark);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.landing-detail-mobile-card h3 {
+  margin: 1.1rem 0 0;
+  color: var(--text);
+  font-size: 1.35rem;
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+}
+
+.landing-detail-mobile-card > p:not(.landing-detail-mobile-label) {
+  margin: 0.55rem 0 0;
+  color: var(--slate-text);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.landing-detail-mobile-label {
+  margin: 1.4rem 0 0;
+  color: var(--slate-text);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.landing-detail-mobile-actions {
+  margin-top: 1.5rem;
+}
+
+.landing-detail-mobile-actions span {
+  display: inline-flex;
+  min-height: 2.65rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #1e8751;
+  border-radius: 0.45rem;
+  color: #1e8751;
+  font-size: 0.75rem;
+  font-weight: 760;
+}
+
+.landing-detail-mobile-actions span:first-child {
+  background: #238b55;
+  color: #fff;
+}
+
+.landing-detail-mobile-actions span:last-child {
+  border-color: #cf3c36;
+  color: #cf3c36;
 }
 
 .landing-use-cases {
@@ -1937,8 +2019,8 @@ body > .error-main {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 1rem;
-  width: min(100%, 48rem);
-  margin: clamp(3rem, 4vw, 4rem) auto 0;
+  width: 100%;
+  margin: clamp(3rem, 4vw, 4rem) 0 0;
 }
 
 .landing-plan {
@@ -2080,8 +2162,9 @@ body > .error-main {
 }
 
 .landing-pricing-note {
-  width: min(100%, 48rem);
-  margin: 1rem auto 0;
+  width: 100%;
+  max-width: 48rem;
+  margin: 1rem 0 0;
   color: var(--faint-on-ink);
   font-size: 0.72rem;
   line-height: 1.6;
@@ -2313,7 +2396,7 @@ body > .error-main {
   }
 
   .landing-browser-frame {
-    aspect-ratio: 430 / 610;
+    aspect-ratio: auto;
     overflow: hidden;
     width: 100%;
     max-width: 62rem;
@@ -2511,6 +2594,13 @@ body > .error-main {
   }
 }
 
+@media (max-width: 640px) {
+  .landing-browser-frame {
+    aspect-ratio: 430 / 610;
+    width: min(100%, 28rem);
+  }
+}
+
 @media (max-width: 768px) {
   .landing-hero {
     align-items: flex-start;
@@ -2583,6 +2673,20 @@ body > .error-main {
 
   .landing-mobile-stage {
     min-height: 29rem;
+  }
+
+  .landing-tablet-frame {
+    display: none;
+  }
+
+  .landing-detail-mobile-card {
+    display: block;
+    width: 100%;
+    padding: 1.25rem;
+    border: 1px solid #d7d0c5;
+    border-radius: 1rem;
+    background: #fffdf9;
+    box-shadow: 0 1.5rem 3rem rgba(49, 40, 31, 0.14);
   }
 
   .landing-thesis-heading h2 br {
