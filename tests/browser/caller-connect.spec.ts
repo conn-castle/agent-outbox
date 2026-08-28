@@ -447,6 +447,14 @@ test("rotate and revoke approval pages complete against live caller rows", async
   await expect(
     page.getByText(caller.displayName, { exact: true })
   ).toBeVisible();
+  await expect(page.getByLabel("Account").locator("strong")).toHaveText(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  );
+  const rotateDetails = page.getByLabel("Credential operation details");
+  await expect(rotateDetails).toContainText("Rotate");
+  await expect(rotateDetails).toContainText(caller.keyId);
+  await expect(rotateDetails).toContainText(caller.apiKey.slice(-4));
+  await expect(rotateDetails.getByText(/^Expires /)).toBeVisible();
   await page.getByRole("button", { name: "Approve rotation" }).click();
   await expect(page).toHaveURL(/\/caller\/connect\/callback\?/);
 
@@ -511,6 +519,13 @@ test("rotate and revoke approval pages complete against live caller rows", async
   await expect(
     page.getByText(caller.displayName, { exact: true })
   ).toBeVisible();
+  const revokeDetails = page.getByLabel("Credential operation details");
+  await expect(revokeDetails).toContainText("Revoke");
+  await expect(revokeDetails).toContainText(
+    rotateExchangePayload.data.replacement_credential.key_id
+  );
+  await expect(revokeDetails).toContainText(replacementApiKey.slice(-4));
+  await expect(revokeDetails.getByText(/^Expires /)).toBeVisible();
   await page.getByRole("button", { name: "Approve revoke" }).click();
   await expect(page).toHaveURL(/\/caller\/revoke\/success/);
 
@@ -760,7 +775,8 @@ async function connectCallerThroughDevice(
     callerId: pollPayload.data.caller.caller_id,
     localCallerName,
     displayName,
-    apiKey
+    apiKey,
+    keyId: pollPayload.data.credential.key_id
   };
 }
 

@@ -127,7 +127,7 @@ export function ConnectErrorPanel({ error }: { error: ConnectPageError }) {
 }
 
 export function AccountSummary({ session }: { session: HumanAccountSession }) {
-  const accountName = session.account.label ?? "Your Agent Outbox account";
+  const accountName = session.account.label ?? session.account.accountId;
 
   return (
     <div
@@ -151,18 +151,51 @@ export function AccountSummary({ session }: { session: HumanAccountSession }) {
   );
 }
 
-export function ApprovalSummary({ preview }: { preview: ApprovalPreview }) {
+export function ApprovalSummary({
+  preview,
+  showCredentialDetails = false
+}: {
+  preview: ApprovalPreview;
+  showCredentialDetails?: boolean;
+}) {
   return (
-    <div className="connect-identity-row connect-caller-row">
-      <span className="connect-identity-icon" aria-hidden="true">
-        <LinkIcon />
-      </span>
-      <div>
-        <span className="connect-identity-label">App requesting access</span>
-        <strong>{preview.display_name}</strong>
-        <p>CLI name · {preview.local_caller_name}</p>
+    <>
+      <div className="connect-identity-row connect-caller-row">
+        <span className="connect-identity-icon" aria-hidden="true">
+          <LinkIcon />
+        </span>
+        <div>
+          <span className="connect-identity-label">App requesting access</span>
+          <strong>{preview.display_name}</strong>
+          <p>CLI name · {preview.local_caller_name}</p>
+        </div>
       </div>
-    </div>
+      {showCredentialDetails ? (
+        <div
+          className="connect-credential-details"
+          aria-label="Credential operation details"
+        >
+          <div className="connect-expiry-row">
+            <LocalExpiry value={preview.expires_at} />
+          </div>
+          <dl className="connect-kv">
+            <div>
+              <dt>Operation</dt>
+              <dd>{titleCase(preview.operation)}</dd>
+            </div>
+            {preview.current_credential ? (
+              <div>
+                <dt>Current key</dt>
+                <dd>
+                  <code>{preview.current_credential.key_id}</code> ending{" "}
+                  <code>{preview.current_credential.last_chars}</code>
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+      ) : null}
+    </>
   );
 }
 

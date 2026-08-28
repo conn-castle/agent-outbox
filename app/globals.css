@@ -3270,6 +3270,18 @@ body > .error-main {
   font-size: 0.76rem;
 }
 
+.connect-credential-details {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #e6e1d9;
+}
+
+.connect-credential-details .connect-expiry-row {
+  margin: 0 0 0.75rem;
+  padding: 0;
+  border: 0;
+}
+
 .connect-inline-details {
   margin-top: 0.55rem;
 }
