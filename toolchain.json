@@ -16,11 +16,6 @@
       "version": "1.10.2",
       "source": "https://pkg.go.dev/github.com/spf13/cobra"
     },
-    "goKeyring": {
-      "module": "github.com/zalando/go-keyring",
-      "version": "0.2.8",
-      "source": "https://github.com/zalando/go-keyring/releases"
-    },
     "goreleaser": {
       "module": "github.com/goreleaser/goreleaser/v2",
       "version": "2.16.0",

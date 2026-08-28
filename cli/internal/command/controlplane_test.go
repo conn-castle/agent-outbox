@@ -75,6 +75,27 @@ func (readOnlyControlPlaneSecretStore) LoadCallerKey(string) (string, error) {
 	return "read-only-secret", nil
 }
 
+func TestApprovalUsesDeviceCodeHonorsExplicitAndHeadlessSelection(t *testing.T) {
+	if _, err := approvalUsesDeviceCode(Options{Env: foundation.Env{}}, true, true); err == nil {
+		t.Fatalf("device-code and browser flags did not conflict")
+	}
+	useDevice, err := approvalUsesDeviceCode(Options{Env: foundation.Env{"SSH_CONNECTION": "client server"}}, false, false)
+	if err != nil || !useDevice {
+		t.Fatalf("SSH session selection = %v, %v; want device code", useDevice, err)
+	}
+	useDevice, err = approvalUsesDeviceCode(Options{Env: foundation.Env{"SSH_CONNECTION": "client server"}}, false, true)
+	if err != nil || useDevice {
+		t.Fatalf("forced browser selection = %v, %v; want browser", useDevice, err)
+	}
+	useDevice, err = approvalUsesDeviceCode(Options{
+		Env:         foundation.Env{},
+		OpenBrowser: func(string) error { return nil },
+	}, false, false)
+	if err != nil || useDevice {
+		t.Fatalf("injected browser selection = %v, %v; want browser", useDevice, err)
+	}
+}
+
 func TestCallerConnectBrowserUsesAllocatedCallbackPortAndStoresCredential(t *testing.T) {
 	store := &controlPlaneSecretStore{}
 	configPath := filepath.Join(t.TempDir(), "config.json")

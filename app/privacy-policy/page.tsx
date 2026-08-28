@@ -208,11 +208,11 @@ export default function PrivacyPolicyPage() {
               and page-view analytics and does not access browser storage.
             </li>
             <li>
-              The Agent Outbox command-line client stores non-secret connection
-              configuration in its local config and stores caller credentials in
-              the supported operating-system credential store. Those local
-              values remain on your device except when a credential is sent to
-              the hosted caller API for authentication.
+              The Agent Outbox command-line client keeps connection
+              configuration and caller credentials on your device or accesses
+              credentials through a credential-management mechanism you provide.
+              A credential is sent to the hosted caller API only to authenticate
+              a request.
             </li>
           </ul>
           <p>

@@ -1,7 +1,8 @@
 # Agent Outbox
 
-> Status: Agent Outbox is under active development. Its CLI is publicly
-> available through Homebrew; hosted caller connection remains invite-only.
+> Status: Agent Outbox is under active development. Its macOS and Linux CLI is
+> publicly available through the direct installer and Homebrew; hosted caller
+> connection remains invite-only.
 
 Agent Outbox is a hosted, source-available review queue for agent-prepared work.
 
@@ -22,7 +23,7 @@ For repository navigation, see [TOC.md](TOC.md).
 This repository is public and source-available under the
 [PolyForm Perimeter License 1.0.1](LICENSE). The hosted product is still
 pre-release and caller connection is invite-only. The `agent-outbox` CLI is
-available for public installation through Homebrew. The hosted service uses:
+available for public installation on macOS and Linux. The hosted service uses:
 
 - `https://agent-outbox.dev` for the product landing page and API documentation
 - `https://app.agent-outbox.dev` for the human app and caller API
@@ -83,6 +84,17 @@ Install the public CLI:
 ```bash
 brew install --cask conn-castle/tap/agent-outbox
 ```
+
+Or install the latest macOS or Linux release directly without Homebrew or
+`sudo`:
+
+```bash
+curl -fsSL https://agent-outbox.dev/install.sh | sh
+```
+
+The direct installer detects amd64 or arm64, verifies the published release
+checksum, and installs to `~/.local/bin`. Set `AGENT_OUTBOX_INSTALL_DIR` to use
+another user-writable directory.
 
 Caller connection remains invite-only during pre-release. Request caller access
 at [agent-outbox.dev/contact](https://agent-outbox.dev/contact) before running

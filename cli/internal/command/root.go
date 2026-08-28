@@ -147,7 +147,7 @@ func NewRootCommand(opts Options, flags *rootFlags) *cobra.Command {
 	documentCommand(caller, commandHelpSpec{
 		Purpose:     "Manage local caller setup, status, rotation, revocation, and disconnect state.",
 		Arguments:   "Use a caller subcommand. Caller names are local labels stored in the Agent Outbox config.",
-		Flags:       "Subcommands may add --device-code or --revoke. Global --config, --base-url, --caller, --json, and --no-color remain available.",
+		Flags:       "Approval subcommands may add --device-code, --browser, or --revoke. Global --config, --base-url, --caller, --json, and --no-color remain available.",
 		Environment: globalEnvironmentHelp(),
 		Examples: strings.Join([]string{
 			"agent-outbox caller connect steward-email",

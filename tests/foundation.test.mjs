@@ -1990,8 +1990,7 @@ test("validateGoModuleTooling requires pinned Go module directives and dependenc
     node: { version: "24.18.0", npm: "11.16.0" },
     go: { version: "1.26.4" },
     goTooling: {
-      cobra: { module: "github.com/spf13/cobra", version: "1.10.2" },
-      goKeyring: { module: "github.com/zalando/go-keyring", version: "0.2.8" }
+      cobra: { module: "github.com/spf13/cobra", version: "1.10.2" }
     },
     packageManager: { name: "pnpm", version: "11.9.0" },
     flyway: FLYWAY_TOOLCHAIN_FIXTURE,
@@ -2011,7 +2010,6 @@ go 1.26.4
 
 require (
   github.com/spf13/cobra v1.10.2
-  github.com/zalando/go-keyring v0.2.8
 )
 `
     ),
@@ -2034,8 +2032,7 @@ require github.com/spf13/cobra v1.10.1
     [
       "cli/go.mod go directive must be 1.26.4",
       "cli/go.mod toolchain directive must be go1.26.4 when present",
-      "cli/go.mod must require github.com/spf13/cobra v1.10.2",
-      "cli/go.mod must require github.com/zalando/go-keyring v0.2.8"
+      "cli/go.mod must require github.com/spf13/cobra v1.10.2"
     ]
   );
 
@@ -2049,14 +2046,10 @@ go 1.26.4
 
 require (
   github.com/spf13/cobra v1.10.2
-  github.com/zalando/go-keyring v0.2.8
 )
 `
     ),
-    [
-      "toolchain.json goTooling.cobra module/version is required",
-      "toolchain.json goTooling.goKeyring module/version is required"
-    ]
+    ["toolchain.json goTooling.cobra module/version is required"]
   );
 });
 

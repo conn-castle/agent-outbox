@@ -67,7 +67,7 @@ func doctorCommand(opts Options, flags *rootFlags) *cobra.Command {
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
-		Purpose:     "Diagnose local CLI readiness by checking config path, config file, base URL, caller selection, local secret loading, caller status, and account status in deterministic order.",
+		Purpose:     "Diagnose local CLI readiness by checking config path, config file, base URL, caller selection, local credential loading, caller status, and account status in deterministic order.",
 		Arguments:   "None. Use the global --caller flag to force a specific local caller for diagnostic checks.",
 		Flags:       "--json prints ok and checks[]. Global --config, --base-url, --caller, and --no-color are honored by this diagnostic command.",
 		Environment: globalEnvironmentHelp(),
@@ -92,7 +92,7 @@ func runDoctor(ctx context.Context, opts Options, flags *rootFlags) []doctorChec
 	caller, callerOK, callerCheck := doctorCallerSelectionCheck(flags, opts.Env, cfg, configOK)
 	checks = append(checks, callerCheck)
 
-	bearer, bearerOK, secretCheck := doctorSecretStoreCheck(opts, caller, callerOK)
+	bearer, bearerOK, secretCheck := doctorSecretStoreCheck(opts, path, !explicit, caller, callerOK)
 	checks = append(checks, secretCheck)
 
 	client := foundation.APIClient{
@@ -192,11 +192,16 @@ func doctorCallerSelectionCheck(flags *rootFlags, env foundation.Env, cfg founda
 	return foundation.CallerConfig{}, false, failCheck("caller_selection", "Selected caller is not present in local config.", foundation.CodeUnknownCaller, foundation.ExitConfig, map[string]any{"caller": selected})
 }
 
-func doctorSecretStoreCheck(opts Options, caller foundation.CallerConfig, callerOK bool) (string, bool, doctorCheck) {
+func doctorSecretStoreCheck(opts Options, configPath string, configPathOwned bool, caller foundation.CallerConfig, callerOK bool) (string, bool, doctorCheck) {
 	if !callerOK {
 		return "", false, warnCheck("secret_store", "Skipped because no single local caller was selected.", nil)
 	}
-	store, err := secretStoreForCommand(opts)
+	if bearer, found, err := environmentCallerCredential(opts.Env, caller); err != nil {
+		return "", false, appErrorCheck("secret_store", err, map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
+	} else if found {
+		return bearer, true, passCheck("secret_store", "Selected caller credential loaded from AGENT_OUTBOX_API_KEY.", map[string]any{"caller": caller.Name, "caller_id": caller.CallerID, "source": "environment"})
+	}
+	store, err := secretStoreForCommand(opts, configPath, configPathOwned)
 	if err != nil {
 		return "", false, appErrorCheck("secret_store", err, map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
 	}
@@ -205,9 +210,9 @@ func doctorSecretStoreCheck(opts Options, caller foundation.CallerConfig, caller
 		return "", false, appErrorCheck("secret_store", err, map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
 	}
 	if strings.TrimSpace(bearer) == "" {
-		return "", false, failCheck("secret_store", "Local caller secret is empty; rotate or reconnect the caller.", foundation.CodeSecretStore, foundation.ExitSecretStore, map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
+		return "", false, failCheck("secret_store", "Local caller credential is empty; run agent-outbox caller rotate --caller <caller>.", foundation.CodeSecretStore, foundation.ExitSecretStore, map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
 	}
-	return bearer, true, passCheck("secret_store", "Selected caller secret loaded from local secure storage.", map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
+	return bearer, true, passCheck("secret_store", "Selected caller credential loaded from the owner-only credentials file.", map[string]any{"caller": caller.Name, "caller_id": caller.CallerID, "source": "credentials_file"})
 }
 
 func doctorRemoteStatusCheck(ctx context.Context, name string, apiPath string, client foundation.APIClient, bearer string, baseURLOK bool, bearerOK bool) doctorCheck {

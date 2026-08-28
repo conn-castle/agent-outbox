@@ -50,6 +50,7 @@ func globalEnvironmentHelp() string {
 		"AGENT_OUTBOX_BASE_URL selects the app/API origin unless --base-url is set.",
 		"AGENT_OUTBOX_CONFIG_PATH selects the local config path unless --config is set.",
 		"AGENT_OUTBOX_CALLER selects the local caller unless --caller is set; setting both is a config error.",
+		"AGENT_OUTBOX_API_KEY supplies the selected caller credential instead of reading credentials.json; use a secret manager when setting it.",
 		"NO_COLOR is honored by color-capable output; current output is deterministic without color.",
 	}, "\n")
 }

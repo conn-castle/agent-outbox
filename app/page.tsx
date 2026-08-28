@@ -148,10 +148,10 @@ export default function HomePage() {
           <p className="landing-index">01 / Caller access</p>
           <h2>Connect once. Then step away.</h2>
           <p className="landing-install-note">
-            Install the public CLI with Homebrew. Caller connection remains
-            invite-only during this pre-release, so request caller access before
-            connecting an agent. The browser flow asks you to sign in or create
-            an account before approving the caller.
+            Install the public CLI on macOS or Linux with one command. Caller
+            connection remains invite-only during this pre-release, so request
+            caller access before connecting an agent. The approval flow asks you
+            to sign in or create an account before approving the caller.
           </p>
           <Link className="button" href="/contact">
             Request caller access <ArrowRight aria-hidden="true" />
@@ -187,11 +187,11 @@ export default function HomePage() {
               <pre>
                 <code>
                   <span className="landing-command-line">
-                    <span className="landing-command-prompt">$</span> brew
-                    install --cask{" "}
+                    <span className="landing-command-prompt">$</span> curl -fsSL{" "}
                     <span className="landing-command-argument">
-                      conn-castle/tap/agent-outbox
+                      https://agent-outbox.dev/install.sh
                     </span>
+                    {" | sh"}
                   </span>
                   <span className="landing-command-comment">
                     # After your caller invitation arrives:
@@ -204,10 +204,12 @@ export default function HomePage() {
               </pre>
             </div>
             <p className="landing-terminal-help">
-              Homebrew installs the public CLI. Once you receive caller access,
-              run the connect command; <code>my-agent</code> is a local label
-              you choose. Agent Outbox then opens so you can review and approve
-              the caller in your browser.
+              The installer verifies and installs the public macOS or Linux CLI
+              without <code>sudo</code>. Homebrew remains supported. Once you
+              receive caller access, run the connect command;{" "}
+              <code>my-agent</code> is a local label you choose. Agent Outbox
+              opens browser approval on desktops and uses a device code in
+              headless sessions.
             </p>
           </div>
         </div>

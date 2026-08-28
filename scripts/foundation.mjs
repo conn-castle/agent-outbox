@@ -20,7 +20,6 @@ import { RUNTIME_CRON_SCHEDULE } from "../src/server/scheduled.ts";
  *   go: { version: string },
  *   goTooling?: {
  *     cobra?: { module: string, version: string },
- *     goKeyring?: { module: string, version: string },
  *     githubActionsSetupGo?: { version: string },
  *     goreleaser?: { module: string, version: string }
  *   },
@@ -1763,13 +1762,6 @@ export function validateGoModuleTooling(toolchain, goModContent) {
     "cobra",
     toolchain.goTooling?.cobra
   );
-  validateGoModulePin(
-    errors,
-    goModContent,
-    "goKeyring",
-    toolchain.goTooling?.goKeyring
-  );
-
   return errors;
 }
 

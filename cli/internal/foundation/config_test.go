@@ -14,15 +14,32 @@ func TestDefaultPathsUsePlatformStandardLocations(t *testing.T) {
 	if want := filepath.Join(home, "Library", "Application Support", "Agent Outbox", "config.json"); mac.ConfigPath != want {
 		t.Fatalf("darwin config path = %q, want %q", mac.ConfigPath, want)
 	}
+	if want := filepath.Join(home, "Library", "Application Support", "Agent Outbox", "credentials.json"); mac.CredentialsPath != want {
+		t.Fatalf("darwin credentials path = %q, want %q", mac.CredentialsPath, want)
+	}
 
 	linux := DefaultPaths(home, Env{"XDG_CONFIG_HOME": filepath.Join(home, "xdg")}, "linux")
 	if want := filepath.Join(home, "xdg", "agent-outbox", "config.json"); linux.ConfigPath != want {
 		t.Fatalf("linux config path = %q, want %q", linux.ConfigPath, want)
 	}
+	if want := filepath.Join(home, "xdg", "agent-outbox", "credentials.json"); linux.CredentialsPath != want {
+		t.Fatalf("linux credentials path = %q, want %q", linux.CredentialsPath, want)
+	}
 
 	windows := DefaultPaths(home, Env{"APPDATA": filepath.Join(home, "AppData", "Roaming")}, "windows")
 	if want := filepath.Join(home, "AppData", "Roaming", "Agent Outbox", "config.json"); windows.ConfigPath != want {
 		t.Fatalf("windows config path = %q, want %q", windows.ConfigPath, want)
+	}
+}
+
+func TestCredentialsPathLivesBesideSelectedConfig(t *testing.T) {
+	configPath := filepath.Join("custom", "agent-outbox.test.json")
+	got, err := CredentialsPathForConfig(configPath)
+	if err != nil {
+		t.Fatalf("CredentialsPathForConfig failed: %v", err)
+	}
+	if want := filepath.Join("custom", "credentials.json"); got != want {
+		t.Fatalf("credentials path = %q, want %q", got, want)
 	}
 }
 

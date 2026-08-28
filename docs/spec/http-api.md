@@ -555,7 +555,7 @@ status object for the bearer key's account. It exists so
 terms when local caller credentials are already available.
 
 If no local caller credential is available, the CLI fails loudly with setup
-remediation such as `agent-outbox caller connect <caller>`. There is no
+remediation to rotate the selected caller or connect a new caller. There is no
 browser/device-code fallback for `account status`.
 
 ## Caller Connect Control Plane
@@ -602,6 +602,11 @@ Approval rejects with `409 caller_already_exists` if the approving account
 already has a caller using the requested name/slug. Duplicate connect is not
 treated as rotate, does not reuse the existing caller, and does not auto-rename;
 the user should run caller rotate or choose a different name.
+
+The CLI uses browser approval by default in an interactive desktop session. It
+automatically uses device-code approval for SSH, CI, and Linux sessions without
+a display or browser opener. `--browser` and `--device-code` explicitly override
+that detection.
 
 ### Browser Connect Start
 
@@ -1179,5 +1184,5 @@ Rotate and revoke routes use the standard error envelope. Common errors:
 
 `agent-outbox caller disconnect` is local-only by default and has no HTTP
 request. `agent-outbox caller disconnect --revoke` first runs the caller revoke
-contract above, then deletes local config and local secret-store entries after
-server confirmation.
+contract above, then deletes local config and the selected entry in the local
+credentials file after server confirmation.

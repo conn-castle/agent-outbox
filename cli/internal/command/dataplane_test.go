@@ -2,6 +2,7 @@ package command
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -736,6 +737,52 @@ func TestAccountStatusUsesExistingLocalBearerCredential(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"account_id":"acct_123"`) {
 		t.Fatalf("stdout missing account status: %s", stdout)
+	}
+}
+
+func TestDataPlaneUsesEnvironmentCredentialWithoutReadingFileStore(t *testing.T) {
+	const envCredential = "aob_live_key_123_environmentsecret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/account/status" {
+			t.Fatalf("unexpected request path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+envCredential {
+			t.Fatalf("authorization = %q, want environment credential", got)
+		}
+		_, _ = io.WriteString(w, `{"ok":true,"data":{"account_id":"acct_123","effective_tier":"free"}}`)
+	}))
+	defer server.Close()
+
+	configPath := writeDataPlaneCommandConfig(t, server.URL)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Execute(context.Background(), Options{
+		Args:        []string{"--config", configPath, "--json", "account", "status"},
+		Stdout:      &stdout,
+		Stderr:      &stderr,
+		Env:         foundation.Env{foundation.EnvAPIKey: envCredential},
+		SecretStore: &dataPlaneSecretStore{err: foundation.NewSecretStoreError("file store should not be read")},
+	})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), envCredential) || strings.Contains(stderr.String(), envCredential) {
+		t.Fatalf("environment credential leaked into command output")
+	}
+}
+
+func TestEnvironmentCredentialMustMatchSelectedCaller(t *testing.T) {
+	caller := foundation.CallerConfig{Name: "steward-email", KeyID: "key_123"}
+	for _, credential := range []string{
+		"not-a-caller-key",
+		"aob_live_different_key_environmentsecret",
+	} {
+		if _, _, err := environmentCallerCredential(
+			foundation.Env{foundation.EnvAPIKey: credential},
+			caller,
+		); err == nil {
+			t.Fatalf("environment credential %q did not fail selected-caller validation", credential)
+		}
 	}
 }
 
