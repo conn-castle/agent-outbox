@@ -3,7 +3,7 @@ export const CONTACT_DESTINATION = "contact@agent-outbox.dev";
 export const CONTACT_SENDER = "contact-form@agent-outbox.dev";
 
 const CONTACT_TOPICS = [
-  "CLI access",
+  "Caller access",
   "Product question",
   "Billing",
   "Partnership",

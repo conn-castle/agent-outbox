@@ -1023,6 +1023,7 @@ export function validateProductionDeployWorkflow(
     deployWorkflowContent,
     "finalize-release"
   );
+  const buildCliJob = workflowJobContent(deployWorkflowContent, "build-cli");
   const homebrewJob = workflowJobContent(
     deployWorkflowContent,
     "publish-cli-homebrew"
@@ -1060,9 +1061,25 @@ export function validateProductionDeployWorkflow(
     deployJob,
     "Verify restored release"
   );
+  const ensureReleaseTagStep = workflowNamedStepContent(
+    buildCliJob,
+    "Ensure exact local release tag"
+  );
   const buildCliStep = workflowNamedStepContent(
-    homebrewJob,
+    buildCliJob,
     "Build tagged CLI release artifacts"
+  );
+  const validateCaskStep = workflowNamedStepContent(
+    buildCliJob,
+    "Validate generated Homebrew cask"
+  );
+  const uploadCertifiedCliStep = workflowNamedStepContent(
+    buildCliJob,
+    "Upload certified CLI artifacts"
+  );
+  const downloadCertifiedCliStep = workflowNamedStepContent(
+    homebrewJob,
+    "Download certified CLI artifacts"
   );
   const uploadCliStep = workflowNamedStepContent(
     homebrewJob,
@@ -1121,7 +1138,32 @@ export function validateProductionDeployWorkflow(
         ) &&
         workflowHasLine(
           deployJob,
-          /^\s*needs:\s*\[prepare-release, certify\]\s*$/
+          /^\s*needs:\s*\[prepare-release, certify, build-cli\]\s*$/
+        )
+    ],
+    [
+      "pre-deploy CLI artifact certification",
+      workflowHasLine(
+        buildCliJob,
+        /^\s*needs:\s*\[prepare-release, certify\]\s*$/
+      ) &&
+        ensureReleaseTagStep.includes("git show-ref --verify") &&
+        ensureReleaseTagStep.includes(
+          'git tag "${RELEASE_TAG}" "${GITHUB_SHA}"'
+        ) &&
+        workflowRunStepIncludes(
+          buildCliStep,
+          'make cli-release-dist RELEASE_TAG="${RELEASE_TAG}"'
+        ) &&
+        validateCaskStep.includes(
+          "ruby -c dist/homebrew/Casks/agent-outbox.rb"
+        ) &&
+        validateCaskStep.includes(
+          "brew style dist/homebrew/Casks/agent-outbox.rb"
+        ) &&
+        uploadCertifiedCliStep.includes("actions/upload-artifact@") &&
+        uploadCertifiedCliStep.includes(
+          "name: agent-outbox-release-${{ github.sha }}"
         )
     ],
     [
@@ -1255,13 +1297,13 @@ export function validateProductionDeployWorkflow(
     );
   }
   if (
-    !/^\s*needs:\s*\[prepare-release, finalize-release\]\s*$/m.test(
+    !/^\s*needs:\s*\[prepare-release, build-cli, finalize-release\]\s*$/m.test(
       homebrewJob
     ) ||
     !/^\s*contents:\s*write\s*$/m.test(homebrewJob) ||
-    !workflowRunStepIncludes(
-      buildCliStep,
-      'make cli-release-dist RELEASE_TAG="${RELEASE_TAG}"'
+    !downloadCertifiedCliStep.includes("actions/download-artifact@") ||
+    !downloadCertifiedCliStep.includes(
+      "name: agent-outbox-release-${{ github.sha }}"
     ) ||
     !uploadCliStep.includes("gh release view") ||
     !uploadCliStep.includes("--json assets") ||
@@ -1778,6 +1820,15 @@ export function validateGoReleaserTooling(
     );
   }
   if (
+    !makefileContent.includes(
+      'cd cli && go run ./internal/tools/rendercask ../dist/homebrew/Casks/agent-outbox.rb "$(RELEASE_TAG)" ../dist/checksums.txt'
+    )
+  ) {
+    errors.push(
+      "Makefile cli-release-dist must render the Homebrew cask from release checksums"
+    );
+  }
+  if (
     !makefileContent.includes("release-check: check go-check package-check")
   ) {
     errors.push(
@@ -1789,16 +1840,9 @@ export function validateGoReleaserTooling(
   ) {
     errors.push(".goreleaser.yaml must disable release publishing");
   }
-  if (
-    !yamlTopLevelBlockHasScalar(
-      goreleaserContent,
-      "homebrew_casks",
-      "skip_upload",
-      "true"
-    )
-  ) {
+  if (/^homebrew_casks:\s*(?:#.*)?$/m.test(goreleaserContent)) {
     errors.push(
-      ".goreleaser.yaml Homebrew cask config must set skip_upload: true"
+      ".goreleaser.yaml must leave Homebrew cask rendering to the project-owned renderer"
     );
   }
   return errors;

@@ -243,6 +243,10 @@ test("device approval succeeds through the fixture Clerk identity and live datab
     "Device Approved Caller"
   );
 
+  const originalApprovalUrl = `/caller/connect/device?user_code=${encodeURIComponent(
+    startPayload.data.user_code
+  )}&fixture_clerk_user_id=${fixtureUserId}`;
+
   const poll = await request.post("/api/caller/connect/device/poll", {
     headers: connectRequestHeaders,
     data: {
@@ -252,6 +256,16 @@ test("device approval succeeds through the fixture Clerk identity and live datab
   const pollPayload = await poll.json();
   expect(poll.ok(), JSON.stringify(pollPayload)).toBe(true);
   expect(pollPayload.data.caller.display_name).toBe("Device Approved Caller");
+
+  await page.goto(originalApprovalUrl);
+  await expect(page).toHaveURL(/\/caller\/connect\/success/);
+  await expect(
+    page.getByRole("heading", { name: "Caller approved" })
+  ).toBeVisible();
+  await expect(page.getByLabel("Approval success")).toContainText(
+    "Device Approved Caller"
+  );
+  await expect(page.getByLabel("Approval error")).toHaveCount(0);
 });
 
 test("manual device-code entry previews the caller before approval", async ({

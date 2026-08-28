@@ -9,7 +9,7 @@ export default function ContactPage() {
           Talk to the people building Agent Outbox.
         </h1>
         <p className="legal-summary">
-          CLI access requests, product questions, billing, partnerships,
+          Caller access requests, product questions, billing, partnerships,
           privacy, and support go directly to the Agent Outbox team.
         </p>
         <div className="contact-note">

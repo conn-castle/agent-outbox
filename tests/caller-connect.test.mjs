@@ -587,6 +587,7 @@ test("device approval preview normalizes the user code and expires stale setup r
 
       const result = await getConnectDeviceApprovalPreview(query, {
         userCode: "abcd-2345",
+        accountId: ACCOUNT_ID,
         now: new Date("2026-07-02T00:00:00.000Z")
       });
 
@@ -600,6 +601,87 @@ test("device approval preview normalizes the user code and expires stale setup r
       assert.equal(result.error.code, "invalid_request");
       assert.match(query.calls[1].sql, /status = 'expired'/);
       assert.deepEqual(query.calls[1].values, [setupRequestId]);
+    }
+  );
+});
+
+test("device approval preview treats an exchanged request from the same account as success", async () => {
+  await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
+    async () => {
+      const setupRequestId = "10000000-0000-4000-8000-000000000033";
+      const query = fakeQuery(() => [
+        {
+          setup_request_id: setupRequestId,
+          operation: "connect",
+          flow: "device",
+          status: "exchanged",
+          local_caller_name: "steward-email",
+          display_name: "Steward Email",
+          callback_url: null,
+          expires_at: "2026-07-02T00:10:00.000Z",
+          account_id: ACCOUNT_ID,
+          caller_id: CALLER_ID,
+          caller_slug: "steward-email",
+          caller_display_name: "Steward Email"
+        }
+      ]);
+
+      const result = await getConnectDeviceApprovalPreview(query, {
+        userCode: "abcd-2345",
+        accountId: ACCOUNT_ID,
+        now: new Date("2026-07-02T00:00:00.000Z")
+      });
+
+      assert.equal(result.ok, true);
+      if (!result.ok) {
+        assert.fail("expected exchanged preview to remain successful");
+      }
+      assert.equal(result.data.setup_request_id, setupRequestId);
+      assert.equal(result.data.status, "exchanged");
+      assert.equal(query.calls.length, 1);
+      assert.match(
+        query.calls[0].sql,
+        /status in \('pending', 'approved', 'exchanged'\)/
+      );
+      assert.match(query.calls[0].sql, /for update of setup/);
+    }
+  );
+});
+
+test("device approval preview does not expose another account's completed request", async () => {
+  await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
+    async () => {
+      const query = fakeQuery(() => [
+        {
+          setup_request_id: "10000000-0000-4000-8000-000000000034",
+          operation: "connect",
+          flow: "device",
+          status: "approved",
+          local_caller_name: "steward-email",
+          display_name: "Steward Email",
+          callback_url: null,
+          expires_at: "2026-07-02T00:10:00.000Z",
+          account_id: "00000000-0000-4000-8000-000000000099",
+          caller_id: CALLER_ID,
+          caller_slug: "steward-email",
+          caller_display_name: "Steward Email"
+        }
+      ]);
+
+      const result = await getConnectDeviceApprovalPreview(query, {
+        userCode: "abcd-2345",
+        accountId: ACCOUNT_ID,
+        now: new Date("2026-07-02T00:00:00.000Z")
+      });
+
+      assert.equal(result.ok, false);
+      if (result.ok) {
+        assert.fail("expected cross-account preview to fail");
+      }
+      assert.equal(result.error.code, "invalid_request");
+      assert.equal(query.calls.length, 1);
     }
   );
 });
@@ -825,11 +907,14 @@ test("device approval binds the account and moves the request pending -> approve
       // the plaintext code the human typed.
       assert.match(String(query.calls[0].values?.[0]), /^[a-f0-9]{64}$/);
       assert.doesNotMatch(JSON.stringify(query.calls), /abcd-2345/i);
-      assert.match(query.calls[0].sql, /status in \('pending', 'approved'\)/);
+      assert.match(
+        query.calls[0].sql,
+        /status in \('pending', 'approved', 'exchanged'\)/
+      );
       assert.match(query.calls[0].sql, /expires_at > now\(\)/);
       assert.match(
         query.calls[0].sql,
-        /order by expires_at desc, created_at desc/
+        /order by setup\.expires_at desc, setup\.created_at desc/
       );
       assert.match(query.calls[0].sql, /limit 1/);
 
@@ -845,6 +930,95 @@ test("device approval binds the account and moves the request pending -> approve
         CALLER_ID,
         USER_ID
       ]);
+    }
+  );
+});
+
+test("repeated device approval is idempotent before and after the CLI exchanges the code", async () => {
+  await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
+    async () => {
+      const setupRequestId = "10000000-0000-4000-8000-000000000010";
+      for (const status of ["approved", "exchanged"]) {
+        const query = fakeQuery(() => [
+          {
+            setup_request_id: setupRequestId,
+            operation: "connect",
+            flow: "device",
+            status,
+            local_caller_name: "steward-email",
+            display_name: "Steward Email",
+            callback_url: null,
+            expires_at: "2026-07-02T00:10:00.000Z",
+            account_id: ACCOUNT_ID,
+            caller_id: CALLER_ID,
+            caller_slug: "steward-email",
+            caller_display_name: "Steward Email"
+          }
+        ]);
+
+        const result = await approveConnectDeviceSetupRequest(query, {
+          userCode: "abcd-2345",
+          accountId: ACCOUNT_ID,
+          userId: USER_ID,
+          now: new Date("2026-07-02T00:00:00.000Z")
+        });
+
+        assert.deepEqual(result, {
+          ok: true,
+          data: {
+            setup_request_id: setupRequestId,
+            caller: {
+              caller_id: CALLER_ID,
+              caller_slug: "steward-email",
+              display_name: "Steward Email"
+            }
+          }
+        });
+        assert.equal(query.calls.length, 1);
+        assert.equal(
+          query.calls.some((call) => /^\s*(insert|update)\b/i.test(call.sql)),
+          false
+        );
+      }
+    }
+  );
+});
+
+test("repeated device approval cannot cross account boundaries", async () => {
+  await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
+    async () => {
+      const query = fakeQuery(() => [
+        {
+          setup_request_id: "10000000-0000-4000-8000-000000000011",
+          operation: "connect",
+          flow: "device",
+          status: "approved",
+          local_caller_name: "steward-email",
+          display_name: "Steward Email",
+          callback_url: null,
+          expires_at: "2026-07-02T00:10:00.000Z",
+          account_id: "00000000-0000-4000-8000-000000000099",
+          caller_id: CALLER_ID,
+          caller_slug: "steward-email",
+          caller_display_name: "Steward Email"
+        }
+      ]);
+
+      const result = await approveConnectDeviceSetupRequest(query, {
+        userCode: "abcd-2345",
+        accountId: ACCOUNT_ID,
+        userId: USER_ID,
+        now: new Date("2026-07-02T00:00:00.000Z")
+      });
+
+      assert.equal(result.ok, false);
+      if (result.ok) {
+        assert.fail("expected cross-account repeat approval to fail");
+      }
+      assert.equal(result.error.code, "invalid_request");
+      assert.equal(query.calls.length, 1);
     }
   );
 });

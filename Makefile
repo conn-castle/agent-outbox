@@ -154,6 +154,7 @@ cli-release-dist:
 	@printf '%s' "$(RELEASE_TAG)" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { echo 'RELEASE_TAG must be a stable vX.Y.Z tag' >&2; exit 64; }
 	@test "$$(git rev-list -n 1 "$(RELEASE_TAG)")" = "$$(git rev-parse HEAD)" || { echo 'RELEASE_TAG must point at HEAD' >&2; exit 64; }
 	go run $(GORELEASER_MODULE) release --clean --skip=publish
+	cd cli && go run ./internal/tools/rendercask ../dist/homebrew/Casks/agent-outbox.rb "$(RELEASE_TAG)" ../dist/checksums.txt
 
 check:
 	corepack pnpm run check

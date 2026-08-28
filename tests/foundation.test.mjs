@@ -1073,6 +1073,26 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     "numbered releases must retain CLI asset and Homebrew cask publication"
   );
 
+  const withoutPreDeployCliCertification = deployWorkflow.replace(
+    /\n  build-cli:[\s\S]*?(?=\n  deploy:)/,
+    ""
+  );
+  assert.notEqual(
+    withoutPreDeployCliCertification,
+    deployWorkflow,
+    "pre-deploy CLI certification regression fixture must modify the workflow"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(
+      withoutPreDeployCliCertification,
+      "24.18.0"
+    ).includes(
+      ".github/workflows/deploy-production.yml must include pre-deploy CLI artifact certification"
+    ),
+    true,
+    "CLI packaging and Homebrew validation must complete before production deploy"
+  );
+
   const clobberingCliAssets = deployWorkflow.replace(
     'gh release upload "$RELEASE_TAG" "$artifact"',
     'gh release upload "$RELEASE_TAG" "$artifact" --clobber'
@@ -2065,14 +2085,11 @@ package-check:
 
 cli-release-dist:
 \tgo run $(GORELEASER_MODULE) release --clean --skip=publish
+\tcd cli && go run ./internal/tools/rendercask ../dist/homebrew/Casks/agent-outbox.rb "$(RELEASE_TAG)" ../dist/checksums.txt
 
 release-check: check go-check package-check
 `;
-  const goreleaser = `homebrew_casks:
-  - name: agent-outbox
-    skip_upload: true
-
-release:
+  const goreleaser = `release:
   disable: true
 `;
 
@@ -2081,11 +2098,7 @@ release:
     []
   );
 
-  const reorderedRelease = `homebrew_casks:
-  - name: agent-outbox
-    skip_upload: true
-
-release:
+  const reorderedRelease = `release:
   prerelease: auto
   disable: true
 `;
@@ -2110,9 +2123,10 @@ release:
       "Makefile package-check must validate .goreleaser.yaml",
       "Makefile package-check must build a clean snapshot release",
       "Makefile cli-release-dist must build a clean tagged release without publishing",
+      "Makefile cli-release-dist must render the Homebrew cask from release checksums",
       "Makefile release-check must run check, go-check, and package-check",
       ".goreleaser.yaml must disable release publishing",
-      ".goreleaser.yaml Homebrew cask config must set skip_upload: true"
+      ".goreleaser.yaml must leave Homebrew cask rendering to the project-owned renderer"
     ]
   );
 
@@ -2131,7 +2145,9 @@ release:
   disable: true
 `
     ),
-    [".goreleaser.yaml Homebrew cask config must set skip_upload: true"]
+    [
+      ".goreleaser.yaml must leave Homebrew cask rendering to the project-owned renderer"
+    ]
   );
 });
 

@@ -51,9 +51,68 @@ jobs:
       contents: read
     uses: ./.github/workflows/release-check.yml
 
+  build-cli:
+    name: Build and validate release CLI
+    needs: [prepare-release, certify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - name: Ensure exact local release tag
+        run: |
+          set -euo pipefail
+          if git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            tag_sha="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            if [[ "${tag_sha}" != "${GITHUB_SHA}" ]]; then
+              echo "::error::Release tag ${RELEASE_TAG} points to ${tag_sha}, not candidate ${GITHUB_SHA}."
+              exit 1
+            fi
+          else
+            git tag "${RELEASE_TAG}" "${GITHUB_SHA}"
+          fi
+
+      - name: Build tagged CLI release artifacts
+        run: make cli-release-dist RELEASE_TAG="${RELEASE_TAG}"
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869 # main as of 2026-08-21
+        with:
+          token: ${{ github.token }}
+
+      - name: Validate generated Homebrew cask
+        run: |
+          ruby -c dist/homebrew/Casks/agent-outbox.rb
+          brew style dist/homebrew/Casks/agent-outbox.rb
+
+      - name: Upload certified CLI artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-outbox-release-${{ github.sha }}
+          overwrite: true
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+            dist/homebrew/Casks/agent-outbox.rb
+          if-no-files-found: error
+          retention-days: 7
+
   deploy:
     name: Deploy and verify production Worker
-    needs: [prepare-release, certify]
+    needs: [prepare-release, certify, build-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -229,7 +288,7 @@ jobs:
 
   publish-cli-homebrew:
     name: Publish CLI and open Homebrew tap PR
-    needs: [prepare-release, finalize-release]
+    needs: [prepare-release, build-cli, finalize-release]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -243,14 +302,11 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - name: Download certified CLI artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          go-version-file: cli/go.mod
-          cache-dependency-path: cli/go.sum
-
-      - name: Build tagged CLI release artifacts
-        run: make cli-release-dist RELEASE_TAG="${RELEASE_TAG}"
+          name: agent-outbox-release-${{ github.sha }}
+          path: dist
 
       - name: Upload CLI release assets
         env:
@@ -312,7 +368,7 @@ jobs:
           source_cask="dist/homebrew/Casks/agent-outbox.rb"
           target_cask="homebrew-tap/Casks/agent-outbox.rb"
           if [[ ! -f "$source_cask" ]]; then
-            echo "::error::GoReleaser did not generate $source_cask"
+            echo "::error::Certified release artifacts did not include $source_cask"
             exit 1
           fi
           mkdir -p "$(dirname "$target_cask")"

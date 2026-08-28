@@ -34,25 +34,5 @@ archives:
 checksum:
   name_template: checksums.txt
 
-homebrew_casks:
-  - name: agent-outbox
-    skip_upload: true
-    ids:
-      - agent-outbox
-    binaries:
-      - agent-outbox
-    repository:
-      owner: conn-castle
-      name: homebrew-tap
-    directory: Casks
-    url:
-      template:
-        https://github.com/conn-castle/agent-outbox/releases/download/{{ .Tag
-        }}/{{ .ArtifactName }}
-      verified: github.com/conn-castle/agent-outbox/
-    homepage: https://agent-outbox.dev
-    description: Agent Outbox command line client
-    license: PolyForm-Perimeter-1.0.1
-
 release:
   disable: true
