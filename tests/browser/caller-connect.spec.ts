@@ -40,7 +40,7 @@ test("terminal pages derive persisted setup state instead of URL outcome text", 
       approvedStartPayload.data.user_code
     )}&fixture_clerk_user_id=${fixtureUserId}`
   );
-  await page.getByRole("button", { name: "Approve caller" }).click();
+  await page.getByRole("button", { name: "Confirm and connect" }).click();
   await expect(page).toHaveURL(/\/caller\/connect\/success/);
 
   const forgedSuccessUrl = new URL(page.url());
@@ -52,11 +52,11 @@ test("terminal pages derive persisted setup state instead of URL outcome text", 
   await page.goto(forgedSuccessUrl.toString());
 
   await expect(
-    page.getByRole("heading", { name: "Caller approved" })
+    page.getByRole("heading", { name: "You're connected" })
   ).toBeVisible();
-  await expect(page.getByLabel("Account")).toContainText("owner");
+  await expect(page.getByLabel("Account")).toContainText("Owner");
   await expect(page.getByLabel("Approval success")).toContainText(
-    "Return to the CLI"
+    "Continue in your terminal"
   );
   await expect(page.getByLabel("Approval success")).toContainText(
     "Terminal Device Caller"
@@ -80,7 +80,7 @@ test("terminal pages derive persisted setup state instead of URL outcome text", 
       deniedStartPayload.data.user_code
     )}&fixture_clerk_user_id=${fixtureUserId}`
   );
-  await page.getByRole("button", { name: "Cancel setup" }).click();
+  await page.getByRole("button", { name: "Decline" }).click();
   await expect(page).toHaveURL(/\/caller\/connect\/error/);
 
   const forgedErrorUrl = new URL(page.url());
@@ -93,27 +93,30 @@ test("terminal pages derive persisted setup state instead of URL outcome text", 
   await page.goto(forgedErrorUrl.toString());
 
   await expect(
-    page.getByRole("heading", { name: "Connect failed" })
+    page.getByRole("heading", { name: "Connection request declined" })
   ).toBeVisible();
-  await expect(page.getByLabel("Account")).toContainText("owner");
+  await expect(page.getByLabel("Account")).toContainText("Owner");
   await expect(page.getByLabel("Approval error")).toContainText(
     "Terminal Canceled Caller"
   );
   await expect(page.getByLabel("Approval error")).toContainText(
-    "Caller setup was canceled."
+    "start a new connection"
   );
-  await expect(page.getByLabel("Approval error")).toContainText("denied");
   await expect(page.getByLabel("Approval error")).not.toContainText(
     "Forged denial text"
   );
+  await expect(
+    page.getByRole("link", { name: "Enter device code" })
+  ).toHaveCount(0);
 
   await page.goto(
     `/caller/connect/error?status=409&code=caller_already_exists&message=Caller%20already%20exists&fixture_clerk_user_id=${fixtureUserId}`
   );
   await expect(
-    page.getByRole("heading", { name: "Connect failed" })
+    page.getByRole("heading", { name: "Connection failed" })
   ).toBeVisible();
   await expect(page.getByLabel("Account")).toHaveCount(0);
+  await page.getByText("Technical details").click();
   await expect(page.getByText("caller_already_exists")).toBeVisible();
   await expect(page.getByText("Caller already exists")).toBeVisible();
 });
@@ -141,15 +144,13 @@ test("browser approval succeeds through the fixture Clerk identity and live data
   await page.goto(approvalUrl.toString());
 
   await expect(
-    page.getByRole("heading", { name: "Approve caller setup" })
+    page.getByRole("heading", { name: /^Allow .+ to connect\?$/ })
   ).toBeVisible();
   await expect(page.getByLabel("Caller setup request")).toContainText(
     "Browser Approved Caller"
   );
-  await expect(
-    page.getByRole("button", { name: "Cancel setup" })
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Approve caller" }).click();
+  await expect(page.getByRole("button", { name: "Decline" })).toBeVisible();
+  await page.getByRole("button", { name: "Approve connection" }).click();
 
   await expect(page).toHaveURL(/\/caller\/connect\/callback\?/);
   const callbackUrl = new URL(page.url());
@@ -225,19 +226,21 @@ test("device approval succeeds through the fixture Clerk identity and live datab
     )}&fixture_clerk_user_id=${fixtureUserId}`
   );
   await expect(
-    page.getByRole("heading", { name: "Verify device code" })
+    page.getByRole("heading", { name: "Does this code match?" })
   ).toBeVisible();
   await expect(page.getByLabel("Caller setup request")).toContainText(
     "Device Approved Caller"
   );
+  await expect(page.getByRole("button", { name: "Decline" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Cancel setup" })
+    page.getByLabel(`Device verification code: ${startPayload.data.user_code}`)
   ).toBeVisible();
-  await page.getByRole("button", { name: "Approve caller" }).click();
+  await expect(page.getByRole("textbox", { name: "User code" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Confirm and connect" }).click();
 
   await expect(page).toHaveURL(/\/caller\/connect\/success/);
   await expect(
-    page.getByRole("heading", { name: "Caller approved" })
+    page.getByRole("heading", { name: "You're connected" })
   ).toBeVisible();
   await expect(page.getByLabel("Approval success")).toContainText(
     "Device Approved Caller"
@@ -260,7 +263,7 @@ test("device approval succeeds through the fixture Clerk identity and live datab
   await page.goto(originalApprovalUrl);
   await expect(page).toHaveURL(/\/caller\/connect\/success/);
   await expect(
-    page.getByRole("heading", { name: "Caller approved" })
+    page.getByRole("heading", { name: "You're connected" })
   ).toBeVisible();
   await expect(page.getByLabel("Approval success")).toContainText(
     "Device Approved Caller"
@@ -289,7 +292,7 @@ test("manual device-code entry previews the caller before approval", async ({
     `/caller/connect/device?fixture_clerk_user_id=${fixtureUserId}`
   );
   await expect(
-    page.getByRole("heading", { name: "Verify device code" })
+    page.getByRole("heading", { name: "Enter your device code" })
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Enter the CLI code" })
@@ -299,13 +302,11 @@ test("manual device-code entry previews the caller before approval", async ({
   await page.getByRole("button", { name: "Continue" }).click();
 
   await expect(page).toHaveURL(/\/caller\/connect\/device\?/);
-  await expect(page.getByLabel("Account")).toContainText("owner");
+  await expect(page.getByLabel("Account")).toContainText("Owner");
   await expect(page.getByLabel("Caller setup request")).toContainText(
     "Manual Device Caller"
   );
-  await expect(
-    page.getByRole("button", { name: "Cancel setup" })
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Decline" })).toBeVisible();
 
   const pendingPoll = await request.post("/api/caller/connect/device/poll", {
     headers: connectRequestHeaders,
@@ -317,11 +318,11 @@ test("manual device-code entry previews the caller before approval", async ({
   expect(pendingPoll.status(), JSON.stringify(pendingPayload)).toBe(202);
   expect(pendingPayload.error.code).toBe("authorization_pending");
 
-  await page.getByRole("button", { name: "Approve caller" }).click();
+  await page.getByRole("button", { name: "Confirm and connect" }).click();
 
   await expect(page).toHaveURL(/\/caller\/connect\/success/);
   await expect(
-    page.getByRole("heading", { name: "Caller approved" })
+    page.getByRole("heading", { name: "You're connected" })
   ).toBeVisible();
   await expect(page.getByLabel("Approval success")).toContainText(
     "Manual Device Caller"
@@ -360,14 +361,13 @@ test("browser approval can cancel a pending setup request", async ({
   await page.goto(approvalUrl.toString());
 
   await expect(
-    page.getByRole("heading", { name: "Approve caller setup" })
+    page.getByRole("heading", { name: /^Allow .+ to connect\?$/ })
   ).toBeVisible();
-  await page.getByRole("button", { name: "Cancel setup" }).click();
+  await page.getByRole("button", { name: "Decline" }).click();
 
   await expect(page).toHaveURL(/\/caller\/connect\/error/);
-  await expect(page.getByLabel("Approval error")).toContainText("setup_denied");
   await expect(page.getByLabel("Approval error")).toContainText(
-    "Caller setup was canceled"
+    "start a new connection"
   );
 });
 
@@ -393,12 +393,14 @@ test("device approval can cancel a pending setup request", async ({
     )}&fixture_clerk_user_id=${fixtureUserId}`
   );
   await expect(
-    page.getByRole("heading", { name: "Verify device code" })
+    page.getByRole("heading", { name: "Does this code match?" })
   ).toBeVisible();
-  await page.getByRole("button", { name: "Cancel setup" }).click();
+  await page.getByRole("button", { name: "Decline" }).click();
 
   await expect(page).toHaveURL(/\/caller\/connect\/error/);
-  await expect(page.getByLabel("Approval error")).toContainText("setup_denied");
+  await expect(page.getByLabel("Approval error")).toContainText(
+    "Device Canceled Caller"
+  );
 
   const poll = await request.post("/api/caller/connect/device/poll", {
     headers: connectRequestHeaders,
@@ -442,10 +444,9 @@ test("rotate and revoke approval pages complete against live caller rows", async
   await expect(
     page.getByRole("heading", { name: "Approve key rotation" })
   ).toBeVisible();
-  await expect(page.getByLabel("Caller setup request")).toContainText("rotate");
-  await expect(page.getByLabel("Caller setup request")).toContainText(
-    caller.displayName
-  );
+  await expect(
+    page.getByText(caller.displayName, { exact: true })
+  ).toBeVisible();
   await page.getByRole("button", { name: "Approve rotation" }).click();
   await expect(page).toHaveURL(/\/caller\/connect\/callback\?/);
 
@@ -507,7 +508,9 @@ test("rotate and revoke approval pages complete against live caller rows", async
   await expect(
     page.getByRole("heading", { name: "Approve caller revoke" })
   ).toBeVisible();
-  await expect(page.getByLabel("Caller setup request")).toContainText("revoke");
+  await expect(
+    page.getByText(caller.displayName, { exact: true })
+  ).toBeVisible();
   await page.getByRole("button", { name: "Approve revoke" }).click();
   await expect(page).toHaveURL(/\/caller\/revoke\/success/);
 
@@ -577,10 +580,9 @@ test("rotate and revoke alternate approval variants and error pages render", asy
   await expect(
     page.getByRole("heading", { name: "Approve key rotation" })
   ).toBeVisible();
-  await expect(page.getByLabel("Caller setup request")).toContainText("rotate");
-  await expect(page.getByLabel("Caller setup request")).toContainText(
-    caller.displayName
-  );
+  await expect(
+    page.getByText(caller.displayName, { exact: true })
+  ).toBeVisible();
   await page.getByRole("button", { name: "Approve rotation" }).click();
   await expect(page).toHaveURL(/\/caller\/rotate\/success/);
   await expect(
@@ -615,10 +617,9 @@ test("rotate and revoke alternate approval variants and error pages render", asy
   await expect(
     page.getByRole("heading", { name: "Approve caller revoke" })
   ).toBeVisible();
-  await expect(page.getByLabel("Caller setup request")).toContainText("revoke");
-  await expect(page.getByLabel("Caller setup request")).toContainText(
-    caller.displayName
-  );
+  await expect(
+    page.getByText(caller.displayName, { exact: true })
+  ).toBeVisible();
   await page.getByRole("button", { name: "Approve revoke" }).click();
   await expect(page).toHaveURL(/\/caller\/connect\/callback\?/);
   const revokeCallbackUrl = new URL(page.url());
@@ -726,7 +727,7 @@ async function connectCallerThroughDevice(
       startPayload.data.user_code
     )}&fixture_clerk_user_id=${fixtureUserId}`
   );
-  await page.getByRole("button", { name: "Approve caller" }).click();
+  await page.getByRole("button", { name: "Confirm and connect" }).click();
   await expect(page).toHaveURL(/\/caller\/connect\/success/);
 
   const poll = await request.post("/api/caller/connect/device/poll", {

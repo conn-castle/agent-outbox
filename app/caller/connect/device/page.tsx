@@ -2,14 +2,10 @@ import { redirect, unstable_rethrow } from "next/navigation";
 
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectDeviceApprovalPreview } from "../../../../src/server/caller-connect";
-import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/caller-connect-clerk-fixture";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import type { HumanAccountSession } from "../../../../src/server/human-session";
-import {
-  approveDeviceConnect,
-  denyDeviceConnect,
-  previewDeviceConnect
-} from "../actions";
+import { previewDeviceConnect } from "../actions";
+import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/caller-connect-clerk-fixture";
 import {
   firstParam,
   fixtureClerkUserIdParam,
@@ -17,13 +13,8 @@ import {
   requiredCallerConnectSessionConfiguration,
   runCallerConnectHumanTransaction
 } from "../session";
-import {
-  AccountSummary,
-  ApprovalSummary,
-  ConnectActions,
-  ConnectErrorPanel,
-  ConnectPageShell
-} from "../ui";
+import { ConnectActions, ConnectErrorPanel, ConnectPageShell } from "../ui";
+import { DeviceApprovalView } from "../views";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +29,10 @@ export default async function CallerConnectDevicePage({
 
   if (!userCode) {
     return (
-      <ConnectPageShell eyebrow="Caller connect" title="Verify device code">
+      <ConnectPageShell
+        title="Enter your device code"
+        description="Use the code shown in the terminal where you started the connection."
+      >
         <section className="connect-card" aria-labelledby="device-code-heading">
           <h2 id="device-code-heading">Enter the CLI code</h2>
           <form
@@ -106,7 +100,10 @@ export default async function CallerConnectDevicePage({
     );
     if (!transaction.ok) {
       return (
-        <ConnectPageShell eyebrow="Caller connect" title="Verify device code">
+        <ConnectPageShell
+          title="We couldn't load this request"
+          description="The device connection request could not be verified."
+        >
           <ConnectErrorPanel error={transaction} />
         </ConnectPageShell>
       );
@@ -151,74 +148,19 @@ export default async function CallerConnectDevicePage({
     redirect(`/caller/connect/success?${query.toString()}`);
   }
 
-  return (
-    <ConnectPageShell eyebrow="Caller connect" title="Verify device code">
-      <AccountSummary session={session} />
-      {preview.ok ? (
-        <>
-          <ApprovalSummary preview={preview.data} />
-          <section className="connect-card" aria-labelledby="device-approve">
-            <h2 id="device-approve">Approve this caller</h2>
-            <form
-              id="approve-device-connect"
-              action={approveDeviceConnect}
-              className="form-stack"
-            >
-              <label className="field">
-                <span>User code</span>
-                <input
-                  name="userCode"
-                  autoComplete="one-time-code"
-                  inputMode="text"
-                  placeholder="ABCD-EFGH"
-                  defaultValue={userCode}
-                  readOnly
-                  required
-                />
-              </label>
-              {fixtureClerkUserId ? (
-                <input
-                  type="hidden"
-                  name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                  value={fixtureClerkUserId}
-                />
-              ) : null}
-            </form>
-            <form id="deny-device-connect" action={denyDeviceConnect}>
-              <input
-                type="hidden"
-                name="setupRequestId"
-                value={preview.data.setup_request_id}
-              />
-              {fixtureClerkUserId ? (
-                <input
-                  type="hidden"
-                  name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                  value={fixtureClerkUserId}
-                />
-              ) : null}
-            </form>
-            <ConnectActions>
-              <button
-                className="button"
-                form="approve-device-connect"
-                type="submit"
-              >
-                Approve caller
-              </button>
-              <button
-                className="button secondary"
-                form="deny-device-connect"
-                type="submit"
-              >
-                Cancel setup
-              </button>
-            </ConnectActions>
-          </section>
-        </>
-      ) : (
-        <ConnectErrorPanel error={preview.error} />
-      )}
+  return preview.ok ? (
+    <DeviceApprovalView
+      preview={preview.data}
+      session={session}
+      fixtureClerkUserId={fixtureClerkUserId}
+      userCode={userCode}
+    />
+  ) : (
+    <ConnectPageShell
+      title="We couldn't load this request"
+      description="The device connection request could not be verified."
+    >
+      <ConnectErrorPanel error={preview.error} />
     </ConnectPageShell>
   );
 }

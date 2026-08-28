@@ -2,10 +2,8 @@ import { unstable_rethrow } from "next/navigation";
 
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectBrowserApprovalPreview } from "../../../../src/server/caller-connect";
-import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/caller-connect-clerk-fixture";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import type { HumanAccountSession } from "../../../../src/server/human-session";
-import { approveBrowserConnect, denyBrowserConnect } from "../actions";
 import {
   firstParam,
   fixtureClerkUserIdParam,
@@ -13,13 +11,8 @@ import {
   requiredCallerConnectSessionConfiguration,
   runCallerConnectHumanTransaction
 } from "../session";
-import {
-  AccountSummary,
-  ApprovalSummary,
-  ConnectActions,
-  ConnectErrorPanel,
-  ConnectPageShell
-} from "../ui";
+import { ConnectErrorPanel, ConnectPageShell } from "../ui";
+import { BrowserApprovalView } from "../views";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +27,10 @@ export default async function CallerConnectApprovePage({
 
   if (!setupRequestId) {
     return (
-      <ConnectPageShell eyebrow="Caller connect" title="Approve caller setup">
+      <ConnectPageShell
+        title="This connection request is incomplete"
+        description="The request is missing the information needed to continue."
+      >
         <ConnectErrorPanel
           error={{
             status: 400,
@@ -75,7 +71,10 @@ export default async function CallerConnectApprovePage({
     );
     if (!transaction.ok) {
       return (
-        <ConnectPageShell eyebrow="Caller connect" title="Approve caller setup">
+        <ConnectPageShell
+          title="We couldn't load this request"
+          description="The connection request could not be verified."
+        >
           <ConnectErrorPanel error={transaction} />
         </ConnectPageShell>
       );
@@ -106,57 +105,18 @@ export default async function CallerConnectApprovePage({
     throw new Error("Human session is required after caller approval setup.");
   }
 
-  return (
-    <ConnectPageShell eyebrow="Caller connect" title="Approve caller setup">
-      <AccountSummary session={session} />
-      {preview.ok ? (
-        <>
-          <ApprovalSummary preview={preview.data} />
-          <section className="connect-card" aria-label="Approval decision">
-            <p>
-              Approving sends a one-time setup code to the CLI callback URL.
-            </p>
-            <ConnectActions>
-              <form action={approveBrowserConnect}>
-                <input
-                  type="hidden"
-                  name="setupRequestId"
-                  value={preview.data.setup_request_id}
-                />
-                {fixtureClerkUserId ? (
-                  <input
-                    type="hidden"
-                    name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                    value={fixtureClerkUserId}
-                  />
-                ) : null}
-                <button className="button" type="submit">
-                  Approve caller
-                </button>
-              </form>
-              <form action={denyBrowserConnect}>
-                <input
-                  type="hidden"
-                  name="setupRequestId"
-                  value={preview.data.setup_request_id}
-                />
-                {fixtureClerkUserId ? (
-                  <input
-                    type="hidden"
-                    name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                    value={fixtureClerkUserId}
-                  />
-                ) : null}
-                <button className="button secondary" type="submit">
-                  Cancel setup
-                </button>
-              </form>
-            </ConnectActions>
-          </section>
-        </>
-      ) : (
-        <ConnectErrorPanel error={preview.error} />
-      )}
+  return preview.ok ? (
+    <BrowserApprovalView
+      preview={preview.data}
+      session={session}
+      fixtureClerkUserId={fixtureClerkUserId}
+    />
+  ) : (
+    <ConnectPageShell
+      title="We couldn't load this request"
+      description="The connection request could not be verified."
+    >
+      <ConnectErrorPanel error={preview.error} />
     </ConnectPageShell>
   );
 }

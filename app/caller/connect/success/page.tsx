@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import {
@@ -10,12 +8,8 @@ import {
   resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
 } from "../session";
-import {
-  AccountSummary,
-  ConnectActions,
-  ConnectErrorPanel,
-  ConnectPageShell
-} from "../ui";
+import { ConnectErrorPanel, ConnectPageShell } from "../ui";
+import { ConnectionSuccessView } from "../views";
 
 export const dynamic = "force-dynamic";
 
@@ -48,14 +42,20 @@ export default async function CallerConnectSuccessPage({
     });
     if (!session.ok) {
       return (
-        <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
+        <ConnectPageShell
+          title="We couldn't confirm this connection"
+          description="The completed request could not be loaded."
+        >
           <ConnectErrorPanel error={session} />
         </ConnectPageShell>
       );
     }
 
     return (
-      <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
+      <ConnectPageShell
+        title="We couldn't confirm this connection"
+        description="The completed request is missing its reference."
+      >
         <ConnectErrorPanel
           error={{
             status: 400,
@@ -88,7 +88,10 @@ export default async function CallerConnectSuccessPage({
   );
   if (!transaction.ok) {
     return (
-      <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
+      <ConnectPageShell
+        title="We couldn't confirm this connection"
+        description="The completed request could not be loaded."
+      >
         <ConnectErrorPanel error={transaction} />
       </ConnectPageShell>
     );
@@ -98,48 +101,19 @@ export default async function CallerConnectSuccessPage({
 
   if (!setupState.ok) {
     return (
-      <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
+      <ConnectPageShell
+        title="We couldn't confirm this connection"
+        description="The completed request could not be verified."
+      >
         <ConnectErrorPanel error={setupState.error} />
       </ConnectPageShell>
     );
   }
 
-  const setup = setupState.data;
-  const callerDisplayName = setup.caller?.display_name ?? setup.display_name;
-
   return (
-    <ConnectPageShell eyebrow="Caller connect" title="Caller approved">
-      <AccountSummary session={transaction.session} />
-      <section className="connect-card" aria-label="Approval success">
-        <p>
-          {setup.flow === "device"
-            ? "The device code was approved. Return to the CLI to finish setup."
-            : "The caller setup request was approved."}
-        </p>
-        <dl className="connect-kv">
-          <div>
-            <dt>Caller</dt>
-            <dd>{callerDisplayName}</dd>
-          </div>
-          <div>
-            <dt>Setup request</dt>
-            <dd>
-              <code>{setup.setup_request_id}</code>
-            </dd>
-          </div>
-          <div>
-            <dt>Status</dt>
-            <dd>
-              <code>{setup.status}</code>
-            </dd>
-          </div>
-        </dl>
-        <ConnectActions>
-          <Link className="button secondary" href="/human">
-            Open review queue
-          </Link>
-        </ConnectActions>
-      </section>
-    </ConnectPageShell>
+    <ConnectionSuccessView
+      setup={setupState.data}
+      session={transaction.session}
+    />
   );
 }

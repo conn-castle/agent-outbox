@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import {
@@ -10,12 +8,8 @@ import {
   resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
 } from "../session";
-import {
-  AccountSummary,
-  ConnectActions,
-  ConnectErrorPanel,
-  ConnectPageShell
-} from "../ui";
+import { ConnectErrorPanel, ConnectPageShell } from "../ui";
+import { ConnectionDeclinedView } from "../views";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +61,11 @@ export default async function CallerConnectErrorPage({
 
     if (!transaction.ok) {
       return (
-        <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
+        <ConnectPageShell
+          title="We couldn't confirm the result"
+          description="The declined request could not be loaded."
+          tone="canceled"
+        >
           <ConnectErrorPanel error={transaction} />
         </ConnectPageShell>
       );
@@ -75,51 +73,20 @@ export default async function CallerConnectErrorPage({
 
     const terminalState = transaction.data;
     if (terminalState.ok) {
-      const setup = terminalState.data;
-      const callerDisplayName =
-        setup.caller?.display_name ?? setup.display_name;
-
       return (
-        <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
-          <AccountSummary session={transaction.session} />
-          <section className="connect-card" aria-label="Approval error">
-            <dl className="connect-kv">
-              <div>
-                <dt>Status</dt>
-                <dd>
-                  <code>{setup.status}</code>
-                </dd>
-              </div>
-              <div>
-                <dt>Code</dt>
-                <dd>
-                  <code>setup_denied</code>
-                </dd>
-              </div>
-              <div>
-                <dt>Caller</dt>
-                <dd>{callerDisplayName}</dd>
-              </div>
-              <div>
-                <dt>Setup request</dt>
-                <dd>
-                  <code>{setup.setup_request_id}</code>
-                </dd>
-              </div>
-            </dl>
-            <p>Caller setup was canceled.</p>
-            <ConnectActions>
-              <Link className="button secondary" href="/caller/connect/device">
-                Enter device code
-              </Link>
-            </ConnectActions>
-          </section>
-        </ConnectPageShell>
+        <ConnectionDeclinedView
+          setup={terminalState.data}
+          session={transaction.session}
+        />
       );
     }
 
     return (
-      <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
+      <ConnectPageShell
+        title="We couldn't confirm the result"
+        description="The declined request could not be verified."
+        tone="canceled"
+      >
         <ConnectErrorPanel error={terminalState.error} />
       </ConnectPageShell>
     );
@@ -134,14 +101,22 @@ export default async function CallerConnectErrorPage({
 
   if (!session.ok) {
     return (
-      <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
+      <ConnectPageShell
+        title="Connection failed"
+        description="The request could not be completed."
+        tone="canceled"
+      >
         <ConnectErrorPanel error={session} />
       </ConnectPageShell>
     );
   }
 
   return (
-    <ConnectPageShell eyebrow="Caller connect" title="Connect failed">
+    <ConnectPageShell
+      title="Connection failed"
+      description="The request could not be completed."
+      tone="canceled"
+    >
       <ConnectErrorPanel
         error={{
           status,
