@@ -21,15 +21,6 @@
       "sha256": "65030ad86fd0451c087ec8c1d0c18324130a5d9119e5cb12b5bafd70528bb396"
     },
     {
-      "id": "detailMobile",
-      "file": "public/product-review-detail-mobile.png",
-      "publicPath": "/product-review-detail-mobile.png",
-      "route": "/human?status=all&item=c685b264-dc53-478d-8326-df3438613f11",
-      "width": 393,
-      "height": 900,
-      "sha256": "0e4dff477da5f83cbc857504a8f29f6172908968f1af65604b1f9ad4b26b1f68"
-    },
-    {
       "id": "queueMobile",
       "file": "public/product-review-mobile.png",
       "publicPath": "/product-review-mobile.png",

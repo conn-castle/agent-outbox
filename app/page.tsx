@@ -2,12 +2,11 @@ import { ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
 
 import marketingScreenshotManifest from "../marketing/screenshots.json";
-import { CopyCommandButton } from "../src/components/CopyCommandButton";
 
 const marketingScreenshots = Object.fromEntries(
   marketingScreenshotManifest.assets.map((asset) => [asset.id, asset])
 ) as Record<
-  "detailMobile" | "detailTablet" | "queueDesktop" | "queueMobile",
+  "detailTablet" | "queueDesktop" | "queueMobile",
   (typeof marketingScreenshotManifest.assets)[number]
 >;
 
@@ -123,7 +122,7 @@ export default function HomePage() {
           </div>
           <picture>
             <source
-              media="(max-width: 768px)"
+              media="(max-width: 900px)"
               srcSet={marketingScreenshots.queueMobile.publicPath}
               width={marketingScreenshots.queueMobile.width}
               height={marketingScreenshots.queueMobile.height}
@@ -150,7 +149,7 @@ export default function HomePage() {
           <h2>Connect once. Then step away.</h2>
           <p className="landing-install-note">
             Install the public CLI with Homebrew. Caller connection remains
-            invite-only during this prerelease, so request caller access before
+            invite-only during this pre-release, so request caller access before
             connecting an agent. The browser flow asks you to sign in or create
             an account before approving the caller.
           </p>
@@ -183,14 +182,7 @@ export default function HomePage() {
             >
               <div className="landing-terminal-bar">
                 <span>agent-outbox / zsh</span>
-                <div>
-                  <span>Public CLI</span>
-                  <CopyCommandButton
-                    command={`brew install --cask conn-castle/tap/agent-outbox
-
-agent-outbox caller connect my-agent`}
-                  />
-                </div>
+                <span>Public CLI</span>
               </div>
               <pre>
                 <code>
@@ -268,38 +260,12 @@ agent-outbox caller connect my-agent`}
           <div className="landing-tablet-frame">
             <span className="landing-tablet-camera" aria-hidden="true" />
             <div className="landing-tablet-screen">
-              <picture>
-                <source
-                  media="(max-width: 640px)"
-                  srcSet={marketingScreenshots.detailMobile.publicPath}
-                  width={marketingScreenshots.detailMobile.width}
-                  height={marketingScreenshots.detailMobile.height}
-                />
-                <img
-                  src={marketingScreenshots.detailTablet.publicPath}
-                  alt="Agent Outbox request detail with structured context and response actions"
-                  width={marketingScreenshots.detailTablet.width}
-                  height={marketingScreenshots.detailTablet.height}
-                />
-              </picture>
-            </div>
-          </div>
-          <div className="landing-detail-mobile-card" aria-hidden="true">
-            <div className="landing-detail-mobile-surface">
-              <div className="landing-detail-mobile-meta">
-                <span>Email draft</span>
-                <span>Normal priority</span>
-              </div>
-              <h3>Re: Order 1042 delivery date</h3>
-              <p className="landing-detail-mobile-label">Review summary</p>
-              <p>
-                Maya needs a firm delivery update before Monday&apos;s lab
-                opening.
-              </p>
-              <div className="landing-detail-mobile-actions">
-                <span>Approve to send</span>
-                <span>Reject</span>
-              </div>
+              <img
+                src={marketingScreenshots.detailTablet.publicPath}
+                alt="Agent Outbox request detail with structured context and response actions"
+                width={marketingScreenshots.detailTablet.width}
+                height={marketingScreenshots.detailTablet.height}
+              />
             </div>
           </div>
         </figure>
@@ -351,7 +317,7 @@ agent-outbox caller connect my-agent`}
             and actions in view.
           </p>
           <p className="landing-proof-label">
-            Actual responsive product · mobile view
+            Actual responsive product · 430px viewport
           </p>
         </div>
       </section>
@@ -390,7 +356,7 @@ agent-outbox caller connect my-agent`}
               className="landing-plan-link landing-plan-link-secondary"
               href="/sign-up"
             >
-              Get started free <ArrowRight aria-hidden="true" />
+              Start for free <ArrowRight aria-hidden="true" />
             </Link>
           </article>
           <article className="landing-plan landing-plan-paid">
@@ -433,7 +399,7 @@ agent-outbox caller connect my-agent`}
           <br /> Review when it works for you.
         </h2>
         <Link className="button" href="/sign-up">
-          Get started free <ArrowRight aria-hidden="true" />
+          Create your free account <ArrowRight aria-hidden="true" />
         </Link>
         <p>Free to start · No credit card required</p>
       </section>
