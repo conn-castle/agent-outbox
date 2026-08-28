@@ -1035,6 +1035,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   for (const stepName of [
     "Verify rollback target before deploy",
     "Require production migration credential",
+    "Publish GitHub release as Latest",
     "Require publicly downloadable release assets"
   ]) {
     const withoutRequiredStep = deployWorkflow.replace(
@@ -1067,7 +1068,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
       withoutHomebrewPublication,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
     ),
     true,
     "numbered releases must retain CLI asset and Homebrew cask publication"
@@ -1104,10 +1105,10 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   );
   assert.equal(
     validateProductionDeployWorkflow(clobberingCliAssets, "24.18.0").includes(
-      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
     ),
     true,
-    "published CLI assets must never be deleted before replacement upload succeeds"
+    "release assets must never be deleted before replacement upload succeeds"
   );
 
   const withoutCliAssetIdentityCheck = deployWorkflow.replace(
@@ -1124,7 +1125,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
       withoutCliAssetIdentityCheck,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
     ),
     true,
     "release reconciliation must retain only byte-identical existing CLI assets"

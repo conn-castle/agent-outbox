@@ -319,8 +319,8 @@ function reconcileReleaseState(repository, tag) {
  * @param {string} tag
  * @param {string} sha
  */
-function createGithubRelease(repository, tag, sha) {
-  return runGh([
+export function githubReleaseCreateArgs(repository, tag, sha) {
+  return [
     "release",
     "create",
     tag,
@@ -331,8 +331,17 @@ function createGithubRelease(repository, tag, sha) {
     "--title",
     tag,
     "--generate-notes",
-    "--latest"
-  ]);
+    "--draft"
+  ];
+}
+
+/**
+ * @param {string} repository
+ * @param {string} tag
+ * @param {string} sha
+ */
+function createGithubRelease(repository, tag, sha) {
+  return runGh(githubReleaseCreateArgs(repository, tag, sha));
 }
 
 /** @param {number} ms */
@@ -484,13 +493,17 @@ async function verifyFinalizedTag(
 }
 
 /**
- * Publish the numbered GitHub release for the smoke-verified candidate. This
- * runs after the Worker is already live and verified, so a tagging failure must
+ * Prepare the numbered GitHub release as a draft for the smoke-verified
+ * candidate. The downstream publication job uploads every certified CLI asset
+ * before publishing the draft as Latest, so the direct installer cannot resolve
+ * a release whose downloads are absent. This runs after the Worker is already
+ * live and verified, so a tagging failure must
  * never revert production. It reconciles the current release/tag state, treats
- * an already-published release on the candidate SHA as success (covering a
- * create whose response was lost), adopts a correct-SHA orphan tag, retries only
- * transient GitHub failures, refuses to move an immutable release number onto a
- * different commit, and proves the resulting tag resolves to the candidate SHA.
+ * an existing release or draft on the candidate SHA as success (covering a
+ * create whose response was lost), adopts a correct-SHA orphan tag, retries
+ * only transient GitHub failures, refuses to move an immutable release number
+ * onto a different commit, and proves the resulting tag resolves to the
+ * candidate SHA.
  *
  * @param {ReleaseGateway} gateway
  * @param {{ repository: string, releaseTag: string, expectedSha: string }} input
@@ -513,7 +526,7 @@ export async function runReleaseFinalization(
 
     const kind = classifyReleaseTagState(state, expectedSha);
     if (kind === "released_correct") {
-      console.log(`${releaseTag} is already released on ${expectedSha}.`);
+      console.log(`${releaseTag} already exists on ${expectedSha}.`);
       return;
     }
     if (kind === "released_wrong_sha" || kind === "tag_wrong_sha") {
@@ -532,7 +545,7 @@ export async function runReleaseFinalization(
     }
     if (result.status === 0) {
       await verifyFinalizedTag(gateway, repository, releaseTag, expectedSha);
-      console.log(`Published ${releaseTag} on ${expectedSha}.`);
+      console.log(`Prepared ${releaseTag} draft on ${expectedSha}.`);
       return;
     }
 

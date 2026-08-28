@@ -280,7 +280,7 @@ jobs:
       - name: Set up dependencies
         run: make setup
 
-      - name: Create numbered GitHub release and tag
+      - name: Create numbered GitHub release draft and tag
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
@@ -322,7 +322,7 @@ jobs:
               gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$existing_dir"
               if ! cmp -s "$artifact" "$existing_dir/$asset"; then
                 echo "::error::Existing CLI release asset differs from the tagged build: $asset"
-                echo "::error::Refusing to delete a published asset during reconciliation."
+                echo "::error::Refusing to delete a release asset during reconciliation."
                 exit 1
               fi
               echo "Retaining identical existing CLI release asset: $asset"
@@ -330,6 +330,11 @@ jobs:
             fi
             gh release upload "$RELEASE_TAG" "$artifact"
           done
+
+      - name: Publish GitHub release as Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest
 
       - name: Require publicly downloadable release assets
         run: |
