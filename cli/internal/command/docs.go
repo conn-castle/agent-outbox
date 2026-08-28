@@ -32,7 +32,7 @@ var terminalDocs = []docsTopic{
 			"stdout is for command results. stderr is for diagnostics, warnings, progress, and errors.",
 			"--json prints stable machine-readable success payloads for noninteractive commands. JSON errors use the shared error envelope.",
 			"Global selection flags are --config, --base-url, and --caller. Environment fallbacks are AGENT_OUTBOX_CONFIG_PATH, AGENT_OUTBOX_BASE_URL, and AGENT_OUTBOX_CALLER.",
-			"Caller API keys are stored only in the local secret store, never in config, docs, diagnostics, or JSON metadata.",
+			"Caller API keys are stored in an owner-only credentials.json file beside config.json, or supplied through AGENT_OUTBOX_API_KEY by a secret manager. They are never stored in config, docs, diagnostics, or JSON metadata.",
 		}, "\n"),
 		RelatedDocs: []string{"docs/spec/README.md", "docs/spec/errors.md", "docs/agent-layer/COMMANDS.md"},
 	},
@@ -42,6 +42,7 @@ var terminalDocs = []docsTopic{
 		Summary: "Connect, list, status, rotate, revoke, and disconnect local callers.",
 		Body: strings.Join([]string{
 			"caller connect <caller> starts human-approved setup and stores a display-once caller credential locally after approval.",
+			"Approval opens in a browser on desktops and automatically uses a device code in SSH, CI, or headless Linux sessions; --browser and --device-code override detection.",
 			"caller list reads only local config. It does not query remote account callers.",
 			"caller status uses the selected local caller credential and GET /api/caller/status.",
 			"caller rotate and caller revoke require human approval. Rotate activates the new hosted key only after local persistence succeeds.",

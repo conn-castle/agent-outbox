@@ -306,7 +306,7 @@ make go-test
 
 Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Runs
 `go test ./...` from `cli/` for config, caller selection, base URL, exit-code,
-deterministic/no-color output, secret-store, HTTP-client, caller control-plane,
+deterministic/no-color output, credentials-file, HTTP-client, caller control-plane,
 data-plane, utility command, terminal-docs, doctor, upgrade, version, and help
 behavior.
 

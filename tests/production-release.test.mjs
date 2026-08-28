@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   classifyFinalizeFailure,
   classifyReleaseTagState,
+  githubReleaseCreateArgs,
   releaseMetadata,
   requireProductionWorkflowContext,
   runReleaseFinalization,
@@ -74,6 +75,16 @@ test("production release metadata comes from a stable package version", () => {
     () => releaseMetadata({ name: "agent-outbox", version: "1.2.3-beta.1" }),
     /version must be a numbered stable release/
   );
+});
+
+test("release creation remains draft until certified CLI assets are uploaded", () => {
+  const args = githubReleaseCreateArgs(
+    RELEASE.repository,
+    RELEASE.releaseTag,
+    RELEASE.expectedSha
+  );
+  assert.equal(args.includes("--draft"), true);
+  assert.equal(args.includes("--latest"), false);
 });
 
 test("manual rollback accepts only a Worker version stamped with the requested release tag", () => {

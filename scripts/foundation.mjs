@@ -20,7 +20,6 @@ import { RUNTIME_CRON_SCHEDULE } from "../src/server/scheduled.ts";
  *   go: { version: string },
  *   goTooling?: {
  *     cobra?: { module: string, version: string },
- *     goKeyring?: { module: string, version: string },
  *     githubActionsSetupGo?: { version: string },
  *     goreleaser?: { module: string, version: string }
  *   },
@@ -1085,6 +1084,10 @@ export function validateProductionDeployWorkflow(
     homebrewJob,
     "Upload CLI release assets"
   );
+  const publishReleaseStep = workflowNamedStepContent(
+    homebrewJob,
+    "Publish GitHub release as Latest"
+  );
   const publicAssetsStep = workflowNamedStepContent(
     homebrewJob,
     "Require publicly downloadable release assets"
@@ -1311,6 +1314,13 @@ export function validateProductionDeployWorkflow(
     !uploadCliStep.includes("cmp -s") ||
     !uploadCliStep.includes("gh release upload") ||
     uploadCliStep.includes("--clobber") ||
+    !publishReleaseStep.includes("gh release edit") ||
+    !publishReleaseStep.includes("--draft=false") ||
+    !publishReleaseStep.includes("--latest") ||
+    homebrewJob.indexOf(publishReleaseStep) <
+      homebrewJob.indexOf(uploadCliStep) ||
+    homebrewJob.indexOf(publicAssetsStep) <
+      homebrewJob.indexOf(publishReleaseStep) ||
     !publicAssetsStep.includes("curl -fsSL") ||
     !publicAssetsStep.includes("cmp -s") ||
     !publicAssetsStep.includes(
@@ -1326,7 +1336,7 @@ export function validateProductionDeployWorkflow(
     )
   ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
     );
   }
   // Automatic rollback must run inside the already-approved deploy job (so it is
@@ -1763,13 +1773,6 @@ export function validateGoModuleTooling(toolchain, goModContent) {
     "cobra",
     toolchain.goTooling?.cobra
   );
-  validateGoModulePin(
-    errors,
-    goModContent,
-    "goKeyring",
-    toolchain.goTooling?.goKeyring
-  );
-
   return errors;
 }
 

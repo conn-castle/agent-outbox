@@ -25,7 +25,7 @@ test("the homepage separates public CLI installation from invite-only caller acc
   ).toBeVisible();
   await expect(accessSection).toContainText("invite-only");
   await expect(accessSection).toContainText(
-    "brew install --cask conn-castle/tap/agent-outbox"
+    "curl -fsSL https://agent-outbox.dev/install.sh | sh"
   );
 
   const requestAccess = accessSection.getByRole("link", {

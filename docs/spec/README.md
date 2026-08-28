@@ -101,15 +101,21 @@ Precedence:
   `https://app.agent-outbox.dev`.
 - Caller selection is `--caller`, then `AGENT_OUTBOX_CALLER`, then the single
   locally configured caller only when exactly one exists.
+- Caller credential selection is `AGENT_OUTBOX_API_KEY` when set, then the
+  selected caller entry in `credentials.json` beside the selected config file.
 - If `--caller` and `AGENT_OUTBOX_CALLER` are both set, the command fails with
   `caller_selection_conflict` even when the values match.
 - If no explicit caller selector is set and multiple local callers exist, the
   command fails with `ambiguous_caller`. If the selected caller name is not
   present in local config, the command fails with `unknown_caller`.
 
-Caller API keys are not configured through environment variables. Plaintext
-caller credentials live only in local secure storage after human-approved caller
-connect or rotate.
+After human-approved caller connect or rotate, the CLI stores caller API keys in
+`credentials.json`. The file is owned by the current user, must not be a
+symbolic link, and must not grant group or other access; the default Agent
+Outbox directory is mode `0700` and the file is mode `0600`. Config files never
+contain caller API keys. Automation may instead inject one selected caller key
+through `AGENT_OUTBOX_API_KEY`; use a secret manager rather than a shell profile
+or checked-in environment file.
 
 ## CLI To HTTP Map
 

@@ -245,10 +245,14 @@ brew install --cask conn-castle/tap/agent-outbox
 agent-outbox version
 ```
 
-The landing page, README, and public API quickstart must advertise this exact
-verified command. Keep the separate product-access statement accurate: the CLI
-installer is public, while caller connection remains invite-only during the
-hosted prerelease.
+The README and public API quickstart must advertise this exact verified Homebrew
+command. The landing page advertises the direct installer command
+`curl -fsSL https://agent-outbox.dev/install.sh | sh`. Production finalization
+first creates the numbered GitHub release as a draft; the publication job
+uploads and reconciles every release archive and `checksums.txt` before making
+that draft Latest. Keep the separate product-access statement accurate: both CLI
+installation paths are public, while caller connection remains invite-only
+during the hosted prerelease.
 
 ## Manual CLI Connect Smoke
 

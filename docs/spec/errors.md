@@ -113,14 +113,14 @@ below map as follows:
 These codes are emitted by the local CLI JSON error renderer and do not have an
 HTTP status. They use the same envelope shape as API errors.
 
-| Code                        | Exit code | Meaning                                                                                                                                                          |
-| --------------------------- | --------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `usage_error`               |        64 | The local command line is invalid, such as an unknown flag, unknown command, unsupported argument, or wrong argument count.                                      |
-| `config_error`              |        78 | Local CLI config, base URL, config path, or non-secret config file contents are missing, unreadable, invalid, or unsupported.                                    |
-| `caller_selection_conflict` |        78 | Both `--caller` and `AGENT_OUTBOX_CALLER` were set; the CLI refuses to choose one even when the values match.                                                    |
-| `ambiguous_caller`          |        78 | More than one local caller is configured and no explicit caller selector was supplied.                                                                           |
-| `unknown_caller`            |        78 | The selected local caller name is absent from the selected config file.                                                                                          |
-| `secret_store_error`        |        74 | The local OS credential store or encrypted caller-secret file is unavailable, missing required caller secret material, unreadable, unwritable, or undecryptable. |
+| Code                        | Exit code | Meaning                                                                                                                                        |
+| --------------------------- | --------: | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `usage_error`               |        64 | The local command line is invalid, such as an unknown flag, unknown command, unsupported argument, or wrong argument count.                    |
+| `config_error`              |        78 | Local CLI config, base URL, config path, or non-secret config file contents are missing, unreadable, invalid, or unsupported.                  |
+| `caller_selection_conflict` |        78 | Both `--caller` and `AGENT_OUTBOX_CALLER` were set; the CLI refuses to choose one even when the values match.                                  |
+| `ambiguous_caller`          |        78 | More than one local caller is configured and no explicit caller selector was supplied.                                                         |
+| `unknown_caller`            |        78 | The selected local caller name is absent from the selected config file.                                                                        |
+| `secret_store_error`        |        74 | The owner-only local credentials file or selected caller credential is missing, malformed, insecurely permissioned, unreadable, or unwritable. |
 
 ## Error Catalog
 
@@ -162,6 +162,5 @@ Error payloads, logs, Sentry context, and CLI diagnostics must not include:
 - free-text action responses;
 - selected option display text when avoidable;
 - file contents or uploaded file names when avoidable;
-- caller API keys, local secret-store paths containing secrets, or bearer
-  headers;
+- caller API keys, local credential values, or bearer headers;
 - Stripe ids or other sensitive provider internals.

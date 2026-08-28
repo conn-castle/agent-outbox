@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -123,6 +122,7 @@ func addControlPlaneCommands(caller *cobra.Command, opts Options, flags *rootFla
 
 func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 	deviceCode := false
+	browser := false
 	cmd := &cobra.Command{
 		Use:           "connect <caller>",
 		Short:         "Connect a local caller through human approval",
@@ -134,6 +134,10 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			useDeviceCode, err := approvalUsesDeviceCode(opts, deviceCode, browser)
+			if err != nil {
+				return err
+			}
 			runtime, err := writableControlRuntimeForCommand(opts, flags)
 			if err != nil {
 				return err
@@ -141,11 +145,11 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err := ensureLocalCallerNameAvailable(runtime.Config, localName); err != nil {
 				return err
 			}
-			if err := preflightConnectLocalPersistence(runtime); err != nil {
+			if err := preflightWritableLocalPersistence(runtime); err != nil {
 				return err
 			}
 			var result connectExchangeData
-			if deviceCode {
+			if useDeviceCode {
 				result, err = runDeviceConnect(cmd.Context(), opts, runtime, localName)
 			} else {
 				result, err = runBrowserConnect(cmd.Context(), opts, runtime, localName)
@@ -161,10 +165,11 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&deviceCode, "device-code", false, "use the device-code approval flow")
+	cmd.Flags().BoolVar(&browser, "browser", false, "force the browser approval flow")
 	documentCommand(cmd, commandHelpSpec{
 		Purpose:     "Create a local caller connection through human approval, store the display-once caller credential locally, then activate it with the hosted app.",
 		Arguments:   "<caller> is the local caller name to store in Agent Outbox config.",
-		Flags:       "--device-code uses the terminal device-code approval flow instead of opening a browser. Global --config, --base-url, --json, and --no-color are available.",
+		Flags:       "Headless and SSH sessions automatically use terminal device-code approval. --device-code or --browser forces a flow. Global --config, --base-url, --json, and --no-color are available.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox caller connect steward-email\nagent-outbox caller connect steward-email --device-code --json",
 		ExitCodes:   "0 success. 64 usage. 73 local or hosted caller name already exists. 74 secret-store failure. 75 temporary approval/API failure. 77 permission. 78 config.",
@@ -214,6 +219,7 @@ func callerListCommand(opts Options, flags *rootFlags) *cobra.Command {
 
 func callerRotateCommand(opts Options, flags *rootFlags) *cobra.Command {
 	deviceCode := false
+	browser := false
 	cmd := &cobra.Command{
 		Use:           "rotate",
 		Short:         "Rotate a local caller credential through human approval",
@@ -221,12 +227,19 @@ func callerRotateCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			useDeviceCode, err := approvalUsesDeviceCode(opts, deviceCode, browser)
+			if err != nil {
+				return err
+			}
 			runtime, selected, err := selectedWritableControlRuntime(opts, flags)
 			if err != nil {
 				return err
 			}
+			if err := preflightWritableLocalPersistence(runtime); err != nil {
+				return err
+			}
 			var setup deviceSetupCodeData
-			if deviceCode {
+			if useDeviceCode {
 				setup, err = runDeviceSetupCodeFlow(cmd.Context(), opts, runtime, selected, "rotate", "/api/caller/rotate/device/start", "/api/caller/rotate/device/poll")
 			} else {
 				setup, err = runBrowserSetupCodeFlow(cmd.Context(), opts, runtime, selected, "rotate", "/api/caller/rotate/browser/start")
@@ -242,10 +255,11 @@ func callerRotateCommand(opts Options, flags *rootFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&deviceCode, "device-code", false, "use the device-code approval flow")
+	cmd.Flags().BoolVar(&browser, "browser", false, "force the browser approval flow")
 	documentCommand(cmd, commandHelpSpec{
 		Purpose:     "Rotate the selected local caller credential through human approval and activate the replacement only after local storage succeeds.",
 		Arguments:   "None. Select the local caller with --caller, AGENT_OUTBOX_CALLER, or the single configured caller.",
-		Flags:       "--device-code uses terminal approval. Global --caller, --config, --base-url, --json, and --no-color are available.",
+		Flags:       "Headless and SSH sessions automatically use terminal device-code approval. --device-code or --browser forces a flow. Global --caller, --config, --base-url, --json, and --no-color are available.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox caller rotate --caller steward-email\nagent-outbox caller rotate --device-code --json",
 		ExitCodes:   "0 success. 64 usage. 74 secret-store failure. 75 temporary approval/API failure. 77 permission. 78 config or caller selection.",
@@ -256,6 +270,7 @@ func callerRotateCommand(opts Options, flags *rootFlags) *cobra.Command {
 
 func callerRevokeCommand(opts Options, flags *rootFlags) *cobra.Command {
 	deviceCode := false
+	browser := false
 	cmd := &cobra.Command{
 		Use:           "revoke <caller>",
 		Short:         "Revoke a caller credential through human approval",
@@ -263,11 +278,15 @@ func callerRevokeCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			useDeviceCode, err := approvalUsesDeviceCode(opts, deviceCode, browser)
+			if err != nil {
+				return err
+			}
 			runtime, selected, err := namedControlRuntime(opts, flags, args[0])
 			if err != nil {
 				return err
 			}
-			confirmed, err := runRevokeFlow(cmd.Context(), opts, runtime, selected, deviceCode)
+			confirmed, err := runRevokeFlow(cmd.Context(), opts, runtime, selected, useDeviceCode)
 			if err != nil {
 				return err
 			}
@@ -275,10 +294,11 @@ func callerRevokeCommand(opts Options, flags *rootFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&deviceCode, "device-code", false, "use the device-code approval flow")
+	cmd.Flags().BoolVar(&browser, "browser", false, "force the browser approval flow")
 	documentCommand(cmd, commandHelpSpec{
 		Purpose:     "Revoke hosted credentials for a named local caller through human approval while preserving local config unless disconnect is used.",
 		Arguments:   "<caller> is the local caller name to revoke.",
-		Flags:       "--device-code uses terminal approval. Global --config, --base-url, --json, and --no-color are available.",
+		Flags:       "Headless and SSH sessions automatically use terminal device-code approval. --device-code or --browser forces a flow. Global --config, --base-url, --json, and --no-color are available.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox caller revoke steward-email\nagent-outbox caller revoke steward-email --device-code --json",
 		ExitCodes:   "0 success. 64 usage. 75 temporary approval/API failure. 77 permission. 78 config or unknown caller.",
@@ -290,6 +310,7 @@ func callerRevokeCommand(opts Options, flags *rootFlags) *cobra.Command {
 func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 	revoke := false
 	deviceCode := false
+	browser := false
 	cmd := &cobra.Command{
 		Use:           "disconnect",
 		Short:         "Remove local caller state",
@@ -297,8 +318,16 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if deviceCode && !revoke {
-				return foundation.NewUsageError("caller disconnect --device-code requires --revoke.")
+			if (deviceCode || browser) && !revoke {
+				return foundation.NewUsageError("caller disconnect --device-code and --browser require --revoke.")
+			}
+			useDeviceCode := false
+			if revoke {
+				var flowErr error
+				useDeviceCode, flowErr = approvalUsesDeviceCode(opts, deviceCode, browser)
+				if flowErr != nil {
+					return flowErr
+				}
 			}
 			runtime, selected, err := selectedLocalControlRuntime(opts, flags)
 			if err != nil {
@@ -310,7 +339,7 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				confirmed, err = runRevokeFlow(cmd.Context(), opts, runtime, selected, deviceCode)
+				confirmed, err = runRevokeFlow(cmd.Context(), opts, runtime, selected, useDeviceCode)
 				if err != nil {
 					return err
 				}
@@ -336,10 +365,11 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&revoke, "revoke", false, "revoke hosted credentials before removing local state")
 	cmd.Flags().BoolVar(&deviceCode, "device-code", false, "use the device-code approval flow when --revoke is set")
+	cmd.Flags().BoolVar(&browser, "browser", false, "force the browser approval flow when --revoke is set")
 	documentCommand(cmd, commandHelpSpec{
-		Purpose:     "Remove the selected local caller config and secret-store entry, optionally revoking hosted credentials first.",
+		Purpose:     "Remove the selected local caller config and credentials-file entry, optionally revoking hosted credentials first.",
 		Arguments:   "None. Select the local caller with --caller, AGENT_OUTBOX_CALLER, or the single configured caller.",
-		Flags:       "--revoke performs human-approved hosted revocation before local removal. --device-code is valid only with --revoke. Global flags are available.",
+		Flags:       "--revoke performs human-approved hosted revocation before local removal. --device-code and --browser are valid only with --revoke. Global flags are available.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox caller disconnect --caller steward-email\nagent-outbox caller disconnect --revoke --device-code --json",
 		ExitCodes:   "0 success. 64 usage. 74 secret-store failure. 75 temporary approval/API failure. 77 permission. 78 config or caller selection.",
@@ -393,7 +423,7 @@ func writableControlRuntimeForCommand(opts Options, flags *rootFlags) (*controlP
 }
 
 func attachWritableSecretStore(runtime *controlPlaneRuntime, opts Options) error {
-	store, err := writableSecretStoreForCommand(opts)
+	store, err := writableSecretStoreForCommand(opts, runtime.ConfigPath, runtime.ConfigPathOwned)
 	if err != nil {
 		return err
 	}
@@ -462,22 +492,19 @@ func namedControlRuntime(opts Options, flags *rootFlags, name string) (*controlP
 	return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeUnknownCaller, "Selected caller is not present in local config; run agent-outbox caller list or agent-outbox caller connect <caller>.")
 }
 
-func writableSecretStoreForCommand(opts Options) (foundation.CallerSecretStore, error) {
+func writableSecretStoreForCommand(opts Options, configPath string, configPathOwned bool) (foundation.CallerSecretStore, error) {
 	if opts.SecretStore != nil {
 		store, ok := opts.SecretStore.(foundation.CallerSecretStore)
 		if !ok {
-			return nil, foundation.NewSecretStoreError("Configured local secret store cannot write caller credentials.")
+			return nil, foundation.NewSecretStoreError("Configured local credential loader cannot write caller credentials.")
 		}
 		return store, nil
 	}
-	paths, err := foundation.DefaultPathsFromOS()
+	credentialsPath, err := foundation.CredentialsPathForConfig(configPath)
 	if err != nil {
-		return nil, foundation.WrapConfigError("Could not determine local Agent Outbox secret-store path.", err)
+		return nil, err
 	}
-	if err := foundation.EnsureOwnerOnlyAppDir(filepath.Dir(paths.SecretsPath)); err != nil {
-		return nil, foundation.WrapSecretStoreError("Could not prepare local Agent Outbox secret-store directory.", err)
-	}
-	return foundation.NewEncryptedCallerSecretStoreFromOSKeyring(paths.SecretsPath, foundation.GoKeyring{}, nil)
+	return foundation.NewFileCallerSecretStore(credentialsPath, configPathOwned)
 }
 
 func runBrowserConnect(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string) (connectExchangeData, error) {
@@ -881,6 +908,35 @@ func nowForCommand(opts Options) time.Time {
 	return time.Now()
 }
 
+func approvalUsesDeviceCode(opts Options, deviceCode bool, browser bool) (bool, error) {
+	if deviceCode && browser {
+		return false, foundation.NewUsageError("--device-code and --browser cannot both be set.")
+	}
+	if deviceCode {
+		return true, nil
+	}
+	if browser {
+		return false, nil
+	}
+	if opts.OpenBrowser != nil {
+		return false, nil
+	}
+	for _, name := range []string{"SSH_CONNECTION", "SSH_TTY", "CI"} {
+		if strings.TrimSpace(opts.Env.Get(name)) != "" {
+			return true, nil
+		}
+	}
+	if runtime.GOOS == "linux" {
+		if strings.TrimSpace(opts.Env.Get("DISPLAY")) == "" && strings.TrimSpace(opts.Env.Get("WAYLAND_DISPLAY")) == "" {
+			return true, nil
+		}
+		if _, err := exec.LookPath("xdg-open"); err != nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func openBrowserURL(rawURL string) error {
 	switch runtime.GOOS {
 	case "darwin":
@@ -1059,7 +1115,7 @@ type heldLocalStateSecretStore interface {
 	DeleteCallerKeyWithHeldLocalStateLock(callerID string) error
 }
 
-func preflightConnectLocalPersistence(runtime *controlPlaneRuntime) error {
+func preflightWritableLocalPersistence(runtime *controlPlaneRuntime) error {
 	if err := foundation.PreflightConfigWrite(runtime.ConfigPath, runtime.ConfigPathOwned); err != nil {
 		return err
 	}

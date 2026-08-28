@@ -424,7 +424,7 @@ func addPageFlags(cmd *cobra.Command, page *pageFlags) {
 }
 
 func runtimeForCommand(opts Options, flags *rootFlags) (*apiRuntime, error) {
-	cfg, err := loadConfig(flags, opts.Env)
+	configPath, cfg, configPathOwned, err := loadConfigDetails(flags, opts.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -439,16 +439,22 @@ func runtimeForCommand(opts Options, flags *rootFlags) (*apiRuntime, error) {
 	if strings.TrimSpace(caller.CallerID) == "" {
 		return nil, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
 	}
-	store, err := secretStoreForCommand(opts)
+	bearer, bearerFromEnvironment, err := environmentCallerCredential(opts.Env, caller)
 	if err != nil {
 		return nil, err
 	}
-	bearer, err := store.LoadCallerKey(caller.CallerID)
-	if err != nil {
-		return nil, err
+	if !bearerFromEnvironment {
+		store, err := secretStoreForCommand(opts, configPath, configPathOwned)
+		if err != nil {
+			return nil, err
+		}
+		bearer, err = store.LoadCallerKey(caller.CallerID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if strings.TrimSpace(bearer) == "" {
-		return nil, foundation.NewSecretStoreError("Local caller secret is empty; run agent-outbox caller rotate <caller> or reconnect the caller.")
+		return nil, foundation.NewSecretStoreError("Local caller credential is empty; run agent-outbox caller rotate --caller <caller>.")
 	}
 	return &apiRuntime{
 		Client: foundation.APIClient{
@@ -460,19 +466,34 @@ func runtimeForCommand(opts Options, flags *rootFlags) (*apiRuntime, error) {
 	}, nil
 }
 
-func secretStoreForCommand(opts Options) (foundation.CallerSecretLoader, error) {
+func environmentCallerCredential(env foundation.Env, caller foundation.CallerConfig) (string, bool, error) {
+	bearer := strings.TrimSpace(env.Get(foundation.EnvAPIKey))
+	if bearer == "" {
+		return "", false, nil
+	}
+	remainder, ok := strings.CutPrefix(bearer, "aob_live_")
+	separator := strings.LastIndexByte(remainder, '_')
+	if !ok || separator <= 0 || separator == len(remainder)-1 {
+		return "", false, foundation.NewSecretStoreError("AGENT_OUTBOX_API_KEY is not a valid caller credential.")
+	}
+	keyID := remainder[:separator]
+	if expected := strings.TrimSpace(caller.KeyID); expected == "" {
+		return "", false, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing key_id in local config.")
+	} else if keyID != expected {
+		return "", false, foundation.NewSecretStoreError("AGENT_OUTBOX_API_KEY does not match the selected caller; update the secret or select its caller.")
+	}
+	return bearer, true, nil
+}
+
+func secretStoreForCommand(opts Options, configPath string, configPathOwned bool) (foundation.CallerSecretLoader, error) {
 	if opts.SecretStore != nil {
 		return opts.SecretStore, nil
 	}
-	paths, err := foundation.DefaultPathsFromOS()
-	if err != nil {
-		return nil, foundation.WrapConfigError("Could not determine local Agent Outbox secret-store path.", err)
-	}
-	masterKey, err := foundation.LoadMasterKey(foundation.GoKeyring{})
+	credentialsPath, err := foundation.CredentialsPathForConfig(configPath)
 	if err != nil {
 		return nil, err
 	}
-	return foundation.NewEncryptedCallerSecretStore(paths.SecretsPath, masterKey)
+	return foundation.NewFileCallerSecretStore(credentialsPath, configPathOwned)
 }
 
 func readInputSubmissionFile(path string) (json.RawMessage, error) {

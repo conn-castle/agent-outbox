@@ -1035,6 +1035,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   for (const stepName of [
     "Verify rollback target before deploy",
     "Require production migration credential",
+    "Publish GitHub release as Latest",
     "Require publicly downloadable release assets"
   ]) {
     const withoutRequiredStep = deployWorkflow.replace(
@@ -1067,7 +1068,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
       withoutHomebrewPublication,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
     ),
     true,
     "numbered releases must retain CLI asset and Homebrew cask publication"
@@ -1104,10 +1105,10 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   );
   assert.equal(
     validateProductionDeployWorkflow(clobberingCliAssets, "24.18.0").includes(
-      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
     ),
     true,
-    "published CLI assets must never be deleted before replacement upload succeeds"
+    "release assets must never be deleted before replacement upload succeeds"
   );
 
   const withoutCliAssetIdentityCheck = deployWorkflow.replace(
@@ -1124,7 +1125,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
       withoutCliAssetIdentityCheck,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must publish tagged CLI assets and open the guarded Homebrew cask PR after finalization"
+      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
     ),
     true,
     "release reconciliation must retain only byte-identical existing CLI assets"
@@ -1990,8 +1991,7 @@ test("validateGoModuleTooling requires pinned Go module directives and dependenc
     node: { version: "24.18.0", npm: "11.16.0" },
     go: { version: "1.26.4" },
     goTooling: {
-      cobra: { module: "github.com/spf13/cobra", version: "1.10.2" },
-      goKeyring: { module: "github.com/zalando/go-keyring", version: "0.2.8" }
+      cobra: { module: "github.com/spf13/cobra", version: "1.10.2" }
     },
     packageManager: { name: "pnpm", version: "11.9.0" },
     flyway: FLYWAY_TOOLCHAIN_FIXTURE,
@@ -2011,7 +2011,6 @@ go 1.26.4
 
 require (
   github.com/spf13/cobra v1.10.2
-  github.com/zalando/go-keyring v0.2.8
 )
 `
     ),
@@ -2034,8 +2033,7 @@ require github.com/spf13/cobra v1.10.1
     [
       "cli/go.mod go directive must be 1.26.4",
       "cli/go.mod toolchain directive must be go1.26.4 when present",
-      "cli/go.mod must require github.com/spf13/cobra v1.10.2",
-      "cli/go.mod must require github.com/zalando/go-keyring v0.2.8"
+      "cli/go.mod must require github.com/spf13/cobra v1.10.2"
     ]
   );
 
@@ -2049,14 +2047,10 @@ go 1.26.4
 
 require (
   github.com/spf13/cobra v1.10.2
-  github.com/zalando/go-keyring v0.2.8
 )
 `
     ),
-    [
-      "toolchain.json goTooling.cobra module/version is required",
-      "toolchain.json goTooling.goKeyring module/version is required"
-    ]
+    ["toolchain.json goTooling.cobra module/version is required"]
   );
 });
 

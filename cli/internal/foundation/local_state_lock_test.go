@@ -76,7 +76,7 @@ func TestLocalStateLockDeduplicatesSharedStateDirectory(t *testing.T) {
 	dir := t.TempDir()
 	lock, err := AcquireLocalStateLock(
 		filepath.Join(dir, "config.json"),
-		filepath.Join(dir, "secrets.v1.enc"),
+		filepath.Join(dir, "credentials.json"),
 	)
 	if err != nil {
 		t.Fatalf("AcquireLocalStateLock failed: %v", err)

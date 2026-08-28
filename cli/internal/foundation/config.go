@@ -18,6 +18,7 @@ const (
 	EnvBaseURL     = "AGENT_OUTBOX_BASE_URL"
 	EnvCaller      = "AGENT_OUTBOX_CALLER"
 	EnvConfigPath  = "AGENT_OUTBOX_CONFIG_PATH"
+	EnvAPIKey      = "AGENT_OUTBOX_API_KEY"
 )
 
 type Config struct {
@@ -39,8 +40,8 @@ type CallerConfig struct {
 }
 
 type Paths struct {
-	ConfigPath  string
-	SecretsPath string
+	ConfigPath      string
+	CredentialsPath string
 }
 
 func DefaultPathsFromOS() (Paths, error) {
@@ -74,9 +75,16 @@ func DefaultPaths(home string, env Env, goos string) Paths {
 	}
 
 	return Paths{
-		ConfigPath:  filepath.Join(dir, "config.json"),
-		SecretsPath: filepath.Join(dir, "secrets.v1.enc"),
+		ConfigPath:      filepath.Join(dir, "config.json"),
+		CredentialsPath: filepath.Join(dir, "credentials.json"),
 	}
+}
+
+func CredentialsPathForConfig(configPath string) (string, error) {
+	if strings.TrimSpace(configPath) == "" {
+		return "", NewAppError(CodeConfig, "Local Agent Outbox config path is required before resolving credentials.")
+	}
+	return filepath.Join(filepath.Dir(filepath.Clean(configPath)), "credentials.json"), nil
 }
 
 func LoadConfig(path string) (Config, error) {
