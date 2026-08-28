@@ -103,7 +103,7 @@ export async function CredentialOperationApprovePage({
       <AccountSummary session={session} />
       {preview.ok ? (
         <>
-          <ApprovalSummary preview={preview.data} />
+          <ApprovalSummary preview={preview.data} showCredentialDetails />
           <section className="connect-card" aria-label="Approval decision">
             <p>
               {operation === "rotate"
@@ -257,7 +257,7 @@ export async function CredentialOperationDevicePage({
       <AccountSummary session={session} />
       {preview.ok ? (
         <>
-          <ApprovalSummary preview={preview.data} />
+          <ApprovalSummary preview={preview.data} showCredentialDetails />
           <section className="connect-card" aria-labelledby="device-approve">
             <h2 id="device-approve">{approvalTitle(operation)}</h2>
             <form

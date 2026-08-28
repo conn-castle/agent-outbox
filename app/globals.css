@@ -2596,7 +2596,6 @@ body > .error-main {
   display: none;
 }
 
-.shell:has(.connect-main) .topbar,
 .shell:has(.billing-main) .topbar,
 .shell:has(.auth-main) .topbar {
   width: 100%;
@@ -2606,13 +2605,31 @@ body > .error-main {
   background: #171b1d;
 }
 
+.shell:has(.connect-main) .topbar {
+  width: min(100% - 2.5rem, 600px);
+  min-height: 4.25rem;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.shell:has(.connect-main) .product-wordmark img {
+  width: 2rem;
+  height: 2rem;
+}
+
+.shell:has(.connect-main) .product-wordmark > span {
+  color: #242321;
+  font-size: 1rem;
+}
+
 .shell:has(.connect-main) .nav,
 .shell:has(.billing-main) .nav,
 .shell:has(.auth-main) .nav {
   display: none;
 }
 
-.connect-main,
 .billing-main,
 .auth-main {
   width: min(100% - 3rem, 760px);
@@ -2622,38 +2639,44 @@ body > .error-main {
   color: #202426;
 }
 
-.app-page-back {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2.4rem;
-  margin-bottom: 1.3rem;
-  color: #6c7376;
-  font-size: 0.72rem;
-  font-weight: 680;
-  text-decoration: none;
+.connect-main {
+  display: grid;
+  align-content: start;
+  width: min(100% - 2.5rem, 600px);
+  min-height: calc(100dvh - 4.25rem);
+  margin: 0 auto;
+  padding: clamp(1rem, 2vw, 1.5rem) 0 2rem;
+  color: #242321;
+  font-family: Arial, Helvetica, sans-serif;
 }
 
-.app-page-back::before {
-  margin-right: 0.4rem;
-  content: "←";
+.shell:has(.connect-main) .topbar {
+  font-family: Arial, Helvetica, sans-serif;
 }
 
-.app-page-back:hover {
-  color: #202426;
-}
-
-.connect-intro,
 .billing-intro {
   padding-bottom: 1.8rem;
   border-bottom: 1px solid rgba(39, 42, 43, 0.14);
 }
 
-.connect-main .eyebrow,
+.connect-surface {
+  overflow: hidden;
+  border: 1px solid #ded9d0;
+  border-radius: 1.25rem;
+  background: #fffdf9;
+  box-shadow:
+    0 1px 2px rgba(41, 35, 28, 0.03),
+    0 1.5rem 4rem rgba(65, 53, 40, 0.08);
+}
+
+.connect-intro {
+  padding: clamp(1.75rem, 5vw, 2.5rem) clamp(1.5rem, 5vw, 2.5rem) 0;
+}
+
 .billing-main .eyebrow {
   color: #c66426;
 }
 
-.connect-title,
 .billing-main .title {
   max-width: 44rem;
   margin: 0.65rem 0 0;
@@ -2665,7 +2688,17 @@ body > .error-main {
   text-wrap: balance;
 }
 
-.connect-intro > p:last-child,
+.connect-title {
+  max-width: 31rem;
+  margin: 1.15rem 0 0;
+  color: #242321;
+  font-size: clamp(1.75rem, 5vw, 2.15rem);
+  font-weight: 680;
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+
 .billing-main .lede {
   max-width: 38rem;
   margin: 1rem 0 0;
@@ -2674,13 +2707,18 @@ body > .error-main {
   line-height: 1.6;
 }
 
-.connect-content {
-  display: grid;
-  gap: 0.85rem;
-  margin-top: 1.2rem;
+.connect-intro > p:last-child {
+  max-width: 31rem;
+  margin: 0.8rem 0 0;
+  color: #686662;
+  font-size: 0.98rem;
+  line-height: 1.55;
 }
 
-.connect-main .connect-card,
+.connect-content {
+  padding: clamp(1.5rem, 5vw, 2.5rem);
+}
+
 .billing-main .panel,
 .auth-main .panel {
   margin: 0;
@@ -2691,6 +2729,24 @@ body > .error-main {
   color: #202426;
   box-shadow: 0 0.8rem 2.4rem rgba(56, 49, 42, 0.045);
   backdrop-filter: blur(18px);
+}
+
+.connect-main .connect-card {
+  margin: 0;
+  padding: 1.35rem 1.5rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #202426;
+  box-shadow: none;
+}
+
+.connect-flow-card > * {
+  padding: 0;
+}
+
+.connect-flow-card > * + * {
+  border-top: 0;
 }
 
 .connect-main .connect-card h2,
@@ -2708,18 +2764,234 @@ body > .error-main {
   color: #646c70;
 }
 
-.connect-account-card {
-  background: rgba(235, 231, 222, 0.72) !important;
-  box-shadow: none !important;
+.connect-main .connect-flow-card {
+  overflow: hidden;
+  padding: 0;
 }
 
-.connect-request-card {
-  border-left: 3px solid #d97832 !important;
+.connect-main .connect-flow-card > .connect-card {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.connect-flow-card > * {
+  padding: 1.25rem 1.5rem;
+}
+
+.connect-flow-card > * + * {
+  border-top: 1px solid rgba(39, 42, 43, 0.12);
+}
+
+.connect-account-summary {
+  background: rgba(235, 231, 222, 0.5);
+}
+
+.connect-request-summary {
+  background: #fffdf9;
+}
+
+.connect-flow-card-success {
+  border-color: rgba(61, 119, 83, 0.28) !important;
+}
+
+.connect-flow-card-error {
+  border-color: rgba(176, 74, 59, 0.28) !important;
 }
 
 .connect-error-card {
   border-color: rgba(176, 74, 59, 0.3) !important;
   background: rgba(251, 236, 232, 0.9) !important;
+}
+
+.connect-section-label {
+  margin: 0 0 0.75rem;
+  color: #71787b !important;
+  font-size: 0.68rem;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.connect-caller-row,
+.connect-account-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.connect-terminal-mark,
+.connect-account-mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 0.7rem;
+  font-size: 0.74rem;
+  font-weight: 780;
+}
+
+.connect-terminal-mark {
+  background: #24292b;
+  color: #f6ae63;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.connect-account-mark {
+  border: 1px solid rgba(39, 42, 43, 0.14);
+  background: #fffdf9;
+  color: #a84f1d;
+}
+
+.connect-caller-row h2,
+.connect-account-row strong {
+  display: block;
+  margin: 0;
+  color: #202426;
+  font-size: 1rem;
+  font-weight: 720;
+}
+
+.connect-caller-row p,
+.connect-account-row p {
+  margin: 0.18rem 0 0;
+  color: #697174 !important;
+  font-size: 0.77rem;
+}
+
+.connect-request-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid rgba(39, 42, 43, 0.1);
+  color: #4f575a;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.connect-request-meta time {
+  color: #747b7e;
+  font-weight: 560;
+  white-space: nowrap;
+}
+
+.connect-current-key {
+  margin: 0.65rem 0 0;
+  color: #6a7275 !important;
+  font-size: 0.74rem;
+}
+
+.device-code-hero {
+  display: block;
+  width: 100%;
+  margin: 1.15rem 0 0;
+  padding: 1rem;
+  border: 1px solid rgba(198, 100, 38, 0.24);
+  border-radius: 0.75rem;
+  background: #fff6e9;
+  color: #272b2d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(1.65rem, 8vw, 2.1rem);
+  font-weight: 780;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-align: center;
+}
+
+.connect-status-icon {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-bottom: 1rem;
+  border-radius: 50%;
+  background: #e4f2e8;
+  color: #34704b;
+}
+
+.connect-status-icon::before {
+  width: 0.45rem;
+  height: 0.8rem;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: "";
+  transform: translateY(-0.08rem) rotate(45deg);
+}
+
+.connect-surface-canceled .connect-status-icon {
+  background: #f8e8e4;
+  color: #a24638;
+}
+
+.connect-surface-canceled .connect-status-icon::before {
+  width: auto;
+  height: auto;
+  border: 0;
+  content: "×";
+  font-size: 1.3rem;
+  font-weight: 800;
+  transform: none;
+}
+
+.connect-status-pill {
+  display: inline-flex;
+  width: fit-content;
+  margin: 0 0 0.65rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  background: #f8e8e4;
+  color: #933e32 !important;
+  font-size: 0.68rem;
+  font-weight: 780;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.connect-status-pill-success {
+  background: #e4f2e8;
+  color: #34704b !important;
+}
+
+.connect-result h2 {
+  margin-bottom: 0.45rem !important;
+  font-size: 1.2rem !important;
+}
+
+.connect-result > p:last-child {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.connect-technical-details summary {
+  color: #5b6366;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 680;
+}
+
+.connect-technical-details[open] summary {
+  margin-bottom: 1rem;
+}
+
+.connect-decision h2 {
+  margin: 0 0 0.65rem;
+  color: #202426;
+  font-size: 1rem;
+  letter-spacing: -0.025em;
+}
+
+.connect-result > p:first-child,
+.connect-decision > p:first-child {
+  margin-top: 0;
+}
+
+.connect-result > p:last-child,
+.connect-decision > p:last-child {
+  margin-bottom: 0;
 }
 
 .connect-main .connect-kv {
@@ -2760,13 +3032,504 @@ body > .error-main {
 }
 
 .connect-main .connect-actions {
-  margin-top: 1rem;
+  margin-top: 1.15rem;
+}
+
+.connect-flow-card > .connect-actions {
+  margin-top: 0;
+}
+
+.connect-actions form {
+  display: contents;
 }
 
 .connect-main .button,
 .billing-main .button,
 .auth-main .button {
   border-radius: 0.65rem;
+}
+
+/* Caller connection authorization */
+
+.connect-status-icon {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin: 0;
+  border: 1px solid #ead7c5;
+  border-radius: 50%;
+  background: #fff5e9;
+  color: #b75d25;
+}
+
+.connect-status-icon svg,
+.connect-identity-icon svg {
+  width: 1.35rem;
+  height: 1.35rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.connect-surface-success .connect-status-icon {
+  border-color: #cde5d7;
+  background: #eef8f2;
+  color: #27714a;
+}
+
+.connect-surface-canceled .connect-status-icon {
+  border-color: #e7d7d3;
+  background: #faf1ef;
+  color: #9b4d42;
+}
+
+.connect-status-icon::before,
+.connect-surface-canceled .connect-status-icon::before {
+  content: none;
+}
+
+.connect-main .connect-card {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #242321;
+  box-shadow: none;
+}
+
+.connect-main .connect-card p {
+  color: #686662;
+}
+
+.connect-identity-panel {
+  position: relative;
+  padding: 1.1rem;
+  border: 1px solid #e6e1d9;
+  border-radius: 0.9rem;
+  background: #faf8f4;
+}
+
+.connect-flow-context {
+  display: grid;
+  gap: 0.18rem;
+  margin: -0.1rem 0 0.9rem;
+  padding: 0 0 0.7rem;
+  border-bottom: 1px solid #e6e1d9;
+}
+
+.connect-flow-context strong {
+  color: #9b4c1d;
+  font-size: 0.76rem;
+  font-weight: 680;
+}
+
+.connect-flow-context span {
+  color: #706b64;
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.connect-surface-dense .connect-intro {
+  padding-top: 1.5rem;
+}
+
+.connect-surface-dense .connect-title {
+  margin-top: 0.75rem;
+}
+
+.connect-surface-dense .connect-intro > p:last-child {
+  margin-top: 0.55rem;
+}
+
+.connect-surface-dense .connect-content {
+  padding-top: 1.25rem;
+  padding-bottom: 1.5rem;
+}
+
+.connect-surface-dense .connect-code-panel {
+  margin-bottom: 0.85rem;
+  padding: 1rem;
+}
+
+.connect-surface-dense .connect-identity-panel {
+  padding: 0.9rem;
+}
+
+.connect-surface-dense .connect-flow-context {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.55rem;
+}
+
+.connect-surface-dense .connect-identity-connector {
+  height: 0.85rem;
+  margin-block: 0.2rem;
+}
+
+.connect-surface-dense .connect-expiry-row {
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+}
+
+.connect-surface-dense .connect-trust-note {
+  margin-top: 0.8rem !important;
+}
+
+.connect-surface-dense .connect-actions {
+  margin-top: 1.1rem;
+}
+
+.connect-device-decision .connect-actions {
+  margin-top: 0;
+}
+
+.connect-flow-card > .connect-trust-note,
+.connect-flow-card > .connect-actions,
+.connect-flow-card > .connect-device-decision {
+  padding-block: 1rem;
+}
+
+.connect-identity-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.connect-identity-row > div {
+  min-width: 0;
+}
+
+.connect-identity-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid #e6d5c5;
+  border-radius: 0.75rem;
+  background: #fff8ef;
+  color: #b75d25;
+}
+
+.connect-account-mark {
+  border-color: #dedbd5;
+  background: #fff;
+}
+
+.connect-account-mark img {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.connect-identity-label {
+  display: block;
+  margin-bottom: 0.1rem;
+  color: #85817b;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.connect-identity-row strong {
+  display: block;
+  overflow: hidden;
+  color: #292724;
+  font-size: 0.98rem;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connect-identity-row p {
+  margin: 0.12rem 0 0;
+  overflow: hidden;
+  color: #77736d !important;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connect-identity-connector {
+  display: block;
+  width: 1px;
+  height: 1.15rem;
+  margin: 0.35rem 0 0.35rem 1.35rem;
+  background: #d8d2c9;
+}
+
+.connect-expiry-row {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #e6e1d9;
+  color: #6e6a64;
+  font-size: 0.76rem;
+}
+
+.connect-credential-details {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #e6e1d9;
+}
+
+.connect-credential-details .connect-expiry-row {
+  margin: 0 0 0.75rem;
+  padding: 0;
+  border: 0;
+}
+
+.connect-inline-details {
+  margin-top: 0.55rem;
+}
+
+.connect-inline-details summary,
+.connect-technical-details summary {
+  color: #5f5b55;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.connect-inline-details dl {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.75rem 0 0;
+}
+
+.connect-inline-details dl div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.connect-inline-details dt,
+.connect-main .connect-kv dt {
+  color: #8a857e;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.connect-inline-details dd,
+.connect-main .connect-kv dd {
+  margin: 0;
+  color: #4e4a45;
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.connect-inline-details code,
+.connect-main code {
+  overflow-wrap: anywhere;
+  background: transparent;
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+}
+
+.connect-trust-note,
+.connect-outcome-note {
+  margin: 1.1rem 0 0 !important;
+  color: #77726b !important;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.connect-outcome-note {
+  padding-left: 0;
+}
+
+.connect-code-panel {
+  margin-bottom: 1.15rem;
+  padding: 1.25rem;
+  border: 1px solid #ddd7ce;
+  border-radius: 0.9rem;
+  background: #f8f5ef;
+  text-align: center;
+}
+
+.connect-code-panel > span {
+  display: block;
+  color: #77726b;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.device-code-hero {
+  display: block;
+  width: 100%;
+  margin: 0.7rem 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #242321;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(1.85rem, 8vw, 2.4rem);
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.connect-main .connect-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.connect-actions form {
+  display: contents;
+}
+
+.connect-main .button {
+  justify-content: center;
+  min-height: 2.9rem;
+  padding-inline: 1.25rem;
+  border: 1px solid #a94f1c;
+  border-radius: 0.7rem;
+  background: #b75d25;
+  color: #fffdf9;
+  font-size: 0.88rem;
+  font-weight: 650;
+  box-shadow: none;
+}
+
+.connect-main .button:hover {
+  border-color: #934318;
+  background: #9f4b1b;
+  color: #fff;
+}
+
+.connect-main .button:active {
+  transform: scale(0.985);
+}
+
+.connect-main .button.secondary {
+  border-color: #d6d1c9;
+  background: transparent;
+  color: #5b5751;
+}
+
+.connect-main .button.secondary:hover {
+  border-color: #bbb5ac;
+  background: #f5f1eb;
+  color: #292724;
+}
+
+.connect-outcome-summary {
+  padding: 1.1rem;
+  border: 1px solid #e6e1d9;
+  border-radius: 0.9rem;
+  background: #faf8f4;
+}
+
+.connect-flow-card-error {
+  padding: 1.1rem !important;
+  border: 1px solid #ecd4cf !important;
+  border-radius: 0.9rem !important;
+  background: #fff9f7 !important;
+}
+
+.connect-flow-card-error .connect-outcome-summary {
+  border-color: #e7cbc5;
+  background: #fffdfc;
+}
+
+.connect-handoff {
+  margin-bottom: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #cde5d7;
+  border-radius: 0.9rem;
+  background: #f1f8f4;
+}
+
+.connect-handoff strong {
+  display: block;
+  color: #245f40;
+  font-size: 0.98rem;
+  font-weight: 680;
+}
+
+.connect-handoff p {
+  margin: 0.25rem 0 0;
+  color: #52685a !important;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.connect-secondary-link {
+  display: block;
+  width: fit-content;
+  margin: 1.35rem auto 0;
+  color: #6a6660;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-underline-offset: 0.2em;
+}
+
+.connect-secondary-link:hover {
+  color: #292724;
+}
+
+.connect-outcome-summary > span {
+  display: block;
+  margin-bottom: 0.9rem;
+  color: #6e6a64;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.connect-outcome-summary > span strong {
+  color: #373430;
+  font-weight: 650;
+}
+
+.connect-outcome-summary .connect-account-row {
+  padding-top: 0.9rem;
+  border-top: 1px solid #e6e1d9;
+}
+
+.connect-technical-details {
+  margin-top: 1rem;
+}
+
+.connect-technical-details[open] summary {
+  margin-bottom: 0.8rem;
+}
+
+.connect-main .connect-kv {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  margin: 0;
+}
+
+.connect-main .connect-kv div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.connect-error-card h2 {
+  margin: 0 0 0.5rem;
+  color: #292724;
+  font-size: 1rem;
+}
+
+.connect-error-card > p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.connect-footer-note {
+  margin: 1.15rem 0 0;
+  color: #85817b;
+  font-size: 0.72rem;
+  text-align: center;
 }
 
 .billing-actions-panel {
@@ -2988,16 +3751,59 @@ body > .error-main {
 }
 
 @media (max-width: 700px) {
-  .connect-main,
   .billing-main,
   .auth-main {
     width: min(100% - 2rem, 760px);
     padding-top: 2.5rem;
   }
 
-  .connect-title,
+  .connect-main {
+    width: 100%;
+    padding: 0 0 2rem;
+  }
+
+  .shell:has(.connect-main) {
+    background: #fffdf9;
+  }
+
+  .shell:has(.connect-main) .topbar {
+    width: 100%;
+    padding: 0 1.25rem;
+    border-bottom: 1px solid #ece7df;
+    background: #fffdf9;
+  }
+
+  .connect-surface {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
   .billing-main .title {
     font-size: clamp(2.65rem, 13vw, 3.5rem);
+  }
+
+  .connect-title {
+    font-size: clamp(1.75rem, 8vw, 2rem);
+  }
+
+  .connect-intro {
+    padding: 1.75rem 1.25rem 0;
+  }
+
+  .connect-content {
+    padding: 1.5rem 1.25rem 2rem;
+  }
+
+  .connect-main .connect-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .connect-actions .button {
+    justify-content: center;
+    width: 100%;
+    min-height: 3rem;
   }
 
   .connect-main .connect-kv,
