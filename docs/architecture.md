@@ -46,8 +46,13 @@ Production runs on Cloudflare Workers/OpenNext against production service
 resources. There is no persistent staging environment yet; the protected
 production workflow instead certifies the exact `main` SHA, verifies the live
 deployment before numbering the release, and automatically restores the prior
-Worker when the deploy fails to verify. A tagging-only failure leaves the
-verified deploy live rather than reverting healthy production.
+Worker if any failure occurs after deployment begins but before the prepared
+GitHub Release is published. Draft metadata and byte-verified CLI assets are
+prepared before production changes; publication is the transaction commit point.
+An exceptional protected repair can finish an already-deployed unpublished
+candidate only from the failed run's unexpired certified artifact and only while
+production still serves that exact candidate; it cannot rebuild or redeploy the
+release.
 
 ## System Contract Ownership
 

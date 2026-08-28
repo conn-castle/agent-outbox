@@ -5,10 +5,14 @@ import {
   classifyFinalizeFailure,
   classifyReleaseTagState,
   githubReleaseCreateArgs,
+  githubReleasePublishArgs,
+  PublicationStateUnknownError,
   releaseMetadata,
   requireProductionWorkflowContext,
-  runReleaseFinalization,
+  runReleaseDraftPreparation,
+  runReleasePublication,
   selectRollbackTarget,
+  validateReleaseRepairSource,
   validateWorkerVersionReleaseTag
 } from "../scripts/production-release.mjs";
 
@@ -18,6 +22,49 @@ const RELEASE = {
   expectedSha: "1111111111111111111111111111111111111111"
 };
 const OTHER_SHA = "2222222222222222222222222222222222222222";
+/** @type {any} */
+const REPAIR_SOURCE = {
+  sourceRunId: "123456789",
+  releaseTag: RELEASE.releaseTag,
+  candidateSha: RELEASE.expectedSha,
+  run: {
+    id: 123456789,
+    path: ".github/workflows/deploy-production.yml",
+    event: "workflow_dispatch",
+    head_branch: "main",
+    head_sha: RELEASE.expectedSha,
+    status: "completed",
+    conclusion: "failure"
+  },
+  jobs: {
+    jobs: [
+      "Certify exact release SHA / make release-check",
+      "Certify exact release SHA / make browser",
+      "Certify exact release SHA / make migration-replay",
+      "Build and validate release CLI",
+      "Deploy and verify production Worker"
+    ]
+      .map((name) => ({
+        name,
+        conclusion: "success",
+        head_sha: RELEASE.expectedSha
+      }))
+      .concat({
+        name: "Tag verified production release",
+        conclusion: "failure",
+        head_sha: RELEASE.expectedSha
+      })
+  },
+  artifacts: {
+    artifacts: [
+      {
+        name: `agent-outbox-release-${RELEASE.expectedSha}`,
+        expired: false
+      }
+    ]
+  },
+  candidatePackageJson: { name: "agent-outbox", version: "1.2.3" }
+};
 
 /**
  * Scripted release gateway: each method returns (or throws, for Error items) the
@@ -25,18 +72,23 @@ const OTHER_SHA = "2222222222222222222222222222222222222222";
  * answers every call. `sleep` is a no-op so retry tests run instantly.
  *
  * @param {object} script
- * @param {Array<{ tagCommit: string | null, releaseExists: boolean } | Error>} [script.reconcile]
+ * @param {Array<object | Error>} [script.reconcile]
  * @param {Array<{ status: number, stderr?: string, error?: Error } | Error>} [script.createRelease]
- * @param {Array<string | null | Error>} [script.tagCommit]
+ * @param {Array<{ status: number, stderr?: string, error?: Error } | Error>} [script.publishRelease]
  */
 function scriptedGateway({
   reconcile = [],
   createRelease = [],
-  tagCommit = []
+  publishRelease = []
 }) {
-  const calls = { reconcile: 0, createRelease: 0, tagCommit: 0, sleep: 0 };
+  const calls = {
+    reconcile: 0,
+    createRelease: 0,
+    publishRelease: 0,
+    sleep: 0
+  };
   /**
-   * @param {"reconcile" | "createRelease" | "tagCommit"} name
+   * @param {"reconcile" | "createRelease" | "publishRelease"} name
    * @param {any[]} queue
    */
   const take = (name, queue) => {
@@ -52,7 +104,7 @@ function scriptedGateway({
     calls,
     reconcile: () => take("reconcile", reconcile),
     createRelease: () => take("createRelease", createRelease),
-    tagCommit: () => take("tagCommit", tagCommit),
+    publishRelease: () => take("publishRelease", publishRelease),
     sleep: () => {
       calls.sleep += 1;
     }
@@ -77,6 +129,50 @@ test("production release metadata comes from a stable package version", () => {
   );
 });
 
+test("release repair accepts only the exact failed certified production source", () => {
+  assert.deepEqual(validateReleaseRepairSource(REPAIR_SOURCE), {
+    artifactName: `agent-outbox-release-${RELEASE.expectedSha}`
+  });
+
+  /** @type {[string, (source: any) => void][]} */
+  const invalidCases = [
+    ["automatic run", (source) => (source.run.event = "push")],
+    ["wrong candidate", (source) => (source.run.head_sha = OTHER_SHA)],
+    ["successful run", (source) => (source.run.conclusion = "success")],
+    [
+      "missing certification",
+      (source) => {
+        source.jobs.jobs = source.jobs.jobs.filter(
+          (/** @type {any} */ job) =>
+            job.name !== "Certify exact release SHA / make browser"
+        );
+      }
+    ],
+    [
+      "failed deploy",
+      (source) => {
+        source.jobs.jobs.find(
+          (/** @type {any} */ job) =>
+            job.name === "Deploy and verify production Worker"
+        ).conclusion = "failure";
+      }
+    ],
+    [
+      "expired artifact",
+      (source) => (source.artifacts.artifacts[0].expired = true)
+    ],
+    [
+      "wrong version",
+      (source) => (source.candidatePackageJson.version = "1.2.4")
+    ]
+  ];
+  for (const [description, mutate] of invalidCases) {
+    const source = structuredClone(REPAIR_SOURCE);
+    mutate(source);
+    assert.throws(() => validateReleaseRepairSource(source), description);
+  }
+});
+
 test("release creation remains draft until certified CLI assets are uploaded", () => {
   const args = githubReleaseCreateArgs(
     RELEASE.repository,
@@ -85,6 +181,18 @@ test("release creation remains draft until certified CLI assets are uploaded", (
   );
   assert.equal(args.includes("--draft"), true);
   assert.equal(args.includes("--latest"), false);
+  assert.deepEqual(
+    githubReleasePublishArgs(RELEASE.repository, RELEASE.releaseTag),
+    [
+      "release",
+      "edit",
+      RELEASE.releaseTag,
+      "--repo",
+      RELEASE.repository,
+      "--draft=false",
+      "--latest"
+    ]
+  );
 });
 
 test("manual rollback accepts only a Worker version stamped with the requested release tag", () => {
@@ -245,34 +353,76 @@ test("rollback target requires one fully active Worker version and a live releas
   );
 });
 
-test("finalize classifies release/tag state against the candidate commit", () => {
+test("release transaction classifies drafts by target and publications by tag", () => {
   const sha = "1111111111111111111111111111111111111111";
   const other = "2222222222222222222222222222222222222222";
   assert.equal(
-    classifyReleaseTagState({ tagCommit: null, releaseExists: false }, sha),
+    classifyReleaseTagState({ tagCommit: null, release: null }, sha),
     "absent"
   );
   assert.equal(
-    classifyReleaseTagState({ tagCommit: sha, releaseExists: false }, sha),
+    classifyReleaseTagState({ tagCommit: sha, release: null }, sha),
     "tag_orphan_correct"
   );
   assert.equal(
-    classifyReleaseTagState({ tagCommit: other, releaseExists: false }, sha),
+    classifyReleaseTagState({ tagCommit: other, release: null }, sha),
     "tag_wrong_sha"
   );
   assert.equal(
-    classifyReleaseTagState({ tagCommit: sha, releaseExists: true }, sha),
-    "released_correct"
+    classifyReleaseTagState(
+      {
+        tagCommit: null,
+        release: {
+          isDraft: true,
+          tagName: "v1.2.3",
+          targetCommitish: sha
+        }
+      },
+      sha
+    ),
+    "draft_correct"
   );
   assert.equal(
-    classifyReleaseTagState({ tagCommit: other, releaseExists: true }, sha),
-    "released_wrong_sha"
+    classifyReleaseTagState(
+      {
+        tagCommit: null,
+        release: {
+          isDraft: true,
+          tagName: "v1.2.3",
+          targetCommitish: other
+        }
+      },
+      sha
+    ),
+    "draft_wrong_sha"
   );
-  // A published release whose tag cannot be resolved must never read as correct;
-  // finalize must refuse it rather than claim idempotent success.
   assert.equal(
-    classifyReleaseTagState({ tagCommit: null, releaseExists: true }, sha),
-    "released_wrong_sha"
+    classifyReleaseTagState(
+      {
+        tagCommit: sha,
+        release: {
+          isDraft: false,
+          tagName: "v1.2.3",
+          targetCommitish: other
+        }
+      },
+      sha
+    ),
+    "published_correct"
+  );
+  assert.equal(
+    classifyReleaseTagState(
+      {
+        tagCommit: null,
+        release: {
+          isDraft: false,
+          tagName: "v1.2.3",
+          targetCommitish: sha
+        }
+      },
+      sha
+    ),
+    "published_wrong_sha"
   );
 });
 
@@ -336,6 +486,11 @@ test("production mutations require the sanctioned GitHub Actions context", () =>
     assert.doesNotThrow(() =>
       requireProductionWorkflowContext("deploy-production.yml")
     );
+    process.env.GITHUB_WORKFLOW_REF =
+      "owner/repo/.github/workflows/repair-production-release.yml@refs/heads/main";
+    assert.doesNotThrow(() =>
+      requireProductionWorkflowContext("repair-production-release.yml")
+    );
     // The deploy-context token must not satisfy the rollback workflow guard.
     assert.throws(
       () => requireProductionWorkflowContext("rollback-production.yml"),
@@ -346,115 +501,175 @@ test("production mutations require the sanctioned GitHub Actions context", () =>
   }
 });
 
-test("finalize creates and verifies a release when none exists", async () => {
+const DRAFT = {
+  tagCommit: null,
+  release: {
+    isDraft: true,
+    tagName: RELEASE.releaseTag,
+    targetCommitish: RELEASE.expectedSha
+  }
+};
+const PUBLISHED = {
+  tagCommit: RELEASE.expectedSha,
+  release: {
+    isDraft: false,
+    tagName: RELEASE.releaseTag,
+    targetCommitish: RELEASE.expectedSha
+  }
+};
+
+test("draft preparation creates and reconciles an untagged exact-candidate draft", async () => {
   const gateway = scriptedGateway({
-    reconcile: [{ tagCommit: null, releaseExists: false }],
-    createRelease: [{ status: 0 }],
-    tagCommit: [RELEASE.expectedSha]
+    reconcile: [{ tagCommit: null, release: null }, DRAFT],
+    createRelease: [{ status: 0 }]
   });
-  await runReleaseFinalization(gateway, RELEASE);
+  await runReleaseDraftPreparation(gateway, RELEASE);
+  assert.equal(gateway.calls.createRelease, 1);
+  assert.equal(gateway.calls.reconcile, 2);
+});
+
+test("draft preparation adopts an orphan tag at the candidate commit", async () => {
+  const gateway = scriptedGateway({
+    reconcile: [{ tagCommit: RELEASE.expectedSha, release: null }, DRAFT],
+    createRelease: [{ status: 0 }]
+  });
+  await runReleaseDraftPreparation(gateway, RELEASE);
   assert.equal(gateway.calls.createRelease, 1);
 });
 
-test("finalize adopts an orphan tag left at the candidate commit", async () => {
+test("draft preparation treats a lost create response as idempotent success", async () => {
   const gateway = scriptedGateway({
-    reconcile: [{ tagCommit: RELEASE.expectedSha, releaseExists: false }],
-    createRelease: [{ status: 0 }],
-    tagCommit: [RELEASE.expectedSha]
+    reconcile: [{ tagCommit: null, release: null }, DRAFT],
+    createRelease: [{ status: 1, stderr: "error: request timed out" }]
   });
-  await runReleaseFinalization(gateway, RELEASE);
-  assert.equal(gateway.calls.createRelease, 1);
-});
-
-test("finalize treats a lost-response transient create as idempotent success", async () => {
-  const gateway = scriptedGateway({
-    reconcile: [
-      { tagCommit: null, releaseExists: false },
-      { tagCommit: RELEASE.expectedSha, releaseExists: true }
-    ],
-    createRelease: [{ status: 1, stderr: "error: request timed out" }],
-    tagCommit: []
-  });
-  await runReleaseFinalization(gateway, RELEASE);
-  // The second reconcile finds the release the lost-response create actually made.
+  await runReleaseDraftPreparation(gateway, RELEASE);
   assert.equal(gateway.calls.reconcile, 2);
   assert.equal(gateway.calls.createRelease, 1);
 });
 
-test("finalize re-reconciles instead of failing when create reports already_exists", async () => {
+test("draft preparation re-reconciles when create reports already_exists", async () => {
   const gateway = scriptedGateway({
-    reconcile: [
-      { tagCommit: null, releaseExists: false },
-      { tagCommit: RELEASE.expectedSha, releaseExists: true }
-    ],
+    reconcile: [{ tagCommit: null, release: null }, DRAFT],
     createRelease: [
       { status: 1, stderr: "HTTP 422: Validation Failed (already_exists)" }
-    ],
-    tagCommit: []
+    ]
   });
-  await runReleaseFinalization(gateway, RELEASE);
+  await runReleaseDraftPreparation(gateway, RELEASE);
   assert.equal(gateway.calls.reconcile, 2);
 });
 
-test("finalize retries a transient reconcile read failure", async () => {
+test("draft preparation retries a transient reconcile read failure", async () => {
   const gateway = scriptedGateway({
     reconcile: [
       new Error("gh api repos/x/y/releases/tags/v1.2.3 failed: HTTP 503"),
-      { tagCommit: null, releaseExists: false }
+      DRAFT
     ],
-    createRelease: [{ status: 0 }],
-    tagCommit: [RELEASE.expectedSha]
+    createRelease: []
   });
-  await runReleaseFinalization(gateway, RELEASE);
+  await runReleaseDraftPreparation(gateway, RELEASE);
   assert.equal(gateway.calls.reconcile, 2);
-  assert.equal(gateway.calls.createRelease, 1);
+  assert.equal(gateway.calls.createRelease, 0);
 });
 
-test("finalize tolerates read-after-write lag on the finalized tag", async () => {
+test("draft preparation refuses a draft targeting another candidate", async () => {
   const gateway = scriptedGateway({
-    reconcile: [{ tagCommit: null, releaseExists: false }],
-    createRelease: [{ status: 0 }],
-    tagCommit: [null, RELEASE.expectedSha]
-  });
-  await runReleaseFinalization(gateway, RELEASE);
-  assert.equal(gateway.calls.tagCommit, 2);
-});
-
-test("finalize refuses to publish when the created tag resolves to a different commit", async () => {
-  const gateway = scriptedGateway({
-    reconcile: [{ tagCommit: null, releaseExists: false }],
-    createRelease: [{ status: 0 }],
-    tagCommit: [OTHER_SHA]
+    reconcile: [
+      {
+        tagCommit: null,
+        release: {
+          isDraft: true,
+          tagName: RELEASE.releaseTag,
+          targetCommitish: OTHER_SHA
+        }
+      }
+    ]
   });
   await assert.rejects(
-    runReleaseFinalization(gateway, RELEASE),
-    /resolved to 2222.*expected 1111/
-  );
-});
-
-test("finalize refuses to reuse a release number that already points at another commit", async () => {
-  const gateway = scriptedGateway({
-    reconcile: [{ tagCommit: OTHER_SHA, releaseExists: true }],
-    createRelease: [],
-    tagCommit: []
-  });
-  await assert.rejects(
-    runReleaseFinalization(gateway, RELEASE),
-    /refusing to reuse the release number/
+    runReleaseDraftPreparation(gateway, RELEASE),
+    /not bound to candidate/
   );
   assert.equal(gateway.calls.createRelease, 0);
 });
 
-test("finalize fails loud on a permanent create failure", async () => {
+test("draft preparation fails loud on a permanent create failure", async () => {
   const gateway = scriptedGateway({
-    reconcile: [{ tagCommit: null, releaseExists: false }],
+    reconcile: [{ tagCommit: null, release: null }],
     createRelease: [
       { status: 1, stderr: "HTTP 403: Resource not accessible by integration" }
-    ],
-    tagCommit: []
+    ]
   });
   await assert.rejects(
-    runReleaseFinalization(gateway, RELEASE),
+    runReleaseDraftPreparation(gateway, RELEASE),
     /gh release create failed/
+  );
+});
+
+test("publication publishes the prepared draft and proves the exact tag", async () => {
+  const gateway = scriptedGateway({
+    reconcile: [DRAFT, PUBLISHED],
+    publishRelease: [{ status: 0 }]
+  });
+  await runReleasePublication(gateway, RELEASE);
+  assert.equal(gateway.calls.publishRelease, 1);
+  assert.equal(gateway.calls.reconcile, 2);
+});
+
+test("publication reconciles a lost publish response", async () => {
+  const gateway = scriptedGateway({
+    reconcile: [DRAFT, PUBLISHED],
+    publishRelease: [{ status: 1, stderr: "request timed out" }]
+  });
+  await runReleasePublication(gateway, RELEASE);
+  assert.equal(gateway.calls.publishRelease, 1);
+});
+
+test("publication is idempotent after the exact release is public", async () => {
+  const gateway = scriptedGateway({ reconcile: [PUBLISHED] });
+  await runReleasePublication(gateway, RELEASE);
+  assert.equal(gateway.calls.publishRelease, 0);
+});
+
+test("publication refuses a wrong-candidate draft", async () => {
+  const gateway = scriptedGateway({
+    reconcile: [
+      {
+        tagCommit: null,
+        release: {
+          isDraft: true,
+          tagName: RELEASE.releaseTag,
+          targetCommitish: OTHER_SHA
+        }
+      }
+    ]
+  });
+  await assert.rejects(
+    runReleasePublication(gateway, RELEASE),
+    /not an exact-candidate draft/
+  );
+});
+
+test("publication fails loud on a permanent provider failure", async () => {
+  const gateway = scriptedGateway({
+    reconcile: [DRAFT],
+    publishRelease: [
+      { status: 1, stderr: "HTTP 403: Resource not accessible by integration" }
+    ]
+  });
+  await assert.rejects(
+    runReleasePublication(gateway, RELEASE),
+    /gh release publish failed/
+  );
+});
+
+test("publication refuses rollback when a transient publish outcome stays ambiguous", async () => {
+  const gateway = scriptedGateway({
+    reconcile: [DRAFT],
+    publishRelease: [{ status: 1, stderr: "request timed out" }]
+  });
+  await assert.rejects(
+    runReleasePublication(gateway, RELEASE),
+    (error) =>
+      error instanceof PublicationStateUnknownError &&
+      /refusing automatic rollback/.test(error.message)
   );
 });

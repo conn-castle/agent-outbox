@@ -31,6 +31,7 @@ import {
   validateRuntimeProofScope,
   validateToolchainPackage,
   validateProductionDeployWorkflow,
+  validateProductionReleaseRepairWorkflow,
   validateProductionRollbackWorkflow,
   validateWorkflowGoChecks,
   validateWranglerCronSchedule,
@@ -890,6 +891,13 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     new URL("../.github/workflows/rollback-production.yml", import.meta.url),
     "utf8"
   );
+  const repairWorkflow = readFileSync(
+    new URL(
+      "../.github/workflows/repair-production-release.yml",
+      import.meta.url
+    ),
+    "utf8"
+  );
 
   assert.deepEqual(
     assertNoForbiddenWorkflowCommands({
@@ -905,6 +913,51 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     validateProductionRollbackWorkflow(rollbackWorkflow, "24.18.0"),
     []
   );
+  assert.deepEqual(
+    assertNoForbiddenWorkflowCommands({
+      ".github/workflows/repair-production-release.yml": repairWorkflow
+    }),
+    []
+  );
+  assert.deepEqual(
+    validateProductionReleaseRepairWorkflow(repairWorkflow, "24.18.0"),
+    []
+  );
+
+  for (const [description, brokenWorkflow] of [
+    [
+      "unprotected",
+      repairWorkflow.replace("    environment: production\n", "")
+    ],
+    [
+      "rebuilding artifacts",
+      repairWorkflow.replace(
+        "          ruby -c dist/homebrew/Casks/agent-outbox.rb",
+        "          make cli-release-dist"
+      )
+    ],
+    [
+      "deploying code",
+      repairWorkflow.replace(
+        "        run: corepack pnpm run smoke-runtime",
+        "        run: corepack pnpm run worker:deploy"
+      )
+    ],
+    [
+      "missing source proof",
+      repairWorkflow.replace(
+        "run: node scripts/production-release.mjs validate-repair",
+        "run: true"
+      )
+    ]
+  ]) {
+    assert.notEqual(brokenWorkflow, repairWorkflow, description);
+    assert.notDeepEqual(
+      validateProductionReleaseRepairWorkflow(brokenWorkflow, "24.18.0"),
+      [],
+      description
+    );
+  }
   const releaseCheckWorkflow = readFileSync(
     new URL("../.github/workflows/release-check.yml", import.meta.url),
     "utf8"
@@ -935,8 +988,8 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   );
 
   const unscopedRollbackWorkflow = deployWorkflow.replace(
-    "if: failure() && steps.deploy-attempt.outputs.attempted == 'true'",
-    "if: always()"
+    "          steps.publish-release.outcome != 'success'",
+    "          true"
   );
   assert.notEqual(
     unscopedRollbackWorkflow,
@@ -948,10 +1001,30 @@ test("production deploy workflow guard accepts only the manual deploy contract",
       unscopedRollbackWorkflow,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must roll back within the deploy job on a failed deploy and verify the restored release"
+      ".github/workflows/deploy-production.yml must roll back every deployed but unpublished release and verify the restored release"
     ),
     true,
-    "automatic rollback must stay scoped to a failed deploy attempt inside the deploy job"
+    "automatic rollback must cover failures through the publication commit point"
+  );
+
+  const rollbackOnUnknownPublication = deployWorkflow.replaceAll(
+    "          steps.publish-release.outputs.publication_state != 'unknown'",
+    "          true"
+  );
+  assert.notEqual(
+    rollbackOnUnknownPublication,
+    deployWorkflow,
+    "unknown-publication regression fixture must modify the workflow"
+  );
+  assert.equal(
+    validateProductionDeployWorkflow(
+      rollbackOnUnknownPublication,
+      "24.18.0"
+    ).includes(
+      ".github/workflows/deploy-production.yml must roll back every deployed but unpublished release and verify the restored release"
+    ),
+    true,
+    "automatic rollback must not contradict an indeterminate publication commit"
   );
 
   const withoutProductionMigrations = deployWorkflow.replace(
@@ -1033,9 +1106,16 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   );
 
   for (const stepName of [
+    "Prepare exact-candidate GitHub release draft",
+    "Upload certified CLI assets to draft",
+    "Verify complete draft asset set",
+    "Require public release repository",
+    "Create Homebrew preflight token",
+    "Verify Homebrew tap access",
     "Verify rollback target before deploy",
     "Require production migration credential",
-    "Publish GitHub release as Latest",
+    "Reverify draft assets before publication",
+    "Publish exact-candidate GitHub release",
     "Require publicly downloadable release assets"
   ]) {
     const withoutRequiredStep = deployWorkflow.replace(
@@ -1068,7 +1148,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
       withoutHomebrewPublication,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
+      ".github/workflows/deploy-production.yml must verify the public CLI release and open the guarded Homebrew cask PR after publication"
     ),
     true,
     "numbered releases must retain CLI asset and Homebrew cask publication"
@@ -1105,7 +1185,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   );
   assert.equal(
     validateProductionDeployWorkflow(clobberingCliAssets, "24.18.0").includes(
-      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
+      ".github/workflows/deploy-production.yml must prepare and byte-verify the exact-candidate draft before production mutation"
     ),
     true,
     "release assets must never be deleted before replacement upload succeeds"
@@ -1125,7 +1205,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
       withoutCliAssetIdentityCheck,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
+      ".github/workflows/deploy-production.yml must prepare and byte-verify the exact-candidate draft before production mutation"
     ),
     true,
     "release reconciliation must retain only byte-identical existing CLI assets"

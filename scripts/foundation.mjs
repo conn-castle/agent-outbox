@@ -105,6 +105,7 @@ const REQUIRED_FILES = [
   ".github/workflows/release-check.yml",
   ".github/workflows/policy-gates.yml",
   ".github/workflows/deploy-production.yml",
+  ".github/workflows/repair-production-release.yml",
   ".github/workflows/rollback-production.yml"
 ];
 
@@ -1018,16 +1019,52 @@ export function validateProductionDeployWorkflow(
     "validate-ref"
   );
   const deployJob = workflowJobContent(deployWorkflowContent, "deploy");
-  const finalizeJob = workflowJobContent(
-    deployWorkflowContent,
-    "finalize-release"
-  );
   const buildCliJob = workflowJobContent(deployWorkflowContent, "build-cli");
   const homebrewJob = workflowJobContent(
     deployWorkflowContent,
     "publish-cli-homebrew"
   );
   const deployStep = workflowNamedStepContent(deployJob, "Deploy Worker");
+  const captureRollbackStep = workflowNamedStepContent(
+    deployJob,
+    "Capture healthy rollback target"
+  );
+  const downloadCertifiedCliStep = workflowNamedStepContent(
+    deployJob,
+    "Download certified CLI artifacts"
+  );
+  const prepareDraftStep = workflowNamedStepContent(
+    deployJob,
+    "Prepare exact-candidate GitHub release draft"
+  );
+  const uploadCliStep = workflowNamedStepContent(
+    deployJob,
+    "Upload certified CLI assets to draft"
+  );
+  const verifyDraftAssetsStep = workflowNamedStepContent(
+    deployJob,
+    "Verify complete draft asset set"
+  );
+  const reverifyDraftAssetsStep = workflowNamedStepContent(
+    deployJob,
+    "Reverify draft assets before publication"
+  );
+  const requirePublicRepositoryStep = workflowNamedStepContent(
+    deployJob,
+    "Require public release repository"
+  );
+  const tapPreflightTokenStep = workflowNamedStepContent(
+    deployJob,
+    "Create Homebrew preflight token"
+  );
+  const tapPreflightAccessStep = workflowNamedStepContent(
+    deployJob,
+    "Verify Homebrew tap access"
+  );
+  const publishReleaseStep = workflowNamedStepContent(
+    deployJob,
+    "Publish exact-candidate GitHub release"
+  );
   const requireMigrationCredentialStep = workflowNamedStepContent(
     deployJob,
     "Require production migration credential"
@@ -1054,7 +1091,7 @@ export function validateProductionDeployWorkflow(
   );
   const rollbackStep = workflowNamedStepContent(
     deployJob,
-    "Roll back on failed deploy"
+    "Roll back uncommitted release"
   );
   const verifyRestoredStep = workflowNamedStepContent(
     deployJob,
@@ -1076,17 +1113,9 @@ export function validateProductionDeployWorkflow(
     buildCliJob,
     "Upload certified CLI artifacts"
   );
-  const downloadCertifiedCliStep = workflowNamedStepContent(
+  const downloadPublishedCliStep = workflowNamedStepContent(
     homebrewJob,
     "Download certified CLI artifacts"
-  );
-  const uploadCliStep = workflowNamedStepContent(
-    homebrewJob,
-    "Upload CLI release assets"
-  );
-  const publishReleaseStep = workflowNamedStepContent(
-    homebrewJob,
-    "Publish GitHub release as Latest"
   );
   const publicAssetsStep = workflowNamedStepContent(
     homebrewJob,
@@ -1291,36 +1320,14 @@ export function validateProductionDeployWorkflow(
     );
   }
   if (
-    !/^\s*needs:\s*\[prepare-release, deploy\]\s*$/m.test(finalizeJob) ||
-    !finalizeJob.includes("node scripts/production-release.mjs finalize") ||
-    !/^\s*contents:\s*write\s*$/m.test(finalizeJob)
-  ) {
-    failures.push(
-      ".github/workflows/deploy-production.yml must finalize one numbered release through production-release.mjs after deploy"
-    );
-  }
-  if (
-    !/^\s*needs:\s*\[prepare-release, build-cli, finalize-release\]\s*$/m.test(
+    !/^\s*needs:\s*\[prepare-release, build-cli, deploy\]\s*$/m.test(
       homebrewJob
     ) ||
-    !/^\s*contents:\s*write\s*$/m.test(homebrewJob) ||
-    !downloadCertifiedCliStep.includes("actions/download-artifact@") ||
-    !downloadCertifiedCliStep.includes(
+    !/^\s*contents:\s*read\s*$/m.test(homebrewJob) ||
+    !downloadPublishedCliStep.includes("actions/download-artifact@") ||
+    !downloadPublishedCliStep.includes(
       "name: agent-outbox-release-${{ github.sha }}"
     ) ||
-    !uploadCliStep.includes("gh release view") ||
-    !uploadCliStep.includes("--json assets") ||
-    !uploadCliStep.includes("gh release download") ||
-    !uploadCliStep.includes("cmp -s") ||
-    !uploadCliStep.includes("gh release upload") ||
-    uploadCliStep.includes("--clobber") ||
-    !publishReleaseStep.includes("gh release edit") ||
-    !publishReleaseStep.includes("--draft=false") ||
-    !publishReleaseStep.includes("--latest") ||
-    homebrewJob.indexOf(publishReleaseStep) <
-      homebrewJob.indexOf(uploadCliStep) ||
-    homebrewJob.indexOf(publicAssetsStep) <
-      homebrewJob.indexOf(publishReleaseStep) ||
     !publicAssetsStep.includes("curl -fsSL") ||
     !publicAssetsStep.includes("cmp -s") ||
     !publicAssetsStep.includes(
@@ -1336,24 +1343,84 @@ export function validateProductionDeployWorkflow(
     )
   ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must upload tagged CLI assets before publishing Latest and open the guarded Homebrew cask PR"
+      ".github/workflows/deploy-production.yml must verify the public CLI release and open the guarded Homebrew cask PR after publication"
     );
   }
-  // Automatic rollback must run inside the already-approved deploy job (so it is
-  // never gated behind a second production-environment approval) and fire only
-  // when a deploy was attempted and a later step failed. Because it lives in the
-  // deploy job, a downstream finalize/tagging failure cannot trigger it.
-  const rollbackScopedToDeployFailure =
-    rollbackStep.includes("if: failure()") &&
-    rollbackStep.includes("steps.deploy-attempt.outputs.attempted == 'true'") &&
-    rollbackStep.includes("corepack pnpm exec wrangler rollback") &&
-    rollbackStep.includes(
-      "steps.rollback-target.outputs.rollback_version_id"
+  const releasePreparedBeforeDeploy =
+    /^\s*contents:\s*write\s*$/m.test(deployJob) &&
+    downloadCertifiedCliStep.includes("actions/download-artifact@") &&
+    downloadCertifiedCliStep.includes(
+      "name: agent-outbox-release-${{ github.sha }}"
     ) &&
-    !rollbackStep.includes("finalize");
+    prepareDraftStep.includes(
+      "node scripts/production-release.mjs prepare-draft"
+    ) &&
+    uploadCliStep.includes("gh release view") &&
+    uploadCliStep.includes("gh release download") &&
+    uploadCliStep.includes("cmp -s") &&
+    uploadCliStep.includes("gh release upload") &&
+    !uploadCliStep.includes("--clobber") &&
+    verifyDraftAssetsStep.includes("gh release download") &&
+    verifyDraftAssetsStep.includes("cmp -s") &&
+    verifyDraftAssetsStep.includes("expected_assets") &&
+    verifyDraftAssetsStep.includes("actual_assets") &&
+    requirePublicRepositoryStep.includes(".visibility") &&
+    tapPreflightTokenStep.includes("actions/create-github-app-token@") &&
+    tapPreflightTokenStep.includes("secrets.HOMEBREW_TAP_APP_ID") &&
+    tapPreflightTokenStep.includes("secrets.HOMEBREW_TAP_PRIVATE_KEY") &&
+    tapPreflightAccessStep.includes("repos/conn-castle/homebrew-tap") &&
+    deployJob.indexOf(downloadCertifiedCliStep) <
+      deployJob.indexOf(captureRollbackStep) &&
+    deployJob.indexOf(prepareDraftStep) <
+      deployJob.indexOf(captureRollbackStep) &&
+    deployJob.indexOf(uploadCliStep) < deployJob.indexOf(captureRollbackStep) &&
+    deployJob.indexOf(verifyDraftAssetsStep) <
+      deployJob.indexOf(captureRollbackStep) &&
+    deployJob.indexOf(requirePublicRepositoryStep) <
+      deployJob.indexOf(captureRollbackStep) &&
+    deployJob.indexOf(tapPreflightAccessStep) <
+      deployJob.indexOf(captureRollbackStep);
+  if (!releasePreparedBeforeDeploy) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must prepare and byte-verify the exact-candidate draft before production mutation"
+    );
+  }
   if (
-    !rollbackScopedToDeployFailure ||
-    !verifyRestoredStep.includes("if: failure()") ||
+    !publishReleaseStep.includes("id: publish-release") ||
+    !publishReleaseStep.includes(
+      "node scripts/production-release.mjs publish"
+    ) ||
+    !reverifyDraftAssetsStep.includes("expected_assets") ||
+    !reverifyDraftAssetsStep.includes("actual_assets") ||
+    !reverifyDraftAssetsStep.includes("gh release download") ||
+    !reverifyDraftAssetsStep.includes("cmp -s") ||
+    deployJob.indexOf(reverifyDraftAssetsStep) <
+      deployJob.indexOf(verifyStep) ||
+    deployJob.indexOf(publishReleaseStep) <
+      deployJob.indexOf(reverifyDraftAssetsStep)
+  ) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must publish and prove the exact release only after live verification"
+    );
+  }
+  const rollbackCoversUncommittedRelease =
+    rollbackStep.includes("failure()") &&
+    rollbackStep.includes("steps.deploy-attempt.outputs.attempted == 'true'") &&
+    rollbackStep.includes("steps.publish-release.outcome != 'success'") &&
+    rollbackStep.includes(
+      "steps.publish-release.outputs.publication_state != 'unknown'"
+    ) &&
+    rollbackStep.includes("corepack pnpm exec wrangler rollback") &&
+    rollbackStep.includes("steps.rollback-target.outputs.rollback_version_id");
+  if (
+    !rollbackCoversUncommittedRelease ||
+    !verifyRestoredStep.includes("failure()") ||
+    !verifyRestoredStep.includes(
+      "steps.publish-release.outcome != 'success'"
+    ) ||
+    !verifyRestoredStep.includes(
+      "steps.publish-release.outputs.publication_state != 'unknown'"
+    ) ||
     !workflowRunStepIncludes(
       verifyRestoredStep,
       "corepack pnpm run smoke-runtime"
@@ -1363,10 +1430,220 @@ export function validateProductionDeployWorkflow(
     )
   ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must roll back within the deploy job on a failed deploy and verify the restored release"
+      ".github/workflows/deploy-production.yml must roll back every deployed but unpublished release and verify the restored release"
     );
   }
 
+  return failures;
+}
+
+/**
+ * @param {string} repairWorkflowContent
+ * @param {string} nodeVersion
+ * @returns {string[]}
+ */
+export function validateProductionReleaseRepairWorkflow(
+  repairWorkflowContent,
+  nodeVersion
+) {
+  const failures = [];
+  const validateJob = workflowJobContent(
+    repairWorkflowContent,
+    "validate-source"
+  );
+  const repairJob = workflowJobContent(repairWorkflowContent, "repair");
+  const validateStep = workflowNamedStepContent(
+    validateJob,
+    "Validate failed production run and certified artifact"
+  );
+  const downloadStep = workflowNamedStepContent(
+    repairJob,
+    "Download original certified CLI artifacts"
+  );
+  const artifactStep = workflowNamedStepContent(
+    repairJob,
+    "Validate certified artifact inventory and checksums"
+  );
+  const firstSmokeStep = workflowNamedStepContent(
+    repairJob,
+    "Verify production still serves certified candidate"
+  );
+  const prepareDraftStep = workflowNamedStepContent(
+    repairJob,
+    "Reconcile exact-candidate GitHub release draft"
+  );
+  const uploadStep = workflowNamedStepContent(
+    repairJob,
+    "Upload certified CLI assets to draft"
+  );
+  const verifyAssetsStep = workflowNamedStepContent(
+    repairJob,
+    "Verify exact draft asset set"
+  );
+  const secondSmokeStep = workflowNamedStepContent(
+    repairJob,
+    "Reverify production candidate before publication"
+  );
+  const publishStep = workflowNamedStepContent(
+    repairJob,
+    "Publish and prove exact-candidate GitHub release"
+  );
+  const publicAssetsStep = workflowNamedStepContent(
+    repairJob,
+    "Require publicly downloadable release assets"
+  );
+  const tapTokenStep = workflowNamedStepContent(
+    repairJob,
+    "Create GitHub App token for tap repo"
+  );
+  const tapPullRequestStep = workflowNamedStepContent(
+    repairJob,
+    "Create PR in tap repo"
+  );
+
+  const required = [
+    [
+      "manual-only trigger",
+      workflowHasLine(repairWorkflowContent, /^\s*workflow_dispatch:\s*$/)
+    ],
+    [
+      "production serialization",
+      workflowHasLine(
+        repairWorkflowContent,
+        /^\s*group:\s*production-deploy\s*$/
+      ) &&
+        workflowHasLine(
+          repairWorkflowContent,
+          /^\s*cancel-in-progress:\s*false\s*$/
+        )
+    ],
+    [
+      "required repair inputs",
+      ["source_run_id:", "release_tag:", "candidate_sha:"].every((token) =>
+        repairWorkflowContent.includes(token)
+      )
+    ],
+    [
+      "current main validation",
+      validateJob.includes('test "$GITHUB_REF" = "refs/heads/main"')
+    ],
+    [
+      "guarded source validator",
+      validateStep.includes(
+        "node scripts/production-release.mjs validate-repair"
+      ) &&
+        validateStep.includes("SOURCE_RUN_ID") &&
+        validateStep.includes("RELEASE_CANDIDATE_SHA")
+    ],
+    [
+      "protected repair job",
+      /^\s*needs:\s*validate-source\s*$/m.test(repairJob) &&
+        /^\s*environment:\s*production\s*$/m.test(repairJob) &&
+        /^\s*actions:\s*read\s*$/m.test(repairJob) &&
+        /^\s*contents:\s*write\s*$/m.test(repairJob)
+    ],
+    [
+      `Node ${nodeVersion}`,
+      workflowHasLine(
+        repairJob,
+        new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`)
+      )
+    ],
+    [
+      "original artifact reuse",
+      downloadStep.includes("gh run download") &&
+        downloadStep.includes("$SOURCE_RUN_ID") &&
+        downloadStep.includes("$ARTIFACT_NAME") &&
+        !repairJob.includes("cli-release-dist") &&
+        !repairJob.includes("goreleaser")
+    ],
+    [
+      "certified artifact validation",
+      artifactStep.includes("expected_files") &&
+        artifactStep.includes("actual_files") &&
+        artifactStep.includes("sha256sum --check checksums.txt") &&
+        artifactStep.includes("ruby -c")
+    ],
+    [
+      "exact production proof before mutation and publication",
+      [firstSmokeStep, secondSmokeStep].every(
+        (step) =>
+          step.includes("AGENT_OUTBOX_EXPECTED_RELEASE") &&
+          step.includes("RELEASE_CANDIDATE_SHA") &&
+          step.includes("corepack pnpm run smoke-runtime")
+      )
+    ],
+    [
+      "workflow-owned draft and publication",
+      prepareDraftStep.includes("production-release.mjs prepare-draft") &&
+        publishStep.includes("production-release.mjs publish")
+    ],
+    [
+      "non-clobbering exact asset reconciliation",
+      uploadStep.includes("gh release download") &&
+        uploadStep.includes("cmp -s") &&
+        uploadStep.includes("gh release upload") &&
+        !uploadStep.includes("--clobber") &&
+        verifyAssetsStep.includes("expected_assets") &&
+        verifyAssetsStep.includes("actual_assets") &&
+        verifyAssetsStep.includes("cmp -s")
+    ],
+    [
+      "public asset proof",
+      publicAssetsStep.includes("curl -fsSL") &&
+        publicAssetsStep.includes("cmp -s")
+    ],
+    [
+      "Homebrew app publication",
+      tapTokenStep.includes("secrets.HOMEBREW_TAP_APP_ID") &&
+        tapTokenStep.includes("secrets.HOMEBREW_TAP_PRIVATE_KEY") &&
+        tapPullRequestStep.includes(
+          "branch: bump-agent-outbox-${{ env.RELEASE_TAG }}"
+        )
+    ]
+  ];
+  for (const [description, present] of required) {
+    if (!present) {
+      failures.push(
+        `.github/workflows/repair-production-release.yml must include ${description}`
+      );
+    }
+  }
+  for (const forbiddenTrigger of ["push", "pull_request", "schedule"]) {
+    if (
+      workflowHasLine(
+        repairWorkflowContent,
+        new RegExp(`^\\s*${escapeRegExp(forbiddenTrigger)}:\\s*$`)
+      )
+    ) {
+      failures.push(
+        `.github/workflows/repair-production-release.yml must be manual-only and not include ${forbiddenTrigger}:`
+      );
+    }
+  }
+  for (const forbiddenMutation of [
+    "worker:deploy",
+    "wrangler deploy",
+    "wrangler rollback",
+    "migration:migrate",
+    "git tag"
+  ]) {
+    if (repairWorkflowContent.includes(forbiddenMutation)) {
+      failures.push(
+        `.github/workflows/repair-production-release.yml must not run ${forbiddenMutation}`
+      );
+    }
+  }
+  if (!(
+    repairJob.indexOf(firstSmokeStep) < repairJob.indexOf(prepareDraftStep) &&
+    repairJob.indexOf(verifyAssetsStep) < repairJob.indexOf(secondSmokeStep) &&
+    repairJob.indexOf(secondSmokeStep) < repairJob.indexOf(publishStep) &&
+    repairJob.indexOf(publishStep) < repairJob.indexOf(publicAssetsStep)
+  )) {
+    failures.push(
+      ".github/workflows/repair-production-release.yml must preserve validate, reconcile, reverify, publish, and public-proof ordering"
+    );
+  }
   return failures;
 }
 
@@ -1971,6 +2248,7 @@ function readWorkflowContents() {
     ".github/workflows/release-check.yml",
     ".github/workflows/policy-gates.yml",
     ".github/workflows/deploy-production.yml",
+    ".github/workflows/repair-production-release.yml",
     ".github/workflows/rollback-production.yml"
   ]) {
     workflows[relativePath] = readFileSync(
@@ -2367,6 +2645,16 @@ function smoke() {
     productionRollbackWorkflowFailures,
     [],
     productionRollbackWorkflowFailures.join("\n")
+  );
+  const productionReleaseRepairWorkflowFailures =
+    validateProductionReleaseRepairWorkflow(
+      readWorkflowContents()[".github/workflows/repair-production-release.yml"],
+      /** @type {Toolchain} */ (readJson("toolchain.json")).node.version
+    );
+  assert.deepEqual(
+    productionReleaseRepairWorkflowFailures,
+    [],
+    productionReleaseRepairWorkflowFailures.join("\n")
   );
   const migrationWorkflowFailures = validateMigrationReplayWorkflow(
     readWorkflowContents()

@@ -111,13 +111,13 @@ jobs:
           retention-days: 7
 
   deploy:
-    name: Deploy and verify production Worker
+    name: Publish verified production release
     needs: [prepare-release, certify, build-cli]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     environment: production
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@v7
@@ -129,6 +129,91 @@ jobs:
 
       - name: Set up dependencies
         run: make setup
+
+      - name: Download certified CLI artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: agent-outbox-release-${{ github.sha }}
+          path: dist
+
+      - name: Require public release repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          visibility="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.visibility')"
+          if [[ "$visibility" != "public" ]]; then
+            echo "::error::The release repository must be public before production deployment."
+            exit 1
+          fi
+
+      - name: Prepare exact-candidate GitHub release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: node scripts/production-release.mjs prepare-draft
+
+      - name: Upload certified CLI assets to draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          existing_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          existing_dir="$(mktemp -d)"
+          trap 'rm -rf "$existing_dir"' EXIT
+          for artifact in dist/*.tar.gz dist/checksums.txt; do
+            asset="$(basename "$artifact")"
+            if grep -Fqx -- "$asset" <<<"$existing_assets"; then
+              gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$existing_dir"
+              if ! cmp -s "$artifact" "$existing_dir/$asset"; then
+                echo "::error::Existing CLI release asset differs from the certified build: $asset"
+                echo "::error::Refusing to delete or replace a release asset."
+                exit 1
+              fi
+              echo "Retaining identical existing CLI release asset: $asset"
+              continue
+            fi
+            gh release upload "$RELEASE_TAG" "$artifact"
+          done
+
+      - name: Verify complete draft asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          download_dir="$(mktemp -d)"
+          trap 'rm -rf "$download_dir"' EXIT
+          expected_assets="$(for artifact in dist/*.tar.gz dist/checksums.txt; do basename "$artifact"; done | LC_ALL=C sort)"
+          actual_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
+          if [[ "$actual_assets" != "$expected_assets" ]]; then
+            echo "::error::Draft release asset inventory differs from the certified build."
+            exit 1
+          fi
+          for artifact in dist/*.tar.gz dist/checksums.txt; do
+            asset="$(basename "$artifact")"
+            gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$download_dir"
+            if ! cmp -s "$artifact" "$download_dir/$asset"; then
+              echo "::error::Draft release asset differs from the certified build: $asset"
+              exit 1
+            fi
+          done
+
+      - name: Create Homebrew preflight token
+        id: tap-preflight-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_PRIVATE_KEY }}
+          owner: conn-castle
+          repositories: homebrew-tap
+
+      - name: Verify Homebrew tap access
+        env:
+          GH_TOKEN: ${{ steps.tap-preflight-token.outputs.token }}
+        run:
+          test "$(gh api repos/conn-castle/homebrew-tap --jq '.name')" =
+          "homebrew-tap"
 
       - name: Capture healthy rollback target
         id: rollback-target
@@ -233,13 +318,46 @@ jobs:
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
         run: corepack pnpm run smoke-runtime
 
+      - name: Reverify draft assets before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          download_dir="$(mktemp -d)"
+          trap 'rm -rf "$download_dir"' EXIT
+          expected_assets="$(for artifact in dist/*.tar.gz dist/checksums.txt; do basename "$artifact"; done | LC_ALL=C sort)"
+          actual_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
+          if [[ "$actual_assets" != "$expected_assets" ]]; then
+            echo "::error::Draft release asset inventory changed after deployment."
+            exit 1
+          fi
+          for artifact in dist/*.tar.gz dist/checksums.txt; do
+            asset="$(basename "$artifact")"
+            gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$download_dir"
+            if ! cmp -s "$artifact" "$download_dir/$asset"; then
+              echo "::error::Draft release asset changed after deployment: $asset"
+              exit 1
+            fi
+          done
+
+      - name: Publish exact-candidate GitHub release
+        id: publish-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: node scripts/production-release.mjs publish
+
       # Automatic rollback runs inside this already-approved deploy job so it can
       # never be gated behind a second production-environment approval. It fires
-      # only when a deploy was attempted and a later step failed; the earlier
-      # failure keeps the job red.
-      - name: Roll back on failed deploy
+      # for every failure after deployment begins until GitHub publication is
+      # proven. Publication is the transaction commit point.
+      - name: Roll back uncommitted release
         id: rollback-worker
-        if: failure() && steps.deploy-attempt.outputs.attempted == 'true'
+        if: >-
+          failure() && steps.deploy-attempt.outputs.attempted == 'true' &&
+          steps.publish-release.outcome != 'success' &&
+          steps.publish-release.outputs.publication_state != 'unknown'
         env:
           CLOUDFLARE_API_TOKEN:
             ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
@@ -247,12 +365,15 @@ jobs:
             ${{ steps.rollback-target.outputs.rollback_version_id }}
         run: >-
           corepack pnpm exec wrangler rollback "$ROLLBACK_VERSION_ID" --name
-          agent-outbox --message "Automatic rollback after failed ${{
-          needs.prepare-release.outputs.release_tag }} deploy" --yes --env-file
+          agent-outbox --message "Automatic rollback before publication of ${{
+          needs.prepare-release.outputs.release_tag }}" --yes --env-file
           /dev/null
 
       - name: Verify restored release
-        if: failure() && steps.deploy-attempt.outputs.attempted == 'true'
+        if: >-
+          failure() && steps.deploy-attempt.outputs.attempted == 'true' &&
+          steps.publish-release.outcome != 'success' &&
+          steps.publish-release.outputs.publication_state != 'unknown'
         env:
           AGENT_OUTBOX_EXPECTED_RELEASE:
             ${{ steps.rollback-target.outputs.rollback_release }}
@@ -261,38 +382,13 @@ jobs:
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
         run: corepack pnpm run smoke-runtime
 
-  finalize-release:
-    name: Tag verified production release
-    needs: [prepare-release, deploy]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout exact candidate
-        uses: actions/checkout@v7
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24.18.0
-
-      - name: Set up dependencies
-        run: make setup
-
-      - name: Create numbered GitHub release draft and tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: node scripts/production-release.mjs finalize
-
   publish-cli-homebrew:
-    name: Publish CLI and open Homebrew tap PR
-    needs: [prepare-release, build-cli, finalize-release]
+    name: Verify public CLI and open Homebrew tap PR
+    needs: [prepare-release, build-cli, deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: write
+      contents: read
     env:
       RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
     steps:
@@ -307,34 +403,6 @@ jobs:
         with:
           name: agent-outbox-release-${{ github.sha }}
           path: dist
-
-      - name: Upload CLI release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          existing_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
-          existing_dir="$(mktemp -d)"
-          trap 'rm -rf "$existing_dir"' EXIT
-          for artifact in dist/*.tar.gz dist/checksums.txt; do
-            asset="$(basename "$artifact")"
-            if grep -Fqx -- "$asset" <<<"$existing_assets"; then
-              gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$existing_dir"
-              if ! cmp -s "$artifact" "$existing_dir/$asset"; then
-                echo "::error::Existing CLI release asset differs from the tagged build: $asset"
-                echo "::error::Refusing to delete a release asset during reconciliation."
-                exit 1
-              fi
-              echo "Retaining identical existing CLI release asset: $asset"
-              continue
-            fi
-            gh release upload "$RELEASE_TAG" "$artifact"
-          done
-
-      - name: Publish GitHub release as Latest
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$RELEASE_TAG" --draft=false --latest
 
       - name: Require publicly downloadable release assets
         run: |

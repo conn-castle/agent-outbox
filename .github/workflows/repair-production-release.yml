@@ -1,0 +1,256 @@
+name: Repair Production Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description:
+          Failed Release Production run containing certified artifacts
+        required: true
+        type: string
+      release_tag:
+        description: Numbered release tag to repair (vX.Y.Z)
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact deployed and certified 40-character commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  validate-source:
+    name: Validate certified repair source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.source.outputs.artifact_name }}
+      candidate_sha: ${{ steps.source.outputs.candidate_sha }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
+    steps:
+      - name: Require main
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+      - name: Checkout repair implementation
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Set up dependencies
+        run: make setup
+
+      - name: Validate failed production run and certified artifact
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: node scripts/production-release.mjs validate-repair
+
+  repair:
+    name: Publish certified production release repair
+    needs: validate-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      actions: read
+      contents: write
+    env:
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      RELEASE_TAG: ${{ needs.validate-source.outputs.release_tag }}
+      RELEASE_CANDIDATE_SHA: ${{ needs.validate-source.outputs.candidate_sha }}
+    steps:
+      - name: Checkout repair implementation
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Set up dependencies
+        run: make setup
+
+      - name: Download original certified CLI artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ needs.validate-source.outputs.artifact_name }}
+        run: >-
+          gh run download "$SOURCE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name
+          "$ARTIFACT_NAME" --dir dist
+
+      - name: Validate certified artifact inventory and checksums
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          expected_files="$(printf '%s\n' \
+            "agent-outbox_${version}_darwin_amd64.tar.gz" \
+            "agent-outbox_${version}_darwin_arm64.tar.gz" \
+            "agent-outbox_${version}_linux_amd64.tar.gz" \
+            "agent-outbox_${version}_linux_arm64.tar.gz" \
+            "checksums.txt" \
+            "homebrew/Casks/agent-outbox.rb" | LC_ALL=C sort)"
+          actual_files="$(find dist -type f -printf '%P\n' | LC_ALL=C sort)"
+          if [[ "$actual_files" != "$expected_files" ]]; then
+            echo "::error::Certified artifact inventory is not the exact release set."
+            exit 1
+          fi
+          (cd dist && sha256sum --check checksums.txt)
+          ruby -c dist/homebrew/Casks/agent-outbox.rb
+          grep -Fqx "  version \"${version}\"" dist/homebrew/Casks/agent-outbox.rb
+          grep -Fq "/releases/download/${RELEASE_TAG}/" dist/homebrew/Casks/agent-outbox.rb
+
+      - name: Require public release repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          visibility="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.visibility')"
+          test "$visibility" = "public"
+
+      - name: Create Homebrew preflight token
+        id: tap-preflight-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_PRIVATE_KEY }}
+          owner: conn-castle
+          repositories: homebrew-tap
+
+      - name: Verify Homebrew tap access
+        env:
+          GH_TOKEN: ${{ steps.tap-preflight-token.outputs.token }}
+        run:
+          test "$(gh api repos/conn-castle/homebrew-tap --jq '.name')" =
+          "homebrew-tap"
+
+      - name: Verify production still serves certified candidate
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE: ${{ env.RELEASE_CANDIDATE_SHA }}
+          AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: corepack pnpm run smoke-runtime
+
+      - name: Reconcile exact-candidate GitHub release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/production-release.mjs prepare-draft
+
+      - name: Upload certified CLI assets to draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          existing_dir="$(mktemp -d)"
+          trap 'rm -rf "$existing_dir"' EXIT
+          for artifact in dist/*.tar.gz dist/checksums.txt; do
+            asset="$(basename "$artifact")"
+            if grep -Fqx -- "$asset" <<<"$existing_assets"; then
+              gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$existing_dir"
+              if ! cmp -s "$artifact" "$existing_dir/$asset"; then
+                echo "::error::Existing release asset differs from the certified artifact: $asset"
+                exit 1
+              fi
+              continue
+            fi
+            gh release upload "$RELEASE_TAG" "$artifact"
+          done
+
+      - name: Verify exact draft asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          download_dir="$(mktemp -d)"
+          trap 'rm -rf "$download_dir"' EXIT
+          expected_assets="$(for artifact in dist/*.tar.gz dist/checksums.txt; do basename "$artifact"; done | LC_ALL=C sort)"
+          actual_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
+          if [[ "$actual_assets" != "$expected_assets" ]]; then
+            echo "::error::Draft asset inventory differs from the certified artifact."
+            exit 1
+          fi
+          for artifact in dist/*.tar.gz dist/checksums.txt; do
+            asset="$(basename "$artifact")"
+            gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$download_dir"
+            cmp -s "$artifact" "$download_dir/$asset"
+          done
+
+      - name: Reverify production candidate before publication
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE: ${{ env.RELEASE_CANDIDATE_SHA }}
+          AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: corepack pnpm run smoke-runtime
+
+      - name: Publish and prove exact-candidate GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/production-release.mjs publish
+
+      - name: Require publicly downloadable release assets
+        run: |
+          set -euo pipefail
+          download_dir="$(mktemp -d)"
+          trap 'rm -rf "$download_dir"' EXIT
+          for artifact in dist/*.tar.gz dist/checksums.txt; do
+            asset="$(basename "$artifact")"
+            url="https://github.com/conn-castle/agent-outbox/releases/download/${RELEASE_TAG}/${asset}"
+            curl -fsSL "$url" --output "$download_dir/$asset"
+            cmp -s "$artifact" "$download_dir/$asset"
+          done
+
+      - name: Create GitHub App token for tap repo
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_TAP_PRIVATE_KEY }}
+          owner: conn-castle
+          repositories: homebrew-tap
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v7
+        with:
+          repository: conn-castle/homebrew-tap
+          token: ${{ steps.app-token.outputs.token }}
+          path: homebrew-tap
+
+      - name: Update Homebrew cask
+        run: |
+          set -euo pipefail
+          mkdir -p homebrew-tap/Casks
+          cp dist/homebrew/Casks/agent-outbox.rb homebrew-tap/Casks/agent-outbox.rb
+          git -C homebrew-tap diff -- Casks/agent-outbox.rb
+
+      - name: Create PR in tap repo
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          path: homebrew-tap
+          branch: bump-agent-outbox-${{ env.RELEASE_TAG }}
+          commit-message: "agent-outbox ${{ env.RELEASE_TAG }}"
+          title: "agent-outbox ${{ env.RELEASE_TAG }}"
+          body: "Automated cask bump for ${{ env.RELEASE_TAG }}."
+          base: main

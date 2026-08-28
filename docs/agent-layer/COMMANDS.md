@@ -483,13 +483,33 @@ Run from: repo root Prerequisites: `gh` authenticated to the repository; the
 candidate merged to `main`; `package.json` containing a new stable version other
 than `0.0.0`; explicit owner approval; and the protected GitHub `production`
 environment fully configured. Notes: External write. GitHub Actions reruns the
-exact-SHA release gate, captures and verifies the current rollback target,
+exact-SHA release gate, prepares an unpublished exact-candidate draft with
+byte-verified CLI assets, captures and verifies the current rollback target,
 builds/dry-runs/deploys the Worker, verifies the candidate SHA is live, and only
-then creates the numbered tag and GitHub Release. A failed deploy or smoke check
-restores the previous Worker. A tagging-only failure keeps the verified code
-live and leaves the workflow red for finalization retry.
+then publishes the numbered tag and GitHub Release. Any failure after deployment
+begins but before publication is proven restores the previous Worker. Failed
+post-publication Homebrew distribution is retried independently.
 The underlying `worker:deploy` script rejects execution outside the designated
 GitHub Actions workflow.
+
+- Repair an already-deployed unpublished release from its certified artifact
+
+```bash
+gh workflow run repair-production-release.yml --ref main \
+  -f source_run_id=<failed-production-run-id> \
+  -f release_tag=v<version> \
+  -f candidate_sha=<full-certified-sha>
+```
+
+Run from: repo root Prerequisites: `gh` authenticated to the repository;
+explicit owner approval; the failed original production run still retaining
+its exact certified artifact; every original certification, build, and deploy
+job green; the original finalizer red; and production still serving the exact
+candidate. Notes: External write. The protected workflow reuses and verifies
+the original bytes, reconciles the draft and assets without overwriting a
+conflict, smoke-tests the live candidate twice, publishes the release, verifies
+public downloads, and refreshes the Homebrew tap pull request. It never rebuilds,
+redeploys, migrates, or creates/moves a tag directly.
 
 - Dispatch a manual rollback to a previously tagged release
 

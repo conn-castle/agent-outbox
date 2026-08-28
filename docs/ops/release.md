@@ -164,52 +164,94 @@ The workflow applies one serialized release sequence:
    pinned GoReleaser, render `Casks/agent-outbox.rb` from those checksums
    through the project-owned Go renderer, require Ruby syntax and Homebrew style
    checks, and retain those exact files as the certified workflow artifact.
-4. Capture the one current 100%-traffic Cloudflare Worker version and its live
+4. Prepare an unpublished GitHub Release draft whose `targetCommitish` is the
+   exact candidate SHA, upload every certified CLI archive and `checksums.txt`,
+   download them again, and require byte identity. A draft is validated by its
+   target commit; GitHub may not create the numbered Git tag until publication.
+   Require the repository to be public before any production mutation.
+5. Capture the one current 100%-traffic Cloudflare Worker version and its live
    runtime release SHA, then run runtime smoke against that rollback target.
-5. Validate the durable production Flyway history, apply every pending
+6. Validate the durable production Flyway history, apply every pending
    checked-in migration using `DATABASE_MIGRATION_URL` from the protected
    `production` GitHub environment, and validate the resulting history. A
    missing credential or failed migration stops the release before Worker
    deployment.
-6. Build once with production public configuration, dry-run the generated
+7. Build once with production public configuration, dry-run the generated
    artifact with its Hyperdrive and secret inventory, stamp the Worker version
    with `v<package.json version>`, and deploy that artifact.
-7. Retry runtime smoke until the exact candidate SHA is serving successfully.
-8. Only after live verification, publish `v<package.json version>` and its
-   GitHub Release on the certified SHA. Finalization is idempotent: it
-   reconciles the current tag/release state, adopts a tag a prior partial run
-   already created on this SHA, treats an already-published release as success,
-   retries only transient GitHub API failures, and proves the tag resolves to
-   the certified SHA before reporting success.
-9. Download the pre-deploy certified workflow artifact, upload missing archives
-   and `checksums.txt`, retain byte-identical existing assets on same-run
-   failed-job retries, fail rather than replace a conflicting published asset,
-   and prove each asset is publicly downloadable.
-10. Use the Homebrew tap GitHub App to open or refresh
+8. Retry runtime smoke until the exact candidate SHA is serving successfully.
+9. Only after live verification, publish the prepared draft as Latest. This is
+   the release transaction's commit point. Publication is idempotent: it
+   reconciles lost responses and proves both the published release and the
+   resulting numbered tag resolve to the certified SHA before reporting success.
+10. Download every public release asset without authentication and require byte
+    identity with the pre-deploy certified workflow artifact.
+11. Use the Homebrew tap GitHub App to open or refresh
     `bump-agent-outbox-vX.Y.Z` with the certified project-rendered
     `Casks/agent-outbox.rb`. The tap's own checks and guarded automation own the
     merge; do not merge the tap pull request manually.
 
 The pipeline deploys only when current production is a single Worker version at
-100% traffic that passes runtime smoke (step 4). During a broad production
+100% traffic that passes runtime smoke (step 5). During a broad production
 outage, or a split/gradual rollout, it refuses to deploy; recover with the
 manual rollback workflow below rather than this deploy workflow.
 
 CLI packaging, cask rendering, Ruby syntax, and Homebrew style failures stop the
-workflow before the protected production job begins. If the deploy or its live
-verification fails after the deploy attempt starts, the workflow restores the
-captured Worker version, verifies the captured release SHA, and remains red.
-Because the Worker is already smoke-verified before finalization, a tagging,
-CLI-upload, public-download, or tap-publication failure does NOT roll back: the
-verified code stays live and the run goes red. Within the certified artifact's
-seven-day retention window, choose **Re-run failed jobs** on the original
-workflow run; this reuses the exact artifact, reconciles the existing tag and
-release assets, and refreshes the tap pull request. Do not re-dispatch the
-workflow or choose **Re-run all jobs** for this recovery: a fresh build embeds a
-new build date and may not be byte-identical. After artifact expiry, stop and
-prepare an explicit release-repair change rather than rebuilding under the
-existing tag. A failed rollback stays visible in the workflow step outcomes and
-requires the manual rollback procedure below.
+workflow before the protected production job begins. Draft creation, asset
+upload/reconciliation, and repository-visibility failures also stop before any
+production mutation. If any step fails after the deploy attempt starts but
+before publication is proven, the same protected job restores the captured
+Worker version, verifies the captured release SHA, leaves the unpublished draft
+available for an idempotent retry, and remains red. Database migrations are not
+reversed; every migration must remain compatible with both Worker versions. If
+GitHub may have accepted publication but remains unreadable through every
+reconciliation retry, the workflow stays red and refuses automatic rollback:
+rolling back an already-public release would create the opposite inconsistency.
+Rerun the failed job when GitHub is readable so exact tag/release proof decides
+the state before another mutation.
+
+Once publication is proven, production and the public GitHub release are one
+committed unit and the workflow never rolls one back without the other.
+Anonymous-download verification and Homebrew tap automation run afterward as
+idempotent distribution checks; their failure leaves the committed release live
+and requires only that failed downstream job to be retried.
+
+Within the certified artifact's seven-day retention window, choose **Re-run
+failed jobs** on the original workflow run. This reuses the exact artifact,
+reconciles the existing draft/assets or refreshes the tap pull request, and
+never replaces a conflicting asset. Do not re-dispatch the workflow or choose
+**Re-run all jobs** for this recovery: a fresh build embeds a new build date and
+may not be byte-identical. After artifact expiry, stop and prepare an explicit
+new-version release repair rather than rebuilding under an existing tag. A
+failed rollback stays visible in the workflow step outcomes and requires the
+manual rollback procedure below.
+
+### Repair an already-deployed unpublished release
+
+Use `.github/workflows/repair-production-release.yml` only when an original
+production workflow deployed and smoke-verified its exact candidate but failed
+before publishing the release. The original run must be completed and failed,
+all certification/build/deploy jobs must have succeeded, its finalizer must have
+failed, and its exact certified artifact must still be unexpired. Dispatch the
+repair from the current `main`:
+
+```bash
+gh workflow run repair-production-release.yml --ref main \
+  -f source_run_id=<failed-production-run-id> \
+  -f release_tag=v<version> \
+  -f candidate_sha=<full-certified-sha>
+```
+
+The protected workflow validates those source facts, downloads rather than
+rebuilds the original artifact, verifies its fixed inventory and checksums, and
+proves production is still serving the exact candidate before changing release
+state. It then reconciles the unpublished draft, uploads assets without
+overwriting conflicts, proves byte identity, smoke-tests production again, and
+publishes the release as the commit point. Public asset verification and the
+Homebrew tap pull request follow publication. The repair does not deploy a
+Worker, run migrations, build replacement binaries, or create/move a Git tag
+directly. If the artifact has expired or production no longer serves the exact
+candidate, stop and release a new version through the normal workflow.
 
 The project-owned `worker:deploy` command is an internal workflow step and fails
 outside `deploy-production.yml` on GitHub Actions. Do not load production
@@ -247,12 +289,12 @@ agent-outbox version
 
 The README and public API quickstart must advertise this exact verified Homebrew
 command. The landing page advertises the direct installer command
-`curl -fsSL https://agent-outbox.dev/install.sh | sh`. Production finalization
-first creates the numbered GitHub release as a draft; the publication job
-uploads and reconciles every release archive and `checksums.txt` before making
-that draft Latest. Keep the separate product-access statement accurate: both CLI
-installation paths are public, while caller connection remains invite-only
-during the hosted prerelease.
+`curl -fsSL https://agent-outbox.dev/install.sh | sh`. Production preparation
+creates the numbered GitHub release as a draft and uploads and reconciles every
+release archive and `checksums.txt` before deployment. The workflow makes that
+draft Latest only after exact-SHA production smoke passes. Keep the separate
+product-access statement accurate: both CLI installation paths are public, while
+caller connection remains invite-only during the hosted prerelease.
 
 ## Manual CLI Connect Smoke
 
@@ -382,12 +424,13 @@ redeploy through the approved workflow. Do not use raw SQL or dashboard schema
 edits for rollback.
 
 The release workflow automatically rolls back only Worker code and configuration
-when its deploy or live-verification steps fail; it never reverts Flyway schema
-history. Every production migration must therefore remain compatible with both
-the outgoing and incoming Worker through expand/contract sequencing. A
-tagging-only failure leaves the verified deploy live. For a problem found after
-a workflow completed, inspect recent deployments read-only to identify the
-Cloudflare version id for a previously tagged release:
+when a failure occurs after deployment begins but before GitHub publication is
+proven; it never reverts Flyway schema history. Every production migration must
+therefore remain compatible with both the outgoing and incoming Worker through
+expand/contract sequencing. After publication, production and the numbered
+release remain together. For a problem found after a workflow completed, inspect
+recent deployments read-only to identify the Cloudflare version id for a
+previously tagged release:
 
 ```bash
 corepack pnpm exec wrangler deployments list --name agent-outbox --env-file /dev/null

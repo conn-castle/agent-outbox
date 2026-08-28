@@ -14,7 +14,6 @@ const WORKER_VERSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const FINALIZE_MAX_ATTEMPTS = 5;
 const FINALIZE_BACKOFF_MS = 5_000;
-const FINALIZE_VERIFY_MAX_ATTEMPTS = 4;
 const FINALIZE_VERIFY_BACKOFF_MS = 2_000;
 
 /**
@@ -109,28 +108,43 @@ export function validateWorkerVersionReleaseTag(
 }
 
 /**
- * Classify the GitHub release/tag state for a candidate commit so finalization
- * can (a) treat an already-published release on the same SHA as idempotent
- * success — covering the create-succeeded-but-response-was-lost case, (b) adopt
- * an orphan tag left at the same SHA by a prior partial run, and (c) refuse to
- * move an immutable release number onto a different commit.
+ * Classify the GitHub release/tag state for a candidate commit. Draft releases
+ * are identified by their exact target commit because GitHub does not create
+ * the tag until the draft is published. Published releases are identified by
+ * the immutable tag itself.
  *
- * @param {{ tagCommit: string | null, releaseExists: boolean }} state
+ * @param {{
+ *   tagCommit: string | null,
+ *   release: null | {
+ *     isDraft: boolean,
+ *     tagName: string,
+ *     targetCommitish: string
+ *   }
+ * }} state
  * @param {string} expectedSha
- * @returns {"absent" | "tag_orphan_correct" | "tag_wrong_sha" | "released_correct" | "released_wrong_sha"}
+ * @returns {"absent" | "tag_orphan_correct" | "tag_wrong_sha" | "draft_correct" | "draft_wrong_sha" | "published_correct" | "published_wrong_sha"}
  */
 export function classifyReleaseTagState(state, expectedSha) {
-  if (state.releaseExists) {
+  if (state.release === null) {
+    if (state.tagCommit === null) {
+      return "absent";
+    }
     return state.tagCommit === expectedSha
-      ? "released_correct"
-      : "released_wrong_sha";
+      ? "tag_orphan_correct"
+      : "tag_wrong_sha";
   }
-  if (state.tagCommit === null) {
-    return "absent";
+  if (state.release.isDraft) {
+    if (state.tagCommit !== null && state.tagCommit !== expectedSha) {
+      return "draft_wrong_sha";
+    }
+    return state.tagCommit === expectedSha ||
+      state.release.targetCommitish === expectedSha
+      ? "draft_correct"
+      : "draft_wrong_sha";
   }
   return state.tagCommit === expectedSha
-    ? "tag_orphan_correct"
-    : "tag_wrong_sha";
+    ? "published_correct"
+    : "published_wrong_sha";
 }
 
 /**
@@ -155,6 +169,17 @@ export function classifyFinalizeFailure(stderr) {
   return transient ? "transient" : "permanent";
 }
 
+export class PublicationStateUnknownError extends Error {
+  /** @param {string} releaseTag @param {{ cause?: unknown }} [options] */
+  constructor(releaseTag, options) {
+    super(
+      `${releaseTag} publication may have succeeded, but its final state could not be proven; refusing automatic rollback until reconciliation succeeds`,
+      options
+    );
+    this.name = "PublicationStateUnknownError";
+  }
+}
+
 /** @param {Record<string, string>} outputs */
 function writeGithubOutputs(outputs) {
   const outputPath = process.env.GITHUB_OUTPUT;
@@ -168,7 +193,7 @@ function writeGithubOutputs(outputs) {
 }
 
 /**
- * @param {"deploy-production.yml" | "rollback-production.yml"} workflow
+ * @param {"deploy-production.yml" | "repair-production-release.yml" | "rollback-production.yml"} workflow
  */
 export function requireProductionWorkflowContext(workflow) {
   if (process.env.GITHUB_ACTIONS !== "true") {
@@ -194,6 +219,25 @@ function requireCandidateSha() {
   return sha;
 }
 
+function requireReleaseMutationCandidateSha() {
+  if (
+    process.env.GITHUB_WORKFLOW_REF?.includes(
+      "/.github/workflows/repair-production-release.yml@"
+    )
+  ) {
+    requireProductionWorkflowContext("repair-production-release.yml");
+    const candidateSha = process.env.RELEASE_CANDIDATE_SHA ?? "";
+    if (!FULL_GIT_SHA.test(candidateSha)) {
+      throw new Error(
+        "RELEASE_CANDIDATE_SHA must be the 40-character certified repair candidate."
+      );
+    }
+    return candidateSha;
+  }
+  requireProductionWorkflowContext("deploy-production.yml");
+  return requireCandidateSha();
+}
+
 function requireReleaseTag() {
   const releaseTag = process.env.RELEASE_TAG ?? "";
   if (!RELEASE_TAG_PATTERN.test(releaseTag)) {
@@ -208,6 +252,136 @@ function requireRepository() {
     throw new Error("GITHUB_REPOSITORY must be set to owner/repo.");
   }
   return repository;
+}
+
+/**
+ * Prove that a release repair adopts one certified artifact from a failed
+ * production run whose candidate was already deployed and verified.
+ *
+ * @param {{
+ *   sourceRunId: string,
+ *   releaseTag: string,
+ *   candidateSha: string,
+ *   run: unknown,
+ *   jobs: unknown,
+ *   artifacts: unknown,
+ *   candidatePackageJson: unknown
+ * }} input
+ */
+export function validateReleaseRepairSource(input) {
+  const {
+    sourceRunId,
+    releaseTag,
+    candidateSha,
+    run,
+    jobs,
+    artifacts,
+    candidatePackageJson
+  } = input;
+  if (!/^[1-9]\d*$/.test(sourceRunId)) {
+    throw new Error("SOURCE_RUN_ID must be a positive GitHub Actions run id.");
+  }
+  if (!RELEASE_TAG_PATTERN.test(releaseTag)) {
+    throw new Error("RELEASE_TAG must be a numbered vX.Y.Z release tag.");
+  }
+  if (!FULL_GIT_SHA.test(candidateSha)) {
+    throw new Error("RELEASE_CANDIDATE_SHA must be a full Git commit SHA.");
+  }
+
+  const runState =
+    /** @type {{
+     * id?: unknown,
+     * path?: unknown,
+     * event?: unknown,
+     * head_branch?: unknown,
+     * head_sha?: unknown,
+     * status?: unknown,
+     * conclusion?: unknown
+     * }} */ (run);
+  if (String(runState.id) !== sourceRunId) {
+    throw new Error("release repair source run id does not match GitHub");
+  }
+  if (
+    runState.path !== ".github/workflows/deploy-production.yml" ||
+    runState.event !== "workflow_dispatch" ||
+    runState.head_branch !== "main" ||
+    runState.head_sha !== candidateSha ||
+    runState.status !== "completed" ||
+    runState.conclusion !== "failure"
+  ) {
+    throw new Error(
+      "release repair requires a failed completed manual production run on main at the exact candidate"
+    );
+  }
+
+  const metadata = releaseMetadata(
+    /** @type {{ name?: unknown, version?: unknown }} */ (candidatePackageJson)
+  );
+  if (metadata.releaseTag !== releaseTag) {
+    throw new Error(
+      `candidate package resolves to ${metadata.releaseTag}, not ${releaseTag}`
+    );
+  }
+
+  const jobList = Array.isArray(/** @type {{ jobs?: unknown }} */ (jobs)?.jobs)
+    ? /** @type {{ name?: unknown, conclusion?: unknown, head_sha?: unknown }[]} */ (
+        /** @type {{ jobs: unknown[] }} */ (jobs).jobs
+      )
+    : [];
+  const requiredSuccessfulJobs = [
+    "Certify exact release SHA / make release-check",
+    "Certify exact release SHA / make browser",
+    "Certify exact release SHA / make migration-replay",
+    "Build and validate release CLI",
+    "Deploy and verify production Worker"
+  ];
+  for (const name of requiredSuccessfulJobs) {
+    if (
+      !jobList.some(
+        (job) =>
+          job.name === name &&
+          job.conclusion === "success" &&
+          job.head_sha === candidateSha
+      )
+    ) {
+      throw new Error(
+        `release repair source is missing successful job: ${name}`
+      );
+    }
+  }
+  if (
+    !jobList.some(
+      (job) =>
+        job.name === "Tag verified production release" &&
+        job.conclusion === "failure" &&
+        job.head_sha === candidateSha
+    )
+  ) {
+    throw new Error(
+      "release repair source must have failed at numbered release finalization"
+    );
+  }
+
+  const expectedArtifactName = `agent-outbox-release-${candidateSha}`;
+  const artifactList = Array.isArray(
+    /** @type {{ artifacts?: unknown }} */ (artifacts)?.artifacts
+  )
+    ? /** @type {{ name?: unknown, expired?: unknown }[]} */ (
+        /** @type {{ artifacts: unknown[] }} */ (artifacts).artifacts
+      )
+    : [];
+  const matchingArtifacts = artifactList.filter(
+    (artifact) => artifact.name === expectedArtifactName
+  );
+  if (
+    matchingArtifacts.length !== 1 ||
+    matchingArtifacts[0].expired !== false
+  ) {
+    throw new Error(
+      `release repair requires one unexpired ${expectedArtifactName} artifact`
+    );
+  }
+  return { artifactName: expectedArtifactName };
 }
 
 /**
@@ -304,13 +478,39 @@ function remoteTagCommit(repository, tag) {
 /**
  * @param {string} repository
  * @param {string} tag
- * @returns {{ tagCommit: string | null, releaseExists: boolean }}
+ * @returns {{
+ *   tagCommit: string | null,
+ *   release: null | {
+ *     isDraft: boolean,
+ *     tagName: string,
+ *     targetCommitish: string
+ *   }
+ * }}
  */
 function reconcileReleaseState(repository, tag) {
-  const release = ghApiJsonOrNull(`repos/${repository}/releases/tags/${tag}`);
+  const result = runGh([
+    "release",
+    "view",
+    tag,
+    "--repo",
+    repository,
+    "--json",
+    "isDraft,tagName,targetCommitish"
+  ]);
+  if (result.error) {
+    throw result.error;
+  }
+  let release = null;
+  if (result.status === 0) {
+    release = JSON.parse(result.stdout);
+  } else if (!/release not found|not found/i.test(result.stderr ?? "")) {
+    throw new Error(
+      `gh release view ${tag} failed: ${(result.stderr ?? "").trim() || "unknown"}`
+    );
+  }
   return {
     tagCommit: remoteTagCommit(repository, tag),
-    releaseExists: release !== null
+    release
   };
 }
 
@@ -342,6 +542,27 @@ export function githubReleaseCreateArgs(repository, tag, sha) {
  */
 function createGithubRelease(repository, tag, sha) {
   return runGh(githubReleaseCreateArgs(repository, tag, sha));
+}
+
+/**
+ * @param {string} repository
+ * @param {string} tag
+ */
+export function githubReleasePublishArgs(repository, tag) {
+  return [
+    "release",
+    "edit",
+    tag,
+    "--repo",
+    repository,
+    "--draft=false",
+    "--latest"
+  ];
+}
+
+/** @param {string} repository @param {string} tag */
+function publishGithubRelease(repository, tag) {
+  return runGh(githubReleasePublishArgs(repository, tag));
 }
 
 /** @param {number} ms */
@@ -428,13 +649,19 @@ async function captureRollbackTarget() {
 /**
  * @typedef {object} ReleaseGateway
  * @property {(repository: string, tag: string) =>
- *   ({ tagCommit: string | null, releaseExists: boolean }
- *     | Promise<{ tagCommit: string | null, releaseExists: boolean }>)} reconcile
+ *   ({
+ *     tagCommit: string | null,
+ *     release: null | { isDraft: boolean, tagName: string, targetCommitish: string }
+ *   } | Promise<{
+ *     tagCommit: string | null,
+ *     release: null | { isDraft: boolean, tagName: string, targetCommitish: string }
+ *   }>)} reconcile
  * @property {(repository: string, tag: string, sha: string) =>
  *   ({ status: number | null, stderr?: string, error?: Error }
  *     | Promise<{ status: number | null, stderr?: string, error?: Error }>)} createRelease
  * @property {(repository: string, tag: string) =>
- *   (string | null | Promise<string | null>)} tagCommit
+ *   ({ status: number | null, stderr?: string, error?: Error }
+ *     | Promise<{ status: number | null, stderr?: string, error?: Error }>)} publishRelease
  * @property {(ms: number) => void | Promise<void>} sleep
  */
 
@@ -442,7 +669,7 @@ async function captureRollbackTarget() {
 const defaultReleaseGateway = {
   reconcile: reconcileReleaseState,
   createRelease: createGithubRelease,
-  tagCommit: remoteTagCommit,
+  publishRelease: publishGithubRelease,
   sleep: delay
 };
 
@@ -458,57 +685,14 @@ function isTransientGatewayError(error) {
 }
 
 /**
- * Confirm the finalized tag resolves to the candidate commit, tolerating brief
- * read-after-write lag on the git ref but refusing a tag that resolves to a
- * different commit.
- *
- * @param {ReleaseGateway} gateway
- * @param {string} repository
- * @param {string} releaseTag
- * @param {string} expectedSha
- */
-async function verifyFinalizedTag(
-  gateway,
-  repository,
-  releaseTag,
-  expectedSha
-) {
-  for (let attempt = 1; attempt <= FINALIZE_VERIFY_MAX_ATTEMPTS; attempt += 1) {
-    const commit = await gateway.tagCommit(repository, releaseTag);
-    if (commit === expectedSha) {
-      return;
-    }
-    if (commit !== null && commit !== expectedSha) {
-      throw new Error(
-        `${releaseTag} resolved to ${commit} after finalize; expected ${expectedSha}`
-      );
-    }
-    if (attempt < FINALIZE_VERIFY_MAX_ATTEMPTS) {
-      await gateway.sleep(FINALIZE_VERIFY_BACKOFF_MS);
-    }
-  }
-  throw new Error(
-    `${releaseTag} did not resolve to ${expectedSha} after finalize`
-  );
-}
-
-/**
- * Prepare the numbered GitHub release as a draft for the smoke-verified
- * candidate. The downstream publication job uploads every certified CLI asset
- * before publishing the draft as Latest, so the direct installer cannot resolve
- * a release whose downloads are absent. This runs after the Worker is already
- * live and verified, so a tagging failure must
- * never revert production. It reconciles the current release/tag state, treats
- * an existing release or draft on the candidate SHA as success (covering a
- * create whose response was lost), adopts a correct-SHA orphan tag, retries
- * only transient GitHub failures, refuses to move an immutable release number
- * onto a different commit, and proves the resulting tag resolves to the
- * candidate SHA.
+ * Prepare an unpublished release transaction for the exact candidate. A draft
+ * is validated by targetCommitish, not by a tag that GitHub creates only when
+ * the release is published.
  *
  * @param {ReleaseGateway} gateway
  * @param {{ repository: string, releaseTag: string, expectedSha: string }} input
  */
-export async function runReleaseFinalization(
+export async function runReleaseDraftPreparation(
   gateway,
   { repository, releaseTag, expectedSha }
 ) {
@@ -525,13 +709,21 @@ export async function runReleaseFinalization(
     }
 
     const kind = classifyReleaseTagState(state, expectedSha);
-    if (kind === "released_correct") {
-      console.log(`${releaseTag} already exists on ${expectedSha}.`);
+    if (kind === "draft_correct") {
+      console.log(`${releaseTag} draft is prepared on ${expectedSha}.`);
       return;
     }
-    if (kind === "released_wrong_sha" || kind === "tag_wrong_sha") {
+    if (kind === "published_correct") {
+      console.log(`${releaseTag} is already published on ${expectedSha}.`);
+      return;
+    }
+    if (
+      kind === "draft_wrong_sha" ||
+      kind === "published_wrong_sha" ||
+      kind === "tag_wrong_sha"
+    ) {
       throw new Error(
-        `${releaseTag} already points at ${state.tagCommit}; refusing to reuse the release number for ${expectedSha}`
+        `${releaseTag} is not bound to candidate ${expectedSha}; refusing to reuse the release number`
       );
     }
 
@@ -544,9 +736,10 @@ export async function runReleaseFinalization(
       throw result.error;
     }
     if (result.status === 0) {
-      await verifyFinalizedTag(gateway, repository, releaseTag, expectedSha);
-      console.log(`Prepared ${releaseTag} draft on ${expectedSha}.`);
-      return;
+      if (attempt < FINALIZE_MAX_ATTEMPTS) {
+        await gateway.sleep(FINALIZE_VERIFY_BACKOFF_MS);
+        continue;
+      }
     }
 
     const stderr = result.stderr ?? "";
@@ -570,19 +763,168 @@ export async function runReleaseFinalization(
   }
 
   throw new Error(
-    `unable to finalize ${releaseTag} after ${FINALIZE_MAX_ATTEMPTS} attempts`
+    `unable to prepare ${releaseTag} draft after ${FINALIZE_MAX_ATTEMPTS} attempts`
   );
 }
 
-async function finalizeRelease() {
-  requireProductionWorkflowContext("deploy-production.yml");
+/**
+ * Publish the prepared release as the transaction commit point. Success means
+ * both the release and its immutable tag resolve to the exact candidate.
+ *
+ * @param {ReleaseGateway} gateway
+ * @param {{ repository: string, releaseTag: string, expectedSha: string }} input
+ */
+export async function runReleasePublication(
+  gateway,
+  { repository, releaseTag, expectedSha }
+) {
+  let publicationMutationAttempted = false;
+  for (let attempt = 1; attempt <= FINALIZE_MAX_ATTEMPTS; attempt += 1) {
+    let state;
+    try {
+      state = await gateway.reconcile(repository, releaseTag);
+    } catch (error) {
+      if (isTransientGatewayError(error) && attempt < FINALIZE_MAX_ATTEMPTS) {
+        await gateway.sleep(FINALIZE_BACKOFF_MS * attempt);
+        continue;
+      }
+      if (publicationMutationAttempted) {
+        throw new PublicationStateUnknownError(releaseTag, { cause: error });
+      }
+      throw error;
+    }
+    const kind = classifyReleaseTagState(state, expectedSha);
+    if (kind === "published_correct") {
+      console.log(`${releaseTag} is published on ${expectedSha}.`);
+      return;
+    }
+    if (kind !== "draft_correct") {
+      throw new Error(
+        `${releaseTag} is not an exact-candidate draft; refusing publication`
+      );
+    }
+
+    publicationMutationAttempted = true;
+    let result;
+    try {
+      result = await gateway.publishRelease(repository, releaseTag);
+    } catch (error) {
+      throw new PublicationStateUnknownError(releaseTag, { cause: error });
+    }
+    if (result.error) {
+      throw result.error;
+    }
+    const stderr = result.stderr ?? "";
+    if (
+      result.status !== 0 &&
+      classifyFinalizeFailure(stderr) === "permanent"
+    ) {
+      throw new Error(
+        `gh release publish failed: ${stderr.trim() || "unknown error"}`
+      );
+    }
+    if (attempt < FINALIZE_MAX_ATTEMPTS) {
+      await gateway.sleep(FINALIZE_VERIFY_BACKOFF_MS);
+    }
+  }
+  throw new PublicationStateUnknownError(releaseTag);
+}
+
+async function prepareReleaseDraft() {
   const releaseTag = requireReleaseTag();
-  const expectedSha = requireCandidateSha();
+  const expectedSha = requireReleaseMutationCandidateSha();
   const repository = requireRepository();
-  await runReleaseFinalization(defaultReleaseGateway, {
+  await runReleaseDraftPreparation(defaultReleaseGateway, {
     repository,
     releaseTag,
     expectedSha
+  });
+}
+
+async function publishRelease() {
+  const releaseTag = requireReleaseTag();
+  const expectedSha = requireReleaseMutationCandidateSha();
+  const repository = requireRepository();
+  try {
+    await runReleasePublication(defaultReleaseGateway, {
+      repository,
+      releaseTag,
+      expectedSha
+    });
+    writeGithubOutputs({ publication_state: "published" });
+  } catch (error) {
+    writeGithubOutputs({
+      publication_state:
+        error instanceof PublicationStateUnknownError
+          ? "unknown"
+          : "unpublished"
+    });
+    throw error;
+  }
+}
+
+function validateReleaseRepair() {
+  requireProductionWorkflowContext("repair-production-release.yml");
+  const repository = requireRepository();
+  const sourceRunId = process.env.SOURCE_RUN_ID ?? "";
+  const releaseTag = requireReleaseTag();
+  const candidateSha = process.env.RELEASE_CANDIDATE_SHA ?? "";
+  if (!FULL_GIT_SHA.test(candidateSha)) {
+    throw new Error("RELEASE_CANDIDATE_SHA must be a full Git commit SHA.");
+  }
+
+  const currentSha = requireCandidateSha();
+  const ancestry = spawnSync(
+    "git",
+    ["merge-base", "--is-ancestor", candidateSha, currentSha],
+    { cwd: ROOT, encoding: "utf8" }
+  );
+  if (ancestry.error) {
+    throw ancestry.error;
+  }
+  if (ancestry.status !== 0) {
+    throw new Error(
+      "release repair candidate must be an ancestor of the current main SHA"
+    );
+  }
+
+  const packageResult = spawnSync(
+    "git",
+    ["show", `${candidateSha}:package.json`],
+    { cwd: ROOT, encoding: "utf8" }
+  );
+  if (packageResult.error) {
+    throw packageResult.error;
+  }
+  if (packageResult.status !== 0) {
+    throw new Error("unable to read package.json from repair candidate");
+  }
+
+  const run = ghApiJsonOrNull(
+    `repos/${repository}/actions/runs/${sourceRunId}`
+  );
+  const jobs = ghApiJsonOrNull(
+    `repos/${repository}/actions/runs/${sourceRunId}/jobs?per_page=100&filter=all`
+  );
+  const artifacts = ghApiJsonOrNull(
+    `repos/${repository}/actions/runs/${sourceRunId}/artifacts?per_page=100`
+  );
+  if (!run || !jobs || !artifacts) {
+    throw new Error("release repair source run evidence is unavailable");
+  }
+  const result = validateReleaseRepairSource({
+    sourceRunId,
+    releaseTag,
+    candidateSha,
+    run,
+    jobs,
+    artifacts,
+    candidatePackageJson: JSON.parse(packageResult.stdout)
+  });
+  writeGithubOutputs({
+    artifact_name: result.artifactName,
+    candidate_sha: candidateSha,
+    release_tag: releaseTag
   });
 }
 
@@ -633,15 +975,21 @@ async function main() {
     case "capture-rollback":
       await captureRollbackTarget();
       break;
-    case "finalize":
-      await finalizeRelease();
+    case "prepare-draft":
+      await prepareReleaseDraft();
+      break;
+    case "publish":
+      await publishRelease();
+      break;
+    case "validate-repair":
+      validateReleaseRepair();
       break;
     case "verify-rollback-version":
       verifyRollbackVersion();
       break;
     default:
       throw new Error(
-        "Usage: node scripts/production-release.mjs <prepare|capture-rollback|finalize|verify-rollback-version>"
+        "Usage: node scripts/production-release.mjs <prepare|prepare-draft|capture-rollback|publish|validate-repair|verify-rollback-version>"
       );
   }
 }
