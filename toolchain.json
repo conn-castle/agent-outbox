@@ -22,7 +22,7 @@
       "source": "go list -m -json github.com/goreleaser/goreleaser/v2@latest (verified 2026-07-03)"
     },
     "githubActionsSetupGo": {
-      "version": "v6",
+      "version": "v7",
       "source": "https://github.com/actions/setup-go/releases"
     }
   },
@@ -38,12 +38,12 @@
   },
   "phase1Tools": {
     "prettier": {
-      "version": "3.9.3",
+      "version": "3.9.6",
       "package": "prettier",
       "source": "npm view prettier version engines --json"
     },
     "markdownlint": {
-      "version": "0.22.1",
+      "version": "0.23.2",
       "package": "markdownlint-cli2",
       "source": "npm view markdownlint-cli2 version engines --json"
     },
@@ -80,37 +80,37 @@
       "source": "npm view next version engines peerDependencies --json"
     },
     "react": {
-      "version": "19.2.7",
+      "version": "19.2.8",
       "package": "react",
       "source": "npm view react version --json"
     },
     "reactDom": {
-      "version": "19.2.7",
+      "version": "19.2.8",
       "package": "react-dom",
       "source": "npm view react-dom version --json"
     },
     "clerkNextjs": {
-      "version": "7.5.10",
+      "version": "7.8.2",
       "package": "@clerk/nextjs",
       "source": "npm view @clerk/nextjs version engines peerDependencies --json"
     },
     "supabaseJs": {
-      "version": "2.108.2",
+      "version": "2.112.4",
       "package": "@supabase/supabase-js",
       "source": "npm view @supabase/supabase-js version engines --json"
     },
     "sentryNextjs": {
-      "version": "10.62.0",
+      "version": "10.71.0",
       "package": "@sentry/nextjs",
       "source": "npm view @sentry/nextjs version engines peerDependencies --json"
     },
     "lucideReact": {
-      "version": "1.23.0",
+      "version": "1.34.0",
       "package": "lucide-react",
       "source": "corepack pnpm view lucide-react version"
     },
     "postgresNode": {
-      "version": "8.22.0",
+      "version": "8.23.0",
       "package": "pg",
       "source": "npm view pg version engines --json"
     },
@@ -120,39 +120,39 @@
       "source": "corepack pnpm view pg-cloudflare version --json"
     },
     "stripeNode": {
-      "version": "22.3.0",
+      "version": "22.5.0",
       "package": "stripe",
       "source": "npm view stripe version engines --json"
     },
     "marked": {
-      "version": "18.0.9",
+      "version": "18.0.11",
       "package": "marked",
       "source": "corepack pnpm view marked version engines --json"
     },
     "typebox": {
-      "version": "1.3.14",
+      "version": "1.3.19",
       "package": "typebox",
       "source": "corepack pnpm view typebox version engines --json"
     }
   },
   "runtimeDevTools": {
     "reactTypes": {
-      "version": "19.2.17",
+      "version": "19.2.18",
       "package": "@types/react",
       "source": "corepack pnpm view @types/react@19 version --json"
     },
     "reactDomTypes": {
-      "version": "19.2.3",
+      "version": "19.2.5",
       "package": "@types/react-dom",
       "source": "corepack pnpm view @types/react-dom@19 version --json"
     },
     "postgresTypes": {
-      "version": "8.20.0",
+      "version": "8.23.1",
       "package": "@types/pg",
       "source": "corepack pnpm view @types/pg@8 version --json"
     },
     "playwrightTest": {
-      "version": "1.61.1",
+      "version": "1.62.1",
       "package": "@playwright/test",
       "source": "corepack pnpm view @playwright/test version"
     },
@@ -179,7 +179,7 @@
   },
   "providerCli": {
     "cloudflareWrangler": {
-      "version": "4.125.0",
+      "version": "4.126.0",
       "package": "wrangler",
       "source": "pnpm view wrangler version engines --json",
       "authCheck": ["wrangler", "whoami", "--env-file", "/dev/null"]
@@ -191,7 +191,7 @@
       "authCheck": ["clerk", "whoami", "--json"]
     },
     "supabase": {
-      "version": "2.108.0",
+      "version": "2.115.0",
       "package": "supabase",
       "source": "npm view supabase version --json",
       "authCheck": ["supabase", "projects", "list", "--output", "json"]
@@ -203,7 +203,7 @@
       "authCheck": ["stripe", "whoami", "--format", "json"]
     },
     "sentry": {
-      "version": "3.6.0",
+      "version": "3.6.2",
       "package": "@sentry/cli",
       "source": "npm view @sentry/cli version engines --json",
       "authCheck": ["sentry-cli", "info", "--no-defaults"]
