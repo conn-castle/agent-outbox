@@ -60,7 +60,7 @@
     "clean": "node scripts/foundation.mjs clean"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.20.1",
+    "@opennextjs/cloudflare": "1.20.4",
     "@playwright/test": "1.61.1",
     "@sentry/cli": "3.6.0",
     "@types/node": "24.13.2",
@@ -76,7 +76,7 @@
     "supabase": "2.108.0",
     "tsx": "4.23.12",
     "typescript": "6.0.3",
-    "wrangler": "4.107.0"
+    "wrangler": "4.125.0"
   },
   "dependencies": {
     "@clerk/nextjs": "7.5.10",
@@ -84,7 +84,7 @@
     "@supabase/supabase-js": "2.108.2",
     "lucide-react": "1.23.0",
     "marked": "18.0.9",
-    "next": "16.2.12",
+    "next": "16.3.3",
     "pg": "8.22.0",
     "pg-cloudflare": "1.4.0",
     "react": "19.2.7",

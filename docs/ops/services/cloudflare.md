@@ -135,8 +135,8 @@ The production release entrypoint is the protected GitHub Actions
 `deploy-production.yml` workflow, dispatched only from `main`. See
 [the release runbook](../release.md) for the dispatch command, prerequisites,
 certification, numbered releases, automatic restoration, and manual rollback.
-The internal deploy wrapper supplies the complete runtime inventory because
-Wrangler 4.107.0 dry-run did not reject a dummy `--secrets-file` that omitted a
+The internal deploy wrapper supplies the complete runtime inventory because The
+pinned Wrangler dry-run did not reject a dummy `--secrets-file` that omitted a
 required secret.
 
 Check the always-on `/api/client-events` rate-limit rule without changing
