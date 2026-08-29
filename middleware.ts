@@ -9,8 +9,8 @@ import {
 import { middlewareFixtureBypassEnabled } from "./src/server/middleware-fixture-bypass";
 import { hostedHostRedirect } from "./src/shared/hosted-origins";
 
-// OpenNext Cloudflare 1.20 rejects Next 16's Node.js proxy build output.
-// Keep middleware.ts until this pinned adapter supports proxy.ts.
+// OpenNext Cloudflare 1.20.4 has experimental proxy.ts support. Keep
+// middleware.ts until the platform verification gate proves proxy.ts parity.
 const isProtectedRoute = createRouteMatcher([
   "/human(.*)",
   "/caller/connect/approve(.*)",
