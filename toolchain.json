@@ -152,7 +152,7 @@
       "source": "corepack pnpm view @types/pg@8 version --json"
     },
     "playwrightTest": {
-      "version": "1.62.1",
+      "version": "1.61.1",
       "package": "@playwright/test",
       "source": "corepack pnpm view @playwright/test version"
     },
