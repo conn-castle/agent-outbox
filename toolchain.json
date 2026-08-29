@@ -58,7 +58,7 @@
       "source": "npm view typescript version engines --json"
     },
     "nodeTypes": {
-      "version": "24.13.2",
+      "version": "24.13.3",
       "package": "@types/node",
       "source": "corepack pnpm view @types/node@24 version --json"
     },
@@ -185,7 +185,7 @@
       "authCheck": ["wrangler", "whoami", "--env-file", "/dev/null"]
     },
     "clerk": {
-      "version": "1.5.0",
+      "version": "3.2.0",
       "package": "clerk",
       "source": "npm view clerk name version description bin homepage repository engines --json",
       "authCheck": ["clerk", "whoami", "--json"]

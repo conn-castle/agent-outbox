@@ -17,6 +17,18 @@ test("capture every landing-page product screenshot", async ({ browser }) => {
     });
     await page.goto(asset.route);
     await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+    if (new URL(asset.route, "http://127.0.0.1").searchParams.has("item")) {
+      const detail = page.locator("dialog.detail-modal[open] .detail-pane");
+      await expect(detail).toBeVisible();
+      await expect(detail.locator(".detail-title")).toBeVisible();
+      await expect(
+        detail.getByRole("button", { name: "Approve to send" })
+      ).toBeVisible();
+    } else {
+      await expect(
+        page.getByRole("heading", { name: "Needs review" })
+      ).toBeVisible();
+    }
     await page.evaluate(async () => document.fonts.ready);
 
     const outputPath = path.join(outputRoot, asset.file);
