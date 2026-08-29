@@ -75,7 +75,7 @@
   },
   "runtimePins": {
     "next": {
-      "version": "16.2.9",
+      "version": "16.2.12",
       "package": "next",
       "source": "npm view next version engines peerDependencies --json"
     },
