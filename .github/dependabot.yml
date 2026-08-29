@@ -5,6 +5,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    ignore:
+      # Icon glyph changes fail marketing screenshot verification.
+      - dependency-name: lucide-react
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: clerk
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-patch:
         update-types:

@@ -105,7 +105,7 @@
       "source": "npm view @sentry/nextjs version engines peerDependencies --json"
     },
     "lucideReact": {
-      "version": "1.34.0",
+      "version": "1.23.0",
       "package": "lucide-react",
       "source": "corepack pnpm view lucide-react version"
     },
