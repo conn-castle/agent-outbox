@@ -266,8 +266,8 @@ importers:
         specifier: 19.2.3
         version: 19.2.3(@types/react@19.2.17)
       clerk:
-        specifier: 1.5.0
-        version: 1.5.0
+        specifier: 3.2.0
+        version: 3.2.0
       ignore:
         specifier: 7.0.6
         version: 7.0.6
@@ -624,47 +624,47 @@ packages:
     resolution: {integrity: sha512-BcMp+hXKA4Tx0fWvGh23P2hgg+58SCTmkMJip93DL+lauUNbg1ExpKzzvfSpHFyhdZkQuf4irsDvSdmV+bDpBQ==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/cli-darwin-arm64@1.5.0':
-    resolution: {integrity: sha512-8Ed0jRgjUIjAQh04xCafT/JBzMGeYuY4LCs37iJr5msRDfDTn5GIjkmgtGpoHLS/xQPehtqATk3OkTe+X+rY3w==}
+  '@clerk/cli-darwin-arm64@3.2.0':
+    resolution: {integrity: sha512-ACdcyqqdtDtoOE5A8BvClY2vcDdlRxc5pKotCbbB7DjsiZ3CE/g18M0yMyYYPvPLzd93PS7yReTPxWuxhhuZ/g==}
     cpu: [arm64]
     os: [darwin]
 
-  '@clerk/cli-darwin-x64@1.5.0':
-    resolution: {integrity: sha512-UqVBwPI+cxE8PJ6ULLcR8dq0ujn2RVfMXZaZZmjUPCJO0jzZbsBZt/HN0cVWBC8XJmYJZM1CW9T2G/Zo/KfTyA==}
+  '@clerk/cli-darwin-x64@3.2.0':
+    resolution: {integrity: sha512-0th+akBnO5lImawIxV/LTCn9Y990GDh5ZibrdzeBVGnLBklBoVMjCT2QKUSiHEbr4maUEj8k0Xl1VbPzE7WNxA==}
     cpu: [x64]
     os: [darwin]
 
-  '@clerk/cli-linux-arm64-musl@1.5.0':
-    resolution: {integrity: sha512-O1fIwjXE43zH/GFp6Qnt5Uktg3s3xIhv7b2dE3QkVbJeoBAzhTt6WJKqoDRlSBw13Zqj46NGEESK4+DkGVxhFA==}
+  '@clerk/cli-linux-arm64-musl@3.2.0':
+    resolution: {integrity: sha512-+JnogjMMV+bb0N8R3e/NngvVGNy+aZGihDr4rl8LTTZ6MqpPL/n7RtTVOIbaAd544VDZgSWbHsX7F2uyp7WEuw==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@clerk/cli-linux-arm64@1.5.0':
-    resolution: {integrity: sha512-8+KXmYvRYbV1hZRod8i/0Ni6qZvmUZOhLutDtlN4lpIO0HwDbx/C2dK5pGP5xN3x30ZlyhmYBPAd6vNj7z3VYg==}
+  '@clerk/cli-linux-arm64@3.2.0':
+    resolution: {integrity: sha512-ZfcZHtH88josgIiCiM8GJpTyip7q3UphlqAPFrOkPnymES/oNEh1vHRSnmvlNWtOKVzZt4U00fz633Ykagdxcw==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@clerk/cli-linux-x64-musl@1.5.0':
-    resolution: {integrity: sha512-I0K9+3Y8KRkq5H8acUv068j2+A7DMgiEAgQh8yogz8MhLlJ2EN3dJ3ZqMY+CPj7v/yfCl8izFYm7QE25fkK83Q==}
+  '@clerk/cli-linux-x64-musl@3.2.0':
+    resolution: {integrity: sha512-7VD17oW/7YdQ/c3kTI218CXZmbStDeVj34L47b0chXwRer9THVYi+VnhhhiyQpCouyquqWRL2XPIfT/g5OZ3SQ==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@clerk/cli-linux-x64@1.5.0':
-    resolution: {integrity: sha512-f2CAzCjiG6BOZ2W9o2eFhtbHpPB1yV/vGqbDzYF4Gb84zpgP7ELoL4KnfqqUIaiOdjlcYtJFCIHk/34wrZiXXw==}
+  '@clerk/cli-linux-x64@3.2.0':
+    resolution: {integrity: sha512-sIELzItsUSRkXyh+iR+i92yEvqoMHhrqNndjgfHQ6fwh/+1DcoT0UCZYtZBWwM21l7eJ742Qju3lxsWxUWKy1w==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@clerk/cli-win32-arm64@1.5.0':
-    resolution: {integrity: sha512-+M+6EViBJFAQc4L47IwI+vEna25LqqXzLEhugztd+fw4jWVi9ZxlCL18EJ+b5ekFZY0Y0lymOukSk/Q0BQ7uNw==}
+  '@clerk/cli-win32-arm64@3.2.0':
+    resolution: {integrity: sha512-+7OBsTwTM/IFHWE7MorEMNHxj8MsgktPvJeMFOhJvb66gjVwa+8hMv+ogwAUXoBKEUvos7gJZ6huUfJh2xnZZw==}
     cpu: [arm64]
     os: [win32]
 
-  '@clerk/cli-win32-x64@1.5.0':
-    resolution: {integrity: sha512-JXaJmhpf+j+cmuXp6jkvooNjeSs7aLRl2gs4eX1+aU9YOTx5/AgODz7xBLj7jE2HumN9URa4OzkNrY1u+yKvWw==}
+  '@clerk/cli-win32-x64@3.2.0':
+    resolution: {integrity: sha512-T4JI0CPyMe1U/kuZApCqOPK3C0E20AStUH16I0cbz/mGmcMLBowMMHXaO1xKplM4nz/OKn0392Q1qsjd5RHASw==}
     cpu: [x64]
     os: [win32]
 
@@ -1551,6 +1551,10 @@ packages:
     resolution: {integrity: sha512-/UhIkaZgPutTFmQ7RnIJGgDXZmtEJ7Dvi86xNTFWcnRxVRNk/aotsqDJYeEvDP+FSMB2SdW+pQzNMcWP0rwuNA==}
     engines: {node: '>=14'}
 
+  '@opentelemetry/semantic-conventions@1.43.0':
+    resolution: {integrity: sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==}
+    engines: {node: '>=14'}
+
   '@playwright/test@1.61.1':
     resolution: {integrity: sha512-8nKv6+0RJSL9FE4jYOEGXnPeM/Hg12qZpmqzZjRh3qM0Y7c3z1mrOTfFLids72RDQYVh9WpLEfR5WdpNX4fkig==}
     engines: {node: '>=18'}
@@ -2279,6 +2283,11 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
+  acorn@8.18.0:
+    resolution: {integrity: sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ==}
+    engines: {node: '>=0.4.0'}
+    hasBin: true
+
   adm-zip@0.5.18:
     resolution: {integrity: sha512-ufJnssQGbxzLNS1Ho9bCtX4rQKCCvoVuDLHoJyc3F9dOGDB4BkWs2Ci0kv53lqocAEQ/Cbi+I2XCsNYGqVYqng==}
     engines: {node: '>=12.0'}
@@ -2351,6 +2360,11 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
+  baseline-browser-mapping@2.11.19:
+    resolution: {integrity: sha512-Grytf1xOxOEMTGRwx6rLGKkTabd4vMg3VrKdj/7joCmV0qgh4QwMMO6xh34YEXQqirAuUdgQGa5orJQQ+69RBw==}
+    engines: {node: '>=6.0.0'}
+    hasBin: true
+
   blake3-wasm@2.1.5:
     resolution: {integrity: sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g==}
 
@@ -2377,6 +2391,11 @@ packages:
     engines: {node: ^6 || ^7 || ^8 || ^9 || ^10 || ^11 || ^12 || >=13.7}
     hasBin: true
 
+  browserslist@4.28.8:
+    resolution: {integrity: sha512-V2NpofLblG64mfOtSgDhOJESZEGogzDMBv/q+W6oc4LXWP/q75eOXoOaaOu1EOadB9U4Bwx/e0yzbvwKH8zalA==}
+    engines: {node: ^6 || ^7 || ^8 || ^9 || ^10 || ^11 || ^12 || >=13.7}
+    hasBin: true
+
   buffer-from@1.1.2:
     resolution: {integrity: sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==}
 
@@ -2394,6 +2413,9 @@ packages:
 
   caniuse-lite@1.0.30001799:
     resolution: {integrity: sha512-hG1bReV+OUU+MOqK4t/ZWI0tZOyz3rqS9XuhOUz1cIcbwBKjOyJEJuw9ER5JuNyqxNk8u/JUVbGibBOL1yrjFw==}
+
+  caniuse-lite@1.0.30001810:
+    resolution: {integrity: sha512-TITQPUkaz+aVk5GL6NhOdwk1aEaNTSDPsGFWrTuhKGtjTF70jL/Oht2W4c6rXUe5fu7Ie19VIahAXHIIiWWNeg==}
 
   chalk@5.6.2:
     resolution: {integrity: sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA==}
@@ -2419,8 +2441,8 @@ packages:
   cjs-module-lexer@2.2.0:
     resolution: {integrity: sha512-4bHTS2YuzUvtoLjdy+98ykbNB5jS0+07EvFNXerqZQJ89F7DI6ET7OQo/HJuW6K0aVsKA9hj9/RVb2kQVOrPDQ==}
 
-  clerk@1.5.0:
-    resolution: {integrity: sha512-oVlCmlaPEXwlI64xa5xuwkl4HUjZlDIRm364F3im4EJXixisEFRuhyTwxinhGPFa8OBQyMAWGewfQQZEWYxXog==}
+  clerk@3.2.0:
+    resolution: {integrity: sha512-nu2YUXwetAukdCeRcuCZAdHqTOryQtebd7SeihduXsqgZYwEkl6BB+m4QCSFoS3ODA64FampvKY/PGsyEJ5zGw==}
     engines: {node: '>=20.0.0'}
     hasBin: true
 
@@ -2542,6 +2564,9 @@ packages:
   electron-to-chromium@1.5.380:
     resolution: {integrity: sha512-W6d5AbuEoRayO447cqrg6lKJIlscgRnnxOZl/08kfV71BQDoEBC7Wwis68z87LjyK6f4kWyTaubuDbhHKrZkbA==}
 
+  electron-to-chromium@1.5.415:
+    resolution: {integrity: sha512-958V+Kbhtgz+SxXeEVKBjrlKRBIDAYvUJfwhjxMZ5S6ut9jAl7l9ZKBkBrvjyjZE36PabLUo2L8kEeV5O4vgJg==}
+
   emoji-regex@10.6.0:
     resolution: {integrity: sha512-toUI84YS5YmxW219erniWD0CIVOo46xGKColeNQRgOzDorgBi1v4D71/OFzgD9GO2UGKIv1C3Sp8DAn0+j5w7A==}
 
@@ -2549,8 +2574,8 @@ packages:
     resolution: {integrity: sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg==}
     engines: {node: '>= 0.8'}
 
-  enhanced-resolve@5.24.1:
-    resolution: {integrity: sha512-7DdUaTjmNwMcH2gLr1qycesKII3BK4RLy/mdAb7x10Lq7bR4aNKHt1BR1ZALSv0rPM/hF5wYF0PhGop/rJm8vw==}
+  enhanced-resolve@5.24.5:
+    resolution: {integrity: sha512-L1l8TNvomm6UVW5B253AGxQagSQr+vGwhMlrrfRS2qmhx46AMpMVJKQYLvWYbysTMY8VoicOvzHzoHMbyzB+4A==}
     engines: {node: '>=10.13.0'}
 
   enquirer@2.4.1:
@@ -2574,6 +2599,9 @@ packages:
 
   es-module-lexer@2.1.0:
     resolution: {integrity: sha512-n27zTYMjYu1aj4MjCWzSP7G9r75utsaoc8m61weK+W8JMBGGQybd43GstCXZ3WNmSFtGT9wi59qQTW6mhTR5LQ==}
+
+  es-module-lexer@2.3.2:
+    resolution: {integrity: sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==}
 
   es-object-atoms@1.1.2:
     resolution: {integrity: sha512-HWcBoN6NileqtSydK2FqHbS/LoDd2pqrnQHLyJzBj4kOp/ky2MWMN694xOfkK8/SnUsW2DH7EfyVlydKCsm1Zw==}
@@ -2658,8 +2686,8 @@ packages:
   fast-sha256@1.3.0:
     resolution: {integrity: sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ==}
 
-  fast-uri@3.1.2:
-    resolution: {integrity: sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==}
+  fast-uri@3.1.6:
+    resolution: {integrity: sha512-7Ical1vFEMr0onbVzEDIreM22I4khW+fzyQPwvAFWBp1iwdshSZRsL4jjRvPG9JP1uiqMHRto+YU6R2/CzDz5Q==}
 
   fastq@1.20.1:
     resolution: {integrity: sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==}
@@ -3246,6 +3274,10 @@ packages:
     resolution: {integrity: sha512-J6l92tKHX6w8Jy5nO1Vuc01NoIiRGi/d6qBKVxh+IQ8Cr3b6HbVNfKiF8ZpFKufTwpwxMmce2W3iQZ861ZRyTg==}
     engines: {node: '>=18'}
 
+  node-releases@2.0.53:
+    resolution: {integrity: sha512-D9UOmYG3UH1V+ENW56t5QXBwJw1YEY18ruVeus89Rw+SyIgjPkCO84bRzO3uNIYosJbNwiabWVn48o3uJLjxFQ==}
+    engines: {node: '>=18'}
+
   node@runtime:24.18.0:
     resolution:
       type: variations
@@ -3763,8 +3795,8 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
-  terser@5.48.0:
-    resolution: {integrity: sha512-J/9An6vs9Us6wKRriSFXBWdRZapREHqFzdNUKk0pmu804EMR6dr6winwo7e5JDxN4xahxQsuysyYFwlwj4XN/Q==}
+  terser@5.50.0:
+    resolution: {integrity: sha512-CN9BVxWhgS/hRxtUMjtC2uRWSTcSfQFHMDWma6sKKfIivCD91sM+FOPfvwoaRMqCSrUpe1nv3jDamd9eEQ4y+w==}
     engines: {node: '>=10'}
     hasBin: true
 
@@ -3840,6 +3872,12 @@ packages:
     peerDependencies:
       browserslist: '>= 4.21.0'
 
+  update-browserslist-db@1.3.1:
+    resolution: {integrity: sha512-ZZ61DsRsOnakl74HAmp3oSN4aXUmEWXf+i/yv0h7tIBfICc3VdrFErQKUUKPgu3AMsTUMbcongALEN4l6GSUrQ==}
+    hasBin: true
+    peerDependencies:
+      browserslist: '>= 4.21.0'
+
   urlpattern-polyfill@10.1.0:
     resolution: {integrity: sha512-IGjKp/o0NL3Bso1PymYURCJxMPNAf/ILOpendP9f5B6e1rTJgdgiOvgfoT8VxCAdY+Wisb9uhGaJJf3yZ2V9nw==}
 
@@ -3858,8 +3896,8 @@ packages:
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
-  webpack-sources@3.5.0:
-    resolution: {integrity: sha512-HPuy+uuoTCaaoEoI1LQ3JN9+vrPBvEesnnX1jADHy728cHSMlq4wUc4afYqahq2B1mhQVZxCXOkNTnXltr+2vQ==}
+  webpack-sources@3.5.1:
+    resolution: {integrity: sha512-jyuiGJdtvY434z5bUZrjz67v76/ePNvFZTp9Mdz29IlH4+GPsgyGjiv0fKI+M7BdkU6ADjulUcKAd3tUK3WlEw==}
     engines: {node: '>=10.13.0'}
 
   webpack@5.108.1:
@@ -4659,28 +4697,28 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/cli-darwin-arm64@1.5.0':
+  '@clerk/cli-darwin-arm64@3.2.0':
     optional: true
 
-  '@clerk/cli-darwin-x64@1.5.0':
+  '@clerk/cli-darwin-x64@3.2.0':
     optional: true
 
-  '@clerk/cli-linux-arm64-musl@1.5.0':
+  '@clerk/cli-linux-arm64-musl@3.2.0':
     optional: true
 
-  '@clerk/cli-linux-arm64@1.5.0':
+  '@clerk/cli-linux-arm64@3.2.0':
     optional: true
 
-  '@clerk/cli-linux-x64-musl@1.5.0':
+  '@clerk/cli-linux-x64-musl@3.2.0':
     optional: true
 
-  '@clerk/cli-linux-x64@1.5.0':
+  '@clerk/cli-linux-x64@3.2.0':
     optional: true
 
-  '@clerk/cli-win32-arm64@1.5.0':
+  '@clerk/cli-win32-arm64@3.2.0':
     optional: true
 
-  '@clerk/cli-win32-x64@1.5.0':
+  '@clerk/cli-win32-x64@3.2.0':
     optional: true
 
   '@clerk/nextjs@7.5.10(next@16.3.3(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.61.1)(@types/node@24.13.2)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
@@ -5266,7 +5304,7 @@ snapshots:
   '@opentelemetry/core@2.8.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/instrumentation@0.214.0(@opentelemetry/api@1.9.1)':
     dependencies:
@@ -5281,16 +5319,18 @@ snapshots:
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.8.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/sdk-trace-base@2.8.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.8.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.8.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.41.1
+      '@opentelemetry/semantic-conventions': 1.43.0
 
   '@opentelemetry/semantic-conventions@1.41.1': {}
+
+  '@opentelemetry/semantic-conventions@1.43.0': {}
 
   '@playwright/test@1.61.1':
     dependencies:
@@ -6022,11 +6062,13 @@ snapshots:
     dependencies:
       acorn: 8.17.0
 
-  acorn-import-phases@1.0.4(acorn@8.17.0):
+  acorn-import-phases@1.0.4(acorn@8.18.0):
     dependencies:
-      acorn: 8.17.0
+      acorn: 8.18.0
 
   acorn@8.17.0: {}
+
+  acorn@8.18.0: {}
 
   adm-zip@0.5.18: {}
 
@@ -6052,7 +6094,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.2
+      fast-uri: 3.1.6
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -6079,6 +6121,8 @@ snapshots:
   balanced-match@4.0.4: {}
 
   baseline-browser-mapping@2.10.40: {}
+
+  baseline-browser-mapping@2.11.19: {}
 
   blake3-wasm@2.1.5: {}
 
@@ -6118,6 +6162,14 @@ snapshots:
       node-releases: 2.0.50
       update-browserslist-db: 1.2.3(browserslist@4.28.4)
 
+  browserslist@4.28.8:
+    dependencies:
+      baseline-browser-mapping: 2.11.19
+      caniuse-lite: 1.0.30001810
+      electron-to-chromium: 1.5.415
+      node-releases: 2.0.53
+      update-browserslist-db: 1.3.1(browserslist@4.28.8)
+
   buffer-from@1.1.2: {}
 
   bytes@3.1.2: {}
@@ -6134,6 +6186,8 @@ snapshots:
 
   caniuse-lite@1.0.30001799: {}
 
+  caniuse-lite@1.0.30001810: {}
+
   chalk@5.6.2: {}
 
   character-entities-legacy@3.0.0: {}
@@ -6148,16 +6202,16 @@ snapshots:
 
   cjs-module-lexer@2.2.0: {}
 
-  clerk@1.5.0:
+  clerk@3.2.0:
     optionalDependencies:
-      '@clerk/cli-darwin-arm64': 1.5.0
-      '@clerk/cli-darwin-x64': 1.5.0
-      '@clerk/cli-linux-arm64': 1.5.0
-      '@clerk/cli-linux-arm64-musl': 1.5.0
-      '@clerk/cli-linux-x64': 1.5.0
-      '@clerk/cli-linux-x64-musl': 1.5.0
-      '@clerk/cli-win32-arm64': 1.5.0
-      '@clerk/cli-win32-x64': 1.5.0
+      '@clerk/cli-darwin-arm64': 3.2.0
+      '@clerk/cli-darwin-x64': 3.2.0
+      '@clerk/cli-linux-arm64': 3.2.0
+      '@clerk/cli-linux-arm64-musl': 3.2.0
+      '@clerk/cli-linux-x64': 3.2.0
+      '@clerk/cli-linux-x64-musl': 3.2.0
+      '@clerk/cli-win32-arm64': 3.2.0
+      '@clerk/cli-win32-x64': 3.2.0
 
   client-only@0.0.1: {}
 
@@ -6259,11 +6313,13 @@ snapshots:
 
   electron-to-chromium@1.5.380: {}
 
+  electron-to-chromium@1.5.415: {}
+
   emoji-regex@10.6.0: {}
 
   encodeurl@2.0.0: {}
 
-  enhanced-resolve@5.24.1:
+  enhanced-resolve@5.24.5:
     dependencies:
       graceful-fs: 4.2.11
       tapable: 2.3.3
@@ -6282,6 +6338,8 @@ snapshots:
   es-errors@1.3.0: {}
 
   es-module-lexer@2.1.0: {}
+
+  es-module-lexer@2.3.2: {}
 
   es-object-atoms@1.1.2:
     dependencies:
@@ -6439,7 +6497,7 @@ snapshots:
 
   fast-sha256@1.3.0: {}
 
-  fast-uri@3.1.2: {}
+  fast-uri@3.1.6: {}
 
   fastq@1.20.1:
     dependencies:
@@ -6996,7 +7054,7 @@ snapshots:
       '@jridgewell/trace-mapping': 0.3.31
       jest-worker: 27.5.1
       schema-utils: 4.3.3
-      terser: 5.48.0
+      terser: 5.50.0
       webpack: 5.108.1
 
   minipass@4.2.8: {}
@@ -7055,6 +7113,8 @@ snapshots:
       whatwg-url: 5.0.0
 
   node-releases@2.0.50: {}
+
+  node-releases@2.0.53: {}
 
   node@runtime:24.18.0: {}
 
@@ -7518,10 +7578,10 @@ snapshots:
       commander: 2.20.3
       source-map-support: 0.5.21
 
-  terser@5.48.0:
+  terser@5.50.0:
     dependencies:
       '@jridgewell/source-map': 0.3.11
-      acorn: 8.17.0
+      acorn: 8.18.0
       commander: 2.20.3
       source-map-support: 0.5.21
 
@@ -7579,6 +7639,12 @@ snapshots:
       escalade: 3.2.0
       picocolors: 1.1.1
 
+  update-browserslist-db@1.3.1(browserslist@4.28.8):
+    dependencies:
+      browserslist: 4.28.8
+      escalade: 3.2.0
+      picocolors: 1.1.1
+
   urlpattern-polyfill@10.1.0: {}
 
   vary@1.1.2: {}
@@ -7591,7 +7657,7 @@ snapshots:
 
   webidl-conversions@3.0.1: {}
 
-  webpack-sources@3.5.0: {}
+  webpack-sources@3.5.1: {}
 
   webpack@5.108.1:
     dependencies:
@@ -7600,12 +7666,12 @@ snapshots:
       '@webassemblyjs/ast': 1.14.1
       '@webassemblyjs/wasm-edit': 1.14.1
       '@webassemblyjs/wasm-parser': 1.14.1
-      acorn: 8.17.0
-      acorn-import-phases: 1.0.4(acorn@8.17.0)
-      browserslist: 4.28.4
+      acorn: 8.18.0
+      acorn-import-phases: 1.0.4(acorn@8.18.0)
+      browserslist: 4.28.8
       chrome-trace-event: 1.0.4
-      enhanced-resolve: 5.24.1
-      es-module-lexer: 2.1.0
+      enhanced-resolve: 5.24.5
+      es-module-lexer: 2.3.2
       eslint-scope: 5.1.1
       events: 3.3.0
       graceful-fs: 4.2.11
@@ -7616,7 +7682,7 @@ snapshots:
       schema-utils: 4.3.3
       tapable: 2.3.3
       watchpack: 2.5.2
-      webpack-sources: 3.5.0
+      webpack-sources: 3.5.1
     transitivePeerDependencies:
       - '@minify-html/node'
       - '@swc/core'
