@@ -16,12 +16,14 @@
  *   condition: string | null
  * }} ProductionDeployReleasePhase
  *
- * @typedef {{
- *   stepName: string,
- *   command: string | null,
- *   condition: string | null
- * }} ProductionDeployReleasePhaseTuple
+ * @typedef {import("../workflow-yaml.mjs").WorkflowStepTuple} ProductionDeployReleasePhaseTuple
  */
+
+import {
+  normalizeRunCommand,
+  parseWorkflowStepTuple,
+  workflowStepBlocks
+} from "../workflow-yaml.mjs";
 
 const CANDIDATE_UNCOMMITTED_CONDITION =
   "steps.prepare-draft.outputs.draft_state != 'committed'";
@@ -49,24 +51,7 @@ const NON_BEHAVIORAL_RELEASE_PHASE_IDS = new Set([
   "reconcile"
 ]);
 
-/**
- * Collapse a workflow `run:` block to comparable executable lines: trim
- * whitespace and drop comments/blank lines.
- *
- * @param {string | null | undefined} command
- * @returns {string | null}
- */
-export function normalizeRunCommand(command) {
-  if (command == null) {
-    return null;
-  }
-  const normalized = command
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"))
-    .join("\n");
-  return normalized.length > 0 ? normalized : null;
-}
+export { normalizeRunCommand };
 
 /** @type {ProductionDeployReleasePhase[]} */
 export const PRODUCTION_DEPLOY_RELEASE_PHASES = [
@@ -194,97 +179,14 @@ export function expectedReleasePhaseTuples() {
 }
 
 /**
- * @param {string[]} lines
- * @returns {ProductionDeployReleasePhaseTuple}
- */
-function parseNamedStepTuple(lines) {
-  let stepName = null;
-  let condition = null;
-  let command = null;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const nameMatch = /^(?:      - name:|        name:)\s*(.+)\s*$/.exec(line);
-    if (nameMatch) {
-      stepName = nameMatch[1].trim();
-      continue;
-    }
-    const ifMatch = /^        if:\s*(.+)\s*$/.exec(line);
-    if (ifMatch) {
-      condition = ifMatch[1].trim();
-      continue;
-    }
-    const runMatch = /^        run:\s*(.*)$/.exec(line);
-    if (!runMatch) {
-      continue;
-    }
-    const rest = runMatch[1].trim();
-    if (
-      rest === "|" ||
-      rest === "|-" ||
-      rest === ">" ||
-      rest === ">-" ||
-      rest === ""
-    ) {
-      /** @type {string[]} */
-      const body = [];
-      for (
-        let bodyIndex = index + 1;
-        bodyIndex < lines.length;
-        bodyIndex += 1
-      ) {
-        const bodyLine = lines[bodyIndex];
-        if (/^        [A-Za-z]/.test(bodyLine)) {
-          break;
-        }
-        if (bodyLine.trim() === "") {
-          continue;
-        }
-        body.push(bodyLine.replace(/^          /, ""));
-      }
-      command = normalizeRunCommand(body.join("\n"));
-    } else {
-      command = normalizeRunCommand(rest);
-    }
-  }
-  return { stepName: stepName ?? "", command, condition };
-}
-
-/**
  * @param {string} deployJobContent
  * @returns {ProductionDeployReleasePhaseTuple[]}
  */
 export function deployJobReleasePhaseTuples(deployJobContent) {
   const expected = new Set(PRODUCTION_DEPLOY_RELEASE_STEP_NAMES);
-  const lines = deployJobContent.split(/\r?\n/);
-  /** @type {string[][]} */
-  const blocks = [];
-  /** @type {string[] | null} */
-  let current = null;
-  for (const line of lines) {
-    if (/^      - /.test(line)) {
-      if (current) {
-        blocks.push(current);
-      }
-      current = [line];
-      continue;
-    }
-    if (current) {
-      current.push(line);
-    }
-  }
-  if (current) {
-    blocks.push(current);
-  }
-
-  /** @type {ProductionDeployReleasePhaseTuple[]} */
-  const tuples = [];
-  for (const block of blocks) {
-    const parsed = parseNamedStepTuple(block);
-    if (expected.has(parsed.stepName)) {
-      tuples.push(parsed);
-    }
-  }
-  return tuples;
+  return workflowStepBlocks(deployJobContent)
+    .map((block) => parseWorkflowStepTuple(block))
+    .filter((parsed) => expected.has(parsed.stepName));
 }
 
 /**

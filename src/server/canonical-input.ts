@@ -1,10 +1,20 @@
-import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
+import {
+  apiTimestamp,
+  isJsonRecord,
+  type ApiErrorInput,
+  type ApiRequestContext
+} from "./api-errors.ts";
 import type { CallerIdentity } from "./caller-api-auth.ts";
 import type {
   ProductTransactionQuery,
   TransactionContextStatement
 } from "./database.ts";
 import {
+  ACTION_STYLES,
+  ACTION_TONES,
+  CARD_VISUAL_KINDS,
+  POPUP_KINDS,
+  QUEUE_PRIORITIES,
   canonicalInputForms,
   sha256Hex,
   stableStringify,
@@ -17,10 +27,6 @@ import {
   type PopupKind,
   type QueuePriority
 } from "./input-schema.ts";
-import {
-  SUPPORTED_ACTION_STYLES,
-  SUPPORTED_ACTION_TONES
-} from "../shared/input-schema-rules.ts";
 import { publicCanonicalRawInputShapeMatches } from "../shared/public-api-contract.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
@@ -155,19 +161,6 @@ export type CanonicalOptionRow = {
   icon: string | null;
 };
 
-const PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
-const CARD_VISUAL_KINDS = new Set(["numeric_bar", "pill", "progress_ring"]);
-const POPUP_KINDS = new Set([
-  "none",
-  "free_text",
-  "single_select",
-  "multi_select",
-  "date_picker",
-  "file_upload"
-]);
-const ACTION_TONES = new Set<string>(SUPPORTED_ACTION_TONES);
-const ACTION_STYLES = new Set<string>(SUPPORTED_ACTION_STYLES);
-
 export function reconstructCanonicalInput(args: {
   root: CanonicalInputRootRow;
   linkButtons: readonly CanonicalLinkButtonRow[];
@@ -195,12 +188,12 @@ export function reconstructCanonicalInput(args: {
       caller_item_id: args.root.caller_item_id,
       status: args.root.status as "pending" | "answered",
       revision: args.root.current_revision,
-      created_at: timestampValue(args.root.created_at),
-      updated_at: timestampValue(args.root.updated_at),
+      created_at: apiTimestamp(args.root.created_at),
+      updated_at: apiTimestamp(args.root.updated_at),
       answered_at:
         args.root.answered_at == null
           ? null
-          : timestampValue(args.root.answered_at),
+          : apiTimestamp(args.root.answered_at),
       raw_input: rawInput
     }
   };
@@ -404,7 +397,7 @@ function canonicalPartsFromRows(args: {
     !nonEmptyString(root.subtitle_html) ||
     !nonEmptyString(root.summary_html) ||
     (root.status !== "pending" && root.status !== "answered") ||
-    !PRIORITIES.has(root.priority) ||
+    !QUEUE_PRIORITIES.has(root.priority) ||
     !Number.isSafeInteger(root.current_revision) ||
     root.current_revision < 1 ||
     typeof root.skip_disabled !== "boolean" ||
@@ -485,7 +478,7 @@ function actionFromStored(
     !nonEmptyString(action.action_value) ||
     typeof action.overflow !== "boolean" ||
     !POPUP_KINDS.has(action.popup_kind) ||
-    !isPlainRecord(action.popup_payload)
+    !isJsonRecord(action.popup_payload)
   ) {
     return null;
   }
@@ -536,7 +529,7 @@ function cardVisualFromStored(
   if (kind == null) {
     return null;
   }
-  if (!CARD_VISUAL_KINDS.has(kind) || !isPlainRecord(payload)) {
+  if (!CARD_VISUAL_KINDS.has(kind) || !isJsonRecord(payload)) {
     return undefined;
   }
   if (kind === "numeric_bar") {
@@ -593,14 +586,4 @@ function groupBy<T>(rows: readonly T[], key: (row: T) => string) {
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function timestampValue(value: string | Date) {
-  return value instanceof Date
-    ? value.toISOString()
-    : new Date(value).toISOString();
 }

@@ -27,12 +27,6 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
 
 <!-- ENTRIES START -->
 
-- Backlog 2026-08-30 consumer-ai-integrations: Official consumer AI integrations
-    Priority: Medium. Area: integrations, onboarding
-    Description: Create official plugins, apps, or connections for ChatGPT, Gemini, and Claude on the web so a layperson can use Agent Outbox without developer tooling.
-    Acceptance criteria: For each platform that supports unattended scheduled execution, users can install an official integration, connect Agent Outbox through a guided setup, and complete a scheduled review-and-response flow end to end.
-    Notes: Confirm each platform's current unattended scheduling and integration capabilities before implementation; document unsupported platforms or limitations rather than simulating unattended behavior.
-
 - Backlog 2026-08-20 real-user-journey-certification: Real-user-journey certification gate
     Priority: Low. Area: CI, browser
     Description: Add a real-user-journey certification harness and a human-only `real-user-journey-approved` label that Policy gates require when that harness changes.

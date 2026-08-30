@@ -175,9 +175,13 @@ export type InputSubmissionParseResult =
 export type InputDeleteParseResult =
   { ok: true; callerItemId: string } | { ok: false; error: ApiErrorInput };
 
-const PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
-const CARD_VISUAL_KINDS = new Set(["numeric_bar", "pill", "progress_ring"]);
-const POPUP_KINDS = new Set([
+export const QUEUE_PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
+export const CARD_VISUAL_KINDS = new Set([
+  "numeric_bar",
+  "pill",
+  "progress_ring"
+]);
+export const POPUP_KINDS = new Set([
   "none",
   "free_text",
   "single_select",
@@ -196,8 +200,8 @@ const UTC_DATETIME_PATTERN =
 export { isSupportedColor, SUPPORTED_COLORS, SUPPORTED_LUCIDE_ICON_NAMES };
 
 const SUPPORTED_LUCIDE_ICONS = new Set<string>(SUPPORTED_LUCIDE_ICON_NAMES);
-const ACTION_TONES = new Set<string>(SUPPORTED_ACTION_TONES);
-const ACTION_STYLES = new Set<string>(SUPPORTED_ACTION_STYLES);
+export const ACTION_TONES = new Set<string>(SUPPORTED_ACTION_TONES);
+export const ACTION_STYLES = new Set<string>(SUPPORTED_ACTION_STYLES);
 
 const ALLOWED_HTML_ELEMENTS = new Set([
   "p",
@@ -332,7 +336,7 @@ export function parseInputSubmission(
     value,
     "priority",
     "normal",
-    PRIORITIES,
+    QUEUE_PRIORITIES,
     fields,
     "priority"
   ) as QueuePriority;

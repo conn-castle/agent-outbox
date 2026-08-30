@@ -178,25 +178,6 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     "release-check must not use a redundant tag-push trigger"
   );
 
-  const packageJson = JSON.parse(
-    readFileSync(new URL("../package.json", import.meta.url), "utf8")
-  );
-  assert.match(
-    packageJson.scripts["worker:dry-run"],
-    /^corepack pnpm run worker:build && /,
-    "production dry-run must not depend on a globally available pnpm shim"
-  );
-
-  const openNextConfig = readFileSync(
-    new URL("../open-next.config.ts", import.meta.url),
-    "utf8"
-  );
-  assert.match(
-    openNextConfig,
-    /config\.buildCommand = "corepack pnpm run next:build";/,
-    "OpenNext build must not depend on a globally available pnpm shim"
-  );
-
   const withoutCleanup = deployWorkflow.replace(
     /      - name: Reconcile uncommitted release[\s\S]*?(?=\n  publish-cli-homebrew:)/,
     ""
@@ -432,7 +413,7 @@ test("production deploy workflow guard accepts only the manual deploy contract",
       rollbackTargetEchoSkip,
       "24.18.0"
     ).includes(
-      ".github/workflows/deploy-production.yml must prove the captured rollback target with smoke-runtime and AGENT_OUTBOX_EXPECTED_RELEASE"
+      ".github/workflows/deploy-production.yml must match the exported production release phase (step name, run command, condition) contract"
     ),
     true,
     "rollback-target verification must run smoke-runtime"

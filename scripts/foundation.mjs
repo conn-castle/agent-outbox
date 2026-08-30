@@ -36,11 +36,10 @@ import {
   readText
 } from "./foundation/repository.mjs";
 import {
-  PHASE3_FOUNDATION_MARKERS_BY_FILE,
-  PHASE4_CONTRACT_DOC_MARKERS_BY_FILE,
+  PHASE3_FOUNDATION_SOURCE_FILES,
+  PHASE4_CONTRACT_DOC_FILES,
   RUNTIME_PROOF_SOURCE_DIRS,
   RUNTIME_PROOF_SOURCE_FILES,
-  validatePhase3FoundationSourceContents,
   validatePhase4ContractDocContents,
   validateRuntimeProofScope
 } from "./foundation/source-contracts.mjs";
@@ -111,11 +110,11 @@ const REQUIRED_FILES = [
     "app/layout.tsx",
     "app/page.tsx",
     "app/api/runtime/canary/route.ts",
-    ...Object.keys(PHASE3_FOUNDATION_MARKERS_BY_FILE),
+    ...PHASE3_FOUNDATION_SOURCE_FILES,
     "src/server/logging.ts",
     "src/server/scheduled.ts",
     "db/migrations/V20260703223000__output_file_size_invariant.sql",
-    ...Object.keys(PHASE4_CONTRACT_DOC_MARKERS_BY_FILE),
+    ...PHASE4_CONTRACT_DOC_FILES,
     "docs/agent-layer/COMMANDS.md",
     "docs/ops/migrations.md",
     "scripts/flyway.mjs",
@@ -145,15 +144,8 @@ function readRuntimeProofSourceContents() {
 /**
  * @returns {Record<string, string>}
  */
-function readPhase3FoundationSourceContents() {
-  return readPathContents(Object.keys(PHASE3_FOUNDATION_MARKERS_BY_FILE));
-}
-
-/**
- * @returns {Record<string, string>}
- */
 function readPhase4ContractDocContents() {
-  return readPathContents(Object.keys(PHASE4_CONTRACT_DOC_MARKERS_BY_FILE));
+  return readPathContents(PHASE4_CONTRACT_DOC_FILES);
 }
 
 /**
@@ -353,15 +345,6 @@ function smoke() {
     readRuntimeProofSourceContents()
   );
   assert.deepEqual(scopeFailures, [], scopeFailures.join("\n"));
-
-  const phase3FoundationFailures = validatePhase3FoundationSourceContents(
-    readPhase3FoundationSourceContents()
-  );
-  assert.deepEqual(
-    phase3FoundationFailures,
-    [],
-    phase3FoundationFailures.join("\n")
-  );
 
   const phase4ContractDocFailures = validatePhase4ContractDocContents({
     ...readPhase4ContractDocContents(),

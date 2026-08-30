@@ -1,21 +1,21 @@
-import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
 import {
-  runAuthenticatedCallerTransaction,
+  apiTimestamp,
+  apiValidationFailed,
+  isJsonRecord,
+  parseBoundedPageLimit,
+  type ApiErrorInput,
+  type ApiRequestContext
+} from "./api-errors.ts";
+import {
+  runGuardedCallerTransaction,
   type CallerIdentity
 } from "./caller-api-auth.ts";
-import {
-  accountLimitProfileForAccount,
-  enforceCallerRequestLimits
-} from "./caller-api-limits.ts";
 import {
   CanonicalInputIntegrityError,
   canonicalInputLinkButtonsStatement,
   canonicalInputActionsStatement,
   canonicalInputOptionsStatement,
-  canonicalInputIntegrityClientError,
-  isCanonicalInputIntegrityError,
   reconstructCanonicalInput,
-  reportCanonicalInputIntegrityFailure,
   type CanonicalActionRow,
   type CanonicalInput,
   type CanonicalInputRootRow,
@@ -26,8 +26,6 @@ import type {
   ProductTransactionQuery,
   TransactionContextStatement
 } from "./database.ts";
-import { durationSinceMs } from "./logging.ts";
-import { reportRuntimeFailure } from "./sentry.ts";
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
   InputReadRequestSchema,
@@ -96,10 +94,15 @@ export async function handleInputListRequest(
     return parsed;
   }
 
-  return withAuthenticatedCallerTransaction(
+  return runGuardedCallerTransaction(
     request,
     context,
-    INPUT_LIST_OPERATION,
+    {
+      rateLimitKind: INPUT_READ_LIMIT_OPERATION_KIND,
+      loggedOperation: INPUT_LIST_OPERATION,
+      unavailableMessage: "Input list operation is temporarily unavailable.",
+      unexpectedFailureMessage: "Input list operation failed unexpectedly."
+    },
     (query, identity) =>
       listInputsInTransaction(query, identity, parsed.limit, parsed.cursor)
   );
@@ -115,10 +118,15 @@ export async function handleInputReadRequest(
     return parsed;
   }
 
-  return withAuthenticatedCallerTransaction(
+  return runGuardedCallerTransaction(
     request,
     context,
-    INPUT_READ_OPERATION,
+    {
+      rateLimitKind: INPUT_READ_LIMIT_OPERATION_KIND,
+      loggedOperation: INPUT_READ_OPERATION,
+      unavailableMessage: "Input read operation is temporarily unavailable.",
+      unexpectedFailureMessage: "Input read operation failed unexpectedly."
+    },
     (query, identity) =>
       readInputInTransaction(query, identity, parsed.callerItemId)
   );
@@ -188,36 +196,6 @@ export async function readInputInTransaction(
   return { ok: true, data: publicInputReadResult(reconstructed.input) };
 }
 
-export async function enforceInputReadAccess(
-  query: ProductTransactionQuery,
-  identity: CallerIdentity,
-  operation: typeof INPUT_LIST_OPERATION | typeof INPUT_READ_OPERATION
-): Promise<InputReadQueueResult | { ok: true }> {
-  const profile = await accountLimitProfileForAccount(
-    query,
-    identity.accountId
-  );
-  if (!profile) {
-    return temporaryUnavailableError(
-      operation === INPUT_LIST_OPERATION
-        ? "Input list operation is temporarily unavailable."
-        : "Input read operation is temporarily unavailable."
-    );
-  }
-
-  const limit = await enforceCallerRequestLimits(
-    query,
-    identity,
-    profile,
-    INPUT_READ_LIMIT_OPERATION_KIND
-  );
-  if (!limit.ok) {
-    return { ok: false, error: limit.error };
-  }
-
-  return { ok: true };
-}
-
 export function parseInputPageQuery(
   searchParams: URLSearchParams
 ): ParsedPageRequest {
@@ -230,7 +208,7 @@ export function parseInputPageQuery(
 export function parseInputReadBody(
   body: unknown
 ): { ok: true; callerItemId: string } | { ok: false; error: ApiErrorInput } {
-  if (!isRecord(body)) {
+  if (!isJsonRecord(body)) {
     return validationFailed([
       {
         path: "",
@@ -364,90 +342,21 @@ function inputListItemFromRow(row: InputListRow): InputListItem {
     caller_item_id: row.caller_item_id,
     status: row.status,
     revision: row.current_revision,
-    created_at: timestampValue(row.created_at),
-    updated_at: timestampValue(row.updated_at),
-    answered_at:
-      row.answered_at == null ? null : timestampValue(row.answered_at)
+    created_at: apiTimestamp(row.created_at),
+    updated_at: apiTimestamp(row.updated_at),
+    answered_at: row.answered_at == null ? null : apiTimestamp(row.answered_at)
   };
-}
-
-async function withAuthenticatedCallerTransaction(
-  request: Request,
-  context: ApiRequestContext,
-  operation: typeof INPUT_LIST_OPERATION | typeof INPUT_READ_OPERATION,
-  callback: (
-    query: ProductTransactionQuery,
-    identity: CallerIdentity
-  ) => Promise<InputReadQueueResult>
-): Promise<InputReadQueueResult> {
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return temporaryUnavailableError(
-      "Caller API database configuration is unavailable."
-    );
-  }
-
-  let identity: CallerIdentity | undefined;
-  try {
-    const transaction = await runAuthenticatedCallerTransaction(
-      request,
-      context,
-      connectionString,
-      async (query, auth) => {
-        identity = auth;
-        const access = await enforceInputReadAccess(query, auth, operation);
-        if (!access.ok) {
-          return access;
-        }
-
-        return callback(query, auth);
-      }
-    );
-    if (!transaction.authenticated) {
-      return { ok: false, error: transaction.failure.clientError };
-    }
-    return transaction.data;
-  } catch (error) {
-    if (isCanonicalInputIntegrityError(error)) {
-      reportCanonicalInputIntegrityFailure(error, context);
-      return {
-        ok: false,
-        error: canonicalInputIntegrityClientError({
-          errorId: context.correlationId,
-          reported: true
-        })
-      };
-    }
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      request_id: context.requestId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
-      operation,
-      account_id: identity?.accountId,
-      caller_id: identity?.callerId,
-      message:
-        operation === INPUT_LIST_OPERATION
-          ? "Input list operation failed unexpectedly."
-          : "Input read operation failed unexpectedly."
-    });
-    return temporaryUnavailableError(
-      operation === INPUT_LIST_OPERATION
-        ? "Input list operation is temporarily unavailable."
-        : "Input read operation is temporarily unavailable.",
-      { errorId: context.correlationId, reported: true }
-    );
-  }
 }
 
 function parseInputPageParameters(input: {
   limit: unknown;
   cursor: unknown;
 }): ParsedPageRequest {
-  const limit = parsePageLimit(input.limit);
+  const limit = parseBoundedPageLimit(
+    input.limit,
+    INPUT_PAGE_DEFAULT_LIMIT,
+    INPUT_PAGE_MAX_LIMIT
+  );
   const cursor = parseCursor(input.cursor);
   const fields = [
     ...(limit.ok ? [] : limit.fields),
@@ -463,38 +372,6 @@ function parseInputPageParameters(input: {
     limit: limit.value,
     cursor: cursor.value
   };
-}
-
-function parsePageLimit(value: unknown) {
-  if (value == null || value === "") {
-    return { ok: true as const, value: INPUT_PAGE_DEFAULT_LIMIT };
-  }
-
-  const numericValue =
-    typeof value === "number"
-      ? value
-      : typeof value === "string" && /^\d+$/.test(value)
-        ? Number(value)
-        : NaN;
-
-  if (
-    !Number.isSafeInteger(numericValue) ||
-    numericValue < 1 ||
-    numericValue > INPUT_PAGE_MAX_LIMIT
-  ) {
-    return {
-      ok: false as const,
-      fields: [
-        {
-          path: "limit",
-          code: "invalid_limit",
-          message: `limit must be an integer from 1 through ${INPUT_PAGE_MAX_LIMIT}.`
-        }
-      ]
-    };
-  }
-
-  return { ok: true as const, value: numericValue };
 }
 
 function parseCursor(value: unknown) {
@@ -517,7 +394,7 @@ function parseCursor(value: unknown) {
   try {
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
     if (
-      isRecord(parsed) &&
+      isJsonRecord(parsed) &&
       typeof parsed.input_item_id === "string" &&
       UUID_PATTERN.test(parsed.input_item_id)
     ) {
@@ -548,15 +425,7 @@ function validationFailed(fields: ApiErrorInput["fields"]): {
   ok: false;
   error: ApiErrorInput;
 } {
-  return {
-    ok: false,
-    error: {
-      status: 422,
-      code: "validation_failed",
-      message: "Input read request failed validation.",
-      fields
-    }
-  };
+  return apiValidationFailed("Input read request failed validation.", fields);
 }
 
 function notFoundError(): InputReadQueueResult {
@@ -568,30 +437,4 @@ function notFoundError(): InputReadQueueResult {
       message: "Input item was not found for this caller."
     }
   };
-}
-
-function temporaryUnavailableError(
-  message: string,
-  options?: { errorId?: string; reported?: boolean }
-): InputReadQueueResult {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message,
-      ...(options?.errorId ? { errorId: options.errorId } : {}),
-      ...(options?.reported ? { reported: true } : {})
-    }
-  };
-}
-
-function timestampValue(value: string | Date) {
-  return value instanceof Date
-    ? value.toISOString()
-    : new Date(value).toISOString();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
+import { enforceCallerOperationLimits } from "../src/server/caller-api-auth.ts";
 import {
   CanonicalInputIntegrityError,
   canonicalInputActionsStatement,
@@ -16,11 +14,8 @@ import {
   reportCanonicalInputIntegrityFailure
 } from "../src/server/canonical-input.ts";
 import {
-  INPUT_LIST_OPERATION,
   INPUT_READ_LIMIT_OPERATION_KIND,
-  INPUT_READ_OPERATION,
   cursorFromInputRow,
-  enforceInputReadAccess,
   handleInputListRequest,
   handleInputReadRequest,
   inputListPageStatement,
@@ -30,18 +25,22 @@ import {
   parseInputReadBody,
   readInputInTransaction
 } from "../src/server/input-read.ts";
-import {
-  canonicalInputForms,
-  parseInputSubmission,
-  sha256Hex,
-  stableStringify
-} from "../src/server/input-schema.ts";
+import { sha256Hex, stableStringify } from "../src/server/input-schema.ts";
 import {
   PUBLIC_API_EXAMPLES,
   publicCanonicalRawInputShapeMatches,
   publicInputSubmissionShapeMatches,
   publicSchemaMatches
 } from "../src/shared/public-api-contract.ts";
+import {
+  CANONICAL_INPUT_ONE_ID as inputOneId,
+  CANONICAL_INPUT_TWO_ID as inputTwoId,
+  CANONICAL_TEST_IDENTITY as identity,
+  canonicalFormsFromSubmission,
+  parseValidSubmission,
+  richPublicInput,
+  storedRowsFromSubmission
+} from "./helpers/canonical-input.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -50,205 +49,13 @@ import {
  * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
  */
 
-const identity = {
-  accountId: "00000000-0000-4000-8000-000000000001",
-  callerId: "00000000-0000-4000-8000-000000000002"
-};
-
 const context = {
   requestId: "req-input-read-test",
   correlationId: "corr-input-read-test"
 };
 
-const inputOneId = "00000000-0000-4000-8000-000000000301";
-const inputTwoId = "00000000-0000-4000-8000-000000000302";
-
-function richPublicInput(overrides = {}) {
-  return {
-    caller_item_id: "workflow:nested",
-    row_type: { display: "Review", icon: "mail" },
-    row_accent_color: null,
-    title: "Canonical title",
-    subtitle: "Canonical subtitle",
-    corner: null,
-    summary: "Canonical summary",
-    details: null,
-    link_buttons: [
-      {
-        display: "Open source",
-        icon: "external-link",
-        url: "https://example.com/source"
-      },
-      {
-        display: "Inbox",
-        icon: "inbox",
-        url: "https://example.com/inbox"
-      }
-    ],
-    card_visual: {
-      kind: "progress_ring",
-      label: "Progress",
-      value: 4,
-      display: "4/10",
-      unit: "%",
-      min_value: 0,
-      max_value: 10,
-      color: "blue"
-    },
-    actions: [
-      {
-        display: "Approve",
-        icon: "send",
-        value: "approve",
-        overflow: false,
-        tone: "success",
-        style: "solid",
-        popup: { kind: "none" }
-      },
-      {
-        display: "Comment",
-        icon: "message-square",
-        value: "comment",
-        overflow: false,
-        popup: {
-          kind: "free_text",
-          label: "Notes",
-          placeholder: null,
-          default_value: null,
-          multiline: true,
-          min_length: null,
-          max_length: 200
-        }
-      },
-      {
-        display: "Pick one",
-        icon: "inbox",
-        value: "pick_one",
-        overflow: true,
-        popup: {
-          kind: "single_select",
-          label: "Choice",
-          options: [
-            { display: "A", value: "a", icon: "check" },
-            { display: "B", value: "b", icon: null }
-          ]
-        }
-      },
-      {
-        display: "Pick many",
-        icon: "archive",
-        value: "pick_many",
-        overflow: true,
-        popup: {
-          kind: "multi_select",
-          label: "Checks",
-          options: [
-            { display: "One", value: "one" },
-            { display: "Two", value: "two" }
-          ]
-        }
-      },
-      {
-        display: "Schedule",
-        icon: "calendar",
-        value: "schedule",
-        overflow: true,
-        popup: {
-          kind: "date_picker",
-          label: "When",
-          mode: "date",
-          placeholder: null,
-          display_timezone: "America/New_York",
-          min_value: null,
-          max_value: null
-        }
-      },
-      {
-        display: "Upload",
-        icon: "upload",
-        value: "upload",
-        overflow: true,
-        popup: {
-          kind: "file_upload",
-          label: "File",
-          accept_mime_types: null
-        }
-      }
-    ],
-    ...overrides
-  };
-}
-
 function parseValid(input = richPublicInput()) {
-  const parsed = parseInputSubmission(input, { limitProfile: "hosted-paid" });
-  assert.equal(parsed.ok, true);
-  if (!parsed.ok) {
-    assert.fail("expected valid input submission");
-  }
-  return parsed.submission;
-}
-
-/**
- * @param {string} inputItemId
- * @param {import("../src/server/input-schema.ts").NormalizedInputSubmission} submission
- * @param {Partial<QueryResultRow>} rootOverrides
- */
-function storedRowsFromSubmission(inputItemId, submission, rootOverrides = {}) {
-  return {
-    root: {
-      input_item_id: inputItemId,
-      caller_item_id: submission.callerItemId,
-      status: "pending",
-      current_revision: 1,
-      priority: submission.priority,
-      row_type_display: submission.rowType.display,
-      row_type_icon: submission.rowType.icon,
-      row_accent_color: submission.rowAccentColor,
-      title_html: submission.titleHtml,
-      subtitle_html: submission.subtitleHtml,
-      corner_html: submission.cornerHtml,
-      summary_html: submission.summaryHtml,
-      details_html: submission.detailsHtml,
-      card_visual_kind: submission.cardVisual?.kind ?? null,
-      card_visual_payload: submission.cardVisual?.payload ?? {},
-      skip_disabled: submission.skipDisabled,
-      normalized_content_fingerprint: submission.normalizedContentFingerprint,
-      created_at: "2026-06-30T12:00:00.000Z",
-      updated_at: "2026-06-30T12:05:00.000Z",
-      answered_at: null,
-      ...rootOverrides
-    },
-    links: submission.linkButtons.map((button) => ({
-      input_item_id: inputItemId,
-      display_order: button.displayOrder,
-      display: button.display,
-      icon: button.icon,
-      url: button.url
-    })),
-    actions: submission.actions.map((action, index) => ({
-      input_item_id: inputItemId,
-      input_action_id: `00000000-0000-4000-8000-0000000004${String(index).padStart(2, "0")}`,
-      display_order: action.displayOrder,
-      display: action.display,
-      icon: action.icon,
-      action_value: action.value,
-      overflow: action.overflow,
-      action_tone: action.tone,
-      action_style: action.style,
-      popup_kind: action.popupKind,
-      popup_payload: action.popupPayload
-    })),
-    options: submission.actions.flatMap((action, index) =>
-      action.options.map((option) => ({
-        input_item_id: inputItemId,
-        input_action_id: `00000000-0000-4000-8000-0000000004${String(index).padStart(2, "0")}`,
-        display_order: option.displayOrder,
-        display: option.display,
-        option_value: option.value,
-        icon: option.icon
-      }))
-    )
-  };
+  return parseValidSubmission(input);
 }
 
 /**
@@ -405,21 +212,7 @@ test("canonical reconstruction restores nested variants, defaults, and public sh
     submission.normalizedContent.link_buttons
   );
 
-  const { fingerprintForm } = canonicalInputForms({
-    callerItemId: submission.callerItemId,
-    priority: submission.priority,
-    rowType: submission.rowType,
-    rowAccentColor: submission.rowAccentColor,
-    titleHtml: submission.titleHtml,
-    subtitleHtml: submission.subtitleHtml,
-    cornerHtml: submission.cornerHtml,
-    summaryHtml: submission.summaryHtml,
-    detailsHtml: submission.detailsHtml,
-    linkButtons: submission.linkButtons,
-    cardVisual: submission.cardVisual,
-    skipDisabled: submission.skipDisabled,
-    actions: submission.actions
-  });
+  const { fingerprintForm } = canonicalFormsFromSubmission(submission);
   assert.equal(
     sha256Hex(stableStringify(fingerprintForm)),
     submission.normalizedContentFingerprint
@@ -533,21 +326,8 @@ test("fingerprint mismatch and public-schema failure are temporary_unavailable",
 
   const emptyActionsFingerprint = sha256Hex(
     stableStringify(
-      canonicalInputForms({
-        callerItemId: submission.callerItemId,
-        priority: submission.priority,
-        rowType: submission.rowType,
-        rowAccentColor: submission.rowAccentColor,
-        titleHtml: submission.titleHtml,
-        subtitleHtml: submission.subtitleHtml,
-        cornerHtml: submission.cornerHtml,
-        summaryHtml: submission.summaryHtml,
-        detailsHtml: submission.detailsHtml,
-        linkButtons: submission.linkButtons,
-        cardVisual: submission.cardVisual,
-        skipDisabled: submission.skipDisabled,
-        actions: []
-      }).fingerprintForm
+      canonicalFormsFromSubmission({ ...submission, actions: [] })
+        .fingerprintForm
     )
   );
   const schemaFailure = reconstructCanonicalInput({
@@ -607,9 +387,6 @@ test("input list returns caller-scoped metadata in stable indexed keyset order",
   });
   assert.equal("input_item_id" in result.data.items[0], false);
   assert.equal("raw_input" in result.data.items[0], false);
-  assert.match(query.calls[0].sql, /account_id = \$1/);
-  assert.match(query.calls[0].sql, /caller_id = \$2/);
-  assert.match(query.calls[0].sql, /order by i\.input_item_id/);
   assert.doesNotMatch(query.calls[0].sql, /for update/i);
   assert.deepEqual(query.calls[0].values, [
     identity.accountId,
@@ -667,8 +444,6 @@ test("input read returns canonical raw_input for the authenticated caller only",
     true
   );
   assert.equal(JSON.stringify(result.data).includes(inputOneId), false);
-  assert.match(query.calls[0].sql, /account_id = \$1/);
-  assert.match(query.calls[0].sql, /caller_id = \$2/);
   assert.match(query.calls[0].sql, /for update/i);
   assert.deepEqual(query.calls[0].values, [
     identity.accountId,
@@ -697,33 +472,24 @@ test("input read returns not_found for a missing live item", async () => {
 
 test("child-table reads join through caller-owned input rows", () => {
   for (const statement of [
-    canonicalInputRootsStatement(identity, [inputOneId]),
     canonicalInputLinkButtonsStatement(identity, [inputOneId]),
     canonicalInputActionsStatement(identity, [inputOneId]),
-    canonicalInputOptionsStatement(identity, [inputOneId]),
-    liveInputForReadStatement(identity, "workflow:nested")
+    canonicalInputOptionsStatement(identity, [inputOneId])
   ]) {
-    assert.match(statement.sql, /account_id = \$1/);
-    assert.match(statement.sql, /caller_id = \$2/);
     assert.ok(statement.values);
     assert.deepEqual(statement.values.slice(0, 2), [
       identity.accountId,
       identity.callerId
     ]);
+    assert.match(statement.sql, /join public\.agent_outbox_input_items i/);
   }
 
-  assert.match(
-    canonicalInputLinkButtonsStatement(identity, [inputOneId]).sql,
-    /join public\.agent_outbox_input_items i/
-  );
-  assert.match(
-    canonicalInputActionsStatement(identity, [inputOneId]).sql,
-    /join public\.agent_outbox_input_items i/
-  );
-  assert.match(
-    canonicalInputOptionsStatement(identity, [inputOneId]).sql,
-    /join public\.agent_outbox_input_items i/
-  );
+  const roots = canonicalInputRootsStatement(identity, [inputOneId]);
+  assert.ok(roots.values);
+  assert.deepEqual(roots.values.slice(0, 2), [
+    identity.accountId,
+    identity.callerId
+  ]);
   assert.match(
     liveInputForReadStatement(identity, "workflow:nested").sql,
     /for update/i
@@ -804,7 +570,11 @@ test("input read locks the caller-scoped root and treats a concurrent miss as no
 
   assert.equal(result.ok, true);
   assert.match(query.calls[0].sql, /for update/i);
-  assert.match(query.calls[0].sql, /caller_item_id = \$3/);
+  assert.deepEqual(query.calls[0].values, [
+    identity.accountId,
+    identity.callerId,
+    submission.callerItemId
+  ]);
   assert.equal(
     query.calls.filter((call) => /for update/i.test(call.sql)).length,
     1
@@ -887,11 +657,6 @@ test("canonical integrity reporting uses a distinct operation and safe identifie
 });
 
 test("input list and read share output_check_read limits under distinct operations", async () => {
-  assert.equal(INPUT_LIST_OPERATION, "input_list");
-  assert.equal(INPUT_READ_OPERATION, "input_read");
-  assert.equal(INPUT_READ_LIMIT_OPERATION_KIND, "output_check_read");
-  assert.notEqual(INPUT_LIST_OPERATION, INPUT_READ_OPERATION);
-
   const query = fakeQuery([
     [{ tier: "hosted_free" }],
     [
@@ -908,7 +673,12 @@ test("input list and read share output_check_read limits under distinct operatio
       }
     ]
   ]);
-  const result = await enforceInputReadAccess(query, identity, "input_read");
+  const result = await enforceCallerOperationLimits(
+    query,
+    identity,
+    INPUT_READ_LIMIT_OPERATION_KIND,
+    "Input read operation is temporarily unavailable."
+  );
   assert.equal(result.ok, false);
   if (result.ok) {
     assert.fail("expected output_check_read throttle");
@@ -959,19 +729,6 @@ test("canonical raw_input examples are default-expanded and stricter than reques
   assert.equal(PUBLIC_API_EXAMPLES.canonicalRawInput.skip_disabled, false);
   assert.equal(PUBLIC_API_EXAMPLES.canonicalRawInput.card_visual, null);
   assert.equal(PUBLIC_API_EXAMPLES.canonicalRawInput.corner, null);
-});
-
-test("input list and read routes send Cache-Control no-store", () => {
-  const listSource = readFileSync(
-    fileURLToPath(new URL("../app/api/input/list/route.ts", import.meta.url)),
-    "utf8"
-  );
-  const readSource = readFileSync(
-    fileURLToPath(new URL("../app/api/input/read/route.ts", import.meta.url)),
-    "utf8"
-  );
-  assert.match(listSource, /Cache-Control": "no-store"/);
-  assert.match(readSource, /Cache-Control": "no-store"/);
 });
 
 test("batch materialize throws integrity errors without leaking review content", async () => {

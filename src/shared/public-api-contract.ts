@@ -180,6 +180,7 @@ export const ProtocolValueSchema = Type.String({
 });
 
 export const IconSchema = Type.String({
+  $id: "Icon",
   enum: [...SUPPORTED_LUCIDE_ICON_NAMES],
   description:
     "A supported Lucide icon name. Arbitrary SVG and HTML are rejected."
@@ -193,47 +194,62 @@ export const PopupOptionSchema = openObject({
 
 const NonePopupSchema = openObject({ kind: Type.Literal("none") });
 
-const FreeTextPopupSchema = openObject({
-  kind: Type.Literal("free_text"),
-  label: Type.String({ minLength: 1 }),
-  placeholder: Type.Optional(nullable(Type.String())),
-  default_value: Type.Optional(nullable(Type.String())),
-  multiline: Type.Boolean(),
-  min_length: Type.Optional(nullable(Type.Integer({ minimum: 0 }))),
-  max_length: Type.Optional(nullable(Type.Integer({ minimum: 1 })))
-});
+const FreeTextPopupSchema = openObject(
+  {
+    kind: Type.Literal("free_text"),
+    label: Type.String({ minLength: 1 }),
+    placeholder: Type.Optional(nullable(Type.String())),
+    default_value: Type.Optional(nullable(Type.String())),
+    multiline: Type.Boolean(),
+    min_length: Type.Optional(nullable(Type.Integer({ minimum: 0 }))),
+    max_length: Type.Optional(nullable(Type.Integer({ minimum: 1 })))
+  },
+  { $id: "FreeTextPopup" }
+);
 
-const SingleSelectPopupSchema = openObject({
-  kind: Type.Literal("single_select"),
-  label: Type.String({ minLength: 1 }),
-  options: Type.Array(PopupOptionSchema, { minItems: 1, maxItems: 64 })
-});
+const SingleSelectPopupSchema = openObject(
+  {
+    kind: Type.Literal("single_select"),
+    label: Type.String({ minLength: 1 }),
+    options: Type.Array(PopupOptionSchema, { minItems: 1, maxItems: 64 })
+  },
+  { $id: "SingleSelectPopup" }
+);
 
-const MultiSelectPopupSchema = openObject({
-  kind: Type.Literal("multi_select"),
-  label: Type.String({ minLength: 1 }),
-  options: Type.Array(PopupOptionSchema, { minItems: 1, maxItems: 64 }),
-  min_selected: Type.Optional(nullable(Type.Integer({ minimum: 0 }))),
-  max_selected: Type.Optional(nullable(Type.Integer({ minimum: 0 })))
-});
+const MultiSelectPopupSchema = openObject(
+  {
+    kind: Type.Literal("multi_select"),
+    label: Type.String({ minLength: 1 }),
+    options: Type.Array(PopupOptionSchema, { minItems: 1, maxItems: 64 }),
+    min_selected: Type.Optional(nullable(Type.Integer({ minimum: 0 }))),
+    max_selected: Type.Optional(nullable(Type.Integer({ minimum: 0 })))
+  },
+  { $id: "MultiSelectPopup" }
+);
 
-const DatePickerPopupSchema = openObject({
-  kind: Type.Literal("date_picker"),
-  label: Type.String({ minLength: 1 }),
-  mode: Type.Union([Type.Literal("date"), Type.Literal("datetime")]),
-  placeholder: Type.Optional(nullable(Type.String())),
-  display_timezone: Type.Optional(nullable(Type.String({ minLength: 1 }))),
-  min_value: Type.Optional(nullable(Type.String({ minLength: 1 }))),
-  max_value: Type.Optional(nullable(Type.String({ minLength: 1 })))
-});
+const DatePickerPopupSchema = openObject(
+  {
+    kind: Type.Literal("date_picker"),
+    label: Type.String({ minLength: 1 }),
+    mode: Type.Union([Type.Literal("date"), Type.Literal("datetime")]),
+    placeholder: Type.Optional(nullable(Type.String())),
+    display_timezone: Type.Optional(nullable(Type.String({ minLength: 1 }))),
+    min_value: Type.Optional(nullable(Type.String({ minLength: 1 }))),
+    max_value: Type.Optional(nullable(Type.String({ minLength: 1 })))
+  },
+  { $id: "DatePickerPopup" }
+);
 
-const FileUploadPopupSchema = openObject({
-  kind: Type.Literal("file_upload"),
-  label: Type.String({ minLength: 1 }),
-  accept_mime_types: Type.Optional(
-    nullable(Type.Array(Type.String({ minLength: 3 }), { minItems: 1 }))
-  )
-});
+const FileUploadPopupSchema = openObject(
+  {
+    kind: Type.Literal("file_upload"),
+    label: Type.String({ minLength: 1 }),
+    accept_mime_types: Type.Optional(
+      nullable(Type.Array(Type.String({ minLength: 3 }), { minItems: 1 }))
+    )
+  },
+  { $id: "FileUploadPopup" }
+);
 
 export const ActionPopupSchema = Type.Union(
   [
@@ -273,7 +289,10 @@ export const InputActionSchema = openObject(
     ),
     popup: ActionPopupSchema
   },
-  { dependentRequired: { tone: ["style"], style: ["tone"] } }
+  {
+    $id: "InputAction",
+    dependentRequired: { tone: ["style"], style: ["tone"] }
+  }
 );
 
 export const LinkButtonSchema = openObject({
@@ -458,6 +477,7 @@ export const ActionResponseSchema = Type.Union(
     })
   ],
   {
+    $id: "ActionResponse",
     description:
       "The human response. Date-picker responses share a kind and are distinguished by mode."
   }
