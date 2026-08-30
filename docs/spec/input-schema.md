@@ -7,7 +7,8 @@ product data, not authorization data. The server derives `account_id` and
 ## Submission Shape
 
 `POST /api/input/send` and `POST /api/input/replace` accept the same
-`AgentOutboxInputSubmission` JSON body:
+`AgentOutboxInputSubmission` JSON body. `POST /api/input/read` and full output
+reads return that accepted shape as `raw_input`.
 
 ```json
 {
@@ -270,3 +271,56 @@ rather than treating the request as a duplicate success.
 
 Answered items remain visible until acknowledgement, output-timeout cleanup, or
 pre-read human undo resolves the pair.
+
+## Canonical Accepted Input
+
+`raw_input` is the complete canonical accepted `InputSubmission`: validated,
+sanitized, default-expanded, and limited to fields Agent Outbox accepted and
+uses. It is not the original request JSON and does not preserve unknown
+properties.
+
+The public form:
+
+- includes normalized nullable and defaulted fields as explicit `null` or values
+  where the parser does, including default `priority` (`normal`) and
+  `skip_disabled` (`false`);
+- omits action `tone` and `style` when the caller did not supply them;
+- flattens card visuals with `kind`;
+- preserves child order for link buttons, actions, and popup options;
+- strips internal display-order fields that exist only for fingerprint
+  stability.
+
+The stored fingerprint is computed from that same accepted content, including
+internal option order fields. Public `raw_input` is the fingerprint form with
+those internal fields removed. If reconstruction cannot match the stored
+fingerprint or the public canonical form, input and output reads fail with
+`temporary_unavailable` rather than returning a guessed body.
+
+The request `InputSubmission` schema remains weaker than the returned canonical
+form: callers may omit defaulted and nullable fields on send and replace. Reads
+always return those fields explicitly (`priority`, `skip_disabled`,
+`row_accent_color`, `corner`, `details`, and `card_visual`).
+
+Values accepted into a live retained input must remain supported and readable
+for that item's retention window. Narrowing a public enum, pattern, or other
+accept-list requires compatible handling of already-stored live values; do not
+make reconstruction of retained rows fail by dropping a previously accepted
+value.
+
+## Live Input Reads
+
+`GET /api/input/list` enumerates live retained input metadata for the
+authenticated caller. `POST /api/input/read` returns one live item's metadata
+plus `raw_input`.
+
+- Visible inputs are pending items and answered items whose output is still
+  unacknowledged.
+- Caller-deleted, acknowledged, expired, and retention-cleaned inputs are
+  absent.
+- List pages use a stable indexed internal order and the same default page size
+  (25) and maximum (100) as output pages.
+- Public results use `caller_item_id` and opaque cursors. Internal
+  `input_item_id` is not exposed.
+- Both routes are non-mutating and return `Cache-Control: no-store`.
+- Both routes share the `output_check_read` per-minute limit and consume monthly
+  API request quota.

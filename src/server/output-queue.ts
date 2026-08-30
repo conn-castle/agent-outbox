@@ -19,6 +19,13 @@ import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { safeContentType } from "./output-files.ts";
 import {
+  CanonicalInputIntegrityError,
+  canonicalInputIntegrityClientError,
+  isCanonicalInputIntegrityError,
+  materializeCanonicalInputsByItemId,
+  reportCanonicalInputIntegrityFailure
+} from "./canonical-input.ts";
+import {
   OutputReadAllRequestSchema,
   publicOutputReadAllShapeMatches,
   publicSchemaFieldErrors
@@ -56,6 +63,7 @@ export type AgentOutboxOutputResult = {
   response: JsonValue;
   answered_at: string;
   answered_by: string | null;
+  raw_input: Record<string, unknown>;
 };
 
 export type OutputReadPage = {
@@ -105,6 +113,7 @@ type OutputRow = {
   output_result_id: string;
   caller_id: string;
   caller_item_id: string;
+  input_item_id: string;
   action_value: string;
   response_kind: OutputResponseKind;
   response_payload: unknown;
@@ -280,8 +289,19 @@ export async function readOutputResultInTransaction(
     return output;
   }
 
+  const rawInputs = await canonicalRawInputsForOutputRows(query, identity, [
+    row
+  ]);
+  const rawInput = requiredRawInput(rawInputs, row.input_item_id, identity);
+
   await query(markOutputResultsReadStatement(identity, [row.output_result_id]));
-  return { ok: true, data: output.data };
+  return {
+    ok: true,
+    data: {
+      ...output.data,
+      raw_input: rawInput
+    }
+  };
 }
 
 export async function readAllOutputPageInTransaction(
@@ -301,7 +321,10 @@ export async function readAllOutputPageInTransaction(
     identity,
     outputResultIds
   );
-  const items: AgentOutboxOutputResult[] = [];
+  const eligible: {
+    row: OutputPageRow;
+    data: Omit<AgentOutboxOutputResult, "raw_input">;
+  }[] = [];
   const unavailableOutputs: OutputUnavailableItem[] = [];
 
   for (const row of page) {
@@ -317,8 +340,18 @@ export async function readAllOutputPageInTransaction(
       });
       continue;
     }
-    items.push(output.data);
+    eligible.push({ row, data: output.data });
   }
+
+  const rawInputs = await canonicalRawInputsForOutputRows(
+    query,
+    identity,
+    eligible.map(({ row }) => row)
+  );
+  const items: AgentOutboxOutputResult[] = eligible.map(({ row, data }) => ({
+    ...data,
+    raw_input: requiredRawInput(rawInputs, row.input_item_id, identity)
+  }));
 
   const returnedOutputResultIds = items.map((item) => item.output_result_id);
   if (returnedOutputResultIds.length > 0) {
@@ -483,6 +516,7 @@ export function outputPageStatement(
         output_result_id::text as output_result_id,
         caller_id::text as caller_id,
         caller_item_id,
+        input_item_id::text as input_item_id,
         action_value,
         response_kind,
         response_payload,
@@ -544,6 +578,7 @@ export function outputResultByIdStatement(
         output_result_id::text as output_result_id,
         caller_id::text as caller_id,
         caller_item_id,
+        input_item_id::text as input_item_id,
         action_value,
         response_kind,
         response_payload,
@@ -673,6 +708,16 @@ async function withAuthenticatedCallerTransaction(
     }
     return transaction.data;
   } catch (error) {
+    if (isCanonicalInputIntegrityError(error)) {
+      reportCanonicalInputIntegrityFailure(error, context);
+      return {
+        ok: false,
+        error: canonicalInputIntegrityClientError({
+          errorId: context.correlationId,
+          reported: true
+        })
+      };
+    }
     reportRuntimeFailure(error, {
       errorId: context.correlationId,
       request_id: context.requestId,
@@ -714,11 +759,44 @@ async function outputFileMetadataByResultId(
   return filesByOutputId;
 }
 
+async function canonicalRawInputsForOutputRows(
+  query: ProductTransactionQuery,
+  identity: CallerIdentity,
+  rows: readonly OutputRow[]
+): Promise<Map<string, Record<string, unknown>>> {
+  const materialized = await materializeCanonicalInputsByItemId(
+    query,
+    identity,
+    rows.map((row) => row.input_item_id)
+  );
+  const byInputItemId = new Map<string, Record<string, unknown>>();
+  for (const [inputItemId, input] of materialized) {
+    byInputItemId.set(inputItemId, input.raw_input);
+  }
+  return byInputItemId;
+}
+
+function requiredRawInput(
+  rawInputs: Map<string, Record<string, unknown>>,
+  inputItemId: string,
+  identity: CallerIdentity
+) {
+  const rawInput = rawInputs.get(inputItemId);
+  if (!rawInput) {
+    throw new CanonicalInputIntegrityError({
+      inputItemId,
+      accountId: identity.accountId,
+      callerId: identity.callerId
+    });
+  }
+  return rawInput;
+}
+
 function outputResultFromRow(
   row: OutputRow,
   filesByOutputId: ReadonlyMap<string, OutputFileMetadataRow[]>
 ):
-  | { ok: true; data: AgentOutboxOutputResult }
+  | { ok: true; data: Omit<AgentOutboxOutputResult, "raw_input"> }
   | { ok: false; error: ApiErrorInput } {
   const response = outputResponse(
     row,
@@ -959,7 +1037,7 @@ function outputResultIdRequiredError(): OutputQueueResult {
 function temporaryUnavailableError(
   message: string,
   options?: { errorId?: string; reported?: boolean }
-): OutputQueueResult {
+): { ok: false; error: ApiErrorInput } {
   return {
     ok: false,
     error: {

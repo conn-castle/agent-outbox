@@ -48,6 +48,8 @@ const callerFacingRouteContents = Object.fromEntries(
     "app/api/account/status/route.ts",
     "app/api/caller/status/route.ts",
     "app/api/input/delete/route.ts",
+    "app/api/input/list/route.ts",
+    "app/api/input/read/route.ts",
     "app/api/input/replace/route.ts",
     "app/api/input/send/route.ts",
     "app/api/output/[output_result_id]/ack/route.ts",
@@ -106,6 +108,8 @@ test("validateRuntimeProofScope allows implemented caller API route paths", () =
     "app/api/input/send/route.ts": "export async function POST() {}",
     "app/api/input/replace/route.ts": "export async function POST() {}",
     "app/api/input/delete/route.ts": "export async function POST() {}",
+    "app/api/input/list/route.ts": "export async function GET() {}",
+    "app/api/input/read/route.ts": "export async function POST() {}",
     "app/api/output/check/route.ts": "export async function GET() {}",
     "app/api/output/[output_result_id]/read/route.ts":
       "export async function POST() {}",

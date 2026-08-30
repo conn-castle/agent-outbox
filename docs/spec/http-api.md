@@ -1,14 +1,14 @@
 # HTTP API Contract
 
 This document defines the implemented HTTP surface for caller integrations:
-caller/account status, input writes, output reads, output acknowledgement,
-output-file download, human-approved caller connect, rotation, revocation,
-disconnect-with-revoke control-plane contracts, and account-scoped billing
-checkout/portal/webhook contracts. It also records the public contact-form
-endpoint. Schema details live in [input-schema.md](input-schema.md),
-[output-schema.md](output-schema.md), and [errors.md](errors.md). The CLI
-`upgrade` command is local-only: it opens the selected app origin plus
-`/upgrade`.
+caller/account status, input writes, live input reads, output reads, output
+acknowledgement, output-file download, human-approved caller connect, rotation,
+revocation, disconnect-with-revoke control-plane contracts, and account-scoped
+billing checkout/portal/webhook contracts. It also records the public
+contact-form endpoint. Schema details live in
+[input-schema.md](input-schema.md), [output-schema.md](output-schema.md), and
+[errors.md](errors.md). The CLI `upgrade` command is local-only: it opens the
+selected app origin plus `/upgrade`.
 
 ## Base URL
 
@@ -360,6 +360,118 @@ Success `data`:
 }
 ```
 
+### List Live Inputs
+
+```http
+GET /api/input/list?limit=25&cursor=<opaque_cursor>
+```
+
+Behavior:
+
+- Non-mutating enumeration of live retained inputs owned by the authenticated
+  caller.
+- Returns metadata only. It does not return `raw_input`, mark output read, or
+  change input lifecycle.
+- Visible items are pending inputs and answered inputs whose output is still
+  unacknowledged. Caller-deleted, acknowledged, expired, and retention-cleaned
+  inputs are absent.
+- Ordered by an internal stable key backed by the caller-scoped input index; the
+  ordering key is exposed only through the opaque cursor.
+- Uses the same default page size (25) and maximum page size (100) as output
+  pages.
+- Follow the opaque `next_cursor` while `has_more` is true.
+- Does not expose internal `input_item_id`.
+- Successful responses include `Cache-Control: no-store`.
+- Shares the `output_check_read` per-minute limit and consumes monthly API
+  request quota.
+
+Success `data`:
+
+```json
+{
+  "items": [
+    {
+      "caller_item_id": "email:thread_123",
+      "status": "pending",
+      "revision": 1,
+      "created_at": "2026-06-30T19:00:00Z",
+      "updated_at": "2026-06-30T19:00:00Z",
+      "answered_at": null
+    }
+  ],
+  "has_more": false,
+  "next_cursor": null,
+  "returned_count": 1,
+  "page_limit": 25
+}
+```
+
+### Read One Live Input
+
+```http
+POST /api/input/read
+```
+
+Body:
+
+```json
+{
+  "caller_item_id": "email:thread_123"
+}
+```
+
+Behavior:
+
+- Returns one complete live retained input owned by the authenticated caller.
+- `raw_input` is the canonical accepted submission: validated, sanitized,
+  default-expanded, and limited to fields Agent Outbox accepted and uses. It is
+  not the original request JSON and does not preserve unknown properties.
+- A JSON body is required because `caller_item_id` is arbitrary caller-owned
+  text and is not URL-safe.
+- Missing, deleted, acknowledged, expired, and retention-cleaned inputs return
+  `not_found`.
+- Non-mutating. Successful responses include `Cache-Control: no-store`.
+- Shares the `output_check_read` per-minute limit and consumes monthly API
+  request quota.
+
+Success `data`:
+
+```json
+{
+  "caller_item_id": "email:thread_123",
+  "status": "pending",
+  "revision": 1,
+  "created_at": "2026-06-30T19:00:00Z",
+  "updated_at": "2026-06-30T19:00:00Z",
+  "answered_at": null,
+  "raw_input": {
+    "caller_item_id": "email:thread_123",
+    "priority": "high",
+    "row_type": { "display": "Email draft", "icon": "mail" },
+    "row_accent_color": null,
+    "title": "Reply to Acme Corp",
+    "subtitle": "A customer response is ready for review.",
+    "corner": null,
+    "summary": "Approve the prepared response before it is sent.",
+    "details": null,
+    "link_buttons": [],
+    "card_visual": null,
+    "skip_disabled": false,
+    "actions": [
+      {
+        "display": "Approve to send",
+        "icon": "send",
+        "value": "approve_send",
+        "overflow": false,
+        "tone": "success",
+        "style": "solid",
+        "popup": { "kind": "none" }
+      }
+    ]
+  }
+}
+```
+
 ## Human Answer Boundary
 
 Human answers use authenticated server actions with explicit account and human
@@ -398,10 +510,13 @@ POST /api/output/{output_result_id}/read
 
 Behavior:
 
-- Returns the full output result payload for the authenticated caller.
+- Returns the full output result payload for the authenticated caller, including
+  the matching canonical accepted `raw_input`.
 - Marks that output result as read when the response succeeds.
 - Disables human undo for that result.
 - May return the same result repeatedly until acknowledgement.
+- Malformed retained input fails the whole request with `temporary_unavailable`
+  before the result is marked read.
 
 Success `data` is `AgentOutboxOutputResult`.
 
@@ -422,12 +537,17 @@ Body:
 
 Behavior:
 
-- Returns a cursor-paginated page of full output payloads.
+- Returns a cursor-paginated page of full output payloads, each including the
+  matching canonical accepted `raw_input`.
 - Marks only returned `items` as read.
 - Uses the same ordering and pagination rules as output check.
 - Adds top-level `unavailable_outputs` and `unavailable_count` when a scanned
   file-upload row cannot materialize safe metadata; unavailable entries do not
   include filenames, MIME types, bytes, caller content, or raw payloads.
+- File-metadata degradation is isolated: those rows are not reconstructed as
+  `raw_input` and do not fail the page if their retained input is malformed.
+- Malformed canonical input on a row that would otherwise be returned fails the
+  whole request with `temporary_unavailable` before any result is marked read.
 
 Success `data` is the paginated output-read envelope in
 [output-schema.md](output-schema.md#output-read-page).

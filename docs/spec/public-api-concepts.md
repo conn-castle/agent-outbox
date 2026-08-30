@@ -44,13 +44,22 @@ An input describes what the person should understand and what actions are
 available. It can include concise HTML text, context links, a visual summary,
 and one or more typed interactions.
 
+While an input is live, the caller can list it and read the canonical accepted
+body. Live means pending, or answered with output that is still unacknowledged.
+Deleted, acknowledged, expired, and retention-cleaned inputs are gone.
+
+`raw_input` is that accepted body: validated, sanitized, and default-expanded to
+the fields Agent Outbox stored. Unknown request properties and pre-sanitized
+content are not retained.
+
 An output contains:
 
 - the originating `caller_item_id`;
 - a unique `output_result_id` for delivery idempotency;
 - the selected caller-defined `action_value`;
 - a response whose shape matches the selected interaction;
-- UTC answer timing and non-secret actor metadata.
+- UTC answer timing and non-secret actor metadata;
+- the matching canonical accepted `raw_input`.
 
 Files are different from JSON values. Output JSON contains authenticated file
 metadata; a separate endpoint returns the bytes.

@@ -150,9 +150,10 @@ curl https://app.agent-outbox.dev/api/output/out_123/read \
   --header "Accept: application/json"
 ```
 
-The result includes the selected action’s stable `value` and a response shaped
-by its popup kind. The first successful read disables human undo. The result
-remains available, and can be delivered again, until you acknowledge it.
+The result includes the selected action’s stable `value`, a response shaped by
+its popup kind, and `raw_input`: the canonical accepted submission Agent Outbox
+stored for that live item. The first successful read disables human undo. The
+result remains available, and can be delivered again, until you acknowledge it.
 
 <!-- contract-example:OutputResultResponse -->
 
@@ -168,7 +169,32 @@ remains available, and can be delivered again, until you acknowledge it.
     "action_value": "approve_send",
     "response": { "kind": "none" },
     "answered_at": "2026-06-30T20:00:00Z",
-    "answered_by": "user_123"
+    "answered_by": "user_123",
+    "raw_input": {
+      "caller_item_id": "email:thread_123",
+      "priority": "high",
+      "row_type": { "display": "Email draft", "icon": "mail" },
+      "row_accent_color": null,
+      "title": "Reply to Acme Corp",
+      "subtitle": "A customer response is ready for review.",
+      "corner": null,
+      "summary": "Approve the prepared response before it is sent.",
+      "details": null,
+      "link_buttons": [],
+      "card_visual": null,
+      "skip_disabled": false,
+      "actions": [
+        {
+          "display": "Approve to send",
+          "icon": "send",
+          "value": "approve_send",
+          "overflow": false,
+          "tone": "success",
+          "style": "solid",
+          "popup": { "kind": "none" }
+        }
+      ]
+    }
   }
 }
 ```

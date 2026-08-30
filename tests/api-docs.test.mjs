@@ -23,9 +23,11 @@ const generatedDocs = JSON.parse(
 const expectedRoutes = [
   "GET /api/account/status",
   "GET /api/caller/status",
+  "GET /api/input/list",
   "GET /api/output/check",
   "GET /api/output/{output_result_id}/files/{file_id}",
   "POST /api/input/delete",
+  "POST /api/input/read",
   "POST /api/input/replace",
   "POST /api/input/send",
   "POST /api/output/read-all",

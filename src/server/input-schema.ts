@@ -397,39 +397,21 @@ export function parseInputSubmission(
       }
     };
   }
-  const normalizedContent = {
-    caller_item_id: callerItemId,
+  const { fingerprintForm: normalizedContent } = canonicalInputForms({
+    callerItemId,
     priority,
-    row_type: rowType,
-    row_accent_color: rowAccentColor,
-    title: titleHtml,
-    subtitle: subtitleHtml,
-    corner: cornerHtml,
-    summary: summaryHtml,
-    details: detailsHtml,
-    link_buttons: linkButtons.map(({ displayOrder: _order, ...button }) => ({
-      display: button.display,
-      icon: button.icon,
-      url: button.url
-    })),
-    card_visual: cardVisual
-      ? { kind: cardVisual.kind, ...cardVisual.payload }
-      : null,
-    skip_disabled: skipDisabled,
-    actions: actions.map((action) => ({
-      display: action.display,
-      icon: action.icon,
-      value: action.value,
-      overflow: action.overflow,
-      ...(action.tone ? { tone: action.tone } : {}),
-      ...(action.style ? { style: action.style } : {}),
-      popup: {
-        kind: action.popupKind,
-        ...action.popupPayload,
-        ...(action.options.length > 0 ? { options: action.options } : {})
-      }
-    }))
-  };
+    rowType,
+    rowAccentColor,
+    titleHtml,
+    subtitleHtml,
+    cornerHtml,
+    summaryHtml,
+    detailsHtml,
+    linkButtons,
+    cardVisual,
+    skipDisabled,
+    actions
+  });
   const canonical = stableStringify(normalizedContent);
 
   return {
@@ -454,6 +436,104 @@ export function parseInputSubmission(
       containsFileUploadAction,
       normalizedContent
     }
+  };
+}
+
+export type CanonicalInputParts = {
+  callerItemId: string;
+  priority: QueuePriority;
+  rowType: { display: string; icon: string };
+  rowAccentColor: string | null;
+  titleHtml: string;
+  subtitleHtml: string;
+  cornerHtml: string | null;
+  summaryHtml: string;
+  detailsHtml: string | null;
+  linkButtons: ReadonlyArray<
+    Pick<NormalizedInputLinkButton, "display" | "icon" | "url">
+  >;
+  cardVisual: NormalizedCardVisual | null;
+  skipDisabled: boolean;
+  actions: ReadonlyArray<{
+    display: string;
+    icon: string;
+    value: string;
+    overflow: boolean;
+    tone: ActionTone | null;
+    style: ActionStyle | null;
+    popupKind: PopupKind;
+    popupPayload: NormalizedPopupPayload;
+    options: readonly NormalizedPopupOption[];
+  }>;
+};
+
+export function canonicalInputForms(parts: CanonicalInputParts): {
+  fingerprintForm: Record<string, unknown>;
+  rawInput: Record<string, unknown>;
+} {
+  const fingerprintForm = {
+    caller_item_id: parts.callerItemId,
+    priority: parts.priority,
+    row_type: parts.rowType,
+    row_accent_color: parts.rowAccentColor,
+    title: parts.titleHtml,
+    subtitle: parts.subtitleHtml,
+    corner: parts.cornerHtml,
+    summary: parts.summaryHtml,
+    details: parts.detailsHtml,
+    link_buttons: parts.linkButtons.map((button) => ({
+      display: button.display,
+      icon: button.icon,
+      url: button.url
+    })),
+    card_visual: parts.cardVisual
+      ? { kind: parts.cardVisual.kind, ...parts.cardVisual.payload }
+      : null,
+    skip_disabled: parts.skipDisabled,
+    actions: parts.actions.map((action) => ({
+      display: action.display,
+      icon: action.icon,
+      value: action.value,
+      overflow: action.overflow,
+      ...(action.tone ? { tone: action.tone } : {}),
+      ...(action.style ? { style: action.style } : {}),
+      popup: {
+        kind: action.popupKind,
+        ...action.popupPayload,
+        ...(action.options.length > 0 ? { options: action.options } : {})
+      }
+    }))
+  };
+
+  return {
+    fingerprintForm,
+    rawInput: {
+      ...fingerprintForm,
+      actions: fingerprintForm.actions.map((action) => ({
+        ...action,
+        popup: publicPopup(action.popup as Record<string, unknown>)
+      }))
+    }
+  };
+}
+
+function publicPopup(popup: Record<string, unknown>) {
+  const options = popup.options;
+  if (!Array.isArray(options)) {
+    return popup;
+  }
+
+  return {
+    ...popup,
+    options: options.map((option) => {
+      if (!option || typeof option !== "object" || Array.isArray(option)) {
+        return option;
+      }
+      const { displayOrder: _order, ...rest } = option as {
+        displayOrder?: number;
+      } & Record<string, unknown>;
+      return rest;
+    })
   };
 }
 

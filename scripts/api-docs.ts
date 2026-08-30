@@ -119,7 +119,8 @@ export function publicOpenApiDocument() {
     tags: [
       {
         name: "Inputs",
-        description: "Create, replace, and remove pending human review work."
+        description:
+          "Create, replace, remove, list, and read live human review work."
       },
       {
         name: "Outputs",
