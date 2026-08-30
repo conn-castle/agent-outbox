@@ -53,9 +53,11 @@ var terminalDocs = []docsTopic{
 	{
 		Name:    "input",
 		Title:   "Input Commands",
-		Summary: "Submit, replace, delete, and validate review input items.",
+		Summary: "Submit, list, read, replace, delete, and validate review input items.",
 		Body: strings.Join([]string{
 			"input send --file <input.json> submits a retry-safe pending item through POST /api/input/send.",
+			"input list enumerates live retained input metadata through GET /api/input/list and auto-pages by default.",
+			"input read <caller_item_id> returns one live item and its canonical accepted raw_input through POST /api/input/read.",
 			"input replace --file <input.json> updates an existing pending item through POST /api/input/replace.",
 			"input delete <caller_item_id> removes only pending work through POST /api/input/delete.",
 			"Input files must be JSON objects and must not include caller_id; caller identity is derived from the selected bearer credential.",

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -108,6 +109,166 @@ func TestInputSendRejectsInvalidSchemaBeforeHTTP(t *testing.T) {
 	}
 	if !strings.Contains(stderr, `"code":"validation_failed"`) {
 		t.Fatalf("stderr missing validation code: %s", stderr)
+	}
+}
+
+func TestInputListAutoPagesUntilComplete(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.RawQuery)
+		if r.Method != http.MethodGet || r.URL.Path != "/api/input/list" {
+			t.Errorf("request = %s %s, want GET /api/input/list", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("cursor") {
+		case "":
+			_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[{"caller_item_id":"item_1","status":"pending","revision":1,"created_at":"2026-08-30T12:00:00Z","updated_at":"2026-08-30T12:00:00Z","answered_at":null}],"has_more":true,"next_cursor":"cursor_2","returned_count":1,"page_limit":2}}`)
+		case "cursor_2":
+			_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[{"caller_item_id":"item_2","status":"answered","revision":2,"created_at":"2026-08-30T12:01:00Z","updated_at":"2026-08-30T12:02:00Z","answered_at":"2026-08-30T12:02:00Z"}],"has_more":false,"next_cursor":null,"returned_count":1,"page_limit":2}}`)
+		default:
+			t.Errorf("unexpected cursor %q", r.URL.Query().Get("cursor"))
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "list", "--page-size", "2"})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr should be empty: %s", stderr)
+	}
+	if len(requests) != 2 || requests[0] != "limit=2" || requests[1] != "cursor=cursor_2&limit=2" {
+		t.Fatalf("requests = %#v", requests)
+	}
+
+	payload := decodeCommandJSON(t, stdout)
+	pagination := payload["pagination"].(map[string]any)
+	if pagination["complete"] != true || pagination["page_count"] != float64(2) || pagination["returned_count"] != float64(2) {
+		t.Fatalf("pagination = %#v", pagination)
+	}
+	data := payload["data"].(map[string]any)
+	items := data["items"].([]any)
+	if len(items) != 2 || items[0].(map[string]any)["caller_item_id"] != "item_1" || items[1].(map[string]any)["caller_item_id"] != "item_2" {
+		t.Fatalf("items = %#v", items)
+	}
+}
+
+func TestInputListHumanReadableOutputEscapesCallerItemID(t *testing.T) {
+	const callerItemID = "item\nwith\tescape\x1b[2J"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/input/list" {
+			t.Errorf("request = %s %s, want GET /api/input/list", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[{"caller_item_id":"item\nwith\tescape\u001b[2J","status":"pending","revision":1,"updated_at":"2026-08-30T12:00:00Z"}],"has_more":false,"next_cursor":null,"returned_count":1,"page_limit":25}}`)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"input", "list"})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr should be empty: %s", stderr)
+	}
+	if strings.Contains(stdout, "\x1b") {
+		t.Fatalf("unescaped control sequence leaked into stdout: %q", stdout)
+	}
+	quotedID := strconv.Quote(callerItemID)
+	if !strings.Contains(stdout, "caller_item_id="+quotedID) {
+		t.Fatalf("stdout missing quoted caller_item_id: %q", stdout)
+	}
+	if strings.Count(stdout, "\n") != 1 {
+		t.Fatalf("stdout should be one compact line, got %q", stdout)
+	}
+}
+
+func TestInputReadPreservesCallerItemIDWhitespace(t *testing.T) {
+	const callerItemID = " item "
+	var gotID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/input/read" {
+			t.Errorf("request = %s %s, want POST /api/input/read", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("request body was not JSON: %v", err)
+			return
+		}
+		gotID, _ = body["caller_item_id"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"ok":true,"request_id":"req_input_read","correlation_id":"corr_input_read","data":{"caller_item_id":%q}}`, callerItemID)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "read", callerItemID})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr should be empty: %s", stderr)
+	}
+	if gotID != callerItemID {
+		t.Fatalf("caller_item_id body = %q, want %q", gotID, callerItemID)
+	}
+	if !strings.Contains(stdout, `"caller_item_id":" item "`) {
+		t.Fatalf("stdout missing preserved caller_item_id: %s", stdout)
+	}
+}
+
+func TestInputReadRejectsEmptyCallerItemID(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"input", "read", ""})
+	if code != foundation.ExitUsage {
+		t.Fatalf("exit code = %d, want usage; stderr: %s", code, stderr)
+	}
+	if requests != 0 {
+		t.Fatalf("server requests = %d, want local validation to stop before HTTP", requests)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for usage errors")
+	}
+	if !strings.Contains(stderr, "caller_item_id is required") {
+		t.Fatalf("stderr missing required-id error: %s", stderr)
+	}
+}
+
+func TestInputListNoAutoPageReturnsCursorAndWarns(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[],"has_more":true,"next_cursor":"cursor_2","returned_count":0,"page_limit":1}}`)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "list", "--page-size", "1", "--no-auto-page"})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if requests != 1 {
+		t.Fatalf("request count = %d, want 1", requests)
+	}
+	if !strings.Contains(stderr, "input pages left") || !strings.Contains(stderr, "cursor_2") {
+		t.Fatalf("stderr missing remaining-pages warning: %s", stderr)
+	}
+	pagination := decodeCommandJSON(t, stdout)["pagination"].(map[string]any)
+	if pagination["complete"] != false || pagination["has_more"] != true || pagination["next_cursor"] != "cursor_2" {
+		t.Fatalf("pagination = %#v", pagination)
 	}
 }
 
@@ -619,6 +780,24 @@ func TestDataPlaneEndpointWrappersUseExpectedHTTPMapping(t *testing.T) {
 			},
 			response:   `{"ok":true,"request_id":"req_delete","correlation_id":"corr_delete","data":{"caller_item_id":"item_1","deleted":true}}`,
 			wantStdout: `{"ok":true,"request_id":"req_delete","correlation_id":"corr_delete","data":{"caller_item_id":"item_1","deleted":true}}` + "\n",
+		},
+		{
+			name:   "input read",
+			args:   []string{"--json", "input", "read", "item_1"},
+			method: http.MethodPost,
+			path:   "/api/input/read",
+			assertBody: func(t *testing.T, r *http.Request) {
+				t.Helper()
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("request body was not JSON: %v", err)
+				}
+				if body["caller_item_id"] != "item_1" || len(body) != 1 {
+					t.Fatalf("read body = %#v", body)
+				}
+			},
+			response:   `{"ok":true,"request_id":"req_input_read","correlation_id":"corr_input_read","data":{"caller_item_id":"item_1","status":"pending","revision":1,"created_at":"2026-08-30T12:00:00Z","updated_at":"2026-08-30T12:00:00Z","answered_at":null,"raw_input":{"caller_item_id":"item_1"}}}`,
+			wantStdout: `{"ok":true,"request_id":"req_input_read","correlation_id":"corr_input_read","data":{"caller_item_id":"item_1","status":"pending","revision":1,"created_at":"2026-08-30T12:00:00Z","updated_at":"2026-08-30T12:00:00Z","answered_at":null,"raw_input":{"caller_item_id":"item_1"}}}` + "\n",
 		},
 		{
 			name:   "one-result output read",

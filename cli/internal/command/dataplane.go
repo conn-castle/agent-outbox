@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"agent-outbox/internal/foundation"
@@ -48,7 +49,7 @@ type pageFlags struct {
 	NoAutoPage bool
 }
 
-type outputPage struct {
+type queuePage struct {
 	Items              []json.RawMessage   `json:"items"`
 	ReadyCount         *int                `json:"ready_count,omitempty"`
 	UnavailableOutputs []unavailableOutput `json:"unavailable_outputs,omitempty"`
@@ -89,6 +90,8 @@ func addDataPlaneCommands(caller *cobra.Command, input *cobra.Command, output *c
 	input.AddCommand(inputJSONFileCommand("send", "Submit a new input item", "/api/input/send", opts, flags))
 	input.AddCommand(inputJSONFileCommand("replace", "Replace a pending input item", "/api/input/replace", opts, flags))
 	input.AddCommand(inputDeleteCommand(opts, flags))
+	input.AddCommand(inputListCommand(opts, flags))
+	input.AddCommand(inputReadCommand(opts, flags))
 
 	output.AddCommand(outputCheckCommand(opts, flags))
 	output.AddCommand(outputReadCommand(opts, flags))
@@ -231,6 +234,83 @@ func inputDeleteCommand(opts Options, flags *rootFlags) *cobra.Command {
 	return cmd
 }
 
+func inputListCommand(opts Options, flags *rootFlags) *cobra.Command {
+	page := pageFlags{PageSize: foundation.SystemContractOutputPageDefaultLimit}
+	cmd := &cobra.Command{
+		Use:           "list",
+		Short:         "List live input metadata",
+		Args:          noArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			runtime, err := runtimeForCommand(opts, flags)
+			if err != nil {
+				return err
+			}
+			result, err := fetchPages(cmd.Context(), runtime, "input-list", page)
+			if err != nil {
+				return err
+			}
+			warnInputPagesLeft(opts.Stderr, result.Pagination)
+			return renderInputListSuccess(opts.Stdout, flags.json, result)
+		},
+	}
+	addPageFlags(cmd, &page)
+	documentCommand(cmd, commandHelpSpec{
+		Purpose:     "List metadata for live retained inputs. Auto-pages by default until the API reports no more input.",
+		Arguments:   "None.",
+		Flags:       fmt.Sprintf("--page-size sets a 1 to %d item page size. --cursor starts from a server cursor. --no-auto-page fetches one page and warns if more remains. --json includes pagination metadata. Global flags are available.", foundation.SystemContractOutputPageMaxLimit),
+		Environment: globalEnvironmentHelp(),
+		Examples:    "agent-outbox input list\nagent-outbox input list --page-size 50 --json\nagent-outbox input list --no-auto-page",
+		ExitCodes:   "0 success. 64 usage. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
+		RelatedDocs: "docs/spec/input-schema.md#live-input-reads, docs/spec/http-api.md#input-queue, and agent-outbox docs input.",
+	})
+	return cmd
+}
+
+func inputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "read <caller_item_id>",
+		Short:         "Read one live canonical input",
+		Args:          exactArgs(1),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			callerItemID := args[0]
+			if callerItemID == "" {
+				return foundation.NewUsageError("caller_item_id is required.")
+			}
+			runtime, err := runtimeForCommand(opts, flags)
+			if err != nil {
+				return err
+			}
+			var data json.RawMessage
+			meta, err := runtime.Client.Do(
+				cmd.Context(),
+				http.MethodPost,
+				"/api/input/read",
+				runtime.Bearer,
+				map[string]string{"caller_item_id": callerItemID},
+				&data,
+			)
+			if err != nil {
+				return err
+			}
+			return renderRawSuccess(opts.Stdout, flags.json, meta, data)
+		},
+	}
+	documentCommand(cmd, commandHelpSpec{
+		Purpose:     "Read one live retained input, including its canonical accepted raw_input, through POST /api/input/read.",
+		Arguments:   "<caller_item_id> is the caller-owned id of a live pending or answered-but-unacknowledged input.",
+		Flags:       "--json prints the API response in the shared success envelope. Global --caller, --config, --base-url, and --no-color are available.",
+		Environment: globalEnvironmentHelp(),
+		Examples:    "agent-outbox input read email:thread_123\nagent-outbox input read email:thread_123 --json",
+		ExitCodes:   "0 success. 64 usage. 66 not found. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
+		RelatedDocs: "docs/spec/input-schema.md#live-input-reads, docs/spec/http-api.md#input-queue, docs/spec/errors.md, and agent-outbox docs input.",
+	})
+	return cmd
+}
+
 func outputCheckCommand(opts Options, flags *rootFlags) *cobra.Command {
 	page := pageFlags{PageSize: foundation.SystemContractOutputPageDefaultLimit}
 	cmd := &cobra.Command{
@@ -244,7 +324,7 @@ func outputCheckCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := fetchOutputPages(cmd.Context(), runtime, "check", page)
+			result, err := fetchPages(cmd.Context(), runtime, "check", page)
 			if err != nil {
 				return err
 			}
@@ -291,7 +371,7 @@ func outputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 				return err
 			}
 			if readAll {
-				result, err := fetchOutputPages(cmd.Context(), runtime, "read-all", page)
+				result, err := fetchPages(cmd.Context(), runtime, "read-all", page)
 				if err != nil {
 					return err
 				}
@@ -417,10 +497,10 @@ func addPageFlags(cmd *cobra.Command, page *pageFlags) {
 		&page.PageSize,
 		"page-size",
 		foundation.SystemContractOutputPageDefaultLimit,
-		fmt.Sprintf("output page size, 1 to %d", foundation.SystemContractOutputPageMaxLimit),
+		fmt.Sprintf("page size, 1 to %d", foundation.SystemContractOutputPageMaxLimit),
 	)
-	cmd.Flags().StringVar(&page.Cursor, "cursor", "", "opaque output pagination cursor")
-	cmd.Flags().BoolVar(&page.NoAutoPage, "no-auto-page", false, "fetch only one output page")
+	cmd.Flags().StringVar(&page.Cursor, "cursor", "", "opaque pagination cursor")
+	cmd.Flags().BoolVar(&page.NoAutoPage, "no-auto-page", false, "fetch only one page")
 }
 
 func runtimeForCommand(opts Options, flags *rootFlags) (*apiRuntime, error) {
@@ -575,7 +655,7 @@ func containsClearlyUnsafeHTML(value string) bool {
 	return false
 }
 
-func fetchOutputPages(ctx context.Context, runtime *apiRuntime, kind string, page pageFlags) (*paginatedResult, error) {
+func fetchPages(ctx context.Context, runtime *apiRuntime, kind string, page pageFlags) (*paginatedResult, error) {
 	if page.PageSize < 1 || page.PageSize > foundation.SystemContractOutputPageMaxLimit {
 		return nil, foundation.NewUsageError(fmt.Sprintf("--page-size must be between 1 and %d.", foundation.SystemContractOutputPageMaxLimit))
 	}
@@ -601,11 +681,11 @@ func fetchOutputPages(ctx context.Context, runtime *apiRuntime, kind string, pag
 	}
 
 	for {
-		nextPage, err := fetchOutputPage(ctx, runtime, kind, page.PageSize, cursor)
+		nextPage, err := fetchPage(ctx, runtime, kind, page.PageSize, cursor)
 		if err != nil {
 			return nil, err
 		}
-		if err := validateOutputPage(nextPage); err != nil {
+		if err := validatePage(nextPage); err != nil {
 			return nil, err
 		}
 		if result.Data.ReadyCount == nil && nextPage.ReadyCount != nil {
@@ -647,9 +727,17 @@ func unavailableCount(data paginatedData) int {
 	return *data.UnavailableCount
 }
 
-func fetchOutputPage(ctx context.Context, runtime *apiRuntime, kind string, pageSize int, cursor string) (*outputPage, error) {
-	var page outputPage
+func fetchPage(ctx context.Context, runtime *apiRuntime, kind string, pageSize int, cursor string) (*queuePage, error) {
+	var page queuePage
 	switch kind {
+	case "input-list":
+		values := url.Values{}
+		values.Set("limit", fmt.Sprintf("%d", pageSize))
+		if cursor != "" {
+			values.Set("cursor", cursor)
+		}
+		_, err := runtime.Client.Do(ctx, http.MethodGet, "/api/input/list?"+values.Encode(), runtime.Bearer, nil, &page)
+		return &page, err
 	case "check":
 		values := url.Values{}
 		values.Set("limit", fmt.Sprintf("%d", pageSize))
@@ -669,11 +757,11 @@ func fetchOutputPage(ctx context.Context, runtime *apiRuntime, kind string, page
 		_, err := runtime.Client.Do(ctx, http.MethodPost, "/api/output/read-all", runtime.Bearer, body, &page)
 		return &page, err
 	default:
-		return nil, foundation.NewAppError(foundation.CodeInternalError, "Unknown output pagination kind.")
+		return nil, foundation.NewAppError(foundation.CodeInternalError, "Unknown pagination kind.")
 	}
 }
 
-func validateOutputPage(page *outputPage) error {
+func validatePage(page *queuePage) error {
 	if page.ReturnedCount != len(page.Items) {
 		return foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned inconsistent pagination counts.")
 	}
@@ -800,6 +888,24 @@ func renderPaginatedSuccess(w io.Writer, jsonMode bool, result *paginatedResult)
 	return nil
 }
 
+func renderInputListSuccess(w io.Writer, jsonMode bool, result *paginatedResult) error {
+	if jsonMode {
+		return renderStructuredEnvelope(w, successEnvelope{
+			OK:         true,
+			Data:       result.Data,
+			Pagination: &result.Pagination,
+		})
+	}
+	if len(result.Data.Items) == 0 {
+		_, _ = fmt.Fprintln(w, "no live input")
+		return nil
+	}
+	for _, item := range result.Data.Items {
+		_, _ = fmt.Fprintln(w, compactInputItem(item))
+	}
+	return nil
+}
+
 func renderStructuredSuccess(w io.Writer, jsonMode bool, meta *foundation.APIResponse, data any) error {
 	if jsonMode {
 		envelope := successEnvelope{OK: true, Data: data}
@@ -856,11 +962,41 @@ func compactOutputItem(item json.RawMessage) string {
 	return strings.Join(parts, " ")
 }
 
+func compactInputItem(item json.RawMessage) string {
+	var fields map[string]any
+	if err := json.Unmarshal(item, &fields); err != nil {
+		return string(item)
+	}
+	parts := []string{}
+	for _, field := range []string{"caller_item_id", "status", "revision", "updated_at"} {
+		value, ok := fields[field]
+		if !ok {
+			continue
+		}
+		if text, ok := value.(string); ok {
+			parts = append(parts, field+"="+strconv.Quote(text))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%v", field, value))
+	}
+	if len(parts) == 0 {
+		return string(item)
+	}
+	return strings.Join(parts, " ")
+}
+
 func warnUnreadPagesLeft(w io.Writer, pagination paginationMetadata) {
 	if pagination.Complete || !pagination.HasMore || pagination.NextCursor == nil {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "unread pages left; rerun with --cursor %s or omit --no-auto-page to auto-page all results\n", *pagination.NextCursor)
+}
+
+func warnInputPagesLeft(w io.Writer, pagination paginationMetadata) {
+	if pagination.Complete || !pagination.HasMore || pagination.NextCursor == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "input pages left; rerun with --cursor %s or omit --no-auto-page to auto-page all results\n", *pagination.NextCursor)
 }
 
 func exactArgs(n int) cobra.PositionalArgs {

@@ -122,8 +122,8 @@ or checked-in environment file.
 The repository ships a Go `agent-outbox` CLI. This map constrains the CLI so it
 remains a wrapper over raw HTTP rather than becoming a second product contract.
 Rows for local utilities identify their local behavior and any HTTP contracts
-they inspect. Public HTTP routes without a CLI command, including live input
-list and read, remain valid HTTP-only surfaces.
+they inspect. Public HTTP routes without a CLI command remain valid HTTP-only
+surfaces.
 
 | CLI command                                    | Canonical HTTP contract                                                                                                          |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -135,6 +135,8 @@ list and read, remain valid HTTP-only surfaces.
 | `caller status`                                | `GET /api/caller/status`.                                                                                                        |
 | `account status`                               | `GET /api/account/status` with an existing local caller credential; no browser/device-code fallback.                             |
 | `input send --file <input.json>`               | `POST /api/input/send`.                                                                                                          |
+| `input list`                                   | `GET /api/input/list`. The CLI auto-pages by default.                                                                            |
+| `input read <caller_item_id>`                  | `POST /api/input/read`.                                                                                                          |
 | `input replace --file <input.json>`            | `POST /api/input/replace`.                                                                                                       |
 | `input delete <caller_item_id>`                | `POST /api/input/delete`.                                                                                                        |
 | `output check`                                 | `GET /api/output/check`. The CLI auto-pages by default.                                                                          |

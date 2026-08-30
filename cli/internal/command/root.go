@@ -141,7 +141,7 @@ func NewRootCommand(opts Options, flags *rootFlags) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&flags.noColor, "no-color", false, "disable terminal color")
 
 	caller := parentCommand("caller", "Manage local caller configuration")
-	input := callerRequiredParentCommand("input", "Submit and manage input items")
+	input := callerRequiredParentCommand("input", "Submit and inspect input items")
 	output := callerRequiredParentCommand("output", "Read and acknowledge output results")
 	account := callerRequiredParentCommand("account", "Inspect the selected account")
 	documentCommand(caller, commandHelpSpec{
@@ -158,16 +158,18 @@ func NewRootCommand(opts Options, flags *rootFlags) *cobra.Command {
 		RelatedDocs: "docs/spec/http-api.md#caller-connect-control-plane, docs/spec/errors.md, and agent-outbox docs caller.",
 	})
 	documentCommand(input, commandHelpSpec{
-		Purpose:     "Submit, replace, or delete pending input items for the selected caller.",
-		Arguments:   "Use send, replace, or delete. Input JSON never includes caller_id; the API derives it from the selected local caller credential.",
-		Flags:       "send and replace require --file <input.json>. Global --caller, --config, --base-url, --json, and --no-color are available.",
+		Purpose:     "Submit, inspect, replace, or delete input items for the selected caller.",
+		Arguments:   "Use send, list, read, replace, or delete. Input JSON never includes caller_id; the API derives it from the selected local caller credential.",
+		Flags:       "send and replace require --file <input.json>. list supports --page-size, --cursor, and --no-auto-page. Global flags are available.",
 		Environment: globalEnvironmentHelp(),
 		Examples: strings.Join([]string{
 			"agent-outbox input send --file input.json",
+			"agent-outbox input list --json",
+			"agent-outbox input read email:thread_123",
 			"agent-outbox input replace --file input.json --json",
 			"agent-outbox input delete email:thread_123",
 		}, "\n"),
-		ExitCodes:   "0 success. 64 usage. 65 input JSON/schema/safety errors. 73 live item conflict. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
+		ExitCodes:   "0 success. 64 usage. 65 input JSON/schema/safety errors. 66 missing input. 73 live item conflict. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
 		RelatedDocs: "docs/spec/input-schema.md, docs/spec/http-api.md#input-queue, and agent-outbox docs input.",
 	})
 	documentCommand(output, commandHelpSpec{
