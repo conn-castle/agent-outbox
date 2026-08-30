@@ -1138,7 +1138,8 @@ export function validateProductionDeployWorkflow(
     !verifyStep.includes(
       'AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"'
     ) ||
-    !overrideSmokeStep.includes("AGENT_OUTBOX_WORKER_VERSION_OVERRIDE")
+    !overrideSmokeStep.includes("AGENT_OUTBOX_WORKER_VERSION_OVERRIDE") ||
+    verifyStep.includes("AGENT_OUTBOX_WORKER_VERSION_OVERRIDE")
   ) {
     failures.push(
       ".github/workflows/deploy-production.yml must smoke the candidate through a version override before promotion and without an override after promotion"
@@ -1281,6 +1282,11 @@ export function validateProductionDeployWorkflow(
       ".github/workflows/deploy-production.yml must match the exported production release phase (step name, run command, condition) contract"
     );
   }
+  if (!deployJob.includes("persist-credentials: false")) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must disable persisted checkout credentials on the production deploy job"
+    );
+  }
 
   return failures;
 }
@@ -1372,6 +1378,10 @@ export function validateProductionReconciliationWorkflow(
       reconcileStep.includes("CLOUDFLARE_API_TOKEN") &&
         reconcileStep.includes("SMOKE_OR_CLEANUP_TOKEN") &&
         trafficOnlyForbiddenSecretNames(reconcileStep).length === 0
+    ],
+    [
+      "disabled checkout credentials",
+      reconcileJob.includes("persist-credentials: false")
     ]
   ];
   for (const [description, present] of required) {
@@ -1431,7 +1441,8 @@ export function validateAbandonedReleaseDetectionWorkflow(
       detectJob,
       new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`)
     ) ||
-    !workflowHasLine(detectWorkflowContent, /^\s*actions:\s*read\s*$/)
+    !workflowHasLine(detectWorkflowContent, /^\s*actions:\s*read\s*$/) ||
+    !detectJob.includes("persist-credentials: false")
   ) {
     failures.push(
       ".github/workflows/detect-abandoned-production-release.yml must detect abandoned drafts on a schedule without mutating production"

@@ -60,9 +60,23 @@ export function publishedRelease(overrides = {}) {
 }
 
 /**
- * @param {Record<string, any[]>} script
+ * @param {Record<string, any[]>} [script]
+ * @param {{ omitGetActionsRun?: boolean }} [options]
+ * @returns {import("../../scripts/release/gateway-github.mjs").GithubGateway & {
+ *   calls: {
+ *     listReleases: number,
+ *     getRelease: number,
+ *     remoteTagCommit: number,
+ *     createDraft: number,
+ *     updateRelease: number,
+ *     uploadAsset: number,
+ *     downloadAsset: number,
+ *     deleteRelease: number,
+ *     getActionsRun: number
+ *   }
+ * }}
  */
-export function scriptedGithub(script = {}) {
+export function scriptedGithub(script = {}, options = {}) {
   const calls = {
     listReleases: 0,
     getRelease: 0,
@@ -104,7 +118,11 @@ export function scriptedGithub(script = {}) {
       take("uploadAsset", [{ status: 1, stderr: "missing" }]),
     downloadAsset: async () => take("downloadAsset", [Buffer.from("x")]),
     deleteRelease: async () => take("deleteRelease", [{ status: 0 }]),
-    getActionsRun: async () => take("getActionsRun", [null])
+    ...(options.omitGetActionsRun
+      ? {}
+      : {
+          getActionsRun: async () => take("getActionsRun", [null])
+        })
   };
 }
 
@@ -128,18 +146,17 @@ export function scriptedCloudflare(script = {}) {
     calls,
     deploymentStatus: async () => {
       calls.deploymentStatus += 1;
-      const value = (script.deploymentStatus ?? [
-        {
+      if (!Object.hasOwn(script, "deploymentStatus")) {
+        return {
           versions: [{ version_id: PRIOR_VERSION, percentage: 100 }]
-        }
-      ])[
-        Math.min(
-          calls.deploymentStatus - 1,
-          (script.deploymentStatus ?? []).length - 1
-        )
-      ] ?? {
-        versions: [{ version_id: PRIOR_VERSION, percentage: 100 }]
-      };
+        };
+      }
+      const queue = script.deploymentStatus;
+      const value = Array.isArray(queue)
+        ? queue[
+            Math.min(calls.deploymentStatus - 1, Math.max(queue.length - 1, 0))
+          ]
+        : queue;
       if (value instanceof Error) {
         throw value;
       }

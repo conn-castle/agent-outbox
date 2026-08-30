@@ -663,24 +663,44 @@ export async function runAssetReconciliation(orchestrator, input) {
     }
   }
 
-  const verified = await orchestrator.github.getRelease(
-    input.repository,
-    input.releaseId
-  );
-  if (!verified) {
+  return proveCertifiedAssets(orchestrator, {
+    repository: input.repository,
+    releaseId: input.releaseId,
+    assets
+  });
+}
+
+/**
+ * Prove a GitHub release still has the exact certified asset inventory and
+ * bytes. This does not upload missing assets.
+ *
+ * @param {ReleaseOrchestrator} orchestrator
+ * @param {{
+ *   repository: string,
+ *   releaseId: number,
+ *   assets?: { name: string, path: string, bytes: Buffer }[],
+ *   release?: GithubRelease | null
+ * }} input
+ */
+export async function proveCertifiedAssets(orchestrator, input) {
+  const assets = input.assets ?? certifiedReleaseAssets();
+  const release =
+    input.release ??
+    (await orchestrator.github.getRelease(input.repository, input.releaseId));
+  if (!release) {
     throw new Error(
       `release ${input.releaseId} disappeared during asset proof`
     );
   }
   const expectedNames = assets.map((asset) => asset.name).sort();
-  const actualNames = verified.assets.map((asset) => asset.name).sort();
+  const actualNames = release.assets.map((asset) => asset.name).sort();
   if (JSON.stringify(expectedNames) !== JSON.stringify(actualNames)) {
     throw new Error(
       "draft release asset inventory differs from the certified build"
     );
   }
   for (const asset of assets) {
-    const remote = verified.assets.find((item) => item.name === asset.name);
+    const remote = release.assets.find((item) => item.name === asset.name);
     if (!remote) {
       throw new Error(`missing certified asset ${asset.name}`);
     }
@@ -707,8 +727,11 @@ export async function runAssetReconciliation(orchestrator, input) {
  *   releaseTag: string,
  *   expectedSha: string,
  *   runId: string,
- *   releaseId: number
+ *   releaseId: number,
+ *   assets?: { name: string, path: string, bytes: Buffer }[]
  * }} input
+ * Assets are required immediately before `{ draft: false }`. Early returns for
+ * committed or pending-tag state do not publish.
  */
 export async function runReleasePublication(orchestrator, input) {
   let publicationMutationAttempted = false;
@@ -836,6 +859,13 @@ export async function runReleasePublication(orchestrator, input) {
       );
     }
 
+    const assets = requireCertifiedPublicationAssets(input.assets);
+    await proveCertifiedAssets(orchestrator, {
+      repository: input.repository,
+      releaseId: input.releaseId,
+      assets
+    });
+
     publicationMutationAttempted = true;
     let result;
     try {
@@ -869,6 +899,24 @@ export async function runReleasePublication(orchestrator, input) {
 }
 
 /**
+ * Publication must prove exact certified bytes. Local `dist/` is trusted only
+ * when the deploy job already downloaded that workflow artifact. Manual
+ * reconciliation does not fetch it, so missing assets hold instead of
+ * publishing GitHub draft bytes.
+ *
+ * @param {{ name: string, path: string, bytes: Buffer }[] | undefined} assets
+ * @returns {{ name: string, path: string, bytes: Buffer }[]}
+ */
+function requireCertifiedPublicationAssets(assets) {
+  if (Array.isArray(assets) && assets.length > 0) {
+    return assets;
+  }
+  throw new ReleaseHoldError(
+    "publication requires proving certified CLI asset inventory and bytes immediately before draft:false; retry the original deploy run with Re-run failed jobs so it reuses the certified artifact. Artifact-less reconciliation must not publish GitHub draft bytes"
+  );
+}
+
+/**
  * @param {ReleaseOrchestrator} orchestrator
  * @param {{
  *   repository: string,
@@ -883,7 +931,8 @@ export async function runReleasePublication(orchestrator, input) {
  *   githubReadable?: boolean,
  *   cloudflareReadable?: boolean,
  *   requireExactRun?: boolean,
- *   releaseId?: number
+ *   releaseId?: number,
+ *   assets?: { name: string, path: string, bytes: Buffer }[]
  * }} input
  */
 export async function runReconciliation(orchestrator, input) {
@@ -1077,12 +1126,12 @@ export async function runAbandonedDetection(orchestrator, input) {
       continue;
     }
     const marker = parseOwnershipMarker(release.body);
-    if (
-      marker &&
-      marker.repository === input.repository &&
-      marker.runId &&
-      orchestrator.github.getActionsRun
-    ) {
+    if (marker && marker.repository === input.repository && marker.runId) {
+      if (!orchestrator.github.getActionsRun) {
+        throw new Error(
+          "abandoned detection requires github.getActionsRun to classify owned drafts"
+        );
+      }
       const ownedMarker = marker;
       const run = await orchestrator.github.getActionsRun(
         input.repository,

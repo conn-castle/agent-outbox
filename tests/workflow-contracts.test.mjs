@@ -86,6 +86,43 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     validateAbandonedReleaseDetectionWorkflow(detectWorkflow, "24.18.0"),
     []
   );
+  const deployWithoutPersist = deployWorkflow.replaceAll(
+    "          persist-credentials: false\n",
+    ""
+  );
+  assert.notEqual(deployWithoutPersist, deployWorkflow);
+  assert.ok(
+    validateProductionDeployWorkflow(deployWithoutPersist, "24.18.0").some(
+      (failure) => failure.includes("persisted checkout credentials")
+    )
+  );
+  const verifyPinnedToCandidate = deployWorkflow.replace(
+    `      - name: Verify deployed release
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE: \${{ github.sha }}
+          AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: \${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: corepack pnpm run smoke-runtime`,
+    `      - name: Verify deployed release
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE: \${{ github.sha }}
+          AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          AGENT_OUTBOX_WORKER_VERSION_OVERRIDE: "pinned"
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: \${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: corepack pnpm run smoke-runtime`
+  );
+  assert.notEqual(verifyPinnedToCandidate, deployWorkflow);
+  assert.ok(
+    validateProductionDeployWorkflow(verifyPinnedToCandidate, "24.18.0").some(
+      (failure) => failure.includes("without an override after promotion")
+    )
+  );
 
   for (const [description, brokenWorkflow] of [
     [

@@ -156,11 +156,14 @@ gh workflow run deploy-production.yml --ref main
 The workflow applies one serialized, publicly atomic release sequence. Schema is
 forward-only infrastructure state, applied before candidate traffic and never
 rolled back automatically. Every candidate migration must be compatible with the
-currently live release and the candidate. A failed release may leave expand
-migrations, inactive Worker versions, Sentry records, Actions artifacts, and
-provider audit records. It may not leave candidate traffic, a published release,
-a tag, public release assets, a Homebrew change, or an owned draft. The numbered
-version remains reusable after a proven pre-commit failure.
+currently live release and the candidate. A proven pre-commit failure may leave
+expand migrations, inactive Worker versions, Sentry records, Actions artifacts,
+and provider audit records. It may not leave candidate traffic, a published
+release, a tag, public release assets, a Homebrew change, or an owned draft. The
+numbered version remains reusable. After publication is proven, a failed
+anonymous-download or Homebrew distribution check leaves the committed release,
+tag, public assets, and any tap pull request in place and must not roll back or
+delete them.
 
 1. Validate the dispatch is the exact current `main` SHA, resolve the stable
    version from `package.json`, and require public-repository plus Homebrew tap
@@ -274,19 +277,25 @@ Cloudflare is readable with exactly one version at 100%, the runtime canary
 returns a configured SHA that is not the candidate, and nothing indicates the
 candidate is live. Optional workflow inputs are validated against that derived
 state; they cannot replace missing identities. It then chooses only among: prove
-committed; retry a `publishing` draft by ID when GitHub is readable; restore the
-previous Worker to 100%, prove that traffic and the prior runtime SHA, re-read
-the exact-owned `prepared` draft, confirm the tag is absent, delete it by ID,
-and prove it is gone; or hold without mutation. Ambiguous or unprovable
-ownership, candidate-live or unreadable provider state, or a prior identity that
-cannot be proven, stops loudly. A scheduled detector fails nonzero only for
-abandoned exact system-owned markers whose owning GitHub Actions run is missing
-or terminal, including the documented orphan when it still carries this system's
-marker. It reports human-authored, unowned, or malformed drafts as warnings so
-unrelated drafts do not keep the schedule red. It excludes queued and
-in-progress runs so an active release is not treated as abandoned. It must not
-join `production-deploy` concurrency or mutate, because GitHub concurrency keeps
-only one pending run and can cancel a queued human release.
+committed; retry a `publishing` draft by ID when GitHub is readable and the
+exact certified CLI asset inventory and bytes can be re-proved immediately
+before `draft: false`; restore the previous Worker to 100%, prove that traffic
+and the prior runtime SHA, re-read the exact-owned `prepared` draft, confirm the
+tag is absent, delete it by ID, and prove it is gone; or hold without mutation.
+Publication never sets `draft: false` without that certified-asset proof. Manual
+reconciliation does not download the original workflow artifact; without those
+exact files it holds rather than publishing GitHub draft bytes. Recover by
+choosing **Re-run failed jobs** on the original deploy run so it reuses the
+certified artifact. Ambiguous or unprovable ownership, candidate-live or
+unreadable provider state, or a prior identity that cannot be proven, stops
+loudly. A scheduled detector fails nonzero only for abandoned exact system-owned
+markers whose owning GitHub Actions run is missing or terminal, including the
+documented orphan when it still carries this system's marker. It reports
+human-authored, unowned, or malformed drafts as warnings so unrelated drafts do
+not keep the schedule red. It excludes queued and in-progress runs so an active
+release is not treated as abandoned. It must not join `production-deploy`
+concurrency or mutate, because GitHub concurrency keeps only one pending run and
+can cancel a queued human release.
 
 The Worker upload and traffic commands fail outside the sanctioned GitHub
 Actions workflows. Do not load production credentials locally to bypass them and

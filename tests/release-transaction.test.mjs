@@ -27,9 +27,9 @@ import {
 import { runReleasePhases } from "./helpers/release-phases.mjs";
 
 test("fault injection restores prior traffic and leaves the version reusable", async () => {
-  /** @type {("upload" | "staged" | "promote")[]} */
-  const failures = ["upload", "staged", "promote"];
-  for (const failAfter of failures) {
+  /** @type {("upload" | "persist-candidate" | "staged" | "promote")[]} */
+  const failures = ["upload", "persist-candidate", "staged", "promote"];
+  for (const failBefore of failures) {
     const github = scriptedGithub({
       listReleases: [[draftRelease()]],
       remoteTagCommit: [null],
@@ -65,10 +65,24 @@ test("fault injection restores prior traffic and leaves the version reusable", a
         migrate: async () => {},
         overrideSmoke: async () => {},
         productionSmoke: async () => {},
-        failAfter
-      })
+        failBefore
+      }),
+      new RegExp(
+        {
+          upload: "version upload failed",
+          "persist-candidate": "candidate identity persist failed",
+          staged: "0% deploy failed",
+          promote: "promotion failed"
+        }[failBefore]
+      ),
+      failBefore
     );
-    assert.ok(github.calls.updateRelease >= 1, failAfter);
+    if (failBefore === "persist-candidate") {
+      assert.equal(cloudflare.calls.uploadVersion, 1, failBefore);
+    } else if (failBefore === "upload") {
+      assert.equal(cloudflare.calls.uploadVersion, 0, failBefore);
+    }
+    assert.ok(github.calls.updateRelease >= 1, failBefore);
     const ownedDraft = draftRelease({ body: preparedMarker() });
     const cleanupGithub = scriptedGithub({
       listReleases: [[ownedDraft]],
@@ -92,7 +106,12 @@ test("fault injection restores prior traffic and leaves the version reusable", a
       requireExactRun: false,
       liveSha: OTHER_SHA
     });
-    assert.equal(cleanupGithub.calls.deleteRelease, 1, failAfter);
+    assert.deepEqual(
+      cleanupCloudflare.calls.deployVersions[0].placements,
+      [{ versionId: PRIOR_VERSION, percentage: 100 }],
+      failBefore
+    );
+    assert.equal(cleanupGithub.calls.deleteRelease, 1, failBefore);
     const reused = await runDraftPreparation(
       orchestrator(
         scriptedGithub({
@@ -111,7 +130,7 @@ test("fault injection restores prior traffic and leaves the version reusable", a
       ),
       { ...RELEASE, expectedSha: OTHER_SHA }
     );
-    assert.equal(reused.kind, "owned_prepared", failAfter);
+    assert.equal(reused.kind, "owned_prepared", failBefore);
   }
 });
 
@@ -165,7 +184,7 @@ test("transaction fault at override smoke collapses to prior@100 only", async ()
       liveConfig: { routes: [], triggers: {} },
       candidateConfig: { routes: [], triggers: {} },
       migrate: async () => {},
-      failAfter: "override-smoke"
+      failBefore: "override-smoke"
     }),
     /override smoke failed/
   );
@@ -460,4 +479,16 @@ test("capture-rollback proves the live prior against the marker before persisten
     /differs from marker-recorded prior/
   );
   assert.equal(github.calls.updateRelease, 0);
+});
+
+test("scripted Cloudflare deploymentStatus preserves explicit null and undefined entries", async () => {
+  const scripted = scriptedCloudflare({
+    deploymentStatus: [null, undefined]
+  });
+  assert.equal(await scripted.deploymentStatus(), null);
+  assert.equal(await scripted.deploymentStatus(), undefined);
+  const unscripted = scriptedCloudflare();
+  assert.deepEqual(await unscripted.deploymentStatus(), {
+    versions: [{ version_id: PRIOR_VERSION, percentage: 100 }]
+  });
 });

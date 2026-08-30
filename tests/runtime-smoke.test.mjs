@@ -255,7 +255,11 @@ test("runtime smoke override header is exact and applied to every request", asyn
     request.url.includes("/api/runtime/canary")
   );
   assert.ok(canaryRequests.length >= 2);
-  assert.equal(canaryRequests[0].url.includes("/api/runtime/canary"), true);
+  assert.equal(
+    requests[0].url.includes("/api/runtime/canary"),
+    true,
+    "override smoke must prove the candidate SHA before any probe"
+  );
   assert.equal(
     requests.at(-1)?.url.includes("/api/runtime/canary"),
     true,

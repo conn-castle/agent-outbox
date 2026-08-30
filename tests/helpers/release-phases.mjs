@@ -27,7 +27,12 @@ import {
  *   migrate?: () => unknown | Promise<unknown>,
  *   overrideSmoke?: () => unknown | Promise<unknown>,
  *   productionSmoke?: () => unknown | Promise<unknown>,
- *   failAfter?: "upload" | "staged" | "override-smoke" | "promote"
+ *   failBefore?:
+ *     | "upload"
+ *     | "persist-candidate"
+ *     | "staged"
+ *     | "override-smoke"
+ *     | "promote"
  * }} input
  */
 export async function runReleasePhases(orch, input) {
@@ -80,10 +85,13 @@ export async function runReleasePhases(orch, input) {
     input.candidateConfig ?? input.liveConfig ?? { routes: [], triggers: {} }
   );
 
-  if (input.failAfter === "upload") {
+  if (input.failBefore === "upload") {
     throw new Error("version upload failed");
   }
   const uploaded = await cloudflare.uploadVersion({});
+  if (input.failBefore === "persist-candidate") {
+    throw new Error("candidate identity persist failed");
+  }
   await persistOwnedDraftIdentities(orch, {
     repository: RELEASE.repository,
     releaseTag: RELEASE.releaseTag,
@@ -97,7 +105,7 @@ export async function runReleasePhases(orch, input) {
     await input.migrate();
   }
 
-  if (input.failAfter === "staged") {
+  if (input.failBefore === "staged") {
     throw new Error("0% deploy failed");
   }
   await cloudflare.deployVersions(
@@ -111,11 +119,11 @@ export async function runReleasePhases(orch, input) {
   if (input.overrideSmoke) {
     await input.overrideSmoke();
   }
-  if (input.failAfter === "override-smoke") {
+  if (input.failBefore === "override-smoke") {
     throw new Error("override smoke failed");
   }
 
-  if (input.failAfter === "promote") {
+  if (input.failBefore === "promote") {
     throw new Error("promotion failed");
   }
   await cloudflare.deployVersions(
@@ -129,7 +137,8 @@ export async function runReleasePhases(orch, input) {
 
   await runReleasePublication(orch, {
     ...RELEASE,
-    releaseId: draft.releaseId
+    releaseId: draft.releaseId,
+    assets: input.assets
   });
   return { kind: "committed", releaseId: draft.releaseId };
 }

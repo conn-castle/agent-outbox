@@ -130,6 +130,14 @@ test("same-tag classification uses release id and exact ownership, never tag uni
   );
   assert.equal(
     classifySameTagReleases({
+      releases: [draftRelease({ body: marker("prepared", { runId: "1" }) })],
+      tagCommit: null,
+      ...RELEASE
+    }).kind,
+    "conflict"
+  );
+  assert.equal(
+    classifySameTagReleases({
       releases: [draftRelease(), draftRelease({ id: 9002, body: "unowned" })],
       tagCommit: null,
       ...RELEASE
@@ -410,6 +418,26 @@ test("observed live state supplies prior identity only when every invariant hold
   );
   assert.equal(
     derivePriorIdentityFromLiveState({ ...safe, liveSha: "not-a-sha" }),
+    null
+  );
+  assert.equal(
+    derivePriorIdentityFromLiveState({ ...safe, expectedSha: "not-a-sha" }),
+    null
+  );
+  assert.equal(
+    derivePriorIdentityFromLiveState({
+      ...safe,
+      deployment: {
+        versions: [{ version_id: PRIOR_VERSION, percentage: 90 }]
+      }
+    }),
+    null
+  );
+  assert.equal(
+    derivePriorIdentityFromLiveState({
+      ...safe,
+      deployment: { versions: [{ version_id: "not-a-uuid", percentage: 100 }] }
+    }),
     null
   );
   assert.equal(

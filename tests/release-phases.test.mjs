@@ -8,7 +8,8 @@ import {
   GH_SPAWN_MAX_BUFFER_BYTES,
   assertGithubMutationResult,
   collectCommandStdoutBytes,
-  githubCommandSpawnOptions
+  githubCommandSpawnOptions,
+  listGithubReleases
 } from "../scripts/release/gateway-github.mjs";
 import {
   PublicationStateUnknownError,
@@ -49,6 +50,15 @@ import {
   scriptedCloudflare,
   scriptedGithub
 } from "./helpers/release-fixtures.mjs";
+
+const CERTIFIED_ASSET = {
+  name: "checksums.txt",
+  path: "/tmp/checksums.txt",
+  bytes: Buffer.from("abcd")
+};
+const CERTIFIED_RELEASE_ASSETS = [
+  { id: 1, name: "checksums.txt", size: CERTIFIED_ASSET.bytes.length }
+];
 
 test("draft preparation creates a release-id-owned prepared draft", async () => {
   const github = scriptedGithub({
@@ -167,6 +177,8 @@ test("publication marks publishing by id before the publish mutation", async () 
   const github = scriptedGithub({
     listReleases: [[draftRelease()], [publishedRelease()]],
     remoteTagCommit: [null, null, RELEASE.expectedSha],
+    getRelease: [draftRelease({ assets: CERTIFIED_RELEASE_ASSETS })],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
     updateRelease: [
       () => {
         patches.push("publishing");
@@ -180,7 +192,8 @@ test("publication marks publishing by id before the publish mutation", async () 
   });
   await runReleasePublication(orchestrator(github), {
     ...RELEASE,
-    releaseId: DRAFT_ID
+    releaseId: DRAFT_ID,
+    assets: [CERTIFIED_ASSET]
   });
   assert.deepEqual(patches, ["publishing", "publish"]);
 });
@@ -189,12 +202,20 @@ test("ambiguous publication after publishing intent holds and never deletes", as
   const github = scriptedGithub({
     listReleases: [[draftRelease({ body: marker("publishing") })]],
     remoteTagCommit: [null],
+    getRelease: [
+      draftRelease({
+        body: marker("publishing"),
+        assets: CERTIFIED_RELEASE_ASSETS
+      })
+    ],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
     updateRelease: [{ status: 1, stderr: "request timed out" }]
   });
   await assert.rejects(
     runReleasePublication(orchestrator(github), {
       ...RELEASE,
-      releaseId: DRAFT_ID
+      releaseId: DRAFT_ID,
+      assets: [CERTIFIED_ASSET]
     }),
     (error) => error instanceof PublicationStateUnknownError
   );
@@ -235,18 +256,22 @@ test("reconciliation restores prior@100 then deletes only the owned prepared dra
 
 test("reconciliation never deletes a publishing draft or published release", async () => {
   const publishingDraft = draftRelease({
-    body: preparedMarker({ state: "publishing" })
+    body: preparedMarker({ state: "publishing" }),
+    assets: CERTIFIED_RELEASE_ASSETS
   });
   const publishingGithub = scriptedGithub({
     listReleases: [[publishingDraft], [publishingDraft], [publishedRelease()]],
     remoteTagCommit: [null, null, RELEASE.expectedSha],
+    getRelease: [publishingDraft],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
     updateRelease: [{ status: 0 }]
   });
   await runReconciliation(
     orchestrator(publishingGithub, scriptedCloudflare()),
     {
       ...RELEASE,
-      priorVersionId: PRIOR_VERSION
+      priorVersionId: PRIOR_VERSION,
+      assets: [CERTIFIED_ASSET]
     }
   );
   assert.equal(publishingGithub.calls.deleteRelease, 0);
@@ -266,6 +291,29 @@ test("reconciliation never deletes a publishing draft or published release", asy
   assert.equal(published.action, "committed");
   assert.equal(publishedGithub.calls.deleteRelease, 0);
   assert.equal(publishedGithub.calls.updateRelease, 0);
+});
+
+test("artifact-less reconciliation holds instead of retry-publishing unproved assets", async () => {
+  const publishingDraft = draftRelease({
+    body: preparedMarker({ state: "publishing" })
+  });
+  const github = scriptedGithub({
+    listReleases: [[publishingDraft]],
+    remoteTagCommit: [null],
+    updateRelease: [{ status: 0 }]
+  });
+  await assert.rejects(
+    runReconciliation(orchestrator(github, scriptedCloudflare()), {
+      ...RELEASE,
+      priorVersionId: PRIOR_VERSION
+    }),
+    (error) =>
+      error instanceof ReleaseHoldError &&
+      /certified CLI asset/.test(error.message) &&
+      !(error instanceof PublicationStateUnknownError)
+  );
+  assert.equal(github.calls.updateRelease, 0);
+  assert.equal(github.calls.deleteRelease, 0);
 });
 
 test("abandoned detection reports drafts and does not mutate", async () => {
@@ -785,7 +833,8 @@ test("publication holds if the remote tag changes after the publishing marker", 
   await assert.rejects(
     runReleasePublication(orchestrator(github), {
       ...RELEASE,
-      releaseId: DRAFT_ID
+      releaseId: DRAFT_ID,
+      assets: [CERTIFIED_ASSET]
     }),
     /points at 2222222222222222222222222222222222222222/
   );
@@ -822,6 +871,76 @@ test("abandoned detection excludes queued and in-progress owning runs", async ()
   );
   assert.equal(github.calls.getActionsRun, 3);
   assert.equal(github.calls.deleteRelease, 0);
+});
+
+test("abandoned detection fails closed when getActionsRun is unavailable", async () => {
+  const github = scriptedGithub(
+    { listReleases: [[draftRelease()]] },
+    { omitGetActionsRun: true }
+  );
+  assert.equal("getActionsRun" in github, false);
+  await assert.rejects(
+    runAbandonedDetection(orchestrator(github), {
+      repository: RELEASE.repository
+    }),
+    /requires github.getActionsRun/
+  );
+});
+
+test("publication holds when certified assets are missing before draft:false", async () => {
+  const github = scriptedGithub({
+    listReleases: [[draftRelease({ body: marker("publishing") })]],
+    remoteTagCommit: [null],
+    updateRelease: [{ status: 0 }]
+  });
+  await assert.rejects(
+    runReleasePublication(orchestrator(github), {
+      ...RELEASE,
+      releaseId: DRAFT_ID
+    }),
+    (error) =>
+      error instanceof ReleaseHoldError &&
+      /certified CLI asset/.test(error.message)
+  );
+  assert.equal(github.calls.updateRelease, 0);
+});
+
+test("publication re-proves certified assets immediately before draft:false", async () => {
+  const github = scriptedGithub({
+    listReleases: [[draftRelease()]],
+    remoteTagCommit: [null],
+    updateRelease: [{ status: 0 }, { status: 0 }],
+    getRelease: [draftRelease({ assets: CERTIFIED_RELEASE_ASSETS })],
+    downloadAsset: [Buffer.from("tampered")]
+  });
+  await assert.rejects(
+    runReleasePublication(orchestrator(github), {
+      ...RELEASE,
+      releaseId: DRAFT_ID,
+      assets: [CERTIFIED_ASSET]
+    }),
+    /differs from the certified build/
+  );
+  assert.equal(github.calls.updateRelease, 1);
+});
+
+test("GitHub release listing continues past twenty pages to an owned draft", () => {
+  const owned = draftRelease({ id: 9001 });
+  const pages = Array.from({ length: 21 }, (_, page) =>
+    Array.from({ length: 100 }, (__, index) =>
+      publishedRelease({ id: page * 100 + index + 1 })
+    )
+  );
+  pages.push([owned]);
+  let requestedPage = 0;
+  const releases = listGithubReleases(RELEASE.repository, (apiPath) => {
+    requestedPage += 1;
+    assert.match(apiPath, new RegExp(`[?&]page=${requestedPage}(?:$|&)`));
+    return pages[requestedPage - 1];
+  });
+  assert.equal(releases.length, 2101);
+  assert.equal(releases.at(-1)?.id, owned.id);
+  assert.equal(requestedPage, 22);
 });
 
 test("assertGithubMutationResult fails closed on errors and nonzero status", () => {
@@ -885,11 +1004,14 @@ test("publication retries while the tag ref is not yet visible", async () => {
       [publishedRelease()]
     ],
     remoteTagCommit: [null, null, null, RELEASE.expectedSha],
+    getRelease: [draftRelease({ assets: CERTIFIED_RELEASE_ASSETS })],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
     updateRelease: [{ status: 0 }, { status: 0 }]
   });
   const result = await runReleasePublication(orchestrator(github), {
     ...RELEASE,
-    releaseId: DRAFT_ID
+    releaseId: DRAFT_ID,
+    assets: [CERTIFIED_ASSET]
   });
   assert.equal(result.kind, "committed");
   assert.equal(github.calls.updateRelease, 2);
@@ -903,7 +1025,8 @@ test("publication tag lag exhaustion is PublicationStateUnknownError", async () 
   await assert.rejects(
     runReleasePublication(orchestrator(github), {
       ...RELEASE,
-      releaseId: DRAFT_ID
+      releaseId: DRAFT_ID,
+      assets: [CERTIFIED_ASSET]
     }),
     (error) => error instanceof PublicationStateUnknownError
   );

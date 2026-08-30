@@ -10,6 +10,9 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { GH_SPAWN_MAX_BUFFER_BYTES } from "../scripts/release/gateway-github.mjs";
 
 import {
   findExactWorkerVersion,
@@ -211,7 +214,7 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
   const tempBase = mkdtempSync(
     path.join(os.tmpdir(), "agent-outbox-worker-deploy-test-")
   );
-  /** @type {{ command: string, args: string[], env: NodeJS.ProcessEnv | undefined }[]} */
+  /** @type {{ command: string, args: string[], env: NodeJS.ProcessEnv | undefined, maxBuffer?: number, stdio?: import("node:child_process").StdioOptions }[]} */
   const calls = [];
   /** @type {string | null} */
   let secretsFilePath = null;
@@ -223,7 +226,13 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
       env,
       tempBase,
       spawnSyncImpl(command, args, options) {
-        calls.push({ command, args, env: options.env });
+        calls.push({
+          command,
+          args,
+          env: options.env,
+          maxBuffer: options.maxBuffer,
+          stdio: options.stdio
+        });
 
         if (args[0] === "pnpm" && args[1] === "exec") {
           const secretsFileIndex = args.indexOf("--secrets-file") + 1;
@@ -273,6 +282,9 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
     for (const name of WORKER_DEPLOY_SECRET_NAMES) {
       assert.equal(calls[0].env?.[name], undefined);
     }
+    assert.equal(calls[1].maxBuffer, GH_SPAWN_MAX_BUFFER_BYTES);
+    assert.deepEqual(calls[1].stdio, ["ignore", "pipe", "pipe"]);
+    assert.equal(calls[2].maxBuffer, GH_SPAWN_MAX_BUFFER_BYTES);
     assert.equal(calls[1].command, "corepack");
     assert.deepEqual(calls[1].args.slice(0, 6), [
       "pnpm",
@@ -602,7 +614,7 @@ test("worker-deploy CLI refuses standalone mutation commands", () => {
     process.execPath,
     ["scripts/worker-deploy.mjs", "upload"],
     {
-      cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), ".."),
+      cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
       encoding: "utf8"
     }
   );

@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 import { verifyCommittedMarketingReleaseFiles } from "./marketing-screenshots.mjs";
+import { certifiedReleaseAssets } from "./release/assets.mjs";
 import { selectRollbackTarget } from "./release/decide.mjs";
 import { createCloudflareGateway } from "./release/gateway-cloudflare.mjs";
 import {
@@ -308,14 +309,10 @@ async function captureRollbackTarget() {
     });
     const orchestrator = defaultOrchestrator();
     const status = await orchestrator.cloudflare.deploymentStatus();
-    const response = await fetch(new URL("/api/runtime/canary", baseUrl), {
-      headers: { authorization: `Bearer ${smokeToken}` },
-      signal: AbortSignal.timeout(10_000)
-    });
-    if (!response.ok) {
-      throw new Error(`runtime canary returned ${response.status}`);
-    }
-    const target = selectRollbackTarget(status, await response.json());
+    const target = selectRollbackTarget(
+      status,
+      await orchestrator.runtimeCanary()
+    );
     const current = await orchestrator.github.getRelease(
       context.repository,
       /** @type {number} */ (context.releaseId)
@@ -405,7 +402,8 @@ async function publishRelease() {
         releaseTag: context.releaseTag,
         expectedSha: context.candidateSha,
         runId: /** @type {string} */ (context.runId),
-        releaseId: /** @type {number} */ (context.releaseId)
+        releaseId: /** @type {number} */ (context.releaseId),
+        assets: certifiedReleaseAssets()
       });
       writeGithubOutputs({ publication_state: "published" });
     } catch (error) {

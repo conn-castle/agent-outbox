@@ -15,6 +15,10 @@ import {
   DATABASE_HYPERDRIVE_BINDING
 } from "../worker/hyperdrive.mjs";
 import {
+  GH_SPAWN_MAX_BUFFER_BYTES,
+  assertSpawnStdoutBudget
+} from "./release/gateway-github.mjs";
+import {
   CANDIDATE_WORKER_VERSION_ID_ENV_NAME,
   FULL_GIT_SHA,
   GITHUB_RELEASE_ID_ENV_NAME,
@@ -725,6 +729,10 @@ export function writeWranglerConfigFile(env, options = {}) {
  */
 function runCommand(command, args, options, spawnSyncImpl) {
   const result = spawnSyncImpl(command, args, options);
+  assertSpawnStdoutBudget(
+    result.error,
+    options.maxBuffer ?? GH_SPAWN_MAX_BUFFER_BYTES
+  );
   if (result.error) {
     throw result.error;
   }
@@ -764,7 +772,8 @@ export function runWorkerVersionUpload(options = {}) {
       cwd: ROOT,
       env: wranglerDeployEnvironment(env),
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: GH_SPAWN_MAX_BUFFER_BYTES
     });
 
   runCommand(

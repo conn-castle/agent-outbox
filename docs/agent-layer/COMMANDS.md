@@ -521,9 +521,12 @@ same reconciler as deploy-job cleanup. It derives identities from the owned
 draft marker and Cloudflare, and from observed live prior traffic only when a
 pre-persistence `prepared` draft meets the live-state invariants. It validates
 any optional inputs against that state, then proves committed, retries a
-`publishing` draft by ID, restores prior@100 and deletes only an owned
-`prepared` draft after proving traffic, prior SHA, tag absence, and deletion,
-or holds without mutation. It never deletes published releases or orphan tags.
+`publishing` draft by ID only when certified CLI assets can be re-proved,
+restores prior@100 and deletes only an owned `prepared` draft after proving
+traffic, prior SHA, tag absence, and deletion, or holds without mutation.
+Artifact-less reconcile cannot publish GitHub draft bytes; retry the original
+deploy run with Re-run failed jobs. It never deletes published releases or
+orphan tags.
 
 - Dispatch a manual rollback to a previously tagged release
 

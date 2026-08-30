@@ -198,13 +198,14 @@ function remoteTagCommit(repository, tag) {
 
 /**
  * @param {string} repository
+ * @param {(apiPath: string) => unknown} [requestPage]
  * @returns {GithubRelease[]}
  */
-function listGithubReleases(repository) {
+export function listGithubReleases(repository, requestPage = ghApiJsonOrNull) {
   /** @type {GithubRelease[]} */
   const releases = [];
-  for (let page = 1; page <= 20; page += 1) {
-    const payload = ghApiJsonOrNull(
+  for (let page = 1; ; page += 1) {
+    const payload = requestPage(
       `repos/${repository}/releases?per_page=100&page=${page}`
     );
     if (!Array.isArray(payload) || payload.length === 0) {
