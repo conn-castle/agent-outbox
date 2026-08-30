@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"agent-outbox/internal/foundation"
@@ -275,7 +276,7 @@ func inputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			callerItemID := strings.TrimSpace(args[0])
+			callerItemID := args[0]
 			if callerItemID == "" {
 				return foundation.NewUsageError("caller_item_id is required.")
 			}
@@ -968,9 +969,15 @@ func compactInputItem(item json.RawMessage) string {
 	}
 	parts := []string{}
 	for _, field := range []string{"caller_item_id", "status", "revision", "updated_at"} {
-		if value, ok := fields[field]; ok {
-			parts = append(parts, fmt.Sprintf("%s=%v", field, value))
+		value, ok := fields[field]
+		if !ok {
+			continue
 		}
+		if text, ok := value.(string); ok {
+			parts = append(parts, field+"="+strconv.Quote(text))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%v", field, value))
 	}
 	if len(parts) == 0 {
 		return string(item)

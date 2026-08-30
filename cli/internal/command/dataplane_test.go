@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -153,6 +154,96 @@ func TestInputListAutoPagesUntilComplete(t *testing.T) {
 	items := data["items"].([]any)
 	if len(items) != 2 || items[0].(map[string]any)["caller_item_id"] != "item_1" || items[1].(map[string]any)["caller_item_id"] != "item_2" {
 		t.Fatalf("items = %#v", items)
+	}
+}
+
+func TestInputListHumanReadableOutputEscapesCallerItemID(t *testing.T) {
+	const callerItemID = "item\nwith\tescape\x1b[2J"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/input/list" {
+			t.Errorf("request = %s %s, want GET /api/input/list", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true,"data":{"items":[{"caller_item_id":"item\nwith\tescape\u001b[2J","status":"pending","revision":1,"updated_at":"2026-08-30T12:00:00Z"}],"has_more":false,"next_cursor":null,"returned_count":1,"page_limit":25}}`)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"input", "list"})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr should be empty: %s", stderr)
+	}
+	if strings.Contains(stdout, "\x1b") {
+		t.Fatalf("unescaped control sequence leaked into stdout: %q", stdout)
+	}
+	quotedID := strconv.Quote(callerItemID)
+	if !strings.Contains(stdout, "caller_item_id="+quotedID) {
+		t.Fatalf("stdout missing quoted caller_item_id: %q", stdout)
+	}
+	if strings.Count(stdout, "\n") != 1 {
+		t.Fatalf("stdout should be one compact line, got %q", stdout)
+	}
+}
+
+func TestInputReadPreservesCallerItemIDWhitespace(t *testing.T) {
+	const callerItemID = " item "
+	var gotID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/input/read" {
+			t.Errorf("request = %s %s, want POST /api/input/read", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("request body was not JSON: %v", err)
+			return
+		}
+		gotID, _ = body["caller_item_id"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"ok":true,"request_id":"req_input_read","correlation_id":"corr_input_read","data":{"caller_item_id":%q}}`, callerItemID)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "read", callerItemID})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr should be empty: %s", stderr)
+	}
+	if gotID != callerItemID {
+		t.Fatalf("caller_item_id body = %q, want %q", gotID, callerItemID)
+	}
+	if !strings.Contains(stdout, `"caller_item_id":" item "`) {
+		t.Fatalf("stdout missing preserved caller_item_id: %s", stdout)
+	}
+}
+
+func TestInputReadRejectsEmptyCallerItemID(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"input", "read", ""})
+	if code != foundation.ExitUsage {
+		t.Fatalf("exit code = %d, want usage; stderr: %s", code, stderr)
+	}
+	if requests != 0 {
+		t.Fatalf("server requests = %d, want local validation to stop before HTTP", requests)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for usage errors")
+	}
+	if !strings.Contains(stderr, "caller_item_id is required") {
+		t.Fatalf("stderr missing required-id error: %s", stderr)
 	}
 }
 
