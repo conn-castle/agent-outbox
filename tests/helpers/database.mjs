@@ -1,6 +1,29 @@
+import assert from "node:assert/strict";
 import pg from "pg";
 
 const { Client } = pg;
+
+export const DATABASE_POLICY_VERIFICATION_SKIP =
+  "set AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 and DATABASE_MIGRATION_URL to run database policy verification";
+
+/**
+ * Returns DATABASE_MIGRATION_URL when database tests are enabled, otherwise
+ * undefined so gated tests skip. Fails loud when the enable flag is set
+ * without a migration URL.
+ *
+ * @returns {string | undefined}
+ */
+export function phase3DatabaseVerificationUrl() {
+  const enabled = process.env.AGENT_OUTBOX_ENABLE_DATABASE_TESTS === "1";
+  const url = enabled ? process.env.DATABASE_MIGRATION_URL : undefined;
+  if (enabled) {
+    assert.ok(
+      url,
+      "DATABASE_MIGRATION_URL is required when AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1"
+    );
+  }
+  return url;
+}
 
 /**
  * Asserts the connected session user is a valid gated-database-test owner:
@@ -102,4 +125,24 @@ export async function connectedDatabaseClient(connectionString) {
   const client = new Client({ connectionString });
   await client.connect();
   return client;
+}
+
+/**
+ * @param {import("pg").Client} client
+ */
+export async function resetRoleAndRollback(client) {
+  /** @type {Error[]} */
+  const errors = [];
+  for (const sql of ["rollback", "reset role"]) {
+    try {
+      await client.query(sql);
+    } catch (error) {
+      errors.push(
+        new Error(`Database state reset failed for ${sql}.`, { cause: error })
+      );
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "Database state reset failed.");
+  }
 }

@@ -77,6 +77,21 @@ HTTP timeouts and retries, setup-record retention, review/bulk UI sizing, HTTP
 transport pooling, cryptographic byte sizes, file modes, and test fixtures.
 Equal numbers alone do not establish shared ownership.
 
+## Repository Foundation Scripts
+
+`scripts/foundation.mjs` is the CLI for `build`, `smoke`, `doctor`, and `clean`.
+Domain validators live beside the contract they own:
+
+- environment, toolchain, source/HTTP markers, Wrangler, CI workflow policy,
+  content-safe commands, doctor probes, and generic repository I/O under
+  `scripts/foundation/`;
+- production release/reconcile/detector/rollback workflow validators in
+  `scripts/release/workflow-contract.mjs`;
+- shared YAML text helpers in `scripts/workflow-yaml.mjs`.
+
+Release modules must not import from `scripts/foundation/`. Tests import the
+owning module directly.
+
 ## Trust Boundaries
 
 Human routes use Clerk sessions and Agent Outbox account membership. The hosted
