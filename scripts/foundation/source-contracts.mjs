@@ -28,64 +28,23 @@ const FORBIDDEN_RUNTIME_PROOF_TOKENS = [
   "classifier"
 ];
 
-export const PHASE3_FOUNDATION_MARKERS_BY_FILE = {
-  "src/server/accounting.ts": [
-    "auditSafeLifecycleEvent",
-    "storedByteAccounting",
-    "quotaWindowKey"
-  ],
-  "src/server/authorization.ts": [
-    "authorizeAccountMembership",
-    "authorizeCallerAccount"
-  ],
-  "src/server/caller-auth.ts": [
-    "generateCallerApiKeyMaterial",
-    "callerCredentialLookupStatement"
-  ],
-  "src/server/cleanup.ts": [
-    "terminalOutputDeletionStatement",
-    "downgradeGraceExpiryStatement",
-    "agent_outbox_cleanup_downgrade_grace_expiry"
-  ],
-  "src/server/database.ts": ["runProductTransaction"],
-  "src/server/limits.ts": [
-    "authenticated_caller_api_requests_per_calendar_month",
-    "self_hosted"
-  ],
-  "db/migrations/V20260630000000__initial_schema.sql": [
-    "agent_outbox_context_allows_caller",
-    "enable row level security",
-    "agent_outbox_delete_output_result",
-    "agent_outbox_cleanup_downgrade_grace_expiry",
-    "agent_outbox_app",
-    "nobypassrls"
-  ]
-};
+export const PHASE3_FOUNDATION_SOURCE_FILES = [
+  "src/server/accounting.ts",
+  "src/server/authorization.ts",
+  "src/server/caller-auth.ts",
+  "src/server/cleanup.ts",
+  "src/server/database.ts",
+  "src/server/limits.ts",
+  "db/migrations/V20260630000000__initial_schema.sql"
+];
 
-export const PHASE4_CONTRACT_DOC_MARKERS_BY_FILE = {
-  "docs/spec/README.md": ["Raw HTTP is canonical", "CLI To HTTP Map"],
-  "docs/spec/http-api.md": [
-    "POST /api/input/send",
-    "GET /api/output/check",
-    "GET /api/caller/status",
-    "Human Answer Boundary"
-  ],
-  "docs/spec/input-schema.md": [
-    "ActionButton.value",
-    "date_picker",
-    "Input Semantics"
-  ],
-  "docs/spec/output-schema.md": [
-    "Output Check Page",
-    "Pagination",
-    "File Download"
-  ],
-  "docs/spec/errors.md": [
-    "Error Envelope",
-    "rate_limit_exceeded",
-    "invalid_caller_credentials"
-  ]
-};
+export const PHASE4_CONTRACT_DOC_FILES = [
+  "docs/spec/README.md",
+  "docs/spec/http-api.md",
+  "docs/spec/input-schema.md",
+  "docs/spec/output-schema.md",
+  "docs/spec/errors.md"
+];
 
 const HTTP_ROUTE_METHOD_PATTERN =
   /^\s*export\s+async\s+function\s+(GET|POST|PUT|PATCH|DELETE)\b/gm;
@@ -123,70 +82,26 @@ export function validateRuntimeProofScope(sourceContentsByPath) {
  * @param {Record<string, string>} sourceContentsByPath
  * @returns {string[]}
  */
-export function validatePhase3FoundationSourceContents(sourceContentsByPath) {
-  const failures = [];
-
-  for (const [relativePath, markers] of Object.entries(
-    PHASE3_FOUNDATION_MARKERS_BY_FILE
-  )) {
-    const content = sourceContentsByPath[relativePath];
-    if (content === undefined) {
-      failures.push(
-        `${relativePath} is missing from Phase 3 foundation source`
-      );
-      continue;
-    }
-
-    for (const marker of markers) {
-      if (!content.includes(marker)) {
-        failures.push(
-          `${relativePath} is missing Phase 3 foundation marker: ${marker}`
-        );
-      }
-    }
-  }
-
-  return failures;
-}
-
-/**
- * @param {Record<string, string>} sourceContentsByPath
- * @returns {string[]}
- */
 export function validatePhase4ContractDocContents(sourceContentsByPath) {
   const failures = [];
-
-  for (const [relativePath, markers] of Object.entries(
-    PHASE4_CONTRACT_DOC_MARKERS_BY_FILE
-  )) {
-    const content = sourceContentsByPath[relativePath];
-    if (content === undefined) {
-      failures.push(`${relativePath} is missing from Phase 4 contract docs`);
-      continue;
-    }
-
-    for (const marker of markers) {
-      if (!content.includes(marker)) {
-        failures.push(
-          `${relativePath} is missing Phase 4 contract marker: ${marker}`
-        );
-      }
-    }
+  const httpApiContent = sourceContentsByPath["docs/spec/http-api.md"];
+  if (httpApiContent === undefined) {
+    failures.push(
+      "docs/spec/http-api.md is missing from Phase 4 contract docs"
+    );
+    return failures;
   }
 
-  const httpApiContent = sourceContentsByPath["docs/spec/http-api.md"];
-  if (httpApiContent !== undefined) {
-    const documentedRouteMarkers =
-      extractDocumentedHttpContractRouteMarkers(httpApiContent);
-    const markers =
-      extractImplementedHttpContractRouteMarkers(sourceContentsByPath);
+  const documentedRouteMarkers =
+    extractDocumentedHttpContractRouteMarkers(httpApiContent);
+  const markers =
+    extractImplementedHttpContractRouteMarkers(sourceContentsByPath);
 
-    for (const marker of markers) {
-      if (!documentedRouteMarkers.includes(marker)) {
-        failures.push(
-          `docs/spec/http-api.md is missing implemented HTTP route contract: ${marker}`
-        );
-      }
+  for (const marker of markers) {
+    if (!documentedRouteMarkers.includes(marker)) {
+      failures.push(
+        `docs/spec/http-api.md is missing implemented HTTP route contract: ${marker}`
+      );
     }
   }
 

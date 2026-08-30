@@ -23,9 +23,11 @@ const generatedDocs = JSON.parse(
 const expectedRoutes = [
   "GET /api/account/status",
   "GET /api/caller/status",
+  "GET /api/input/list",
   "GET /api/output/check",
   "GET /api/output/{output_result_id}/files/{file_id}",
   "POST /api/input/delete",
+  "POST /api/input/read",
   "POST /api/input/replace",
   "POST /api/input/send",
   "POST /api/output/read-all",
@@ -86,6 +88,25 @@ test("public OpenAPI document exposes only the caller data plane", () => {
     tone: ["style"],
     style: ["tone"]
   });
+  assert.deepEqual(
+    openapi.components.schemas.InputReadResponse.properties.data.properties
+      .raw_input,
+    { $ref: "#/components/schemas/CanonicalRawInput" }
+  );
+  assert.deepEqual(
+    openapi.components.schemas.OutputResultResponse.properties.data.properties
+      .raw_input,
+    { $ref: "#/components/schemas/CanonicalRawInput" }
+  );
+  assert.equal(
+    openapi.components.schemas.CanonicalRawInput.title,
+    "Canonical accepted input"
+  );
+  assert.equal(
+    JSON.stringify(openapi).split("#/components/schemas/CanonicalRawInput")
+      .length - 1,
+    3
+  );
 });
 
 test("public OpenAPI operations are described, secured, and locally resolvable", () => {

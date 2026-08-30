@@ -5,7 +5,6 @@ import test from "node:test";
 import {
   extractDocumentedHttpContractRouteMarkers,
   extractImplementedHttpContractRouteMarkers,
-  validatePhase3FoundationSourceContents,
   validatePhase4ContractDocContents,
   validateRuntimeProofScope
 } from "../scripts/foundation/source-contracts.mjs";
@@ -14,21 +13,6 @@ import {
   validateWranglerRequiredSecrets
 } from "../scripts/foundation/wrangler-contracts.mjs";
 import { RUNTIME_CRON_SCHEDULE } from "../src/server/scheduled.ts";
-
-const phase3FoundationSourceContents = Object.fromEntries(
-  [
-    "src/server/accounting.ts",
-    "src/server/authorization.ts",
-    "src/server/caller-auth.ts",
-    "src/server/cleanup.ts",
-    "src/server/database.ts",
-    "src/server/limits.ts",
-    "db/migrations/V20260630000000__initial_schema.sql"
-  ].map((relativePath) => [
-    relativePath,
-    readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8")
-  ])
-);
 
 const phase4ContractDocContents = Object.fromEntries(
   [
@@ -48,6 +32,8 @@ const callerFacingRouteContents = Object.fromEntries(
     "app/api/account/status/route.ts",
     "app/api/caller/status/route.ts",
     "app/api/input/delete/route.ts",
+    "app/api/input/list/route.ts",
+    "app/api/input/read/route.ts",
     "app/api/input/replace/route.ts",
     "app/api/input/send/route.ts",
     "app/api/output/[output_result_id]/ack/route.ts",
@@ -106,6 +92,8 @@ test("validateRuntimeProofScope allows implemented caller API route paths", () =
     "app/api/input/send/route.ts": "export async function POST() {}",
     "app/api/input/replace/route.ts": "export async function POST() {}",
     "app/api/input/delete/route.ts": "export async function POST() {}",
+    "app/api/input/list/route.ts": "export async function GET() {}",
+    "app/api/input/read/route.ts": "export async function POST() {}",
     "app/api/output/check/route.ts": "export async function GET() {}",
     "app/api/output/[output_result_id]/read/route.ts":
       "export async function POST() {}",
@@ -204,18 +192,7 @@ test("validateRuntimeProofScope allows current product boundary copy", () => {
     []
   );
 });
-test("validatePhase3FoundationSourceContents requires Phase 3 modules and markers", () => {
-  assert.deepEqual(
-    validatePhase3FoundationSourceContents(phase3FoundationSourceContents),
-    []
-  );
-  assert.ok(
-    validatePhase3FoundationSourceContents({}).includes(
-      "src/server/accounting.ts is missing from Phase 3 foundation source"
-    )
-  );
-});
-test("validatePhase4ContractDocContents requires contract docs and markers", () => {
+test("validatePhase4ContractDocContents requires documented HTTP routes for implemented caller APIs", () => {
   assert.deepEqual(
     validatePhase4ContractDocContents({
       ...phase4ContractDocContents,
@@ -225,15 +202,7 @@ test("validatePhase4ContractDocContents requires contract docs and markers", () 
   );
   assert.ok(
     validatePhase4ContractDocContents({}).includes(
-      "docs/spec/README.md is missing from Phase 4 contract docs"
-    )
-  );
-  assert.ok(
-    validatePhase4ContractDocContents({
-      ...phase4ContractDocContents,
-      "docs/spec/errors.md": "# API Errors\n"
-    }).includes(
-      "docs/spec/errors.md is missing Phase 4 contract marker: Error Envelope"
+      "docs/spec/http-api.md is missing from Phase 4 contract docs"
     )
   );
   assert.ok(

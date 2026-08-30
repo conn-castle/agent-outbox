@@ -10,14 +10,29 @@ import {
   type CallerApiKeyId,
   type StoredCallerCredentialDigest
 } from "./caller-auth.ts";
-import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
+import {
+  apiTemporaryUnavailable,
+  type ApiErrorInput,
+  type ApiRequestContext
+} from "./api-errors.ts";
+import {
+  accountLimitProfileForAccount,
+  enforceCallerRequestLimits
+} from "./caller-api-limits.ts";
+import {
+  canonicalInputIntegrityClientError,
+  isCanonicalInputIntegrityError,
+  reportCanonicalInputIntegrityFailure
+} from "./canonical-input.ts";
 import {
   runProductTransaction,
   setProductTransactionIdentityContext,
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
+import type { LimitOperationKind } from "./limits.ts";
 import { durationSinceMs, emitRuntimeLog, safeErrorName } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 export type CallerCredentialLookup = (
   keyId: CallerApiKeyId
@@ -72,6 +87,13 @@ export type AuthenticatedCallerTransactionResult<TResult> =
 export type CallerIdentity = {
   accountId: string;
   callerId: string;
+};
+
+export type GuardedCallerOperation = {
+  rateLimitKind: LimitOperationKind;
+  loggedOperation: string;
+  unavailableMessage: string;
+  unexpectedFailureMessage: string;
 };
 
 export type AuthenticateCallerApiRequestOptions = {
@@ -275,6 +297,105 @@ export async function runAuthenticatedCallerTransaction<TResult>(
       return { authenticated: true as const, data };
     }
   );
+}
+
+export async function enforceCallerOperationLimits(
+  query: ProductTransactionQuery,
+  identity: CallerIdentity,
+  rateLimitKind: LimitOperationKind,
+  unavailableMessage: string
+): Promise<{ ok: true } | { ok: false; error: ApiErrorInput }> {
+  const profile = await accountLimitProfileForAccount(
+    query,
+    identity.accountId
+  );
+  if (!profile) {
+    return apiTemporaryUnavailable(unavailableMessage);
+  }
+
+  const limit = await enforceCallerRequestLimits(
+    query,
+    identity,
+    profile,
+    rateLimitKind
+  );
+  if (!limit.ok) {
+    return { ok: false, error: limit.error };
+  }
+
+  return { ok: true };
+}
+
+export async function runGuardedCallerTransaction<TResult>(
+  request: Request,
+  context: ApiRequestContext,
+  operation: GuardedCallerOperation,
+  callback: (
+    query: ProductTransactionQuery,
+    identity: CallerIdentity
+  ) => Promise<TResult>
+): Promise<TResult | { ok: false; error: ApiErrorInput }> {
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return apiTemporaryUnavailable(
+      "Caller API database configuration is unavailable."
+    );
+  }
+
+  let identity: CallerIdentity | undefined;
+  try {
+    const transaction = await runAuthenticatedCallerTransaction(
+      request,
+      context,
+      connectionString,
+      async (query, auth) => {
+        identity = auth;
+        const access = await enforceCallerOperationLimits(
+          query,
+          auth,
+          operation.rateLimitKind,
+          operation.unavailableMessage
+        );
+        if (!access.ok) {
+          return access;
+        }
+
+        return callback(query, auth);
+      }
+    );
+    if (!transaction.authenticated) {
+      return { ok: false, error: transaction.failure.clientError };
+    }
+    return transaction.data;
+  } catch (error) {
+    if (isCanonicalInputIntegrityError(error)) {
+      reportCanonicalInputIntegrityFailure(error, context);
+      return {
+        ok: false,
+        error: canonicalInputIntegrityClientError({
+          errorId: context.correlationId,
+          reported: true
+        })
+      };
+    }
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
+      request_id: context.requestId,
+      surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
+      operation: operation.loggedOperation,
+      account_id: identity?.accountId,
+      caller_id: identity?.callerId,
+      message: operation.unexpectedFailureMessage
+    });
+    return apiTemporaryUnavailable(operation.unavailableMessage, {
+      errorId: context.correlationId,
+      reported: true
+    });
+  }
 }
 
 async function updateCallerLastUsedInSavepoint(

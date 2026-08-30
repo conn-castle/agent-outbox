@@ -15,12 +15,37 @@ shape.
   "output_result_id": "out_123",
   "caller_id": "caller_123",
   "caller_item_id": "email:thread_123",
-  "action_value": "send",
+  "action_value": "approve_send",
   "response": {
     "kind": "none"
   },
   "answered_at": "2026-06-30T20:00:00Z",
-  "answered_by": "user_123"
+  "answered_by": "user_123",
+  "raw_input": {
+    "caller_item_id": "email:thread_123",
+    "priority": "high",
+    "row_type": { "display": "Email draft", "icon": "mail" },
+    "row_accent_color": null,
+    "title": "Reply to Acme Corp",
+    "subtitle": "A customer response is ready for review.",
+    "corner": null,
+    "summary": "Approve the prepared response before it is sent.",
+    "details": null,
+    "link_buttons": [],
+    "card_visual": null,
+    "skip_disabled": false,
+    "actions": [
+      {
+        "display": "Approve to send",
+        "icon": "send",
+        "value": "approve_send",
+        "overflow": false,
+        "tone": "success",
+        "style": "solid",
+        "popup": { "kind": "none" }
+      }
+    ]
+  }
 }
 ```
 
@@ -31,6 +56,13 @@ Rules:
 - `answered_at` is a UTC ISO-8601 timestamp.
 - `answered_by` is a non-secret Agent Outbox user identifier or null.
 - File-upload responses include metadata only, never bytes.
+- `raw_input` is required on full output results. It is the canonical accepted
+  input for the matching live item, as defined in
+  [input-schema.md](input-schema.md#canonical-accepted-input). Output/check
+  remains metadata-only and does not include `raw_input`.
+- If that retained input cannot be reconstructed, the read fails with
+  `temporary_unavailable` before any result is marked read. This is not
+  `unavailable_outputs` file-metadata degradation.
 
 ## Response Variants
 
@@ -138,12 +170,37 @@ or shorten timeout windows.
       "output_result_id": "out_123",
       "caller_id": "caller_123",
       "caller_item_id": "email:thread_123",
-      "action_value": "send",
+      "action_value": "approve_send",
       "response": {
         "kind": "none"
       },
       "answered_at": "2026-06-30T20:00:00Z",
-      "answered_by": "user_123"
+      "answered_by": "user_123",
+      "raw_input": {
+        "caller_item_id": "email:thread_123",
+        "priority": "high",
+        "row_type": { "display": "Email draft", "icon": "mail" },
+        "row_accent_color": null,
+        "title": "Reply to Acme Corp",
+        "subtitle": "A customer response is ready for review.",
+        "corner": null,
+        "summary": "Approve the prepared response before it is sent.",
+        "details": null,
+        "link_buttons": [],
+        "card_visual": null,
+        "skip_disabled": false,
+        "actions": [
+          {
+            "display": "Approve to send",
+            "icon": "send",
+            "value": "approve_send",
+            "overflow": false,
+            "tone": "success",
+            "style": "solid",
+            "popup": { "kind": "none" }
+          }
+        ]
+      }
     }
   ],
   "unavailable_outputs": [],
@@ -158,7 +215,9 @@ or shorten timeout windows.
 Read-all marks only returned results as read. If one scanned `file_upload` row
 cannot materialize safe file metadata, read-all still returns HTTP 200 with the
 successfully materialized `items`, advances the cursor over the scanned row, and
-adds a filename-free entry to top-level `unavailable_outputs`:
+adds a filename-free entry to top-level `unavailable_outputs`. File-degraded
+rows are not reconstructed as `raw_input`; a malformed input on a file-degraded
+row does not fail the page.
 
 ```json
 {
@@ -180,6 +239,8 @@ Output check and read-all are cursor-paginated.
 - Maximum page size: 100.
 - Invalid limits fail loudly with a validation error.
 - Results are ordered oldest-first by `answered_at` and `output_result_id`.
+- Each result also carries its full canonical input. Use a smaller page `limit`
+  when inputs are large to keep response sizes bounded for your worker.
 - Callers pass the opaque `next_cursor` to fetch the next page.
 - Offset and page-number pagination are not supported.
 - `has_more`, `next_cursor`, `returned_count`, and `page_limit` are always

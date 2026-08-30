@@ -148,6 +148,83 @@ export function apiErrorResponse(
   );
 }
 
+export function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function apiTimestamp(value: string | Date) {
+  return value instanceof Date
+    ? value.toISOString()
+    : new Date(value).toISOString();
+}
+
+export function apiTemporaryUnavailable(
+  message: string,
+  options?: { errorId?: string; reported?: boolean }
+): { ok: false; error: ApiErrorInput } {
+  return {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message,
+      ...(options?.errorId ? { errorId: options.errorId } : {}),
+      ...(options?.reported ? { reported: true } : {})
+    }
+  };
+}
+
+export function apiValidationFailed(
+  message: string,
+  fields: ApiErrorInput["fields"]
+): { ok: false; error: ApiErrorInput } {
+  return {
+    ok: false,
+    error: {
+      status: 422,
+      code: "validation_failed",
+      message,
+      fields
+    }
+  };
+}
+
+export function parseBoundedPageLimit(
+  value: unknown,
+  defaultLimit: number,
+  maxLimit: number
+) {
+  if (value == null || value === "") {
+    return { ok: true as const, value: defaultLimit };
+  }
+
+  const numericValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\d+$/.test(value)
+        ? Number(value)
+        : NaN;
+
+  if (
+    !Number.isSafeInteger(numericValue) ||
+    numericValue < 1 ||
+    numericValue > maxLimit
+  ) {
+    return {
+      ok: false as const,
+      fields: [
+        {
+          path: "limit",
+          code: "invalid_limit",
+          message: `limit must be an integer from 1 through ${maxLimit}.`
+        }
+      ]
+    };
+  }
+
+  return { ok: true as const, value: numericValue };
+}
+
 export function apiResponseHeaders(
   context: ApiRequestContext,
   initHeaders?: HeadersInit

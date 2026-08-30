@@ -20,6 +20,7 @@ export type RuntimeLogEvent = {
   operation_kind?: string;
   account_id?: string;
   caller_id?: string;
+  input_item_id?: string;
   limit_name?: string;
   limit_reason_code?: string;
   limit_resets_at?: string | null;
@@ -50,6 +51,7 @@ const SAFE_LOG_KEYS = new Set([
   "operation_kind",
   "account_id",
   "caller_id",
+  "input_item_id",
   "limit_name",
   "limit_reason_code",
   "limit_resets_at",

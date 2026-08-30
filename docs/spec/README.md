@@ -31,7 +31,7 @@ or error states that are unavailable through HTTP.
   envelopes, status, data-plane commands, file downloads, and human-approved
   caller registration flows.
 - [input-schema.md](input-schema.md) - typed input submission model, validation
-  rules, normalization, and input send/replace/delete semantics.
+  rules, normalization, live list/read, and input send/replace/delete semantics.
 - [output-schema.md](output-schema.md) - typed output result model, readiness
   checks, reads, read-all pagination, acknowledgement, and file metadata.
 - [errors.md](errors.md) - stable success/error envelopes, field errors,
@@ -122,7 +122,8 @@ or checked-in environment file.
 The repository ships a Go `agent-outbox` CLI. This map constrains the CLI so it
 remains a wrapper over raw HTTP rather than becoming a second product contract.
 Rows for local utilities identify their local behavior and any HTTP contracts
-they inspect.
+they inspect. Public HTTP routes without a CLI command, including live input
+list and read, remain valid HTTP-only surfaces.
 
 | CLI command                                    | Canonical HTTP contract                                                                                                          |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |

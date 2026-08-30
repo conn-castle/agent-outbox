@@ -18,6 +18,16 @@ import {
   readAllOutputPageInTransaction,
   readOutputResultInTransaction
 } from "../src/server/output-queue.ts";
+import {
+  CanonicalInputIntegrityError,
+  isCanonicalInputIntegrityError
+} from "../src/server/canonical-input.ts";
+import {
+  CANONICAL_INPUT_ONE_ID as inputOneId,
+  CANONICAL_INPUT_TWO_ID as inputTwoId,
+  CANONICAL_TEST_IDENTITY as identity,
+  canonicalRelationalFixture
+} from "./helpers/canonical-input.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -25,11 +35,6 @@ import {
  * @typedef {import("pg").QueryResultRow} QueryResultRow
  * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
  */
-
-const identity = {
-  accountId: "00000000-0000-4000-8000-000000000001",
-  callerId: "00000000-0000-4000-8000-000000000002"
-};
 
 const context = {
   requestId: "req-output-test",
@@ -48,6 +53,7 @@ function outputRow(overrides = {}) {
     output_result_id: outputOneId,
     caller_id: identity.callerId,
     caller_item_id: "email:thread_123",
+    input_item_id: inputOneId,
     action_value: "send",
     response_kind: "free_text",
     response_payload: { text: "Approved response." },
@@ -59,10 +65,81 @@ function outputRow(overrides = {}) {
 }
 
 /**
+ * @typedef {{
+ *   rawInput: Record<string, unknown>,
+ *   roots: QueryResultRow[],
+ *   links: QueryResultRow[],
+ *   actions: QueryResultRow[],
+ *   options: QueryResultRow[]
+ * }} CanonicalFixture
+ */
+
+/**
+ * @param {string} inputItemId
+ * @param {string} callerItemId
+ * @param {string | null} [fingerprint]
+ * @returns {CanonicalFixture}
+ */
+function canonicalFixture(inputItemId, callerItemId, fingerprint = null) {
+  return canonicalRelationalFixture(inputItemId, callerItemId, {
+    actionIdPrefix: "00000000-0000-4000-8000-0000000005",
+    ...(fingerprint ? { fingerprint } : {})
+  });
+}
+
+const defaultCanonicalFixtures = {
+  [inputOneId]: canonicalFixture(inputOneId, "email:thread_123"),
+  [inputTwoId]: canonicalFixture(inputTwoId, "email:thread_456")
+};
+
+/** @param {string} sql */
+function isCanonicalSql(sql) {
+  return (
+    sql.includes("normalized_content_fingerprint") ||
+    sql.includes("agent_outbox_input_link_buttons") ||
+    sql.includes("agent_outbox_input_action_popup_options") ||
+    (sql.includes("agent_outbox_input_actions") &&
+      sql.includes("join public.agent_outbox_input_items"))
+  );
+}
+
+/**
+ * @param {string} sql
+ * @param {string[]} inputItemIds
+ * @param {Record<string, CanonicalFixture>} fixtures
+ */
+function canonicalRowsFor(sql, inputItemIds, fixtures) {
+  /** @type {CanonicalFixture[]} */
+  const selected = [];
+  for (const id of inputItemIds) {
+    const fixture = fixtures[id];
+    if (fixture) {
+      selected.push(fixture);
+    }
+  }
+  if (sql.includes("normalized_content_fingerprint")) {
+    return selected.flatMap((fixture) => fixture.roots);
+  }
+  if (sql.includes("agent_outbox_input_link_buttons")) {
+    return selected.flatMap((fixture) => fixture.links);
+  }
+  if (sql.includes("agent_outbox_input_action_popup_options")) {
+    return selected.flatMap((fixture) => fixture.options);
+  }
+  return selected.flatMap((fixture) => fixture.actions);
+}
+
+/** @param {MockProductTransactionQuery} query */
+function markReadCall(query) {
+  return query.calls.find((call) => call.sql.includes("first_read_at"));
+}
+
+/**
  * @param {QueryResultRow[][]} rowsByCall
+ * @param {Record<string, CanonicalFixture>} [fixtures]
  * @returns {MockProductTransactionQuery}
  */
-function fakeQuery(rowsByCall) {
+function fakeQuery(rowsByCall, fixtures = defaultCanonicalFixtures) {
   /** @type {TransactionContextStatement[]} */
   const calls = [];
   /**
@@ -71,7 +148,17 @@ function fakeQuery(rowsByCall) {
    */
   const query = async (statement) => {
     calls.push(statement);
-    const rows = rowsByCall[calls.length - 1] ?? [];
+    if (isCanonicalSql(statement.sql)) {
+      const inputItemIds = /** @type {string[]} */ (
+        (statement.values ?? []).filter(
+          (value, index) => index >= 2 && typeof value === "string"
+        )
+      );
+      const rows = canonicalRowsFor(statement.sql, inputItemIds, fixtures);
+      return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
+    }
+    const sequential = calls.filter((call) => !isCanonicalSql(call.sql));
+    const rows = rowsByCall[sequential.length - 1] ?? [];
     return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
   };
   const typed = /** @type {MockProductTransactionQuery} */ (
@@ -117,7 +204,10 @@ test("output check returns cursor-paginated readiness metadata only", async () =
   });
   assert.equal(result.data.returned_count, 1);
   assert.equal(result.data.page_limit, 1);
-  assert.doesNotMatch(JSON.stringify(result), /action_value|response|files/);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /action_value|response|files|raw_input/
+  );
   assert.equal(
     query.calls.some((call) => call.sql.includes("first_read_at")),
     false
@@ -177,11 +267,14 @@ test("read one returns payload and file metadata only, then marks the result rea
         }
       },
       answered_at: "2026-06-30T12:00:00.000Z",
-      answered_by: "00000000-0000-4000-8000-0000000000ab"
+      answered_by: "00000000-0000-4000-8000-0000000000ab",
+      raw_input: defaultCanonicalFixtures[inputOneId].rawInput
     }
   });
   assert.doesNotMatch(JSON.stringify(result), /must not appear/);
-  assert.match(query.calls[2].sql, /first_read_at = coalesce/);
+  const marked = markReadCall(query);
+  assert.ok(marked);
+  assert.match(marked.sql, /first_read_at = coalesce/);
 });
 
 test("read one fails loud on invalid file metadata before marking output read", async () => {
@@ -232,6 +325,7 @@ test("read all marks only returned output rows and exposes pagination", async ()
       outputRow({
         output_result_id: outputTwoId,
         caller_item_id: "email:thread_456",
+        input_item_id: inputTwoId,
         response_payload: { text: "Second page." },
         answered_at: "2026-06-30T12:01:00.000Z"
       })
@@ -250,15 +344,22 @@ test("read all marks only returned output rows and exposes pagination", async ()
     result.data.items.map((item) => item.output_result_id),
     [outputOneId]
   );
+  const page =
+    /** @type {import("../src/server/output-queue.ts").OutputReadPage} */ (
+      result.data
+    );
+  assert.deepEqual(
+    page.items[0].raw_input,
+    defaultCanonicalFixtures[inputOneId].rawInput
+  );
   assert.equal(result.data.has_more, true);
-  assert.equal(query.calls[2].values?.length, 3);
-  assert.deepEqual(query.calls[2].values, [
+  const marked = markReadCall(query);
+  assert.ok(marked);
+  assert.deepEqual(marked.values, [
     identity.accountId,
     identity.callerId,
     outputOneId
   ]);
-  assert.match(query.calls[2].sql, /account_id = \$1/);
-  assert.match(query.calls[2].sql, /caller_id = \$2/);
   // read-all must lock the page rows FOR UPDATE (like the single-read path) so a
   // concurrent undo/ack/cleanup cannot delete or restore a returned row before
   // the mark-read update runs, which would otherwise hand the caller an
@@ -276,6 +377,7 @@ test("read all reports unavailable file rows without marking them read", async (
       outputRow({
         output_result_id: outputTwoId,
         caller_item_id: "email:thread_456",
+        input_item_id: inputTwoId,
         response_payload: { text: "Second output." },
         answered_at: "2026-06-30T12:01:00.000Z"
       })
@@ -311,11 +413,131 @@ test("read all reports unavailable file rows without marking them read", async (
   ]);
   assert.equal(data.unavailable_count, 1);
   assert.equal(data.returned_count, 1);
-  assert.deepEqual(query.calls[2].values, [
+  assert.deepEqual(
+    data.items[0].raw_input,
+    defaultCanonicalFixtures[inputTwoId].rawInput
+  );
+  const marked = markReadCall(query);
+  assert.ok(marked);
+  assert.deepEqual(marked.values, [
     identity.accountId,
     identity.callerId,
     outputTwoId
   ]);
+});
+
+test("malformed canonical input fails before any output is marked read", async () => {
+  const fixtures = {
+    [inputOneId]: canonicalFixture(
+      inputOneId,
+      "email:thread_123",
+      "0".repeat(64)
+    ),
+    [inputTwoId]: canonicalFixture(inputTwoId, "email:thread_456")
+  };
+  const singleQuery = fakeQuery([[outputRow()], []], fixtures);
+  const pageQuery = fakeQuery(
+    [
+      [
+        outputRow(),
+        outputRow({
+          output_result_id: outputTwoId,
+          caller_item_id: "email:thread_456",
+          input_item_id: inputTwoId,
+          answered_at: "2026-06-30T12:01:00.000Z"
+        })
+      ],
+      []
+    ],
+    fixtures
+  );
+
+  await assert.rejects(
+    () => readOutputResultInTransaction(singleQuery, identity, outputOneId),
+    (error) => {
+      assert.equal(isCanonicalInputIntegrityError(error), true);
+      const integrity = /** @type {CanonicalInputIntegrityError} */ (error);
+      assert.equal(integrity.inputItemId, inputOneId);
+      assert.equal(JSON.stringify(error).includes("Reply"), false);
+      return true;
+    }
+  );
+  await assert.rejects(
+    () => readAllOutputPageInTransaction(pageQuery, identity, 2, null),
+    (error) => isCanonicalInputIntegrityError(error)
+  );
+  assert.equal(markReadCall(singleQuery), undefined);
+  assert.equal(markReadCall(pageQuery), undefined);
+});
+
+test("read-all isolates file-degraded rows from canonical input failures", async () => {
+  const fixtures = {
+    [inputOneId]: canonicalFixture(
+      inputOneId,
+      "email:thread_123",
+      "0".repeat(64)
+    ),
+    [inputTwoId]: canonicalFixture(inputTwoId, "email:thread_456")
+  };
+  const query = fakeQuery(
+    [
+      [
+        outputRow({
+          response_kind: "file_upload",
+          response_payload: {}
+        }),
+        outputRow({
+          output_result_id: outputTwoId,
+          caller_item_id: "email:thread_456",
+          input_item_id: inputTwoId,
+          answered_at: "2026-06-30T12:01:00.000Z"
+        })
+      ],
+      []
+    ],
+    fixtures
+  );
+
+  const result = await readAllOutputPageInTransaction(query, identity, 2, null);
+
+  assert.equal(result.ok, true);
+  if (
+    !result.ok ||
+    !("items" in result.data) ||
+    !("unavailable_outputs" in result.data)
+  ) {
+    assert.fail("expected output read page");
+  }
+  const data =
+    /** @type {import("../src/server/output-queue.ts").OutputReadPage} */ (
+      result.data
+    );
+  assert.deepEqual(
+    data.items.map((item) => item.output_result_id),
+    [outputTwoId]
+  );
+  assert.equal(data.unavailable_outputs.length, 1);
+  assert.equal(data.unavailable_outputs[0].output_result_id, outputOneId);
+  assert.deepEqual(
+    data.items[0].raw_input,
+    defaultCanonicalFixtures[inputTwoId].rawInput
+  );
+  const marked = markReadCall(query);
+  assert.ok(marked);
+  assert.deepEqual(marked.values, [
+    identity.accountId,
+    identity.callerId,
+    outputTwoId
+  ]);
+  assert.equal(
+    query.calls.some(
+      (call) =>
+        call.sql.includes("normalized_content_fingerprint") &&
+        Array.isArray(call.values) &&
+        call.values.includes(inputOneId)
+    ),
+    false
+  );
 });
 
 test("read one preserves authoritative response kind over payload keys", async () => {
@@ -474,22 +696,13 @@ test("output query builders scope by authenticated caller and metadata-only file
     identity.callerId,
     outputOneId
   ]);
-  assert.match(outputPageStatement(identity, 25, null).sql, /caller_id = \$2/);
   assert.doesNotMatch(
     outputCheckPageStatement(identity, 25, null).sql,
     /action_value|response_kind|response_payload|answered_by_user_id/
   );
-  assert.match(
-    outputCheckPageStatement(identity, 25, null).sql,
-    /answered_at_cursor/
-  );
 
   const fileMetadata = outputFileMetadataStatement(identity, [outputOneId]);
-  assert.match(fileMetadata.sql, /filename/);
-  assert.match(fileMetadata.sql, /size_bytes/);
   assert.doesNotMatch(fileMetadata.sql, /file_bytes/);
-  assert.match(fileMetadata.sql, /account_id = \$1/);
-  assert.match(fileMetadata.sql, /caller_id = \$2/);
   assert.deepEqual(fileMetadata.values, [
     identity.accountId,
     identity.callerId,

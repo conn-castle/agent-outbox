@@ -105,7 +105,7 @@ export function publicOpenApiDocument() {
     paths[operation.path] = pathItem;
   }
 
-  return {
+  const document = {
     openapi: "3.1.0",
     info: {
       title: "Agent Outbox Caller API",
@@ -119,7 +119,8 @@ export function publicOpenApiDocument() {
     tags: [
       {
         name: "Inputs",
-        description: "Create, replace, and remove pending human review work."
+        description:
+          "Create, replace, remove, list, and read live human review work."
       },
       {
         name: "Outputs",
@@ -145,11 +146,13 @@ export function publicOpenApiDocument() {
       schemas: Object.fromEntries(
         Object.entries(PUBLIC_API_SCHEMAS).map(([name, schema]) => [
           name,
-          openApiSchema(schema)
+          openApiSchema(schema, true)
         ])
       )
     }
   };
+  assertOpenApiReferencesResolve(document);
+  return document;
 }
 
 export function generatedApiDocsText() {
@@ -317,12 +320,24 @@ function schemaReference(name: keyof typeof PUBLIC_API_SCHEMAS) {
   return { $ref: `#/components/schemas/${name}` };
 }
 
-function openApiSchema(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(openApiSchema);
+function openApiSchema(schema: unknown, isComponentRoot = false): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map((entry) => openApiSchema(entry));
+  }
   if (!schema || typeof schema !== "object") return schema;
 
+  const record = schema as JsonObject;
+  const schemaId = record.$id;
+  if (
+    !isComponentRoot &&
+    typeof schemaId === "string" &&
+    schemaId in PUBLIC_API_SCHEMAS
+  ) {
+    return schemaReference(schemaId as keyof typeof PUBLIC_API_SCHEMAS);
+  }
+
   return Object.fromEntries(
-    Object.entries(schema as JsonObject)
+    Object.entries(record)
       .filter(([key]) => key !== "$id")
       .map(([key, value]) => [
         key === "anyOf" ? "oneOf" : key,
@@ -330,6 +345,54 @@ function openApiSchema(schema: unknown): unknown {
       ])
   );
 }
+
+function assertOpenApiReferencesResolve(document: JsonObject) {
+  for (const reference of collectJsonReferences(document)) {
+    if (!reference.startsWith("#/")) {
+      throw new Error(`OpenAPI $ref is not a local pointer: ${reference}`);
+    }
+    resolveJsonPointer(document, reference);
+  }
+}
+
+function collectJsonReferences(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(collectJsonReferences);
+  }
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+  return Object.entries(value as JsonObject).flatMap(([key, entry]) =>
+    key === "$ref" && typeof entry === "string"
+      ? [entry]
+      : collectJsonReferences(entry)
+  );
+}
+
+function resolveJsonPointer(document: JsonObject, reference: string) {
+  const path = reference
+    .slice(2)
+    .split("/")
+    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
+  let current: unknown = document;
+  for (const part of path) {
+    if (!current || typeof current !== "object" || !(part in current)) {
+      throw new Error(`OpenAPI $ref does not resolve: ${reference}`);
+    }
+    current = (current as JsonObject)[part];
+  }
+  return current;
+}
+
+const NO_STORE_PUBLIC_API_OPERATION_IDS = new Set([
+  "listInputs",
+  "readInput",
+  "checkOutput",
+  "readOutput",
+  "readAllOutputs",
+  "acknowledgeOutput",
+  "downloadOutputFile"
+]);
 
 function validateImplementedRoutes() {
   for (const operation of PUBLIC_API_OPERATIONS) {
@@ -352,6 +415,19 @@ function validateImplementedRoutes() {
       throw new Error(
         `Public API route does not export ${operation.method.toUpperCase()}: ${sourcePath}.`
       );
+    }
+    if (NO_STORE_PUBLIC_API_OPERATION_IDS.has(operation.id)) {
+      const noStoreSource =
+        operation.id === "downloadOutputFile"
+          ? readFileSync(`${repositoryRoot}src/server/output-files.ts`, "utf8")
+          : source;
+      if (
+        !/Cache-Control["']?\s*[:=,]\s*["']no-store["']/.test(noStoreSource)
+      ) {
+        throw new Error(
+          `Public API route must send Cache-Control: no-store: ${sourcePath}.`
+        );
+      }
     }
   }
 }

@@ -117,6 +117,121 @@ export function workflowNamedStepContent(jobContent, stepName) {
 }
 
 /**
+ * Collapse a workflow `run:` block to comparable executable lines: trim
+ * whitespace and drop comments/blank lines.
+ *
+ * @param {string | null | undefined} command
+ * @returns {string | null}
+ */
+export function normalizeRunCommand(command) {
+  if (command == null) {
+    return null;
+  }
+  const normalized = command
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"))
+    .join("\n");
+  return normalized.length > 0 ? normalized : null;
+}
+
+/**
+ * Split a GitHub Actions job body into raw step line blocks.
+ *
+ * @param {string} jobContent
+ * @returns {string[][]}
+ */
+export function workflowStepBlocks(jobContent) {
+  const lines = jobContent.split(/\r?\n/);
+  /** @type {string[][]} */
+  const blocks = [];
+  /** @type {string[] | null} */
+  let current = null;
+  for (const line of lines) {
+    if (/^      - /.test(line)) {
+      if (current) {
+        blocks.push(current);
+      }
+      current = [line];
+      continue;
+    }
+    if (current) {
+      current.push(line);
+    }
+  }
+  if (current) {
+    blocks.push(current);
+  }
+  return blocks;
+}
+
+/**
+ * @typedef {{
+ *   stepName: string,
+ *   command: string | null,
+ *   condition: string | null
+ * }} WorkflowStepTuple
+ */
+
+/**
+ * Parse a named step's name, normalized run command, and `if:` condition.
+ *
+ * @param {string[]} lines
+ * @returns {WorkflowStepTuple}
+ */
+export function parseWorkflowStepTuple(lines) {
+  let stepName = null;
+  let condition = null;
+  let command = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const nameMatch = /^(?:      - name:|        name:)\s*(.+)\s*$/.exec(line);
+    if (nameMatch) {
+      stepName = nameMatch[1].trim();
+      continue;
+    }
+    const ifMatch = /^        if:\s*(.+)\s*$/.exec(line);
+    if (ifMatch) {
+      condition = ifMatch[1].trim();
+      continue;
+    }
+    const runMatch = /^        run:\s*(.*)$/.exec(line);
+    if (!runMatch) {
+      continue;
+    }
+    const rest = runMatch[1].trim();
+    if (
+      rest === "|" ||
+      rest === "|-" ||
+      rest === ">" ||
+      rest === ">-" ||
+      rest === ""
+    ) {
+      /** @type {string[]} */
+      const body = [];
+      for (
+        let bodyIndex = index + 1;
+        bodyIndex < lines.length;
+        bodyIndex += 1
+      ) {
+        const bodyLine = lines[bodyIndex];
+        if (/^        [A-Za-z]/.test(bodyLine)) {
+          break;
+        }
+        if (bodyLine.trim() === "") {
+          continue;
+        }
+        body.push(bodyLine.replace(/^          /, ""));
+      }
+      command = normalizeRunCommand(body.join("\n"));
+    } else {
+      command = normalizeRunCommand(rest);
+    }
+  }
+  return { stepName: stepName ?? "", command, condition };
+}
+
+/**
  * @param {string} content
  * @param {string} blockName
  * @param {string} scalarName

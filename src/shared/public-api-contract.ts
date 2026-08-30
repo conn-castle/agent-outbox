@@ -180,6 +180,7 @@ export const ProtocolValueSchema = Type.String({
 });
 
 export const IconSchema = Type.String({
+  $id: "Icon",
   enum: [...SUPPORTED_LUCIDE_ICON_NAMES],
   description:
     "A supported Lucide icon name. Arbitrary SVG and HTML are rejected."
@@ -193,47 +194,62 @@ export const PopupOptionSchema = openObject({
 
 const NonePopupSchema = openObject({ kind: Type.Literal("none") });
 
-const FreeTextPopupSchema = openObject({
-  kind: Type.Literal("free_text"),
-  label: Type.String({ minLength: 1 }),
-  placeholder: Type.Optional(nullable(Type.String())),
-  default_value: Type.Optional(nullable(Type.String())),
-  multiline: Type.Boolean(),
-  min_length: Type.Optional(nullable(Type.Integer({ minimum: 0 }))),
-  max_length: Type.Optional(nullable(Type.Integer({ minimum: 1 })))
-});
+const FreeTextPopupSchema = openObject(
+  {
+    kind: Type.Literal("free_text"),
+    label: Type.String({ minLength: 1 }),
+    placeholder: Type.Optional(nullable(Type.String())),
+    default_value: Type.Optional(nullable(Type.String())),
+    multiline: Type.Boolean(),
+    min_length: Type.Optional(nullable(Type.Integer({ minimum: 0 }))),
+    max_length: Type.Optional(nullable(Type.Integer({ minimum: 1 })))
+  },
+  { $id: "FreeTextPopup" }
+);
 
-const SingleSelectPopupSchema = openObject({
-  kind: Type.Literal("single_select"),
-  label: Type.String({ minLength: 1 }),
-  options: Type.Array(PopupOptionSchema, { minItems: 1, maxItems: 64 })
-});
+const SingleSelectPopupSchema = openObject(
+  {
+    kind: Type.Literal("single_select"),
+    label: Type.String({ minLength: 1 }),
+    options: Type.Array(PopupOptionSchema, { minItems: 1, maxItems: 64 })
+  },
+  { $id: "SingleSelectPopup" }
+);
 
-const MultiSelectPopupSchema = openObject({
-  kind: Type.Literal("multi_select"),
-  label: Type.String({ minLength: 1 }),
-  options: Type.Array(PopupOptionSchema, { minItems: 1, maxItems: 64 }),
-  min_selected: Type.Optional(nullable(Type.Integer({ minimum: 0 }))),
-  max_selected: Type.Optional(nullable(Type.Integer({ minimum: 0 })))
-});
+const MultiSelectPopupSchema = openObject(
+  {
+    kind: Type.Literal("multi_select"),
+    label: Type.String({ minLength: 1 }),
+    options: Type.Array(PopupOptionSchema, { minItems: 1, maxItems: 64 }),
+    min_selected: Type.Optional(nullable(Type.Integer({ minimum: 0 }))),
+    max_selected: Type.Optional(nullable(Type.Integer({ minimum: 0 })))
+  },
+  { $id: "MultiSelectPopup" }
+);
 
-const DatePickerPopupSchema = openObject({
-  kind: Type.Literal("date_picker"),
-  label: Type.String({ minLength: 1 }),
-  mode: Type.Union([Type.Literal("date"), Type.Literal("datetime")]),
-  placeholder: Type.Optional(nullable(Type.String())),
-  display_timezone: Type.Optional(nullable(Type.String({ minLength: 1 }))),
-  min_value: Type.Optional(nullable(Type.String({ minLength: 1 }))),
-  max_value: Type.Optional(nullable(Type.String({ minLength: 1 })))
-});
+const DatePickerPopupSchema = openObject(
+  {
+    kind: Type.Literal("date_picker"),
+    label: Type.String({ minLength: 1 }),
+    mode: Type.Union([Type.Literal("date"), Type.Literal("datetime")]),
+    placeholder: Type.Optional(nullable(Type.String())),
+    display_timezone: Type.Optional(nullable(Type.String({ minLength: 1 }))),
+    min_value: Type.Optional(nullable(Type.String({ minLength: 1 }))),
+    max_value: Type.Optional(nullable(Type.String({ minLength: 1 })))
+  },
+  { $id: "DatePickerPopup" }
+);
 
-const FileUploadPopupSchema = openObject({
-  kind: Type.Literal("file_upload"),
-  label: Type.String({ minLength: 1 }),
-  accept_mime_types: Type.Optional(
-    nullable(Type.Array(Type.String({ minLength: 3 }), { minItems: 1 }))
-  )
-});
+const FileUploadPopupSchema = openObject(
+  {
+    kind: Type.Literal("file_upload"),
+    label: Type.String({ minLength: 1 }),
+    accept_mime_types: Type.Optional(
+      nullable(Type.Array(Type.String({ minLength: 3 }), { minItems: 1 }))
+    )
+  },
+  { $id: "FileUploadPopup" }
+);
 
 export const ActionPopupSchema = Type.Union(
   [
@@ -273,7 +289,10 @@ export const InputActionSchema = openObject(
     ),
     popup: ActionPopupSchema
   },
-  { dependentRequired: { tone: ["style"], style: ["tone"] } }
+  {
+    $id: "InputAction",
+    dependentRequired: { tone: ["style"], style: ["tone"] }
+  }
 );
 
 export const LinkButtonSchema = openObject({
@@ -319,19 +338,17 @@ export const CardVisualSchema = Type.Union(
   { discriminator: { propertyName: "kind" } }
 );
 
+const InputPrioritySchema = Type.Union([
+  Type.Literal("low"),
+  Type.Literal("normal"),
+  Type.Literal("high"),
+  Type.Literal("urgent")
+]);
+
 export const InputSubmissionSchema = openObject(
   {
     caller_item_id: Type.String({ minLength: 1 }),
-    priority: Type.Optional(
-      nullable(
-        Type.Union([
-          Type.Literal("low"),
-          Type.Literal("normal"),
-          Type.Literal("high"),
-          Type.Literal("urgent")
-        ])
-      )
-    ),
+    priority: Type.Optional(nullable(InputPrioritySchema)),
     row_type: openObject({
       display: Type.String({ minLength: 1 }),
       icon: IconSchema
@@ -358,13 +375,50 @@ export const InputSubmissionSchema = openObject(
     $id: "InputSubmission",
     title: "Input submission",
     description:
-      "A complete, caller-owned review request. The server derives account and caller identity from the bearer credential."
+      "A complete, caller-owned review request. The server derives account and caller identity from the bearer credential. Optional fields may be omitted; the server stores and later returns the default-expanded canonical form."
+  }
+);
+
+export const CanonicalRawInputSchema = closedObject(
+  {
+    caller_item_id: Type.String({ minLength: 1 }),
+    priority: InputPrioritySchema,
+    row_type: openObject({
+      display: Type.String({ minLength: 1 }),
+      icon: IconSchema
+    }),
+    row_accent_color: nullable(
+      Type.String({
+        enum: [...SUPPORTED_COLORS],
+        description: "A named color from the Agent Outbox product palette."
+      })
+    ),
+    title: Type.String({ minLength: 1 }),
+    subtitle: Type.String({ minLength: 1 }),
+    corner: nullable(Type.String()),
+    summary: Type.String({ minLength: 1 }),
+    details: nullable(Type.String()),
+    link_buttons: Type.Array(LinkButtonSchema, { maxItems: 32 }),
+    card_visual: nullable(CardVisualSchema),
+    skip_disabled: Type.Boolean(),
+    actions: Type.Array(InputActionSchema, { minItems: 1, maxItems: 32 })
+  },
+  {
+    $id: "CanonicalRawInput",
+    title: "Canonical accepted input",
+    description:
+      "The default-expanded submission Agent Outbox accepted and returns as raw_input. Request InputSubmission remains weaker so callers may omit defaults; this response shape always includes them."
   }
 );
 
 export const InputDeleteSchema = openObject(
   { caller_item_id: Type.String({ minLength: 1 }) },
   { $id: "InputDelete", title: "Delete pending input" }
+);
+
+export const InputReadRequestSchema = openObject(
+  { caller_item_id: Type.String({ minLength: 1 }) },
+  { $id: "InputReadRequest", title: "Read live input" }
 );
 
 export const OutputReadAllRequestSchema = openObject(
@@ -423,6 +477,7 @@ export const ActionResponseSchema = Type.Union(
     })
   ],
   {
+    $id: "ActionResponse",
     description:
       "The human response. Date-picker responses share a kind and are distinguished by mode."
   }
@@ -436,7 +491,8 @@ export const OutputResultSchema = closedObject(
     action_value: ProtocolValueSchema,
     response: ActionResponseSchema,
     answered_at: Type.String({ format: "date-time" }),
-    answered_by: nullable(Type.String({ minLength: 1 }))
+    answered_by: nullable(Type.String({ minLength: 1 })),
+    raw_input: CanonicalRawInputSchema
   },
   { $id: "OutputResult", title: "Output result" }
 );
@@ -563,6 +619,36 @@ const InputDeleteResultSchema = closedObject({
   deleted: Type.Literal(true)
 });
 
+const InputLiveMetadataFields = {
+  caller_item_id: Type.String({ minLength: 1 }),
+  status: Type.Union([Type.Literal("pending"), Type.Literal("answered")]),
+  revision: Type.Integer({ minimum: 1 }),
+  created_at: Type.String({ format: "date-time" }),
+  updated_at: Type.String({ format: "date-time" }),
+  answered_at: nullable(Type.String({ format: "date-time" }))
+};
+
+const InputListItemSchema = closedObject(InputLiveMetadataFields);
+
+export const InputListPageSchema = closedObject(
+  {
+    items: Type.Array(InputListItemSchema),
+    has_more: Type.Boolean(),
+    next_cursor: nullable(Type.String({ minLength: 1 })),
+    returned_count: Type.Integer({ minimum: 0 }),
+    page_limit: Type.Integer({ minimum: 1 })
+  },
+  { $id: "InputListPage", title: "Input list page" }
+);
+
+export const InputReadResultSchema = closedObject(
+  {
+    ...InputLiveMetadataFields,
+    raw_input: CanonicalRawInputSchema
+  },
+  { $id: "InputReadResult", title: "Live input" }
+);
+
 const OutputAckResultSchema = closedObject({
   output_result_id: Type.String({ minLength: 1 }),
   acknowledged: Type.Literal(true),
@@ -613,11 +699,15 @@ export const PUBLIC_API_SCHEMAS = {
   FileUploadPopup: FileUploadPopupSchema,
   ActionResponse: ActionResponseSchema,
   InputSubmission: InputSubmissionSchema,
+  CanonicalRawInput: CanonicalRawInputSchema,
   InputDelete: InputDeleteSchema,
+  InputReadRequest: InputReadRequestSchema,
   OutputReadAllRequest: OutputReadAllRequestSchema,
   InputSendResponse: successEnvelope(InputSendResultSchema),
   InputReplaceResponse: successEnvelope(InputReplaceResultSchema),
   InputDeleteResponse: successEnvelope(InputDeleteResultSchema),
+  InputListResponse: successEnvelope(InputListPageSchema),
+  InputReadResponse: successEnvelope(InputReadResultSchema),
   OutputCheckResponse: successEnvelope(OutputCheckPageSchema),
   OutputResultResponse: successEnvelope(OutputResultSchema),
   OutputReadPageResponse: successEnvelope(OutputReadPageSchema),
@@ -627,27 +717,39 @@ export const PUBLIC_API_SCHEMAS = {
   ErrorEnvelope: ErrorEnvelopeSchema
 } as const;
 
+const inputSubmissionExample = {
+  caller_item_id: "email:thread_123",
+  priority: "high",
+  row_type: { display: "Email draft", icon: "mail" },
+  title: "Reply to Acme Corp",
+  subtitle: "A customer response is ready for review.",
+  summary: "Approve the prepared response before it is sent.",
+  link_buttons: [],
+  actions: [
+    {
+      display: "Approve to send",
+      icon: "send",
+      value: "approve_send",
+      overflow: false,
+      tone: "success",
+      style: "solid",
+      popup: { kind: "none" }
+    }
+  ]
+} as const;
+
+const canonicalRawInputExample = {
+  ...inputSubmissionExample,
+  row_accent_color: null,
+  corner: null,
+  details: null,
+  card_visual: null,
+  skip_disabled: false
+} as const;
+
 export const PUBLIC_API_EXAMPLES = {
-  inputSubmission: {
-    caller_item_id: "email:thread_123",
-    priority: "high",
-    row_type: { display: "Email draft", icon: "mail" },
-    title: "Reply to Acme Corp",
-    subtitle: "A customer response is ready for review.",
-    summary: "Approve the prepared response before it is sent.",
-    link_buttons: [],
-    actions: [
-      {
-        display: "Approve to send",
-        icon: "send",
-        value: "approve_send",
-        overflow: false,
-        tone: "success",
-        style: "solid",
-        popup: { kind: "none" }
-      }
-    ]
-  },
+  inputSubmission: inputSubmissionExample,
+  canonicalRawInput: canonicalRawInputExample,
   sendSuccess: {
     ok: true,
     request_id: "req_123",
@@ -690,11 +792,48 @@ export const PUBLIC_API_EXAMPLES = {
       action_value: "approve_send",
       response: { kind: "none" },
       answered_at: "2026-06-30T20:00:00Z",
-      answered_by: "user_123"
+      answered_by: "user_123",
+      raw_input: canonicalRawInputExample
     }
   },
   deleteInput: { caller_item_id: "email:thread_123" },
-  readAllRequest: { limit: 25, cursor: null }
+  readInput: { caller_item_id: "email:thread_123" },
+  readAllRequest: { limit: 25, cursor: null },
+  listInputsSuccess: {
+    ok: true,
+    request_id: "req_126",
+    correlation_id: "corr_126",
+    data: {
+      items: [
+        {
+          caller_item_id: "email:thread_123",
+          status: "pending",
+          revision: 1,
+          created_at: "2026-06-30T19:00:00Z",
+          updated_at: "2026-06-30T19:00:00Z",
+          answered_at: null
+        }
+      ],
+      has_more: false,
+      next_cursor: null,
+      returned_count: 1,
+      page_limit: 25
+    }
+  },
+  readInputSuccess: {
+    ok: true,
+    request_id: "req_127",
+    correlation_id: "corr_127",
+    data: {
+      caller_item_id: "email:thread_123",
+      status: "pending",
+      revision: 1,
+      created_at: "2026-06-30T19:00:00Z",
+      updated_at: "2026-06-30T19:00:00Z",
+      answered_at: null,
+      raw_input: canonicalRawInputExample
+    }
+  }
 } as const;
 
 export type PublicApiOperation = Readonly<{
@@ -777,6 +916,61 @@ export const PUBLIC_API_OPERATIONS = [
     exampleKey: "deleteInput"
   },
   {
+    id: "listInputs",
+    method: "get",
+    path: "/api/input/list",
+    group: "Inputs",
+    summary: "List live retained inputs",
+    description:
+      "Returns metadata for live retained inputs owned by the authenticated caller in stable opaque-cursor order.",
+    behavior: [
+      "Pending and answered-but-unacknowledged inputs are visible; deleted, acknowledged, expired, and retention-cleaned inputs are not.",
+      "This route is non-mutating and does not return input bodies.",
+      `Page size is 1 to ${SYSTEM_CONTRACT.outputPageMaxLimit} and defaults to ${SYSTEM_CONTRACT.outputPageDefaultLimit}.`,
+      "Follow next_cursor while has_more is true.",
+      "Shares the output_check_read per-minute limit and consumes monthly API request quota."
+    ],
+    responseSchema: "InputListResponse",
+    errorStatuses: [400, 401, 422, 429, 503],
+    responseExampleKey: "listInputsSuccess",
+    query: [
+      {
+        name: "limit",
+        description: `Page size from 1 to ${SYSTEM_CONTRACT.outputPageMaxLimit}. Defaults to ${SYSTEM_CONTRACT.outputPageDefaultLimit}.`,
+        schema: Type.Integer({
+          minimum: 1,
+          maximum: SYSTEM_CONTRACT.outputPageMaxLimit,
+          default: SYSTEM_CONTRACT.outputPageDefaultLimit
+        })
+      },
+      {
+        name: "cursor",
+        description: "Opaque next_cursor from the preceding page.",
+        schema: Type.String({ minLength: 1 })
+      }
+    ]
+  },
+  {
+    id: "readInput",
+    method: "post",
+    path: "/api/input/read",
+    group: "Inputs",
+    summary: "Read one live retained input",
+    description:
+      "Returns one complete canonical accepted input for a live caller_item_id owned by the authenticated caller.",
+    behavior: [
+      "raw_input is the validated, sanitized, default-expanded submission Agent Outbox accepted, not the original request JSON.",
+      "A JSON body is required because caller_item_id is arbitrary caller-owned text and is not URL-safe.",
+      "Missing live items return not_found. This route is non-mutating.",
+      "Shares the output_check_read per-minute limit and consumes monthly API request quota."
+    ],
+    requestSchema: "InputReadRequest",
+    responseSchema: "InputReadResponse",
+    errorStatuses: [400, 401, 404, 413, 422, 429, 503],
+    exampleKey: "readInput",
+    responseExampleKey: "readInputSuccess"
+  },
+  {
     id: "checkOutput",
     method: "get",
     path: "/api/output/check",
@@ -816,9 +1010,10 @@ export const PUBLIC_API_OPERATIONS = [
     group: "Outputs",
     summary: "Read one human decision",
     description:
-      "Returns one complete decision. The first successful read marks it read and permanently disables human undo.",
+      "Returns one complete decision and the matching canonical accepted input. The first successful read marks it read and permanently disables human undo.",
     behavior: [
       "The same result remains readable until acknowledgement.",
+      "raw_input is the canonical accepted submission for the matching live input.",
       "Use output_result_id as the idempotency key for downstream work."
     ],
     responseSchema: "OutputResultResponse",
@@ -838,9 +1033,12 @@ export const PUBLIC_API_OPERATIONS = [
     group: "Outputs",
     summary: "Read a page of human decisions",
     description:
-      "Returns full decisions in oldest-first order and marks only returned items read.",
+      "Returns full decisions and matching canonical accepted inputs in oldest-first order, and marks only returned items read.",
     behavior: [
+      "Each returned item includes raw_input for the matching live input.",
       "Unavailable file metadata is reported separately and does not mark that result read.",
+      "File-metadata degradation stays isolated; it does not require canonical input reconstruction.",
+      "Because each item includes the full canonical input, choose a smaller limit when submissions are large.",
       "Follow next_cursor while has_more is true."
     ],
     requestSchema: "OutputReadAllRequest",
@@ -969,8 +1167,16 @@ export function publicInputSubmissionShapeMatches(value: unknown): boolean {
   return Value.Check(InputSubmissionSchema, value);
 }
 
+export function publicCanonicalRawInputShapeMatches(value: unknown): boolean {
+  return Value.Check(CanonicalRawInputSchema, value);
+}
+
 export function publicInputDeleteShapeMatches(value: unknown): boolean {
   return Value.Check(InputDeleteSchema, value);
+}
+
+export function publicInputReadShapeMatches(value: unknown): boolean {
+  return Value.Check(InputReadRequestSchema, value);
 }
 
 export function publicOutputReadAllShapeMatches(value: unknown): boolean {

@@ -28,7 +28,13 @@ request.
 
 `output/check` is non-mutating and cursor-paginated. Poll when the caller can
 actually resume work, use backoff and jitter for recurring workers, and obey
-`Retry-After` when present.
+`Retry-After` when present. `input/list` uses the same page default and maximum
+and is also non-mutating metadata. `input/list` and `input/read` share the
+`output_check_read` per-minute limit and consume monthly API request quota.
+
+Full `output/read-all` pages include every matching canonical input. Choose a
+smaller `limit` when submissions are large so workers do not need to buffer an
+unnecessarily large response.
 
 Do not assume the first page represents the entire queue. Continue with the
 opaque `next_cursor` while `has_more` is true. Never inspect or construct a

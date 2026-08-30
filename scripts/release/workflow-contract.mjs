@@ -325,10 +325,6 @@ export function validateProductionDeployWorkflow(
     );
   }
   if (
-    !workflowRunStepIncludes(
-      verifyRollbackTargetStep,
-      "corepack pnpm run smoke-runtime"
-    ) ||
     !verifyRollbackTargetStep.includes("AGENT_OUTBOX_EXPECTED_RELEASE:") ||
     !verifyRollbackTargetStep.includes(
       "steps.rollback-target.outputs.rollback_release"

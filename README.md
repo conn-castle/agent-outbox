@@ -267,12 +267,14 @@ Important behavior:
 - `POST /api/input/send` is retry-safe create.
 - `POST /api/input/replace` explicitly updates a pending item.
 - `POST /api/input/delete` removes only pending items.
+- `GET /api/input/list` enumerates live retained input metadata.
+- `POST /api/input/read` returns one live canonical accepted input.
 - Answered items stay visible until the caller acknowledges the matching output
   result or retention cleanup resolves it.
 - Human undo is available before the caller reads the output result.
 - `GET /api/output/check` is non-mutating readiness metadata.
-- Output read routes return full output payloads and mark returned results as
-  read.
+- Output read routes return full output payloads, including canonical
+  `raw_input`, and mark returned results as read.
 - `POST /api/output/{output_result_id}/ack` is idempotent after caller-side
   durable handling.
 
@@ -282,15 +284,16 @@ Delivery is asynchronous and at least once. Callers deduplicate by
 ## Caller Integration
 
 Raw HTTP is the canonical integration contract. The `agent-outbox` CLI maps
-directly to the HTTP API for caller setup, status, input, output, and
-acknowledgement while keeping local utilities local-only.
+directly to the HTTP API for caller setup, status, input writes, output, and
+acknowledgement while keeping local utilities local-only. Not every public HTTP
+route has a CLI command.
 
 Implemented caller-authenticated HTTP areas:
 
 - `GET /api/caller/status` for caller health and account limit metadata
 - `GET /api/account/status` for account status using existing caller credentials
-- `POST /api/input/send`, `POST /api/input/replace`, and
-  `POST /api/input/delete`
+- `POST /api/input/send`, `POST /api/input/replace`, `POST /api/input/delete`,
+  `GET /api/input/list`, and `POST /api/input/read`
 - `GET /api/output/check`, `POST /api/output/{output_result_id}/read`,
   `POST /api/output/read-all`,
   `GET /api/output/{output_result_id}/files/{file_id}`, and
