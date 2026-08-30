@@ -179,10 +179,13 @@ delete them.
    release ID, `target_commitish`, draft status, and an exact ownership marker
    (repository, run ID, candidate SHA, release tag, state `prepared` or
    `publishing`, and the prior SHA/version plus candidate Worker version as they
-   become known). Create or adopt exactly one owned draft, then upload and
-   byte-verify every certified CLI archive and `checksums.txt` against that
-   release ID before any production mutation. Duplicate, unowned, or conflicting
-   same-tag state stops without mutation.
+   become known). GitHub may represent a draft whose requested tag does not yet
+   exist as an `untagged-*` tag; the exact ownership marker remains the source
+   of truth until publication supplies the requested tag explicitly. Create or
+   adopt exactly one owned draft, then upload and byte-verify every certified
+   CLI archive and `checksums.txt` against that release ID before any production
+   mutation. Duplicate, unowned, or conflicting same-tag state stops without
+   mutation.
 5. Capture the one current 100%-traffic Cloudflare Worker version and its live
    runtime release SHA, then run runtime smoke against that rollback target.
    Compare `wrangler.jsonc` `routes` and `triggers` at that live SHA with the

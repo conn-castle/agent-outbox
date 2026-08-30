@@ -83,17 +83,30 @@ export function selectRollbackTarget(deploymentStatus, runtimeCanary) {
  */
 export function classifySameTagReleases(input) {
   const requireExactRun = input.requireExactRun !== false;
-  const sameTag = input.releases.filter(
-    (release) => release.tagName === input.releaseTag
-  );
-  const drafts = sameTag.filter((release) => release.draft);
-  const published = sameTag.filter((release) => !release.draft);
   const ownership = {
     repository: input.repository,
     runId: input.runId,
     candidateSha: input.expectedSha,
     releaseTag: input.releaseTag
   };
+  const sameTag = input.releases.filter(
+    (release) => release.tagName === input.releaseTag
+  );
+  const temporaryOwnedDrafts = input.releases.filter(
+    (release) =>
+      release.draft &&
+      /^untagged-[0-9a-f]+$/i.test(release.tagName) &&
+      markerMatchesRun(parseOwnershipMarker(release.body), ownership, {
+        requireExactRun
+      })
+  );
+  const drafts = [
+    ...sameTag.filter((release) => release.draft),
+    ...temporaryOwnedDrafts.filter(
+      (release) => release.tagName !== input.releaseTag
+    )
+  ];
+  const published = sameTag.filter((release) => !release.draft);
 
   if (published.length > 1) {
     return {
@@ -155,10 +168,10 @@ export function classifySameTagReleases(input) {
       kind: "conflict",
       reason:
         owned.length === 0
-          ? "multiple drafts share the tag"
+          ? "multiple candidate drafts exist"
           : owned.length === 1
-            ? "owned draft is not unique for the tag"
-            : "multiple owned drafts share the tag"
+            ? "owned candidate draft is not unique"
+            : "multiple owned candidate drafts exist"
     };
   }
 

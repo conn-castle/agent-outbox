@@ -174,10 +174,18 @@ test("asset reconciliation refuses mutation without the exact ownership marker",
 test("publication marks publishing by id before the publish mutation", async () => {
   /** @type {string[]} */
   const patches = [];
+  const ownedDraft = draftRelease({
+    tagName: "untagged-e5874a3f76e2804256df"
+  });
   const github = scriptedGithub({
-    listReleases: [[draftRelease()], [publishedRelease()]],
+    listReleases: [[ownedDraft], [publishedRelease()]],
     remoteTagCommit: [null, null, RELEASE.expectedSha],
-    getRelease: [draftRelease({ assets: CERTIFIED_RELEASE_ASSETS })],
+    getRelease: [
+      draftRelease({
+        tagName: ownedDraft.tagName,
+        assets: CERTIFIED_RELEASE_ASSETS
+      })
+    ],
     downloadAsset: [CERTIFIED_ASSET.bytes],
     updateRelease: [
       () => {
@@ -190,12 +198,22 @@ test("publication marks publishing by id before the publish mutation", async () 
       }
     ]
   });
+  const updateRelease = github.updateRelease;
+  /** @type {Record<string, unknown>[]} */
+  const updateInputs = [];
+  github.updateRelease = async (...args) => {
+    updateInputs.push(args[2]);
+    return updateRelease(...args);
+  };
   await runReleasePublication(orchestrator(github), {
     ...RELEASE,
     releaseId: DRAFT_ID,
     assets: [CERTIFIED_ASSET]
   });
   assert.deepEqual(patches, ["publishing", "publish"]);
+  assert.equal(updateInputs[1].tag_name, RELEASE.releaseTag);
+  assert.equal(updateInputs[1].target_commitish, RELEASE.expectedSha);
+  assert.equal(updateInputs[1].draft, false);
 });
 
 test("ambiguous publication after publishing intent holds and never deletes", async () => {

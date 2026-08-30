@@ -872,7 +872,12 @@ export async function runReleasePublication(orchestrator, input) {
       result = await orchestrator.github.updateRelease(
         input.repository,
         input.releaseId,
-        { draft: false, make_latest: "true" }
+        {
+          tag_name: input.releaseTag,
+          target_commitish: input.expectedSha,
+          draft: false,
+          make_latest: "true"
+        }
       );
     } catch (error) {
       throw new PublicationStateUnknownError(input.releaseTag, {

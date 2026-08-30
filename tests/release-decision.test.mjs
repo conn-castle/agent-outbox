@@ -114,6 +114,27 @@ test("same-tag classification uses release id and exact ownership, never tag uni
   );
   assert.equal(
     classifySameTagReleases({
+      releases: [draftRelease({ tagName: "untagged-e5874a3f76e2804256df" })],
+      tagCommit: null,
+      ...RELEASE
+    }).kind,
+    "owned_prepared"
+  );
+  assert.equal(
+    classifySameTagReleases({
+      releases: [
+        draftRelease({
+          tagName: "untagged-e5874a3f76e2804256df",
+          body: "not a marker"
+        })
+      ],
+      tagCommit: null,
+      ...RELEASE
+    }).kind,
+    "absent"
+  );
+  assert.equal(
+    classifySameTagReleases({
       releases: [draftRelease({ body: marker("publishing") })],
       tagCommit: null,
       ...RELEASE

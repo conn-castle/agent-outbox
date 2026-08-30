@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Agent Outbox Caller API",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "summary": "Durable human decisions for software agents",
     "description": "Send structured work to a person, continue asynchronously, and retrieve a typed decision when it is ready. This document intentionally includes only the caller-facing data plane and status operations."
   },
