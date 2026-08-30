@@ -285,8 +285,7 @@ Delivery is asynchronous and at least once. Callers deduplicate by
 
 Raw HTTP is the canonical integration contract. The `agent-outbox` CLI maps
 directly to the HTTP API for caller setup, status, input writes, output, and
-acknowledgement while keeping local utilities local-only. Not every public HTTP
-route has a CLI command.
+acknowledgement while keeping local utilities local-only.
 
 Implemented caller-authenticated HTTP areas:
 
@@ -303,7 +302,7 @@ Implemented CLI areas:
 
 - `caller connect/list/status/rotate/revoke/disconnect`
 - `account status`
-- `input send/replace/delete`
+- `input send/list/read/replace/delete`
 - `output check/read/read --all/file get/ack`
 - `docs [topic]`, `doctor [--caller]`, `upgrade`, `version`, and `--version`
 
