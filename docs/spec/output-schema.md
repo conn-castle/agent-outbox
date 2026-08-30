@@ -15,7 +15,7 @@ shape.
   "output_result_id": "out_123",
   "caller_id": "caller_123",
   "caller_item_id": "email:thread_123",
-  "action_value": "send",
+  "action_value": "approve_send",
   "response": {
     "kind": "none"
   },
@@ -170,7 +170,7 @@ or shorten timeout windows.
       "output_result_id": "out_123",
       "caller_id": "caller_123",
       "caller_item_id": "email:thread_123",
-      "action_value": "send",
+      "action_value": "approve_send",
       "response": {
         "kind": "none"
       },
