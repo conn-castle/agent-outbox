@@ -38,7 +38,6 @@
     "next:build": "next build",
     "worker:build": "opennextjs-cloudflare build",
     "worker:dry-run": "corepack pnpm run worker:build && wrangler deploy --dry-run --env-file /dev/null",
-    "worker:deploy": "node scripts/worker-deploy.mjs",
     "smoke": "node scripts/foundation.mjs smoke",
     "contract:generate": "node scripts/system-contract.mjs generate",
     "contract:check": "node scripts/system-contract.mjs check",

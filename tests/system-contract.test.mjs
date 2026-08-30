@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  parseJsonc,
   readSystemContract,
   renderGeneratedGoSystemContract,
   stripJsonComments,
@@ -49,6 +50,17 @@ test("JSONC comment stripping preserves comment-like text in strings", () => {
   assert.throws(
     () => stripJsonComments('{ "enabled": true /* unterminated'),
     /Unterminated JSONC block comment/
+  );
+  assert.deepEqual(
+    parseJsonc(`{
+      // comment
+      "routes": [{ "custom_domain": true, "pattern": "app.example" }],
+      "triggers": { "crons": ["17 * * * *"] },
+    }`),
+    {
+      routes: [{ custom_domain: true, pattern: "app.example" }],
+      triggers: { crons: ["17 * * * *"] }
+    }
   );
 });
 

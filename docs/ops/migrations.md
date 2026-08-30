@@ -31,25 +31,29 @@ The canonical migration source is `db/migrations/`.
     without a same-column `DEFAULT`) requires the human-only
     `migration-destructive-approved` label. CI: Enforced by Policy gates.
 12. Every production migration must be compatible with both the outgoing and
-    incoming application release. Use expand/contract sequencing because the
-    outgoing Worker serves traffic after migrations apply and automatic rollback
-    restores Worker code only, never schema. CI: Code review enforced.
+    incoming application release. Schema is forward-only infrastructure state,
+    applied before candidate traffic and never rolled back automatically. Use
+    expand/contract sequencing because a failed release restores Worker code
+    only, never schema, and may leave expand migrations in place. CI: Code
+    review enforced.
 
 ## Production Application
 
 Production migrations run only within the protected manual release workflow in
 `.github/workflows/deploy-production.yml`. The workflow certifies the exact
-release SHA, verifies the current rollback target, validates existing Flyway
+release SHA, prepares byte-verified draft assets, captures the rollback target,
+uploads an inactive candidate Worker version, then validates existing Flyway
 history while allowing pending checked-in migrations, applies those migrations,
-strictly validates the resulting history, and only then deploys the Worker. The
-post-deploy runtime smoke also executes the production human-review list query
-through the restricted application role under an isolated human account context,
-so a release cannot finalize when its deployed schema cannot serve the queue.
-Pre-deploy and restored-release smoke tolerate the field being absent from an
-outgoing release that predates this canary, but reject a failed result whenever
-the deployed Worker exposes it. The outgoing Worker remains live against the
-migrated schema during deployment, and a failed deploy restores only that Worker
-version. This makes rule 12 a release requirement, not optional rollback advice.
+and strictly validates the resulting history before any candidate traffic.
+Override smoke of the 0% candidate and post-promotion smoke execute the
+production human-review list query through the restricted application role under
+an isolated human account context, so a release cannot finalize when its schema
+cannot serve the queue. Rollback-target smoke tolerates the field being absent
+from an outgoing release that predates this canary, but reject a failed result
+whenever the deployed Worker exposes it. The outgoing Worker remains live
+against the migrated schema until promotion, and a proven pre-commit failure
+restores only that Worker version. This makes rule 12 a release requirement, not
+optional rollback advice.
 
 `DATABASE_MIGRATION_URL` in the GitHub `production` environment is a downstream
 copy of the canonical SSM parameter. Missing credentials or any Flyway failure

@@ -1,18 +1,9 @@
 import assert from "node:assert/strict";
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import pg from "pg";
 
 import {
-  assertNoForbiddenWorkflowCommands,
   extractDocumentedHttpContractRouteMarkers,
   extractImplementedHttpContractRouteMarkers,
   missingEnvNames,
@@ -30,40 +21,11 @@ import {
   validateRequiredEnvExample,
   validateRuntimeProofScope,
   validateToolchainPackage,
-  validateProductionDeployWorkflow,
-  validateProductionReleaseRepairWorkflow,
-  validateProductionRollbackWorkflow,
   validateWorkflowGoChecks,
   validateWranglerCronSchedule,
   validateWranglerRequiredSecrets,
   validateWorkflowVersionPins
 } from "../scripts/foundation.mjs";
-import {
-  REQUIRED_PUBLIC_VAR_NAMES as WORKER_DEPLOY_PUBLIC_VAR_NAMES,
-  REQUIRED_SECRET_NAMES as WORKER_DEPLOY_SECRET_NAMES,
-  buildWranglerDeployArgsWithConfig,
-  buildWranglerDeployArgs,
-  runWorkerDeploy,
-  secretsDotenvContent,
-  validateWorkerDeployEnvironment,
-  workerBuildEnvironment,
-  wranglerDeployEnvironment,
-  wranglerConfigWithHyperdrive
-} from "../scripts/worker-deploy.mjs";
-import {
-  DATABASE_CONNECTION_MODE_HYPERDRIVE,
-  DATABASE_CONNECTION_MODE_VAR,
-  DATABASE_HYPERDRIVE_BINDING,
-  runtimeDatabaseConnectionString,
-  runtimeDatabaseEnv
-} from "../worker/hyperdrive.mjs";
-import {
-  assertRuntimeDatabaseCanary,
-  assertRuntimeCanaryEnvironment,
-  missingRuntimeSmokeEnvNames,
-  readRuntimeSmokeEnv,
-  runtimeSmokeAttemptCount
-} from "../scripts/runtime-smoke.mjs";
 import { validateBrowserFixtureRunId } from "../scripts/browser-fixture-run-id.mjs";
 import {
   flywayDockerEnvironmentNames,
@@ -153,40 +115,6 @@ const FLYWAY_TOOLCHAIN_FIXTURE = {
   image: "flyway/flyway",
   source: "test"
 };
-
-/**
- * @param {Record<string, string | undefined>} [overrides]
- * @returns {Record<string, string | undefined>}
- */
-function workerDeployEnv(overrides = {}) {
-  return {
-    PATH: process.env.PATH,
-    GITHUB_ACTIONS: "true",
-    GITHUB_REF: "refs/heads/main",
-    GITHUB_SHA: "0123456789abcdef0123456789abcdef01234567",
-    GITHUB_WORKFLOW_REF:
-      "conn-castle/agent-outbox/.github/workflows/deploy-production.yml@refs/heads/main",
-    AGENT_OUTBOX_RELEASE_TAG: "v1.2.3",
-    CLOUDFLARE_API_TOKEN: "cf-worker-token",
-    CLOUDFLARE_HYPERDRIVE_ID: "hyperdrive-test-id",
-    CLERK_SECRET_KEY: "sk_test_clerk",
-    SENTRY_DSN: "https://public@example.invalid/1",
-    CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
-    SMOKE_OR_CLEANUP_TOKEN: "runtime-smoke-token",
-    STRIPE_SECRET_KEY: "sk_live_runtime",
-    STRIPE_WEBHOOK_SECRET: "whsec_runtime",
-    APP_ENV: "production",
-    APP_BASE_URL: "https://app.agent-outbox.dev",
-    PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev",
-    SENTRY_RELEASE: "0123456789abcdef0123456789abcdef01234567",
-    CLERK_PUBLISHABLE_KEY: "pk_live_clerk",
-    SENTRY_BROWSER_DSN: "https://browser@example.invalid/2",
-    STRIPE_PAID_MONTHLY_PRICE_ID: "price_monthly",
-    STRIPE_PAID_YEARLY_PRICE_ID: "price_yearly",
-    STRIPE_BILLING_PORTAL_CONFIGURATION_ID: "bpc_runtime",
-    ...overrides
-  };
-}
 
 /**
  * @param {Record<string, string | undefined>} values
@@ -522,172 +450,6 @@ test("missingEnvNames reports names without exposing configured secret values", 
     "CALLER_KEY_HASH_SECRET"
   ]);
 });
-
-test("runtime smoke loads an explicit operator env file before root .env", () => {
-  const root = mkdtempSync(
-    path.join(os.tmpdir(), "agent-outbox-runtime-smoke-root-")
-  );
-  const explicitDir = mkdtempSync(
-    path.join(os.tmpdir(), "agent-outbox-runtime-smoke-env-")
-  );
-  const explicitEnvPath = path.join(explicitDir, "production-smoke.env");
-
-  try {
-    writeFileSync(path.join(root, ".env"), "APP_BASE_URL=http://localhost\n");
-    writeFileSync(
-      explicitEnvPath,
-      "APP_BASE_URL=https://app.agent-outbox.dev\nSMOKE_OR_CLEANUP_TOKEN=smoke-token\n"
-    );
-
-    assert.equal(
-      readRuntimeSmokeEnv({ env: {}, root }).get("APP_BASE_URL"),
-      "http://localhost"
-    );
-    const explicitValues = readRuntimeSmokeEnv({
-      env: { AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE: explicitEnvPath },
-      root
-    });
-    assert.equal(
-      explicitValues.get("APP_BASE_URL"),
-      "https://app.agent-outbox.dev"
-    );
-    assert.equal(explicitValues.get("SMOKE_OR_CLEANUP_TOKEN"), "smoke-token");
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-    rmSync(explicitDir, { force: true, recursive: true });
-  }
-});
-
-test("runtime smoke fails loudly when an explicit operator env file is missing", () => {
-  const missingEnvPath = path.join(
-    os.tmpdir(),
-    `agent-outbox-missing-smoke-${process.pid}.env`
-  );
-
-  assert.throws(
-    () =>
-      readRuntimeSmokeEnv({
-        env: { AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE: missingEnvPath }
-      }),
-    {
-      message: `Runtime smoke env file does not exist: ${missingEnvPath}`
-    }
-  );
-});
-
-test("runtime smoke process-env mode reads only remote smoke client inputs", () => {
-  const values = readRuntimeSmokeEnv({
-    env: {
-      AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1",
-      AGENT_OUTBOX_EXPECTED_RELEASE: "release-sha",
-      APP_BASE_URL: "https://app.agent-outbox.dev",
-      SMOKE_OR_CLEANUP_TOKEN: "smoke-token",
-      AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1",
-      STRIPE_SECRET_KEY: "must-not-be-copied"
-    }
-  });
-
-  assert.deepEqual(Object.fromEntries(values), {
-    APP_BASE_URL: "https://app.agent-outbox.dev",
-    SMOKE_OR_CLEANUP_TOKEN: "smoke-token",
-    AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1",
-    AGENT_OUTBOX_EXPECTED_RELEASE: "release-sha"
-  });
-  assert.throws(
-    () =>
-      readRuntimeSmokeEnv({
-        env: {
-          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1",
-          APP_BASE_URL: "https://app.agent-outbox.dev",
-          SMOKE_OR_CLEANUP_TOKEN: "smoke-token"
-        }
-      }),
-    /AGENT_OUTBOX_EXPECTED_RELEASE is required in process-env mode/
-  );
-  assert.throws(
-    () =>
-      readRuntimeSmokeEnv({
-        env: {
-          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1",
-          AGENT_OUTBOX_EXPECTED_RELEASE: "   ",
-          APP_BASE_URL: "https://app.agent-outbox.dev",
-          SMOKE_OR_CLEANUP_TOKEN: "smoke-token"
-        }
-      }),
-    /AGENT_OUTBOX_EXPECTED_RELEASE is required in process-env mode/
-  );
-});
-
-test("runtime smoke rejects a healthy response from the wrong release", () => {
-  assert.doesNotThrow(() =>
-    assertRuntimeCanaryEnvironment(
-      { environment: { configured: true, release: "expected-sha" } },
-      "expected-sha"
-    )
-  );
-  assert.throws(
-    () =>
-      assertRuntimeCanaryEnvironment(
-        { environment: { configured: true, release: "previous-sha" } },
-        "expected-sha"
-      ),
-    /did not report the expected deployed release/
-  );
-  assert.equal(runtimeSmokeAttemptCount({}), 1);
-  assert.equal(
-    runtimeSmokeAttemptCount({
-      AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
-    }),
-    6
-  );
-});
-
-test("runtime smoke requires the production human review query canary", () => {
-  assert.deepEqual(
-    missingRuntimeSmokeEnvNames(
-      new Map([
-        ["APP_BASE_URL", "https://app.agent-outbox.dev"],
-        ["SMOKE_OR_CLEANUP_TOKEN", "smoke-token"]
-      ])
-    ),
-    [],
-    "the post-deploy query flag must remain optional for outgoing releases"
-  );
-  assert.doesNotThrow(() =>
-    assertRuntimeDatabaseCanary({
-      transaction_context_matched: true,
-      restricted_role_matched: true
-    })
-  );
-  assert.doesNotThrow(() =>
-    assertRuntimeDatabaseCanary({
-      transaction_context_matched: true,
-      restricted_role_matched: true,
-      human_review_query_matched: true
-    })
-  );
-  assert.throws(
-    () =>
-      assertRuntimeDatabaseCanary({
-        transaction_context_matched: true,
-        restricted_role_matched: true,
-        human_review_query_matched: false
-      }),
-    /did not prove the human review query/
-  );
-  assert.throws(
-    () =>
-      assertRuntimeDatabaseCanary(
-        {
-          transaction_context_matched: true,
-          restricted_role_matched: true
-        },
-        { requireHumanReviewQuery: true }
-      ),
-    /did not prove the human review query/
-  );
-});
-
 test("redactCommandResult excludes stdout and stderr from failed provider checks", () => {
   const result = redactCommandResult({
     status: 1,
@@ -698,7 +460,6 @@ test("redactCommandResult excludes stdout and stderr from failed provider checks
 
   assert.deepEqual(result, { status: 1, signal: null, error: null });
 });
-
 test("runQuiet times out stuck provider commands without exposing command output", () => {
   const result = runQuiet(
     process.execPath,
@@ -712,7 +473,6 @@ test("runQuiet times out stuck provider commands without exposing command output
     error: "ETIMEDOUT"
   });
 });
-
 test("supabaseProjectsIncludeRef checks project refs without exposing project output", () => {
   const projectsJson = JSON.stringify([
     { id: "not-agent-outbox", name: "Other" },
@@ -725,7 +485,6 @@ test("supabaseProjectsIncludeRef checks project refs without exposing project ou
   );
   assert.equal(supabaseProjectsIncludeRef(projectsJson, "missing-ref"), false);
 });
-
 test("validateToolchainPackage accepts runtime dependencies only when toolchain-pinned", () => {
   const toolchain = {
     node: { version: "24.18.0", npm: "11.16.0" },
@@ -758,7 +517,6 @@ test("validateToolchainPackage accepts runtime dependencies only when toolchain-
 
   assert.deepEqual(validateToolchainPackage(toolchain, packageJson), []);
 });
-
 test("validateToolchainPackage rejects provider CLIs without auth checks", () => {
   const toolchain = /** @type {any} */ ({
     node: { version: "24.18.0", npm: "11.16.0" },
@@ -789,7 +547,6 @@ test("validateToolchainPackage rejects provider CLIs without auth checks", () =>
     "toolchain.json providerCli.cloudflareOpenNext.authCheck is required"
   ]);
 });
-
 test("validateToolchainPackage rejects unpinned runtime dependencies", () => {
   const toolchain = {
     node: { version: "24.18.0", npm: "11.16.0" },
@@ -819,7 +576,6 @@ test("validateToolchainPackage rejects unpinned runtime dependencies", () => {
     "dependency lodash is not pinned in toolchain.json"
   ]);
 });
-
 test("validateToolchainPackage treats npm as Node runtime metadata, not a devDependency", () => {
   const toolchain = {
     node: { version: "24.18.0", npm: "11.16.0" },
@@ -842,7 +598,6 @@ test("validateToolchainPackage treats npm as Node runtime metadata, not a devDep
 
   assert.deepEqual(validateToolchainPackage(toolchain, packageJson), []);
 });
-
 test("validateToolchainPackage rejects Node types from a newer runtime major", () => {
   const toolchain = {
     node: { version: "24.18.0", npm: "11.16.0" },
@@ -869,710 +624,6 @@ test("validateToolchainPackage rejects Node types from a newer runtime major", (
     "@types/node major 26 must match Node major 24"
   ]);
 });
-
-test("workflow guard rejects deploy and publish commands", () => {
-  const failures = assertNoForbiddenWorkflowCommands({
-    ".github/workflows/release-check.yml":
-      "run: wrangler deploy\nrun: supabase migration up --linked"
-  });
-
-  assert.deepEqual(failures, [
-    ".github/workflows/release-check.yml contains forbidden command: wrangler deploy",
-    ".github/workflows/release-check.yml contains forbidden command: supabase migration"
-  ]);
-});
-
-test("production deploy workflow guard accepts only the manual deploy contract", () => {
-  const deployWorkflow = readFileSync(
-    new URL("../.github/workflows/deploy-production.yml", import.meta.url),
-    "utf8"
-  );
-  const rollbackWorkflow = readFileSync(
-    new URL("../.github/workflows/rollback-production.yml", import.meta.url),
-    "utf8"
-  );
-  const repairWorkflow = readFileSync(
-    new URL(
-      "../.github/workflows/repair-production-release.yml",
-      import.meta.url
-    ),
-    "utf8"
-  );
-
-  assert.deepEqual(
-    assertNoForbiddenWorkflowCommands({
-      ".github/workflows/deploy-production.yml": deployWorkflow
-    }),
-    []
-  );
-  assert.deepEqual(
-    validateProductionDeployWorkflow(deployWorkflow, "24.18.0"),
-    []
-  );
-  assert.deepEqual(
-    validateProductionRollbackWorkflow(rollbackWorkflow, "24.18.0"),
-    []
-  );
-  assert.deepEqual(
-    assertNoForbiddenWorkflowCommands({
-      ".github/workflows/repair-production-release.yml": repairWorkflow
-    }),
-    []
-  );
-  assert.deepEqual(
-    validateProductionReleaseRepairWorkflow(repairWorkflow, "24.18.0"),
-    []
-  );
-
-  for (const [description, brokenWorkflow] of [
-    [
-      "unprotected",
-      repairWorkflow.replace("    environment: production\n", "")
-    ],
-    [
-      "rebuilding artifacts",
-      repairWorkflow.replace(
-        "          ruby -c dist/homebrew/Casks/agent-outbox.rb",
-        "          make cli-release-dist"
-      )
-    ],
-    [
-      "deploying code",
-      repairWorkflow.replace(
-        "        run: corepack pnpm run smoke-runtime",
-        "        run: corepack pnpm run worker:deploy"
-      )
-    ],
-    [
-      "missing source proof",
-      repairWorkflow.replace(
-        "run: node scripts/production-release.mjs validate-repair",
-        "run: true"
-      )
-    ]
-  ]) {
-    assert.notEqual(brokenWorkflow, repairWorkflow, description);
-    assert.notDeepEqual(
-      validateProductionReleaseRepairWorkflow(brokenWorkflow, "24.18.0"),
-      [],
-      description
-    );
-  }
-  const releaseCheckWorkflow = readFileSync(
-    new URL("../.github/workflows/release-check.yml", import.meta.url),
-    "utf8"
-  );
-  assert.match(
-    releaseCheckWorkflow,
-    /^  workflow_call:$/m,
-    "production certification must call the exact release-check workflow"
-  );
-
-  const packageJson = JSON.parse(
-    readFileSync(new URL("../package.json", import.meta.url), "utf8")
-  );
-  assert.match(
-    packageJson.scripts["worker:dry-run"],
-    /^corepack pnpm run worker:build && /,
-    "production dry-run must not depend on a globally available pnpm shim"
-  );
-
-  const openNextConfig = readFileSync(
-    new URL("../open-next.config.ts", import.meta.url),
-    "utf8"
-  );
-  assert.match(
-    openNextConfig,
-    /config\.buildCommand = "corepack pnpm run next:build";/,
-    "OpenNext build must not depend on a globally available pnpm shim"
-  );
-
-  const unscopedRollbackWorkflow = deployWorkflow.replace(
-    "          steps.publish-release.outcome != 'success'",
-    "          true"
-  );
-  assert.notEqual(
-    unscopedRollbackWorkflow,
-    deployWorkflow,
-    "rollback-scope regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      unscopedRollbackWorkflow,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must roll back every deployed but unpublished release and verify the restored release"
-    ),
-    true,
-    "automatic rollback must cover failures through the publication commit point"
-  );
-
-  const rollbackOnUnknownPublication = deployWorkflow.replaceAll(
-    "          steps.publish-release.outputs.publication_state != 'unknown'",
-    "          true"
-  );
-  assert.notEqual(
-    rollbackOnUnknownPublication,
-    deployWorkflow,
-    "unknown-publication regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      rollbackOnUnknownPublication,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must roll back every deployed but unpublished release and verify the restored release"
-    ),
-    true,
-    "automatic rollback must not contradict an indeterminate publication commit"
-  );
-
-  const withoutProductionMigrations = deployWorkflow.replace(
-    /      - name: Apply production database migrations[\s\S]*?(?=\n      - name: Mark deployment attempt)/,
-    ""
-  );
-  assert.notEqual(
-    withoutProductionMigrations,
-    deployWorkflow,
-    "production-migration regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      withoutProductionMigrations,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must apply and validate production migrations through the protected release job before deploy"
-    ),
-    true,
-    "production migrations must remain inside the protected release sequence"
-  );
-
-  const withoutPostDeployHumanQueryProof = deployWorkflow.replace(
-    '          AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"\n',
-    ""
-  );
-  assert.notEqual(
-    withoutPostDeployHumanQueryProof,
-    deployWorkflow,
-    "post-deploy human-query regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      withoutPostDeployHumanQueryProof,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must verify the deployed SHA after deploy"
-    ),
-    true,
-    "the candidate release must prove the deployed human review query"
-  );
-
-  const nMinusOneIncompatibleSmoke = deployWorkflow.replace(
-    '          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"',
-    '          AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"\n' +
-      '          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"'
-  );
-  assert.notEqual(
-    nMinusOneIncompatibleSmoke,
-    deployWorkflow,
-    "N-1 smoke regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      nMinusOneIncompatibleSmoke,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must keep rollback-target smoke compatible with the outgoing release contract"
-    ),
-    true,
-    "rollback-target smoke must tolerate fields absent from the outgoing release"
-  );
-
-  const firstAtHostMask = deployWorkflow.replace(
-    'host="${host##*@}"',
-    'host="${host#*@}"'
-  );
-  assert.notEqual(
-    firstAtHostMask,
-    deployWorkflow,
-    "migration-host-mask regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(firstAtHostMask, "24.18.0").includes(
-      ".github/workflows/deploy-production.yml must apply and validate production migrations through the protected release job before deploy"
-    ),
-    true,
-    "migration host masking must follow URL parsing through the final at-sign"
-  );
-
-  for (const stepName of [
-    "Prepare exact-candidate GitHub release draft",
-    "Upload certified CLI assets to draft",
-    "Verify complete draft asset set",
-    "Require public release repository",
-    "Create Homebrew preflight token",
-    "Verify Homebrew tap access",
-    "Verify rollback target before deploy",
-    "Require production migration credential",
-    "Reverify draft assets before publication",
-    "Publish exact-candidate GitHub release",
-    "Require publicly downloadable release assets"
-  ]) {
-    const withoutRequiredStep = deployWorkflow.replace(
-      new RegExp(`      - name: ${stepName}[\\s\\S]*?(?=\\n      - name:)`),
-      ""
-    );
-    assert.notEqual(
-      withoutRequiredStep,
-      deployWorkflow,
-      `${stepName} regression fixture must modify the workflow`
-    );
-    assert.notDeepEqual(
-      validateProductionDeployWorkflow(withoutRequiredStep, "24.18.0"),
-      [],
-      `${stepName} must remain required by the production workflow guard`
-    );
-  }
-
-  const withoutHomebrewPublication = deployWorkflow.replace(
-    /\n  publish-cli-homebrew:[\s\S]*$/,
-    ""
-  );
-  assert.notEqual(
-    withoutHomebrewPublication,
-    deployWorkflow,
-    "Homebrew-publication regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      withoutHomebrewPublication,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must verify the public CLI release and open the guarded Homebrew cask PR after publication"
-    ),
-    true,
-    "numbered releases must retain CLI asset and Homebrew cask publication"
-  );
-
-  const withoutPreDeployCliCertification = deployWorkflow.replace(
-    /\n  build-cli:[\s\S]*?(?=\n  deploy:)/,
-    ""
-  );
-  assert.notEqual(
-    withoutPreDeployCliCertification,
-    deployWorkflow,
-    "pre-deploy CLI certification regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      withoutPreDeployCliCertification,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must include pre-deploy CLI artifact certification"
-    ),
-    true,
-    "CLI packaging and Homebrew validation must complete before production deploy"
-  );
-
-  const clobberingCliAssets = deployWorkflow.replace(
-    'gh release upload "$RELEASE_TAG" "$artifact"',
-    'gh release upload "$RELEASE_TAG" "$artifact" --clobber'
-  );
-  assert.notEqual(
-    clobberingCliAssets,
-    deployWorkflow,
-    "CLI asset clobber regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(clobberingCliAssets, "24.18.0").includes(
-      ".github/workflows/deploy-production.yml must prepare and byte-verify the exact-candidate draft before production mutation"
-    ),
-    true,
-    "release assets must never be deleted before replacement upload succeeds"
-  );
-
-  const withoutCliAssetIdentityCheck = deployWorkflow.replace(
-    'if ! cmp -s "$artifact" "$existing_dir/$asset"; then',
-    "if false; then"
-  );
-  assert.notEqual(
-    withoutCliAssetIdentityCheck,
-    deployWorkflow,
-    "CLI asset identity-check regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      withoutCliAssetIdentityCheck,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must prepare and byte-verify the exact-candidate draft before production mutation"
-    ),
-    true,
-    "release reconciliation must retain only byte-identical existing CLI assets"
-  );
-});
-
-test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {
-  const unsafeWorkflow = `
-    on:
-      workflow_dispatch:
-      push:
-        branches: [main]
-    jobs:
-      deploy:
-        environment: staging
-        steps:
-          - uses: actions/setup-node@v6
-            with:
-              node-version: 25.0.0
-          - run: pnpm run worker:deploy
-  `;
-
-  const failures = validateProductionDeployWorkflow(unsafeWorkflow, "24.18.0");
-  assert.equal(
-    failures.includes(
-      ".github/workflows/deploy-production.yml must be manual-only and not include push:"
-    ),
-    true
-  );
-  assert.equal(
-    failures.includes(
-      ".github/workflows/deploy-production.yml must include certified release flow"
-    ),
-    true
-  );
-});
-
-test("worker deploy wrapper builds, passes explicit bindings, and removes the temp secrets file", () => {
-  const env = workerDeployEnv();
-  const tempBase = mkdtempSync(
-    path.join(os.tmpdir(), "agent-outbox-worker-deploy-test-")
-  );
-  /** @type {{ command: string, args: string[], env: NodeJS.ProcessEnv | undefined }[]} */
-  const calls = [];
-  /** @type {string | null} */
-  let secretsFilePath = null;
-  /** @type {string | null} */
-  let configFilePath = null;
-
-  try {
-    runWorkerDeploy({
-      env,
-      tempBase,
-      spawnSyncImpl(command, args, options) {
-        calls.push({ command, args, env: options.env });
-
-        if (args[0] === "pnpm" && args[1] === "exec") {
-          const secretsFileIndex = args.indexOf("--secrets-file") + 1;
-          secretsFilePath = args[secretsFileIndex] ?? null;
-          assert.ok(secretsFilePath, "deploy command must pass --secrets-file");
-          assert.equal(existsSync(secretsFilePath), true);
-          const secretNames = readFileSync(secretsFilePath, "utf8")
-            .trim()
-            .split("\n")
-            .map((line) => line.split("=", 1)[0]);
-          assert.deepEqual(secretNames, WORKER_DEPLOY_SECRET_NAMES);
-
-          const configFileIndex = args.indexOf("--config") + 1;
-          configFilePath = args[configFileIndex] ?? null;
-          assert.ok(configFilePath, "deploy command must pass --config");
-          assert.equal(existsSync(configFilePath), true);
-          const config = JSON.parse(readFileSync(configFilePath, "utf8"));
-          assert.deepEqual(config.hyperdrive, [
-            {
-              binding: DATABASE_HYPERDRIVE_BINDING,
-              id: env.CLOUDFLARE_HYPERDRIVE_ID
-            }
-          ]);
-        }
-
-        return { status: 0, signal: null, error: undefined };
-      }
-    });
-
-    assert.equal(calls[0].command, "corepack");
-    assert.deepEqual(calls[0].args, ["pnpm", "run", "worker:build"]);
-    assert.equal(calls[0].env?.APP_BASE_URL, env.APP_BASE_URL);
-    assert.equal(calls[0].env?.CLOUDFLARE_API_TOKEN, undefined);
-    for (const name of WORKER_DEPLOY_SECRET_NAMES) {
-      assert.equal(calls[0].env?.[name], undefined);
-    }
-    assert.equal(calls[1].command, "corepack");
-    assert.deepEqual(calls[1].args.slice(0, 8), [
-      "pnpm",
-      "exec",
-      "wrangler",
-      "deploy",
-      "--config",
-      configFilePath,
-      "--env-file",
-      "/dev/null"
-    ]);
-    assert.equal(calls[1].args.includes("--secrets-file"), true);
-    assert.equal(calls[1].args.includes("--dry-run"), true);
-    assert.equal(calls[1].args.includes("--keep-vars"), false);
-    assert.equal(calls[1].args.includes("--tag"), true);
-    assert.equal(calls[1].args.includes("v1.2.3"), true);
-
-    assert.equal(calls[2].command, "corepack");
-    assert.deepEqual(
-      calls[2].args,
-      calls[1].args.filter((arg) => arg !== "--dry-run")
-    );
-    for (const call of calls.slice(1)) {
-      assert.equal(call.env?.CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_API_TOKEN);
-      assert.equal(call.env?.APP_BASE_URL, undefined);
-      for (const name of WORKER_DEPLOY_SECRET_NAMES) {
-        assert.equal(call.env?.[name], undefined);
-      }
-    }
-
-    const varBindings = calls[2].args.flatMap((arg, index, args) =>
-      arg === "--var" ? [args[index + 1]] : []
-    );
-    const expectedPublicVarBindings = [
-      `${DATABASE_CONNECTION_MODE_VAR}:${DATABASE_CONNECTION_MODE_HYPERDRIVE}`,
-      ...WORKER_DEPLOY_PUBLIC_VAR_NAMES.map((name) => `${name}:${env[name]}`),
-      `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:${env.CLERK_PUBLISHABLE_KEY}`
-    ];
-    assert.deepEqual(varBindings, expectedPublicVarBindings);
-    assert.equal(
-      varBindings.some((binding) =>
-        binding.startsWith("CLOUDFLARE_API_TOKEN:")
-      ),
-      false
-    );
-    assert.ok(secretsFilePath, "test must observe a secrets file path");
-    assert.equal(existsSync(secretsFilePath), false);
-    assert.ok(configFilePath, "test must observe a config file path");
-    assert.equal(existsSync(configFilePath), false);
-  } finally {
-    rmSync(tempBase, { force: true, recursive: true });
-  }
-});
-
-test("worker deploy secrets file writes raw dotenv values and rejects ambiguous characters", () => {
-  const content = secretsDotenvContent(workerDeployEnv());
-  assert.equal(content.includes('"'), false);
-  assert.equal(content.includes("CLERK_SECRET_KEY=sk_test_clerk"), true);
-  assert.throws(
-    () =>
-      secretsDotenvContent(
-        workerDeployEnv({
-          CLERK_SECRET_KEY: 'sk_test_"quoted"'
-        })
-      ),
-    /must not contain whitespace, quotes, or backslashes/
-  );
-  assert.throws(
-    () =>
-      secretsDotenvContent(
-        workerDeployEnv({
-          SMOKE_OR_CLEANUP_TOKEN: "token with space"
-        })
-      ),
-    /must not contain whitespace, quotes, or backslashes/
-  );
-});
-
-test("worker deploy command environments keep runtime secrets out of build and deploy subprocesses", () => {
-  const env = workerDeployEnv({
-    PATH: "/usr/bin",
-    HOME: "/tmp/agent-outbox-home"
-  });
-  const buildEnv = workerBuildEnvironment(env);
-  const deployEnv = wranglerDeployEnvironment(env);
-
-  for (const name of WORKER_DEPLOY_SECRET_NAMES) {
-    assert.equal(buildEnv[name], undefined);
-    assert.equal(deployEnv[name], undefined);
-  }
-  assert.equal(buildEnv.APP_BASE_URL, env.APP_BASE_URL);
-  assert.equal(buildEnv.CLERK_PUBLISHABLE_KEY, env.CLERK_PUBLISHABLE_KEY);
-  assert.equal(
-    buildEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
-    env.CLERK_PUBLISHABLE_KEY
-  );
-  assert.equal(deployEnv.CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_API_TOKEN);
-  assert.equal(deployEnv.APP_BASE_URL, undefined);
-});
-
-test("worker build subprocess gets Sentry upload config, never the deploy subprocess or Worker vars", () => {
-  const sentryUploadNames = [
-    "SENTRY_ORG",
-    "SENTRY_PROJECT",
-    "SENTRY_AUTH_TOKEN",
-    "AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD",
-    "AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH"
-  ];
-  const env = workerDeployEnv({
-    SENTRY_ORG: "conn-castle",
-    SENTRY_PROJECT: "agent-outbox",
-    SENTRY_AUTH_TOKEN: "sntrys_upload_token",
-    AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD: "1",
-    AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH: "1"
-  });
-  const buildEnv = workerBuildEnvironment(env);
-  const deployEnv = wranglerDeployEnvironment(env);
-
-  // The build subprocess needs the upload config plus the already-public
-  // release id so the Sentry plugin can create the release and upload maps.
-  for (const name of sentryUploadNames) {
-    assert.equal(buildEnv[name], env[name]);
-  }
-  assert.equal(buildEnv.SENTRY_RELEASE, env.SENTRY_RELEASE);
-
-  // The secret auth token must never reach the wrangler deploy subprocess...
-  for (const name of sentryUploadNames) {
-    assert.equal(deployEnv[name], undefined);
-  }
-
-  // ...nor become a Worker runtime --var binding.
-  const varBindings = buildWranglerDeployArgs(env, "/tmp/secrets").flatMap(
-    (arg, index, args) => (arg === "--var" ? [args[index + 1]] : [])
-  );
-  for (const name of sentryUploadNames) {
-    assert.equal(
-      varBindings.some((binding) => binding.startsWith(`${name}:`)),
-      false
-    );
-  }
-
-  // Absent by default: the passthrough must not fabricate empty values.
-  const buildEnvUnset = workerBuildEnvironment(workerDeployEnv());
-  for (const name of sentryUploadNames) {
-    assert.equal(buildEnvUnset[name], undefined);
-  }
-});
-
-test("worker deploy wrapper requires production config and appends optional analytics only when set", () => {
-  assert.deepEqual(
-    validateWorkerDeployEnvironment(
-      workerDeployEnv({
-        APP_ENV: "development",
-        APP_BASE_URL: "http://localhost:38000",
-        CLOUDFLARE_HYPERDRIVE_ID: undefined,
-        SENTRY_RELEASE: ""
-      })
-    ),
-    [
-      "CLOUDFLARE_HYPERDRIVE_ID is required for production Worker deploy",
-      "SENTRY_RELEASE is required for production Worker deploy",
-      "APP_ENV must be production for production Worker deploy",
-      "APP_BASE_URL must be https://app.agent-outbox.dev for production Worker deploy"
-    ]
-  );
-
-  const withoutAnalytics = buildWranglerDeployArgsWithConfig(
-    workerDeployEnv(),
-    "/tmp/worker-secrets.env",
-    "/tmp/wrangler.jsonc"
-  );
-  assert.deepEqual(withoutAnalytics.slice(0, 5), [
-    "exec",
-    "wrangler",
-    "deploy",
-    "--config",
-    "/tmp/wrangler.jsonc"
-  ]);
-  assert.equal(
-    withoutAnalytics.includes(
-      "NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:analytics-token"
-    ),
-    false
-  );
-  const withAnalytics = buildWranglerDeployArgs(
-    workerDeployEnv({
-      NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "analytics-token"
-    }),
-    "/tmp/worker-secrets.env"
-  );
-  assert.equal(
-    withAnalytics.includes(
-      "NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:analytics-token"
-    ),
-    true
-  );
-});
-
-test("worker deploy wrapper refuses local or non-production-workflow execution", () => {
-  assert.deepEqual(
-    validateWorkerDeployEnvironment(
-      workerDeployEnv({
-        GITHUB_ACTIONS: undefined,
-        GITHUB_REF: "refs/heads/feature/local-deploy",
-        GITHUB_WORKFLOW_REF:
-          "conn-castle/agent-outbox/.github/workflows/ci.yml@refs/heads/main"
-      })
-    ).slice(-3),
-    [
-      "Production Worker deploys must run in GitHub Actions.",
-      "Production Worker deploys must run from refs/heads/main.",
-      "Production Worker deploys must run from deploy-production.yml."
-    ]
-  );
-});
-
-test("worker deploy wrapper injects Hyperdrive binding into temporary Wrangler config", () => {
-  const config = JSON.parse(
-    wranglerConfigWithHyperdrive(
-      `{
-        "name": "agent-outbox",
-        "hyperdrive": [
-          { "binding": "OTHER_DATABASE", "id": "other-id" },
-          { "binding": "${DATABASE_HYPERDRIVE_BINDING}", "id": "old-id" }
-        ]
-      }`,
-      "new-hyperdrive-id"
-    )
-  );
-
-  assert.deepEqual(config.hyperdrive, [
-    { binding: "OTHER_DATABASE", id: "other-id" },
-    { binding: DATABASE_HYPERDRIVE_BINDING, id: "new-hyperdrive-id" }
-  ]);
-});
-
-test("Worker runtime database env prefers Hyperdrive and fails loud when required binding is absent", () => {
-  const envWithHyperdrive = {
-    DATABASE_APP_ROLE_URL: "postgres://pooler",
-    [DATABASE_HYPERDRIVE_BINDING]: {
-      connectionString: "postgres://hyperdrive"
-    },
-    [DATABASE_CONNECTION_MODE_VAR]: DATABASE_CONNECTION_MODE_HYPERDRIVE
-  };
-
-  assert.equal(
-    runtimeDatabaseConnectionString(envWithHyperdrive),
-    "postgres://hyperdrive"
-  );
-  assert.equal(
-    /** @type {{ DATABASE_APP_ROLE_URL: string }} */ (
-      runtimeDatabaseEnv(envWithHyperdrive)
-    ).DATABASE_APP_ROLE_URL,
-    "postgres://hyperdrive"
-  );
-
-  const missingBinding = {
-    DATABASE_APP_ROLE_URL: "postgres://pooler",
-    [DATABASE_CONNECTION_MODE_VAR]: DATABASE_CONNECTION_MODE_HYPERDRIVE
-  };
-  assert.equal(runtimeDatabaseConnectionString(missingBinding), undefined);
-  assert.equal(
-    /** @type {{ DATABASE_APP_ROLE_URL: string }} */ (
-      runtimeDatabaseEnv(missingBinding)
-    ).DATABASE_APP_ROLE_URL,
-    ""
-  );
-
-  assert.equal(
-    runtimeDatabaseConnectionString({
-      DATABASE_APP_ROLE_URL: "postgres://pooler"
-    }),
-    "postgres://pooler"
-  );
-});
-
 test("wrangler required secrets stay limited to true Worker secrets", () => {
   const wranglerConfig = readFileSync(
     new URL("../wrangler.jsonc", import.meta.url),
@@ -1600,7 +651,6 @@ test("wrangler required secrets stay limited to true Worker secrets", () => {
     ]
   );
 });
-
 test("validateMigrationReplayWorkflow requires raw Postgres-backed CI replay", () => {
   const validWorkflow = `
 jobs:
@@ -1804,7 +854,6 @@ jobs:
     );
   }
 });
-
 test("validatePolicyGatesWorkflow requires label-retriggered PR policy checks", () => {
   const validWorkflow = `
 name: Policy gates
@@ -1925,7 +974,6 @@ jobs:
     ]
   );
 });
-
 test("validateDatabaseTestCommand enforces the serialized root test command chain", () => {
   const validPackageJson = {
     scripts: {
@@ -2005,7 +1053,6 @@ test("validateDatabaseTestCommand enforces the serialized root test command chai
     ]
   );
 });
-
 test("validateWorkflowVersionPins rejects CI Node drift", () => {
   const failures = validateWorkflowVersionPins(
     {
@@ -2025,7 +1072,6 @@ test("validateWorkflowVersionPins rejects CI Node drift", () => {
     ".github/workflows/ci.yml node-version 26.1.0 must match toolchain.json 24.18.0"
   ]);
 });
-
 test("validateCommandsVersionPins rejects stale pinned documentation versions", () => {
   const failures = validateCommandsVersionPins(
     {
@@ -2047,7 +1093,6 @@ test("validateCommandsVersionPins rejects stale pinned documentation versions", 
     "COMMANDS.md Flyway 12.0.0 must match toolchain.json 12.10.0"
   ]);
 });
-
 test("validateCommandsVersionPins allows lower-bound Node prerequisites", () => {
   const failures = validateCommandsVersionPins(
     {
@@ -2065,7 +1110,6 @@ test("validateCommandsVersionPins allows lower-bound Node prerequisites", () => 
 
   assert.deepEqual(failures, []);
 });
-
 test("validateGoModuleTooling requires pinned Go module directives and dependencies", () => {
   const toolchain = {
     node: { version: "24.18.0", npm: "11.16.0" },
@@ -2133,7 +1177,6 @@ require (
     ["toolchain.json goTooling.cobra module/version is required"]
   );
 });
-
 test("validateGoReleaserTooling requires pinned package verification module", () => {
   const toolchain = {
     node: { version: "24.18.0", npm: "11.16.0" },
@@ -2224,7 +1267,6 @@ release:
     ]
   );
 });
-
 test("validateWorkflowGoChecks requires Go gate jobs in CI workflows", () => {
   const toolchain = {
     node: { version: "24.18.0", npm: "11.16.0" },
@@ -2315,14 +1357,12 @@ test("validateWorkflowGoChecks requires Go gate jobs in CI workflows", () => {
     ["toolchain.json goTooling.githubActionsSetupGo.version is required"]
   );
 });
-
 test("validateRequiredEnvExample allows optional local development names", () => {
   const template =
     "APP_ENV=development\nPORT=38000\nAPP_BASE_URL=http://localhost:38000\nPUBLIC_APP_BASE_URL=http://localhost:38000\nSUPABASE_PROJECT_REF=\nDATABASE_URL=\nDATABASE_APP_ROLE_URL=\nDATABASE_MIGRATION_URL=\nCLERK_SECRET_KEY=\nCLERK_PUBLISHABLE_KEY=\nSTRIPE_ACCOUNT_ID=\nSTRIPE_SECRET_KEY=\nSTRIPE_WEBHOOK_SECRET=\nSTRIPE_PAID_MONTHLY_PRICE_ID=\nSTRIPE_PAID_YEARLY_PRICE_ID=\nSTRIPE_BILLING_PORTAL_CONFIGURATION_ID=\nSENTRY_DSN=\nSENTRY_BROWSER_DSN=\nSENTRY_RELEASE=\nSENTRY_ORG=\nSENTRY_PROJECT=\nSENTRY_AUTH_TOKEN=\nAGENT_OUTBOX_SENTRY_RELEASE_UPLOAD=\nAGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH=\nNEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN=\nCALLER_KEY_HASH_SECRET=\nSMOKE_OR_CLEANUP_TOKEN=\nAWS_PROFILE=conn\nCLOUDFLARE_DNS_API_TOKEN=\nCLOUDFLARE_WAF_API_TOKEN=\nAGENT_OUTBOX_BASE_URL=\nAGENT_OUTBOX_CONFIG_PATH=\nAGENT_OUTBOX_CALLER=\n";
 
   assert.deepEqual(validateRequiredEnvExample(template), []);
 });
-
 test("validateRequiredEnvExample rejects missing and unknown names", () => {
   const failures = validateRequiredEnvExample(
     "APP_ENV=development\nAPP_BASE_URL=http://localhost:3000\nEXTRA_SECRET=\n"
@@ -2335,7 +1375,6 @@ test("validateRequiredEnvExample rejects missing and unknown names", () => {
     failures.includes(".env.example contains unknown name EXTRA_SECRET")
   );
 });
-
 test("validateRuntimeProofScope rejects runtime schema mutation and later-phase routes", () => {
   const failures = validateRuntimeProofScope({
     "app/human/queue/page.tsx": "export default function Queue() {}",
@@ -2348,7 +1387,6 @@ test("validateRuntimeProofScope rejects runtime schema mutation and later-phase 
     "src/server/schema.ts contains out-of-scope token: create table"
   ]);
 });
-
 test("validateRuntimeProofScope allows implemented caller API route paths", () => {
   const failures = validateRuntimeProofScope({
     "app/api/input/send/route.ts": "export async function POST() {}",
@@ -2401,7 +1439,6 @@ test("validateRuntimeProofScope allows implemented caller API route paths", () =
 
   assert.deepEqual(failures, []);
 });
-
 test("validateRuntimeProofScope allows Phase 3 product foundation identifiers", () => {
   const failures = validateRuntimeProofScope({
     "src/server/accounting.ts":
@@ -2410,7 +1447,6 @@ test("validateRuntimeProofScope allows Phase 3 product foundation identifiers", 
 
   assert.deepEqual(failures, []);
 });
-
 test("validateRuntimeProofScope rejects later-phase storage and source drift", () => {
   const failures = validateRuntimeProofScope({
     "app/api/account/portal/route.ts": "export async function POST() {}",
@@ -2445,7 +1481,6 @@ test("validateRuntimeProofScope rejects later-phase storage and source drift", (
     "src/server/source.ts contains out-of-scope token: classifier"
   ]);
 });
-
 test("validateRuntimeProofScope allows current product boundary copy", () => {
   assert.deepEqual(
     validateRuntimeProofScope({
@@ -2455,7 +1490,6 @@ test("validateRuntimeProofScope allows current product boundary copy", () => {
     []
   );
 });
-
 test("validatePhase3FoundationSourceContents requires Phase 3 modules and markers", () => {
   assert.deepEqual(
     validatePhase3FoundationSourceContents(phase3FoundationSourceContents),
@@ -2467,7 +1501,6 @@ test("validatePhase3FoundationSourceContents requires Phase 3 modules and marker
     )
   );
 });
-
 test("validatePhase4ContractDocContents requires contract docs and markers", () => {
   assert.deepEqual(
     validatePhase4ContractDocContents({
@@ -2509,7 +1542,6 @@ test("validatePhase4ContractDocContents requires contract docs and markers", () 
     )
   );
 });
-
 test("documented HTTP route markers require exact http code-block method paths", () => {
   assert.deepEqual(
     extractDocumentedHttpContractRouteMarkers(`
@@ -2534,7 +1566,6 @@ GET /api/output/check
     )
   );
 });
-
 test("implemented HTTP route markers derive from caller-facing route files", () => {
   assert.deepEqual(
     extractImplementedHttpContractRouteMarkers({
@@ -2555,7 +1586,6 @@ test("implemented HTTP route markers derive from caller-facing route files", () 
     ]
   );
 });
-
 test("worker cron schedule stays aligned with runtime scheduled canary", () => {
   const wranglerConfig = readFileSync(
     new URL("../wrangler.jsonc", import.meta.url),
@@ -2596,7 +1626,6 @@ test("worker cron schedule stays aligned with runtime scheduled canary", () => {
     ]
   );
 });
-
 test("browser fixture run ids are safe for shell and Docker interpolation", () => {
   assert.equal(validateBrowserFixtureRunId("run_2026-08.12"), "run_2026-08.12");
   for (const invalid of [
@@ -2612,7 +1641,6 @@ test("browser fixture run ids are safe for shell and Docker interpolation", () =
     );
   }
 });
-
 test("validateMigrationFilenames enforces Flyway versioned SQL names", () => {
   assert.deepEqual(
     validateMigrationFilenames([
@@ -2694,7 +1722,6 @@ test("validateMigrationFilenames enforces Flyway versioned SQL names", () => {
     ]
   );
 });
-
 test("flywayConnectionFromDatabaseUrl converts PostgreSQL URLs without leaking credentials into JDBC URLs", () => {
   withProcessEnv({ FLYWAY_USER: undefined, FLYWAY_PASSWORD: undefined }, () => {
     assert.deepEqual(
@@ -2710,7 +1737,6 @@ test("flywayConnectionFromDatabaseUrl converts PostgreSQL URLs without leaking c
     );
   });
 });
-
 test("flyway validation scopes pending migration ignores to pre-migrate replay", () => {
   const connection = {
     jdbcUrl: "jdbc:postgresql://example.test:5432/agent_outbox",
@@ -2756,7 +1782,6 @@ test("flyway validation scopes pending migration ignores to pre-migrate replay",
     }
   );
 });
-
 test("validateCallerBearer accepts only the configured smoke token", () => {
   assert.deepEqual(validateCallerBearer(null, "smoke-token"), {
     ok: false,
@@ -2781,7 +1806,6 @@ test("validateCallerBearer accepts only the configured smoke token", () => {
     }
   );
 });
-
 test("caller API key helpers create display-once material and lookup metadata", () => {
   withProcessEnv({ CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE }, () => {
     const material = generateCallerApiKeyMaterial();
@@ -2840,7 +1864,6 @@ test("caller API key helpers create display-once material and lookup metadata", 
     );
   });
 });
-
 test("caller key digest fails loud when the server hash secret is missing", () => {
   withProcessEnv({ CALLER_KEY_HASH_SECRET: undefined }, () => {
     assert.throws(
@@ -2854,7 +1877,6 @@ test("caller key digest fails loud when the server hash secret is missing", () =
     );
   });
 });
-
 test("caller key digest rejects a hash secret weaker than the minimum length", () => {
   withProcessEnv({ CALLER_KEY_HASH_SECRET: "short-secret" }, () => {
     assert.throws(
@@ -2868,7 +1890,6 @@ test("caller key digest rejects a hash secret weaker than the minimum length", (
     );
   });
 });
-
 test("authorization helpers deny cross-account human and caller access", () => {
   assert.deepEqual(
     authorizeAccountMembership(
@@ -2939,7 +1960,6 @@ test("authorization helpers deny cross-account human and caller access", () => {
     }
   );
 });
-
 test("limits metadata uses explicit disabled states and maps self-hosted to paid without Stripe state", () => {
   const freeStatus = accountLimitStatusMetadata("hosted-free");
   const paidStatus = accountLimitStatusMetadata("hosted-paid");
@@ -3010,7 +2030,6 @@ test("limits metadata uses explicit disabled states and maps self-hosted to paid
     ]
   );
 });
-
 test("limit error and active block metadata derive reason fields from the limits catalog", () => {
   assert.deepEqual(
     limitErrorMetadata(
@@ -3145,7 +2164,6 @@ test("limit error and active block metadata derive reason fields from the limits
     /does not apply/
   );
 });
-
 test("accounting helpers keep audit data content-safe and use quota windows for flow limits", () => {
   const unsafeAuditInput = /** @type {any} */ ({
     eventType: "input_answered",
@@ -3241,7 +2259,6 @@ test("accounting helpers keep audit data content-safe and use quota windows for 
     /fileBytes must be a non-negative safe integer/
   );
 });
-
 test("cleanup statement builders target lifecycle database functions", () => {
   const duplicateAck = duplicateAcknowledgementLookupStatement(
     { accountId: "account-123", callerId: "caller-123" },
@@ -3407,7 +2424,6 @@ test("cleanup statement builders target lifecycle database functions", () => {
     }
   );
 });
-
 test("scheduled cleanup runs global and account-scoped maintenance under cleanup context", async () => {
   /** @type {import("../src/server/database.ts").ProductTransactionContext[]} */
   const contexts = [];
@@ -3537,7 +2553,6 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     [expiredBillingGraceDowngradeStatement(32_000_000, now)]
   );
 });
-
 test("scheduled cleanup continues account maintenance after one account fails", async () => {
   /** @type {import("../src/server/database.ts").ProductTransactionContext[]} */
   const contexts = [];
@@ -3618,7 +2633,6 @@ test("scheduled cleanup continues account maintenance after one account fails", 
     }
   ]);
 });
-
 test("safeLogEvent strips request bodies and arbitrary caller-controlled fields", () => {
   /** @type {import("../src/server/logging.ts").RuntimeLogEvent & { request_body: string, caller_display_name: string }} */
   const unsafeEvent = {
@@ -3678,7 +2692,6 @@ test("safeLogEvent strips request bodies and arbitrary caller-controlled fields"
     "Error"
   );
 });
-
 test("runtimeConfigStatus reports missing provider values without exposing values", () => {
   withProcessEnv(
     {
@@ -3727,7 +2740,6 @@ test("runtimeConfigStatus reports missing provider values without exposing value
     }
   );
 });
-
 test("absoluteHttpOrigin accepts only an origin-safe HTTP(S) URL", () => {
   assert.equal(
     absoluteHttpOrigin("https://app.example.test"),
@@ -3749,7 +2761,6 @@ test("absoluteHttpOrigin accepts only an origin-safe HTTP(S) URL", () => {
     assert.equal(absoluteHttpOrigin(invalid), null);
   }
 });
-
 test("application security headers add HSTS only in production", () => {
   const development = applicationSecurityHeaders("development");
   assert.deepEqual(development, [
@@ -3785,7 +2796,6 @@ test("application security headers add HSTS only in production", () => {
     "Next.js must apply the security-header policy to every application path"
   );
 });
-
 test("runtime canary keeps configuration detail behind smoke bearer auth", () => {
   withProcessEnv(
     {
@@ -3860,7 +2870,6 @@ test("runtime canary keeps configuration detail behind smoke bearer auth", () =>
     }
   );
 });
-
 test("sentryCaptureEnabled only allows production runtime capture", () => {
   withProcessEnv(
     {
@@ -3909,7 +2918,6 @@ test("sentryCaptureEnabled only allows production runtime capture", () => {
     () => assert.equal(sentryCaptureEnabled(), false)
   );
 });
-
 test("database canary statements keep transaction context scoped to one transaction", () => {
   assert.deepEqual(databaseCanaryStatements("request-123"), [
     { sql: "begin" },
@@ -3927,7 +2935,6 @@ test("database canary statements keep transaction context scoped to one transact
     { sql: "rollback" }
   ]);
 });
-
 test("phase 3 product tables have row level security enabled and forced", () => {
   for (const table of phase3ProductTables) {
     assert.match(
@@ -3942,7 +2949,6 @@ test("phase 3 product tables have row level security enabled and forced", () => 
     );
   }
 });
-
 test("phase 3 migration keeps audit events append-only for the app role", () => {
   const auditGrantStatements = initialMigration
     .split(";")
@@ -3963,7 +2969,6 @@ test("phase 3 migration keeps audit events append-only for the app role", () => 
     "grant select, insert on public.agent_outbox_audit_events to agent_outbox_app"
   ]);
 });
-
 test("phase 3 migration uses canonical sources for usage and limit state", () => {
   assert.doesNotMatch(initialMigration, /agent_outbox_account_current_usage/);
   assert.doesNotMatch(initialMigration, /agent_outbox_usage_rollups_daily/);
@@ -3971,7 +2976,6 @@ test("phase 3 migration uses canonical sources for usage and limit state", () =>
   assert.match(initialMigration, /limit_reason_code text not null/);
   assert.doesNotMatch(initialMigration, /limit_name text not null\s+check/is);
 });
-
 test("phase 3 migration defines account-scoped cleanup primitives", () => {
   for (const functionName of [
     "agent_outbox_delete_output_result",
@@ -4024,7 +3028,6 @@ test("phase 3 migration defines account-scoped cleanup primitives", () => {
     /with file_input_targets as \([\s\S]*for update of i skip locked/
   );
 });
-
 test("output operation auth migration narrows destructive SQL functions", () => {
   assert.match(
     outputOperationAuthMatrixMigration,
@@ -4047,7 +3050,6 @@ test("output operation auth migration narrows destructive SQL functions", () => 
     /agent_outbox_context_allows_caller\(o\.caller_id\)/
   );
 });
-
 test("phase 3 migration keeps representative policies tied to transaction context", () => {
   assert.match(initialMigration, /agent_outbox_context_account_id\(\)/);
   assert.match(initialMigration, /agent_outbox_context_caller_id\(\)/);
@@ -4090,7 +3092,6 @@ test("phase 3 migration keeps representative policies tied to transaction contex
     /create policy agent_outbox_callers_account_context/
   );
 });
-
 test("phase 3 migration keeps output and file ownership tied to parents", () => {
   assert.match(
     initialMigration,
@@ -4130,7 +3131,6 @@ test("phase 3 migration keeps output and file ownership tied to parents", () => 
     /constraint agent_outbox_output_files_one_row_per_result\s+unique \(output_result_id\)/s
   );
 });
-
 test("scheduled cleanup account targets are cleanup-surface only", () => {
   assert.match(
     scheduledCleanupAccountTargetsMigration,
@@ -4158,7 +3158,6 @@ test("scheduled cleanup account targets are cleanup-surface only", () => {
     /grant execute on function public\.agent_outbox_cleanup_account_targets\(\) to agent_outbox_app;/
   );
 });
-
 test("function auth guards fail closed when transaction context is unset", () => {
   for (const functionName of [
     "agent_outbox_bootstrap_clerk_human",
@@ -4176,7 +3175,6 @@ test("function auth guards fail closed when transaction context is unset", () =>
     );
   }
 });
-
 test("never-activated caller prune migration is cleanup-scoped and preserves history", () => {
   assert.match(
     neverActivatedCallerPruneMigration,
@@ -4232,7 +3230,6 @@ test("never-activated caller prune migration is cleanup-scoped and preserves his
   assert.match(neverActivatedCallerPruneMigration, /'authenticated'/);
   assert.match(neverActivatedCallerPruneMigration, /'service_role'/);
 });
-
 test("phase 3 migration restricts app function execution to the app role", () => {
   for (const functionSignature of [
     "agent_outbox_context_account_id()",
@@ -4278,7 +3275,6 @@ test("phase 3 migration restricts app function execution to the app role", () =>
   assert.match(initialMigration, /'authenticated'/);
   assert.match(initialMigration, /'service_role'/);
 });
-
 test("initial migration keeps the app role restricted before schema access", () => {
   assert.match(initialMigration, /create role agent_outbox_app/);
   assert.match(initialMigration, /nosuperuser/);
@@ -4310,7 +3306,6 @@ test("initial migration keeps the app role restricted before schema access", () 
     /create trigger agent_outbox_callers_audit_id_immutable/
   );
 });
-
 test(
   "completed Stripe webhook claims serialize duplicates and rollback permits retry",
   {
@@ -4517,7 +3512,6 @@ test(
     }
   }
 );
-
 test(
   "Stripe webhook expand migration rejects each contradictory old-row shape without durable mutation",
   {
@@ -4583,7 +3577,6 @@ test(
     }
   }
 );
-
 test(
   "Stripe webhook ordering migration backfills existing account projections",
   {
@@ -4715,7 +3708,6 @@ test(
     }
   }
 );
-
 test(
   "Stripe webhook projections retain newer account state while recording stale distinct events",
   {
@@ -4972,7 +3964,6 @@ test(
     }
   }
 );
-
 test(
   "phase 3 local database enforces representative policies and shared cleanup",
   {
@@ -7411,7 +6402,6 @@ test(
     }
   }
 );
-
 test("scheduled canary ignores invalid scheduled timestamps", () => {
   const originalLog = console.log;
   console.log = () => {};

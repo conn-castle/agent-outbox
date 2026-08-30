@@ -408,6 +408,21 @@ Worker bundle, custom domain route config, disabled workers.dev route, cron
 config, observability config, and static assets without uploading or mutating
 Cloudflare state.
 
+- Apply Worker routes and cron triggers without an application release
+
+```bash
+corepack pnpm exec wrangler triggers deploy --name agent-outbox --dry-run --env-file /dev/null
+corepack pnpm exec wrangler triggers deploy --name agent-outbox --env-file /dev/null
+```
+
+Run from: repo root. Prerequisites: an operator-controlled environment with the
+production Worker deploy token mapped to `CLOUDFLARE_API_TOKEN`. Notes: This
+experimental Wrangler command applies `wrangler.jsonc` routes/domains and cron
+triggers. Application releases using `wrangler versions upload` do not apply
+those settings; the numbered-release compare-triggers gate fails until this
+operator procedure has been applied. Full procedure:
+[release runbook](../ops/release.md#apply-worker-routes-and-cron-triggers).
+
 - Check or reconcile the always-on client-events edge rate limit
 
 ```bash
@@ -483,33 +498,32 @@ Run from: repo root Prerequisites: `gh` authenticated to the repository; the
 candidate merged to `main`; `package.json` containing a new stable version other
 than `0.0.0`; explicit owner approval; and the protected GitHub `production`
 environment fully configured. Notes: External write. GitHub Actions reruns the
-exact-SHA release gate, prepares an unpublished exact-candidate draft with
-byte-verified CLI assets, captures and verifies the current rollback target,
-builds/dry-runs/deploys the Worker, verifies the candidate SHA is live, and only
-then publishes the numbered tag and GitHub Release. Any failure after deployment
-begins but before publication is proven restores the previous Worker. Failed
-post-publication Homebrew distribution is retried independently.
-The underlying `worker:deploy` script rejects execution outside the designated
-GitHub Actions workflow.
+exact-SHA release gate, prepares an owned unpublished draft with byte-verified
+CLI assets, captures the current rollback target, uploads an inactive Worker
+version, applies forward-only migrations, smokes the candidate at 0% through a
+production-hostname version override, promotes it, and publishes the GitHub
+release by ID. Any proven pre-commit failure restores the previous Worker to
+100% and deletes only that run's owned `prepared` draft. Failed post-publication
+Homebrew distribution is retried independently. Worker upload and traffic
+commands reject execution outside the designated GitHub Actions workflows.
 
-- Repair an already-deployed unpublished release from its certified artifact
+- Reconcile an abandoned pre-commit production release
 
 ```bash
-gh workflow run repair-production-release.yml --ref main \
-  -f source_run_id=<failed-production-run-id> \
+gh workflow run reconcile-production-release.yml --ref main \
   -f release_tag=v<version> \
   -f candidate_sha=<full-certified-sha>
 ```
 
 Run from: repo root Prerequisites: `gh` authenticated to the repository;
-explicit owner approval; the failed original production run still retaining
-its exact certified artifact; every original certification, build, and deploy
-job green; the original finalizer red; and production still serving the exact
-candidate. Notes: External write. The protected workflow reuses and verifies
-the original bytes, reconciles the draft and assets without overwriting a
-conflict, smoke-tests the live candidate twice, publishes the release, verifies
-public downloads, and refreshes the Homebrew tap pull request. It never rebuilds,
-redeploys, migrates, or creates/moves a tag directly.
+explicit owner approval. Notes: External write. The protected workflow uses the
+same reconciler as deploy-job cleanup. It derives identities from the owned
+draft marker and Cloudflare, and from observed live prior traffic only when a
+pre-persistence `prepared` draft meets the live-state invariants. It validates
+any optional inputs against that state, then proves committed, retries a
+`publishing` draft by ID, restores prior@100 and deletes only an owned
+`prepared` draft after proving traffic, prior SHA, tag absence, and deletion,
+or holds without mutation. It never deletes published releases or orphan tags.
 
 - Dispatch a manual rollback to a previously tagged release
 

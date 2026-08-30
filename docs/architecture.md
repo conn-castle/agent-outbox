@@ -44,15 +44,15 @@ limits, billing, and maintenance jobs should stay separable.
 
 Production runs on Cloudflare Workers/OpenNext against production service
 resources. There is no persistent staging environment yet; the protected
-production workflow instead certifies the exact `main` SHA, verifies the live
-deployment before numbering the release, and automatically restores the prior
-Worker if any failure occurs after deployment begins but before the prepared
-GitHub Release is published. Draft metadata and byte-verified CLI assets are
-prepared before production changes; publication is the transaction commit point.
-An exceptional protected repair can finish an already-deployed unpublished
-candidate only from the failed run's unexpired certified artifact and only while
-production still serves that exact candidate; it cannot rebuild or redeploy the
-release.
+production workflow instead certifies the exact `main` SHA, prepares an owned
+GitHub draft with byte-verified CLI assets, uploads an inactive Worker version,
+applies forward-only migrations, smokes the candidate at 0% through a version
+override on the production hostname, promotes it, and publishes the draft by
+release ID. Publication of that release ID plus the numbered tag is the
+transaction commit point. A proven pre-commit failure restores the previous
+Worker to 100% and deletes only the exact-owned `prepared` draft. A published
+release is immutable. Manual reconciliation, not a repair publisher, is the
+operator path for abandoned transactions.
 
 ## System Contract Ownership
 
