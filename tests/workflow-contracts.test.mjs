@@ -2,37 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { assertNoForbiddenWorkflowCommands } from "../scripts/foundation/ci-workflows.mjs";
 import {
-  assertNoForbiddenWorkflowCommands,
   validateAbandonedReleaseDetectionWorkflow,
   validateProductionDeployWorkflow,
   validateProductionReconciliationWorkflow,
   validateProductionRollbackWorkflow
-} from "../scripts/foundation.mjs";
-
-test("workflow guard rejects deploy and publish commands", () => {
-  const failures = assertNoForbiddenWorkflowCommands({
-    ".github/workflows/release-check.yml":
-      "run: wrangler deploy\nrun: supabase migration up --linked"
-  });
-
-  assert.deepEqual(failures, [
-    ".github/workflows/release-check.yml contains forbidden command: wrangler deploy",
-    ".github/workflows/release-check.yml contains forbidden command: supabase migration"
-  ]);
-  assert.deepEqual(
-    assertNoForbiddenWorkflowCommands({
-      ".github/workflows/deploy-production.yml":
-        "run: gh release create v1.0.0",
-      ".github/workflows/reconcile-production-release.yml":
-        "run: gh release create v1.0.0"
-    }),
-    [
-      ".github/workflows/deploy-production.yml contains forbidden command: gh release create",
-      ".github/workflows/reconcile-production-release.yml contains forbidden command: gh release create"
-    ]
-  );
-});
+} from "../scripts/release/workflow-contract.mjs";
 
 test("production deploy workflow guard accepts only the manual deploy contract", () => {
   const deployWorkflow = readFileSync(

@@ -58,6 +58,7 @@ import {
   sentryCaptureEnabled,
   sentryRuntimeInitOptions
 } from "../src/server/sentry.ts";
+import { withProcessEnv } from "./helpers/process-env.mjs";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -69,68 +70,6 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  *   log: Record<string, unknown>
  * }} RuntimeFailureReporterForTest
  */
-
-/**
- * @template T
- * @param {Record<string, string | undefined>} values
- * @param {() => T} callback
- * @returns {T}
- */
-function withProcessEnv(values, callback) {
-  const previous = new Map(
-    Object.keys(values).map((name) => [name, process.env[name]])
-  );
-
-  try {
-    for (const [name, value] of Object.entries(values)) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = value;
-      }
-    }
-    return callback();
-  } finally {
-    for (const [name, value] of previous) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = value;
-      }
-    }
-  }
-}
-
-/**
- * @template T
- * @param {Record<string, string | undefined>} values
- * @param {() => Promise<T>} callback
- * @returns {Promise<T>}
- */
-async function withProcessEnvAsync(values, callback) {
-  const previous = new Map(
-    Object.keys(values).map((name) => [name, process.env[name]])
-  );
-
-  try {
-    for (const [name, value] of Object.entries(values)) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = value;
-      }
-    }
-    return await callback();
-  } finally {
-    for (const [name, value] of previous) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = value;
-      }
-    }
-  }
-}
 
 /**
  * @param {() => Promise<void>} callback
@@ -1182,7 +1121,7 @@ test("human answer transaction failures share error id across structured log and
   const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
   const { createHumanAnswer: createAnswer } =
     loadHumanAnswerModuleForTest(reportRuntimeFailure);
-  const logs = await withProcessEnvAsync(
+  const logs = await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -1277,7 +1216,7 @@ test("human answer undo transaction failures share error id across structured lo
   const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
   const { humanAnswerUndoTransactionFailure: undoFailure } =
     loadHumanAnswerModuleForTest(reportRuntimeFailure);
-  const logs = await withProcessEnvAsync(
+  const logs = await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -1829,7 +1768,7 @@ test("caller approval failure reporter emits structured log and Sentry context",
       })
     );
 
-  const logs = await withProcessEnvAsync(
+  const logs = await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -1910,7 +1849,7 @@ test("runtime failures set a Sentry fingerprint from safe discriminators", async
   };
   const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
 
-  await withProcessEnvAsync(
+  await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -2024,7 +1963,7 @@ test("connect terminal setup state reports transaction exceptions", async () => 
       })
     );
 
-  const logs = await withProcessEnvAsync(
+  const logs = await withProcessEnv(
     {
       APP_ENV: "production",
       DATABASE_APP_ROLE_URL: "postgresql://connect-terminal-test",
@@ -2345,7 +2284,7 @@ test("billing webhook processing failures share one error id across structured l
     startedAtMs: Date.now()
   };
 
-  const logs = await withProcessEnvAsync(
+  const logs = await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -2515,7 +2454,7 @@ test("billing checkout and portal Stripe failures share error ids across structu
     },
     webhooks: { constructEvent() {} }
   });
-  const logs = await withProcessEnvAsync(
+  const logs = await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -2670,7 +2609,7 @@ test("billing account-lookup failures label the flow operation and redact secret
       )
     });
 
-  const logs = await withProcessEnvAsync(
+  const logs = await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -2763,7 +2702,7 @@ test("billing account-lookup failures label the flow operation and redact secret
 
   // Prove the operation label follows the explicit flow, not the request route:
   // a checkout flow reported against the portal route still labels checkout.
-  const mismatchedLogs = await withProcessEnvAsync(
+  const mismatchedLogs = await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -2828,7 +2767,7 @@ test("billing session resolution failures share billing route error ids", async 
   const { resolveHumanAccountSession } =
     loadHumanSessionModuleForTest(reportRuntimeFailure);
 
-  const logs = await withProcessEnvAsync(
+  const logs = await withProcessEnv(
     {
       APP_ENV: "production",
       DATABASE_APP_ROLE_URL: "postgresql://billing-session-test",
@@ -2941,7 +2880,7 @@ test("input queue and output file catch paths share error ids across logs and Se
   outputContext.requestId = "req-output-file-observability";
   outputContext.correlationId = "corr-output-file-observability";
 
-  const logs = await withProcessEnvAsync(
+  const logs = await withProcessEnv(
     {
       APP_ENV: "production",
       DATABASE_APP_ROLE_URL: "postgresql://observability-test",
@@ -3625,7 +3564,7 @@ test("runtime canary failure routes include server request ids in reports", asyn
       })
     );
 
-  await withProcessEnvAsync(
+  await withProcessEnv(
     {
       APP_ENV: "development",
       DATABASE_APP_ROLE_URL: "postgresql://runtime-canary-test",
@@ -3730,7 +3669,7 @@ test("runtime sentry canary fails loud when production release metadata is missi
     })
   );
 
-  await withProcessEnvAsync(
+  await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -3809,7 +3748,7 @@ test("runtime sentry canary reports configured capture while smoke suppresses em
     })
   );
 
-  await withProcessEnvAsync(
+  await withProcessEnv(
     {
       APP_ENV: "production",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",

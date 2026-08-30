@@ -17,6 +17,7 @@ import {
   handleRotateDeviceStartRequest,
   handleRotateExchangeRequest
 } from "../src/server/caller-credential-operations.ts";
+import { withProcessEnv } from "./helpers/process-env.mjs";
 
 const HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
 const ACCOUNT_ID = "00000000-0000-4000-8000-000000000001";
@@ -33,37 +34,6 @@ const TEST_IP = "203.0.113.55";
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
  * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
  */
-
-/**
- * @template TResult
- * @param {Record<string, string | undefined>} values
- * @param {() => TResult | Promise<TResult>} callback
- * @returns {Promise<TResult>}
- */
-async function withProcessEnv(values, callback) {
-  const previous = new Map(
-    Object.keys(values).map((name) => [name, process.env[name]])
-  );
-
-  try {
-    for (const [name, value] of Object.entries(values)) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = value;
-      }
-    }
-    return await callback();
-  } finally {
-    for (const [name, value] of previous) {
-      if (value === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = value;
-      }
-    }
-  }
-}
 
 /**
  * @param {(statement: TransactionContextStatement, callNumber: number) => import("pg").QueryResultRow[]} resolver
