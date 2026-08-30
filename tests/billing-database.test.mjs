@@ -8,6 +8,7 @@ import { runProductTransaction } from "../src/server/database.ts";
 import {
   DATABASE_POLICY_VERIFICATION_SKIP,
   phase3DatabaseVerificationUrl as resolvePhase3DatabaseVerificationUrl,
+  preserveBodyErrorDuringTeardown,
   resetRoleAndRollback,
   teardownAttempt
 } from "./helpers/database.mjs";
@@ -60,6 +61,67 @@ async function waitForDatabaseLock(observer, backendPid) {
   }
   throw new Error(`Backend ${backendPid} did not enter a database lock wait.`);
 }
+
+test("preserveBodyErrorDuringTeardown rethrows the body error after teardown succeeds", async () => {
+  const bodyError = new Error("body failed");
+  /** @type {string[]} */
+  const order = [];
+  await assert.rejects(
+    preserveBodyErrorDuringTeardown(
+      bodyError,
+      async () => {
+        order.push("teardown");
+      },
+      "Stripe concurrency test and teardown both failed."
+    ),
+    bodyError
+  );
+  assert.deepEqual(order, ["teardown"]);
+});
+
+test("preserveBodyErrorDuringTeardown throws teardown error when the body succeeded", async () => {
+  const teardownError = new AggregateError(
+    [new Error("cleanup")],
+    "Stripe concurrency teardown failed."
+  );
+  await assert.rejects(
+    preserveBodyErrorDuringTeardown(
+      undefined,
+      async () => {
+        throw teardownError;
+      },
+      "Stripe concurrency test and teardown both failed."
+    ),
+    teardownError
+  );
+});
+
+test("preserveBodyErrorDuringTeardown prefers the body error in a combined AggregateError", async () => {
+  const bodyError = new Error("body failed");
+  const teardownError = new AggregateError(
+    [new Error("cleanup")],
+    "Stripe concurrency teardown failed."
+  );
+  try {
+    await preserveBodyErrorDuringTeardown(
+      bodyError,
+      async () => {
+        throw teardownError;
+      },
+      "Stripe concurrency test and teardown both failed."
+    );
+    assert.fail("expected combined teardown error");
+  } catch (error) {
+    assert.equal(error instanceof AggregateError, true);
+    const combined = /** @type {AggregateError} */ (error);
+    assert.equal(
+      combined.message,
+      "Stripe concurrency test and teardown both failed."
+    );
+    assert.deepEqual(combined.errors, [bodyError, teardownError]);
+    assert.equal(combined.cause, bodyError);
+  }
+});
 
 test(
   "completed Stripe webhook claims serialize duplicates and rollback permits retry",
@@ -216,54 +278,50 @@ test(
     } catch (error) {
       bodyError = error;
     } finally {
-      /** @type {Error[]} */
-      const teardownErrors = [];
-      const attempt = teardownAttempt(
-        teardownErrors,
-        "Stripe concurrency teardown failed"
-      );
-
-      await attempt("first transaction reset", () =>
-        resetRoleAndRollback(first)
-      );
-      const pendingDuplicate = duplicateTransaction;
-      if (pendingDuplicate) {
-        await attempt("duplicate transaction settlement", () =>
-          pendingDuplicate.then(() => undefined)
-        );
-      }
-      await attempt("duplicate transaction reset", () =>
-        resetRoleAndRollback(duplicate)
-      );
-      await attempt("cleanup timeout configuration", () =>
-        observer.query("set statement_timeout = '5s'")
-      );
-      await attempt("test row cleanup", () =>
-        observer.query(
-          "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = any($1::text[])",
-          [[eventId, failedEventId, rollbackCompatibleEventId]]
-        )
-      );
-      await attempt("first client close", () => first.end());
-      await attempt("duplicate client close", () => duplicate.end());
-      await attempt("observer client close", () => observer.end());
-
-      if (teardownErrors.length > 0) {
-        const teardownError = new AggregateError(
-          teardownErrors,
-          "Stripe concurrency teardown failed."
-        );
-        if (bodyError !== undefined) {
-          throw new AggregateError(
-            [bodyError, teardownError],
-            "Stripe concurrency test and teardown both failed."
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          /** @type {Error[]} */
+          const teardownErrors = [];
+          const attempt = teardownAttempt(
+            teardownErrors,
+            "Stripe concurrency teardown failed"
           );
-        }
-        throw teardownError;
-      }
-      if (bodyError !== undefined) {
-        throw bodyError;
-      }
+
+          await attempt("first transaction reset", () =>
+            resetRoleAndRollback(first)
+          );
+          const pendingDuplicate = duplicateTransaction;
+          if (pendingDuplicate) {
+            await attempt("duplicate transaction settlement", () =>
+              pendingDuplicate.then(() => undefined)
+            );
+          }
+          await attempt("duplicate transaction reset", () =>
+            resetRoleAndRollback(duplicate)
+          );
+          await attempt("cleanup timeout configuration", () =>
+            observer.query("set statement_timeout = '5s'")
+          );
+          await attempt("test row cleanup", () =>
+            observer.query(
+              "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = any($1::text[])",
+              [[eventId, failedEventId, rollbackCompatibleEventId]]
+            )
+          );
+          await attempt("first client close", () => first.end());
+          await attempt("duplicate client close", () => duplicate.end());
+          await attempt("observer client close", () => observer.end());
+
+          if (teardownErrors.length > 0) {
+            throw new AggregateError(
+              teardownErrors,
+              "Stripe concurrency teardown failed."
+            );
+          }
+        },
+        "Stripe concurrency test and teardown both failed."
+      );
     }
   }
 );
@@ -668,57 +726,53 @@ test(
     } catch (error) {
       bodyError = error;
     } finally {
-      /** @type {Error[]} */
-      const teardownErrors = [];
-      const attempt = teardownAttempt(
-        teardownErrors,
-        "Stripe ordering teardown failed"
-      );
-      releaseConcurrentEarlier();
-      const pendingConcurrentEarlier = concurrentEarlierProcessing;
-      if (pendingConcurrentEarlier) {
-        await attempt("concurrent earlier event settlement", () =>
-          pendingConcurrentEarlier.then(() => undefined)
-        );
-      }
-      await attempt("Stripe ordering ledger cleanup", () =>
-        client.query(
-          "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = any($1::text[])",
-          [
-            [
-              newerEventId,
-              staleEventId,
-              equalEventId,
-              concurrentEarlierEventId,
-              concurrentLaterEventId
-            ]
-          ]
-        )
-      );
-      await attempt("Stripe ordering account cleanup", () =>
-        client.query(
-          "delete from public.agent_outbox_accounts where account_id = $1",
-          [accountId]
-        )
-      );
-      await attempt("Stripe ordering client close", () => client.end());
-
-      if (teardownErrors.length > 0) {
-        const teardownError = new AggregateError(
-          teardownErrors,
-          "Stripe ordering teardown failed."
-        );
-        if (bodyError !== undefined) {
-          throw new AggregateError(
-            [bodyError, teardownError],
-            "Stripe ordering test and teardown both failed."
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          /** @type {Error[]} */
+          const teardownErrors = [];
+          const attempt = teardownAttempt(
+            teardownErrors,
+            "Stripe ordering teardown failed"
           );
-        }
-        throw teardownError;
-      }
-      if (bodyError !== undefined) {
-        throw bodyError;
-      }
+          releaseConcurrentEarlier();
+          const pendingConcurrentEarlier = concurrentEarlierProcessing;
+          if (pendingConcurrentEarlier) {
+            await attempt("concurrent earlier event settlement", () =>
+              pendingConcurrentEarlier.then(() => undefined)
+            );
+          }
+          await attempt("Stripe ordering ledger cleanup", () =>
+            client.query(
+              "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = any($1::text[])",
+              [
+                [
+                  newerEventId,
+                  staleEventId,
+                  equalEventId,
+                  concurrentEarlierEventId,
+                  concurrentLaterEventId
+                ]
+              ]
+            )
+          );
+          await attempt("Stripe ordering account cleanup", () =>
+            client.query(
+              "delete from public.agent_outbox_accounts where account_id = $1",
+              [accountId]
+            )
+          );
+          await attempt("Stripe ordering client close", () => client.end());
+
+          if (teardownErrors.length > 0) {
+            throw new AggregateError(
+              teardownErrors,
+              "Stripe ordering teardown failed."
+            );
+          }
+        },
+        "Stripe ordering test and teardown both failed."
+      );
     }
   }
 );
