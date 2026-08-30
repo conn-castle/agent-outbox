@@ -180,9 +180,15 @@ When rotating Cloudflare tokens:
 
 ## Guardrails
 
-- GitHub Actions is the only deployment and rollback mutation path. Never run
-  `worker:deploy`, `wrangler deploy`, or `wrangler rollback` locally; follow the
-  [release runbook](../release.md).
+- GitHub Actions is the only Worker code, traffic, and rollback mutation path.
+  Never run `wrangler deploy`, `wrangler versions upload`,
+  `wrangler versions deploy`, or `wrangler rollback` locally; follow the
+  [release runbook](../release.md). Local `wrangler triggers deploy` remains the
+  permitted infrastructure exception for route and cron changes. Application
+  releases upload an inactive Worker version and change traffic with exact
+  version IDs. They do not apply routes or crons; route and cron drift fails the
+  release until an operator applies them with the runbook's
+  `wrangler triggers deploy` procedure.
 - Wrangler is for local agent/developer operations and for the deployment
   command inside GitHub Actions. Normal app CI and app tests must not require
   Wrangler, OpenNext Cloudflare, provider credentials, deployment artifacts, or

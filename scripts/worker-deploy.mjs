@@ -14,19 +14,38 @@ import {
   DATABASE_CONNECTION_MODE_VAR,
   DATABASE_HYPERDRIVE_BINDING
 } from "../worker/hyperdrive.mjs";
-import { readSystemContract } from "./system-contract.mjs";
+import {
+  GH_SPAWN_MAX_BUFFER_BYTES,
+  assertSpawnStdoutBudget
+} from "./release/gateway-github.mjs";
+import {
+  CANDIDATE_WORKER_VERSION_ID_ENV_NAME,
+  FULL_GIT_SHA,
+  GITHUB_RELEASE_ID_ENV_NAME,
+  PRIOR_WORKER_VERSION_ID_ENV_NAME,
+  RELEASE_TAG_PATTERN,
+  WORKER_NAME,
+  WORKER_VERSION_ID,
+  WorkerVersionMatchError,
+  findExactWorkerVersion,
+  isWorkerVersionId,
+  parseWorkerVersionMessage,
+  serializeWorkerVersionMessage,
+  validateActionsContext
+} from "./release/identity.mjs";
+import { parseJsonc, readSystemContract } from "./system-contract.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const systemContract = readSystemContract();
 const PRODUCTION_APP_BASE_URL = systemContract.hostedAppBaseUrl;
 const WRANGLER_CONFIG_PATH = path.join(ROOT, "wrangler.jsonc");
 
-export const HYPERDRIVE_ID_ENV_NAME = "CLOUDFLARE_HYPERDRIVE_ID";
-
 /**
- * @typedef {{ error?: Error, status: number | null }} CommandStatus
+ * @typedef {{ error?: Error, status: number | null, stdout?: unknown, stderr?: unknown }} CommandStatus
  * @typedef {(command: string, args: string[], options: import("node:child_process").SpawnSyncOptions) => CommandStatus} SpawnSyncLike
  */
+
+export const HYPERDRIVE_ID_ENV_NAME = "CLOUDFLARE_HYPERDRIVE_ID";
 
 export const REQUIRED_SECRET_NAMES = [
   "CLERK_SECRET_KEY",
@@ -106,18 +125,135 @@ const REQUIRED_PROCESS_ENV_NAMES = [
   ...REQUIRED_PUBLIC_VAR_NAMES
 ];
 
+const REQUIRED_UPLOAD_IDENTITY_ENV_NAMES = [
+  "GITHUB_RUN_ID",
+  GITHUB_RELEASE_ID_ENV_NAME,
+  "GITHUB_SHA"
+];
+
+/**
+ * @param {unknown} output
+ * @returns {string}
+ */
+export function parseUploadedWorkerVersionId(output) {
+  const text = String(output ?? "");
+  const matches = [
+    ...text.matchAll(/Worker Version ID:\s*([0-9a-f-]{36})/gi)
+  ].map((match) => match[1].toLowerCase());
+  const unique = [...new Set(matches)];
+  if (unique.length !== 1 || !WORKER_VERSION_ID.test(unique[0])) {
+    throw new Error(
+      "wrangler versions upload did not report exactly one Worker version id"
+    );
+  }
+  return unique[0];
+}
+
+/**
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+export function canonicalizeJson(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeJson(item));
+  }
+  if (value && typeof value === "object") {
+    const record = /** @type {Record<string, unknown>} */ (value);
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, canonicalizeJson(record[key])])
+    );
+  }
+  return value;
+}
+
+/**
+ * @param {unknown} wranglerConfig
+ * @returns {{ routes: unknown, triggers: unknown }}
+ */
+export function workerTriggerConfig(wranglerConfig) {
+  const config =
+    typeof wranglerConfig === "string"
+      ? parseJsonc(wranglerConfig)
+      : wranglerConfig;
+  if (!config || typeof config !== "object") {
+    throw new Error("Worker config must be a JSON object");
+  }
+  const record = /** @type {{ routes?: unknown, triggers?: unknown }} */ (
+    config
+  );
+  return {
+    routes: record.routes ?? [],
+    triggers: record.triggers ?? {}
+  };
+}
+
+/**
+ * @param {unknown} liveConfig
+ * @param {unknown} candidateConfig
+ */
+export function assertWorkerTriggersUnchanged(liveConfig, candidateConfig) {
+  const live = canonicalizeJson(workerTriggerConfig(liveConfig));
+  const candidate = canonicalizeJson(workerTriggerConfig(candidateConfig));
+  if (JSON.stringify(live) !== JSON.stringify(candidate)) {
+    throw new Error(
+      "Worker routes or cron triggers changed; treat that as a separate operator-controlled infrastructure operation, not an application release"
+    );
+  }
+}
+
+/**
+ * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
+ * @param {string[]} allowedWorkflows
+ * @returns {string[]}
+ */
+export function validateWorkerDeployEnvironment(
+  env,
+  allowedWorkflows = ["deploy-production.yml"]
+) {
+  const failures = [
+    ...REQUIRED_PROCESS_ENV_NAMES.flatMap((name) => {
+      const value = env[name];
+      return typeof value === "string" && value.trim() !== ""
+        ? []
+        : [`${name} is required for production Worker deploy`];
+    }),
+    ...productionAppUrlFailures(env),
+    ...validateActionsContext(env, {
+      allowedWorkflows,
+      actionsMessage: "Production Worker deploys must run in GitHub Actions.",
+      refMessage: "Production Worker deploys must run from refs/heads/main.",
+      workflowMessage: `Production Worker deploys must run from ${allowedWorkflows.join(" or ")}.`
+    })
+  ];
+
+  if (
+    env.GITHUB_SHA &&
+    env.SENTRY_RELEASE &&
+    env.SENTRY_RELEASE !== env.GITHUB_SHA
+  ) {
+    failures.push(
+      "SENTRY_RELEASE must match GITHUB_SHA for production deploy."
+    );
+  }
+  if (
+    env.AGENT_OUTBOX_RELEASE_TAG &&
+    !RELEASE_TAG_PATTERN.test(env.AGENT_OUTBOX_RELEASE_TAG)
+  ) {
+    failures.push("AGENT_OUTBOX_RELEASE_TAG must be a stable v<version> tag.");
+  }
+
+  return failures;
+}
+
 /**
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
  * @returns {string[]}
  */
-export function validateWorkerDeployEnvironment(env) {
-  const failures = REQUIRED_PROCESS_ENV_NAMES.flatMap((name) => {
-    const value = env[name];
-    return typeof value === "string" && value.trim() !== ""
-      ? []
-      : [`${name} is required for production Worker deploy`];
-  });
-
+function productionAppUrlFailures(env) {
+  /** @type {string[]} */
+  const failures = [];
   if (env.APP_ENV && env.APP_ENV !== "production") {
     failures.push("APP_ENV must be production for production Worker deploy");
   }
@@ -134,39 +270,67 @@ export function validateWorkerDeployEnvironment(env) {
       `PUBLIC_APP_BASE_URL must be ${PRODUCTION_APP_BASE_URL} for production Worker deploy`
     );
   }
-  if (env.GITHUB_ACTIONS !== "true") {
-    failures.push("Production Worker deploys must run in GitHub Actions.");
-  }
-  if (env.GITHUB_REF !== "refs/heads/main") {
-    failures.push("Production Worker deploys must run from refs/heads/main.");
-  }
-  if (
-    !env.GITHUB_WORKFLOW_REF?.includes(
-      "/.github/workflows/deploy-production.yml@"
-    )
-  ) {
-    failures.push(
-      "Production Worker deploys must run from deploy-production.yml."
-    );
-  }
-  if (
-    env.GITHUB_SHA &&
-    env.SENTRY_RELEASE &&
-    env.SENTRY_RELEASE !== env.GITHUB_SHA
-  ) {
-    failures.push(
-      "SENTRY_RELEASE must match GITHUB_SHA for production deploy."
-    );
-  }
-  if (
-    env.AGENT_OUTBOX_RELEASE_TAG &&
-    !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(
-      env.AGENT_OUTBOX_RELEASE_TAG
-    )
-  ) {
-    failures.push("AGENT_OUTBOX_RELEASE_TAG must be a stable v<version> tag.");
-  }
+  return failures;
+}
 
+/**
+ * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
+ * @param {string[]} [allowedWorkflows]
+ * @returns {string[]}
+ */
+export function validateWorkerTrafficEnvironment(
+  env,
+  allowedWorkflows = [
+    "deploy-production.yml",
+    "reconcile-production-release.yml"
+  ]
+) {
+  const failures = [];
+  if (
+    typeof env.CLOUDFLARE_API_TOKEN !== "string" ||
+    env.CLOUDFLARE_API_TOKEN.trim() === ""
+  ) {
+    failures.push(
+      "CLOUDFLARE_API_TOKEN is required for Worker traffic operations"
+    );
+  }
+  failures.push(
+    ...validateActionsContext(env, {
+      allowedWorkflows,
+      actionsMessage: "Production Worker deploys must run in GitHub Actions.",
+      refMessage: "Production Worker deploys must run from refs/heads/main.",
+      workflowMessage: `Production Worker deploys must run from ${allowedWorkflows.join(" or ")}.`
+    }),
+    ...productionAppUrlFailures(env)
+  );
+  return failures;
+}
+
+/**
+ * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
+ * @returns {string[]}
+ */
+export function validateWorkerVersionUploadEnvironment(env) {
+  const failures = validateWorkerDeployEnvironment(env);
+  for (const name of REQUIRED_UPLOAD_IDENTITY_ENV_NAMES) {
+    const value = env[name];
+    if (typeof value !== "string" || value.trim() === "") {
+      failures.push(`${name} is required for Worker version upload`);
+    }
+  }
+  const releaseId = env[GITHUB_RELEASE_ID_ENV_NAME];
+  if (releaseId && !/^[1-9]\d*$/.test(releaseId)) {
+    failures.push(
+      `${GITHUB_RELEASE_ID_ENV_NAME} must be a positive GitHub release id`
+    );
+  }
+  const runId = env.GITHUB_RUN_ID;
+  if (runId && !/^[1-9]\d*$/.test(runId)) {
+    failures.push("GITHUB_RUN_ID must be a positive GitHub Actions run id");
+  }
+  if (env.GITHUB_SHA && !FULL_GIT_SHA.test(env.GITHUB_SHA)) {
+    failures.push("GITHUB_SHA must be the 40-character candidate commit.");
+  }
   return failures;
 }
 
@@ -195,8 +359,12 @@ export function publicVarBindings(env) {
  * @param {string} secretsFilePath
  * @returns {string[]}
  */
-export function buildWranglerDeployArgs(env, secretsFilePath) {
-  return buildWranglerDeployArgsWithConfig(env, secretsFilePath, undefined);
+export function buildWranglerVersionsUploadArgs(env, secretsFilePath) {
+  return buildWranglerVersionsUploadArgsWithConfig(
+    env,
+    secretsFilePath,
+    undefined
+  );
 }
 
 /**
@@ -205,7 +373,7 @@ export function buildWranglerDeployArgs(env, secretsFilePath) {
  * @param {string | undefined} wranglerConfigPath
  * @returns {string[]}
  */
-export function buildWranglerDeployArgsWithConfig(
+export function buildWranglerVersionsUploadArgsWithConfig(
   env,
   secretsFilePath,
   wranglerConfigPath
@@ -213,7 +381,8 @@ export function buildWranglerDeployArgsWithConfig(
   return [
     "exec",
     "wrangler",
-    "deploy",
+    "versions",
+    "upload",
     ...(wranglerConfigPath ? ["--config", wranglerConfigPath] : []),
     "--env-file",
     "/dev/null",
@@ -222,12 +391,95 @@ export function buildWranglerDeployArgsWithConfig(
     "--tag",
     env.AGENT_OUTBOX_RELEASE_TAG ?? "",
     "--message",
-    `Production release ${env.AGENT_OUTBOX_RELEASE_TAG ?? ""}`,
+    serializeWorkerVersionMessage({
+      runId: env.GITHUB_RUN_ID ?? "",
+      releaseId: env[GITHUB_RELEASE_ID_ENV_NAME] ?? "",
+      sha: env.GITHUB_SHA ?? ""
+    }),
     ...publicVarBindings(env).flatMap(({ name, value }) => [
       "--var",
       `${name}:${value}`
     ])
   ];
+}
+
+/**
+ * @param {{ versionId: string, percentage: number }[]} placements
+ * @param {string} [message]
+ * @returns {string[]}
+ */
+export function buildWranglerVersionsDeployArgs(placements, message) {
+  if (!Array.isArray(placements) || placements.length === 0) {
+    throw new Error("Worker version deploy requires at least one placement");
+  }
+  const specs = placements.map((placement) => {
+    if (!isWorkerVersionId(placement.versionId)) {
+      throw new Error("Worker version deploy requires a valid version id");
+    }
+    if (
+      !Number.isInteger(placement.percentage) ||
+      placement.percentage < 0 ||
+      placement.percentage > 100
+    ) {
+      throw new Error(
+        "Worker version deploy percentages must be 0-100 integers"
+      );
+    }
+    return `${placement.versionId}@${placement.percentage}%`;
+  });
+  const total = placements.reduce(
+    (sum, placement) => sum + placement.percentage,
+    0
+  );
+  if (total !== 100) {
+    throw new Error("Worker version deploy percentages must sum to 100");
+  }
+  return [
+    "exec",
+    "wrangler",
+    "versions",
+    "deploy",
+    ...specs,
+    "--name",
+    WORKER_NAME,
+    "--yes",
+    "--env-file",
+    "/dev/null",
+    ...(message ? ["--message", message] : [])
+  ];
+}
+
+/**
+ * @param {string} priorVersionId
+ * @param {string} candidateVersionId
+ */
+export function buildStagedVersionDeployArgs(
+  priorVersionId,
+  candidateVersionId
+) {
+  return buildWranglerVersionsDeployArgs(
+    [
+      { versionId: priorVersionId, percentage: 100 },
+      { versionId: candidateVersionId, percentage: 0 }
+    ],
+    `Stage candidate ${candidateVersionId} at 0%`
+  );
+}
+
+/** @param {string} candidateVersionId */
+export function buildPromoteCandidateArgs(candidateVersionId) {
+  return buildWranglerVersionsDeployArgs(
+    [{ versionId: candidateVersionId, percentage: 100 }],
+    `Promote candidate ${candidateVersionId} to 100%`
+  );
+}
+
+/** @param {string} priorVersionId */
+export function buildRestorePriorArgs(priorVersionId) {
+  return buildWranglerVersionsDeployArgs(
+    [{ versionId: priorVersionId, percentage: 100 }],
+    `Restore prior ${priorVersionId} to 100%`
+  );
 }
 
 /**
@@ -288,7 +540,7 @@ export function wranglerConfigWithHyperdrive(wranglerConfigText, hyperdriveId) {
   }
 
   const config = /** @type {{ hyperdrive?: unknown }} */ (
-    JSON.parse(wranglerConfigText)
+    parseJsonc(wranglerConfigText)
   );
   if (
     "main" in config &&
@@ -473,9 +725,14 @@ export function writeWranglerConfigFile(env, options = {}) {
  * @param {string[]} args
  * @param {import("node:child_process").SpawnSyncOptions} options
  * @param {SpawnSyncLike} spawnSyncImpl
+ * @returns {CommandStatus}
  */
 function runCommand(command, args, options, spawnSyncImpl) {
   const result = spawnSyncImpl(command, args, options);
+  assertSpawnStdoutBudget(
+    result.error,
+    options.maxBuffer ?? GH_SPAWN_MAX_BUFFER_BYTES
+  );
   if (result.error) {
     throw result.error;
   }
@@ -484,6 +741,7 @@ function runCommand(command, args, options, spawnSyncImpl) {
       `${command} ${args.join(" ")} failed with status ${result.status}`
     );
   }
+  return result;
 }
 
 /**
@@ -492,10 +750,11 @@ function runCommand(command, args, options, spawnSyncImpl) {
  *   spawnSyncImpl?: SpawnSyncLike,
  *   tempBase?: string
  * }} [options]
+ * @returns {{ versionId: string }}
  */
-export function runWorkerDeploy(options = {}) {
+export function runWorkerVersionUpload(options = {}) {
   const env = options.env ?? process.env;
-  const failures = validateWorkerDeployEnvironment(env);
+  const failures = validateWorkerVersionUploadEnvironment(env);
   if (failures.length > 0) {
     throw new Error(failures.join("\n"));
   }
@@ -508,11 +767,13 @@ export function runWorkerDeploy(options = {}) {
       env: workerBuildEnvironment(env),
       stdio: "inherit"
     });
-  const deployCommandOptions =
+  const uploadCommandOptions =
     /** @type {import("node:child_process").SpawnSyncOptions} */ ({
       cwd: ROOT,
       env: wranglerDeployEnvironment(env),
-      stdio: "inherit"
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: GH_SPAWN_MAX_BUFFER_BYTES
     });
 
   runCommand(
@@ -529,32 +790,122 @@ export function runWorkerDeploy(options = {}) {
     wranglerConfigFile = writeWranglerConfigFile(env, {
       tempBase: options.tempBase
     });
-    const wranglerDeployArgs = buildWranglerDeployArgsWithConfig(
+    const wranglerUploadArgs = buildWranglerVersionsUploadArgsWithConfig(
       env,
       secretsFile.path,
       wranglerConfigFile.path
     );
     runCommand(
       "corepack",
-      ["pnpm", ...wranglerDeployArgs, "--dry-run"],
-      deployCommandOptions,
+      ["pnpm", ...wranglerUploadArgs, "--dry-run"],
+      uploadCommandOptions,
       spawnSyncImpl
     );
-    runCommand(
+    const uploaded = runCommand(
       "corepack",
-      ["pnpm", ...wranglerDeployArgs],
-      deployCommandOptions,
+      ["pnpm", ...wranglerUploadArgs],
+      uploadCommandOptions,
       spawnSyncImpl
     );
+    const combinedOutput = `${uploaded.stdout ?? ""}\n${uploaded.stderr ?? ""}`;
+    if (combinedOutput.trim() !== "") {
+      process.stdout.write(
+        combinedOutput.endsWith("\n") ? combinedOutput : `${combinedOutput}\n`
+      );
+    }
+    return { versionId: parseUploadedWorkerVersionId(combinedOutput) };
   } finally {
     secretsFile.cleanup();
     wranglerConfigFile?.cleanup();
   }
 }
 
+/**
+ * @param {string[]} args
+ * @param {{
+ *   env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
+ *   spawnSyncImpl?: SpawnSyncLike,
+ *   allowedWorkflows?: string[]
+ * }} [options]
+ */
+export function runWranglerVersionsDeploy(args, options = {}) {
+  const env = options.env ?? process.env;
+  const failures = validateWorkerTrafficEnvironment(
+    env,
+    options.allowedWorkflows ?? [
+      "deploy-production.yml",
+      "reconcile-production-release.yml"
+    ]
+  );
+  if (failures.length > 0) {
+    throw new Error(failures.join("\n"));
+  }
+  const spawnSyncImpl =
+    options.spawnSyncImpl ?? /** @type {SpawnSyncLike} */ (spawnSync);
+  runCommand(
+    "corepack",
+    ["pnpm", ...args],
+    {
+      cwd: ROOT,
+      env: wranglerDeployEnvironment(env),
+      stdio: "inherit"
+    },
+    spawnSyncImpl
+  );
+}
+
+/**
+ * @param {{
+ *   env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
+ *   spawnSyncImpl?: SpawnSyncLike
+ * }} [options]
+ */
+export function runStagedVersionDeploy(options = {}) {
+  const env = options.env ?? process.env;
+  const priorVersionId = env[PRIOR_WORKER_VERSION_ID_ENV_NAME] ?? "";
+  const candidateVersionId = env[CANDIDATE_WORKER_VERSION_ID_ENV_NAME] ?? "";
+  if (
+    !isWorkerVersionId(priorVersionId) ||
+    !isWorkerVersionId(candidateVersionId)
+  ) {
+    throw new Error(
+      "staged Worker deploy requires prior and candidate version ids"
+    );
+  }
+  if (priorVersionId === candidateVersionId) {
+    throw new Error(
+      "staged Worker deploy requires distinct prior and candidate versions"
+    );
+  }
+  runWranglerVersionsDeploy(
+    buildStagedVersionDeployArgs(priorVersionId, candidateVersionId),
+    { ...options, allowedWorkflows: ["deploy-production.yml"] }
+  );
+}
+
+/**
+ * @param {{
+ *   env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
+ *   spawnSyncImpl?: SpawnSyncLike
+ * }} [options]
+ */
+export function runPromoteCandidate(options = {}) {
+  const env = options.env ?? process.env;
+  const candidateVersionId = env[CANDIDATE_WORKER_VERSION_ID_ENV_NAME] ?? "";
+  if (!isWorkerVersionId(candidateVersionId)) {
+    throw new Error("candidate promotion requires a Worker version id");
+  }
+  runWranglerVersionsDeploy(buildPromoteCandidateArgs(candidateVersionId), {
+    ...options,
+    allowedWorkflows: ["deploy-production.yml"]
+  });
+}
+
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  runWorkerDeploy();
+  throw new Error(
+    "Worker mutation commands must run through scripts/production-release.mjs so ownership markers and compensation stay attached. There is no standalone worker-deploy CLI."
+  );
 }

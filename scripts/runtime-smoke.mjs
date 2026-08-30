@@ -4,11 +4,16 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { parseEnv } from "./foundation.mjs";
+import { parseEnv } from "./dotenv.mjs";
+import { WORKER_NAME, WORKER_VERSION_ID } from "./release/identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PROCESS_ENV_MODE_NAME = "AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV";
 const EXPECTED_RELEASE_ENV_NAME = "AGENT_OUTBOX_EXPECTED_RELEASE";
+export const WORKER_VERSION_OVERRIDE_ENV_NAME =
+  "AGENT_OUTBOX_WORKER_VERSION_OVERRIDE";
+export const WORKER_VERSION_OVERRIDE_HEADER =
+  "Cloudflare-Workers-Version-Overrides";
 const REQUIRE_HUMAN_REVIEW_QUERY_ENV_NAME =
   "AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY";
 const REQUIRED_RUNTIME_SMOKE_CLIENT_ENV_NAMES = [
@@ -17,14 +22,59 @@ const REQUIRED_RUNTIME_SMOKE_CLIENT_ENV_NAMES = [
 ];
 const PROCESS_ENV_NAMES = [
   ...REQUIRED_RUNTIME_SMOKE_CLIENT_ENV_NAMES,
-  REQUIRE_HUMAN_REVIEW_QUERY_ENV_NAME
+  REQUIRE_HUMAN_REVIEW_QUERY_ENV_NAME,
+  WORKER_VERSION_OVERRIDE_ENV_NAME
 ];
 const RUNTIME_SMOKE_HEADERS = {
   "x-agent-outbox-runtime-smoke": "1"
 };
+/**
+ * @typedef {(
+ *   url: string | URL,
+ *   init?: RequestInit
+ * ) => Promise<{
+ *   ok: boolean,
+ *   status: number,
+ *   json: () => Promise<any>
+ * }>} RuntimeSmokeFetch
+ */
+
 const REQUEST_TIMEOUT_MS = 10_000;
 const DEPLOY_SMOKE_ATTEMPTS = 6;
 const DEPLOY_SMOKE_RETRY_DELAY_MS = 10_000;
+
+/**
+ * @param {unknown} versionId
+ * @returns {string}
+ */
+export function formatWorkerVersionOverrideHeader(versionId) {
+  if (typeof versionId !== "string" || !WORKER_VERSION_ID.test(versionId)) {
+    throw new Error(
+      `${WORKER_VERSION_OVERRIDE_ENV_NAME} must be a Worker version UUID`
+    );
+  }
+  return `${WORKER_NAME}="${versionId}"`;
+}
+
+/**
+ * @param {Map<string, string> | NodeJS.ProcessEnv | Record<string, string | undefined>} env
+ * @param {Record<string, string>} [extra]
+ * @returns {Record<string, string>}
+ */
+export function runtimeSmokeRequestHeaders(env, extra = {}) {
+  /** @param {string} name */
+  const read = (name) =>
+    env instanceof Map
+      ? env.get(name)
+      : /** @type {Record<string, string | undefined>} */ (env)[name];
+  const headers = { ...extra };
+  const override = read(WORKER_VERSION_OVERRIDE_ENV_NAME);
+  if (typeof override === "string" && override !== "") {
+    headers[WORKER_VERSION_OVERRIDE_HEADER] =
+      formatWorkerVersionOverrideHeader(override);
+  }
+  return headers;
+}
 
 /**
  * @param {{
@@ -64,16 +114,31 @@ export function readRuntimeSmokeEnv(options = {}) {
     return new Map();
   }
 
-  return parseEnv(readFileSync(envPath, "utf8"));
+  const values = parseEnv(readFileSync(envPath, "utf8"));
+  const processOverride = env[WORKER_VERSION_OVERRIDE_ENV_NAME];
+  if (typeof processOverride === "string" && processOverride !== "") {
+    values.set(WORKER_VERSION_OVERRIDE_ENV_NAME, processOverride);
+  }
+  const processExpected = env[EXPECTED_RELEASE_ENV_NAME];
+  if (typeof processExpected === "string" && processExpected !== "") {
+    values.set(EXPECTED_RELEASE_ENV_NAME, processExpected);
+  }
+  return values;
 }
 
 /**
+ * @param {RuntimeSmokeFetch} fetchImpl
+ * @param {Map<string, string>} env
  * @param {URL} url
  * @param {RequestInit} [init]
  */
-async function expectCanaryOk(url, init) {
-  const response = await fetch(url, {
+async function expectCanaryOk(fetchImpl, env, url, init = {}) {
+  const response = await fetchImpl(url, {
     ...init,
+    headers: runtimeSmokeRequestHeaders(
+      env,
+      /** @type {Record<string, string>} */ (init.headers ?? {})
+    ),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   });
   assert.equal(response.ok, true, `${url} returned ${response.status}`);
@@ -83,13 +148,25 @@ async function expectCanaryOk(url, init) {
 }
 
 /**
+ * @param {RuntimeSmokeFetch} fetchImpl
+ * @param {Map<string, string>} env
  * @param {URL} url
  * @param {number} expectedStatus
  * @param {RequestInit} [init]
  */
-async function expectJsonStatus(url, expectedStatus, init) {
-  const response = await fetch(url, {
+async function expectJsonStatus(
+  fetchImpl,
+  env,
+  url,
+  expectedStatus,
+  init = {}
+) {
+  const response = await fetchImpl(url, {
     ...init,
+    headers: runtimeSmokeRequestHeaders(
+      env,
+      /** @type {Record<string, string>} */ (init.headers ?? {})
+    ),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   });
   assert.equal(
@@ -101,24 +178,42 @@ async function expectJsonStatus(url, expectedStatus, init) {
 }
 
 /**
+ * @param {RuntimeSmokeFetch} fetchImpl
+ * @param {Map<string, string>} env
  * @param {URL} url
  * @param {number} expectedStatus
  * @param {string} expectedCode
  * @param {RequestInit} [init]
  */
-async function expectErrorCode(url, expectedStatus, expectedCode, init) {
-  const body = await expectJsonStatus(url, expectedStatus, init);
+async function expectErrorCode(
+  fetchImpl,
+  env,
+  url,
+  expectedStatus,
+  expectedCode,
+  init = {}
+) {
+  const body = await expectJsonStatus(
+    fetchImpl,
+    env,
+    url,
+    expectedStatus,
+    init
+  );
   assert.equal(body.ok, false, `${url} returned ok=${String(body.ok)}`);
   assert.equal(body.code, expectedCode, `${url} returned code=${body.code}`);
   return body;
 }
 
 /**
+ * @param {RuntimeSmokeFetch} fetchImpl
+ * @param {Map<string, string>} env
  * @param {URL} url
  */
-async function expectReachablePage(url) {
-  const response = await fetch(url, {
+async function expectReachablePage(fetchImpl, env, url) {
+  const response = await fetchImpl(url, {
     redirect: "manual",
+    headers: runtimeSmokeRequestHeaders(env),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   });
   assert.ok(
@@ -189,8 +284,11 @@ export function missingRuntimeSmokeEnvNames(env) {
 
 /**
  * @param {Map<string, string>} env
+ * @param {{ fetchImpl?: RuntimeSmokeFetch }} [options]
  */
-async function runRuntimeSmoke(env) {
+export async function runRuntimeSmokeChecks(env, options = {}) {
+  const fetchImpl =
+    options.fetchImpl ?? /** @type {RuntimeSmokeFetch} */ (fetch);
   const missing = missingRuntimeSmokeEnvNames(env);
 
   if (missing.length > 0) {
@@ -198,43 +296,92 @@ async function runRuntimeSmoke(env) {
       `Runtime smoke blocked by missing required values: ${missing.join(", ")}`
     );
     process.exitCode = 1;
-    return;
+    return { ok: false, missing };
   }
 
   const baseUrl = env.get("APP_BASE_URL");
   const token = env.get("SMOKE_OR_CLEANUP_TOKEN");
+  const expectedRelease = env.get(EXPECTED_RELEASE_ENV_NAME);
+  const override = env.get(WORKER_VERSION_OVERRIDE_ENV_NAME);
+  if (override) {
+    formatWorkerVersionOverrideHeader(override);
+    if (!expectedRelease) {
+      throw new Error(
+        `${EXPECTED_RELEASE_ENV_NAME} is required when ${WORKER_VERSION_OVERRIDE_ENV_NAME} is set`
+      );
+    }
+  }
   const smokeAuth = { Authorization: `Bearer ${token}` };
 
-  await expectReachablePage(new URL("/sign-in", baseUrl));
-  await expectReachablePage(new URL("/sign-out", baseUrl));
-  await expectReachablePage(new URL("/human", baseUrl));
-  const runtimeCanary = await expectCanaryOk(
-    new URL("/api/runtime/canary", baseUrl),
-    { headers: smokeAuth }
-  );
-  const expectedRelease = env.get(EXPECTED_RELEASE_ENV_NAME);
-  assertRuntimeCanaryEnvironment(runtimeCanary, expectedRelease);
+  /**
+   * @param {string} label
+   */
+  async function proveCandidateRelease(label) {
+    const runtimeCanary = await expectCanaryOk(
+      fetchImpl,
+      env,
+      new URL("/api/runtime/canary", baseUrl),
+      { headers: smokeAuth }
+    );
+    assertRuntimeCanaryEnvironment(runtimeCanary, expectedRelease);
+    if (!runtimeCanary.environment?.release) {
+      throw new Error(
+        `runtime canary ${label} did not prove a deployed release SHA`
+      );
+    }
+    return runtimeCanary;
+  }
+
+  if (override) {
+    await proveCandidateRelease("before probes");
+  }
+
+  await expectReachablePage(fetchImpl, env, new URL("/sign-in", baseUrl));
+  await expectReachablePage(fetchImpl, env, new URL("/sign-out", baseUrl));
+  await expectReachablePage(fetchImpl, env, new URL("/human", baseUrl));
+  const runtimeCanary = override
+    ? await proveCandidateRelease("during probes")
+    : await expectCanaryOk(
+        fetchImpl,
+        env,
+        new URL("/api/runtime/canary", baseUrl),
+        { headers: smokeAuth }
+      );
+  if (!override) {
+    assertRuntimeCanaryEnvironment(runtimeCanary, expectedRelease);
+  }
   const runtimeAppEnv = runtimeCanary.environment?.appEnv;
   await expectErrorCode(
+    fetchImpl,
+    env,
     new URL("/api/runtime/caller-auth", baseUrl),
     401,
     "missing_authorization"
   );
   await expectErrorCode(
+    fetchImpl,
+    env,
     new URL("/api/runtime/caller-auth", baseUrl),
     403,
     "invalid_bearer_token",
     { headers: { Authorization: "Bearer wrong-token" } }
   );
-  await expectCanaryOk(new URL("/api/runtime/caller-auth", baseUrl), {
-    headers: smokeAuth
-  });
+  await expectCanaryOk(
+    fetchImpl,
+    env,
+    new URL("/api/runtime/caller-auth", baseUrl),
+    { headers: smokeAuth }
+  );
   await expectErrorCode(
+    fetchImpl,
+    env,
     new URL("/api/runtime/database", baseUrl),
     401,
     "missing_authorization"
   );
   const databaseCanary = await expectCanaryOk(
+    fetchImpl,
+    env,
     new URL("/api/runtime/database", baseUrl),
     { headers: smokeAuth }
   );
@@ -242,14 +389,21 @@ async function runRuntimeSmoke(env) {
     requireHumanReviewQuery:
       env.get(REQUIRE_HUMAN_REVIEW_QUERY_ENV_NAME) === "1"
   });
-  await expectCanaryOk(new URL("/api/runtime/log", baseUrl), {
+  await expectCanaryOk(fetchImpl, env, new URL("/api/runtime/log", baseUrl), {
     headers: smokeAuth
   });
-  await expectCanaryOk(new URL("/api/runtime/scheduled", baseUrl), {
-    method: "POST",
-    headers: smokeAuth
-  });
+  await expectCanaryOk(
+    fetchImpl,
+    env,
+    new URL("/api/runtime/scheduled", baseUrl),
+    {
+      method: "POST",
+      headers: smokeAuth
+    }
+  );
   const sentryCanary = await expectCanaryOk(
+    fetchImpl,
+    env,
     new URL("/api/runtime/sentry", baseUrl),
     {
       method: "POST",
@@ -277,6 +431,8 @@ async function runRuntimeSmoke(env) {
     );
   }
   const errorCanary = await expectJsonStatus(
+    fetchImpl,
+    env,
     new URL("/api/runtime/error", baseUrl),
     500,
     {
@@ -289,7 +445,12 @@ async function runRuntimeSmoke(env) {
   assert.equal(errorCanary.code, "structured_error_canary");
   assert.match(errorCanary.error_id, /^err_/);
 
+  if (override) {
+    await proveCandidateRelease("after probes");
+  }
+
   console.log("Runtime smoke canaries passed.");
+  return { ok: true };
 }
 
 async function main() {
@@ -297,7 +458,7 @@ async function main() {
   const attempts = runtimeSmokeAttemptCount(process.env);
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      await runRuntimeSmoke(env);
+      await runRuntimeSmokeChecks(env);
       return;
     } catch (error) {
       if (attempt === attempts) {

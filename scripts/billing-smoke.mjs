@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { parseEnv } from "./foundation.mjs";
+import { parseEnv } from "./dotenv.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_FILE_NAME = "AGENT_OUTBOX_BILLING_SMOKE_ENV_FILE";

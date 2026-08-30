@@ -5,6 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { RUNTIME_CRON_SCHEDULE } from "../src/server/scheduled.ts";
+import { parseEnv } from "./dotenv.mjs";
+import { deployReleasePhaseOrderMatches } from "./release/order.mjs";
+import { parseJsonc } from "./system-contract.mjs";
+
+export { parseEnv };
 
 /**
  * @typedef {{
@@ -71,6 +76,9 @@ const REQUIRED_FILES = [
   ".markdownlint-cli2.yaml",
   "tsconfig.json",
   "scripts/foundation.mjs",
+  "scripts/dotenv.mjs",
+  "scripts/release/identity.mjs",
+  "scripts/release/order.mjs",
   "scripts/worker-deploy.mjs",
   "scripts/runtime-smoke.mjs",
   "scripts/hosted-health.mjs",
@@ -105,7 +113,8 @@ const REQUIRED_FILES = [
   ".github/workflows/release-check.yml",
   ".github/workflows/policy-gates.yml",
   ".github/workflows/deploy-production.yml",
-  ".github/workflows/repair-production-release.yml",
+  ".github/workflows/reconcile-production-release.yml",
+  ".github/workflows/detect-abandoned-production-release.yml",
   ".github/workflows/rollback-production.yml"
 ];
 
@@ -283,30 +292,6 @@ const HTTP_DOC_ROUTE_LINE_PATTERN =
  */
 function readJson(relativePath) {
   return JSON.parse(readFileSync(path.join(ROOT, relativePath), "utf8"));
-}
-
-/**
- * @param {string} content
- * @returns {Map<string, string>}
- */
-export function parseEnv(content) {
-  const values = new Map();
-
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-
-    const equalsIndex = trimmed.indexOf("=");
-    if (equalsIndex <= 0) {
-      continue;
-    }
-
-    values.set(trimmed.slice(0, equalsIndex), trimmed.slice(equalsIndex + 1));
-  }
-
-  return values;
 }
 
 /**
@@ -660,7 +645,9 @@ export function validateWranglerCronSchedule(
 ) {
   let config;
   try {
-    config = JSON.parse(jsoncToJson(wranglerConfigContent));
+    config = /** @type {{ triggers?: { crons?: unknown } }} */ (
+      parseJsonc(wranglerConfigContent)
+    );
   } catch {
     return ["wrangler.jsonc must be parseable JSONC for cron drift checks"];
   }
@@ -696,7 +683,9 @@ export function validateWranglerCronSchedule(
 export function validateWranglerRequiredSecrets(wranglerConfigContent) {
   let config;
   try {
-    config = JSON.parse(jsoncToJson(wranglerConfigContent));
+    config = /** @type {{ secrets?: { required?: unknown } }} */ (
+      parseJsonc(wranglerConfigContent)
+    );
   } catch {
     return ["wrangler.jsonc must be parseable JSONC for secret drift checks"];
   }
@@ -729,119 +718,6 @@ export function validateWranglerRequiredSecrets(wranglerConfigContent) {
 }
 
 /**
- * @param {string} input
- * @returns {string}
- */
-function jsoncToJson(input) {
-  let output = "";
-  let inString = false;
-  let escaped = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-    const next = input[index + 1] ?? "";
-
-    if (inLineComment) {
-      if (char === "\n" || char === "\r") {
-        inLineComment = false;
-        output += char;
-      }
-      continue;
-    }
-
-    if (inBlockComment) {
-      if (char === "*" && next === "/") {
-        inBlockComment = false;
-        index += 1;
-      }
-      continue;
-    }
-
-    if (inString) {
-      output += char;
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      output += char;
-      continue;
-    }
-
-    if (char === "/" && next === "/") {
-      inLineComment = true;
-      index += 1;
-      continue;
-    }
-
-    if (char === "/" && next === "*") {
-      inBlockComment = true;
-      index += 1;
-      continue;
-    }
-
-    output += char;
-  }
-
-  return removeTrailingJsonCommas(output);
-}
-
-/**
- * @param {string} input
- * @returns {string}
- */
-function removeTrailingJsonCommas(input) {
-  let output = "";
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-
-    if (inString) {
-      output += char;
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      output += char;
-      continue;
-    }
-
-    if (char === ",") {
-      const rest = input.slice(index + 1);
-      const match = rest.match(/^(\s*)([}\]])/);
-      if (match) {
-        output += match[1] + match[2];
-        index += match[0].length;
-        continue;
-      }
-    }
-
-    output += char;
-  }
-
-  return output;
-}
-
-/**
  * @param {Record<string, string>} workflowContentsByPath
  * @returns {string[]}
  */
@@ -852,12 +728,6 @@ export function assertNoForbiddenWorkflowCommands(workflowContentsByPath) {
     workflowContentsByPath
   )) {
     for (const token of FORBIDDEN_WORKFLOW_TOKENS) {
-      if (
-        token === "gh release create" &&
-        workflowPath === ".github/workflows/deploy-production.yml"
-      ) {
-        continue;
-      }
       if (content.includes(token)) {
         failures.push(`${workflowPath} contains forbidden command: ${token}`);
       }
@@ -1024,7 +894,18 @@ export function validateProductionDeployWorkflow(
     deployWorkflowContent,
     "publish-cli-homebrew"
   );
-  const deployStep = workflowNamedStepContent(deployJob, "Deploy Worker");
+  const uploadWorkerStep = workflowNamedStepContent(
+    deployJob,
+    "Upload inactive Worker version"
+  );
+  const stagedDeployStep = workflowNamedStepContent(
+    deployJob,
+    "Deploy prior@100 and candidate@0"
+  );
+  const promoteStep = workflowNamedStepContent(
+    deployJob,
+    "Promote candidate to 100%"
+  );
   const captureRollbackStep = workflowNamedStepContent(
     deployJob,
     "Capture healthy rollback target"
@@ -1040,14 +921,6 @@ export function validateProductionDeployWorkflow(
   const uploadCliStep = workflowNamedStepContent(
     deployJob,
     "Upload certified CLI assets to draft"
-  );
-  const verifyDraftAssetsStep = workflowNamedStepContent(
-    deployJob,
-    "Verify complete draft asset set"
-  );
-  const reverifyDraftAssetsStep = workflowNamedStepContent(
-    deployJob,
-    "Reverify draft assets before publication"
   );
   const requirePublicRepositoryStep = workflowNamedStepContent(
     deployJob,
@@ -1085,17 +958,17 @@ export function validateProductionDeployWorkflow(
     deployJob,
     "Verify rollback target before deploy"
   );
+  const overrideSmokeStep = workflowNamedStepContent(
+    deployJob,
+    "Verify candidate through version override"
+  );
   const verifyStep = workflowNamedStepContent(
     deployJob,
     "Verify deployed release"
   );
-  const rollbackStep = workflowNamedStepContent(
+  const cleanupStep = workflowNamedStepContent(
     deployJob,
-    "Roll back uncommitted release"
-  );
-  const verifyRestoredStep = workflowNamedStepContent(
-    deployJob,
-    "Verify restored release"
+    "Reconcile uncommitted release"
   );
   const ensureReleaseTagStep = workflowNamedStepContent(
     buildCliJob,
@@ -1165,9 +1038,6 @@ export function validateProductionDeployWorkflow(
         deployWorkflowContent.includes(
           "run: node scripts/production-release.mjs prepare"
         ) &&
-        deployWorkflowContent.includes(
-          "run: node scripts/production-release.mjs capture-rollback"
-        ) &&
         workflowHasLine(
           deployJob,
           /^\s*needs:\s*\[prepare-release, certify, build-cli\]\s*$/
@@ -1232,9 +1102,13 @@ export function validateProductionDeployWorkflow(
     }
   }
 
-  if (!workflowRunStepIncludes(deployStep, "corepack pnpm run worker:deploy")) {
+  if (
+    uploadWorkerStep.includes("wrangler deploy") ||
+    stagedDeployStep.includes("wrangler deploy") ||
+    promoteStep.includes("wrangler deploy")
+  ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must deploy through worker:deploy"
+      ".github/workflows/deploy-production.yml must upload an inactive Worker version through production-release.mjs"
     );
   }
   if (
@@ -1248,75 +1122,70 @@ export function validateProductionDeployWorkflow(
     !migrationStep.includes(
       "DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}"
     ) ||
-    !workflowRunStepIncludes(
-      preMigrationValidationStep,
-      "corepack pnpm run migration:validate-pre-migrate"
-    ) ||
     !preMigrationValidationStep.includes(
       "DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}"
     ) ||
-    !workflowRunStepIncludes(
-      migrationStep,
-      "corepack pnpm run migration:migrate"
-    ) ||
-    !workflowRunStepIncludes(
-      postMigrationValidationStep,
-      "corepack pnpm run migration:validate"
-    ) ||
     !postMigrationValidationStep.includes(
       "DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}"
-    ) ||
-    (Boolean(
-      verifyRollbackTargetStep &&
-      requireMigrationCredentialStep &&
-      preMigrationValidationStep &&
-      migrationStep &&
-      postMigrationValidationStep &&
-      deployStep
-    ) &&
-      (deployJob.indexOf(requireMigrationCredentialStep) <
-        deployJob.indexOf(verifyRollbackTargetStep) ||
-        deployJob.indexOf(preMigrationValidationStep) <
-          deployJob.indexOf(requireMigrationCredentialStep) ||
-        deployJob.indexOf(migrationStep) <
-          deployJob.indexOf(preMigrationValidationStep) ||
-        deployJob.indexOf(postMigrationValidationStep) <
-          deployJob.indexOf(migrationStep) ||
-        deployJob.indexOf(postMigrationValidationStep) >
-          deployJob.indexOf(deployStep)))
+    )
   ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must apply and validate production migrations through the protected release job before deploy"
+      ".github/workflows/deploy-production.yml must apply and validate production migrations through the protected release job before traffic promotion"
     );
   }
   if (
-    !workflowRunStepIncludes(verifyStep, "corepack pnpm run smoke-runtime") ||
     !verifyStep.includes("AGENT_OUTBOX_EXPECTED_RELEASE: ${{ github.sha }}") ||
     !verifyStep.includes(
       'AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"'
     ) ||
-    deployJob.indexOf(verifyStep) < deployJob.indexOf(deployStep)
+    !overrideSmokeStep.includes("AGENT_OUTBOX_WORKER_VERSION_OVERRIDE") ||
+    verifyStep.includes("AGENT_OUTBOX_WORKER_VERSION_OVERRIDE")
   ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must verify the deployed SHA after deploy"
+      ".github/workflows/deploy-production.yml must smoke the candidate through a version override before promotion and without an override after promotion"
     );
   }
   const requireHumanReviewQueryCanary =
     'AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"';
-  if (
-    verifyRollbackTargetStep.includes(requireHumanReviewQueryCanary) ||
-    verifyRestoredStep.includes(requireHumanReviewQueryCanary)
-  ) {
+  if (verifyRollbackTargetStep.includes(requireHumanReviewQueryCanary)) {
     failures.push(
       ".github/workflows/deploy-production.yml must keep rollback-target smoke compatible with the outgoing release contract"
     );
   }
   if (
-    !deployStep.includes("CLOUDFLARE_HYPERDRIVE_ID") ||
-    !deployStep.includes("AGENT_OUTBOX_RELEASE_TAG")
+    !workflowRunStepIncludes(
+      verifyRollbackTargetStep,
+      "corepack pnpm run smoke-runtime"
+    ) ||
+    !verifyRollbackTargetStep.includes("AGENT_OUTBOX_EXPECTED_RELEASE:") ||
+    !verifyRollbackTargetStep.includes(
+      "steps.rollback-target.outputs.rollback_release"
+    )
+  ) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must prove the captured rollback target with smoke-runtime and AGENT_OUTBOX_EXPECTED_RELEASE"
+    );
+  }
+  if (
+    !uploadWorkerStep.includes("CLOUDFLARE_HYPERDRIVE_ID") ||
+    !uploadWorkerStep.includes("AGENT_OUTBOX_RELEASE_TAG") ||
+    !uploadWorkerStep.includes("AGENT_OUTBOX_GITHUB_RELEASE_ID")
   ) {
     failures.push(
       ".github/workflows/deploy-production.yml must supply release and Hyperdrive metadata"
+    );
+  }
+  const githubToken = "GH_TOKEN: ${{ github.token }}";
+  if (
+    !prepareDraftStep.includes(githubToken) ||
+    !uploadCliStep.includes(githubToken) ||
+    !captureRollbackStep.includes(githubToken) ||
+    !uploadWorkerStep.includes(githubToken) ||
+    !publishReleaseStep.includes(githubToken) ||
+    !cleanupStep.includes(githubToken)
+  ) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must supply GH_TOKEN to GitHub release identity mutations"
     );
   }
   if (
@@ -1352,296 +1221,241 @@ export function validateProductionDeployWorkflow(
     downloadCertifiedCliStep.includes(
       "name: agent-outbox-release-${{ github.sha }}"
     ) &&
-    prepareDraftStep.includes(
-      "node scripts/production-release.mjs prepare-draft"
-    ) &&
-    uploadCliStep.includes("gh release view") &&
-    uploadCliStep.includes("gh release download") &&
-    uploadCliStep.includes("cmp -s") &&
-    uploadCliStep.includes("gh release upload") &&
-    !uploadCliStep.includes("--clobber") &&
-    verifyDraftAssetsStep.includes("gh release download") &&
-    verifyDraftAssetsStep.includes("cmp -s") &&
-    verifyDraftAssetsStep.includes("expected_assets") &&
-    verifyDraftAssetsStep.includes("actual_assets") &&
     requirePublicRepositoryStep.includes(".visibility") &&
     tapPreflightTokenStep.includes("actions/create-github-app-token@") &&
     tapPreflightTokenStep.includes("secrets.HOMEBREW_TAP_APP_ID") &&
     tapPreflightTokenStep.includes("secrets.HOMEBREW_TAP_PRIVATE_KEY") &&
     tapPreflightAccessStep.includes("repos/conn-castle/homebrew-tap") &&
-    deployJob.indexOf(downloadCertifiedCliStep) <
-      deployJob.indexOf(captureRollbackStep) &&
-    deployJob.indexOf(prepareDraftStep) <
-      deployJob.indexOf(captureRollbackStep) &&
-    deployJob.indexOf(uploadCliStep) < deployJob.indexOf(captureRollbackStep) &&
-    deployJob.indexOf(verifyDraftAssetsStep) <
-      deployJob.indexOf(captureRollbackStep) &&
-    deployJob.indexOf(requirePublicRepositoryStep) <
-      deployJob.indexOf(captureRollbackStep) &&
-    deployJob.indexOf(tapPreflightAccessStep) <
-      deployJob.indexOf(captureRollbackStep);
+    captureRollbackStep.includes("AGENT_OUTBOX_GITHUB_RELEASE_ID");
   if (!releasePreparedBeforeDeploy) {
     failures.push(
       ".github/workflows/deploy-production.yml must prepare and byte-verify the exact-candidate draft before production mutation"
     );
   }
-  if (
-    !publishReleaseStep.includes("id: publish-release") ||
-    !publishReleaseStep.includes(
-      "node scripts/production-release.mjs publish"
-    ) ||
-    !reverifyDraftAssetsStep.includes("expected_assets") ||
-    !reverifyDraftAssetsStep.includes("actual_assets") ||
-    !reverifyDraftAssetsStep.includes("gh release download") ||
-    !reverifyDraftAssetsStep.includes("cmp -s") ||
-    deployJob.indexOf(reverifyDraftAssetsStep) <
-      deployJob.indexOf(verifyStep) ||
-    deployJob.indexOf(publishReleaseStep) <
-      deployJob.indexOf(reverifyDraftAssetsStep)
-  ) {
+  if (!publishReleaseStep.includes("id: publish-release")) {
     failures.push(
       ".github/workflows/deploy-production.yml must publish and prove the exact release only after live verification"
     );
   }
-  const rollbackCoversUncommittedRelease =
-    rollbackStep.includes("failure()") &&
-    rollbackStep.includes("steps.deploy-attempt.outputs.attempted == 'true'") &&
-    rollbackStep.includes("steps.publish-release.outcome != 'success'") &&
-    rollbackStep.includes(
-      "steps.publish-release.outputs.publication_state != 'unknown'"
-    ) &&
-    rollbackStep.includes("corepack pnpm exec wrangler rollback") &&
-    rollbackStep.includes("steps.rollback-target.outputs.rollback_version_id");
+  const cleanupCoversUncommittedRelease =
+    cleanupStep.includes("timeout-minutes: 15") &&
+    /^\s*timeout-minutes:\s*60\s*$/m.test(deployJob);
+  if (!cleanupCoversUncommittedRelease) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must reconcile uncommitted releases through if: always() cleanup"
+    );
+  }
   if (
-    !rollbackCoversUncommittedRelease ||
-    !verifyRestoredStep.includes("failure()") ||
-    !verifyRestoredStep.includes(
-      "steps.publish-release.outcome != 'success'"
-    ) ||
-    !verifyRestoredStep.includes(
-      "steps.publish-release.outputs.publication_state != 'unknown'"
-    ) ||
-    !workflowRunStepIncludes(
-      verifyRestoredStep,
-      "corepack pnpm run smoke-runtime"
-    ) ||
-    !verifyRestoredStep.includes(
-      "steps.rollback-target.outputs.rollback_release"
-    )
+    !uploadWorkerStep.includes("CLERK_SECRET_KEY") ||
+    !uploadWorkerStep.includes("STRIPE_SECRET_KEY") ||
+    !uploadWorkerStep.includes("SENTRY_DSN") ||
+    !uploadWorkerStep.includes("CLOUDFLARE_HYPERDRIVE_ID")
   ) {
     failures.push(
-      ".github/workflows/deploy-production.yml must roll back every deployed but unpublished release and verify the restored release"
+      ".github/workflows/deploy-production.yml must supply Worker runtime secrets only to the version upload step"
+    );
+  }
+  for (const [stepName, stepContent] of [
+    ["Deploy prior@100 and candidate@0", stagedDeployStep],
+    ["Promote candidate to 100%", promoteStep],
+    ["Reconcile uncommitted release", cleanupStep]
+  ]) {
+    if (!stepContent.includes("CLOUDFLARE_API_TOKEN")) {
+      failures.push(
+        `.github/workflows/deploy-production.yml ${stepName} must supply CLOUDFLARE_API_TOKEN`
+      );
+    }
+    const forbiddenSecrets = trafficOnlyForbiddenSecretNames(stepContent);
+    if (forbiddenSecrets.length > 0) {
+      failures.push(
+        `.github/workflows/deploy-production.yml ${stepName} must not receive unused Worker runtime secrets (${forbiddenSecrets.join(", ")})`
+      );
+    }
+  }
+  if (!cleanupStep.includes("SMOKE_OR_CLEANUP_TOKEN")) {
+    failures.push(
+      ".github/workflows/deploy-production.yml cleanup must supply SMOKE_OR_CLEANUP_TOKEN to prove restored runtime SHA"
+    );
+  }
+  if (!deployReleasePhaseOrderMatches(deployJob)) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must match the exported production release phase (step name, run command, condition) contract"
+    );
+  }
+  if (!deployJob.includes("persist-credentials: false")) {
+    failures.push(
+      ".github/workflows/deploy-production.yml must disable persisted checkout credentials on the production deploy job"
     );
   }
 
   return failures;
 }
 
+const TRAFFIC_ONLY_FORBIDDEN_SECRET_NAMES = [
+  "CLERK_SECRET_KEY",
+  "CLERK_PUBLISHABLE_KEY",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "STRIPE_PAID_MONTHLY_PRICE_ID",
+  "STRIPE_PAID_YEARLY_PRICE_ID",
+  "STRIPE_BILLING_PORTAL_CONFIGURATION_ID",
+  "SENTRY_DSN",
+  "SENTRY_AUTH_TOKEN",
+  "SENTRY_BROWSER_DSN",
+  "SENTRY_RELEASE",
+  "CALLER_KEY_HASH_SECRET",
+  "CLOUDFLARE_HYPERDRIVE_ID"
+];
+
+/** @param {string} stepContent */
+function trafficOnlyForbiddenSecretNames(stepContent) {
+  return TRAFFIC_ONLY_FORBIDDEN_SECRET_NAMES.filter((name) =>
+    stepContent.includes(name)
+  );
+}
+
 /**
- * @param {string} repairWorkflowContent
+ * @param {string} reconcileWorkflowContent
  * @param {string} nodeVersion
  * @returns {string[]}
  */
-export function validateProductionReleaseRepairWorkflow(
-  repairWorkflowContent,
+export function validateProductionReconciliationWorkflow(
+  reconcileWorkflowContent,
   nodeVersion
 ) {
   const failures = [];
-  const validateJob = workflowJobContent(
-    repairWorkflowContent,
-    "validate-source"
+  const reconcileJob = workflowJobContent(
+    reconcileWorkflowContent,
+    "reconcile"
   );
-  const repairJob = workflowJobContent(repairWorkflowContent, "repair");
-  const validateStep = workflowNamedStepContent(
-    validateJob,
-    "Validate failed production run and certified artifact"
+  const reconcileStep = workflowNamedStepContent(
+    reconcileJob,
+    "Reconcile GitHub and Cloudflare transaction state"
   );
-  const downloadStep = workflowNamedStepContent(
-    repairJob,
-    "Download original certified CLI artifacts"
-  );
-  const artifactStep = workflowNamedStepContent(
-    repairJob,
-    "Validate certified artifact inventory and checksums"
-  );
-  const firstSmokeStep = workflowNamedStepContent(
-    repairJob,
-    "Verify production still serves certified candidate"
-  );
-  const prepareDraftStep = workflowNamedStepContent(
-    repairJob,
-    "Reconcile exact-candidate GitHub release draft"
-  );
-  const uploadStep = workflowNamedStepContent(
-    repairJob,
-    "Upload certified CLI assets to draft"
-  );
-  const verifyAssetsStep = workflowNamedStepContent(
-    repairJob,
-    "Verify exact draft asset set"
-  );
-  const secondSmokeStep = workflowNamedStepContent(
-    repairJob,
-    "Reverify production candidate before publication"
-  );
-  const publishStep = workflowNamedStepContent(
-    repairJob,
-    "Publish and prove exact-candidate GitHub release"
-  );
-  const publicAssetsStep = workflowNamedStepContent(
-    repairJob,
-    "Require publicly downloadable release assets"
-  );
-  const tapTokenStep = workflowNamedStepContent(
-    repairJob,
-    "Create GitHub App token for tap repo"
-  );
-  const tapPullRequestStep = workflowNamedStepContent(
-    repairJob,
-    "Create PR in tap repo"
-  );
-
   const required = [
     [
       "manual-only trigger",
-      workflowHasLine(repairWorkflowContent, /^\s*workflow_dispatch:\s*$/)
+      workflowHasLine(reconcileWorkflowContent, /^\s*workflow_dispatch:\s*$/)
     ],
     [
       "production serialization",
       workflowHasLine(
-        repairWorkflowContent,
+        reconcileWorkflowContent,
         /^\s*group:\s*production-deploy\s*$/
       ) &&
         workflowHasLine(
-          repairWorkflowContent,
+          reconcileWorkflowContent,
           /^\s*cancel-in-progress:\s*false\s*$/
         )
     ],
     [
-      "required repair inputs",
-      ["source_run_id:", "release_tag:", "candidate_sha:"].every((token) =>
-        repairWorkflowContent.includes(token)
-      )
+      "required reconcile input",
+      reconcileWorkflowContent.includes("release_tag:")
     ],
     [
       "current main validation",
-      validateJob.includes('test "$GITHUB_REF" = "refs/heads/main"')
+      reconcileJob.includes('test "$GITHUB_REF" = "refs/heads/main"')
     ],
     [
-      "guarded source validator",
-      validateStep.includes(
-        "node scripts/production-release.mjs validate-repair"
-      ) &&
-        validateStep.includes("SOURCE_RUN_ID") &&
-        validateStep.includes("RELEASE_CANDIDATE_SHA")
-    ],
-    [
-      "protected repair job",
-      /^\s*needs:\s*validate-source\s*$/m.test(repairJob) &&
-        /^\s*environment:\s*production\s*$/m.test(repairJob) &&
-        /^\s*actions:\s*read\s*$/m.test(repairJob) &&
-        /^\s*contents:\s*write\s*$/m.test(repairJob)
+      "protected reconcile job",
+      /^\s*environment:\s*production\s*$/m.test(reconcileJob) &&
+        /^\s*contents:\s*write\s*$/m.test(reconcileWorkflowContent)
     ],
     [
       `Node ${nodeVersion}`,
       workflowHasLine(
-        repairJob,
+        reconcileJob,
         new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`)
       )
     ],
     [
-      "original artifact reuse",
-      downloadStep.includes("gh run download") &&
-        downloadStep.includes("$SOURCE_RUN_ID") &&
-        downloadStep.includes("$ARTIFACT_NAME") &&
-        !repairJob.includes("cli-release-dist") &&
-        !repairJob.includes("goreleaser")
+      "shared reconciler",
+      reconcileStep.includes("production-release.mjs reconcile") &&
+        reconcileStep.includes("GH_TOKEN: ${{ github.token }}")
     ],
     [
-      "certified artifact validation",
-      artifactStep.includes("expected_files") &&
-        artifactStep.includes("actual_files") &&
-        artifactStep.includes("sha256sum --check checksums.txt") &&
-        artifactStep.includes("ruby -c")
+      "traffic-only Cloudflare credentials",
+      reconcileStep.includes("CLOUDFLARE_API_TOKEN") &&
+        reconcileStep.includes("SMOKE_OR_CLEANUP_TOKEN") &&
+        trafficOnlyForbiddenSecretNames(reconcileStep).length === 0
     ],
     [
-      "exact production proof before mutation and publication",
-      [firstSmokeStep, secondSmokeStep].every(
-        (step) =>
-          step.includes("AGENT_OUTBOX_EXPECTED_RELEASE") &&
-          step.includes("RELEASE_CANDIDATE_SHA") &&
-          step.includes("corepack pnpm run smoke-runtime")
-      )
-    ],
-    [
-      "workflow-owned draft and publication",
-      prepareDraftStep.includes("production-release.mjs prepare-draft") &&
-        publishStep.includes("production-release.mjs publish")
-    ],
-    [
-      "non-clobbering exact asset reconciliation",
-      uploadStep.includes("gh release download") &&
-        uploadStep.includes("cmp -s") &&
-        uploadStep.includes("gh release upload") &&
-        !uploadStep.includes("--clobber") &&
-        verifyAssetsStep.includes("expected_assets") &&
-        verifyAssetsStep.includes("actual_assets") &&
-        verifyAssetsStep.includes("cmp -s")
-    ],
-    [
-      "public asset proof",
-      publicAssetsStep.includes("curl -fsSL") &&
-        publicAssetsStep.includes("cmp -s")
-    ],
-    [
-      "Homebrew app publication",
-      tapTokenStep.includes("secrets.HOMEBREW_TAP_APP_ID") &&
-        tapTokenStep.includes("secrets.HOMEBREW_TAP_PRIVATE_KEY") &&
-        tapPullRequestStep.includes(
-          "branch: bump-agent-outbox-${{ env.RELEASE_TAG }}"
-        )
+      "disabled checkout credentials",
+      reconcileJob.includes("persist-credentials: false")
     ]
   ];
   for (const [description, present] of required) {
     if (!present) {
       failures.push(
-        `.github/workflows/repair-production-release.yml must include ${description}`
+        `.github/workflows/reconcile-production-release.yml must include ${description}`
       );
     }
   }
   for (const forbiddenTrigger of ["push", "pull_request", "schedule"]) {
     if (
       workflowHasLine(
-        repairWorkflowContent,
+        reconcileWorkflowContent,
         new RegExp(`^\\s*${escapeRegExp(forbiddenTrigger)}:\\s*$`)
       )
     ) {
       failures.push(
-        `.github/workflows/repair-production-release.yml must be manual-only and not include ${forbiddenTrigger}:`
+        `.github/workflows/reconcile-production-release.yml must be manual-only and not include ${forbiddenTrigger}:`
       );
     }
   }
   for (const forbiddenMutation of [
-    "worker:deploy",
     "wrangler deploy",
-    "wrangler rollback",
     "migration:migrate",
     "git tag"
   ]) {
-    if (repairWorkflowContent.includes(forbiddenMutation)) {
+    if (reconcileWorkflowContent.includes(forbiddenMutation)) {
       failures.push(
-        `.github/workflows/repair-production-release.yml must not run ${forbiddenMutation}`
+        `.github/workflows/reconcile-production-release.yml must not run ${forbiddenMutation}`
       );
     }
   }
-  if (!(
-    repairJob.indexOf(firstSmokeStep) < repairJob.indexOf(prepareDraftStep) &&
-    repairJob.indexOf(verifyAssetsStep) < repairJob.indexOf(secondSmokeStep) &&
-    repairJob.indexOf(secondSmokeStep) < repairJob.indexOf(publishStep) &&
-    repairJob.indexOf(publishStep) < repairJob.indexOf(publicAssetsStep)
-  )) {
+  return failures;
+}
+
+/**
+ * @param {string} detectWorkflowContent
+ * @param {string} nodeVersion
+ * @returns {string[]}
+ */
+export function validateAbandonedReleaseDetectionWorkflow(
+  detectWorkflowContent,
+  nodeVersion
+) {
+  const failures = [];
+  const detectJob = workflowJobContent(detectWorkflowContent, "detect");
+  const detectStep = workflowNamedStepContent(
+    detectJob,
+    "Detect abandoned release drafts"
+  );
+  if (
+    !workflowHasLine(detectWorkflowContent, /^\s*schedule:\s*$/) ||
+    !workflowHasLine(detectWorkflowContent, /^\s*workflow_dispatch:\s*$/) ||
+    !detectStep.includes("production-release.mjs detect-abandoned") ||
+    !detectStep.includes("GH_TOKEN: ${{ github.token }}") ||
+    !workflowHasLine(
+      detectJob,
+      new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`)
+    ) ||
+    !workflowHasLine(detectWorkflowContent, /^\s*actions:\s*read\s*$/) ||
+    !detectJob.includes("persist-credentials: false")
+  ) {
     failures.push(
-      ".github/workflows/repair-production-release.yml must preserve validate, reconcile, reverify, publish, and public-proof ordering"
+      ".github/workflows/detect-abandoned-production-release.yml must detect abandoned drafts on a schedule without mutating production"
+    );
+  }
+  if (
+    detectWorkflowContent.includes("production-deploy") ||
+    detectWorkflowContent.includes("environment: production") ||
+    detectWorkflowContent.includes("wrangler") ||
+    detectWorkflowContent.includes("migration:migrate")
+  ) {
+    failures.push(
+      ".github/workflows/detect-abandoned-production-release.yml must stay read-only and outside production-deploy concurrency"
     );
   }
   return failures;
@@ -2248,7 +2062,8 @@ function readWorkflowContents() {
     ".github/workflows/release-check.yml",
     ".github/workflows/policy-gates.yml",
     ".github/workflows/deploy-production.yml",
-    ".github/workflows/repair-production-release.yml",
+    ".github/workflows/reconcile-production-release.yml",
+    ".github/workflows/detect-abandoned-production-release.yml",
     ".github/workflows/rollback-production.yml"
   ]) {
     workflows[relativePath] = readFileSync(
@@ -2646,15 +2461,29 @@ function smoke() {
     [],
     productionRollbackWorkflowFailures.join("\n")
   );
-  const productionReleaseRepairWorkflowFailures =
-    validateProductionReleaseRepairWorkflow(
-      readWorkflowContents()[".github/workflows/repair-production-release.yml"],
+  const productionReconciliationWorkflowFailures =
+    validateProductionReconciliationWorkflow(
+      readWorkflowContents()[
+        ".github/workflows/reconcile-production-release.yml"
+      ],
       /** @type {Toolchain} */ (readJson("toolchain.json")).node.version
     );
   assert.deepEqual(
-    productionReleaseRepairWorkflowFailures,
+    productionReconciliationWorkflowFailures,
     [],
-    productionReleaseRepairWorkflowFailures.join("\n")
+    productionReconciliationWorkflowFailures.join("\n")
+  );
+  const abandonedReleaseDetectionWorkflowFailures =
+    validateAbandonedReleaseDetectionWorkflow(
+      readWorkflowContents()[
+        ".github/workflows/detect-abandoned-production-release.yml"
+      ],
+      /** @type {Toolchain} */ (readJson("toolchain.json")).node.version
+    );
+  assert.deepEqual(
+    abandonedReleaseDetectionWorkflowFailures,
+    [],
+    abandonedReleaseDetectionWorkflowFailures.join("\n")
   );
   const migrationWorkflowFailures = validateMigrationReplayWorkflow(
     readWorkflowContents()

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 
-import { parseEnv } from "./foundation.mjs";
+import { parseEnv } from "./dotenv.mjs";
 import { existsSync, readFileSync } from "node:fs";
 
 const envPath = path.resolve(".env");

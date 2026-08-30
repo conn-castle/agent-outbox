@@ -31,6 +31,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -65,6 +66,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -114,13 +116,18 @@ jobs:
     name: Publish verified production release
     needs: [prepare-release, certify, build-cli]
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     environment: production
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -146,59 +153,6 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare exact-candidate GitHub release draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: node scripts/production-release.mjs prepare-draft
-
-      - name: Upload certified CLI assets to draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          existing_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
-          existing_dir="$(mktemp -d)"
-          trap 'rm -rf "$existing_dir"' EXIT
-          for artifact in dist/*.tar.gz dist/checksums.txt; do
-            asset="$(basename "$artifact")"
-            if grep -Fqx -- "$asset" <<<"$existing_assets"; then
-              gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$existing_dir"
-              if ! cmp -s "$artifact" "$existing_dir/$asset"; then
-                echo "::error::Existing CLI release asset differs from the certified build: $asset"
-                echo "::error::Refusing to delete or replace a release asset."
-                exit 1
-              fi
-              echo "Retaining identical existing CLI release asset: $asset"
-              continue
-            fi
-            gh release upload "$RELEASE_TAG" "$artifact"
-          done
-
-      - name: Verify complete draft asset set
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          download_dir="$(mktemp -d)"
-          trap 'rm -rf "$download_dir"' EXIT
-          expected_assets="$(for artifact in dist/*.tar.gz dist/checksums.txt; do basename "$artifact"; done | LC_ALL=C sort)"
-          actual_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
-          if [[ "$actual_assets" != "$expected_assets" ]]; then
-            echo "::error::Draft release asset inventory differs from the certified build."
-            exit 1
-          fi
-          for artifact in dist/*.tar.gz dist/checksums.txt; do
-            asset="$(basename "$artifact")"
-            gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$download_dir"
-            if ! cmp -s "$artifact" "$download_dir/$asset"; then
-              echo "::error::Draft release asset differs from the certified build: $asset"
-              exit 1
-            fi
-          done
-
       - name: Create Homebrew preflight token
         id: tap-preflight-token
         uses: actions/create-github-app-token@v3
@@ -215,9 +169,27 @@ jobs:
           test "$(gh api repos/conn-castle/homebrew-tap --jq '.name')" =
           "homebrew-tap"
 
+      - name: Prepare exact-candidate GitHub release draft
+        id: prepare-draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/production-release.mjs prepare-draft
+
+      - name: Upload certified CLI assets to draft
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_OUTBOX_GITHUB_RELEASE_ID:
+            ${{ steps.prepare-draft.outputs.github_release_id }}
+        run: node scripts/production-release.mjs upload-assets
+
       - name: Capture healthy rollback target
         id: rollback-target
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
         env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_OUTBOX_GITHUB_RELEASE_ID:
+            ${{ steps.prepare-draft.outputs.github_release_id }}
           APP_BASE_URL: https://app.agent-outbox.dev
           CLOUDFLARE_API_TOKEN:
             ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
@@ -225,6 +197,7 @@ jobs:
         run: node scripts/production-release.mjs capture-rollback
 
       - name: Verify rollback target before deploy
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
         env:
           AGENT_OUTBOX_EXPECTED_RELEASE:
             ${{ steps.rollback-target.outputs.rollback_release }}
@@ -233,7 +206,54 @@ jobs:
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
         run: corepack pnpm run smoke-runtime
 
+      - name: Compare Worker routes and cron triggers
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        env:
+          AGENT_OUTBOX_ROLLBACK_RELEASE:
+            ${{ steps.rollback-target.outputs.rollback_release }}
+        run: node scripts/production-release.mjs compare-triggers
+
+      - name: Upload inactive Worker version
+        id: upload-worker
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_OUTBOX_GITHUB_RELEASE_ID:
+            ${{ steps.prepare-draft.outputs.github_release_id }}
+          AGENT_OUTBOX_RELEASE_TAG:
+            ${{ needs.prepare-release.outputs.release_tag }}
+          APP_ENV: production
+          APP_BASE_URL: https://app.agent-outbox.dev
+          PUBLIC_APP_BASE_URL: https://app.agent-outbox.dev
+          SENTRY_RELEASE: ${{ github.sha }}
+          AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD: "1"
+          AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH: "1"
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+          SENTRY_BROWSER_DSN: ${{ vars.SENTRY_BROWSER_DSN }}
+          STRIPE_PAID_MONTHLY_PRICE_ID:
+            ${{ secrets.STRIPE_PAID_MONTHLY_PRICE_ID }}
+          STRIPE_PAID_YEARLY_PRICE_ID:
+            ${{ secrets.STRIPE_PAID_YEARLY_PRICE_ID }}
+          STRIPE_BILLING_PORTAL_CONFIGURATION_ID:
+            ${{ secrets.STRIPE_BILLING_PORTAL_CONFIGURATION_ID }}
+          NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:
+            ${{ vars.NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN }}
+          CLOUDFLARE_HYPERDRIVE_ID: ${{ secrets.CLOUDFLARE_HYPERDRIVE_ID }}
+          CLOUDFLARE_API_TOKEN:
+            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          CALLER_KEY_HASH_SECRET: ${{ secrets.CALLER_KEY_HASH_SECRET }}
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+        run: node scripts/production-release.mjs upload-worker
+
       - name: Require production migration credential
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
         env:
           DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
         run: |
@@ -254,62 +274,57 @@ jobs:
           echo "::add-mask::$host"
 
       - name: Validate production migration history before apply
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
         env:
           DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
         run: corepack pnpm run migration:validate-pre-migrate
 
       - name: Apply production database migrations
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
         env:
           DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
         run: corepack pnpm run migration:migrate
 
       - name: Validate production migration history after apply
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
         env:
           DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
         run: corepack pnpm run migration:validate
 
-      - name: Mark deployment attempt
-        id: deploy-attempt
-        run: echo "attempted=true" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy Worker
+      - name: Deploy prior@100 and candidate@0
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
         env:
-          AGENT_OUTBOX_RELEASE_TAG:
-            ${{ needs.prepare-release.outputs.release_tag }}
-          APP_ENV: production
-          APP_BASE_URL: https://app.agent-outbox.dev
-          PUBLIC_APP_BASE_URL: https://app.agent-outbox.dev
-          SENTRY_RELEASE: ${{ github.sha }}
-          AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD: "1"
-          AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH: "1"
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-          CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
-          SENTRY_BROWSER_DSN: ${{ vars.SENTRY_BROWSER_DSN }}
-          # Non-secret Worker runtime config that is still an internal provider
-          # resource id. Stored as an environment secret so Actions masks it in
-          # public workflow logs; it is still passed to Wrangler as a --var.
-          STRIPE_PAID_MONTHLY_PRICE_ID:
-            ${{ secrets.STRIPE_PAID_MONTHLY_PRICE_ID }}
-          STRIPE_PAID_YEARLY_PRICE_ID:
-            ${{ secrets.STRIPE_PAID_YEARLY_PRICE_ID }}
-          STRIPE_BILLING_PORTAL_CONFIGURATION_ID:
-            ${{ secrets.STRIPE_BILLING_PORTAL_CONFIGURATION_ID }}
-          NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:
-            ${{ vars.NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN }}
-          CLOUDFLARE_HYPERDRIVE_ID: ${{ secrets.CLOUDFLARE_HYPERDRIVE_ID }}
           CLOUDFLARE_API_TOKEN:
             ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
-          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          CALLER_KEY_HASH_SECRET: ${{ secrets.CALLER_KEY_HASH_SECRET }}
+          AGENT_OUTBOX_PRIOR_WORKER_VERSION_ID:
+            ${{ steps.rollback-target.outputs.rollback_version_id }}
+          AGENT_OUTBOX_CANDIDATE_WORKER_VERSION_ID:
+            ${{ steps.upload-worker.outputs.candidate_version_id }}
+        run: node scripts/production-release.mjs deploy-staged
+
+      - name: Verify candidate through version override
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        env:
+          AGENT_OUTBOX_EXPECTED_RELEASE: ${{ github.sha }}
+          AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"
+          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
+          AGENT_OUTBOX_WORKER_VERSION_OVERRIDE:
+            ${{ steps.upload-worker.outputs.candidate_version_id }}
+          APP_BASE_URL: https://app.agent-outbox.dev
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
-          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
-        run: corepack pnpm run worker:deploy
+        run: corepack pnpm run smoke-runtime
+
+      - name: Promote candidate to 100%
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        env:
+          CLOUDFLARE_API_TOKEN:
+            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
+          AGENT_OUTBOX_CANDIDATE_WORKER_VERSION_ID:
+            ${{ steps.upload-worker.outputs.candidate_version_id }}
+        run: node scripts/production-release.mjs promote
 
       - name: Verify deployed release
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
         env:
           AGENT_OUTBOX_EXPECTED_RELEASE: ${{ github.sha }}
           AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"
@@ -318,69 +333,33 @@ jobs:
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
         run: corepack pnpm run smoke-runtime
 
-      - name: Reverify draft assets before publication
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          download_dir="$(mktemp -d)"
-          trap 'rm -rf "$download_dir"' EXIT
-          expected_assets="$(for artifact in dist/*.tar.gz dist/checksums.txt; do basename "$artifact"; done | LC_ALL=C sort)"
-          actual_assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
-          if [[ "$actual_assets" != "$expected_assets" ]]; then
-            echo "::error::Draft release asset inventory changed after deployment."
-            exit 1
-          fi
-          for artifact in dist/*.tar.gz dist/checksums.txt; do
-            asset="$(basename "$artifact")"
-            gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$download_dir"
-            if ! cmp -s "$artifact" "$download_dir/$asset"; then
-              echo "::error::Draft release asset changed after deployment: $asset"
-              exit 1
-            fi
-          done
-
       - name: Publish exact-candidate GitHub release
         id: publish-release
+        if: steps.prepare-draft.outputs.draft_state != 'committed'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          AGENT_OUTBOX_GITHUB_RELEASE_ID:
+            ${{ steps.prepare-draft.outputs.github_release_id }}
         run: node scripts/production-release.mjs publish
 
-      # Automatic rollback runs inside this already-approved deploy job so it can
-      # never be gated behind a second production-environment approval. It fires
-      # for every failure after deployment begins until GitHub publication is
-      # proven. Publication is the transaction commit point.
-      - name: Roll back uncommitted release
-        id: rollback-worker
-        if: >-
-          failure() && steps.deploy-attempt.outputs.attempted == 'true' &&
-          steps.publish-release.outcome != 'success' &&
-          steps.publish-release.outputs.publication_state != 'unknown'
+      - name: Reconcile uncommitted release
+        if: always()
+        timeout-minutes: 15
         env:
+          GH_TOKEN: ${{ github.token }}
           CLOUDFLARE_API_TOKEN:
             ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
-          ROLLBACK_VERSION_ID:
+          AGENT_OUTBOX_GITHUB_RELEASE_ID:
+            ${{ steps.prepare-draft.outputs.github_release_id }}
+          AGENT_OUTBOX_PRIOR_WORKER_VERSION_ID:
             ${{ steps.rollback-target.outputs.rollback_version_id }}
-        run: >-
-          corepack pnpm exec wrangler rollback "$ROLLBACK_VERSION_ID" --name
-          agent-outbox --message "Automatic rollback before publication of ${{
-          needs.prepare-release.outputs.release_tag }}" --yes --env-file
-          /dev/null
-
-      - name: Verify restored release
-        if: >-
-          failure() && steps.deploy-attempt.outputs.attempted == 'true' &&
-          steps.publish-release.outcome != 'success' &&
-          steps.publish-release.outputs.publication_state != 'unknown'
-        env:
-          AGENT_OUTBOX_EXPECTED_RELEASE:
+          AGENT_OUTBOX_CANDIDATE_WORKER_VERSION_ID:
+            ${{ steps.upload-worker.outputs.candidate_version_id }}
+          AGENT_OUTBOX_ROLLBACK_RELEASE:
             ${{ steps.rollback-target.outputs.rollback_release }}
-          AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1"
           APP_BASE_URL: https://app.agent-outbox.dev
           SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
-        run: corepack pnpm run smoke-runtime
+        run: node scripts/production-release.mjs reconcile
 
   publish-cli-homebrew:
     name: Verify public CLI and open Homebrew tap PR
@@ -397,6 +376,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Download certified CLI artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

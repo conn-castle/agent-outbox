@@ -340,6 +340,62 @@ export function stripJsonComments(input) {
   return output;
 }
 
+/**
+ * @param {string} input
+ * @returns {string}
+ */
+function removeTrailingJsonCommas(input) {
+  let output = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+
+    if (inString) {
+      output += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      output += char;
+      continue;
+    }
+
+    if (char === ",") {
+      const rest = input.slice(index + 1);
+      const match = rest.match(/^(\s*)([}\]])/);
+      if (match) {
+        output += match[1] + match[2];
+        index += match[0].length;
+        continue;
+      }
+    }
+
+    output += char;
+  }
+
+  return output;
+}
+
+/**
+ * Parse JSONC: comments and trailing commas are legal.
+ *
+ * @param {string} input
+ * @returns {unknown}
+ */
+export function parseJsonc(input) {
+  return JSON.parse(removeTrailingJsonCommas(stripJsonComments(input)));
+}
+
 /** @param {string[]} failures @param {string} relativePath @param {string[]} markers */
 function requireMarkers(failures, relativePath, markers) {
   const contents = source(relativePath);
@@ -416,7 +472,9 @@ export function systemContractDriftFailures(contract = readSystemContract()) {
   requireMarkers(failures, "cli/internal/foundation/http.go", [
     "SystemContractRawFileBytes"
   ]);
-  const wrangler = JSON.parse(stripJsonComments(source("wrangler.jsonc")));
+  const wrangler = /** @type {{ triggers?: { crons?: unknown[] } }} */ (
+    parseJsonc(source("wrangler.jsonc"))
+  );
   const hostedAppHostname = new URL(contract.hostedAppBaseUrl).hostname;
   const hostedWebsiteHostname = new URL(contract.hostedWebsiteBaseUrl).hostname;
   const customDomainHostnames = wranglerCustomDomainHostnames(wrangler);

@@ -1,0 +1,66 @@
+name: Reconcile Production Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Numbered release tag to reconcile (vX.Y.Z)
+        required: true
+        type: string
+      candidate_sha:
+        description:
+          Exact 40-character candidate SHA when known; leave empty to derive
+        required: false
+        type: string
+      github_release_id:
+        description: GitHub release id when known; leave empty to derive
+        required: false
+        type: string
+      prior_version_id:
+        description: Prior Worker version id when known; leave empty to derive
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile abandoned production release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Require main
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.0
+
+      - name: Set up dependencies
+        run: make setup
+
+      - name: Reconcile GitHub and Cloudflare transaction state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          AGENT_OUTBOX_GITHUB_RELEASE_ID: ${{ inputs.github_release_id }}
+          AGENT_OUTBOX_PRIOR_WORKER_VERSION_ID: ${{ inputs.prior_version_id }}
+          CLOUDFLARE_API_TOKEN:
+            ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
+        run: node scripts/production-release.mjs reconcile
