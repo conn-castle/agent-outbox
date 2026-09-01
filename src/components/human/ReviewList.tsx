@@ -7,7 +7,7 @@ import {
   type HumanReviewView
 } from "../../shared/human-review-view";
 import { resolveSupportedColor } from "../../shared/input-schema-rules.ts";
-import { InlineQuickAction } from "./ActionForms";
+import { InlineQuickAction, type OnOptimisticHumanAction } from "./ActionForms";
 import { formatQueueTimestamp, formatUtcTimestamp } from "./review-format";
 import { CardVisual, HumanIcon, SafeHtml, safeHref } from "./TypedContent";
 import { ReviewRowFrame } from "./ReviewRowFrame";
@@ -24,7 +24,8 @@ export function ReviewList({
   onSkipToggle,
   selectionMode,
   view,
-  renderedAt
+  renderedAt,
+  onOptimisticAction
 }: {
   rows: HumanReviewListRow[];
   selectedId: string | null;
@@ -35,6 +36,7 @@ export function ReviewList({
   selectionMode: boolean;
   view: HumanReviewView;
   renderedAt: string;
+  onOptimisticAction: OnOptimisticHumanAction;
 }) {
   if (rows.length === 0) {
     return (
@@ -75,7 +77,7 @@ export function ReviewList({
             : [];
         });
         return (
-          <li key={row.inputItemId}>
+          <li key={row.inputItemId} id={`review-row-${row.inputItemId}`}>
             <ReviewRowFrame
               className={`review-row row-status-${row.status} row-priority-${row.priority}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
                 selectionMode ? " selection-mode" : ""
@@ -143,6 +145,13 @@ export function ReviewList({
                               ? "Skipping is disabled for this review"
                               : undefined
                           }
+                          aria-label={
+                            row.skipDisabled
+                              ? "Defer unavailable for this review"
+                              : skippedIds.has(row.inputItemId)
+                                ? "Return review to queue"
+                                : "Defer review"
+                          }
                           onClick={() => onSkipToggle(row.inputItemId)}
                         >
                           {skippedIds.has(row.inputItemId) ? (
@@ -153,7 +162,7 @@ export function ReviewList({
                           <span>
                             {skippedIds.has(row.inputItemId)
                               ? "Return"
-                              : "Skip"}
+                              : "Defer"}
                           </span>
                         </button>
                       ) : null}
@@ -187,6 +196,7 @@ export function ReviewList({
                                   row={row}
                                   action={action}
                                   className="row-overflow-item"
+                                  onOptimisticAction={onOptimisticAction}
                                 />
                               )
                             )}
@@ -222,7 +232,9 @@ export function ReviewList({
                 />
               }
               visual={
-                row.cardVisual ? <CardVisual visual={row.cardVisual} /> : null
+                row.cardVisual ? (
+                  <CardVisual visual={row.cardVisual} compact />
+                ) : null
               }
               summary={
                 <SafeHtml html={row.summaryHtml} className="row-proposal" />
@@ -273,6 +285,7 @@ export function ReviewList({
                             key={action.value}
                             row={row}
                             action={action}
+                            onOptimisticAction={onOptimisticAction}
                           />
                         )
                       )}

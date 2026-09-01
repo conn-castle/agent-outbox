@@ -22,7 +22,12 @@ import {
   humanReviewHref,
   type HumanReviewView
 } from "../../shared/human-review-view";
-import { ActionComposer, ActionTrigger, UndoAnswerForm } from "./ActionForms";
+import {
+  ActionComposer,
+  ActionTrigger,
+  UndoAnswerForm,
+  type OnOptimisticHumanAction
+} from "./ActionForms";
 import { formatReviewPriority, formatUtcTimestamp } from "./review-format";
 import { CardVisual, HumanIcon, LinkButtons, SafeHtml } from "./TypedContent";
 
@@ -32,7 +37,8 @@ export function ReviewDetail({
   positionLabel,
   previousItem,
   nextItem,
-  composeAction
+  composeAction,
+  onOptimisticAction
 }: {
   detail: HumanReviewDetailDto | null;
   view: HumanReviewView;
@@ -40,6 +46,7 @@ export function ReviewDetail({
   previousItem: { href: string; label: string } | null;
   nextItem: { href: string; label: string } | null;
   composeAction?: string | null;
+  onOptimisticAction: OnOptimisticHumanAction;
 }) {
   const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -115,6 +122,7 @@ export function ReviewDetail({
   return (
     <dialog
       ref={dialogRef}
+      id={`review-detail-${detail.inputItemId}`}
       className={`detail-modal${requestedCompose ? " compose-modal" : ""}`}
       aria-label={requestedCompose ? requestedCompose.display : "Review detail"}
       tabIndex={-1}
@@ -245,7 +253,10 @@ export function ReviewDetail({
                     <strong>Answered with {detail.output.actionDisplay}</strong>
                     <span>{formatUtcTimestamp(detail.output.answeredAt)}</span>
                   </div>
-                  <UndoAnswerForm detail={detail} />
+                  <UndoAnswerForm
+                    detail={detail}
+                    onOptimisticAction={onOptimisticAction}
+                  />
                 </div>
               ) : null}
             </>
@@ -258,6 +269,7 @@ export function ReviewDetail({
               detail={detail}
               action={requestedCompose}
               onCancel={closeDetail}
+              onOptimisticAction={onOptimisticAction}
             />
           ) : (
             <>
@@ -278,6 +290,7 @@ export function ReviewDetail({
                             current === action.value ? null : action.value
                           )
                         }
+                        onOptimisticAction={onOptimisticAction}
                       />
                     ))}
                   </div>
@@ -295,6 +308,7 @@ export function ReviewDetail({
                               : secondaryActions[0].value
                           )
                         }
+                        onOptimisticAction={onOptimisticAction}
                       />
                     </div>
                   ) : secondaryActions.length > 1 ? (
@@ -320,6 +334,7 @@ export function ReviewDetail({
                                   current === action.value ? null : action.value
                                 )
                               }
+                              onOptimisticAction={onOptimisticAction}
                             />
                           ))}
                         </div>
@@ -333,6 +348,7 @@ export function ReviewDetail({
                   detail={detail}
                   action={activeAction}
                   onCancel={() => setActiveActionValue(null)}
+                  onOptimisticAction={onOptimisticAction}
                 />
               ) : null}
             </>

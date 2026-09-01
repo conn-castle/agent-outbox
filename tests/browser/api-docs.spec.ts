@@ -22,8 +22,9 @@ test("API docs teach the workflow and expose the generated contract", async ({
     page.getByText("brew install --cask conn-castle/tap/agent-outbox")
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Request caller access" })
-  ).toHaveAttribute("href", "https://agent-outbox.dev/contact");
+    page.getByText("agent-outbox caller connect my-agent")
+  ).toBeVisible();
+  await expect(page.getByText("invited testers")).toHaveCount(0);
 
   const docsNavigation = page.getByRole("navigation", {
     name: "API sections"
@@ -379,19 +380,24 @@ test("review-row anatomy uses the live structure and exposes content sizing", as
       const details = side
         .querySelector(".row-details-link")!
         .getBoundingClientRect();
+      const summary = side
+        .closest(".row-copy")!
+        .querySelector(".row-summary-content")!
+        .getBoundingClientRect();
       return {
         visualCenter: visual.top + visual.height / 2,
         detailsCenter: details.top + details.height / 2,
-        detailsRight: details.right,
-        sideRight: side.getBoundingClientRect().right
+        detailsTop: details.top,
+        summaryBottom: summary.bottom,
+        summaryLeft: summary.left,
+        detailsLeft: details.left
       };
     });
-  expect(compactSideAlignment.detailsCenter).toBeCloseTo(
-    compactSideAlignment.visualCenter,
-    0
+  expect(compactSideAlignment.detailsTop).toBeGreaterThanOrEqual(
+    compactSideAlignment.summaryBottom - 1
   );
-  expect(compactSideAlignment.detailsRight).toBeCloseTo(
-    compactSideAlignment.sideRight,
+  expect(compactSideAlignment.detailsLeft).toBeCloseTo(
+    compactSideAlignment.summaryLeft,
     0
   );
   const compactContextAlignment = await page
@@ -426,6 +432,9 @@ test("review-row anatomy uses the live structure and exposes content sizing", as
         actionRailRight: row
           .querySelector<HTMLElement>(".row-actions")!
           .getBoundingClientRect().right,
+        actionRailLeft: row
+          .querySelector<HTMLElement>(".row-actions")!
+          .getBoundingClientRect().left,
         lastActionRight: actions.at(-1)!.getBoundingClientRect().right
       };
     });
@@ -435,7 +444,13 @@ test("review-row anatomy uses the live structure and exposes content sizing", as
     compactExampleAccessibility.actionHeights.every((height) => height >= 44)
   ).toBe(true);
   expect(
-    compactExampleAccessibility.actionWidths.every((width) => width <= 192)
+    compactExampleAccessibility.actionWidths.every(
+      (width) =>
+        width >=
+        compactExampleAccessibility.actionRailRight -
+          compactExampleAccessibility.actionRailLeft -
+          1
+    )
   ).toBe(true);
   expect(compactExampleAccessibility.lastActionRight).toBeCloseTo(
     compactExampleAccessibility.actionRailRight,

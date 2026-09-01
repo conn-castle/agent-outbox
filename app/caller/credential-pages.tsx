@@ -124,8 +124,14 @@ export async function CredentialOperationApprovePage({
                     value={fixtureClerkUserId}
                   />
                 ) : null}
-                <button className="button" type="submit">
-                  {approveButton(operation)}
+                <button
+                  className="button"
+                  type="submit"
+                  data-immediate-action-label="Approving…"
+                >
+                  <span data-immediate-action-feedback suppressHydrationWarning>
+                    {approveButton(operation)}
+                  </span>
                 </button>
               </form>
               <form action={denyAction}>
@@ -141,8 +147,14 @@ export async function CredentialOperationApprovePage({
                     value={fixtureClerkUserId}
                   />
                 ) : null}
-                <button className="button secondary" type="submit">
-                  Cancel
+                <button
+                  className="button secondary"
+                  type="submit"
+                  data-immediate-action-label="Cancelling…"
+                >
+                  <span data-immediate-action-feedback suppressHydrationWarning>
+                    Cancel
+                  </span>
                 </button>
               </form>
             </ConnectActions>
@@ -206,8 +218,11 @@ export async function CredentialOperationDevicePage({
               className="button"
               form={`enter-${operation}-device-code`}
               type="submit"
+              data-immediate-action-label="Checking code…"
             >
-              Continue
+              <span data-immediate-action-feedback suppressHydrationWarning>
+                Continue
+              </span>
             </button>
           </ConnectActions>
         </section>
@@ -304,15 +319,21 @@ export async function CredentialOperationDevicePage({
                 className="button"
                 form={`approve-device-${operation}`}
                 type="submit"
+                data-immediate-action-label="Approving…"
               >
-                {approveButton(operation)}
+                <span data-immediate-action-feedback suppressHydrationWarning>
+                  {approveButton(operation)}
+                </span>
               </button>
               <button
                 className="button secondary"
                 form={`deny-device-${operation}`}
                 type="submit"
+                data-immediate-action-label="Cancelling…"
               >
-                Cancel
+                <span data-immediate-action-feedback suppressHydrationWarning>
+                  Cancel
+                </span>
               </button>
             </ConnectActions>
           </section>

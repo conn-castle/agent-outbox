@@ -59,8 +59,15 @@ export default async function CallerConnectDevicePage({
             ) : null}
           </form>
           <ConnectActions>
-            <button className="button" form="enter-device-code" type="submit">
-              Continue
+            <button
+              className="button"
+              form="enter-device-code"
+              type="submit"
+              data-immediate-action-label="Checking code…"
+            >
+              <span data-immediate-action-feedback suppressHydrationWarning>
+                Continue
+              </span>
             </button>
           </ConnectActions>
         </section>

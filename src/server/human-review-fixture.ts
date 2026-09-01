@@ -402,6 +402,9 @@ function browserFixtureReviewDetails(
       detailsHtml: isTail
         ? "<p>Open and approve this item to verify tail-page review behavior.</p>"
         : `<p>Pagination fixture detail ${sequence}.</p>`,
+      actions: template.actions.map((action) =>
+        action.value === "approve" ? { ...action, display: "Approve" } : action
+      ),
       createdAt: new Date(
         Date.UTC(2026, 5, 30, 0, 101 - sequence)
       ).toISOString(),

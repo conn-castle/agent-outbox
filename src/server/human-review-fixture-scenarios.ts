@@ -36,7 +36,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
         payload: {
           label: "Confidence",
           value: 82,
-          display: "82",
+          display: "82%",
           unit: "%",
           min_value: 0,
           max_value: 100
@@ -60,7 +60,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       actions: [
         {
           displayOrder: 0,
-          display: "Approve",
+          display: "Approve permit brief",
           icon: "check",
           value: "approve",
           overflow: false,
@@ -171,10 +171,12 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       actions: [
         {
           displayOrder: 0,
-          display: "Approve",
+          display: "Approve follow-up",
           icon: "check",
           value: "approve",
           overflow: false,
+          tone: "success",
+          style: "solid",
           popupKind: "none",
           popupPayload: {},
           answerable: true,
@@ -186,6 +188,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "calendar",
           value: "pick_date",
           overflow: false,
+          tone: "brand",
+          style: "outline",
           popupKind: "date_picker",
           popupPayload: {
             label: "Follow-up date",
@@ -204,6 +208,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "clock",
           value: "pick_datetime",
           overflow: false,
+          tone: "brand",
+          style: "outline",
           popupKind: "date_picker",
           popupPayload: {
             label: "Follow-up instant",
@@ -304,6 +310,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "send",
           value: "approve_draft",
           overflow: false,
+          tone: "success",
+          style: "solid",
           popupKind: "none",
           popupPayload: {},
           answerable: true,
@@ -315,6 +323,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "file",
           value: "request_revision",
           overflow: true,
+          tone: "neutral",
+          style: "outline",
           popupKind: "free_text",
           popupPayload: {
             label: "What should change?",
@@ -333,6 +343,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "x",
           value: "reject_send",
           overflow: false,
+          tone: "danger",
+          style: "outline",
           popupKind: "none",
           popupPayload: {},
           answerable: true,
@@ -557,6 +569,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "send",
           value: "approve_post",
           overflow: false,
+          tone: "success",
+          style: "solid",
           popupKind: "none",
           popupPayload: {},
           answerable: true,
@@ -568,6 +582,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "file",
           value: "revise_copy",
           overflow: true,
+          tone: "neutral",
+          style: "outline",
           popupKind: "free_text",
           popupPayload: {
             label: "Revision direction",
@@ -586,6 +602,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "x",
           value: "decline_post",
           overflow: false,
+          tone: "danger",
+          style: "outline",
           popupKind: "none",
           popupPayload: {},
           answerable: true,
@@ -665,6 +683,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "chevron-down",
           value: "choose_category",
           overflow: false,
+          tone: "neutral",
+          style: "outline",
           popupKind: "single_select",
           popupPayload: { label: "Transaction category" },
           answerable: true,
@@ -695,6 +715,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "file",
           value: "add_note",
           overflow: false,
+          tone: "neutral",
+          style: "outline",
           popupKind: "free_text",
           popupPayload: {
             label: "Transaction note",
@@ -808,20 +830,16 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       rowAccentColor: "red",
       titleHtml: "Payments smoke check failed after deploy",
       subtitleHtml: "Production · checkout session test",
-      cornerHtml: "Failed status",
+      cornerHtml: "Release gate",
       summaryHtml:
         "<p><strong>Failure:</strong> Stripe test checkout returned in 2.8s, above the 2.0s policy threshold. Error rate and payment completion remain normal.</p>",
       detailsHtml:
         "<h3>Incident evidence</h3><pre><code>p95 checkout session: 2.8s\nbaseline p95: 1.7s\nHTTP errors: 0.00%\npayment completion: 99.8%</code></pre><p>The agent will not change production until you choose an explicit response.</p><h4>Sanitized caller attachment</h4><blockquote>&lt;script&gt;fixtureUnsafeScript()&lt;/script&gt;<br>&lt;svg&gt;&lt;foreignObject&gt;bad&lt;/foreignObject&gt;&lt;/svg&gt;<br>&lt;form action='https://example.com'&gt;&lt;input name='x'&gt;&lt;/form&gt;&lt;video src='https://example.com/movie.mp4'&gt;&lt;/video&gt;&lt;CallerInjectedWidget /&gt;</blockquote>",
       cardVisual: {
-        kind: "progress_ring",
+        kind: "pill",
         payload: {
-          label: "Blocking checks",
-          value: 0,
-          display: "1 failed",
-          unit: null,
-          min_value: 0,
-          max_value: 1,
+          text: "1 failed",
+          icon: "x",
           color: "red"
         }
       },
@@ -859,6 +877,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "check",
           value: "keep_release",
           overflow: false,
+          tone: "success",
+          style: "solid",
           popupKind: "single_select",
           popupPayload: {
             label: "Confirm release exception"
@@ -879,6 +899,8 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           icon: "x",
           value: "roll_back",
           overflow: false,
+          tone: "danger",
+          style: "outline",
           popupKind: "single_select",
           popupPayload: {
             label: "Confirm production rollback"

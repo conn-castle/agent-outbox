@@ -12,7 +12,7 @@ test("the Pro plan describes the supported file upload direction", async ({
   );
 });
 
-test("the homepage separates public CLI installation from invite-only caller access", async ({
+test("the homepage presents public installation and caller connection", async ({
   page
 }) => {
   await page.goto("/");
@@ -23,27 +23,17 @@ test("the homepage separates public CLI installation from invite-only caller acc
       name: "Connect once. Then step away."
     })
   ).toBeVisible();
-  await expect(accessSection).toContainText("invite-only");
   await expect(accessSection).toContainText(
-    "curl -fsSL https://agent-outbox.dev/install.sh | sh"
+    "brew install --cask conn-castle/tap/agent-outbox"
   );
-
-  const requestAccess = accessSection.getByRole("link", {
-    name: "Request caller access"
-  });
-  await expect(requestAccess).toHaveAttribute("href", "/contact");
-
-  await requestAccess.click();
-  await expect(page).toHaveURL(/\/contact$/);
+  await expect(accessSection).toContainText(
+    "agent-outbox caller connect my-agent"
+  );
+  await expect(accessSection).toContainText("Approve in browser");
+  await expect(accessSection).not.toContainText("invite-only");
   await expect(
-    page.getByRole("heading", {
-      name: "Talk to the people building Agent Outbox.",
-      level: 1
-    })
-  ).toBeVisible();
-  await expect(page.getByRole("option", { name: "Caller access" })).toHaveCount(
-    1
-  );
+    accessSection.getByRole("link", { name: "Request caller access" })
+  ).toHaveCount(0);
 });
 
 test("the homepage stays inside the viewport at tablet and phone widths", async ({

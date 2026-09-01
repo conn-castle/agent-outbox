@@ -26,7 +26,10 @@ import {
   BROWSER_FIXTURE_REFERENCE_TIME,
   browserFixtureDesignReviewDetails
 } from "../src/server/human-review-design-fixture.ts";
-import { formatQueueTimestamp } from "../src/components/human/review-format.ts";
+import {
+  formatQueueTimestamp,
+  visualUnitSuffix
+} from "../src/components/human/review-format.ts";
 import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
 import {
   isSupportedColor,
@@ -1265,6 +1268,16 @@ test("browser fixture renders queue timestamps against a frozen reference", () =
     "47 min. ago",
     "48 min. ago"
   ]);
+});
+
+test("visual unit suffixes do not duplicate formatted display units", () => {
+  assert.equal(visualUnitSuffix("42ms", "ms"), null);
+  assert.equal(visualUnitSuffix("42 ms", "ms"), null);
+  assert.equal(visualUnitSuffix("42%", "%"), null);
+  assert.equal(visualUnitSuffix("42", "%"), "%");
+  assert.equal(visualUnitSuffix("42", "ms"), " ms");
+  assert.equal(visualUnitSuffix("42", ""), null);
+  assert.equal(visualUnitSuffix("42", null), null);
 });
 
 function answerForm() {

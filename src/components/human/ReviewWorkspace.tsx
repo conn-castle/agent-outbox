@@ -29,7 +29,11 @@ import {
   type HumanReviewView
 } from "../../shared/human-review-view";
 import { AccountBanner } from "./AccountBanner";
-import { UndoNoticeForm } from "./ActionForms";
+import {
+  showOptimisticHumanAction,
+  UndoNoticeForm,
+  type OnOptimisticHumanAction
+} from "./ActionForms";
 import { BulkActions } from "./BulkActions";
 import { ReviewDetail } from "./ReviewDetail";
 import { ReviewList } from "./ReviewList";
@@ -177,6 +181,25 @@ export function ReviewWorkspace({
     setNoticeDismissed(false);
   }, [notice?.message]);
 
+  useEffect(() => {
+    document
+      .querySelectorAll<HTMLElement>("[data-optimistic-hidden]")
+      .forEach((element) => {
+        element.classList.remove("optimistic-hidden");
+        delete element.dataset.optimisticHidden;
+      });
+    const optimisticNotice = document.getElementById("human-optimistic-notice");
+    if (optimisticNotice) optimisticNotice.hidden = true;
+    document
+      .querySelectorAll<HTMLElement>("[data-server-notice]")
+      .forEach((element) => {
+        element.hidden = false;
+      });
+  }, [notice?.message, renderedAt]);
+
+  const handleOptimisticAction: OnOptimisticHumanAction =
+    showOptimisticHumanAction;
+
   function updateView(changes: Partial<HumanReviewView>) {
     const params = new URLSearchParams(window.location.search);
     params.delete("item");
@@ -264,7 +287,8 @@ export function ReviewWorkspace({
     view.status,
     pendingCount,
     rows.length,
-    hasNext
+    hasNext,
+    view.page
   );
   const detailIndex = detail
     ? visibleRows.findIndex((row) => row.inputItemId === detail.inputItemId)
@@ -373,7 +397,12 @@ export function ReviewWorkspace({
   }, [router]);
 
   return (
-    <main className="human-workspace">
+    <main
+      className="human-workspace"
+      data-workspace-hydrated={
+        hydratedAccountId === session.accountId ? "true" : "false"
+      }
+    >
       <header className="app-bar">
         <a
           className="app-brand product-wordmark"
@@ -425,8 +454,24 @@ export function ReviewWorkspace({
         </div>
       </header>
 
+      <div
+        id="human-optimistic-notice"
+        className="human-notice pending"
+        role="status"
+        aria-live="polite"
+        hidden
+      >
+        <div className="notice-copy">
+          <strong id="human-optimistic-message">Submitting decision…</strong>
+          <span>Saving the decision…</span>
+        </div>
+      </div>
       {notice && !noticeDismissed ? (
-        <div className={`human-notice ${notice.kind}`} role="status">
+        <div
+          className={`human-notice ${notice.kind}`}
+          role="status"
+          data-server-notice
+        >
           <div className="notice-copy">
             <strong>{notice.message}</strong>
             {notice.undo ? (
@@ -436,7 +481,12 @@ export function ReviewWorkspace({
             ) : null}
           </div>
           <div className="notice-actions">
-            {notice.undo ? <UndoNoticeForm {...notice.undo} /> : null}
+            {notice.undo ? (
+              <UndoNoticeForm
+                {...notice.undo}
+                onOptimisticAction={handleOptimisticAction}
+              />
+            ) : null}
             <button
               className="notice-dismiss"
               type="button"
@@ -489,19 +539,8 @@ export function ReviewWorkspace({
               ) : (
                 <Filter aria-hidden="true" />
               )}
-              <span className="mobile-tools-state">
-                {mobileToolsOpen
-                  ? "Close filters"
-                  : `Search · ${
-                      view.sort === "priority" ? "Priority" : "Newest"
-                    }`}
-              </span>
               <span className="mobile-tools-copy">
-                {mobileToolsOpen
-                  ? "Close filters"
-                  : `Search · ${
-                      view.sort === "priority" ? "Priority" : "Newest"
-                    }`}
+                {mobileToolsOpen ? "Close filters" : "Search & filter"}
               </span>
             </button>
             <button
@@ -590,6 +629,7 @@ export function ReviewWorkspace({
           <BulkActions
             selectedRows={selectedRows}
             offPageSelectedCount={offPageSelectedCount}
+            onOptimisticAction={handleOptimisticAction}
           />
 
           <div className="queue-scroll">
@@ -603,6 +643,7 @@ export function ReviewWorkspace({
               selectionMode={selectionMode}
               view={view}
               renderedAt={renderedAt}
+              onOptimisticAction={handleOptimisticAction}
             />
             {!hasNext && visibleRows.length > 0 ? (
               <div className="queue-end">
@@ -697,6 +738,7 @@ export function ReviewWorkspace({
               : null
           }
           composeAction={composeAction}
+          onOptimisticAction={handleOptimisticAction}
         />
       ) : null}
     </main>
@@ -849,16 +891,18 @@ function queueCountCopy(
   status: HumanReviewView["status"],
   pendingCount: number,
   rowCount: number,
-  hasNext: boolean
+  hasNext: boolean,
+  page: number
 ): { value: string; label: string } {
+  const pageScoped = page > 1 || hasNext;
   if (status === "answered") {
     return {
-      value: `${rowCount}${hasNext ? "+" : ""}`,
-      label: "answered"
+      value: `${rowCount}`,
+      label: pageScoped ? "shown" : "answered"
     };
   }
   return {
-    value: `${pendingCount}${hasNext ? "+" : ""}`,
-    label: `of ${rowCount} remaining`
+    value: `${pendingCount}`,
+    label: pageScoped ? "shown" : "remaining"
   };
 }

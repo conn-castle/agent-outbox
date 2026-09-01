@@ -103,12 +103,13 @@ responsive layout:
 Responsive reflow is separate from content-driven sizing. Above 800 CSS pixels,
 the action rail is a fixed-width right column and the visual/Details column is
 fixed within the fluid content area. At 800 pixels and below, actions move below
-the content. At 520 pixels and below, the visual and Details slots share one row
-beneath the title. The row height is always content-driven. Metadata can wrap,
-titles can wrap, visual labels ellipsize, summaries clamp to two lines, and the
-number of actions can increase row height. Subtitles are single-line on larger
-layouts and clamp to two wrapped lines at 520 pixels and below. The stable
-scrollbar gutter is browser-owned width reserved outside the row content.
+the content. At 520 pixels and below, the metadata links, title, visual,
+summary, and Details reflow into one column, with Details below the summary. The
+row height is always content-driven. Metadata can wrap, titles can wrap, visual
+labels ellipsize, summaries clamp to two lines, and the number of actions can
+increase row height. Subtitles are single-line on larger layouts and clamp to
+two wrapped lines at 520 pixels and below. The stable scrollbar gutter is
+browser-owned width reserved outside the row content.
 
 | Slot                | Contents                                                                                                                                                         |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -125,7 +126,7 @@ Product controls are not caller-content slots:
 - **Details** is always available and opens the complete decision surface;
   optional caller `details` supplies a rich-content section inside that surface,
   labeled **Details**.
-- **Skip** is product-owned; `skip_disabled` controls whether it is available.
+- **Defer** is product-owned; `skip_disabled` controls whether it is available.
 - **More actions** is product-owned and appears on pending rows when one or more
   actions use `overflow: true`. Answered rows keep the result and undo flow
   instead of live overflow decision controls.

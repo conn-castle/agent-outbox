@@ -163,14 +163,9 @@ test("branded docs bundle has curated guides and generated reference", () => {
     quickstart,
     /brew install --cask conn-castle\/tap\/agent-outbox/
   );
-  assert.match(
-    quickstart,
-    /Caller connection remains available to invited testers/
-  );
-  assert.ok(
-    quickstart.includes(`${SYSTEM_CONTRACT.hostedWebsiteBaseUrl}/contact`)
-  );
-  assert.match(quickstart, /Request caller access/);
+  assert.match(quickstart, /agent-outbox caller connect my-agent/);
+  assert.match(quickstart, /asks a signed-in person to approve the caller/);
+  assert.doesNotMatch(quickstart, /invited testers|Request caller access/);
 
   const uiGuide = generatedDocs.documents.find(
     (/** @type {any} */ document) => document.slug === "ui"
