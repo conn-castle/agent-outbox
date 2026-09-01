@@ -6,10 +6,10 @@ in the protocol—not from assuming every request runs once.
 
 ## Keep credentials out of agent context
 
-When the supported Agent Outbox CLI distribution is available, prefer its secure
-local credential storage. For a raw HTTP integration, inject the bearer
-credential at the network boundary. Never place it in source control, request
-JSON, logs, tracing attributes, or model prompts.
+Prefer the supported Agent Outbox CLI's secure local credential storage. For a
+raw HTTP integration, inject the bearer credential at the network boundary.
+Never place it in source control, request JSON, logs, tracing attributes, or
+model prompts.
 
 Each credential is scoped to one caller and account. Use separate callers when
 services need independent identity, revocation, or audit history.

@@ -146,9 +146,12 @@ export function GitHubSignInButton() {
         disabled={busy}
         onClick={() => void startGitHubSignIn()}
         type="button"
+        data-immediate-action-label="Opening GitHub…"
       >
         <GitHubMark />
-        {busy ? "Opening GitHub…" : "Continue with GitHub"}
+        <span data-immediate-action-feedback>
+          {busy ? "Opening GitHub…" : "Continue with GitHub"}
+        </span>
       </button>
       {message ? (
         <p className="github-sign-in-error" role="alert">

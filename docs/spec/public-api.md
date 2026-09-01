@@ -26,13 +26,15 @@ Or install the latest macOS or Linux release directly without Homebrew or
 curl -fsSL https://agent-outbox.dev/install.sh | sh
 ```
 
-Caller connection remains available to invited testers during this pre-release.
-[Request caller access](https://agent-outbox.dev/contact) through the public
-contact form before running `agent-outbox caller connect my-agent`. An account
-is not required to send that request, and creating an account does not provision
-a caller credential. The connection flow asks a signed-in person to approve the
-caller, displays its credential once, and stores it in the CLI's owner-only
-local credentials file.
+Connect a caller:
+
+```bash
+agent-outbox caller connect my-agent
+```
+
+`my-agent` is a local label you choose. The connection flow opens Agent Outbox
+and asks a signed-in person to approve the caller. It then displays the
+credential once and stores it in the CLI's owner-only local credentials file.
 
 If you already have a connected caller, the raw HTTP examples below are fully
 usable: substitute its display-once value where `<caller_api_key>` appears.

@@ -64,8 +64,12 @@ export function BrowserApprovalView({
                   value={preview.setup_request_id}
                 />
                 <FixtureIdentity value={fixtureClerkUserId} />
-                <button className="button" type="submit">
-                  Approve connection
+                <button
+                  className="button"
+                  type="submit"
+                  data-immediate-action-label="Approving…"
+                >
+                  <span data-immediate-action-feedback>Approve connection</span>
                 </button>
               </form>
               <form action={denyBrowserConnect}>
@@ -75,8 +79,12 @@ export function BrowserApprovalView({
                   value={preview.setup_request_id}
                 />
                 <FixtureIdentity value={fixtureClerkUserId} />
-                <button className="button secondary" type="submit">
-                  Decline
+                <button
+                  className="button secondary"
+                  type="submit"
+                  data-immediate-action-label="Declining…"
+                >
+                  <span data-immediate-action-feedback>Decline</span>
                 </button>
               </form>
             </>
@@ -146,15 +154,21 @@ export function DeviceApprovalView({
               className="button"
               form={interactive ? "approve-device-connect" : undefined}
               type={interactive ? "submit" : "button"}
+              data-immediate-action-label={
+                interactive ? "Connecting…" : undefined
+              }
             >
-              Confirm and connect
+              <span data-immediate-action-feedback>Confirm and connect</span>
             </button>
             <button
               className="button secondary"
               form={interactive ? "deny-device-connect" : undefined}
               type={interactive ? "submit" : "button"}
+              data-immediate-action-label={
+                interactive ? "Declining…" : undefined
+              }
             >
-              Decline
+              <span data-immediate-action-feedback>Decline</span>
             </button>
           </ConnectActions>
         </div>

@@ -386,9 +386,9 @@ command. The landing page advertises the direct installer command
 creates the numbered GitHub release as an owned draft and uploads and reconciles
 every release archive and `checksums.txt` by release ID before production
 mutation. The workflow publishes that draft by ID only after override smoke and
-100% promotion prove the candidate SHA. Keep the separate product-access
-statement accurate: both CLI installation paths are public, while caller
-connection remains invite-only during the hosted prerelease.
+100% promotion prove the candidate SHA. Keep the product-access statement
+accurate: both CLI installation paths and browser-approved caller connection are
+public.
 
 ## Manual CLI Connect Smoke
 

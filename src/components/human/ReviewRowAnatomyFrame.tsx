@@ -83,7 +83,7 @@ export function ReviewRowAnatomyFrame({
                       <span>
                         {annotated
                           ? REVIEW_ROW_ANATOMY_PARTS.skip.label
-                          : "Skip"}
+                          : "Defer"}
                       </span>
                     </button>
                     <details className="row-overflow">

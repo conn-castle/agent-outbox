@@ -146,9 +146,11 @@ export function LinkButtons({
 }
 
 export function CardVisual({
-  visual
+  visual,
+  compact = false
 }: {
   visual: HumanReviewListRow["cardVisual"];
+  compact?: boolean;
 }) {
   if (!visual) {
     return null;
@@ -156,15 +158,20 @@ export function CardVisual({
 
   if (visual.kind === "numeric_bar") {
     const metrics = numericVisualMetrics(visual.payload);
+    const unitSuffix = visualUnitSuffix(metrics.display, metrics.unit);
     return (
       <div className="card-visual numeric-bar">
         <div className="visual-meta">
           <span>{metrics.label}</span>
           <strong>
             {metrics.display}
-            {metrics.unit ? (
-              <span className="visual-unit">
-                {metrics.unit === "%" ? metrics.unit : ` ${metrics.unit}`}
+            {unitSuffix ? (
+              <span
+                className={`visual-unit${
+                  unitSuffix === "%" ? " visual-unit-percent" : ""
+                }`}
+              >
+                {unitSuffix}
               </span>
             ) : null}
           </strong>
@@ -178,8 +185,36 @@ export function CardVisual({
 
   if (visual.kind === "progress_ring") {
     const metrics = numericVisualMetrics(visual.payload);
+    const unitSuffix = visualUnitSuffix(metrics.display, metrics.unit);
     const color = visual.payload.color;
     const paletteColor = color ? resolveSupportedColor(color) : null;
+    if (compact) {
+      return (
+        <div className="card-visual numeric-bar">
+          <div className="visual-meta">
+            <span>{metrics.label}</span>
+            <strong>
+              {metrics.display}
+              {unitSuffix ? (
+                <span
+                  className={`visual-unit${
+                    unitSuffix === "%" ? " visual-unit-percent" : ""
+                  }`}
+                >
+                  {unitSuffix}
+                </span>
+              ) : null}
+            </strong>
+          </div>
+          <div className="bar-track" aria-hidden="true">
+            <span
+              className="bar-fill"
+              style={{ width: `${metrics.percent}%` }}
+            />
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="card-visual progress-ring">
         <span
@@ -198,9 +233,13 @@ export function CardVisual({
           <span>{metrics.label}</span>
           <strong>
             {metrics.display}
-            {metrics.unit ? (
-              <span className="visual-unit">
-                {metrics.unit === "%" ? metrics.unit : ` ${metrics.unit}`}
+            {unitSuffix ? (
+              <span
+                className={`visual-unit${
+                  unitSuffix === "%" ? " visual-unit-percent" : ""
+                }`}
+              >
+                {unitSuffix}
               </span>
             ) : null}
           </strong>
@@ -248,6 +287,19 @@ function numericVisualMetrics(
     unit: payload.unit,
     percent: boundedPercent(payload.value, payload.min_value, payload.max_value)
   };
+}
+
+function visualUnitSuffix(display: string, unit: string | null) {
+  const normalizedDisplay = display.trimEnd();
+  if (
+    !unit ||
+    normalizedDisplay === unit ||
+    normalizedDisplay.endsWith(` ${unit}`) ||
+    (unit === "%" && normalizedDisplay.endsWith("%"))
+  ) {
+    return null;
+  }
+  return unit === "%" ? unit : ` ${unit}`;
 }
 
 export function safeHref(url: string) {

@@ -75,6 +75,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           type="button"
           onClick={() => void startCheckout("monthly")}
           disabled={pending !== null}
+          data-immediate-action-label="Starting..."
           aria-label={
             pending === "monthly" ? "Starting $5/mo..." : "Start $5/mo checkout"
           }
@@ -86,7 +87,9 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>Simple month-to-month billing</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            {pending === "monthly" ? "Starting..." : "Choose monthly"}
+            <span data-immediate-action-feedback>
+              {pending === "monthly" ? "Starting..." : "Choose monthly"}
+            </span>
           </span>
         </button>
         <button
@@ -94,6 +97,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           type="button"
           onClick={() => void startCheckout("yearly")}
           disabled={pending !== null}
+          data-immediate-action-label="Starting..."
           aria-label={
             pending === "yearly"
               ? "Starting $50/year..."
@@ -107,7 +111,9 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>One annual payment</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            {pending === "yearly" ? "Starting..." : "Choose yearly"}
+            <span data-immediate-action-feedback>
+              {pending === "yearly" ? "Starting..." : "Choose yearly"}
+            </span>
           </span>
         </button>
       </div>
@@ -122,9 +128,12 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
             type="button"
             onClick={() => void startPortal()}
             disabled={pending !== null}
+            data-immediate-action-label="Opening..."
           >
             <ExternalLink aria-hidden="true" size={18} />
-            {pending === "portal" ? "Opening..." : "Open billing portal"}
+            <span data-immediate-action-feedback>
+              {pending === "portal" ? "Opening..." : "Open billing portal"}
+            </span>
           </button>
         </div>
       ) : null}

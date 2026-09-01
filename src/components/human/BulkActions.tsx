@@ -8,15 +8,21 @@ import type {
   HumanReviewBulkAction,
   HumanReviewListRow
 } from "../../server/human-review.ts";
-import { ViewStateFields } from "./ActionForms";
+import {
+  optimisticServerActionProps,
+  ViewStateFields,
+  type OnOptimisticHumanAction
+} from "./ActionForms";
 import { HumanIcon } from "./TypedContent";
 
 export function BulkActions({
   selectedRows,
-  offPageSelectedCount
+  offPageSelectedCount,
+  onOptimisticAction
 }: {
   selectedRows: HumanReviewListRow[];
   offPageSelectedCount: number;
+  onOptimisticAction: OnOptimisticHumanAction;
 }) {
   const pendingRows = selectedRows.filter((row) => row.status === "pending");
   const compatibleActions = commonNoPopupActions(pendingRows);
@@ -39,7 +45,18 @@ export function BulkActions({
   }
 
   return (
-    <form className="bulk-actions" action={submitBulkHumanAnswers}>
+    <form
+      className="bulk-actions"
+      action={submitBulkHumanAnswers}
+      {...optimisticServerActionProps(
+        {
+          kind: "answer",
+          inputItemIds: pendingRows.map((row) => row.inputItemId),
+          message: `Submitting ${selectedAction?.display ?? "bulk action"} for ${pendingRows.length} reviews…`
+        },
+        onOptimisticAction
+      )}
+    >
       <ViewStateFields />
       <input
         type="hidden"
@@ -138,7 +155,6 @@ function commonNoPopupActions(rows: HumanReviewListRow[]) {
             action.popupKind === "none" &&
             !action.overflow &&
             action.value === candidate.value &&
-            action.display === candidate.display &&
             action.icon === candidate.icon
         )
       )

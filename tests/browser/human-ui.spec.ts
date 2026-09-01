@@ -221,11 +221,17 @@ test("authenticated review workspace renders content actions and preserves contr
   ).toBeVisible();
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await expect(page.getByLabel("Account status")).toBeVisible();
-  await expect(
-    page.locator(".review-controls .selection-mode-button")
-  ).toBeVisible();
-  await expect(page.locator(".compact-selection-button")).toBeHidden();
   if (isMobile) {
+    await expect(
+      page.locator(".review-controls .selection-mode-button")
+    ).toBeHidden();
+    await expect(page.locator(".compact-selection-button")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Review tools" })
+    ).toBeVisible();
+    await expect(page.locator(".review-controls")).toBeHidden();
+    await openReviewTools(page);
+    await expect(page.locator(".review-controls")).toBeVisible();
     const shellGeometry = await page
       .locator(".human-workspace")
       .evaluate(() => {
@@ -244,14 +250,19 @@ test("authenticated review workspace renders content actions and preserves contr
         const filters = document
           .querySelector(".filter-controls")!
           .getBoundingClientRect();
+        const tools = document
+          .querySelector(".mobile-tools-button")!
+          .getBoundingClientRect();
         const selection = document
-          .querySelector(".selection-mode-button")!
+          .querySelector(".compact-selection-button")!
           .getBoundingClientRect();
         return {
           accountBottom: account.bottom,
           appBarBottom: appBar.bottom,
           filterTop: filters.top,
           searchTop: search.top,
+          toolsTop: tools.top,
+          toolsBottom: tools.bottom,
           selectionTop: selection.top,
           workspaceCenter: workspace.left + workspace.width / 2,
           viewportCenter: window.innerWidth / 2
@@ -265,7 +276,13 @@ test("authenticated review workspace renders content actions and preserves contr
       0
     );
     expect(shellGeometry.filterTop).toBeGreaterThan(shellGeometry.searchTop);
-    expect(shellGeometry.selectionTop).toBeGreaterThan(shellGeometry.filterTop);
+    expect(shellGeometry.selectionTop).toBeCloseTo(shellGeometry.toolsTop, 0);
+    expect(shellGeometry.searchTop).toBeGreaterThan(shellGeometry.toolsBottom);
+  } else {
+    await expect(
+      page.locator(".review-controls .selection-mode-button")
+    ).toBeVisible();
+    await expect(page.locator(".compact-selection-button")).toBeHidden();
   }
   await expect(
     reviewLinkByTitle(page, "Review neighborhood permit brief")
@@ -274,6 +291,7 @@ test("authenticated review workspace renders content actions and preserves contr
   const detail = page.getByRole("region", { name: "Review detail" });
   await expect(detail.getByText("Confidence")).toBeVisible();
   await expect(detail.getByText("82%")).toBeVisible();
+  await expect(detail).not.toContainText("82%%");
   await expect(detail).toContainText(
     "No source-system action is performed here."
   );
@@ -295,7 +313,7 @@ test("authenticated review workspace renders content actions and preserves contr
       page,
       isMobile,
       "Review neighborhood permit brief"
-    ).getByRole("button", { name: "Approve" })
+    ).getByRole("button", { name: "Approve permit brief" })
   ).toBeEnabled();
   await openSecondaryActions(page);
   await expect(
@@ -315,7 +333,7 @@ test("authenticated review workspace renders content actions and preserves contr
   await chooseViewOption(page, "Sort", "Priority");
 
   await reviewRowByTitle(page, "Review neighborhood permit brief")
-    .getByRole("button", { name: "Skip" })
+    .getByRole("button", { name: "Defer" })
     .click();
   await expect(
     reviewRowByTitle(page, "Review neighborhood permit brief")
@@ -403,6 +421,7 @@ test("primary navigation and queue disclosures behave consistently", async ({
   });
   await account.locator("summary").click();
   await expect(account).not.toHaveAttribute("open", "");
+  await openReviewTools(page);
   await sortDisclosure.locator("summary").click();
   await expect(sortDisclosure).toHaveAttribute("open", "");
   await sortDisclosure.locator("summary").click();
@@ -463,11 +482,45 @@ test("queue-only workspace keeps pagination visible and rows independently scrol
   const pagination = page.getByRole("navigation", { name: "Review pages" });
   await expect(queue).toBeVisible();
   await expect(pagination).toBeVisible();
+  await expect(page.getByLabel("Current view summary")).toHaveText(
+    /100\s*shown/
+  );
+  await expect(page.getByLabel("Current view summary")).not.toContainText(
+    "of 100 remaining"
+  );
   await expect
     .poll(() =>
       queue.evaluate((element) => element.scrollHeight > element.clientHeight)
     )
     .toBe(true);
+  const geometry = await page.locator(".queue-pane").evaluate((pane) => {
+    const queue = pane.querySelector(".queue-scroll")!.getBoundingClientRect();
+    const pagination = pane
+      .querySelector(".review-pagination")!
+      .getBoundingClientRect();
+    const buttons = [
+      ...pane.querySelectorAll<HTMLButtonElement>(".review-pagination button")
+    ].map((button) => button.getBoundingClientRect());
+    return {
+      queueBottom: queue.bottom,
+      paginationTop: pagination.top,
+      paginationBottom: pagination.bottom,
+      paneBottom: pane.getBoundingClientRect().bottom,
+      buttonTops: buttons.map((button) => button.top),
+      buttonBottoms: buttons.map((button) => button.bottom)
+    };
+  });
+  expect(geometry.paginationTop).toBeGreaterThanOrEqual(
+    geometry.queueBottom - 1
+  );
+  expect(geometry.paginationBottom).toBeLessThanOrEqual(
+    geometry.paneBottom + 1
+  );
+  expect(geometry.buttonTops[0]).toBeCloseTo(geometry.buttonTops[1] ?? 0, 0);
+  expect(geometry.buttonBottoms[0]).toBeCloseTo(
+    geometry.buttonBottoms[1] ?? 0,
+    0
+  );
 });
 
 test("review rows keep the canonical responsive topology across documented breakpoints", async ({
@@ -513,18 +566,51 @@ test("review rows keep the canonical responsive topology across documented break
   await expect
     .poll(() =>
       row.evaluate((element) => {
-        const visual = element
-          .querySelector(".row-context")!
+        const summary = element
+          .querySelector(".row-summary-link")!
           .getBoundingClientRect();
         const details = element
           .querySelector(".row-details-link")!
           .getBoundingClientRect();
-        return Math.abs(
-          visual.top + visual.height / 2 - (details.top + details.height / 2)
-        );
+        return details.top >= summary.bottom - 1;
       })
     )
-    .toBeLessThan(2);
+    .toBe(true);
+});
+
+test("narrow review rows preserve complete decision context and actions", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "One desktop browser covers explicit viewport changes");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/human");
+
+  const deployment = reviewRowByTitle(
+    page,
+    "Payments smoke check failed after deploy"
+  );
+  await expect(
+    deployment.locator(".row-context .pill-visual > strong")
+  ).toHaveText("1 failed");
+  await expect(deployment.locator(".row-context .bar-track")).toHaveCount(0);
+  await expect(deployment).toContainText(
+    "Error rate and payment completion remain normal."
+  );
+  await expect(
+    deployment.getByRole("link", { name: "Open safety note" })
+  ).toBeVisible();
+  await expect(
+    deployment.getByRole("link", { name: "Keep release" })
+  ).toHaveClass(/action-tone-success action-style-solid/);
+  await expect(deployment.getByRole("link", { name: "Roll back" })).toHaveClass(
+    /action-tone-danger action-style-outline/
+  );
+
+  await expect(
+    reviewRowByTitle(page, "Reply to Meridian about the renewal delay")
+  ).toContainText("the data-import rehearsal.");
 });
 
 test("desktop detail modal stays within a readable responsive measure", async ({
@@ -560,10 +646,10 @@ test("routine reviews can be completed directly from the queue", async ({
       name: /Quick actions for Review neighborhood permit brief/
     })
   ).toBeVisible();
-  await row.getByRole("button", { name: "Approve" }).click();
+  await row.getByRole("button", { name: "Approve permit brief" }).click();
 
-  await expect(page.getByRole("status")).toContainText(
-    "Approve completed for “Review neighborhood permit brief”."
+  await expect(page.locator("[data-server-notice]")).toContainText(
+    "Approve permit brief completed for “Review neighborhood permit brief”."
   );
   await expect(page).not.toHaveURL(/item=/);
   await expect(
@@ -589,6 +675,97 @@ test("routine reviews can be completed directly from the queue", async ({
   await expect(
     reviewRowByTitle(page, "Review neighborhood permit brief")
   ).toContainText("answeredDecision: Approve");
+});
+
+test("review actions respond visibly within 20 ms", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(
+    isMobile,
+    "The interaction latency contract is device-independent."
+  );
+
+  const actionRequestStarted = deferred();
+  const releaseActionResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    if (route.request().method() === "POST") {
+      actionRequestStarted.resolve();
+      await releaseActionResponse.promise;
+    }
+    await route.continue();
+  });
+  await page.addInitScript(() => {
+    window.addEventListener(
+      "click",
+      () => {
+        (
+          window as Window & { __humanActionClickStartedAt?: number }
+        ).__humanActionClickStartedAt = performance.now();
+      },
+      true
+    );
+  });
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+
+  const row = reviewRowByTitle(page, "Review neighborhood permit brief");
+  const approve = row.getByRole("button", { name: "Approve permit brief" });
+  await expect(approve).toBeEnabled();
+
+  await approve.evaluate((button) => {
+    const reviewRow = button.closest("article.review-row");
+    const list = reviewRow?.closest("ol.review-list");
+    const workspace = button.closest<HTMLElement>(".human-workspace");
+    if (!reviewRow || !list || !workspace) {
+      throw new Error("Review action latency test could not find its UI.");
+    }
+    const rowContainer = reviewRow.closest("li");
+    if (!rowContainer) {
+      throw new Error("Review action latency test could not find its row.");
+    }
+    const originalAdd = DOMTokenList.prototype.add;
+    DOMTokenList.prototype.add = function (...tokens: string[]) {
+      if (
+        this === rowContainer.classList &&
+        tokens.includes("optimistic-hidden")
+      ) {
+        const startedAt = (
+          window as Window & { __humanActionClickStartedAt?: number }
+        ).__humanActionClickStartedAt;
+        if (startedAt === undefined) {
+          throw new Error("Review action latency test missed the click event.");
+        }
+        workspace.dataset.actionResponseMs = String(
+          performance.now() - startedAt
+        );
+        DOMTokenList.prototype.add = originalAdd;
+      }
+      return originalAdd.apply(this, tokens);
+    };
+    (button as HTMLButtonElement).click();
+  });
+
+  await actionRequestStarted.promise;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      })
+  );
+  const responseMs = await page
+    .locator(".human-workspace")
+    .getAttribute("data-action-response-ms");
+  releaseActionResponse.resolve();
+
+  expect(
+    responseMs,
+    "The reviewed row must respond before the held server action completes."
+  ).not.toBeNull();
+  expect(Number(responseMs)).toBeLessThanOrEqual(20);
+  await expect(page.locator("[data-server-notice]")).toContainText(
+    "Approve permit brief completed for “Review neighborhood permit brief”."
+  );
 });
 
 test("human actions submit undo and narrow bulk actions through server actions", async ({
@@ -617,8 +794,10 @@ test("human actions submit undo and narrow bulk actions through server actions",
     .getByRole("checkbox", { name: "Select review" })
     .uncheck();
   await followUpRow.getByRole("checkbox", { name: "Select review" }).check();
-  await page.getByRole("button", { name: "Apply Approve" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await page
+    .getByRole("button", { name: "Apply Approve permit brief" })
+    .click();
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Bulk action complete: 2 answered, 0 failed."
   );
   await page
@@ -637,7 +816,7 @@ test("human actions submit undo and narrow bulk actions through server actions",
     "Answered with Archive"
   );
   await page.getByRole("button", { name: "Undo answer" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Answer undone before caller read."
   );
 
@@ -662,7 +841,7 @@ test("failed file upload notice is not re-emitted by the browser", async ({
   });
   await page.getByRole("button", { name: "Attach evidence" }).click();
 
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Action failed: invalid request."
   );
   // The regression this guards against emitted from a post-hydration client
@@ -697,7 +876,7 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
 
   // Submitting from page 2 must land back on page 2, not a reset view.
   await decisionSurface.getByRole("button", { name: "Approve" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Approve completed for “Beyond one hundred review”."
   );
   await expect(page).toHaveURL(/page=2/);
@@ -819,8 +998,8 @@ test("bulk actions only submit selected rows visible in the current filter", asy
   await expect(page.locator(".bulk-actions")).toContainText(
     "1 selected pending row"
   );
-  await page.getByRole("button", { name: "Apply Approve" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await page.getByRole("button", { name: "Apply Approve follow-up" }).click();
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Bulk action complete: 1 answered, 0 failed."
   );
 });
@@ -947,7 +1126,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     buffer: Buffer.from("browser fixture file")
   });
   await page.getByRole("button", { name: "Attach evidence" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Attach evidence completed"
   );
 
@@ -959,7 +1138,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     .getByLabel("Requested change")
     .fill("Tighten the handoff language.");
   await page.getByRole("button", { name: "Request edit" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Request edit completed"
   );
 
@@ -968,7 +1147,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await page.getByRole("button", { name: "Set review lane" }).click();
   await page.getByLabel("Operations").check();
   await page.getByRole("button", { name: "Set review lane" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Set review lane completed"
   );
 
@@ -976,13 +1155,15 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await page.getByRole("button", { name: "Pick date", exact: true }).click();
   await page.getByLabel("Follow-up date").fill("2026-07-15");
   await page.getByRole("button", { name: "Pick date" }).click();
-  await expect(page.getByRole("status")).toContainText("Pick date completed");
+  await expect(page.locator("[data-server-notice]")).toContainText(
+    "Pick date completed"
+  );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
   await page.getByRole("button", { name: "Pick date and time" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Pick date and time completed"
   );
 
@@ -991,7 +1172,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
   await page.getByRole("button", { name: "Select checks" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator("[data-server-notice]")).toContainText(
     "Select checks completed"
   );
 });
@@ -1098,11 +1279,11 @@ test("canonical row visuals and popup constraints expose only supported semantic
   await expect(pillRow.locator(".pill-visual")).not.toContainText("Signal");
   await expect(pillRow.locator(".pill-visual")).toHaveCSS(
     "background-color",
-    "rgb(169, 81, 35)"
+    /color\(srgb/
   );
   await expect(pillRow.locator(".pill-visual")).toHaveCSS(
     "color",
-    "rgb(255, 255, 255)"
+    "rgb(169, 81, 35)"
   );
 
   const categoryVisual = reviewRowByTitle(
@@ -1147,7 +1328,11 @@ test("canonical row visuals and popup constraints expose only supported semantic
   await expect
     .poll(() =>
       fallbackRow.evaluate((row) => {
-        const copy = row.querySelector(".row-copy")!.getBoundingClientRect();
+        const copyElement = row.querySelector<HTMLElement>(".row-copy")!;
+        const copy =
+          getComputedStyle(copyElement).display === "contents"
+            ? row.querySelector(".row-link")!.getBoundingClientRect()
+            : copyElement.getBoundingClientRect();
         const footer = row
           .querySelector(".row-footer")!
           .getBoundingClientRect();
@@ -1334,7 +1519,7 @@ test("deployment fixture renders hostile caller content inertly", async ({
   });
   await expect(securityRow.locator(".review-accent")).toHaveCount(0);
   await expect(securityRow).not.toHaveAttribute("style", /url\(/i);
-  await expect(detail.locator(".ring")).not.toHaveAttribute(
+  await expect(detail.locator(".card-visual")).not.toHaveAttribute(
     "style",
     /caller-controlled/i
   );

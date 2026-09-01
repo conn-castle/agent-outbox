@@ -4,6 +4,7 @@ import Script from "next/script";
 import type { ReactNode } from "react";
 
 import { ClientEventsInit } from "../src/components/observability/ClientEventsInit";
+import { ImmediateActionFeedback } from "../src/components/ImmediateActionFeedback";
 import { SiteFooter } from "../src/components/SiteFooter";
 import { SiteHeader } from "../src/components/SiteHeader";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate";
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-scroll-behavior="smooth">
       <body>
+        <ImmediateActionFeedback />
         <ClientEventsInit />
         {webAnalyticsToken ? (
           <Script

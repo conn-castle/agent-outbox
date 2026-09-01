@@ -788,6 +788,9 @@ function rootLayoutTestRequire(specifier) {
   if (specifier === "../src/components/observability/ClientEventsInit") {
     return { ClientEventsInit: () => null };
   }
+  if (specifier === "../src/components/ImmediateActionFeedback") {
+    return { ImmediateActionFeedback: () => null };
+  }
   if (specifier === "../src/components/SiteFooter") {
     return { SiteFooter: () => React.createElement("footer") };
   }

@@ -203,6 +203,17 @@ Cleanup, retention, output-timeout deletion, acknowledged-output deletion,
 quota-window pruning, and limit-block maintenance are idempotent database-backed
 jobs. The architecture does not rely on an always-running process.
 
+## Interaction Performance
+
+After its interactive client code loads, every valid user-triggered mutation
+must show honest pending feedback within 20 milliseconds of the browser action.
+This includes review decisions and undo, contact submission, billing launch,
+sign-in launch, and caller connect, rotate, and revoke forms. Pending UI is
+presentation only: the server or remote service remains canonical, and its
+success or error result reconciles the interface. Browser coverage enforces the
+latency boundary while deliberately holding responses open so network or
+navigation completion cannot satisfy the gate.
+
 ## File Handling
 
 Hosted file uploads are part of the output-result path, not a general file
