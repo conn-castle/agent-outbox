@@ -206,13 +206,14 @@ jobs. The architecture does not rely on an always-running process.
 ## Interaction Performance
 
 After its interactive client code loads, every valid user-triggered mutation
-must show honest pending feedback within 20 milliseconds of the browser action.
-This includes review decisions and undo, contact submission, billing launch,
-sign-in launch, and caller connect, rotate, and revoke forms. Pending UI is
-presentation only: the server or remote service remains canonical, and its
-success or error result reconciles the interface. Browser coverage enforces the
-latency boundary while deliberately holding responses open so network or
-navigation completion cannot satisfy the gate.
+must produce its expected visible outcome within 20 milliseconds. Review
+decisions and undo optimistically remove the affected review without displaying
+a submitting or saving banner; assistive technology still receives a compact
+status update. Other external launches may use concise pending labels. Feedback
+and canonical completion notices must not shift the primary layout. The server
+or remote service remains authoritative, and an error restores or reconciles the
+interface. Browser coverage holds responses open so network or navigation
+completion cannot satisfy the latency gate.
 
 ## File Handling
 

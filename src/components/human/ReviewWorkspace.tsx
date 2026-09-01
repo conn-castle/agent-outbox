@@ -177,9 +177,18 @@ export function ReviewWorkspace({
     }
   }, [view.search]);
 
+  const noticeEpoch = [
+    notice?.kind ?? "",
+    notice?.message ?? "",
+    notice?.failedActionKind ?? "",
+    notice?.undo?.inputItemId ?? "",
+    notice?.undo?.outputResultId ?? "",
+    notice?.undo?.callerId ?? ""
+  ].join("\0");
+
   useEffect(() => {
     setNoticeDismissed(false);
-  }, [notice?.message]);
+  }, [noticeEpoch]);
 
   useEffect(() => {
     document
@@ -188,14 +197,14 @@ export function ReviewWorkspace({
         element.classList.remove("optimistic-hidden");
         delete element.dataset.optimisticHidden;
       });
-    const optimisticNotice = document.getElementById("human-optimistic-notice");
-    if (optimisticNotice) optimisticNotice.hidden = true;
     document
       .querySelectorAll<HTMLElement>("[data-server-notice]")
       .forEach((element) => {
         element.hidden = false;
       });
-  }, [notice?.message, renderedAt]);
+    const status = document.getElementById("human-optimistic-status");
+    if (status) status.textContent = "";
+  }, [noticeEpoch, renderedAt]);
 
   const handleOptimisticAction: OnOptimisticHumanAction =
     showOptimisticHumanAction;
@@ -455,30 +464,22 @@ export function ReviewWorkspace({
       </header>
 
       <div
-        id="human-optimistic-notice"
-        className="human-notice pending"
+        id="human-optimistic-status"
+        className="sr-only"
         role="status"
         aria-live="polite"
-        hidden
-      >
-        <div className="notice-copy">
-          <strong id="human-optimistic-message">Submitting decision…</strong>
-          <span>Saving the decision…</span>
-        </div>
-      </div>
+        aria-atomic="true"
+      />
       {notice && !noticeDismissed ? (
         <div
           className={`human-notice ${notice.kind}`}
           role="status"
+          aria-live="polite"
+          aria-atomic="true"
           data-server-notice
         >
           <div className="notice-copy">
             <strong>{notice.message}</strong>
-            {notice.undo ? (
-              <span>
-                Undo remains available until the agent receives this decision.
-              </span>
-            ) : null}
           </div>
           <div className="notice-actions">
             {notice.undo ? (

@@ -279,21 +279,19 @@ function humanReviewNotice(
 
   const notice = firstSearchParam(params?.notice);
   if (notice === "answer_submitted") {
-    const action = firstSearchParam(params?.action);
-    const subject = firstSearchParam(params?.subject);
     const inputItemId = firstSearchParam(params?.undo_target);
     const callerId = firstSearchParam(params?.undo_actor);
     const outputResultId = firstSearchParam(params?.undo_result);
     return {
       kind: "notice",
-      message: completedActionNotice(action, subject),
+      message: "Done.",
       ...(inputItemId && callerId && outputResultId
         ? { undo: { inputItemId, callerId, outputResultId } }
         : {})
     };
   }
   if (notice === "answer_undone") {
-    return { kind: "notice", message: "Answer undone before caller read." };
+    return { kind: "notice", message: "Undone." };
   }
   if (notice === "bulk_answered") {
     const answered = firstSearchParam(params?.answered) ?? "0";
@@ -305,19 +303,4 @@ function humanReviewNotice(
   }
 
   return null;
-}
-
-function completedActionNotice(
-  action: string | undefined,
-  subject: string | undefined
-) {
-  if (action === "Approve to send") {
-    return subject
-      ? `Draft approved for sending: “${subject}”.`
-      : "Draft approved for sending.";
-  }
-  if (action && subject) {
-    return `${action} completed for “${subject}”.`;
-  }
-  return action ? `${action} completed.` : "Answer submitted.";
 }

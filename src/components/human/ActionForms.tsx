@@ -19,7 +19,6 @@ import { actionAppearanceClass } from "./action-appearance";
 export type OptimisticHumanAction = {
   kind: "answer" | "undo";
   inputItemIds: string[];
-  message: string;
 };
 
 export type OnOptimisticHumanAction = (action: OptimisticHumanAction) => void;
@@ -30,20 +29,23 @@ type OptimisticActionWindow = Window & {
 };
 
 export function showOptimisticHumanAction(action: OptimisticHumanAction) {
-  if (action.kind === "answer") {
-    action.inputItemIds.forEach((id) => {
-      [`review-row-${id}`, `review-detail-${id}`].forEach((elementId) => {
-        const element = document.getElementById(elementId);
-        if (!element) return;
-        element.dataset.optimisticHidden = "true";
-        element.classList.add("optimistic-hidden");
-      });
+  action.inputItemIds.forEach((id) => {
+    [`review-row-${id}`, `review-detail-${id}`].forEach((elementId) => {
+      const element = document.getElementById(elementId);
+      if (!element) return;
+      if (element instanceof HTMLDialogElement && element.open) {
+        element.close();
+      }
+      element.dataset.optimisticHidden = "true";
+      element.classList.add("optimistic-hidden");
     });
+  });
+  const status = document.getElementById("human-optimistic-status");
+  if (status) {
+    status.textContent = "";
+    status.textContent =
+      action.kind === "undo" ? "Undoing." : "Review updated.";
   }
-  const message = document.getElementById("human-optimistic-message");
-  if (message) message.textContent = action.message;
-  const notice = document.getElementById("human-optimistic-notice");
-  if (notice) notice.hidden = false;
   document
     .querySelectorAll<HTMLElement>("[data-server-notice]")
     .forEach((element) => {
@@ -65,15 +67,13 @@ function optimisticHumanActionFromForm(
     if (
       (action.kind !== "answer" && action.kind !== "undo") ||
       !Array.isArray(action.inputItemIds) ||
-      !action.inputItemIds.every((id) => typeof id === "string") ||
-      typeof action.message !== "string"
+      !action.inputItemIds.every((id) => typeof id === "string")
     ) {
       return null;
     }
     return {
       kind: action.kind,
-      inputItemIds: action.inputItemIds,
-      message: action.message
+      inputItemIds: action.inputItemIds
     };
   } catch {
     return null;
@@ -130,39 +130,16 @@ if (typeof window !== "undefined") {
   }
 }
 
-const deferredServerActionForms = new WeakSet<HTMLFormElement>();
-
-function submitAfterOptimisticPaint(
+function ensureOptimisticState(
   event: FormEvent<HTMLFormElement>,
   showOptimisticState: () => void
 ) {
   const form = event.currentTarget;
-  if (deferredServerActionForms.delete(form)) {
-    delete form.dataset.optimisticPrepared;
-    return;
-  }
-
-  event.preventDefault();
-  const submitter = (event.nativeEvent as SubmitEvent).submitter;
   const optimisticPrepared = form.dataset.optimisticPrepared === "true";
   delete form.dataset.optimisticPrepared;
   if (!optimisticPrepared) {
     showOptimisticState();
   }
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      if (!form.isConnected) return;
-      deferredServerActionForms.add(form);
-      if (
-        submitter instanceof HTMLButtonElement ||
-        submitter instanceof HTMLInputElement
-      ) {
-        form.requestSubmit(submitter);
-      } else {
-        form.requestSubmit();
-      }
-    });
-  });
 }
 
 export function optimisticServerActionProps(
@@ -172,7 +149,7 @@ export function optimisticServerActionProps(
   return {
     "data-optimistic-human-action": JSON.stringify(action),
     onSubmit: (event: FormEvent<HTMLFormElement>) =>
-      submitAfterOptimisticPaint(event, () => onOptimisticAction(action))
+      ensureOptimisticState(event, () => onOptimisticAction(action))
   };
 }
 
@@ -212,8 +189,7 @@ export function InlineQuickAction({
       {...optimisticServerActionProps(
         {
           kind: "answer",
-          inputItemIds: [row.inputItemId],
-          message: `Submitting ${action.display}…`
+          inputItemIds: [row.inputItemId]
         },
         onOptimisticAction
       )}
@@ -292,8 +268,7 @@ export function ActionTrigger({
       {...optimisticServerActionProps(
         {
           kind: "answer",
-          inputItemIds: [detail.inputItemId],
-          message: `Submitting ${action.display}…`
+          inputItemIds: [detail.inputItemId]
         },
         onOptimisticAction
       )}
@@ -346,8 +321,7 @@ export function ActionComposer({
       {...optimisticServerActionProps(
         {
           kind: "answer",
-          inputItemIds: [detail.inputItemId],
-          message: `Submitting ${action.display}…`
+          inputItemIds: [detail.inputItemId]
         },
         onOptimisticAction
       )}
@@ -421,8 +395,7 @@ export function UndoAnswerForm({
       {...optimisticServerActionProps(
         {
           kind: "undo",
-          inputItemIds: [detail.inputItemId],
-          message: "Undoing answer…"
+          inputItemIds: [detail.inputItemId]
         },
         onOptimisticAction
       )}
@@ -458,8 +431,7 @@ export function UndoNoticeForm({
       {...optimisticServerActionProps(
         {
           kind: "undo",
-          inputItemIds: [inputItemId],
-          message: "Undoing answer…"
+          inputItemIds: [inputItemId]
         },
         onOptimisticAction
       )}
@@ -809,7 +781,7 @@ function SubmitButton({
       disabled={disabled || status.pending}
     >
       {icon ? <HumanIcon name={icon} /> : null}
-      <span>{status.pending ? "Submitting" : label}</span>
+      <span>{label}</span>
     </button>
   );
 }

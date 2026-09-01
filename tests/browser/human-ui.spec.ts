@@ -648,9 +648,15 @@ test("routine reviews can be completed directly from the queue", async ({
   ).toBeVisible();
   await row.getByRole("button", { name: "Approve permit brief" }).click();
 
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Approve permit brief completed for “Review neighborhood permit brief”."
-  );
+  const completionNotice = page.locator("[data-server-notice]");
+  await expect(completionNotice).toContainText("Done.");
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(completionNotice).toHaveCount(0);
+
+  const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
+  await followUpRow.scrollIntoViewIfNeeded();
+  await followUpRow.getByRole("button", { name: "Approve follow-up" }).click();
+  await expect(page.locator("[data-server-notice]")).toContainText("Done.");
   await expect(page).not.toHaveURL(/item=/);
   await expect(
     page.getByRole("heading", { name: "Needs review" })
@@ -658,6 +664,9 @@ test("routine reviews can be completed directly from the queue", async ({
   await expect(
     reviewLinkByTitle(page, "Review neighborhood permit brief")
   ).toHaveCount(0);
+  await expect(reviewLinkByTitle(page, "Choose follow-up window")).toHaveCount(
+    0
+  );
 
   await page
     .getByRole("navigation", { name: "Primary" })
@@ -675,17 +684,14 @@ test("routine reviews can be completed directly from the queue", async ({
   await expect(
     reviewRowByTitle(page, "Review neighborhood permit brief")
   ).toContainText("answeredDecision: Approve");
+  await expect(reviewRowByTitle(page, "Choose follow-up window")).toContainText(
+    "answeredDecision: Approve"
+  );
 });
 
-test("review actions respond visibly within 20 ms", async ({
-  page,
-  isMobile
+test("review actions disappear within 20 ms without shifting the workspace", async ({
+  page
 }) => {
-  test.skip(
-    isMobile,
-    "The interaction latency contract is device-independent."
-  );
-
   const actionRequestStarted = deferred();
   const releaseActionResponse = deferred();
   await page.route("**/human**", async (route) => {
@@ -706,12 +712,18 @@ test("review actions respond visibly within 20 ms", async ({
       true
     );
   });
-  await page.goto("/human");
+  await page.goto("/human?notice=answer_submitted");
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
   const row = reviewRowByTitle(page, "Review neighborhood permit brief");
   const approve = row.getByRole("button", { name: "Approve permit brief" });
   await expect(approve).toBeEnabled();
+  const existingNotice = page.locator("[data-server-notice]");
+  await expect(existingNotice).toContainText("Done.");
+  const workspaceBody = page.locator(".workspace-body");
+  const workspaceTopBeforeAction = await workspaceBody.evaluate(
+    (element) => element.getBoundingClientRect().top
+  );
 
   await approve.evaluate((button) => {
     const reviewRow = button.closest("article.review-row");
@@ -756,16 +768,39 @@ test("review actions respond visibly within 20 ms", async ({
   const responseMs = await page
     .locator(".human-workspace")
     .getAttribute("data-action-response-ms");
-  releaseActionResponse.resolve();
 
   expect(
     responseMs,
     "The reviewed row must respond before the held server action completes."
   ).not.toBeNull();
   expect(Number(responseMs)).toBeLessThanOrEqual(20);
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Approve permit brief completed for “Review neighborhood permit brief”."
+  await expect(row).toBeHidden();
+  await expect(existingNotice).toBeHidden();
+  expect(
+    await page
+      .getByText(/Submitting|Saving the decision/)
+      .evaluateAll((elements) =>
+        elements.filter((element) => element.getClientRects().length > 0)
+      )
+  ).toHaveLength(0);
+  expect(
+    await workspaceBody.evaluate(
+      (element) => element.getBoundingClientRect().top
+    )
+  ).toBe(workspaceTopBeforeAction);
+
+  releaseActionResponse.resolve();
+  const completionNotice = page.locator("[data-server-notice]");
+  await expect(completionNotice).toHaveText(/Done\.\s*Undo/);
+  await expect(completionNotice).toHaveCSS("position", "fixed");
+  expect((await completionNotice.boundingBox())?.width).toBeLessThanOrEqual(
+    300
   );
+  expect(
+    await workspaceBody.evaluate(
+      (element) => element.getBoundingClientRect().top
+    )
+  ).toBe(workspaceTopBeforeAction);
 });
 
 test("human actions submit undo and narrow bulk actions through server actions", async ({
@@ -816,14 +851,53 @@ test("human actions submit undo and narrow bulk actions through server actions",
     "Answered with Archive"
   );
   await page.getByRole("button", { name: "Undo answer" }).click();
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Answer undone before caller read."
-  );
+  await expect(page.locator("[data-server-notice]")).toContainText("Undone.");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000525");
   await expect(
     page.getByRole("button", { name: "Undo unavailable after caller read" })
   ).toBeDisabled();
+});
+
+test("undo from detail closes the modal before the server answers", async ({
+  page
+}) => {
+  const actionRequestStarted = deferred();
+  const releaseActionResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    if (route.request().method() === "POST") {
+      actionRequestStarted.resolve();
+      await releaseActionResponse.promise;
+    }
+    await route.continue();
+  });
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000517");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await expect(page.getByLabel("Answered state")).toContainText(
+    "Answered with Archive"
+  );
+  expect(
+    await page.evaluate(() => {
+      const dialog = document.querySelector("dialog.detail-modal");
+      return dialog instanceof HTMLDialogElement && dialog.open;
+    })
+  ).toBe(true);
+
+  await page.getByRole("button", { name: "Undo answer" }).click();
+  await actionRequestStarted.promise;
+  expect(
+    await page.evaluate(() => {
+      const dialog = document.querySelector("dialog.detail-modal");
+      return dialog instanceof HTMLDialogElement ? dialog.open : false;
+    }),
+    "Optimistic undo must close the detail modal so the queue is not left inert."
+  ).toBe(false);
+  expect(
+    await page.evaluate(() => document.querySelector("[inert]") != null)
+  ).toBe(false);
+
+  releaseActionResponse.resolve();
+  await expect(page.locator("[data-server-notice]")).toContainText("Undone.");
 });
 
 test("failed file upload notice is not re-emitted by the browser", async ({
@@ -844,6 +918,9 @@ test("failed file upload notice is not re-emitted by the browser", async ({
   await expect(page.locator("[data-server-notice]")).toContainText(
     "Action failed: invalid request."
   );
+  await expect(
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
+  ).toBeVisible();
   // The regression this guards against emitted from a post-hydration client
   // effect; assert emptiness only after hydration so a reintroduced emission
   // would land before the check and fail it.
@@ -881,9 +958,7 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
 
   // Submitting from page 2 must land back on page 2, not a reset view.
   await decisionSurface.getByRole("button", { name: "Approve" }).click();
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Approve completed for “Beyond one hundred review”."
-  );
+  await expect(page.locator("[data-server-notice]")).toContainText("Done.");
   await expect(page).toHaveURL(/page=2/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
@@ -1131,9 +1206,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     buffer: Buffer.from("browser fixture file")
   });
   await page.getByRole("button", { name: "Attach evidence" }).click();
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Attach evidence completed"
-  );
+  await expect(page.locator("[data-server-notice]")).toContainText("Done.");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
@@ -1143,43 +1216,33 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     .getByLabel("Requested change")
     .fill("Tighten the handoff language.");
   await page.getByRole("button", { name: "Request edit" }).click();
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Request edit completed"
-  );
+  await expect(page.locator("[data-server-notice]")).toContainText("Done.");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
   await openSecondaryActions(page);
   await page.getByRole("button", { name: "Set review lane" }).click();
   await page.getByLabel("Operations").check();
   await page.getByRole("button", { name: "Set review lane" }).click();
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Set review lane completed"
-  );
+  await expect(page.locator("[data-server-notice]")).toContainText("Done.");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date", exact: true }).click();
   await page.getByLabel("Follow-up date").fill("2026-07-15");
   await page.getByRole("button", { name: "Pick date" }).click();
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Pick date completed"
-  );
+  await expect(page.locator("[data-server-notice]")).toContainText("Done.");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
   await page.getByRole("button", { name: "Pick date and time" }).click();
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Pick date and time completed"
-  );
+  await expect(page.locator("[data-server-notice]")).toContainText("Done.");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Select checks" }).click();
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
   await page.getByRole("button", { name: "Select checks" }).click();
-  await expect(page.locator("[data-server-notice]")).toContainText(
-    "Select checks completed"
-  );
+  await expect(page.locator("[data-server-notice]")).toContainText("Done.");
 });
 
 test("row popup actions open a focused composer instead of the full detail", async ({
