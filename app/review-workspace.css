@@ -560,7 +560,8 @@ body:has(.shell > .human-workspace) {
   font-weight: 650;
 }
 
-.human-workspace .optimistic-hidden {
+.human-workspace .optimistic-hidden,
+.human-workspace .human-notice[hidden] {
   display: none;
 }
 

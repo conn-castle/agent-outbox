@@ -43,11 +43,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Date mode always displays and submits the browser timezone, and the human form/server path requires one, although the public date-response contract permits null.
     Next step: Align date-mode display, submission, and server validation with the canonical nullable timezone contract.
 
-- Issue 2026-08-17 completion-notice-display-semantics: Completion behavior is inferred from caller display text
-    Priority: Medium. Area: Human review / Feedback
-    Description: An action labeled exactly `Approve to send` produces a draft-specific completion notice even though display labels are not protocol semantics.
-    Next step: Remove behavior inferred from presentation text and derive completion messaging only from canonical semantics.
-
 - Issue 2026-08-17 queue-count-scope: Page-scoped counts are presented as queue totals
     Priority: Medium. Area: Human review / Pagination
     Description: Pagination can present values such as `100+ of 100 remaining`, and later pages expose only local row counts rather than queue totals.

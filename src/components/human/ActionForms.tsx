@@ -33,10 +33,19 @@ export function showOptimisticHumanAction(action: OptimisticHumanAction) {
     [`review-row-${id}`, `review-detail-${id}`].forEach((elementId) => {
       const element = document.getElementById(elementId);
       if (!element) return;
+      if (element instanceof HTMLDialogElement && element.open) {
+        element.close();
+      }
       element.dataset.optimisticHidden = "true";
       element.classList.add("optimistic-hidden");
     });
   });
+  const status = document.getElementById("human-optimistic-status");
+  if (status) {
+    status.textContent = "";
+    status.textContent =
+      action.kind === "undo" ? "Undoing." : "Review updated.";
+  }
   document
     .querySelectorAll<HTMLElement>("[data-server-notice]")
     .forEach((element) => {

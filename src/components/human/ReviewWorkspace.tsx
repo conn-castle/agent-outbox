@@ -177,9 +177,18 @@ export function ReviewWorkspace({
     }
   }, [view.search]);
 
+  const noticeEpoch = [
+    notice?.kind ?? "",
+    notice?.message ?? "",
+    notice?.failedActionKind ?? "",
+    notice?.undo?.inputItemId ?? "",
+    notice?.undo?.outputResultId ?? "",
+    notice?.undo?.callerId ?? ""
+  ].join("\0");
+
   useEffect(() => {
     setNoticeDismissed(false);
-  }, [notice?.message]);
+  }, [noticeEpoch]);
 
   useEffect(() => {
     document
@@ -193,7 +202,9 @@ export function ReviewWorkspace({
       .forEach((element) => {
         element.hidden = false;
       });
-  }, [notice?.message, renderedAt]);
+    const status = document.getElementById("human-optimistic-status");
+    if (status) status.textContent = "";
+  }, [noticeEpoch, renderedAt]);
 
   const handleOptimisticAction: OnOptimisticHumanAction =
     showOptimisticHumanAction;
@@ -452,10 +463,19 @@ export function ReviewWorkspace({
         </div>
       </header>
 
+      <div
+        id="human-optimistic-status"
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      />
       {notice && !noticeDismissed ? (
         <div
           className={`human-notice ${notice.kind}`}
           role="status"
+          aria-live="polite"
+          aria-atomic="true"
           data-server-notice
         >
           <div className="notice-copy">

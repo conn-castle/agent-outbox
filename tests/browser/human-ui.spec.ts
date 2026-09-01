@@ -648,6 +648,14 @@ test("routine reviews can be completed directly from the queue", async ({
   ).toBeVisible();
   await row.getByRole("button", { name: "Approve permit brief" }).click();
 
+  const completionNotice = page.locator("[data-server-notice]");
+  await expect(completionNotice).toContainText("Done.");
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(completionNotice).toHaveCount(0);
+
+  const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
+  await followUpRow.scrollIntoViewIfNeeded();
+  await followUpRow.getByRole("button", { name: "Approve follow-up" }).click();
   await expect(page.locator("[data-server-notice]")).toContainText("Done.");
   await expect(page).not.toHaveURL(/item=/);
   await expect(
@@ -656,6 +664,9 @@ test("routine reviews can be completed directly from the queue", async ({
   await expect(
     reviewLinkByTitle(page, "Review neighborhood permit brief")
   ).toHaveCount(0);
+  await expect(reviewLinkByTitle(page, "Choose follow-up window")).toHaveCount(
+    0
+  );
 
   await page
     .getByRole("navigation", { name: "Primary" })
@@ -673,6 +684,9 @@ test("routine reviews can be completed directly from the queue", async ({
   await expect(
     reviewRowByTitle(page, "Review neighborhood permit brief")
   ).toContainText("answeredDecision: Approve");
+  await expect(reviewRowByTitle(page, "Choose follow-up window")).toContainText(
+    "answeredDecision: Approve"
+  );
 });
 
 test("review actions disappear within 20 ms without shifting the workspace", async ({
@@ -698,12 +712,14 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
       true
     );
   });
-  await page.goto("/human");
+  await page.goto("/human?notice=answer_submitted");
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
   const row = reviewRowByTitle(page, "Review neighborhood permit brief");
   const approve = row.getByRole("button", { name: "Approve permit brief" });
   await expect(approve).toBeEnabled();
+  const existingNotice = page.locator("[data-server-notice]");
+  await expect(existingNotice).toContainText("Done.");
   const workspaceBody = page.locator(".workspace-body");
   const workspaceTopBeforeAction = await workspaceBody.evaluate(
     (element) => element.getBoundingClientRect().top
@@ -759,6 +775,7 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
   ).not.toBeNull();
   expect(Number(responseMs)).toBeLessThanOrEqual(20);
   await expect(row).toBeHidden();
+  await expect(existingNotice).toBeHidden();
   expect(
     await page
       .getByText(/Submitting|Saving the decision/)
@@ -840,6 +857,47 @@ test("human actions submit undo and narrow bulk actions through server actions",
   await expect(
     page.getByRole("button", { name: "Undo unavailable after caller read" })
   ).toBeDisabled();
+});
+
+test("undo from detail closes the modal before the server answers", async ({
+  page
+}) => {
+  const actionRequestStarted = deferred();
+  const releaseActionResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    if (route.request().method() === "POST") {
+      actionRequestStarted.resolve();
+      await releaseActionResponse.promise;
+    }
+    await route.continue();
+  });
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000517");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await expect(page.getByLabel("Answered state")).toContainText(
+    "Answered with Archive"
+  );
+  expect(
+    await page.evaluate(() => {
+      const dialog = document.querySelector("dialog.detail-modal");
+      return dialog instanceof HTMLDialogElement && dialog.open;
+    })
+  ).toBe(true);
+
+  await page.getByRole("button", { name: "Undo answer" }).click();
+  await actionRequestStarted.promise;
+  expect(
+    await page.evaluate(() => {
+      const dialog = document.querySelector("dialog.detail-modal");
+      return dialog instanceof HTMLDialogElement ? dialog.open : false;
+    }),
+    "Optimistic undo must close the detail modal so the queue is not left inert."
+  ).toBe(false);
+  expect(
+    await page.evaluate(() => document.querySelector("[inert]") != null)
+  ).toBe(false);
+
+  releaseActionResponse.resolve();
+  await expect(page.locator("[data-server-notice]")).toContainText("Undone.");
 });
 
 test("failed file upload notice is not re-emitted by the browser", async ({
