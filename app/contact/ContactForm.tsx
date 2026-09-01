@@ -116,7 +116,7 @@ export function ContactForm() {
           disabled={sending}
           data-immediate-action-label="Sending…"
         >
-          <span data-immediate-action-feedback>
+          <span data-immediate-action-feedback suppressHydrationWarning>
             {sending ? "Sending…" : "Send message"}
           </span>
         </button>

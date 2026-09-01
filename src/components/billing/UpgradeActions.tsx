@@ -87,7 +87,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>Simple month-to-month billing</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            <span data-immediate-action-feedback>
+            <span data-immediate-action-feedback suppressHydrationWarning>
               {pending === "monthly" ? "Starting..." : "Choose monthly"}
             </span>
           </span>
@@ -111,7 +111,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>One annual payment</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            <span data-immediate-action-feedback>
+            <span data-immediate-action-feedback suppressHydrationWarning>
               {pending === "yearly" ? "Starting..." : "Choose yearly"}
             </span>
           </span>
@@ -131,7 +131,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
             data-immediate-action-label="Opening..."
           >
             <ExternalLink aria-hidden="true" size={18} />
-            <span data-immediate-action-feedback>
+            <span data-immediate-action-feedback suppressHydrationWarning>
               {pending === "portal" ? "Opening..." : "Open billing portal"}
             </span>
           </button>

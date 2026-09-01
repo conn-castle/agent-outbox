@@ -65,7 +65,9 @@ export default async function CallerConnectDevicePage({
               type="submit"
               data-immediate-action-label="Checking code…"
             >
-              <span data-immediate-action-feedback>Continue</span>
+              <span data-immediate-action-feedback suppressHydrationWarning>
+                Continue
+              </span>
             </button>
           </ConnectActions>
         </section>

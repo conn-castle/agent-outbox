@@ -129,7 +129,7 @@ export async function CredentialOperationApprovePage({
                   type="submit"
                   data-immediate-action-label="Approving…"
                 >
-                  <span data-immediate-action-feedback>
+                  <span data-immediate-action-feedback suppressHydrationWarning>
                     {approveButton(operation)}
                   </span>
                 </button>
@@ -152,7 +152,9 @@ export async function CredentialOperationApprovePage({
                   type="submit"
                   data-immediate-action-label="Cancelling…"
                 >
-                  <span data-immediate-action-feedback>Cancel</span>
+                  <span data-immediate-action-feedback suppressHydrationWarning>
+                    Cancel
+                  </span>
                 </button>
               </form>
             </ConnectActions>
@@ -218,7 +220,9 @@ export async function CredentialOperationDevicePage({
               type="submit"
               data-immediate-action-label="Checking code…"
             >
-              <span data-immediate-action-feedback>Continue</span>
+              <span data-immediate-action-feedback suppressHydrationWarning>
+                Continue
+              </span>
             </button>
           </ConnectActions>
         </section>
@@ -317,7 +321,7 @@ export async function CredentialOperationDevicePage({
                 type="submit"
                 data-immediate-action-label="Approving…"
               >
-                <span data-immediate-action-feedback>
+                <span data-immediate-action-feedback suppressHydrationWarning>
                   {approveButton(operation)}
                 </span>
               </button>
@@ -327,7 +331,9 @@ export async function CredentialOperationDevicePage({
                 type="submit"
                 data-immediate-action-label="Cancelling…"
               >
-                <span data-immediate-action-feedback>Cancel</span>
+                <span data-immediate-action-feedback suppressHydrationWarning>
+                  Cancel
+                </span>
               </button>
             </ConnectActions>
           </section>

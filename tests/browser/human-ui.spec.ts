@@ -1269,6 +1269,15 @@ test("canonical row visuals and popup constraints expose only supported semantic
   await expect(progressRow.locator(".ring svg")).toHaveCount(0);
   await expect(progressRow.locator(".visual-unit")).toHaveText("checks");
 
+  const coloredProgressRow = reviewRowByTitle(
+    page,
+    "Publish the instruction-ablation result"
+  );
+  await expect(coloredProgressRow.locator(".bar-fill")).toHaveCSS(
+    "background-color",
+    "rgb(169, 81, 35)"
+  );
+
   const pillRow = reviewRowByTitle(
     page,
     "Reply to Meridian about the renewal delay"

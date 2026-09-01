@@ -69,7 +69,9 @@ export function BrowserApprovalView({
                   type="submit"
                   data-immediate-action-label="Approving…"
                 >
-                  <span data-immediate-action-feedback>Approve connection</span>
+                  <span data-immediate-action-feedback suppressHydrationWarning>
+                    Approve connection
+                  </span>
                 </button>
               </form>
               <form action={denyBrowserConnect}>
@@ -84,7 +86,9 @@ export function BrowserApprovalView({
                   type="submit"
                   data-immediate-action-label="Declining…"
                 >
-                  <span data-immediate-action-feedback>Decline</span>
+                  <span data-immediate-action-feedback suppressHydrationWarning>
+                    Decline
+                  </span>
                 </button>
               </form>
             </>
@@ -158,7 +162,9 @@ export function DeviceApprovalView({
                 interactive ? "Connecting…" : undefined
               }
             >
-              <span data-immediate-action-feedback>Confirm and connect</span>
+              <span data-immediate-action-feedback suppressHydrationWarning>
+                Confirm and connect
+              </span>
             </button>
             <button
               className="button secondary"
@@ -168,7 +174,9 @@ export function DeviceApprovalView({
                 interactive ? "Declining…" : undefined
               }
             >
-              <span data-immediate-action-feedback>Decline</span>
+              <span data-immediate-action-feedback suppressHydrationWarning>
+                Decline
+              </span>
             </button>
           </ConnectActions>
         </div>

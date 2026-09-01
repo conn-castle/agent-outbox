@@ -149,7 +149,7 @@ export function GitHubSignInButton() {
         data-immediate-action-label="Opening GitHub…"
       >
         <GitHubMark />
-        <span data-immediate-action-feedback>
+        <span data-immediate-action-feedback suppressHydrationWarning>
           {busy ? "Opening GitHub…" : "Continue with GitHub"}
         </span>
       </button>

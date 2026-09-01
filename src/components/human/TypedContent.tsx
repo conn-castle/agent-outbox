@@ -209,7 +209,12 @@ export function CardVisual({
           <div className="bar-track" aria-hidden="true">
             <span
               className="bar-fill"
-              style={{ width: `${metrics.percent}%` }}
+              style={
+                {
+                  width: `${metrics.percent}%`,
+                  "--bar-color": paletteColor ?? undefined
+                } as CSSProperties
+              }
             />
           </div>
         </div>
