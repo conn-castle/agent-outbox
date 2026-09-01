@@ -258,7 +258,7 @@ child process from SSM; they do not create a plaintext cache.
 Inspect unresolved production Sentry issues:
 
 ```bash
-pnpm run sentry -- issues list --status unresolved --max-rows 100
+pnpm run sentry -- issues list --query 'is:unresolved' --max-rows 100
 ```
 
 Production database credentials are not exposed through this local wrapper.
