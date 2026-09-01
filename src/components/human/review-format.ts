@@ -58,3 +58,11 @@ export function formatReviewPriority(value: string) {
       return "Normal priority";
   }
 }
+
+export function visualUnitSuffix(display: string, unit: string | null) {
+  const normalizedDisplay = display.trimEnd();
+  if (!unit || normalizedDisplay.endsWith(unit)) {
+    return null;
+  }
+  return unit === "%" ? unit : ` ${unit}`;
+}

@@ -32,6 +32,7 @@ import {
   resolveSupportedColor,
   SUPPORTED_LUCIDE_ICON_NAMES
 } from "../../shared/input-schema-rules.ts";
+import { visualUnitSuffix } from "./review-format.ts";
 
 type SupportedLucideIconName = (typeof SUPPORTED_LUCIDE_ICON_NAMES)[number];
 
@@ -292,19 +293,6 @@ function numericVisualMetrics(
     unit: payload.unit,
     percent: boundedPercent(payload.value, payload.min_value, payload.max_value)
   };
-}
-
-function visualUnitSuffix(display: string, unit: string | null) {
-  const normalizedDisplay = display.trimEnd();
-  if (
-    !unit ||
-    normalizedDisplay === unit ||
-    normalizedDisplay.endsWith(` ${unit}`) ||
-    (unit === "%" && normalizedDisplay.endsWith("%"))
-  ) {
-    return null;
-  }
-  return unit === "%" ? unit : ` ${unit}`;
 }
 
 export function safeHref(url: string) {

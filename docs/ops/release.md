@@ -380,15 +380,13 @@ brew install --cask conn-castle/tap/agent-outbox
 agent-outbox version
 ```
 
-The README and public API quickstart must advertise this exact verified Homebrew
-command. The landing page advertises the direct installer command
-`curl -fsSL https://agent-outbox.dev/install.sh | sh`. Production preparation
-creates the numbered GitHub release as an owned draft and uploads and reconciles
-every release archive and `checksums.txt` by release ID before production
-mutation. The workflow publishes that draft by ID only after override smoke and
-100% promotion prove the candidate SHA. Keep the product-access statement
-accurate: both CLI installation paths and browser-approved caller connection are
-public.
+The README, public API quickstart, and landing page must advertise this exact
+verified Homebrew command. Production preparation creates the numbered GitHub
+release as an owned draft and uploads and reconciles every release archive and
+`checksums.txt` by release ID before production mutation. The workflow publishes
+that draft by ID only after override smoke and 100% promotion prove the
+candidate SHA. Keep the product-access statement accurate: both CLI installation
+paths and browser-approved caller connection are public.
 
 ## Manual CLI Connect Smoke
 

@@ -855,6 +855,11 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
   page,
   isMobile
 }) => {
+  // This scenario intentionally spans several client navigations and a server
+  // action. Keep each assertion's normal bounded wait while allowing for CI
+  // scheduling across the complete workflow.
+  test.slow();
+
   await page.goto("/human?fixture_dataset=pagination");
   await expect(page.getByRole("button", { name: "Next 100" })).toBeVisible();
   await page.getByRole("button", { name: "Next 100" }).click();

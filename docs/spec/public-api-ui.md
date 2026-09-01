@@ -126,7 +126,7 @@ Product controls are not caller-content slots:
 - **Details** is always available and opens the complete decision surface;
   optional caller `details` supplies a rich-content section inside that surface,
   labeled **Details**.
-- **Skip** is product-owned; `skip_disabled` controls whether it is available.
+- **Defer** is product-owned; `skip_disabled` controls whether it is available.
 - **More actions** is product-owned and appears on pending rows when one or more
   actions use `overflow: true`. Answered rows keep the result and undo flow
   instead of live overflow decision controls.
