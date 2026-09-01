@@ -51,8 +51,7 @@ export function BulkActions({
       {...optimisticServerActionProps(
         {
           kind: "answer",
-          inputItemIds: pendingRows.map((row) => row.inputItemId),
-          message: `Submitting ${selectedAction?.display ?? "bulk action"} for ${pendingRows.length} reviews…`
+          inputItemIds: pendingRows.map((row) => row.inputItemId)
         },
         onOptimisticAction
       )}
@@ -128,13 +127,7 @@ function BulkSubmitButton({
       disabled={disabled || status.pending}
     >
       <HumanIcon name={action?.icon ?? "check"} />
-      <span>
-        {status.pending
-          ? "Submitting"
-          : action
-            ? `Apply ${action.display}`
-            : "Apply"}
-      </span>
+      <span>{action ? `Apply ${action.display}` : "Apply"}</span>
     </button>
   );
 }

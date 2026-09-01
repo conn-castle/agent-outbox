@@ -188,8 +188,6 @@ export function ReviewWorkspace({
         element.classList.remove("optimistic-hidden");
         delete element.dataset.optimisticHidden;
       });
-    const optimisticNotice = document.getElementById("human-optimistic-notice");
-    if (optimisticNotice) optimisticNotice.hidden = true;
     document
       .querySelectorAll<HTMLElement>("[data-server-notice]")
       .forEach((element) => {
@@ -454,18 +452,6 @@ export function ReviewWorkspace({
         </div>
       </header>
 
-      <div
-        id="human-optimistic-notice"
-        className="human-notice pending"
-        role="status"
-        aria-live="polite"
-        hidden
-      >
-        <div className="notice-copy">
-          <strong id="human-optimistic-message">Submitting decision…</strong>
-          <span>Saving the decision…</span>
-        </div>
-      </div>
       {notice && !noticeDismissed ? (
         <div
           className={`human-notice ${notice.kind}`}
@@ -474,11 +460,6 @@ export function ReviewWorkspace({
         >
           <div className="notice-copy">
             <strong>{notice.message}</strong>
-            {notice.undo ? (
-              <span>
-                Undo remains available until the agent receives this decision.
-              </span>
-            ) : null}
           </div>
           <div className="notice-actions">
             {notice.undo ? (
