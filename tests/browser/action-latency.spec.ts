@@ -220,33 +220,34 @@ test("billing checkout can retry after a fast failure", async ({ page }) => {
   await expect(button).toBeEnabled();
 });
 
+type LatencyWindow = Window & {
+  __actionLatencyStartedAt?: number;
+  __actionLatencyResponseMs?: number;
+};
+
 async function clickAndWatch(
   page: Page,
   button: Locator,
   expectedText: string,
   observeSelector?: string
 ) {
-  await button.evaluate(
+  const recorded = await button.evaluate(
     (clickEl, { text, observeSelector: selector }) => {
+      const latencyWindow = window as LatencyWindow;
+      delete latencyWindow.__actionLatencyResponseMs;
       const element = selector
         ? (clickEl.querySelector(selector) ?? clickEl)
         : clickEl;
       const record = () => {
-        if (document.documentElement.dataset.actionResponseMs !== undefined) {
-          return;
-        }
+        if (latencyWindow.__actionLatencyResponseMs !== undefined) return;
         if (!element.textContent?.includes(text)) return;
-        const startedAt = (
-          window as Window & { __actionLatencyStartedAt?: number }
-        ).__actionLatencyStartedAt;
+        const startedAt = latencyWindow.__actionLatencyStartedAt;
         if (startedAt === undefined) return;
-        document.documentElement.dataset.actionResponseMs = String(
-          performance.now() - startedAt
-        );
+        latencyWindow.__actionLatencyResponseMs = performance.now() - startedAt;
       };
       const observer = new MutationObserver(() => {
         record();
-        if (document.documentElement.dataset.actionResponseMs !== undefined) {
+        if (latencyWindow.__actionLatencyResponseMs !== undefined) {
           observer.disconnect();
         }
       });
@@ -255,27 +256,25 @@ async function clickAndWatch(
         subtree: true,
         characterData: true
       });
-      (
-        window as Window & { __actionLatencyStartedAt?: number }
-      ).__actionLatencyStartedAt = performance.now();
+      latencyWindow.__actionLatencyStartedAt = performance.now();
       (clickEl as HTMLButtonElement).click();
       record();
-      if (document.documentElement.dataset.actionResponseMs !== undefined) {
+      if (latencyWindow.__actionLatencyResponseMs !== undefined) {
         observer.disconnect();
       }
+      return latencyWindow.__actionLatencyResponseMs ?? null;
     },
     { text: expectedText, observeSelector }
   );
 
-  return page
-    .waitForFunction(
-      () => document.documentElement.dataset.actionResponseMs !== undefined
-    )
-    .then(() =>
-      page.evaluate(() =>
-        Number(document.documentElement.dataset.actionResponseMs)
-      )
-    );
+  if (recorded !== null) return recorded;
+
+  await page.waitForFunction(
+    () => (window as LatencyWindow).__actionLatencyResponseMs !== undefined
+  );
+  return page.evaluate(
+    () => (window as LatencyWindow).__actionLatencyResponseMs as number
+  );
 }
 
 function deferred() {
