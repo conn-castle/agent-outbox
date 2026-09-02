@@ -115,6 +115,7 @@ export function ReviewWorkspace({
   const canonicalGeneration = useRef(0);
   const successGenerations = useRef(new Map<string, number>());
   const retriedCanonicalRefreshes = useRef(new Set<string>());
+  const consumedNoticeEpoch = useRef<string | null>(null);
 
   useEffect(() => {
     const persisted = readWorkspaceState(session.accountId);
@@ -228,6 +229,37 @@ export function ReviewWorkspace({
     writeHumanReviewView(params, next);
     const href = `${window.location.pathname}?${params.toString()}`;
     router.replace(href, { scroll: false });
+  }
+
+  function clearRedirectNoticeFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    let changed = false;
+    for (const key of [
+      "notice",
+      "error",
+      "failedActionKind",
+      "action",
+      "answered",
+      "failed",
+      "undo_target",
+      "undo_actor",
+      "undo_result",
+      "resolved",
+      "subject"
+    ]) {
+      if (params.has(key)) {
+        params.delete(key);
+        changed = true;
+      }
+    }
+    if (!changed) {
+      return;
+    }
+    const query = params.toString();
+    router.replace(
+      query ? `${window.location.pathname}?${query}` : window.location.pathname,
+      { scroll: false }
+    );
   }
 
   useEffect(
@@ -477,6 +509,11 @@ export function ReviewWorkspace({
     requiresCanonicalPendingRow = submission.operation === "undo" &&
       rowSnapshots.some((row) => row.status === "pending")
   ) {
+    toast.dismiss();
+    if (notice) {
+      consumedNoticeEpoch.current = noticeEpoch;
+    }
+    clearRedirectNoticeFromUrl();
     const optimistic: HumanOptimisticMutation = {
       operation: submission.operation,
       inputItemIds: submission.inputItemIds,
@@ -560,6 +597,7 @@ export function ReviewWorkspace({
 
   useEffect(() => {
     if (!notice) return;
+    if (consumedNoticeEpoch.current === noticeEpoch) return;
     const options = {
       id: noticeEpoch,
       ...(notice.undo
