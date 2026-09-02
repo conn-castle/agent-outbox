@@ -284,6 +284,12 @@ export function ReviewWorkspace({
 
   function onStatusNavigate(status: HumanReviewView["status"]) {
     return (event: { preventDefault: () => void }) => {
+      // The rendered href already includes `search` state. Only take over when
+      // the in-flight input is ahead of that commit; otherwise let Link keep
+      // its navigation (including hover prefetch).
+      if (currentSearch() === search) {
+        return;
+      }
       event.preventDefault();
       updateViewImmediately({ status, page: 1 });
     };

@@ -1098,6 +1098,7 @@ test("human actions submit undo and narrow bulk actions through server actions",
   );
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000517");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await expect(page.getByLabel("Answered state")).toContainText(
     "Answered with Archive"
   );
@@ -1228,6 +1229,7 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
     .click();
+  await expect(page).toHaveURL(/status=answered/);
   await expect(
     reviewLinkByTitle(page, "Beyond one hundred review")
   ).toBeVisible();
@@ -1243,7 +1245,7 @@ test("review search sends one request after the trailing debounce", async ({
   const searchRequests = trackHumanSearchRequests(page);
 
   await openReviewTools(page);
-  await page.getByLabel("Search").pressSequentially("follow-up");
+  await page.getByLabel("Search").fill("follow-up");
   expect(searchRequests).toHaveLength(0);
   await page.clock.runFor(299);
   expect(searchRequests).toHaveLength(0);
