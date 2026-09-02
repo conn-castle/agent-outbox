@@ -263,16 +263,30 @@ export function ReviewWorkspace({
     previousDetailId.current = currentId;
   }, [detail?.inputItemId]);
 
+  function currentSearch() {
+    return pendingSearch.current ?? search;
+  }
+
   function submitSearch() {
     cancelDebouncedSearch();
-    updateView({ search, page: 1 });
+    updateView({ search: currentSearch(), page: 1 });
   }
 
   function updateViewImmediately(changes: Partial<HumanReviewView>) {
     cancelDebouncedSearch();
+    const nextSearch = currentSearch();
     updateView(
-      search === view.search ? changes : { ...changes, search, page: 1 }
+      nextSearch === view.search
+        ? changes
+        : { ...changes, search: nextSearch, page: 1 }
     );
+  }
+
+  function onStatusNavigate(status: HumanReviewView["status"]) {
+    return (event: { preventDefault: () => void }) => {
+      event.preventDefault();
+      updateViewImmediately({ status, page: 1 });
+    };
   }
 
   const humanMutations = useMemo(
@@ -695,6 +709,7 @@ export function ReviewWorkspace({
               status: "pending",
               page: 1
             })}
+            onNavigate={onStatusNavigate("pending")}
             aria-current={view.status === "answered" ? undefined : "page"}
           >
             Review queue
@@ -707,6 +722,7 @@ export function ReviewWorkspace({
               status: "answered",
               page: 1
             })}
+            onNavigate={onStatusNavigate("answered")}
             aria-current={view.status === "answered" ? "page" : undefined}
           >
             History

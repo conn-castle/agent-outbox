@@ -365,6 +365,7 @@ test("authenticated review workspace renders content actions and preserves contr
 
   await page.getByLabel("Search").fill("");
   await page.getByRole("link", { name: "History" }).click();
+  await expect(page).not.toHaveURL(/search=/);
   await expect(
     reviewLinkByTitle(page, "GitHub security digest for archived repositories")
   ).toBeVisible();
@@ -1284,6 +1285,16 @@ test("Enter and the Search button submit immediately and cancel debounce", async
   await expect.poll(() => searchRequests.length).toBe(3);
   await page.clock.runFor(300);
   expect(searchRequests).toHaveLength(3);
+
+  await page.getByLabel("Search").fill("follow-up");
+  await page.getByRole("button", { name: "Search" }).click();
+  await expect(page).toHaveURL(/search=follow-up/);
+  await page.getByLabel("Search").fill("");
+  await page.getByRole("link", { name: "History" }).click();
+  await expect(page).toHaveURL(/status=answered/);
+  await expect(page).not.toHaveURL(/search=/);
+  await page.clock.runFor(300);
+  await expect(page).not.toHaveURL(/search=/);
 });
 
 test("uncaught browser error emits a content-safe client event", async ({
