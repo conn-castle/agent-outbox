@@ -1,19 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    window.addEventListener(
-      "click",
-      () => {
-        (
-          window as Window & { __actionLatencyStartedAt?: number }
-        ).__actionLatencyStartedAt = performance.now();
-      },
-      true
-    );
-  });
-});
-
 test("contact submission responds visibly within 20 ms", async ({ page }) => {
   const requestStarted = deferred();
   const releaseResponse = deferred();
@@ -28,16 +14,10 @@ test("contact submission responds visibly within 20 ms", async ({ page }) => {
   });
 
   await page.goto("/contact");
-  await page.getByLabel("Name").fill("Latency Tester");
-  await page.getByLabel("Email").fill("latency@example.com");
-  await page.getByLabel("What can we help with?").selectOption("Support");
-  await page
-    .getByLabel("Message")
-    .fill("This valid test message is deliberately held open.");
+  await fillValidContactForm(page);
 
   const button = page.getByRole("button", { name: "Send message" });
-  const responseMsPromise = observeTextResponse(page, button, "Sending…");
-  await button.evaluate((element) => (element as HTMLButtonElement).click());
+  const responseMsPromise = clickAndWatch(page, button, "Sending…");
   await requestStarted.promise;
   let responseMs: number;
   try {
@@ -68,9 +48,12 @@ test("billing checkout responds visibly within 20 ms", async ({ page }) => {
 
   await page.goto("/upgrade");
   const button = page.getByRole("button", { name: "Start $5/mo checkout" });
-  const feedback = button.locator(".billing-option-action");
-  const responseMsPromise = observeTextResponse(page, feedback, "Starting...");
-  await button.evaluate((element) => (element as HTMLButtonElement).click());
+  const responseMsPromise = clickAndWatch(
+    page,
+    button,
+    "Starting...",
+    ".billing-option-action"
+  );
   await requestStarted.promise;
   let responseMs: number;
   try {
@@ -118,8 +101,7 @@ test("caller approval responds visibly within 20 ms", async ({
   await page.goto(approvalUrl.toString());
 
   const button = page.getByRole("button", { name: "Approve connection" });
-  const responseMsPromise = observeTextResponse(page, button, "Approving…");
-  await button.evaluate((element) => (element as HTMLButtonElement).click());
+  const responseMsPromise = clickAndWatch(page, button, "Approving…");
   await actionRequestStarted.promise;
   let responseMs: number;
   try {
@@ -142,60 +124,157 @@ test("invalid forms do not present pending feedback", async ({ page }) => {
   await expect(page.getByLabel("Name")).toBeFocused();
 });
 
-async function observeTextResponse(
-  page: Page,
-  feedback: Locator,
-  expectedText: string
-) {
-  await feedback.evaluate((element, text) => {
-    const feedbackText = element.matches("[data-immediate-action-feedback]")
-      ? element
-      : element.querySelector("[data-immediate-action-feedback]");
-    if (!feedbackText) {
-      throw new Error("Action latency test could not find its feedback text.");
-    }
-    const textContent = Object.getOwnPropertyDescriptor(
-      Node.prototype,
-      "textContent"
-    );
-    if (!textContent?.get || !textContent.set) {
-      throw new Error("Action latency test could not observe text updates.");
-    }
-    const recordResponse = () => {
-      const startedAt = (
-        window as Window & { __actionLatencyStartedAt?: number }
-      ).__actionLatencyStartedAt;
-      if (startedAt === undefined) {
-        throw new Error("Action latency test missed the click event.");
-      }
-      document.documentElement.dataset.actionResponseMs = String(
-        performance.now() - startedAt
-      );
-    };
-    Object.defineProperty(feedbackText, "textContent", {
-      configurable: true,
-      get() {
-        return textContent.get?.call(this);
-      },
-      set(value: string | null) {
-        textContent.set?.call(this, value);
-        if (typeof value === "string" && value.includes(text)) {
-          recordResponse();
-          Reflect.deleteProperty(this, "textContent");
+test("contact submission can retry after a fast failure", async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    let contactAttempts = 0;
+    window.fetch = (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input instanceof Request
+              ? input.url
+              : String(input);
+      if (url.includes("/api/contact")) {
+        contactAttempts += 1;
+        if (contactAttempts === 1) {
+          return Promise.reject(new TypeError("Failed to fetch"));
         }
       }
+      return originalFetch(input, init);
+    };
+  });
+  await page.route("**/api/contact", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true })
     });
-  }, expectedText);
+  });
 
-  return page
-    .waitForFunction(
-      () => document.documentElement.dataset.actionResponseMs !== undefined
-    )
-    .then(() =>
-      page.evaluate(() =>
-        Number(document.documentElement.dataset.actionResponseMs)
-      )
-    );
+  await page.goto("/contact");
+  await fillValidContactForm(page);
+
+  const button = page.getByRole("button", { name: "Send message" });
+  await button.click();
+  await expect(page.getByRole("status")).toContainText(
+    "Check your connection and try again."
+  );
+  await nextMacrotask(page);
+  await expect(button).toHaveText("Send message");
+  await expect(button).toBeEnabled();
+
+  await button.click();
+  await expect(page.getByRole("status")).toContainText(
+    "Message sent. We’ll get back to you soon."
+  );
+});
+
+test("billing checkout can retry after a fast failure", async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    let checkoutAttempts = 0;
+    window.fetch = (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input instanceof Request
+              ? input.url
+              : String(input);
+      if (url.includes("/api/billing/checkout")) {
+        checkoutAttempts += 1;
+        if (checkoutAttempts === 1) {
+          return Promise.reject(new TypeError("Failed to fetch"));
+        }
+      }
+      return originalFetch(input, init);
+    };
+  });
+  await page.route("**/api/billing/checkout", async (route) => {
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: { message: "Retry checkout." }
+      })
+    });
+  });
+
+  await page.goto("/upgrade");
+  const button = page.getByRole("button", { name: "Start $5/mo checkout" });
+  await button.click();
+  await expect(page.locator(".form-error")).toContainText("Failed to fetch");
+  await nextMacrotask(page);
+  await expect(button.locator("[data-immediate-action-feedback]")).toHaveText(
+    "Choose monthly"
+  );
+  await expect(button).toBeEnabled();
+
+  await button.click();
+  await expect(page.locator(".form-error")).toContainText("Retry checkout.");
+  await expect(button).toBeEnabled();
+});
+
+type LatencyWindow = Window & {
+  __actionLatencyStartedAt?: number;
+  __actionLatencyResponseMs?: number;
+};
+
+async function clickAndWatch(
+  page: Page,
+  button: Locator,
+  expectedText: string,
+  observeSelector?: string
+) {
+  const recorded = await button.evaluate(
+    (clickEl, { text, observeSelector: selector }) => {
+      const latencyWindow = window as LatencyWindow;
+      delete latencyWindow.__actionLatencyResponseMs;
+      const element = selector
+        ? (clickEl.querySelector(selector) ?? clickEl)
+        : clickEl;
+      const record = () => {
+        if (latencyWindow.__actionLatencyResponseMs !== undefined) return;
+        if (!element.textContent?.includes(text)) return;
+        const startedAt = latencyWindow.__actionLatencyStartedAt;
+        if (startedAt === undefined) return;
+        latencyWindow.__actionLatencyResponseMs = performance.now() - startedAt;
+      };
+      const observer = new MutationObserver(() => {
+        record();
+        if (latencyWindow.__actionLatencyResponseMs !== undefined) {
+          observer.disconnect();
+        }
+      });
+      observer.observe(element, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+      latencyWindow.__actionLatencyStartedAt = performance.now();
+      (clickEl as HTMLButtonElement).click();
+      record();
+      if (latencyWindow.__actionLatencyResponseMs !== undefined) {
+        observer.disconnect();
+      }
+      return latencyWindow.__actionLatencyResponseMs ?? null;
+    },
+    { text: expectedText, observeSelector }
+  );
+
+  if (recorded !== null) return recorded;
+
+  await page.waitForFunction(
+    () => (window as LatencyWindow).__actionLatencyResponseMs !== undefined
+  );
+  return page.evaluate(
+    () => (window as LatencyWindow).__actionLatencyResponseMs as number
+  );
 }
 
 function deferred() {
@@ -204,4 +283,19 @@ function deferred() {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+async function fillValidContactForm(page: Page) {
+  await page.getByLabel("Name").fill("Latency Tester");
+  await page.getByLabel("Email").fill("latency@example.com");
+  await page.getByLabel("What can we help with?").selectOption("Support");
+  await page
+    .getByLabel("Message")
+    .fill("This valid test message is deliberately held open.");
+}
+
+async function nextMacrotask(page: Page) {
+  await page.evaluate(
+    () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+  );
 }

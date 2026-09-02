@@ -1,4 +1,5 @@
 import { ChevronRight } from "lucide-react";
+import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 
 export function ReviewRowFrame({
@@ -41,14 +42,14 @@ export function ReviewRowFrame({
         <div className="row-heading">{heading}</div>
         <div className="row-copy">
           <div className="row-primary">
-            <a
+            <Link
               className={classes("row-link", slotClassNames?.title)}
               href={href}
               aria-label={ariaLabel}
             >
               <span className="row-link-heading">{title}</span>
               {subtitle}
-            </a>
+            </Link>
             <div className="row-side">
               {visual ? (
                 <aside
@@ -58,14 +59,14 @@ export function ReviewRowFrame({
                   {visual}
                 </aside>
               ) : null}
-              <a
+              <Link
                 className={classes("row-details-link", slotClassNames?.details)}
                 href={href}
                 aria-label={ariaLabel}
               >
                 <span>{details ?? "Details"}</span>
                 <ChevronRight />
-              </a>
+              </Link>
             </div>
           </div>
           <div className="row-summary-link">

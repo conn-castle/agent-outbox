@@ -206,14 +206,33 @@ jobs. The architecture does not rely on an always-running process.
 ## Interaction Performance
 
 After its interactive client code loads, every valid user-triggered mutation
-must produce its expected visible outcome within 20 milliseconds. Review
-decisions and undo optimistically remove the affected review without displaying
-a submitting or saving banner; assistive technology still receives a compact
-status update. Other external launches may use concise pending labels. Feedback
-and canonical completion notices must not shift the primary layout. The server
-or remote service remains authoritative, and an error restores or reconciles the
-interface. Browser coverage holds responses open so network or navigation
-completion cannot satisfy the latency gate.
+must produce its expected visible outcome within 20 milliseconds. The app owns a
+root-mounted, in-memory mutation journal that survives client navigation.
+Human-review decisions are projected into the visible queue immediately and then
+synchronized in FIFO order through the authenticated mutation endpoint; the
+database remains canonical, and the journal is not offline storage. This
+ordering preserves every rapid intent and avoids conflicting concurrent writes
+to fixture or server state.
+
+Each journal entry reconciles independently after a canonical refresh. A failed
+write removes only its own optimistic projection and restores the affected
+review with an actionable toast. A client fetch timeout is indeterminate: the
+journal keeps the projection and refreshes canonical state instead of rolling
+back a write that may still commit. A bulk result with zero successes is a
+failure from the mutation endpoint, not a successful projection. Undo becomes
+available only after the original answer is accepted; its cached restored row
+remains non-interactive until the undo commit is accepted, then reconciles with
+the canonical revision of the current view. JavaScript-disabled review forms
+retain redirecting server actions as a fallback. Navigational and
+security-sensitive workflows use their existing redirecting actions with
+explicit form-local pending labels applied on the native click, so the visible
+pending state does not wait for a React commit. Labeled clicks are stopped in
+window capture so descendant React click handlers cannot delay that paint; other
+window listeners still run. Submits restart with requestSubmit, and non-submit
+actions replay their click, on the following macrotask after MutationObserver
+callbacks have run. Feedback and completion notices live in the root toast layer
+and do not shift the primary layout. Browser coverage holds responses open so
+network or navigation completion cannot satisfy the latency gate.
 
 ## File Handling
 

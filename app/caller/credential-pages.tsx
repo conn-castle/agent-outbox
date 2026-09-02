@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { unstable_rethrow } from "next/navigation";
 
+import { ActionSubmitButton } from "../../src/components/actions/ActionSubmitButton";
 import {
   getCredentialOperationBrowserApprovalPreview,
   getCredentialOperationDeviceApprovalPreview,
@@ -124,15 +125,12 @@ export async function CredentialOperationApprovePage({
                     value={fixtureClerkUserId}
                   />
                 ) : null}
-                <button
+                <ActionSubmitButton
                   className="button"
-                  type="submit"
-                  data-immediate-action-label="Approving…"
+                  pendingChildren="Approving…"
                 >
-                  <span data-immediate-action-feedback suppressHydrationWarning>
-                    {approveButton(operation)}
-                  </span>
-                </button>
+                  {approveButton(operation)}
+                </ActionSubmitButton>
               </form>
               <form action={denyAction}>
                 <input
@@ -147,15 +145,12 @@ export async function CredentialOperationApprovePage({
                     value={fixtureClerkUserId}
                   />
                 ) : null}
-                <button
+                <ActionSubmitButton
                   className="button secondary"
-                  type="submit"
-                  data-immediate-action-label="Cancelling…"
+                  pendingChildren="Cancelling…"
                 >
-                  <span data-immediate-action-feedback suppressHydrationWarning>
-                    Cancel
-                  </span>
-                </button>
+                  Cancel
+                </ActionSubmitButton>
               </form>
             </ConnectActions>
           </section>
@@ -212,19 +207,15 @@ export async function CredentialOperationDevicePage({
                 value={fixtureClerkUserId}
               />
             ) : null}
-          </form>
-          <ConnectActions>
-            <button
-              className="button"
-              form={`enter-${operation}-device-code`}
-              type="submit"
-              data-immediate-action-label="Checking code…"
-            >
-              <span data-immediate-action-feedback suppressHydrationWarning>
+            <ConnectActions>
+              <ActionSubmitButton
+                className="button"
+                pendingChildren="Checking code…"
+              >
                 Continue
-              </span>
-            </button>
-          </ConnectActions>
+              </ActionSubmitButton>
+            </ConnectActions>
+          </form>
         </section>
       </ConnectPageShell>
     );
@@ -275,66 +266,54 @@ export async function CredentialOperationDevicePage({
           <ApprovalSummary preview={preview.data} showCredentialDetails />
           <section className="connect-card" aria-labelledby="device-approve">
             <h2 id="device-approve">{approvalTitle(operation)}</h2>
-            <form
-              id={`approve-device-${operation}`}
-              action={approveAction}
-              className="form-stack"
-            >
-              <label className="field">
-                <span>User code</span>
-                <input
-                  name="userCode"
-                  autoComplete="one-time-code"
-                  inputMode="text"
-                  placeholder="ABCD-EFGH"
-                  defaultValue={userCode}
-                  readOnly
-                  required
-                />
-              </label>
-              {fixtureClerkUserId ? (
-                <input
-                  type="hidden"
-                  name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                  value={fixtureClerkUserId}
-                />
-              ) : null}
-            </form>
-            <form id={`deny-device-${operation}`} action={denyAction}>
-              <input
-                type="hidden"
-                name="setupRequestId"
-                value={preview.data.setup_request_id}
-              />
-              {fixtureClerkUserId ? (
-                <input
-                  type="hidden"
-                  name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                  value={fixtureClerkUserId}
-                />
-              ) : null}
-            </form>
             <ConnectActions>
-              <button
-                className="button"
-                form={`approve-device-${operation}`}
-                type="submit"
-                data-immediate-action-label="Approving…"
-              >
-                <span data-immediate-action-feedback suppressHydrationWarning>
+              <form action={approveAction} className="form-stack">
+                <label className="field">
+                  <span>User code</span>
+                  <input
+                    name="userCode"
+                    autoComplete="one-time-code"
+                    inputMode="text"
+                    placeholder="ABCD-EFGH"
+                    defaultValue={userCode}
+                    readOnly
+                    required
+                  />
+                </label>
+                {fixtureClerkUserId ? (
+                  <input
+                    type="hidden"
+                    name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
+                    value={fixtureClerkUserId}
+                  />
+                ) : null}
+                <ActionSubmitButton
+                  className="button"
+                  pendingChildren="Approving…"
+                >
                   {approveButton(operation)}
-                </span>
-              </button>
-              <button
-                className="button secondary"
-                form={`deny-device-${operation}`}
-                type="submit"
-                data-immediate-action-label="Cancelling…"
-              >
-                <span data-immediate-action-feedback suppressHydrationWarning>
+                </ActionSubmitButton>
+              </form>
+              <form action={denyAction}>
+                <input
+                  type="hidden"
+                  name="setupRequestId"
+                  value={preview.data.setup_request_id}
+                />
+                {fixtureClerkUserId ? (
+                  <input
+                    type="hidden"
+                    name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
+                    value={fixtureClerkUserId}
+                  />
+                ) : null}
+                <ActionSubmitButton
+                  className="button secondary"
+                  pendingChildren="Cancelling…"
+                >
                   Cancel
-                </span>
-              </button>
+                </ActionSubmitButton>
+              </form>
             </ConnectActions>
           </section>
         </>

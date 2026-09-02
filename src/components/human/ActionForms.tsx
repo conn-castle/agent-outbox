@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type MouseEventHandler
+} from "react";
 import { useFormStatus } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
@@ -13,144 +20,99 @@ import type {
   HumanReviewListRow
 } from "../../server/human-review.ts";
 import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../shared/human-review-view";
+import type { HumanMutationOperation } from "../../shared/human-mutation";
 import { HumanIcon } from "./TypedContent";
 import { actionAppearanceClass } from "./action-appearance";
 
-export type OptimisticHumanAction = {
-  kind: "answer" | "undo";
+export type HumanMutationSubmission = {
+  operation: HumanMutationOperation;
   inputItemIds: string[];
+  formData: FormData;
 };
 
-export type OnOptimisticHumanAction = (action: OptimisticHumanAction) => void;
+export type OnHumanMutation = (submission: HumanMutationSubmission) => void;
 
-const OPTIMISTIC_LISTENER_KEY = "__agentOutboxOptimisticActionListener";
-type OptimisticActionWindow = Window & {
-  [OPTIMISTIC_LISTENER_KEY]?: boolean;
-};
+const submittedHumanMutationForms = new WeakSet<HTMLFormElement>();
 
-export function showOptimisticHumanAction(action: OptimisticHumanAction) {
-  action.inputItemIds.forEach((id) => {
-    [`review-row-${id}`, `review-detail-${id}`].forEach((elementId) => {
-      const element = document.getElementById(elementId);
-      if (!element) return;
-      if (element instanceof HTMLDialogElement && element.open) {
-        element.close();
-      }
-      element.dataset.optimisticHidden = "true";
-      element.classList.add("optimistic-hidden");
-    });
-  });
-  const status = document.getElementById("human-optimistic-status");
-  if (status) {
-    status.textContent = "";
-    status.textContent =
-      action.kind === "undo" ? "Undoing." : "Review updated.";
-  }
-  document
-    .querySelectorAll<HTMLElement>("[data-server-notice]")
-    .forEach((element) => {
-      element.hidden = true;
-    });
+// Per JS session, not per mount. useState(false)+useEffect would re-attach the
+// server action on remount until the next paint, and React 19 still starts a
+// form action when that prop is a function. The action remains for no-JS and
+// the first SSR/hydration pass.
+let progressiveFormClientReady = false;
+
+export function useProgressiveFormAction<
+  T extends (formData: FormData) => unknown
+>(serverAction: T): T | undefined {
+  const [hydrated, setHydrated] = useState(progressiveFormClientReady);
+  useEffect(() => {
+    progressiveFormClientReady = true;
+    setHydrated(true);
+  }, []);
+  return hydrated ? undefined : serverAction;
 }
 
-function optimisticHumanActionFromForm(
-  form: HTMLFormElement
-): OptimisticHumanAction | null {
-  const raw = form.dataset.optimisticHumanAction;
-  if (!raw) return null;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return null;
+export function humanMutationFormProps(
+  operation: HumanMutationOperation,
+  inputItemIds: string[],
+  onMutation: OnHumanMutation
+) {
+  return {
+    onSubmit: (event: FormEvent<HTMLFormElement>) => {
+      submitHumanMutationForm(
+        event.currentTarget,
+        operation,
+        inputItemIds,
+        onMutation,
+        event
+      );
     }
-    const action = parsed as Record<string, unknown>;
-    if (
-      (action.kind !== "answer" && action.kind !== "undo") ||
-      !Array.isArray(action.inputItemIds) ||
-      !action.inputItemIds.every((id) => typeof id === "string")
-    ) {
-      return null;
-    }
-    return {
-      kind: action.kind,
-      inputItemIds: action.inputItemIds
-    };
-  } catch {
-    return null;
-  }
+  };
 }
 
-function prepareOptimisticForm(form: HTMLFormElement) {
-  const workspace = form.closest<HTMLElement>(".human-workspace");
+function humanMutationButtonProps(
+  operation: HumanMutationOperation,
+  inputItemIds: string[],
+  onMutation: OnHumanMutation
+) {
+  return {
+    onClick: ((event) => {
+      submitHumanMutationForm(
+        event.currentTarget.form,
+        operation,
+        inputItemIds,
+        onMutation,
+        event
+      );
+    }) satisfies MouseEventHandler<HTMLButtonElement>
+  };
+}
+
+function submitHumanMutationForm(
+  form: HTMLFormElement | null,
+  operation: HumanMutationOperation,
+  inputItemIds: string[],
+  onMutation: OnHumanMutation,
+  event: { preventDefault: () => void; stopPropagation?: () => void }
+) {
+  const workspace = form?.closest<HTMLElement>(".human-workspace");
   if (
+    !form ||
     workspace?.dataset.workspaceHydrated !== "true" ||
-    form.dataset.optimisticPrepared === "true" ||
     !form.checkValidity()
   ) {
     return;
   }
-  const action = optimisticHumanActionFromForm(form);
-  if (!action) return;
-  form.dataset.optimisticPrepared = "true";
-  showOptimisticHumanAction(action);
-}
-
-if (typeof window !== "undefined") {
-  const optimisticWindow = window as OptimisticActionWindow;
-  if (!optimisticWindow[OPTIMISTIC_LISTENER_KEY]) {
-    optimisticWindow[OPTIMISTIC_LISTENER_KEY] = true;
-    window.addEventListener(
-      "click",
-      (event) => {
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        const submitter = target.closest(
-          'button[type="submit"], input[type="submit"]'
-        );
-        const form = submitter?.closest<HTMLFormElement>(
-          "form[data-optimistic-human-action]"
-        );
-        if (form) prepareOptimisticForm(form);
-      },
-      true
-    );
-    window.addEventListener(
-      "submit",
-      (event) => {
-        const form = event.target;
-        if (
-          form instanceof HTMLFormElement &&
-          form.matches("form[data-optimistic-human-action]")
-        ) {
-          prepareOptimisticForm(form);
-        }
-      },
-      true
-    );
+  event.preventDefault();
+  event.stopPropagation?.();
+  if (submittedHumanMutationForms.has(form)) {
+    return;
   }
-}
-
-function ensureOptimisticState(
-  event: FormEvent<HTMLFormElement>,
-  showOptimisticState: () => void
-) {
-  const form = event.currentTarget;
-  const optimisticPrepared = form.dataset.optimisticPrepared === "true";
-  delete form.dataset.optimisticPrepared;
-  if (!optimisticPrepared) {
-    showOptimisticState();
-  }
-}
-
-export function optimisticServerActionProps(
-  action: OptimisticHumanAction,
-  onOptimisticAction: OnOptimisticHumanAction
-) {
-  return {
-    "data-optimistic-human-action": JSON.stringify(action),
-    onSubmit: (event: FormEvent<HTMLFormElement>) =>
-      ensureOptimisticState(event, () => onOptimisticAction(action))
-  };
+  submittedHumanMutationForms.add(form);
+  onMutation({
+    operation,
+    inputItemIds,
+    formData: new FormData(form)
+  });
 }
 
 /**
@@ -175,24 +137,19 @@ export function InlineQuickAction({
   row,
   action,
   className,
-  onOptimisticAction
+  onMutation
 }: {
   row: HumanReviewListRow;
   action: HumanReviewBulkAction;
   className?: string;
-  onOptimisticAction: OnOptimisticHumanAction;
+  onMutation: OnHumanMutation;
 }) {
+  const formAction = useProgressiveFormAction(submitHumanAnswer);
   return (
     <form
       className="inline-action-form"
-      action={submitHumanAnswer}
-      {...optimisticServerActionProps(
-        {
-          kind: "answer",
-          inputItemIds: [row.inputItemId]
-        },
-        onOptimisticAction
-      )}
+      action={formAction}
+      {...humanMutationFormProps("answer", [row.inputItemId], onMutation)}
     >
       <ViewStateFields />
       <HumanAnswerFields
@@ -209,6 +166,7 @@ export function InlineQuickAction({
         }
         icon={action.icon}
         label={action.display}
+        {...humanMutationButtonProps("answer", [row.inputItemId], onMutation)}
       />
     </form>
   );
@@ -220,15 +178,16 @@ export function ActionTrigger({
   variant,
   active,
   onActivate,
-  onOptimisticAction
+  onMutation
 }: {
   detail: HumanReviewDetail;
   action: HumanReviewAction;
   variant: "primary" | "overflow";
   active: boolean;
   onActivate: () => void;
-  onOptimisticAction: OnOptimisticHumanAction;
+  onMutation: OnHumanMutation;
 }) {
+  const formAction = useProgressiveFormAction(submitHumanAnswer);
   const baseClass =
     variant === "primary" ? "action-button" : "secondary-button";
   const className = actionAppearanceClass(baseClass, action);
@@ -264,14 +223,8 @@ export function ActionTrigger({
   return (
     <form
       className="action-form"
-      action={submitHumanAnswer}
-      {...optimisticServerActionProps(
-        {
-          kind: "answer",
-          inputItemIds: [detail.inputItemId]
-        },
-        onOptimisticAction
-      )}
+      action={formAction}
+      {...humanMutationFormProps("answer", [detail.inputItemId], onMutation)}
     >
       <ViewStateFields />
       <HumanAnswerFields
@@ -295,12 +248,12 @@ export function ActionComposer({
   detail,
   action,
   onCancel,
-  onOptimisticAction
+  onMutation
 }: {
   detail: HumanReviewDetail;
   action: HumanReviewAction;
   onCancel: () => void;
-  onOptimisticAction: OnOptimisticHumanAction;
+  onMutation: OnHumanMutation;
 }) {
   const minimumSelection =
     action.popupKind === "multi_select"
@@ -314,17 +267,12 @@ export function ActionComposer({
     setResponseValid(minimumSelection === null || minimumSelection === 0);
   }, [action.value, minimumSelection]);
 
+  const formAction = useProgressiveFormAction(submitHumanAnswer);
   return (
     <form
       className="action-composer"
-      action={submitHumanAnswer}
-      {...optimisticServerActionProps(
-        {
-          kind: "answer",
-          inputItemIds: [detail.inputItemId]
-        },
-        onOptimisticAction
-      )}
+      action={formAction}
+      {...humanMutationFormProps("answer", [detail.inputItemId], onMutation)}
     >
       <ViewStateFields />
       <HumanAnswerFields
@@ -372,11 +320,12 @@ export function ActionComposer({
 
 export function UndoAnswerForm({
   detail,
-  onOptimisticAction
+  onMutation
 }: {
   detail: HumanReviewDetail;
-  onOptimisticAction: OnOptimisticHumanAction;
+  onMutation: OnHumanMutation;
 }) {
+  const formAction = useProgressiveFormAction(undoHumanAnswer);
   if (!detail.output) {
     return null;
   }
@@ -391,14 +340,8 @@ export function UndoAnswerForm({
 
   return (
     <form
-      action={undoHumanAnswer}
-      {...optimisticServerActionProps(
-        {
-          kind: "undo",
-          inputItemIds: [detail.inputItemId]
-        },
-        onOptimisticAction
-      )}
+      action={formAction}
+      {...humanMutationFormProps("undo", [detail.inputItemId], onMutation)}
     >
       <ViewStateFields />
       <input type="hidden" name="inputItemId" value={detail.inputItemId} />
@@ -409,38 +352,6 @@ export function UndoAnswerForm({
         value={detail.output.outputResultId}
       />
       <SubmitButton className="secondary-button" label="Undo answer" />
-    </form>
-  );
-}
-
-export function UndoNoticeForm({
-  inputItemId,
-  callerId,
-  outputResultId,
-  onOptimisticAction
-}: {
-  inputItemId: string;
-  callerId: string;
-  outputResultId: string;
-  onOptimisticAction: OnOptimisticHumanAction;
-}) {
-  return (
-    <form
-      className="notice-undo-form"
-      action={undoHumanAnswer}
-      {...optimisticServerActionProps(
-        {
-          kind: "undo",
-          inputItemIds: [inputItemId]
-        },
-        onOptimisticAction
-      )}
-    >
-      <ViewStateFields />
-      <input type="hidden" name="inputItemId" value={inputItemId} />
-      <input type="hidden" name="callerId" value={callerId} />
-      <input type="hidden" name="outputResultId" value={outputResultId} />
-      <SubmitButton className="notice-undo-button" label="Undo" />
     </form>
   );
 }
@@ -765,12 +676,14 @@ function SubmitButton({
   className,
   icon,
   label,
-  disabled = false
+  disabled = false,
+  onClick
 }: {
   className: string;
   icon?: string | null;
   label: string;
   disabled?: boolean;
+  onClick?: MouseEventHandler<HTMLButtonElement>;
 }) {
   const status = useFormStatus();
   return (
@@ -779,6 +692,7 @@ function SubmitButton({
       type="submit"
       title={label}
       disabled={disabled || status.pending}
+      onClick={onClick}
     >
       {icon ? <HumanIcon name={icon} /> : null}
       <span>{label}</span>

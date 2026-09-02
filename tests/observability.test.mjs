@@ -788,8 +788,8 @@ function rootLayoutTestRequire(specifier) {
   if (specifier === "../src/components/observability/ClientEventsInit") {
     return { ClientEventsInit: () => null };
   }
-  if (specifier === "../src/components/ImmediateActionFeedback") {
-    return { ImmediateActionFeedback: () => null };
+  if (specifier === "../src/components/actions/AppActionProvider") {
+    return { AppActionProvider: ClerkProviderStub };
   }
   if (specifier === "../src/components/SiteFooter") {
     return { SiteFooter: () => React.createElement("footer") };
@@ -797,7 +797,11 @@ function rootLayoutTestRequire(specifier) {
   if (specifier === "../src/components/SiteHeader") {
     return { SiteHeader: () => React.createElement("header") };
   }
-  if (specifier === "./globals.css" || specifier === "./review-workspace.css") {
+  if (
+    specifier === "sonner/dist/styles.css" ||
+    specifier === "./globals.css" ||
+    specifier === "./review-workspace.css"
+  ) {
     return {};
   }
 
@@ -1672,8 +1676,7 @@ test("human review server actions emit failure telemetry only on failure paths",
         producer: "server_action"
       }
     ]);
-    assert.match(redirects[0] ?? "", /notice=bulk_answered/);
-    assert.match(redirects[0] ?? "", /failed=2/);
+    assert.match(redirects[0] ?? "", /error=bulk_answer_failed/);
 
     emitted.length = 0;
     redirects.length = 0;

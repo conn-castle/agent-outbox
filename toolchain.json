@@ -109,6 +109,11 @@
       "package": "lucide-react",
       "source": "corepack pnpm view lucide-react version"
     },
+    "sonner": {
+      "version": "2.0.8",
+      "package": "sonner",
+      "source": "corepack pnpm view sonner version dist-tags --json"
+    },
     "postgresNode": {
       "version": "8.23.0",
       "package": "pg",

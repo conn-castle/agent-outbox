@@ -3,6 +3,10 @@
 import { CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";
 
+import { installImmediateActionFeedback } from "../actions/immediate-action-feedback";
+
+installImmediateActionFeedback();
+
 type BillingInterval = "monthly" | "yearly";
 type BillingAction = BillingInterval | "portal";
 
@@ -10,9 +14,20 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
   const [pending, setPending] = useState<BillingAction | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  function schedulePending(action: BillingAction) {
+    let settled = false;
+    window.setTimeout(() => {
+      if (settled) return;
+      setPending(action);
+      setError(null);
+    }, 0);
+    return () => {
+      settled = true;
+    };
+  }
+
   async function startCheckout(interval: BillingInterval) {
-    setPending(interval);
-    setError(null);
+    const settle = schedulePending(interval);
     try {
       const response = await fetch("/api/billing/checkout", {
         method: "POST",
@@ -21,6 +36,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
       });
       await handleBillingResponse(response);
     } catch (caught) {
+      settle();
       setPending(null);
       setError(
         caught instanceof Error ? caught.message : "Billing action failed."
@@ -29,14 +45,14 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
   }
 
   async function startPortal() {
-    setPending("portal");
-    setError(null);
+    const settle = schedulePending("portal");
     try {
       const response = await fetch("/api/billing/portal", {
         method: "POST"
       });
       await handleBillingResponse(response);
     } catch (caught) {
+      settle();
       setPending(null);
       setError(
         caught instanceof Error ? caught.message : "Billing action failed."
@@ -87,7 +103,11 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>Simple month-to-month billing</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            <span data-immediate-action-feedback suppressHydrationWarning>
+            <span
+              key={pending ?? error ?? "idle"}
+              data-immediate-action-feedback
+              suppressHydrationWarning
+            >
               {pending === "monthly" ? "Starting..." : "Choose monthly"}
             </span>
           </span>
@@ -111,7 +131,11 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>One annual payment</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            <span data-immediate-action-feedback suppressHydrationWarning>
+            <span
+              key={pending ?? error ?? "idle"}
+              data-immediate-action-feedback
+              suppressHydrationWarning
+            >
               {pending === "yearly" ? "Starting..." : "Choose yearly"}
             </span>
           </span>
@@ -131,7 +155,11 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
             data-immediate-action-label="Opening..."
           >
             <ExternalLink aria-hidden="true" size={18} />
-            <span data-immediate-action-feedback suppressHydrationWarning>
+            <span
+              key={pending ?? error ?? "idle"}
+              data-immediate-action-feedback
+              suppressHydrationWarning
+            >
               {pending === "portal" ? "Opening..." : "Open billing portal"}
             </span>
           </button>

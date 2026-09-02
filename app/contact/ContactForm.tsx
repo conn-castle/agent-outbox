@@ -2,6 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 
+import { installImmediateActionFeedback } from "../../src/components/actions/immediate-action-feedback";
+
+installImmediateActionFeedback();
+
 type FormStatus =
   | { state: "idle" }
   | { state: "sending" }
@@ -15,7 +19,10 @@ export function ContactForm() {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
-    setStatus({ state: "sending" });
+    let settled = false;
+    window.setTimeout(() => {
+      if (!settled) setStatus({ state: "sending" });
+    }, 0);
 
     try {
       const response = await fetch("/api/contact", {
@@ -45,6 +52,8 @@ export function ContactForm() {
         message:
           "Your message was not sent. Check your connection and try again."
       });
+    } finally {
+      settled = true;
     }
   }
 
@@ -116,7 +125,11 @@ export function ContactForm() {
           disabled={sending}
           data-immediate-action-label="Sending…"
         >
-          <span data-immediate-action-feedback suppressHydrationWarning>
+          <span
+            key={status.state}
+            data-immediate-action-feedback
+            suppressHydrationWarning
+          >
             {sending ? "Sending…" : "Send message"}
           </span>
         </button>

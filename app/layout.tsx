@@ -2,9 +2,10 @@ import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import Script from "next/script";
 import type { ReactNode } from "react";
+import "sonner/dist/styles.css";
 
+import { AppActionProvider } from "../src/components/actions/AppActionProvider";
 import { ClientEventsInit } from "../src/components/observability/ClientEventsInit";
-import { ImmediateActionFeedback } from "../src/components/ImmediateActionFeedback";
 import { SiteFooter } from "../src/components/SiteFooter";
 import { SiteHeader } from "../src/components/SiteHeader";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate";
@@ -31,7 +32,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-scroll-behavior="smooth">
       <body>
-        <ImmediateActionFeedback />
+        <Script
+          id="agent-outbox-immediate-action-feedback"
+          src="/immediate-action-feedback.js"
+          strategy="beforeInteractive"
+        />
         <ClientEventsInit />
         {webAnalyticsToken ? (
           <Script
@@ -43,10 +48,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         ) : null}
         {process.env.CLERK_PUBLISHABLE_KEY && !browserFixtureEnabled ? (
           <ClerkProvider publishableKey={process.env.CLERK_PUBLISHABLE_KEY}>
-            {content}
+            <AppActionProvider>{content}</AppActionProvider>
           </ClerkProvider>
         ) : (
-          content
+          <AppActionProvider>{content}</AppActionProvider>
         )}
       </body>
     </html>

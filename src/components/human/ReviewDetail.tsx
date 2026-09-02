@@ -8,6 +8,7 @@ import {
   type PointerEvent
 } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Check,
   ChevronDown,
@@ -26,7 +27,7 @@ import {
   ActionComposer,
   ActionTrigger,
   UndoAnswerForm,
-  type OnOptimisticHumanAction
+  type OnHumanMutation
 } from "./ActionForms";
 import { formatReviewPriority, formatUtcTimestamp } from "./review-format";
 import { CardVisual, HumanIcon, LinkButtons, SafeHtml } from "./TypedContent";
@@ -38,7 +39,7 @@ export function ReviewDetail({
   previousItem,
   nextItem,
   composeAction,
-  onOptimisticAction
+  onMutation
 }: {
   detail: HumanReviewDetailDto | null;
   view: HumanReviewView;
@@ -46,7 +47,7 @@ export function ReviewDetail({
   previousItem: { href: string; label: string } | null;
   nextItem: { href: string; label: string } | null;
   composeAction?: string | null;
-  onOptimisticAction: OnOptimisticHumanAction;
+  onMutation: OnHumanMutation;
 }) {
   const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -104,9 +105,13 @@ export function ReviewDetail({
           </span>
           <h2>Review unavailable</h2>
           <p>This review could not be loaded.</p>
-          <a className="mobile-back" href={closeHref} aria-label="Close detail">
+          <Link
+            className="mobile-back"
+            href={closeHref}
+            aria-label="Close detail"
+          >
             Close
-          </a>
+          </Link>
         </section>
       </dialog>
     );
@@ -143,13 +148,13 @@ export function ReviewDetail({
           ) : (
             <nav className="detail-stepper" aria-label="Review navigation">
               {previousItem ? (
-                <a
+                <Link
                   href={previousItem.href}
                   aria-label={`Previous: ${previousItem.label}`}
                 >
                   <ChevronLeft aria-hidden="true" />
                   <span>Previous</span>
-                </a>
+                </Link>
               ) : (
                 <span className="disabled">
                   <ChevronLeft aria-hidden="true" />
@@ -160,10 +165,13 @@ export function ReviewDetail({
                 <span className="detail-position">{positionLabel}</span>
               ) : null}
               {nextItem ? (
-                <a href={nextItem.href} aria-label={`Next: ${nextItem.label}`}>
+                <Link
+                  href={nextItem.href}
+                  aria-label={`Next: ${nextItem.label}`}
+                >
                   <span>Next</span>
                   <ChevronRight aria-hidden="true" />
-                </a>
+                </Link>
               ) : (
                 <span className="disabled">
                   <span>Next</span>
@@ -172,10 +180,14 @@ export function ReviewDetail({
               )}
             </nav>
           )}
-          <a className="mobile-back" href={closeHref} aria-label="Close detail">
+          <Link
+            className="mobile-back"
+            href={closeHref}
+            aria-label="Close detail"
+          >
             <X className="close-icon" aria-hidden="true" />
             <span className="close-copy">Close</span>
-          </a>
+          </Link>
         </div>
 
         <div className="detail-scroll">
@@ -253,10 +265,7 @@ export function ReviewDetail({
                     <strong>Answered with {detail.output.actionDisplay}</strong>
                     <span>{formatUtcTimestamp(detail.output.answeredAt)}</span>
                   </div>
-                  <UndoAnswerForm
-                    detail={detail}
-                    onOptimisticAction={onOptimisticAction}
-                  />
+                  <UndoAnswerForm detail={detail} onMutation={onMutation} />
                 </div>
               ) : null}
             </>
@@ -269,7 +278,7 @@ export function ReviewDetail({
               detail={detail}
               action={requestedCompose}
               onCancel={closeDetail}
-              onOptimisticAction={onOptimisticAction}
+              onMutation={onMutation}
             />
           ) : (
             <>
@@ -290,7 +299,7 @@ export function ReviewDetail({
                             current === action.value ? null : action.value
                           )
                         }
-                        onOptimisticAction={onOptimisticAction}
+                        onMutation={onMutation}
                       />
                     ))}
                   </div>
@@ -308,7 +317,7 @@ export function ReviewDetail({
                               : secondaryActions[0].value
                           )
                         }
-                        onOptimisticAction={onOptimisticAction}
+                        onMutation={onMutation}
                       />
                     </div>
                   ) : secondaryActions.length > 1 ? (
@@ -334,7 +343,7 @@ export function ReviewDetail({
                                   current === action.value ? null : action.value
                                 )
                               }
-                              onOptimisticAction={onOptimisticAction}
+                              onMutation={onMutation}
                             />
                           ))}
                         </div>
@@ -348,7 +357,7 @@ export function ReviewDetail({
                   detail={detail}
                   action={activeAction}
                   onCancel={() => setActiveActionValue(null)}
-                  onOptimisticAction={onOptimisticAction}
+                  onMutation={onMutation}
                 />
               ) : null}
             </>

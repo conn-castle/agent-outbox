@@ -6,6 +6,9 @@ import {
   emitClientEvent,
   registerClientEventFlushListeners
 } from "../../client/client-events.ts";
+import { installImmediateActionFeedback } from "../actions/immediate-action-feedback";
+
+installImmediateActionFeedback();
 
 export function ClientEventsInit() {
   useEffect(() => {
