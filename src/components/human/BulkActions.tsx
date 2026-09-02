@@ -10,6 +10,7 @@ import type {
 } from "../../server/human-review.ts";
 import {
   humanMutationFormProps,
+  useProgressiveFormAction,
   ViewStateFields,
   type OnHumanMutation
 } from "./ActionForms";
@@ -40,6 +41,8 @@ export function BulkActions({
     }
   }, [compatibleActions, selectedValue]);
 
+  const formAction = useProgressiveFormAction(submitBulkHumanAnswers);
+
   if (pendingRows.length === 0 && offPageSelectedCount === 0) {
     return null;
   }
@@ -47,7 +50,7 @@ export function BulkActions({
   return (
     <form
       className="bulk-actions"
-      action={submitBulkHumanAnswers}
+      action={formAction}
       {...humanMutationFormProps(
         "bulk-answer",
         pendingRows.map((row) => row.inputItemId),

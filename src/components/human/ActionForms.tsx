@@ -34,6 +34,18 @@ export type OnHumanMutation = (submission: HumanMutationSubmission) => void;
 
 const submittedHumanMutationForms = new WeakSet<HTMLFormElement>();
 
+// After hydration, drop the server action so React 19 cannot start it in
+// addition to the client mutation path. The action remains for no-JS submit.
+export function useProgressiveFormAction<
+  T extends (formData: FormData) => unknown
+>(serverAction: T): T | undefined {
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+  return hydrated ? undefined : serverAction;
+}
+
 export function humanMutationFormProps(
   operation: HumanMutationOperation,
   inputItemIds: string[],
@@ -127,10 +139,11 @@ export function InlineQuickAction({
   className?: string;
   onMutation: OnHumanMutation;
 }) {
+  const formAction = useProgressiveFormAction(submitHumanAnswer);
   return (
     <form
       className="inline-action-form"
-      action={submitHumanAnswer}
+      action={formAction}
       {...humanMutationFormProps("answer", [row.inputItemId], onMutation)}
     >
       <ViewStateFields />
@@ -169,6 +182,7 @@ export function ActionTrigger({
   onActivate: () => void;
   onMutation: OnHumanMutation;
 }) {
+  const formAction = useProgressiveFormAction(submitHumanAnswer);
   const baseClass =
     variant === "primary" ? "action-button" : "secondary-button";
   const className = actionAppearanceClass(baseClass, action);
@@ -204,7 +218,7 @@ export function ActionTrigger({
   return (
     <form
       className="action-form"
-      action={submitHumanAnswer}
+      action={formAction}
       {...humanMutationFormProps("answer", [detail.inputItemId], onMutation)}
     >
       <ViewStateFields />
@@ -248,10 +262,11 @@ export function ActionComposer({
     setResponseValid(minimumSelection === null || minimumSelection === 0);
   }, [action.value, minimumSelection]);
 
+  const formAction = useProgressiveFormAction(submitHumanAnswer);
   return (
     <form
       className="action-composer"
-      action={submitHumanAnswer}
+      action={formAction}
       {...humanMutationFormProps("answer", [detail.inputItemId], onMutation)}
     >
       <ViewStateFields />
@@ -305,6 +320,7 @@ export function UndoAnswerForm({
   detail: HumanReviewDetail;
   onMutation: OnHumanMutation;
 }) {
+  const formAction = useProgressiveFormAction(undoHumanAnswer);
   if (!detail.output) {
     return null;
   }
@@ -319,7 +335,7 @@ export function UndoAnswerForm({
 
   return (
     <form
-      action={undoHumanAnswer}
+      action={formAction}
       {...humanMutationFormProps("undo", [detail.inputItemId], onMutation)}
     >
       <ViewStateFields />
