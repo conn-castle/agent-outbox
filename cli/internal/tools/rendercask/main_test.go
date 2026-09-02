@@ -46,25 +46,21 @@ cask "agent-outbox" do
   on_macos do
     on_arm do
       sha256 "` + darwinARM64SHA + `"
-      url "https://github.com/conn-castle/agent-outbox/releases/download/v1.2.3/agent-outbox_#{version}_darwin_arm64.tar.gz",
-          verified: "github.com/conn-castle/agent-outbox/"
+      url "https://github.com/conn-castle/agent-outbox/releases/download/v1.2.3/agent-outbox_#{version}_darwin_arm64.tar.gz"
     end
     on_intel do
       sha256 "` + darwinAMD64SHA + `"
-      url "https://github.com/conn-castle/agent-outbox/releases/download/v1.2.3/agent-outbox_#{version}_darwin_amd64.tar.gz",
-          verified: "github.com/conn-castle/agent-outbox/"
+      url "https://github.com/conn-castle/agent-outbox/releases/download/v1.2.3/agent-outbox_#{version}_darwin_amd64.tar.gz"
     end
   end
   on_linux do
     on_arm do
       sha256 "` + linuxARM64SHA + `"
-      url "https://github.com/conn-castle/agent-outbox/releases/download/v1.2.3/agent-outbox_#{version}_linux_arm64.tar.gz",
-          verified: "github.com/conn-castle/agent-outbox/"
+      url "https://github.com/conn-castle/agent-outbox/releases/download/v1.2.3/agent-outbox_#{version}_linux_arm64.tar.gz"
     end
     on_intel do
       sha256 "` + linuxAMD64SHA + `"
-      url "https://github.com/conn-castle/agent-outbox/releases/download/v1.2.3/agent-outbox_#{version}_linux_amd64.tar.gz",
-          verified: "github.com/conn-castle/agent-outbox/"
+      url "https://github.com/conn-castle/agent-outbox/releases/download/v1.2.3/agent-outbox_#{version}_linux_amd64.tar.gz"
     end
   end
 

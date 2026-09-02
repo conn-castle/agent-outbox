@@ -24,25 +24,21 @@ cask "agent-outbox" do
   on_macos do
     on_arm do
       sha256 "{{ .DarwinARM64SHA }}"
-      url "{{ .ReleaseBaseURL }}/agent-outbox_#{version}_darwin_arm64.tar.gz",
-          verified: "github.com/conn-castle/agent-outbox/"
+      url "{{ .ReleaseBaseURL }}/agent-outbox_#{version}_darwin_arm64.tar.gz"
     end
     on_intel do
       sha256 "{{ .DarwinAMD64SHA }}"
-      url "{{ .ReleaseBaseURL }}/agent-outbox_#{version}_darwin_amd64.tar.gz",
-          verified: "github.com/conn-castle/agent-outbox/"
+      url "{{ .ReleaseBaseURL }}/agent-outbox_#{version}_darwin_amd64.tar.gz"
     end
   end
   on_linux do
     on_arm do
       sha256 "{{ .LinuxARM64SHA }}"
-      url "{{ .ReleaseBaseURL }}/agent-outbox_#{version}_linux_arm64.tar.gz",
-          verified: "github.com/conn-castle/agent-outbox/"
+      url "{{ .ReleaseBaseURL }}/agent-outbox_#{version}_linux_arm64.tar.gz"
     end
     on_intel do
       sha256 "{{ .LinuxAMD64SHA }}"
-      url "{{ .ReleaseBaseURL }}/agent-outbox_#{version}_linux_amd64.tar.gz",
-          verified: "github.com/conn-castle/agent-outbox/"
+      url "{{ .ReleaseBaseURL }}/agent-outbox_#{version}_linux_amd64.tar.gz"
     end
   end
 
