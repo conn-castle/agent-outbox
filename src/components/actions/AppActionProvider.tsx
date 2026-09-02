@@ -29,6 +29,7 @@ type EnqueueMutation<TResult> = {
   execute: () => Promise<TResult>;
   refreshOnSuccess?: boolean;
   onSuccess?: (result: TResult, mutationId: string) => void;
+  onIndeterminate?: (error: unknown, mutationId: string) => void;
   onError?: (error: unknown, mutationId: string) => void;
 };
 
@@ -71,6 +72,14 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
     setMutations(next);
   }, []);
 
+  const markSucceeded = useCallback((mutationId: string) => {
+    const succeeded: AppMutationRecord[] = mutationsRef.current.map((record) =>
+      record.id === mutationId ? { ...record, status: "succeeded" } : record
+    );
+    mutationsRef.current = succeeded;
+    setMutations(succeeded);
+  }, []);
+
   const enqueue = useCallback(
     <TResult,>(mutation: EnqueueMutation<TResult>) => {
       const mutationId = `mutation-${Date.now()}-${++nextId.current}`;
@@ -95,19 +104,18 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
         setMutations(syncing);
         try {
           const result = await mutation.execute();
-          const succeeded: AppMutationRecord[] = mutationsRef.current.map(
-            (record) =>
-              record.id === mutationId
-                ? { ...record, status: "succeeded" }
-                : record
-          );
-          mutationsRef.current = succeeded;
-          setMutations(succeeded);
+          markSucceeded(mutationId);
           mutation.onSuccess?.(result, mutationId);
           if (mutation.refreshOnSuccess) {
             startTransition(() => router.refresh());
           }
         } catch (error) {
+          if (isIndeterminateClientTimeout(error)) {
+            markSucceeded(mutationId);
+            mutation.onIndeterminate?.(error, mutationId);
+            startTransition(() => router.refresh());
+            return;
+          }
           dismiss(mutationId);
           mutation.onError?.(error, mutationId);
         }
@@ -116,7 +124,7 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
       syncTail.current = syncTail.current.then(synchronize, synchronize);
       return mutationId;
     },
-    [dismiss, router]
+    [dismiss, markSucceeded, router]
   );
 
   const value = useMemo(
@@ -138,4 +146,14 @@ export function useAppActions() {
     throw new Error("useAppActions must be used within AppActionProvider.");
   }
   return context;
+}
+
+function isIndeterminateClientTimeout(error: unknown) {
+  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
+    return error.name === "TimeoutError" || error.name === "AbortError";
+  }
+  return (
+    error instanceof Error &&
+    (error.name === "TimeoutError" || error.name === "AbortError")
+  );
 }

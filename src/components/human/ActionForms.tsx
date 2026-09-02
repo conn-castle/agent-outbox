@@ -41,22 +41,13 @@ export function humanMutationFormProps(
 ) {
   return {
     onSubmit: (event: FormEvent<HTMLFormElement>) => {
-      const form = event.currentTarget;
-      const workspace = form.closest<HTMLElement>(".human-workspace");
-      if (
-        workspace?.dataset.workspaceHydrated !== "true" ||
-        !form.checkValidity() ||
-        submittedHumanMutationForms.has(form)
-      ) {
-        return;
-      }
-      event.preventDefault();
-      submittedHumanMutationForms.add(form);
-      onMutation({
+      submitHumanMutationForm(
+        event.currentTarget,
         operation,
         inputItemIds,
-        formData: new FormData(form)
-      });
+        onMutation,
+        event
+      );
     }
   };
 }
@@ -68,25 +59,40 @@ function humanMutationButtonProps(
 ) {
   return {
     onClick: ((event) => {
-      const form = event.currentTarget.form;
-      const workspace = form?.closest<HTMLElement>(".human-workspace");
-      if (
-        !form ||
-        workspace?.dataset.workspaceHydrated !== "true" ||
-        !form.checkValidity() ||
-        submittedHumanMutationForms.has(form)
-      ) {
-        return;
-      }
-      event.preventDefault();
-      submittedHumanMutationForms.add(form);
-      onMutation({
+      submitHumanMutationForm(
+        event.currentTarget.form,
         operation,
         inputItemIds,
-        formData: new FormData(form)
-      });
+        onMutation,
+        event
+      );
     }) satisfies MouseEventHandler<HTMLButtonElement>
   };
+}
+
+function submitHumanMutationForm(
+  form: HTMLFormElement | null,
+  operation: HumanMutationOperation,
+  inputItemIds: string[],
+  onMutation: OnHumanMutation,
+  event: { preventDefault: () => void }
+) {
+  const workspace = form?.closest<HTMLElement>(".human-workspace");
+  if (
+    !form ||
+    workspace?.dataset.workspaceHydrated !== "true" ||
+    !form.checkValidity() ||
+    submittedHumanMutationForms.has(form)
+  ) {
+    return;
+  }
+  event.preventDefault();
+  submittedHumanMutationForms.add(form);
+  onMutation({
+    operation,
+    inputItemIds,
+    formData: new FormData(form)
+  });
 }
 
 /**

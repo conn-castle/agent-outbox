@@ -489,6 +489,28 @@ test("GitHub sign-in reports Clerk readiness failures distinctly", async () => {
   assert.deepEqual(events, ["github_sign_in_not_ready"]);
 });
 
+test("GitHub sign-in label is hydration-safe while Clerk initializes", () => {
+  const unloaded = loadGitHubSignInButton({
+    signIn: null,
+    clerkLoaded: false,
+    onEvent() {}
+  });
+  const unloadedLabel =
+    unloaded.GitHubSignInButton()?.props.children[0].props.children[1];
+  assert.equal(unloadedLabel?.props.suppressHydrationWarning, true);
+  assert.equal(unloadedLabel?.props.children, "Opening GitHub…");
+
+  const loaded = loadGitHubSignInButton({
+    signIn: null,
+    clerkLoaded: true,
+    onEvent() {}
+  });
+  const loadedLabel =
+    loaded.GitHubSignInButton()?.props.children[0].props.children[1];
+  assert.equal(loadedLabel?.props.suppressHydrationWarning, true);
+  assert.equal(loadedLabel?.props.children, "Continue with GitHub");
+});
+
 test("GitHub sign-in does not report a provider launch that navigates", async () => {
   const events = /** @type {unknown[]} */ ([]);
   let navigate = () => {};

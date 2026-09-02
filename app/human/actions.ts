@@ -219,6 +219,15 @@ export async function executeBulkHumanAnswersMutation(
     }
   }
 
+  if (answered === 0 && failed > 0) {
+    return humanMutationFailure(
+      "bulk-answer",
+      inputItemIds,
+      "bulk_answer_failed",
+      `Bulk action failed: ${failed} not answered.`,
+      requestId
+    );
+  }
   if (failed > 0) {
     emitHumanActionFailure(requestId);
   }

@@ -148,7 +148,9 @@ export function GitHubSignInButton() {
         type="button"
       >
         <GitHubMark />
-        <span>{busy ? "Opening GitHub…" : "Continue with GitHub"}</span>
+        <span suppressHydrationWarning>
+          {busy ? "Opening GitHub…" : "Continue with GitHub"}
+        </span>
       </button>
       {message ? (
         <p className="github-sign-in-error" role="alert">

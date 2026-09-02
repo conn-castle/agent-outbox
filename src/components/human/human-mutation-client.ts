@@ -8,6 +8,7 @@ import type {
 import type { HumanReviewListRow } from "../../server/human-review";
 
 export const HUMAN_MUTATION_SCOPE = "human-review";
+export const HUMAN_MUTATION_TIMEOUT_MS = 20_000;
 
 export type HumanOptimisticMutation = {
   operation: HumanMutationOperation;
@@ -35,7 +36,7 @@ export async function synchronizeHumanMutation(
     method: "POST",
     body: formData,
     credentials: "same-origin",
-    signal: AbortSignal.timeout(20_000)
+    signal: AbortSignal.timeout(HUMAN_MUTATION_TIMEOUT_MS)
   });
   if (response.redirected || response.status === 401) {
     throw new HumanMutationError(
@@ -71,16 +72,39 @@ export function isHumanOptimisticMutation(
   );
 }
 
-function isHumanMutationResult(value: unknown): value is HumanMutationResult {
+export function isHumanMutationResult(
+  value: unknown
+): value is HumanMutationResult {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const result = value as Record<string, unknown>;
-  return (
+  const inputItemIds = result.inputItemIds;
+  const base =
     typeof result.ok === "boolean" &&
     (result.operation === "answer" ||
       result.operation === "bulk-answer" ||
       result.operation === "undo") &&
     typeof result.message === "string" &&
-    Array.isArray(result.inputItemIds) &&
-    result.inputItemIds.every((id) => typeof id === "string")
-  );
+    Array.isArray(inputItemIds) &&
+    inputItemIds.every((id) => typeof id === "string");
+  if (!base || !Array.isArray(inputItemIds)) return false;
+  if (!result.ok) return typeof result.code === "string";
+  if (result.operation === "answer") {
+    const undo = result.undo as Record<string, unknown> | undefined;
+    return (
+      inputItemIds.length === 1 &&
+      !!undo &&
+      typeof undo.inputItemId === "string" &&
+      typeof undo.callerId === "string" &&
+      typeof undo.outputResultId === "string"
+    );
+  }
+  if (result.operation === "bulk-answer") {
+    return (
+      typeof result.answered === "number" &&
+      Number.isFinite(result.answered) &&
+      typeof result.failed === "number" &&
+      Number.isFinite(result.failed)
+    );
+  }
+  return inputItemIds.length === 1;
 }

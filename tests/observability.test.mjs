@@ -1676,8 +1676,7 @@ test("human review server actions emit failure telemetry only on failure paths",
         producer: "server_action"
       }
     ]);
-    assert.match(redirects[0] ?? "", /notice=bulk_answered/);
-    assert.match(redirects[0] ?? "", /failed=2/);
+    assert.match(redirects[0] ?? "", /error=bulk_answer_failed/);
 
     emitted.length = 0;
     redirects.length = 0;

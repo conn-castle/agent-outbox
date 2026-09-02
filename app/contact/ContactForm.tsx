@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 
 type FormStatus =
   | { state: "idle" }
@@ -15,7 +16,7 @@ export function ContactForm() {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
-    setStatus({ state: "sending" });
+    flushSync(() => setStatus({ state: "sending" }));
 
     try {
       const response = await fetch("/api/contact", {

@@ -2,6 +2,7 @@
 
 import { CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";
+import { flushSync } from "react-dom";
 
 type BillingInterval = "monthly" | "yearly";
 type BillingAction = BillingInterval | "portal";
@@ -11,8 +12,10 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
   const [error, setError] = useState<string | null>(null);
 
   async function startCheckout(interval: BillingInterval) {
-    setPending(interval);
-    setError(null);
+    flushSync(() => {
+      setPending(interval);
+      setError(null);
+    });
     try {
       const response = await fetch("/api/billing/checkout", {
         method: "POST",
@@ -29,8 +32,10 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
   }
 
   async function startPortal() {
-    setPending("portal");
-    setError(null);
+    flushSync(() => {
+      setPending("portal");
+      setError(null);
+    });
     try {
       const response = await fetch("/api/billing/portal", {
         method: "POST"

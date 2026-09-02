@@ -775,6 +775,104 @@ test("a second queue action is retained while the first is synchronizing", async
   ).toContainText("answeredDecision: Approve");
 });
 
+test("a client mutation timeout keeps the optimistic projection", async ({
+  page
+}) => {
+  const requestStarted = deferred();
+  await page.addInitScript(() => {
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    AbortSignal.timeout = (ms: number) =>
+      originalTimeout(ms === 20_000 ? 50 : ms);
+  });
+  await page.route("**/human/mutations", async (route) => {
+    requestStarted.resolve();
+    await new Promise<void>(() => {});
+    await route.continue();
+  });
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+
+  const row = reviewRowByTitle(
+    page,
+    "Reply to Meridian about the renewal delay"
+  );
+  const aborted = page.waitForEvent("requestfailed", (request) =>
+    request.url().includes("/human/mutations")
+  );
+  await row.getByRole("button", { name: "Approve to send" }).click();
+  await requestStarted.promise;
+  await aborted;
+  await expect(row).toBeHidden();
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+});
+
+test("an all-failed bulk mutation restores the selected rows", async ({
+  page
+}) => {
+  await page.route("**/human/mutations", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        operation: "bulk-answer",
+        message: "Bulk action complete: 0 answered, 2 failed.",
+        inputItemIds: [
+          "00000000-0000-4000-8000-000000000511",
+          "00000000-0000-4000-8000-000000000512"
+        ],
+        answered: 0,
+        failed: 2
+      })
+    });
+  });
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await openReviewTools(page);
+  await page
+    .getByRole("button", { name: /^(Select items|Bulk select)$/ })
+    .click();
+  const permitRow = reviewRowByTitle(page, "Review neighborhood permit brief");
+  const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
+  await permitRow.getByRole("checkbox", { name: "Select review" }).check();
+  await followUpRow.getByRole("checkbox", { name: "Select review" }).check();
+  await page
+    .getByRole("button", { name: "Apply Approve permit brief" })
+    .click();
+
+  await expect(page.locator("[data-sonner-toast]")).toContainText(
+    "Bulk action complete: 0 answered, 2 failed."
+  );
+  await expect(permitRow).toBeVisible();
+  await expect(followUpRow).toBeVisible();
+});
+
+test("undo from a History toast does not leave a pending snapshot in History", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  const row = reviewRowByTitle(
+    page,
+    "Reply to Meridian about the renewal delay"
+  );
+  await row.getByRole("button", { name: "Approve to send" }).click();
+  const toast = page.locator("[data-sonner-toast]");
+  await expect(toast).toContainText("Done.");
+
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "History" })
+    .click();
+  await expect(page).toHaveURL(/status=answered/);
+  await expect(row).toBeVisible();
+  await toast.getByRole("button", { name: "Undo" }).click();
+  await expect(
+    page.locator("[data-sonner-toast]").filter({ hasText: "Undone." })
+  ).toBeVisible();
+  await expect(row).toHaveCount(0);
+});
+
 test("a failed optimistic queue action rolls back its local projection", async ({
   page
 }) => {

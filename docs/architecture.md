@@ -216,12 +216,16 @@ to fixture or server state.
 
 Each journal entry reconciles independently after a canonical refresh. A failed
 write removes only its own optimistic projection and restores the affected
-review with an actionable toast. Undo becomes available only after the original
-answer is accepted; its cached restored row remains non-interactive until the
-undo commit is accepted, then reconciles with the canonical revision.
-JavaScript-disabled review forms retain redirecting server actions as a
-fallback. Navigational and security-sensitive workflows use their existing
-redirecting actions with explicit form-local pending feedback. Feedback and
+review with an actionable toast. A client fetch timeout is indeterminate: the
+journal keeps the projection and refreshes canonical state instead of rolling
+back a write that may still commit. A bulk result with zero successes is a
+failure from the mutation endpoint, not a successful projection. Undo becomes
+available only after the original answer is accepted; its cached restored row
+remains non-interactive until the undo commit is accepted, then reconciles with
+the canonical revision of the current view. JavaScript-disabled review forms
+retain redirecting server actions as a fallback. Navigational and
+security-sensitive workflows use their existing redirecting actions with
+explicit form-local pending feedback committed before React yields. Feedback and
 completion notices live in the root toast layer and do not shift the primary
 layout. Browser coverage holds responses open so network or navigation
 completion cannot satisfy the latency gate.

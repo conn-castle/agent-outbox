@@ -108,14 +108,13 @@ export function ReviewWorkspace({
   );
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSearch = useRef<string | null>(null);
+  const previousDetailId = useRef<string | null>(null);
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const previousCanonicalRows = useRef(rows);
   const canonicalGeneration = useRef(0);
   const successGenerations = useRef(new Map<string, number>());
   const retriedCanonicalRefreshes = useRef(new Set<string>());
-  if (previousCanonicalRows.current !== rows) {
-    previousCanonicalRows.current = rows;
-    canonicalGeneration.current += 1;
-  }
 
   useEffect(() => {
     const persisted = readWorkspaceState(session.accountId);
@@ -228,7 +227,7 @@ export function ReviewWorkspace({
     const next = { ...humanReviewViewFromSearchParams(params), ...changes };
     writeHumanReviewView(params, next);
     const href = `${window.location.pathname}?${params.toString()}`;
-    router.replace(href);
+    router.replace(href, { scroll: false });
   }
 
   useEffect(
@@ -252,6 +251,17 @@ export function ReviewWorkspace({
       updateView({ search: nextSearch, page: 1 });
     }, 300);
   }
+
+  useEffect(() => {
+    cancelDebouncedSearch();
+  }, [view.status, view.sort, view.page]);
+  useEffect(() => {
+    const currentId = detail?.inputItemId ?? null;
+    if (currentId !== null && currentId !== previousDetailId.current) {
+      cancelDebouncedSearch();
+    }
+    previousDetailId.current = currentId;
+  }, [detail?.inputItemId]);
 
   function submitSearch() {
     cancelDebouncedSearch();
@@ -289,6 +299,9 @@ export function ReviewWorkspace({
     const restored = new Map<string, HumanReviewListRow>();
     for (const { mutation } of humanMutations) {
       if (mutation.operation !== "undo") continue;
+      if (view.status !== "pending" && !mutation.requiresCanonicalPendingRow) {
+        continue;
+      }
       for (const row of mutation.rowSnapshots) {
         if (!baseIds.has(row.inputItemId)) {
           restored.set(row.inputItemId, row);
@@ -296,7 +309,7 @@ export function ReviewWorkspace({
       }
     }
     return [...restored.values()];
-  }, [humanMutations, rows]);
+  }, [humanMutations, rows, view.status]);
   const lockedIds = useMemo(() => {
     const ids = new Set<string>();
     for (const { record, mutation } of humanMutations) {
@@ -321,6 +334,12 @@ export function ReviewWorkspace({
     synchronizingMutationCount > 0
       ? `${synchronizingMutationCount} review ${synchronizingMutationCount === 1 ? "update" : "updates"} waiting to synchronize.`
       : "";
+
+  useEffect(() => {
+    if (previousCanonicalRows.current === rows) return;
+    previousCanonicalRows.current = rows;
+    canonicalGeneration.current += 1;
+  }, [rows]);
 
   useEffect(() => {
     for (const { record, mutation } of humanMutations) {
@@ -427,16 +446,8 @@ export function ReviewWorkspace({
       submission.inputItemIds.includes(row.inputItemId)
     );
     enqueueHumanMutation(submission, rowSnapshots);
-    if (
-      detail &&
-      submission.inputItemIds.includes(detail.inputItemId) &&
-      typeof window !== "undefined"
-    ) {
-      window.history.replaceState(
-        window.history.state,
-        "",
-        humanReviewHref(view)
-      );
+    if (detail && submission.inputItemIds.includes(detail.inputItemId)) {
+      router.replace(humanReviewHref(view), { scroll: false });
     }
   };
 
@@ -464,6 +475,16 @@ export function ReviewWorkspace({
         synchronizeHumanMutation(submission.operation, submission.formData),
       refreshOnSuccess: true,
       onSuccess: (result, mutationId) => {
+        if (result.operation === "bulk-answer" && result.answered === 0) {
+          successGenerations.current.delete(mutationId);
+          retriedCanonicalRefreshes.current.delete(mutationId);
+          dismiss(mutationId);
+          toast.warning(result.message, {
+            id: mutationId,
+            duration: Infinity
+          });
+          return;
+        }
         successGenerations.current.set(mutationId, canonicalGeneration.current);
         if (result.operation === "answer") {
           toast.success(result.message, {
@@ -483,7 +504,7 @@ export function ReviewWorkspace({
                     formData: undoForm
                   },
                   rowSnapshots,
-                  true
+                  viewRef.current.status === "pending"
                 );
               }
             }
@@ -498,6 +519,9 @@ export function ReviewWorkspace({
           return;
         }
         toast.success(result.message, { id: mutationId });
+      },
+      onIndeterminate: (_error, mutationId) => {
+        successGenerations.current.set(mutationId, canonicalGeneration.current);
       },
       onError: (error, mutationId) => {
         successGenerations.current.delete(mutationId);
