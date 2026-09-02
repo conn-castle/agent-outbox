@@ -34,13 +34,18 @@ export type OnHumanMutation = (submission: HumanMutationSubmission) => void;
 
 const submittedHumanMutationForms = new WeakSet<HTMLFormElement>();
 
-// After hydration, drop the server action so React 19 cannot start it in
-// addition to the client mutation path. The action remains for no-JS submit.
+// Per JS session, not per mount. useState(false)+useEffect would re-attach the
+// server action on remount until the next paint, and React 19 still starts a
+// form action when that prop is a function. The action remains for no-JS and
+// the first SSR/hydration pass.
+let progressiveFormClientReady = false;
+
 export function useProgressiveFormAction<
   T extends (formData: FormData) => unknown
 >(serverAction: T): T | undefined {
-  const [hydrated, setHydrated] = useState(false);
+  const [hydrated, setHydrated] = useState(progressiveFormClientReady);
   useEffect(() => {
+    progressiveFormClientReady = true;
     setHydrated(true);
   }, []);
   return hydrated ? undefined : serverAction;

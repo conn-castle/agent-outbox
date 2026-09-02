@@ -631,7 +631,22 @@ test("desktop detail modal stays within a readable responsive measure", async ({
 test("routine reviews can be completed directly from the queue", async ({
   page
 }) => {
+  const humanPosts: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "POST") return;
+    const url = new URL(request.url());
+    if (!url.pathname.startsWith("/human")) return;
+    humanPosts.push(
+      request.headers()["next-action"]
+        ? "server-action"
+        : url.pathname === "/human/mutations"
+          ? "mutation"
+          : `other:${url.pathname}`
+    );
+  });
+
   await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await openReviewTools(page);
 
   await expect(
@@ -652,6 +667,8 @@ test("routine reviews can be completed directly from the queue", async ({
   const completionNotice = page.locator("[data-sonner-toast]");
   await expect(completionNotice).toHaveCount(1);
   await expect(completionNotice).toContainText("Done.");
+  await expect(page).not.toHaveURL(/notice=/);
+  expect(humanPosts).toEqual(["mutation"]);
   await page.getByRole("button", { name: "Close toast" }).click();
   await expect(completionNotice).toHaveCount(0);
 
@@ -660,6 +677,8 @@ test("routine reviews can be completed directly from the queue", async ({
   await followUpRow.getByRole("button", { name: "Approve follow-up" }).click();
   await expect(page.locator("[data-sonner-toast]")).toHaveCount(1);
   await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page).not.toHaveURL(/notice=/);
+  expect(humanPosts).toEqual(["mutation", "mutation"]);
   await expect(page).not.toHaveURL(/item=/);
   await expect(
     page.getByRole("heading", { name: "Needs review" })
