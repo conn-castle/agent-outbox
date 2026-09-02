@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { flushSync } from "react-dom";
+
+import { installImmediateActionFeedback } from "../../src/components/actions/immediate-action-feedback";
+
+installImmediateActionFeedback();
 
 type FormStatus =
   | { state: "idle" }
@@ -16,7 +19,10 @@ export function ContactForm() {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(form);
-    flushSync(() => setStatus({ state: "sending" }));
+    let settled = false;
+    window.setTimeout(() => {
+      if (!settled) setStatus({ state: "sending" });
+    }, 0);
 
     try {
       const response = await fetch("/api/contact", {
@@ -46,6 +52,8 @@ export function ContactForm() {
         message:
           "Your message was not sent. Check your connection and try again."
       });
+    } finally {
+      settled = true;
     }
   }
 
@@ -111,8 +119,19 @@ export function ContactForm() {
       </label>
 
       <div className="contact-submit-row">
-        <button className="button" type="submit" disabled={sending}>
-          <span>{sending ? "Sending…" : "Send message"}</span>
+        <button
+          className="button"
+          type="submit"
+          disabled={sending}
+          data-immediate-action-label="Sending…"
+        >
+          <span
+            key={status.state}
+            data-immediate-action-feedback
+            suppressHydrationWarning
+          >
+            {sending ? "Sending…" : "Send message"}
+          </span>
         </button>
         <p
           className={`contact-form-status${status.state === "error" ? " is-error" : ""}`}

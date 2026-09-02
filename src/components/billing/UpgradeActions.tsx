@@ -2,7 +2,10 @@
 
 import { CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";
-import { flushSync } from "react-dom";
+
+import { installImmediateActionFeedback } from "../actions/immediate-action-feedback";
+
+installImmediateActionFeedback();
 
 type BillingInterval = "monthly" | "yearly";
 type BillingAction = BillingInterval | "portal";
@@ -11,11 +14,20 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
   const [pending, setPending] = useState<BillingAction | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function startCheckout(interval: BillingInterval) {
-    flushSync(() => {
-      setPending(interval);
+  function schedulePending(action: BillingAction) {
+    let settled = false;
+    window.setTimeout(() => {
+      if (settled) return;
+      setPending(action);
       setError(null);
-    });
+    }, 0);
+    return () => {
+      settled = true;
+    };
+  }
+
+  async function startCheckout(interval: BillingInterval) {
+    const settle = schedulePending(interval);
     try {
       const response = await fetch("/api/billing/checkout", {
         method: "POST",
@@ -24,6 +36,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
       });
       await handleBillingResponse(response);
     } catch (caught) {
+      settle();
       setPending(null);
       setError(
         caught instanceof Error ? caught.message : "Billing action failed."
@@ -32,16 +45,14 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
   }
 
   async function startPortal() {
-    flushSync(() => {
-      setPending("portal");
-      setError(null);
-    });
+    const settle = schedulePending("portal");
     try {
       const response = await fetch("/api/billing/portal", {
         method: "POST"
       });
       await handleBillingResponse(response);
     } catch (caught) {
+      settle();
       setPending(null);
       setError(
         caught instanceof Error ? caught.message : "Billing action failed."
@@ -80,6 +91,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           type="button"
           onClick={() => void startCheckout("monthly")}
           disabled={pending !== null}
+          data-immediate-action-label="Starting..."
           aria-label={
             pending === "monthly" ? "Starting $5/mo..." : "Start $5/mo checkout"
           }
@@ -91,7 +103,11 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>Simple month-to-month billing</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            <span>
+            <span
+              key={pending ?? error ?? "idle"}
+              data-immediate-action-feedback
+              suppressHydrationWarning
+            >
               {pending === "monthly" ? "Starting..." : "Choose monthly"}
             </span>
           </span>
@@ -101,6 +117,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           type="button"
           onClick={() => void startCheckout("yearly")}
           disabled={pending !== null}
+          data-immediate-action-label="Starting..."
           aria-label={
             pending === "yearly"
               ? "Starting $50/year..."
@@ -114,7 +131,11 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>One annual payment</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            <span>
+            <span
+              key={pending ?? error ?? "idle"}
+              data-immediate-action-feedback
+              suppressHydrationWarning
+            >
               {pending === "yearly" ? "Starting..." : "Choose yearly"}
             </span>
           </span>
@@ -131,9 +152,14 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
             type="button"
             onClick={() => void startPortal()}
             disabled={pending !== null}
+            data-immediate-action-label="Opening..."
           >
             <ExternalLink aria-hidden="true" size={18} />
-            <span>
+            <span
+              key={pending ?? error ?? "idle"}
+              data-immediate-action-feedback
+              suppressHydrationWarning
+            >
               {pending === "portal" ? "Opening..." : "Open billing portal"}
             </span>
           </button>

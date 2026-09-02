@@ -28,12 +28,7 @@ test("contact submission responds visibly within 20 ms", async ({ page }) => {
   });
 
   await page.goto("/contact");
-  await page.getByLabel("Name").fill("Latency Tester");
-  await page.getByLabel("Email").fill("latency@example.com");
-  await page.getByLabel("What can we help with?").selectOption("Support");
-  await page
-    .getByLabel("Message")
-    .fill("This valid test message is deliberately held open.");
+  await fillValidContactForm(page);
 
   const button = page.getByRole("button", { name: "Send message" });
   const responseMsPromise = observeTextResponse(page, button, "Sending…");
@@ -142,6 +137,102 @@ test("invalid forms do not present pending feedback", async ({ page }) => {
   await expect(page.getByLabel("Name")).toBeFocused();
 });
 
+test("contact submission can retry after a fast failure", async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    let contactAttempts = 0;
+    window.fetch = (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input instanceof Request
+              ? input.url
+              : String(input);
+      if (url.includes("/api/contact")) {
+        contactAttempts += 1;
+        if (contactAttempts === 1) {
+          return Promise.reject(new TypeError("Failed to fetch"));
+        }
+      }
+      return originalFetch(input, init);
+    };
+  });
+  await page.route("**/api/contact", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true })
+    });
+  });
+
+  await page.goto("/contact");
+  await fillValidContactForm(page);
+
+  const button = page.getByRole("button", { name: "Send message" });
+  await button.click();
+  await expect(page.getByRole("status")).toContainText(
+    "Check your connection and try again."
+  );
+  await nextMacrotask(page);
+  await expect(button).toHaveText("Send message");
+  await expect(button).toBeEnabled();
+
+  await button.click();
+  await expect(page.getByRole("status")).toContainText(
+    "Message sent. We’ll get back to you soon."
+  );
+});
+
+test("billing checkout can retry after a fast failure", async ({ page }) => {
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    let checkoutAttempts = 0;
+    window.fetch = (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input instanceof Request
+              ? input.url
+              : String(input);
+      if (url.includes("/api/billing/checkout")) {
+        checkoutAttempts += 1;
+        if (checkoutAttempts === 1) {
+          return Promise.reject(new TypeError("Failed to fetch"));
+        }
+      }
+      return originalFetch(input, init);
+    };
+  });
+  await page.route("**/api/billing/checkout", async (route) => {
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: { message: "Retry checkout." }
+      })
+    });
+  });
+
+  await page.goto("/upgrade");
+  const button = page.getByRole("button", { name: "Start $5/mo checkout" });
+  await button.click();
+  await expect(page.locator(".form-error")).toContainText("Failed to fetch");
+  await nextMacrotask(page);
+  await expect(button.locator("[data-immediate-action-feedback]")).toHaveText(
+    "Choose monthly"
+  );
+  await expect(button).toBeEnabled();
+
+  await button.click();
+  await expect(page.locator(".form-error")).toContainText("Retry checkout.");
+  await expect(button).toBeEnabled();
+});
+
 async function observeTextResponse(
   page: Page,
   feedback: Locator,
@@ -189,4 +280,19 @@ function deferred() {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+async function fillValidContactForm(page: Page) {
+  await page.getByLabel("Name").fill("Latency Tester");
+  await page.getByLabel("Email").fill("latency@example.com");
+  await page.getByLabel("What can we help with?").selectOption("Support");
+  await page
+    .getByLabel("Message")
+    .fill("This valid test message is deliberately held open.");
+}
+
+async function nextMacrotask(page: Page) {
+  await page.evaluate(
+    () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+  );
 }

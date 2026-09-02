@@ -32,6 +32,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-scroll-behavior="smooth">
       <body>
+        <Script
+          id="agent-outbox-immediate-action-feedback"
+          src="/immediate-action-feedback.js"
+          strategy="beforeInteractive"
+        />
         <ClientEventsInit />
         {webAnalyticsToken ? (
           <Script

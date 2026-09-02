@@ -225,10 +225,13 @@ remains non-interactive until the undo commit is accepted, then reconciles with
 the canonical revision of the current view. JavaScript-disabled review forms
 retain redirecting server actions as a fallback. Navigational and
 security-sensitive workflows use their existing redirecting actions with
-explicit form-local pending feedback committed before React yields. Feedback and
-completion notices live in the root toast layer and do not shift the primary
-layout. Browser coverage holds responses open so network or navigation
-completion cannot satisfy the latency gate.
+explicit form-local pending labels applied on the native click, so the visible
+pending state does not wait for a React commit. Redirecting submits are
+prevented in that click and restarted with requestSubmit on the following
+macrotask, after MutationObserver callbacks have run. Feedback and completion
+notices live in the root toast layer and do not shift the primary layout.
+Browser coverage holds responses open so network or navigation completion cannot
+satisfy the latency gate.
 
 ## File Handling
 

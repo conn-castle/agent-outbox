@@ -14,6 +14,10 @@ import {
 } from "react";
 import { Toaster } from "sonner";
 
+import { installImmediateActionFeedback } from "./immediate-action-feedback";
+
+installImmediateActionFeedback();
+
 export type AppMutationStatus = "queued" | "syncing" | "succeeded";
 
 export type AppMutationRecord = {

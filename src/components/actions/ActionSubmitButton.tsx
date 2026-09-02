@@ -1,12 +1,11 @@
 "use client";
 
-import {
-  useEffect,
-  useState,
-  type ButtonHTMLAttributes,
-  type ReactNode
-} from "react";
-import { flushSync, useFormStatus } from "react-dom";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useFormStatus } from "react-dom";
+
+import { installImmediateActionFeedback } from "./immediate-action-feedback";
+
+installImmediateActionFeedback();
 
 export function ActionSubmitButton({
   children,
@@ -19,29 +18,22 @@ export function ActionSubmitButton({
   pendingChildren: ReactNode;
 }) {
   const status = useFormStatus();
-  const [optimisticPending, setOptimisticPending] = useState(false);
-
-  useEffect(() => {
-    if (status.pending) {
-      setOptimisticPending(false);
-    }
-  }, [status.pending]);
-
-  const pending = status.pending || optimisticPending;
+  const pending = status.pending;
+  const pendingLabel =
+    typeof pendingChildren === "string" ? pendingChildren : undefined;
   return (
     <button
       {...props}
       type="submit"
-      disabled={disabled || status.pending}
-      onClick={(event) => {
-        onClick?.(event);
-        if (event.defaultPrevented || disabled) return;
-        const form = event.currentTarget.form;
-        if (form && !form.checkValidity()) return;
-        flushSync(() => setOptimisticPending(true));
-      }}
+      disabled={disabled || pending}
+      data-immediate-action-label={pendingLabel}
+      // Labeled submit clicks are stopped in capture so React form actions
+      // start on the following macrotask; onClick does not run for those clicks.
+      onClick={onClick}
     >
-      {pending ? pendingChildren : children}
+      <span data-immediate-action-feedback suppressHydrationWarning>
+        {pending ? pendingChildren : children}
+      </span>
     </button>
   );
 }
