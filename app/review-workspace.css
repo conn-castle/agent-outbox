@@ -536,94 +536,6 @@ body:has(.shell > .human-workspace) {
   }
 }
 
-.human-workspace .human-notice {
-  position: fixed;
-  right: 1rem;
-  bottom: max(1rem, env(safe-area-inset-bottom));
-  z-index: 120;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  width: fit-content;
-  max-width: min(28rem, calc(100vw - 2rem));
-  min-height: 3.6rem;
-  margin: 0;
-  padding: 0.65rem 0.7rem 0.65rem 0.85rem;
-  border: 1px solid #d9b97b;
-  border-radius: 0.7rem;
-  background: rgba(255, 246, 224, 0.97);
-  color: #714700;
-  box-shadow: 0 1rem 2.5rem rgba(39, 34, 29, 0.2);
-  backdrop-filter: blur(20px) saturate(140%);
-  font-size: 0.72rem;
-  font-weight: 650;
-}
-
-.human-workspace .optimistic-hidden,
-.human-workspace .human-notice[hidden] {
-  display: none;
-}
-
-.human-workspace .notice-copy {
-  display: grid;
-  gap: 0.14rem;
-  min-width: 0;
-}
-
-.human-workspace .notice-copy strong {
-  line-height: 1.25;
-}
-
-.human-workspace .notice-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex: none;
-}
-
-.human-workspace .notice-undo-form {
-  margin: 0;
-}
-
-.human-workspace .notice-undo-button {
-  min-height: 1.75rem;
-  padding: 0 0.62rem;
-  border: 1px solid currentColor;
-  border-radius: 0.38rem;
-  background: rgba(255, 255, 255, 0.42);
-  color: inherit;
-  font-size: 0.67rem;
-  font-weight: 780;
-}
-
-.human-workspace .notice-dismiss {
-  display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
-  padding: 0;
-  place-items: center;
-  border: 0;
-  border-radius: 0.4rem;
-  background: transparent;
-  color: inherit;
-}
-
-.human-workspace .notice-dismiss:hover {
-  background: rgba(128, 92, 31, 0.1);
-}
-
-.human-workspace .notice-dismiss svg {
-  width: 0.8rem;
-  height: 0.8rem;
-}
-
-.human-workspace .human-notice.error {
-  border-color: #e2afa6;
-  background: var(--review-red-soft);
-  color: #853329;
-}
-
 /* Workspace shell */
 
 .human-workspace .workspace-body {
@@ -2307,11 +2219,6 @@ body:has(.shell > .human-workspace) {
 .human-workspace .account-avatar {
   font-size: var(--queue-type-label);
   font-weight: 700;
-}
-
-.human-workspace .human-notice,
-.human-workspace .notice-undo-button {
-  font-size: var(--queue-type-label);
 }
 
 .human-workspace .app-brand,

@@ -1,5 +1,6 @@
 import { redirect, unstable_rethrow } from "next/navigation";
 
+import { ActionSubmitButton } from "../../../../src/components/actions/ActionSubmitButton";
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectDeviceApprovalPreview } from "../../../../src/server/caller-connect";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
@@ -57,19 +58,15 @@ export default async function CallerConnectDevicePage({
                 value={fixtureClerkUserId}
               />
             ) : null}
-          </form>
-          <ConnectActions>
-            <button
-              className="button"
-              form="enter-device-code"
-              type="submit"
-              data-immediate-action-label="Checking code…"
-            >
-              <span data-immediate-action-feedback suppressHydrationWarning>
+            <ConnectActions>
+              <ActionSubmitButton
+                className="button"
+                pendingChildren="Checking code…"
+              >
                 Continue
-              </span>
-            </button>
-          </ConnectActions>
+              </ActionSubmitButton>
+            </ConnectActions>
+          </form>
         </section>
       </ConnectPageShell>
     );

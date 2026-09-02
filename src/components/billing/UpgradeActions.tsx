@@ -75,7 +75,6 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           type="button"
           onClick={() => void startCheckout("monthly")}
           disabled={pending !== null}
-          data-immediate-action-label="Starting..."
           aria-label={
             pending === "monthly" ? "Starting $5/mo..." : "Start $5/mo checkout"
           }
@@ -87,7 +86,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>Simple month-to-month billing</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            <span data-immediate-action-feedback suppressHydrationWarning>
+            <span>
               {pending === "monthly" ? "Starting..." : "Choose monthly"}
             </span>
           </span>
@@ -97,7 +96,6 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           type="button"
           onClick={() => void startCheckout("yearly")}
           disabled={pending !== null}
-          data-immediate-action-label="Starting..."
           aria-label={
             pending === "yearly"
               ? "Starting $50/year..."
@@ -111,7 +109,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <span>One annual payment</span>
           <span className="billing-option-action">
             <CreditCard aria-hidden="true" size={16} />
-            <span data-immediate-action-feedback suppressHydrationWarning>
+            <span>
               {pending === "yearly" ? "Starting..." : "Choose yearly"}
             </span>
           </span>
@@ -128,10 +126,9 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
             type="button"
             onClick={() => void startPortal()}
             disabled={pending !== null}
-            data-immediate-action-label="Opening..."
           >
             <ExternalLink aria-hidden="true" size={18} />
-            <span data-immediate-action-feedback suppressHydrationWarning>
+            <span>
               {pending === "portal" ? "Opening..." : "Open billing portal"}
             </span>
           </button>

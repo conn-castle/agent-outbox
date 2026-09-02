@@ -28,21 +28,26 @@ import {
   type HumanAccountSession
 } from "../../src/server/human-session";
 import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../src/shared/human-review-view";
+import type {
+  HumanMutationFailure,
+  HumanMutationResult
+} from "../../src/shared/human-mutation";
 
 const humanPath = "/human";
 
-export async function submitHumanAnswer(formData: FormData) {
+export async function executeHumanAnswerMutation(
+  formData: FormData
+): Promise<HumanMutationResult> {
   const requestId = createCorrelationId("human_answer_req");
   const failedActionKind =
     formData.get("popupKind") === "file_upload" ? "file_upload" : undefined;
   const parsed = parseHumanAnswerForm(formData);
   if (!parsed.ok) {
-    refreshHumanFailurePage(
-      formData,
-      {
-        error: "invalid_request",
-        ...(failedActionKind ? { failedActionKind } : {})
-      },
+    return humanMutationFailure(
+      "answer",
+      [],
+      "invalid_request",
+      "Action failed: invalid request.",
       requestId,
       failedActionKind
     );
@@ -60,16 +65,18 @@ export async function submitHumanAnswer(formData: FormData) {
         actionDisplay
       }
     ]);
-    refreshHumanPage(formData, {
-      ...(returnsToQueue(formData) ? {} : { item: parsed.inputItemId }),
-      notice: "answer_submitted",
-      action: actionDisplay,
-      subject: noticeText(formData, "noticeSubject") ?? "this review",
-      resolved: parsed.inputItemId,
-      undo_target: parsed.inputItemId,
-      undo_actor: parsed.callerId,
-      undo_result: "00000000-0000-4000-8000-000000009999"
-    });
+    revalidatePath(humanPath);
+    return {
+      ok: true,
+      operation: "answer",
+      message: "Done.",
+      inputItemIds: [parsed.inputItemId],
+      undo: {
+        inputItemId: parsed.inputItemId,
+        callerId: parsed.callerId,
+        outputResultId: "00000000-0000-4000-8000-000000009999"
+      }
+    };
   }
 
   let answerInput: CreateHumanAnswerInput | null = null;
@@ -97,25 +104,21 @@ export async function submitHumanAnswer(formData: FormData) {
       throw error;
     }
     humanAnswerTransactionFailure(error, answerInput);
-    refreshHumanFailurePage(
-      formData,
-      {
-        item: parsed.inputItemId,
-        error: "temporary_unavailable",
-        ...(failedActionKind ? { failedActionKind } : {})
-      },
+    return humanMutationFailure(
+      "answer",
+      [parsed.inputItemId],
+      "temporary_unavailable",
+      "Human answer is temporarily unavailable.",
       requestId,
       failedActionKind
     );
   }
   if (!transaction.ok) {
-    refreshHumanFailurePage(
-      formData,
-      {
-        item: parsed.inputItemId,
-        error: transaction.code,
-        ...(failedActionKind ? { failedActionKind } : {})
-      },
+    return humanMutationFailure(
+      "answer",
+      [parsed.inputItemId],
+      transaction.code,
+      transaction.message,
       requestId,
       failedActionKind
     );
@@ -123,34 +126,44 @@ export async function submitHumanAnswer(formData: FormData) {
   const result = transaction.data;
 
   if (result.ok) {
-    refreshHumanPage(formData, {
-      ...(returnsToQueue(formData) ? {} : { item: parsed.inputItemId }),
-      notice: "answer_submitted",
-      action: noticeText(formData, "noticeAction") ?? parsed.actionValue,
-      subject: noticeText(formData, "noticeSubject") ?? "this review",
-      undo_target: result.inputItemId,
-      undo_actor: parsed.callerId,
-      undo_result: result.outputResultId
-    });
+    revalidatePath(humanPath);
+    return {
+      ok: true,
+      operation: "answer",
+      message: "Done.",
+      inputItemIds: [result.inputItemId],
+      undo: {
+        inputItemId: result.inputItemId,
+        callerId: parsed.callerId,
+        outputResultId: result.outputResultId
+      }
+    };
   }
-  refreshHumanFailurePage(
-    formData,
-    {
-      item: parsed.inputItemId,
-      error: result.code,
-      ...(failedActionKind ? { failedActionKind } : {})
-    },
+  return humanMutationFailure(
+    "answer",
+    [parsed.inputItemId],
+    result.code,
+    result.message,
     requestId,
     failedActionKind
   );
 }
 
-export async function submitBulkHumanAnswers(formData: FormData) {
+export async function executeBulkHumanAnswersMutation(
+  formData: FormData
+): Promise<HumanMutationResult> {
   const requestId = createCorrelationId("human_bulk_answer_req");
   const parsed = parseBulkHumanAnswersForm(formData);
   if (!parsed.ok) {
-    refreshHumanFailurePage(formData, { error: "invalid_request" }, requestId);
+    return humanMutationFailure(
+      "bulk-answer",
+      [],
+      "invalid_request",
+      "Bulk action failed: invalid request.",
+      requestId
+    );
   }
+  const inputItemIds = parsed.items.map((item) => item.inputItemId);
 
   if (humanBrowserFixtureEnabled()) {
     const { recordFixtureResolvedItems } =
@@ -163,16 +176,26 @@ export async function submitBulkHumanAnswers(formData: FormData) {
           noticeText(formData, "noticeAction") ?? parsed.actionValue
       }))
     );
-    refreshHumanPage(formData, {
-      notice: "bulk_answered",
-      answered: String(parsed.items.length),
-      failed: "0"
-    });
+    revalidatePath(humanPath);
+    return {
+      ok: true,
+      operation: "bulk-answer",
+      message: `Bulk action complete: ${parsed.items.length} answered, 0 failed.`,
+      inputItemIds,
+      answered: parsed.items.length,
+      failed: 0
+    };
   }
 
   const context = await humanActionContext();
   if (!context.ok) {
-    refreshHumanFailurePage(formData, { error: context.code }, requestId);
+    return humanMutationFailure(
+      "bulk-answer",
+      inputItemIds,
+      context.code,
+      context.message,
+      requestId
+    );
   }
 
   let answered = 0;
@@ -199,28 +222,43 @@ export async function submitBulkHumanAnswers(formData: FormData) {
   if (failed > 0) {
     emitHumanActionFailure(requestId);
   }
-  refreshHumanPage(formData, {
-    notice: "bulk_answered",
-    answered: String(answered),
-    failed: String(failed)
-  });
+  revalidatePath(humanPath);
+  return {
+    ok: true,
+    operation: "bulk-answer",
+    message: `Bulk action complete: ${answered} answered, ${failed} failed.`,
+    inputItemIds,
+    answered,
+    failed
+  };
 }
 
-export async function undoHumanAnswer(formData: FormData) {
+export async function executeUndoHumanAnswerMutation(
+  formData: FormData
+): Promise<HumanMutationResult> {
   const requestId = createCorrelationId("human_undo_req");
   const parsed = parseUndoHumanAnswerForm(formData);
   if (!parsed.ok) {
-    refreshHumanFailurePage(formData, { error: "invalid_request" }, requestId);
+    return humanMutationFailure(
+      "undo",
+      [],
+      "invalid_request",
+      "Undo failed: invalid request.",
+      requestId
+    );
   }
 
   if (humanBrowserFixtureEnabled()) {
     const { forgetFixtureResolvedItem } =
       await import("../../src/server/human-review-fixture-state");
     await forgetFixtureResolvedItem(parsed.inputItemId);
-    refreshHumanPage(formData, {
-      item: parsed.inputItemId,
-      notice: "answer_undone"
-    });
+    revalidatePath(humanPath);
+    return {
+      ok: true,
+      operation: "undo",
+      message: "Undone.",
+      inputItemIds: [parsed.inputItemId]
+    };
   }
 
   let undoInput: PreReadUndoInput | null = null;
@@ -245,41 +283,72 @@ export async function undoHumanAnswer(formData: FormData) {
       throw error;
     }
     humanAnswerUndoTransactionFailure(error, undoInput);
-    refreshHumanFailurePage(
-      formData,
-      {
-        item: parsed.inputItemId,
-        error: "temporary_unavailable"
-      },
+    return humanMutationFailure(
+      "undo",
+      [parsed.inputItemId],
+      "temporary_unavailable",
+      "Human answer undo is temporarily unavailable.",
       requestId
     );
   }
   if (!transaction.ok) {
-    refreshHumanFailurePage(
-      formData,
-      { item: parsed.inputItemId, error: transaction.code },
+    return humanMutationFailure(
+      "undo",
+      [parsed.inputItemId],
+      transaction.code,
+      transaction.message,
       requestId
     );
   }
   const result = transaction.data;
 
   if (result.ok) {
-    refreshHumanPage(formData, {
-      item: parsed.inputItemId,
-      notice: "answer_undone"
-    });
+    revalidatePath(humanPath);
+    return {
+      ok: true,
+      operation: "undo",
+      message: "Undone.",
+      inputItemIds: [parsed.inputItemId]
+    };
   }
-  refreshHumanFailurePage(
-    formData,
-    { item: parsed.inputItemId, error: result.code },
+  return humanMutationFailure(
+    "undo",
+    [parsed.inputItemId],
+    result.code,
+    result.message,
     requestId
+  );
+}
+
+export async function submitHumanAnswer(formData: FormData) {
+  redirectHumanMutationResult(
+    formData,
+    await executeHumanAnswerMutation(formData)
+  );
+}
+
+export async function submitBulkHumanAnswers(formData: FormData) {
+  redirectHumanMutationResult(
+    formData,
+    await executeBulkHumanAnswersMutation(formData)
+  );
+}
+
+export async function undoHumanAnswer(formData: FormData) {
+  redirectHumanMutationResult(
+    formData,
+    await executeUndoHumanAnswerMutation(formData)
   );
 }
 
 async function humanActionContext() {
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return { ok: false as const, code: "missing_database_configuration" };
+    return {
+      ok: false as const,
+      code: "missing_database_configuration",
+      message: "Human actions are not configured."
+    };
   }
 
   const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
@@ -290,7 +359,11 @@ async function humanActionContext() {
     method: "POST"
   });
   if (!humanSession.ok) {
-    return { ok: false as const, code: humanSession.code };
+    return {
+      ok: false as const,
+      code: humanSession.code,
+      message: humanSession.message
+    };
   }
 
   return {
@@ -359,14 +432,61 @@ function refreshHumanPage(
   redirect(`${humanPath}?${query.toString()}`);
 }
 
-function refreshHumanFailurePage(
-  formData: FormData,
-  params: Record<string, string>,
+function humanMutationFailure(
+  operation: HumanMutationFailure["operation"],
+  inputItemIds: string[],
+  code: string,
+  message: string,
   requestId: string,
   kind?: "file_upload"
-): never {
+): HumanMutationFailure {
   emitHumanActionFailure(requestId, kind);
-  refreshHumanPage(formData, params);
+  return {
+    ok: false,
+    operation,
+    code,
+    message,
+    inputItemIds,
+    ...(kind ? { failedActionKind: kind } : {})
+  };
+}
+
+function redirectHumanMutationResult(
+  formData: FormData,
+  result: HumanMutationResult
+): never {
+  if (!result.ok) {
+    refreshHumanPage(formData, {
+      ...(result.inputItemIds[0] ? { item: result.inputItemIds[0] } : {}),
+      error: result.code,
+      ...(result.failedActionKind
+        ? { failedActionKind: result.failedActionKind }
+        : {})
+    });
+  }
+
+  switch (result.operation) {
+    case "answer":
+      refreshHumanPage(formData, {
+        ...(returnsToQueue(formData) ? {} : { item: result.inputItemIds[0] }),
+        notice: "answer_submitted",
+        resolved: result.inputItemIds[0],
+        undo_target: result.undo.inputItemId,
+        undo_actor: result.undo.callerId,
+        undo_result: result.undo.outputResultId
+      });
+    case "bulk-answer":
+      refreshHumanPage(formData, {
+        notice: "bulk_answered",
+        answered: String(result.answered),
+        failed: String(result.failed)
+      });
+    case "undo":
+      refreshHumanPage(formData, {
+        item: result.inputItemIds[0],
+        notice: "answer_undone"
+      });
+  }
 }
 
 function emitHumanActionFailure(requestId: string, kind?: "file_upload") {

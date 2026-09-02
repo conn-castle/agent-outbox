@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Check,
   ChevronDown,
@@ -13,7 +14,9 @@ import {
   SlidersHorizontal,
   X
 } from "lucide-react";
+import { toast } from "sonner";
 
+import { useAppActions } from "../actions/AppActionProvider";
 import type { HumanAccountSession } from "../../server/human-session.ts";
 import type {
   HumanAccountBannerData,
@@ -30,13 +33,19 @@ import {
 } from "../../shared/human-review-view";
 import { AccountBanner } from "./AccountBanner";
 import {
-  showOptimisticHumanAction,
-  UndoNoticeForm,
-  type OnOptimisticHumanAction
+  type HumanMutationSubmission,
+  type OnHumanMutation
 } from "./ActionForms";
 import { BulkActions } from "./BulkActions";
 import { ReviewDetail } from "./ReviewDetail";
 import { ReviewList } from "./ReviewList";
+import {
+  HUMAN_MUTATION_SCOPE,
+  HumanMutationError,
+  isHumanOptimisticMutation,
+  synchronizeHumanMutation,
+  type HumanOptimisticMutation
+} from "./human-mutation-client";
 
 type PersistedWorkspaceState = {
   selectedIds?: unknown;
@@ -88,16 +97,25 @@ export function ReviewWorkspace({
   renderedAt: string;
 }) {
   const router = useRouter();
+  const { mutations, enqueue, dismiss } = useAppActions();
   const [search, setSearch] = useState(view.search);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
-  const [noticeDismissed, setNoticeDismissed] = useState(false);
   const [hydratedAccountId, setHydratedAccountId] = useState<string | null>(
     null
   );
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSearch = useRef<string | null>(null);
+  const previousCanonicalRows = useRef(rows);
+  const canonicalGeneration = useRef(0);
+  const successGenerations = useRef(new Map<string, number>());
+  const retriedCanonicalRefreshes = useRef(new Set<string>());
+  if (previousCanonicalRows.current !== rows) {
+    previousCanonicalRows.current = rows;
+    canonicalGeneration.current += 1;
+  }
 
   useEffect(() => {
     const persisted = readWorkspaceState(session.accountId);
@@ -170,11 +188,14 @@ export function ReviewWorkspace({
   }, [rows]);
 
   useEffect(() => {
-    // Re-sync the input after navigation (back/forward, action redirects).
-    // Skip while a debounced edit is pending so in-flight typing survives.
-    if (searchTimer.current === null) {
-      setSearch(view.search);
+    if (pendingSearch.current !== null) {
+      if (view.search === pendingSearch.current) {
+        pendingSearch.current = null;
+      } else {
+        return;
+      }
     }
+    setSearch(view.search);
   }, [view.search]);
 
   const noticeEpoch = [
@@ -185,29 +206,6 @@ export function ReviewWorkspace({
     notice?.undo?.outputResultId ?? "",
     notice?.undo?.callerId ?? ""
   ].join("\0");
-
-  useEffect(() => {
-    setNoticeDismissed(false);
-  }, [noticeEpoch]);
-
-  useEffect(() => {
-    document
-      .querySelectorAll<HTMLElement>("[data-optimistic-hidden]")
-      .forEach((element) => {
-        element.classList.remove("optimistic-hidden");
-        delete element.dataset.optimisticHidden;
-      });
-    document
-      .querySelectorAll<HTMLElement>("[data-server-notice]")
-      .forEach((element) => {
-        element.hidden = false;
-      });
-    const status = document.getElementById("human-optimistic-status");
-    if (status) status.textContent = "";
-  }, [noticeEpoch, renderedAt]);
-
-  const handleOptimisticAction: OnOptimisticHumanAction =
-    showOptimisticHumanAction;
 
   function updateView(changes: Partial<HumanReviewView>) {
     const params = new URLSearchParams(window.location.search);
@@ -267,8 +265,121 @@ export function ReviewWorkspace({
     );
   }
 
+  const humanMutations = useMemo(
+    () =>
+      mutations.flatMap((record) =>
+        record.scope === HUMAN_MUTATION_SCOPE &&
+        isHumanOptimisticMutation(record.optimistic)
+          ? [{ record, mutation: record.optimistic }]
+          : []
+      ),
+    [mutations]
+  );
+  const hiddenIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const { mutation } of humanMutations) {
+      if (mutation.operation !== "undo") {
+        mutation.inputItemIds.forEach((id) => ids.add(id));
+      }
+    }
+    return ids;
+  }, [humanMutations]);
+  const restoredRows = useMemo(() => {
+    const baseIds = new Set(rows.map((row) => row.inputItemId));
+    const restored = new Map<string, HumanReviewListRow>();
+    for (const { mutation } of humanMutations) {
+      if (mutation.operation !== "undo") continue;
+      for (const row of mutation.rowSnapshots) {
+        if (!baseIds.has(row.inputItemId)) {
+          restored.set(row.inputItemId, row);
+        }
+      }
+    }
+    return [...restored.values()];
+  }, [humanMutations, rows]);
+  const lockedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const { record, mutation } of humanMutations) {
+      if (mutation.operation === "undo" && record.status !== "succeeded") {
+        mutation.inputItemIds.forEach((id) => ids.add(id));
+      }
+    }
+    return ids;
+  }, [humanMutations]);
+
+  const projectedRows = useMemo(
+    () =>
+      [...rows, ...restoredRows].filter(
+        (row) => !hiddenIds.has(row.inputItemId)
+      ),
+    [hiddenIds, restoredRows, rows]
+  );
+  const synchronizingMutationCount = humanMutations.filter(
+    ({ record }) => record.status !== "succeeded"
+  ).length;
+  const actionStatus =
+    synchronizingMutationCount > 0
+      ? `${synchronizingMutationCount} review ${synchronizingMutationCount === 1 ? "update" : "updates"} waiting to synchronize.`
+      : "";
+
+  useEffect(() => {
+    for (const { record, mutation } of humanMutations) {
+      if (record.status !== "succeeded") continue;
+      const successGeneration = successGenerations.current.get(record.id);
+      if (successGeneration === undefined) {
+        continue;
+      }
+      const minimumGeneration = successGeneration + 1;
+      if (canonicalGeneration.current < minimumGeneration) {
+        if (
+          canonicalGeneration.current > successGeneration &&
+          !retriedCanonicalRefreshes.current.has(record.id)
+        ) {
+          retriedCanonicalRefreshes.current.add(record.id);
+          router.refresh();
+        }
+        continue;
+      }
+      const canonicalRows = mutation.inputItemIds.map((id) =>
+        rows.find((row) => row.inputItemId === id)
+      );
+      const reflected =
+        mutation.operation === "undo"
+          ? mutation.requiresCanonicalPendingRow
+            ? canonicalRows.every((row, index) => {
+                const snapshot = mutation.rowSnapshots.find(
+                  (candidate) =>
+                    candidate.inputItemId === mutation.inputItemIds[index]
+                );
+                return (
+                  row?.status === "pending" &&
+                  snapshot !== undefined &&
+                  row.currentRevision >= snapshot.currentRevision
+                );
+              })
+            : canonicalRows.every(
+                (row) => row === undefined || row.status === "pending"
+              )
+          : mutation.operation === "bulk-answer"
+            ? canonicalRows.some(
+                (row) => row === undefined || row.status !== "pending"
+              )
+            : canonicalRows.every(
+                (row) => row === undefined || row.status !== "pending"
+              );
+      if (reflected) {
+        successGenerations.current.delete(record.id);
+        retriedCanonicalRefreshes.current.delete(record.id);
+        dismiss(record.id);
+      } else if (!retriedCanonicalRefreshes.current.has(record.id)) {
+        retriedCanonicalRefreshes.current.add(record.id);
+        router.refresh();
+      }
+    }
+  }, [dismiss, humanMutations, router, rows]);
+
   const visibleRows = useMemo(() => {
-    return [...rows].sort((left, right) => {
+    return [...projectedRows].sort((left, right) => {
       const leftSkipped = skippedIds.has(left.inputItemId);
       const rightSkipped = skippedIds.has(right.inputItemId);
       if (leftSkipped !== rightSkipped) {
@@ -276,13 +387,13 @@ export function ReviewWorkspace({
       }
       return 0;
     });
-  }, [rows, skippedIds]);
+  }, [projectedRows, skippedIds]);
   const selectedRows = useMemo(
     () => visibleRows.filter((row) => selectedIds.has(row.inputItemId)),
     [selectedIds, visibleRows]
   );
   const offPageSelectedCount = useMemo(() => {
-    const visibleIds = new Set(rows.map((row) => row.inputItemId));
+    const visibleIds = new Set(projectedRows.map((row) => row.inputItemId));
     let count = 0;
     for (const id of selectedIds) {
       if (!visibleIds.has(id)) {
@@ -290,12 +401,14 @@ export function ReviewWorkspace({
       }
     }
     return count;
-  }, [rows, selectedIds]);
-  const pendingCount = rows.filter((row) => row.status === "pending").length;
+  }, [projectedRows, selectedIds]);
+  const pendingCount = projectedRows.filter(
+    (row) => row.status === "pending"
+  ).length;
   const queueCount = queueCountCopy(
     view.status,
     pendingCount,
-    rows.length,
+    projectedRows.length,
     hasNext,
     view.page
   );
@@ -308,6 +421,132 @@ export function ReviewWorkspace({
     detailIndex >= 0 && detailIndex < visibleRows.length - 1
       ? visibleRows[detailIndex + 1]
       : null;
+
+  const handleHumanMutation: OnHumanMutation = (submission) => {
+    const rowSnapshots = projectedRows.filter((row) =>
+      submission.inputItemIds.includes(row.inputItemId)
+    );
+    enqueueHumanMutation(submission, rowSnapshots);
+    if (
+      detail &&
+      submission.inputItemIds.includes(detail.inputItemId) &&
+      typeof window !== "undefined"
+    ) {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        humanReviewHref(view)
+      );
+    }
+  };
+
+  function enqueueHumanMutation(
+    submission: HumanMutationSubmission,
+    rowSnapshots: HumanReviewListRow[],
+    requiresCanonicalPendingRow = submission.operation === "undo" &&
+      rowSnapshots.some((row) => row.status === "pending")
+  ) {
+    const optimistic: HumanOptimisticMutation = {
+      operation: submission.operation,
+      inputItemIds: submission.inputItemIds,
+      rowSnapshots: requiresCanonicalPendingRow
+        ? rowSnapshots.map((row) => ({
+            ...row,
+            currentRevision: row.currentRevision + 2
+          }))
+        : rowSnapshots,
+      requiresCanonicalPendingRow
+    };
+    enqueue({
+      scope: HUMAN_MUTATION_SCOPE,
+      optimistic,
+      execute: () =>
+        synchronizeHumanMutation(submission.operation, submission.formData),
+      refreshOnSuccess: true,
+      onSuccess: (result, mutationId) => {
+        successGenerations.current.set(mutationId, canonicalGeneration.current);
+        if (result.operation === "answer") {
+          toast.success(result.message, {
+            id: mutationId,
+            action: {
+              label: "Undo",
+              onClick: () => {
+                dismiss(mutationId);
+                const undoForm = new FormData();
+                undoForm.set("inputItemId", result.undo.inputItemId);
+                undoForm.set("callerId", result.undo.callerId);
+                undoForm.set("outputResultId", result.undo.outputResultId);
+                enqueueHumanMutation(
+                  {
+                    operation: "undo",
+                    inputItemIds: [result.undo.inputItemId],
+                    formData: undoForm
+                  },
+                  rowSnapshots,
+                  true
+                );
+              }
+            }
+          });
+          return;
+        }
+        if (result.operation === "bulk-answer" && result.failed > 0) {
+          toast.warning(result.message, {
+            id: mutationId,
+            duration: Infinity
+          });
+          return;
+        }
+        toast.success(result.message, { id: mutationId });
+      },
+      onError: (error, mutationId) => {
+        successGenerations.current.delete(mutationId);
+        retriedCanonicalRefreshes.current.delete(mutationId);
+        const message =
+          error instanceof HumanMutationError
+            ? error.message
+            : "Action is temporarily unavailable.";
+        toast.error(message, {
+          id: mutationId,
+          duration: Infinity
+        });
+      }
+    });
+  }
+
+  useEffect(() => {
+    if (!notice) return;
+    const options = {
+      id: noticeEpoch,
+      ...(notice.undo
+        ? {
+            action: {
+              label: "Undo",
+              onClick: () => {
+                const formData = new FormData();
+                formData.set("inputItemId", notice.undo?.inputItemId ?? "");
+                formData.set("callerId", notice.undo?.callerId ?? "");
+                formData.set(
+                  "outputResultId",
+                  notice.undo?.outputResultId ?? ""
+                );
+                handleHumanMutation({
+                  operation: "undo",
+                  inputItemIds: [notice.undo?.inputItemId ?? ""],
+                  formData
+                });
+              }
+            }
+          }
+        : {}),
+      ...(notice.kind === "error" ? { duration: Infinity } : {})
+    };
+    if (notice.kind === "error") {
+      toast.error(notice.message, options);
+    } else {
+      toast.success(notice.message, options);
+    }
+  }, [notice, noticeEpoch]);
 
   function setRowSelected(inputItemId: string, selected: boolean) {
     setSelectedIds((current) => {
@@ -413,7 +652,7 @@ export function ReviewWorkspace({
       }
     >
       <header className="app-bar">
-        <a
+        <Link
           className="app-brand product-wordmark"
           href="/human"
           aria-label="Agent Outbox home"
@@ -422,9 +661,9 @@ export function ReviewWorkspace({
           <span>
             Agent <b>Outbox</b>
           </span>
-        </a>
+        </Link>
         <nav className="app-location" aria-label="Primary">
-          <a
+          <Link
             className={view.status === "answered" ? undefined : "active"}
             href={humanReviewHref({
               ...view,
@@ -435,8 +674,8 @@ export function ReviewWorkspace({
             aria-current={view.status === "answered" ? undefined : "page"}
           >
             Review queue
-          </a>
-          <a
+          </Link>
+          <Link
             className={view.status === "answered" ? "active" : undefined}
             href={humanReviewHref({
               ...view,
@@ -447,7 +686,7 @@ export function ReviewWorkspace({
             aria-current={view.status === "answered" ? "page" : undefined}
           >
             History
-          </a>
+          </Link>
         </nav>
         <div className="app-account">
           <AccountBanner banner={banner} identity={identity} />
@@ -469,36 +708,9 @@ export function ReviewWorkspace({
         role="status"
         aria-live="polite"
         aria-atomic="true"
-      />
-      {notice && !noticeDismissed ? (
-        <div
-          className={`human-notice ${notice.kind}`}
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          data-server-notice
-        >
-          <div className="notice-copy">
-            <strong>{notice.message}</strong>
-          </div>
-          <div className="notice-actions">
-            {notice.undo ? (
-              <UndoNoticeForm
-                {...notice.undo}
-                onOptimisticAction={handleOptimisticAction}
-              />
-            ) : null}
-            <button
-              className="notice-dismiss"
-              type="button"
-              aria-label="Dismiss notification"
-              onClick={() => setNoticeDismissed(true)}
-            >
-              <X aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-      ) : null}
+      >
+        {actionStatus}
+      </div>
 
       <div className="workspace-body queue-only">
         <section
@@ -585,6 +797,7 @@ export function ReviewWorkspace({
                   <input
                     value={search}
                     onChange={(event) => {
+                      pendingSearch.current = event.target.value;
                       setSearch(event.target.value);
                       applyDebouncedSearch(event.target.value);
                     }}
@@ -630,7 +843,7 @@ export function ReviewWorkspace({
           <BulkActions
             selectedRows={selectedRows}
             offPageSelectedCount={offPageSelectedCount}
-            onOptimisticAction={handleOptimisticAction}
+            onMutation={handleHumanMutation}
           />
 
           <div className="queue-scroll">
@@ -644,7 +857,8 @@ export function ReviewWorkspace({
               selectionMode={selectionMode}
               view={view}
               renderedAt={renderedAt}
-              onOptimisticAction={handleOptimisticAction}
+              onMutation={handleHumanMutation}
+              lockedIds={lockedIds}
             />
             {!hasNext && visibleRows.length > 0 ? (
               <div className="queue-end">
@@ -654,7 +868,7 @@ export function ReviewWorkspace({
                   <kbd>K</kbd> move · <kbd>Enter</kbd> open
                 </span>
                 {view.status === "pending" ? (
-                  <a
+                  <Link
                     href={humanReviewHref({
                       ...view,
                       search: "",
@@ -663,9 +877,9 @@ export function ReviewWorkspace({
                     })}
                   >
                     Review answered decisions
-                  </a>
+                  </Link>
                 ) : (
-                  <a
+                  <Link
                     href={humanReviewHref({
                       ...view,
                       search: "",
@@ -674,7 +888,7 @@ export function ReviewWorkspace({
                     })}
                   >
                     Return to review queue
-                  </a>
+                  </Link>
                 )}
               </div>
             ) : null}
@@ -712,7 +926,10 @@ export function ReviewWorkspace({
         </section>
       </div>
 
-      {detailOpen ? (
+      {detailOpen &&
+      detail &&
+      !hiddenIds.has(detail.inputItemId) &&
+      !lockedIds.has(detail.inputItemId) ? (
         <ReviewDetail
           key={detail?.inputItemId ?? "empty"}
           detail={detail}
@@ -739,7 +956,7 @@ export function ReviewWorkspace({
               : null
           }
           composeAction={composeAction}
-          onOptimisticAction={handleOptimisticAction}
+          onMutation={handleHumanMutation}
         />
       ) : null}
     </main>

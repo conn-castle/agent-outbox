@@ -148,19 +148,6 @@ async function observeTextResponse(
   expectedText: string
 ) {
   await feedback.evaluate((element, text) => {
-    const feedbackText = element.matches("[data-immediate-action-feedback]")
-      ? element
-      : element.querySelector("[data-immediate-action-feedback]");
-    if (!feedbackText) {
-      throw new Error("Action latency test could not find its feedback text.");
-    }
-    const textContent = Object.getOwnPropertyDescriptor(
-      Node.prototype,
-      "textContent"
-    );
-    if (!textContent?.get || !textContent.set) {
-      throw new Error("Action latency test could not observe text updates.");
-    }
     const recordResponse = () => {
       const startedAt = (
         window as Window & { __actionLatencyStartedAt?: number }
@@ -172,18 +159,16 @@ async function observeTextResponse(
         performance.now() - startedAt
       );
     };
-    Object.defineProperty(feedbackText, "textContent", {
-      configurable: true,
-      get() {
-        return textContent.get?.call(this);
-      },
-      set(value: string | null) {
-        textContent.set?.call(this, value);
-        if (typeof value === "string" && value.includes(text)) {
-          recordResponse();
-          Reflect.deleteProperty(this, "textContent");
-        }
+    const observer = new MutationObserver(() => {
+      if (element.textContent?.includes(text)) {
+        recordResponse();
+        observer.disconnect();
       }
+    });
+    observer.observe(element, {
+      childList: true,
+      subtree: true,
+      characterData: true
     });
   }, expectedText);
 

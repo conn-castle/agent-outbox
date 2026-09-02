@@ -1,5 +1,7 @@
 import { Check, MoreVertical, SkipForward, Undo2 } from "lucide-react";
-import type { CSSProperties } from "react";
+import Link from "next/link";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 
 import type { HumanReviewListRow } from "../../server/human-review.ts";
 import {
@@ -7,7 +9,7 @@ import {
   type HumanReviewView
 } from "../../shared/human-review-view";
 import { resolveSupportedColor } from "../../shared/input-schema-rules.ts";
-import { InlineQuickAction, type OnOptimisticHumanAction } from "./ActionForms";
+import { InlineQuickAction, type OnHumanMutation } from "./ActionForms";
 import { formatQueueTimestamp, formatUtcTimestamp } from "./review-format";
 import { CardVisual, HumanIcon, SafeHtml, safeHref } from "./TypedContent";
 import { ReviewRowFrame } from "./ReviewRowFrame";
@@ -25,7 +27,8 @@ export function ReviewList({
   selectionMode,
   view,
   renderedAt,
-  onOptimisticAction
+  onMutation,
+  lockedIds
 }: {
   rows: HumanReviewListRow[];
   selectedId: string | null;
@@ -36,7 +39,8 @@ export function ReviewList({
   selectionMode: boolean;
   view: HumanReviewView;
   renderedAt: string;
-  onOptimisticAction: OnOptimisticHumanAction;
+  onMutation: OnHumanMutation;
+  lockedIds: Set<string>;
 }) {
   if (rows.length === 0) {
     return (
@@ -53,6 +57,7 @@ export function ReviewList({
   return (
     <ol className="review-list" aria-label="Review queue">
       {rows.map((row) => {
+        const locked = lockedIds.has(row.inputItemId);
         const title = plainText(row.titleHtml);
         const selected = row.inputItemId === selectedId;
         const rowAccentColor = row.rowAccentColor
@@ -77,227 +82,260 @@ export function ReviewList({
             : [];
         });
         return (
-          <li key={row.inputItemId} id={`review-row-${row.inputItemId}`}>
-            <ReviewRowFrame
-              className={`review-row row-status-${row.status} row-priority-${row.priority}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
-                selectionMode ? " selection-mode" : ""
-              }`}
-              style={
-                rowAccentColor
-                  ? ({
-                      "--row-accent": rowAccentColor,
-                      "--row-hover-accent": rowAccentColor
-                    } as CSSProperties)
-                  : undefined
-              }
-              selection={
-                selectionMode ? (
-                  <label className="row-select">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(row.inputItemId)}
-                      disabled={row.status !== "pending"}
-                      onChange={(event) =>
-                        onSelectedChange(row.inputItemId, event.target.checked)
+          <OptimisticReviewRow key={row.inputItemId} onMutation={onMutation}>
+            {(handleMutation) => (
+              <li
+                id={`review-row-${row.inputItemId}`}
+                aria-busy={locked || undefined}
+                inert={locked || undefined}
+              >
+                <ReviewRowFrame
+                  className={`review-row row-status-${row.status} row-priority-${row.priority}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
+                    selectionMode ? " selection-mode" : ""
+                  }`}
+                  style={
+                    rowAccentColor
+                      ? ({
+                          "--row-accent": rowAccentColor,
+                          "--row-hover-accent": rowAccentColor
+                        } as CSSProperties)
+                      : undefined
+                  }
+                  selection={
+                    selectionMode ? (
+                      <label className="row-select">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(row.inputItemId)}
+                          disabled={row.status !== "pending"}
+                          onChange={(event) =>
+                            onSelectedChange(
+                              row.inputItemId,
+                              event.target.checked
+                            )
+                          }
+                        />
+                        <span className="sr-only">Select review</span>
+                      </label>
+                    ) : null
+                  }
+                  heading={
+                    <ReviewRowHeading
+                      rowTypeDisplay={row.rowType.display}
+                      rowTypeIcon={row.rowType.icon}
+                      corner={
+                        row.cornerHtml ? (
+                          <SafeHtml
+                            html={row.cornerHtml}
+                            className="corner-meta"
+                          />
+                        ) : (
+                          <time
+                            className="corner-meta row-time product-fallback-meta"
+                            dateTime={row.updatedAt}
+                            title={`${formatUtcTimestamp(row.updatedAt)} UTC`}
+                          >
+                            {formatQueueTimestamp(row.updatedAt, renderedAt)}
+                          </time>
+                        )
+                      }
+                      contextLinks={contextLinks}
+                      contextAfter={
+                        <>
+                          <span className="sr-only">
+                            {formatReviewPriority(row.priority)}
+                          </span>
+                          {skippedIds.has(row.inputItemId) ? (
+                            <span className="status-pill">skipped</span>
+                          ) : null}
+                        </>
+                      }
+                      utilities={
+                        <>
+                          {row.status === "pending" ? (
+                            <button
+                              className="row-skip-button"
+                              type="button"
+                              disabled={row.skipDisabled}
+                              title={
+                                row.skipDisabled
+                                  ? "Skipping is disabled for this review"
+                                  : undefined
+                              }
+                              aria-label={
+                                row.skipDisabled
+                                  ? "Defer unavailable for this review"
+                                  : skippedIds.has(row.inputItemId)
+                                    ? "Return review to queue"
+                                    : "Defer review"
+                              }
+                              onClick={() => onSkipToggle(row.inputItemId)}
+                            >
+                              {skippedIds.has(row.inputItemId) ? (
+                                <Undo2 aria-hidden="true" />
+                              ) : (
+                                <SkipForward aria-hidden="true" />
+                              )}
+                              <span>
+                                {skippedIds.has(row.inputItemId)
+                                  ? "Return"
+                                  : "Defer"}
+                              </span>
+                            </button>
+                          ) : null}
+                          {row.status === "pending" &&
+                          overflowActions.length > 0 ? (
+                            <details
+                              className="row-overflow"
+                              data-dismissible-disclosure
+                            >
+                              <summary aria-label={`More actions for ${title}`}>
+                                <MoreVertical aria-hidden="true" />
+                              </summary>
+                              <div className="row-overflow-menu">
+                                {overflowActions.map((action) =>
+                                  action.popupKind !== "none" ? (
+                                    <Link
+                                      key={action.value}
+                                      className="row-overflow-item"
+                                      href={humanReviewHref(
+                                        view,
+                                        row.inputItemId,
+                                        action.value
+                                      )}
+                                    >
+                                      <HumanIcon name={action.icon} />
+                                      <span>{action.display}</span>
+                                    </Link>
+                                  ) : (
+                                    <InlineQuickAction
+                                      key={action.value}
+                                      row={row}
+                                      action={action}
+                                      className="row-overflow-item"
+                                      onMutation={handleMutation}
+                                    />
+                                  )
+                                )}
+                              </div>
+                            </details>
+                          ) : (
+                            <button
+                              className="row-overflow-disabled"
+                              type="button"
+                              aria-disabled="true"
+                              aria-label={`No more actions for ${title}`}
+                              title="No more actions"
+                            >
+                              <MoreVertical aria-hidden="true" />
+                            </button>
+                          )}
+                        </>
                       }
                     />
-                    <span className="sr-only">Select review</span>
-                  </label>
-                ) : null
-              }
-              heading={
-                <ReviewRowHeading
-                  rowTypeDisplay={row.rowType.display}
-                  rowTypeIcon={row.rowType.icon}
-                  corner={
-                    row.cornerHtml ? (
-                      <SafeHtml html={row.cornerHtml} className="corner-meta" />
-                    ) : (
-                      <time
-                        className="corner-meta row-time product-fallback-meta"
-                        dateTime={row.updatedAt}
-                        title={`${formatUtcTimestamp(row.updatedAt)} UTC`}
-                      >
-                        {formatQueueTimestamp(row.updatedAt, renderedAt)}
-                      </time>
-                    )
                   }
-                  contextLinks={contextLinks}
-                  contextAfter={
-                    <>
-                      <span className="sr-only">
-                        {formatReviewPriority(row.priority)}
-                      </span>
-                      {skippedIds.has(row.inputItemId) ? (
-                        <span className="status-pill">skipped</span>
-                      ) : null}
-                    </>
+                  href={rowHref}
+                  ariaLabel={`Open review details for ${title}`}
+                  title={
+                    <SafeHtml
+                      html={htmlWithoutAnchors(row.titleHtml)}
+                      className="row-title"
+                    />
                   }
-                  utilities={
-                    <>
-                      {row.status === "pending" ? (
-                        <button
-                          className="row-skip-button"
-                          type="button"
-                          disabled={row.skipDisabled}
-                          title={
-                            row.skipDisabled
-                              ? "Skipping is disabled for this review"
-                              : undefined
-                          }
-                          aria-label={
-                            row.skipDisabled
-                              ? "Defer unavailable for this review"
-                              : skippedIds.has(row.inputItemId)
-                                ? "Return review to queue"
-                                : "Defer review"
-                          }
-                          onClick={() => onSkipToggle(row.inputItemId)}
-                        >
-                          {skippedIds.has(row.inputItemId) ? (
-                            <Undo2 aria-hidden="true" />
-                          ) : (
-                            <SkipForward aria-hidden="true" />
-                          )}
-                          <span>
-                            {skippedIds.has(row.inputItemId)
-                              ? "Return"
-                              : "Defer"}
-                          </span>
-                        </button>
-                      ) : null}
-                      {row.status === "pending" &&
-                      overflowActions.length > 0 ? (
-                        <details
-                          className="row-overflow"
-                          data-dismissible-disclosure
-                        >
-                          <summary aria-label={`More actions for ${title}`}>
-                            <MoreVertical aria-hidden="true" />
-                          </summary>
-                          <div className="row-overflow-menu">
-                            {overflowActions.map((action) =>
-                              action.popupKind !== "none" ? (
-                                <a
-                                  key={action.value}
-                                  className="row-overflow-item"
-                                  href={humanReviewHref(
-                                    view,
-                                    row.inputItemId,
-                                    action.value
-                                  )}
-                                >
-                                  <HumanIcon name={action.icon} />
-                                  <span>{action.display}</span>
-                                </a>
-                              ) : (
-                                <InlineQuickAction
-                                  key={action.value}
-                                  row={row}
-                                  action={action}
-                                  className="row-overflow-item"
-                                  onOptimisticAction={onOptimisticAction}
-                                />
-                              )
-                            )}
-                          </div>
-                        </details>
-                      ) : (
-                        <button
-                          className="row-overflow-disabled"
-                          type="button"
-                          aria-disabled="true"
-                          aria-label={`No more actions for ${title}`}
-                          title="No more actions"
-                        >
-                          <MoreVertical aria-hidden="true" />
-                        </button>
-                      )}
-                    </>
+                  subtitle={
+                    <SafeHtml
+                      html={htmlWithoutAnchors(row.subtitleHtml)}
+                      className="row-subtitle"
+                    />
                   }
-                />
-              }
-              href={rowHref}
-              ariaLabel={`Open review details for ${title}`}
-              title={
-                <SafeHtml
-                  html={htmlWithoutAnchors(row.titleHtml)}
-                  className="row-title"
-                />
-              }
-              subtitle={
-                <SafeHtml
-                  html={htmlWithoutAnchors(row.subtitleHtml)}
-                  className="row-subtitle"
-                />
-              }
-              visual={
-                row.cardVisual ? (
-                  <CardVisual visual={row.cardVisual} compact />
-                ) : null
-              }
-              summary={
-                <SafeHtml html={row.summaryHtml} className="row-proposal" />
-              }
-              footer={
-                view.status !== "pending" || row.output ? (
-                  <>
-                    {view.status !== "pending" ? (
-                      <span className={`status-indicator status-${row.status}`}>
-                        {row.status}
-                      </span>
-                    ) : null}
-                    {row.output ? (
-                      <span className="row-result">
-                        Decision: {row.output.actionDisplay}
-                      </span>
-                    ) : null}
-                  </>
-                ) : undefined
-              }
-              actions={
-                row.status === "pending" &&
-                row.bulkActions.some((action) => !action.overflow) ? (
-                  <div
-                    className="inline-actions"
-                    role="group"
-                    aria-label={`Quick actions for ${title}`}
-                  >
-                    {row.bulkActions
-                      .filter((action) => !action.overflow)
-                      .map((action) =>
-                        action.popupKind !== "none" ? (
-                          <a
-                            key={action.value}
-                            className={quickActionClass(action)}
-                            href={humanReviewHref(
-                              view,
-                              row.inputItemId,
-                              action.value
-                            )}
-                            title={action.display}
+                  visual={
+                    row.cardVisual ? (
+                      <CardVisual visual={row.cardVisual} compact />
+                    ) : null
+                  }
+                  summary={
+                    <SafeHtml html={row.summaryHtml} className="row-proposal" />
+                  }
+                  footer={
+                    view.status !== "pending" || row.output ? (
+                      <>
+                        {view.status !== "pending" ? (
+                          <span
+                            className={`status-indicator status-${row.status}`}
                           >
-                            <HumanIcon name={action.icon} />
-                            <span>{action.display}</span>
-                          </a>
-                        ) : (
-                          <InlineQuickAction
-                            key={action.value}
-                            row={row}
-                            action={action}
-                            onOptimisticAction={onOptimisticAction}
-                          />
-                        )
-                      )}
-                  </div>
-                ) : null
-              }
-            />
-          </li>
+                            {row.status}
+                          </span>
+                        ) : null}
+                        {row.output ? (
+                          <span className="row-result">
+                            Decision: {row.output.actionDisplay}
+                          </span>
+                        ) : null}
+                      </>
+                    ) : undefined
+                  }
+                  actions={
+                    row.status === "pending" &&
+                    row.bulkActions.some((action) => !action.overflow) ? (
+                      <div
+                        className="inline-actions"
+                        role="group"
+                        aria-label={`Quick actions for ${title}`}
+                      >
+                        {row.bulkActions
+                          .filter((action) => !action.overflow)
+                          .map((action) =>
+                            action.popupKind !== "none" ? (
+                              <Link
+                                key={action.value}
+                                className={quickActionClass(action)}
+                                href={humanReviewHref(
+                                  view,
+                                  row.inputItemId,
+                                  action.value
+                                )}
+                                title={action.display}
+                              >
+                                <HumanIcon name={action.icon} />
+                                <span>{action.display}</span>
+                              </Link>
+                            ) : (
+                              <InlineQuickAction
+                                key={action.value}
+                                row={row}
+                                action={action}
+                                onMutation={handleMutation}
+                              />
+                            )
+                          )}
+                      </div>
+                    ) : null
+                  }
+                />
+              </li>
+            )}
+          </OptimisticReviewRow>
         );
       })}
     </ol>
   );
+}
+
+function OptimisticReviewRow({
+  onMutation,
+  children
+}: {
+  onMutation: OnHumanMutation;
+  children: (onMutation: OnHumanMutation) => ReactNode;
+}) {
+  const [hidden, setHidden] = useState(false);
+  if (hidden) return null;
+
+  const handleMutation: OnHumanMutation = (submission) => {
+    flushSync(() => setHidden(true));
+    onMutation(submission);
+  };
+  return children(handleMutation);
 }
 
 function quickActionClass(action: HumanReviewListRow["bulkActions"][number]) {

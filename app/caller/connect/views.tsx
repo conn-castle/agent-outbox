@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { ActionSubmitButton } from "../../../src/components/actions/ActionSubmitButton";
 import type {
   ConnectApprovalPreviewData,
   ConnectTerminalSetupData
@@ -64,15 +65,12 @@ export function BrowserApprovalView({
                   value={preview.setup_request_id}
                 />
                 <FixtureIdentity value={fixtureClerkUserId} />
-                <button
+                <ActionSubmitButton
                   className="button"
-                  type="submit"
-                  data-immediate-action-label="Approving…"
+                  pendingChildren="Approving…"
                 >
-                  <span data-immediate-action-feedback suppressHydrationWarning>
-                    Approve connection
-                  </span>
-                </button>
+                  Approve connection
+                </ActionSubmitButton>
               </form>
               <form action={denyBrowserConnect}>
                 <input
@@ -81,15 +79,12 @@ export function BrowserApprovalView({
                   value={preview.setup_request_id}
                 />
                 <FixtureIdentity value={fixtureClerkUserId} />
-                <button
+                <ActionSubmitButton
                   className="button secondary"
-                  type="submit"
-                  data-immediate-action-label="Declining…"
+                  pendingChildren="Declining…"
                 >
-                  <span data-immediate-action-feedback suppressHydrationWarning>
-                    Decline
-                  </span>
-                </button>
+                  Decline
+                </ActionSubmitButton>
               </form>
             </>
           ) : (
@@ -137,47 +132,44 @@ export function DeviceApprovalView({
           granted.
         </p>
         <div className="connect-device-decision">
-          {interactive ? (
-            <>
-              <form id="approve-device-connect" action={approveDeviceConnect}>
-                <input type="hidden" name="userCode" value={userCode} />
-                <FixtureIdentity value={fixtureClerkUserId} />
-              </form>
-              <form id="deny-device-connect" action={denyDeviceConnect}>
-                <input
-                  type="hidden"
-                  name="setupRequestId"
-                  value={preview.setup_request_id}
-                />
-                <FixtureIdentity value={fixtureClerkUserId} />
-              </form>
-            </>
-          ) : null}
           <ConnectActions>
-            <button
-              className="button"
-              form={interactive ? "approve-device-connect" : undefined}
-              type={interactive ? "submit" : "button"}
-              data-immediate-action-label={
-                interactive ? "Connecting…" : undefined
-              }
-            >
-              <span data-immediate-action-feedback suppressHydrationWarning>
-                Confirm and connect
-              </span>
-            </button>
-            <button
-              className="button secondary"
-              form={interactive ? "deny-device-connect" : undefined}
-              type={interactive ? "submit" : "button"}
-              data-immediate-action-label={
-                interactive ? "Declining…" : undefined
-              }
-            >
-              <span data-immediate-action-feedback suppressHydrationWarning>
-                Decline
-              </span>
-            </button>
+            {interactive ? (
+              <>
+                <form action={approveDeviceConnect}>
+                  <input type="hidden" name="userCode" value={userCode} />
+                  <FixtureIdentity value={fixtureClerkUserId} />
+                  <ActionSubmitButton
+                    className="button"
+                    pendingChildren="Connecting…"
+                  >
+                    Confirm and connect
+                  </ActionSubmitButton>
+                </form>
+                <form action={denyDeviceConnect}>
+                  <input
+                    type="hidden"
+                    name="setupRequestId"
+                    value={preview.setup_request_id}
+                  />
+                  <FixtureIdentity value={fixtureClerkUserId} />
+                  <ActionSubmitButton
+                    className="button secondary"
+                    pendingChildren="Declining…"
+                  >
+                    Decline
+                  </ActionSubmitButton>
+                </form>
+              </>
+            ) : (
+              <>
+                <button className="button" type="button">
+                  Confirm and connect
+                </button>
+                <button className="button secondary" type="button">
+                  Decline
+                </button>
+              </>
+            )}
           </ConnectActions>
         </div>
       </ConnectFlowCard>

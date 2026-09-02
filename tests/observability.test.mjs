@@ -788,8 +788,8 @@ function rootLayoutTestRequire(specifier) {
   if (specifier === "../src/components/observability/ClientEventsInit") {
     return { ClientEventsInit: () => null };
   }
-  if (specifier === "../src/components/ImmediateActionFeedback") {
-    return { ImmediateActionFeedback: () => null };
+  if (specifier === "../src/components/actions/AppActionProvider") {
+    return { AppActionProvider: ClerkProviderStub };
   }
   if (specifier === "../src/components/SiteFooter") {
     return { SiteFooter: () => React.createElement("footer") };
@@ -797,7 +797,11 @@ function rootLayoutTestRequire(specifier) {
   if (specifier === "../src/components/SiteHeader") {
     return { SiteHeader: () => React.createElement("header") };
   }
-  if (specifier === "./globals.css" || specifier === "./review-workspace.css") {
+  if (
+    specifier === "sonner/dist/styles.css" ||
+    specifier === "./globals.css" ||
+    specifier === "./review-workspace.css"
+  ) {
     return {};
   }
 

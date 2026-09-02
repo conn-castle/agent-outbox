@@ -110,15 +110,8 @@ export function ContactForm() {
       </label>
 
       <div className="contact-submit-row">
-        <button
-          className="button"
-          type="submit"
-          disabled={sending}
-          data-immediate-action-label="Sending…"
-        >
-          <span data-immediate-action-feedback suppressHydrationWarning>
-            {sending ? "Sending…" : "Send message"}
-          </span>
+        <button className="button" type="submit" disabled={sending}>
+          <span>{sending ? "Sending…" : "Send message"}</span>
         </button>
         <p
           className={`contact-form-status${status.state === "error" ? " is-error" : ""}`}
