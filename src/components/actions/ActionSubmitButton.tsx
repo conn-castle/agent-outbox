@@ -27,8 +27,8 @@ export function ActionSubmitButton({
       type="submit"
       disabled={disabled || pending}
       data-immediate-action-label={pendingLabel}
-      // Labeled submit clicks are stopped in capture so React form actions
-      // start on the following macrotask; onClick does not run for those clicks.
+      // Labeled submit clicks are stopped in window capture so descendant
+      // React form actions start on the following macrotask.
       onClick={onClick}
     >
       <span data-immediate-action-feedback suppressHydrationWarning>

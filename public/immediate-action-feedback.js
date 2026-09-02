@@ -2,6 +2,7 @@
   if (window.__agentOutboxImmediateActionFeedback) return;
   window.__agentOutboxImmediateActionFeedback = true;
   var queuedSubmitters = new WeakSet();
+  var replaying = new WeakSet();
   function show(source) {
     var label = source.getAttribute("data-immediate-action-label");
     if (!label) return false;
@@ -19,40 +20,46 @@
       source.form
     );
   }
-  function deferSubmit(source, event) {
-    if (!isSubmitter(source)) return;
+  function deferAction(source, event) {
     if (queuedSubmitters.has(source)) {
       event.preventDefault();
       return;
     }
     queuedSubmitters.add(source);
     event.preventDefault();
-    var form = source.form;
     window.setTimeout(function () {
       try {
-        form.requestSubmit(source);
+        if (isSubmitter(source)) {
+          source.form.requestSubmit(source);
+          return;
+        }
+        replaying.add(source);
+        try {
+          source.click();
+        } finally {
+          replaying.delete(source);
+        }
       } finally {
         queuedSubmitters.delete(source);
       }
     }, 0);
   }
-  document.addEventListener(
+  window.addEventListener(
     "click",
     function (event) {
       var target = event.target;
+      if (target instanceof Text) target = target.parentElement;
       if (!(target instanceof Element)) return;
       var source = target.closest("[data-immediate-action-label]");
       if (!source) return;
       if (!show(source)) return;
-      if (!isSubmitter(source)) return;
-      deferSubmit(source, event);
-      // Keep React form actions and onClick off this click task so pending
-      // labels stay in the native capture path.
+      if (replaying.has(source)) return;
+      deferAction(source, event);
       event.stopPropagation();
     },
     true
   );
-  document.addEventListener(
+  window.addEventListener(
     "submit",
     function (event) {
       var submitter = event.submitter;

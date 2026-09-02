@@ -650,6 +650,7 @@ test("routine reviews can be completed directly from the queue", async ({
   await row.getByRole("button", { name: "Approve permit brief" }).click();
 
   const completionNotice = page.locator("[data-sonner-toast]");
+  await expect(completionNotice).toHaveCount(1);
   await expect(completionNotice).toContainText("Done.");
   await page.getByRole("button", { name: "Close toast" }).click();
   await expect(completionNotice).toHaveCount(0);
@@ -657,6 +658,7 @@ test("routine reviews can be completed directly from the queue", async ({
   const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
   await followUpRow.scrollIntoViewIfNeeded();
   await followUpRow.getByRole("button", { name: "Approve follow-up" }).click();
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(1);
   await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
   await expect(page).not.toHaveURL(/item=/);
   await expect(

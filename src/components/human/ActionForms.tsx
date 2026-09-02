@@ -75,18 +75,21 @@ function submitHumanMutationForm(
   operation: HumanMutationOperation,
   inputItemIds: string[],
   onMutation: OnHumanMutation,
-  event: { preventDefault: () => void }
+  event: { preventDefault: () => void; stopPropagation?: () => void }
 ) {
   const workspace = form?.closest<HTMLElement>(".human-workspace");
   if (
     !form ||
     workspace?.dataset.workspaceHydrated !== "true" ||
-    !form.checkValidity() ||
-    submittedHumanMutationForms.has(form)
+    !form.checkValidity()
   ) {
     return;
   }
   event.preventDefault();
+  event.stopPropagation?.();
+  if (submittedHumanMutationForms.has(form)) {
+    return;
+  }
   submittedHumanMutationForms.add(form);
   onMutation({
     operation,

@@ -1,19 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    window.addEventListener(
-      "click",
-      () => {
-        (
-          window as Window & { __actionLatencyStartedAt?: number }
-        ).__actionLatencyStartedAt = performance.now();
-      },
-      true
-    );
-  });
-});
-
 test("contact submission responds visibly within 20 ms", async ({ page }) => {
   const requestStarted = deferred();
   const releaseResponse = deferred();
@@ -31,8 +17,7 @@ test("contact submission responds visibly within 20 ms", async ({ page }) => {
   await fillValidContactForm(page);
 
   const button = page.getByRole("button", { name: "Send message" });
-  const responseMsPromise = observeTextResponse(page, button, "Sending…");
-  await button.evaluate((element) => (element as HTMLButtonElement).click());
+  const responseMsPromise = clickAndWatch(page, button, "Sending…");
   await requestStarted.promise;
   let responseMs: number;
   try {
@@ -63,9 +48,12 @@ test("billing checkout responds visibly within 20 ms", async ({ page }) => {
 
   await page.goto("/upgrade");
   const button = page.getByRole("button", { name: "Start $5/mo checkout" });
-  const feedback = button.locator(".billing-option-action");
-  const responseMsPromise = observeTextResponse(page, feedback, "Starting...");
-  await button.evaluate((element) => (element as HTMLButtonElement).click());
+  const responseMsPromise = clickAndWatch(
+    page,
+    button,
+    "Starting...",
+    ".billing-option-action"
+  );
   await requestStarted.promise;
   let responseMs: number;
   try {
@@ -113,8 +101,7 @@ test("caller approval responds visibly within 20 ms", async ({
   await page.goto(approvalUrl.toString());
 
   const button = page.getByRole("button", { name: "Approve connection" });
-  const responseMsPromise = observeTextResponse(page, button, "Approving…");
-  await button.evaluate((element) => (element as HTMLButtonElement).click());
+  const responseMsPromise = clickAndWatch(page, button, "Approving…");
   await actionRequestStarted.promise;
   let responseMs: number;
   try {
@@ -233,35 +220,52 @@ test("billing checkout can retry after a fast failure", async ({ page }) => {
   await expect(button).toBeEnabled();
 });
 
-async function observeTextResponse(
+async function clickAndWatch(
   page: Page,
-  feedback: Locator,
-  expectedText: string
+  button: Locator,
+  expectedText: string,
+  observeSelector?: string
 ) {
-  await feedback.evaluate((element, text) => {
-    const recordResponse = () => {
-      const startedAt = (
+  await button.evaluate(
+    (clickEl, { text, observeSelector: selector }) => {
+      const element = selector
+        ? (clickEl.querySelector(selector) ?? clickEl)
+        : clickEl;
+      const record = () => {
+        if (document.documentElement.dataset.actionResponseMs !== undefined) {
+          return;
+        }
+        if (!element.textContent?.includes(text)) return;
+        const startedAt = (
+          window as Window & { __actionLatencyStartedAt?: number }
+        ).__actionLatencyStartedAt;
+        if (startedAt === undefined) return;
+        document.documentElement.dataset.actionResponseMs = String(
+          performance.now() - startedAt
+        );
+      };
+      const observer = new MutationObserver(() => {
+        record();
+        if (document.documentElement.dataset.actionResponseMs !== undefined) {
+          observer.disconnect();
+        }
+      });
+      observer.observe(element, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+      (
         window as Window & { __actionLatencyStartedAt?: number }
-      ).__actionLatencyStartedAt;
-      if (startedAt === undefined) {
-        throw new Error("Action latency test missed the click event.");
-      }
-      document.documentElement.dataset.actionResponseMs = String(
-        performance.now() - startedAt
-      );
-    };
-    const observer = new MutationObserver(() => {
-      if (element.textContent?.includes(text)) {
-        recordResponse();
+      ).__actionLatencyStartedAt = performance.now();
+      (clickEl as HTMLButtonElement).click();
+      record();
+      if (document.documentElement.dataset.actionResponseMs !== undefined) {
         observer.disconnect();
       }
-    });
-    observer.observe(element, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
-  }, expectedText);
+    },
+    { text: expectedText, observeSelector }
+  );
 
   return page
     .waitForFunction(

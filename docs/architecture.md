@@ -226,12 +226,13 @@ the canonical revision of the current view. JavaScript-disabled review forms
 retain redirecting server actions as a fallback. Navigational and
 security-sensitive workflows use their existing redirecting actions with
 explicit form-local pending labels applied on the native click, so the visible
-pending state does not wait for a React commit. Redirecting submits are
-prevented in that click and restarted with requestSubmit on the following
-macrotask, after MutationObserver callbacks have run. Feedback and completion
-notices live in the root toast layer and do not shift the primary layout.
-Browser coverage holds responses open so network or navigation completion cannot
-satisfy the latency gate.
+pending state does not wait for a React commit. Labeled clicks are stopped in
+window capture so descendant React click handlers cannot delay that paint; other
+window listeners still run. Submits restart with requestSubmit, and non-submit
+actions replay their click, on the following macrotask after MutationObserver
+callbacks have run. Feedback and completion notices live in the root toast layer
+and do not shift the primary layout. Browser coverage holds responses open so
+network or navigation completion cannot satisfy the latency gate.
 
 ## File Handling
 

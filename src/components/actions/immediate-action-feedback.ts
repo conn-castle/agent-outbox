@@ -4,6 +4,7 @@ const FEEDBACK_SELECTOR = "[data-immediate-action-feedback]";
 
 type ImmediateActionWindow = Window & { [LISTENER_KEY]?: boolean };
 const queuedSubmitters = new WeakSet<HTMLElement>();
+const replaying = new WeakSet<HTMLElement>();
 
 function showImmediateActionFeedback(source: HTMLElement) {
   const label = source.dataset.immediateActionLabel;
@@ -33,19 +34,26 @@ function isSubmitter(
   );
 }
 
-function deferSubmit(source: HTMLElement, event: Event) {
-  if (!isSubmitter(source)) return;
+function deferAction(source: HTMLElement, event: Event) {
   if (queuedSubmitters.has(source)) {
     event.preventDefault();
     return;
   }
-  const form = source.form;
-  if (!form) return;
   queuedSubmitters.add(source);
   event.preventDefault();
+  const form = isSubmitter(source) ? source.form : null;
   window.setTimeout(() => {
     try {
-      form.requestSubmit(source);
+      if (form) {
+        form.requestSubmit(source as HTMLButtonElement | HTMLInputElement);
+        return;
+      }
+      replaying.add(source);
+      try {
+        source.click();
+      } finally {
+        replaying.delete(source);
+      }
     } finally {
       queuedSubmitters.delete(source);
     }
@@ -60,15 +68,14 @@ export function installImmediateActionFeedback() {
   window.addEventListener(
     "click",
     (event) => {
-      const target = event.target;
+      let target = event.target;
+      if (target instanceof Text) target = target.parentElement;
       if (!(target instanceof Element)) return;
       const source = target.closest<HTMLElement>(ACTION_SELECTOR);
       if (!source) return;
       if (!showImmediateActionFeedback(source)) return;
-      if (!isSubmitter(source)) return;
-      deferSubmit(source, event);
-      // Keep React form actions and onClick off this click task so pending
-      // labels stay in the native capture path.
+      if (replaying.has(source)) return;
+      deferAction(source, event);
       event.stopPropagation();
     },
     true

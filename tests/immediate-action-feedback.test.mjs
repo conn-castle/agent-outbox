@@ -78,12 +78,25 @@ function installFeedback(source) {
   }
 
   class HTMLElement extends Element {}
+  class Text {
+    constructor() {
+      /** @type {Element | null} */
+      this.parentElement = null;
+    }
+  }
   class HTMLButtonElement extends HTMLElement {
     constructor() {
       super();
       this.type = "submit";
       /** @type {HTMLFormElement | null} */
       this.form = null;
+      /** @type {number} */
+      this.clickCount = 0;
+    }
+
+    click() {
+      this.clickCount += 1;
+      dispatchClick(this);
     }
   }
   class HTMLInputElement extends HTMLElement {
@@ -163,6 +176,7 @@ function installFeedback(source) {
     document,
     Element,
     HTMLElement,
+    Text,
     HTMLButtonElement,
     HTMLInputElement,
     HTMLFormElement,
@@ -188,17 +202,36 @@ function installFeedback(source) {
     });
   }
 
-  function click() {
+  /**
+   * @param {HTMLButtonElement | Text} [target]
+   */
+  function dispatchClick(target = button) {
     const event = {
-      target: button,
+      target,
       defaultPrevented: false,
+      propagationStopped: false,
+      immediateStopped: false,
       preventDefault() {
         this.defaultPrevented = true;
       },
-      stopPropagation() {}
+      stopPropagation() {
+        this.propagationStopped = true;
+      },
+      stopImmediatePropagation() {
+        this.propagationStopped = true;
+        this.immediateStopped = true;
+      }
     };
-    for (const listener of windowListeners.click) listener(event);
-    for (const listener of documentListeners.click) listener(event);
+    for (const listener of windowListeners.click) {
+      if (event.immediateStopped) break;
+      listener(event);
+    }
+    if (!event.propagationStopped) {
+      for (const listener of documentListeners.click) {
+        if (event.immediateStopped) break;
+        listener(event);
+      }
+    }
     return event;
   }
 
@@ -207,7 +240,21 @@ function installFeedback(source) {
     for (const callback of queued) callback();
   }
 
-  return { button, form, feedback, click, flush, macrotasks };
+  return {
+    button,
+    form,
+    feedback,
+    click: dispatchClick,
+    flush,
+    macrotasks,
+    /**
+     * @param {(event: object) => void} listener
+     */
+    addWindowClickListener(listener) {
+      windowListeners.click.push(listener);
+    },
+    Text
+  };
 }
 
 for (const source of /** @type {const} */ (["public", "typescript"])) {
@@ -237,6 +284,49 @@ for (const source of /** @type {const} */ (["public", "typescript"])) {
 
     form.requestSubmitError = null;
     click();
+    flush();
+    assert.equal(form.requestSubmitCalls.length, 1);
+  });
+
+  test(`${source} immediate-action feedback defers labeled non-submit clicks`, () => {
+    const { button, form, click, flush, macrotasks } = installFeedback(source);
+    button.type = "button";
+
+    click();
+    assert.equal(macrotasks.length, 1);
+    assert.equal(button.clickCount, 0);
+    assert.equal(form.requestSubmitCalls.length, 0);
+
+    flush();
+    assert.equal(button.clickCount, 1);
+    assert.equal(form.requestSubmitCalls.length, 0);
+
+    click();
+    flush();
+    assert.equal(button.clickCount, 2);
+  });
+
+  test(`${source} immediate-action feedback does not suppress later window capture listeners`, () => {
+    const { click, addWindowClickListener } = installFeedback(source);
+    let extra = 0;
+    addWindowClickListener(() => {
+      extra += 1;
+    });
+    click();
+    assert.equal(extra, 1);
+  });
+
+  test(`${source} immediate-action feedback resolves labeled clicks from a text node`, () => {
+    const {
+      button,
+      form,
+      click,
+      flush,
+      Text: TextNode
+    } = installFeedback(source);
+    const textNode = new TextNode();
+    textNode.parentElement = button;
+    click(textNode);
     flush();
     assert.equal(form.requestSubmitCalls.length, 1);
   });
