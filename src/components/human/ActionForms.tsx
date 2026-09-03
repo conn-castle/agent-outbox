@@ -116,19 +116,27 @@ function submitHumanMutationForm(
 }
 
 /**
- * Hidden inputs carrying the current URL view state (search/status/sort/page)
+ * Hidden inputs carrying the current URL view state
+ * (search/status/primary sort/secondary sort/page)
  * so server-action redirects can restore the view instead of resetting it.
  */
 export function ViewStateFields() {
   const searchParams = useSearchParams();
   return (
     <>
-      {HUMAN_REVIEW_VIEW_PARAM_KEYS.map((key) => {
-        const value = searchParams.get(key);
-        return value ? (
-          <input key={key} type="hidden" name={`view.${key}`} value={value} />
-        ) : null;
-      })}
+      {HUMAN_REVIEW_VIEW_PARAM_KEYS.flatMap((key) =>
+        searchParams
+          .getAll(key)
+          .filter(Boolean)
+          .map((value, index) => (
+            <input
+              key={`${key}-${index}`}
+              type="hidden"
+              name={`view.${key}`}
+              value={value}
+            />
+          ))
+      )}
     </>
   );
 }
@@ -350,6 +358,11 @@ export function UndoAnswerForm({
         type="hidden"
         name="outputResultId"
         value={detail.output.outputResultId}
+      />
+      <input
+        type="hidden"
+        name="noticeSubject"
+        value={plainText(detail.titleHtml)}
       />
       <SubmitButton className="secondary-button" label="Undo answer" />
     </form>

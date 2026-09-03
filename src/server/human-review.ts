@@ -29,13 +29,20 @@ import {
   type LimitStatusMetadata,
   type LimitWindowKind
 } from "./limits.ts";
+import {
+  type HumanReviewSort,
+  type HumanReviewSortDirection,
+  type HumanReviewSortRule
+} from "../shared/human-review-view.ts";
 
 export type HumanReviewStatus = "pending" | "answered";
 
 export type HumanReviewListOptions = {
   status?: "all" | HumanReviewStatus;
   search?: string | null;
-  sort?: "priority" | "updated_at";
+  priorities?: QueuePriority[];
+  types?: string[];
+  sorts?: HumanReviewSortRule[];
   limit?: number;
   offset?: number;
 };
@@ -253,6 +260,17 @@ export async function humanReviewPageInTransaction(
       .map(reviewListRowFromDatabase),
     hasNext: result.rows.length > MAX_REVIEW_LIST_LIMIT
   };
+}
+
+export async function humanReviewTypeOptionsInTransaction(
+  query: ProductTransactionQuery,
+  context: AuthorizedHumanAccountContext,
+  status: HumanReviewListOptions["status"] = "pending"
+) {
+  const result = await query<{ row_type_display: string }>(
+    humanReviewTypeOptionsStatement(context, status)
+  );
+  return result.rows.map((row) => row.row_type_display);
 }
 
 /**
@@ -492,6 +510,21 @@ function humanReviewListStatementWithLimit(
     )`);
   }
 
+  if (options.priorities?.length) {
+    const placeholders = options.priorities.map((priority) => {
+      values.push(priority);
+      return `$${values.length}`;
+    });
+    filters.push(`i.priority in (${placeholders.join(", ")})`);
+  }
+  if (options.types?.length) {
+    const placeholders = options.types.map((type) => {
+      values.push(type);
+      return `$${values.length}`;
+    });
+    filters.push(`i.row_type_display in (${placeholders.join(", ")})`);
+  }
+
   values.push(limit);
   const limitParameter = values.length;
   values.push(options.offset ?? 0);
@@ -500,9 +533,37 @@ function humanReviewListStatementWithLimit(
     sql: `
       ${reviewRowSelect()}
       where ${filters.join("\n        and ")}
-      ${reviewRowOrderBy(options.sort)}
+      ${reviewRowOrderBy(options.sorts)}
       limit $${limitParameter}
       offset $${values.length}
+    `,
+    values
+  };
+}
+
+export function humanReviewTypeOptionsStatement(
+  context: AuthorizedHumanAccountContext,
+  status: HumanReviewListOptions["status"] = "pending"
+): TransactionContextStatement {
+  const values: string[] = [context.accountId];
+  const filters = ["i.account_id = $1"];
+  if (status && status !== "all") {
+    values.push(status);
+    filters.push(`i.status = $${values.length}`);
+  }
+  return {
+    sql: `
+      select i.row_type_display
+      from public.agent_outbox_input_items i
+      where ${filters.join("\n        and ")}
+      group by i.row_type_display
+      order by
+        translate(
+          i.row_type_display,
+          'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+          'abcdefghijklmnopqrstuvwxyz'
+        ) collate "C",
+        i.row_type_display collate "C"
     `,
     values
   };
@@ -671,22 +732,94 @@ function reviewRowSelect(options: { includeDetails?: boolean } = {}) {
   `;
 }
 
-function reviewRowOrderBy(sort: HumanReviewListOptions["sort"]) {
-  if (sort === "priority") {
-    return `
-      order by
-        case i.priority
+function reviewRowOrderBy(requestedRules: HumanReviewListOptions["sorts"]) {
+  const rules: Array<{
+    key: HumanReviewSort;
+    direction: HumanReviewSortDirection;
+  }> = [];
+  for (const rule of [
+    ...(requestedRules?.length
+      ? requestedRules
+      : [{ key: "updated_at" as const, direction: "desc" as const }]),
+    { key: "updated_at" as const, direction: "desc" as const }
+  ]) {
+    if (!rules.some((candidate) => candidate.key === rule.key))
+      rules.push(rule);
+  }
+  const expressions = rules.flatMap(({ key, direction }) =>
+    reviewSortExpressions(key, direction)
+  );
+  expressions.push("i.input_item_id");
+  return `order by\n        ${expressions.join(",\n        ")}`;
+}
+
+function reviewSortExpressions(
+  sort: HumanReviewSort,
+  direction: HumanReviewSortDirection
+) {
+  const suffix = direction === "desc" ? " desc" : "";
+  switch (sort) {
+    case "priority":
+      return [
+        `case i.priority
           when 'urgent' then 0
           when 'high' then 1
           when 'normal' then 2
           else 3
-        end,
-        i.updated_at desc,
-        i.input_item_id
-    `;
+        end${suffix}`
+      ];
+    case "type":
+      return reviewTextSortExpressions("i.row_type_display", suffix);
+    case "visual_score":
+      return [`${reviewVisualScoreExpression()}${suffix} nulls last`];
+    case "title": {
+      const title = `btrim(regexp_replace(
+        regexp_replace(i.title_html, '<[^>]*>', ' ', 'g'),
+        '[[:space:]]+',
+        ' ',
+        'g'
+      ))`;
+      return reviewTextSortExpressions(title, suffix);
+    }
+    case "caller":
+      return reviewTextSortExpressions("c.display_name", suffix);
+    case "created_at":
+      return [`i.created_at${suffix}`];
+    case "updated_at":
+      return [`i.updated_at${suffix}`];
   }
+}
 
-  return "order by i.updated_at desc, i.input_item_id";
+function reviewTextSortExpressions(expression: string, suffix: string) {
+  return [
+    `translate(
+          ${expression},
+          'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+          'abcdefghijklmnopqrstuvwxyz'
+        ) collate "C"${suffix}`,
+    `${expression} collate "C"${suffix}`
+  ];
+}
+
+function reviewVisualScoreExpression() {
+  return `(case
+          when i.card_visual_kind in ('numeric_bar', 'progress_ring')
+            and jsonb_typeof(i.card_visual_payload -> 'value') = 'number'
+            and jsonb_typeof(i.card_visual_payload -> 'min_value') = 'number'
+            and jsonb_typeof(i.card_visual_payload -> 'max_value') = 'number'
+            and (i.card_visual_payload ->> 'max_value')::numeric
+              > (i.card_visual_payload ->> 'min_value')::numeric
+          then greatest(0, least(1,
+            (
+              (i.card_visual_payload ->> 'value')::numeric
+                - (i.card_visual_payload ->> 'min_value')::numeric
+            ) / (
+              (i.card_visual_payload ->> 'max_value')::numeric
+                - (i.card_visual_payload ->> 'min_value')::numeric
+            )
+          ))
+          else null
+        end)`;
 }
 
 function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {

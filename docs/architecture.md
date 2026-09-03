@@ -216,23 +216,26 @@ to fixture or server state.
 
 Each journal entry reconciles independently after a canonical refresh. A failed
 write removes only its own optimistic projection and restores the affected
-review with an actionable toast. A client fetch timeout is indeterminate: the
-journal keeps the projection and refreshes canonical state instead of rolling
-back a write that may still commit. A bulk result with zero successes is a
-failure from the mutation endpoint, not a successful projection. Undo becomes
-available only after the original answer is accepted; its cached restored row
-remains non-interactive until the undo commit is accepted, then reconciles with
-the canonical revision of the current view. JavaScript-disabled review forms
-retain redirecting server actions as a fallback. Navigational and
-security-sensitive workflows use their existing redirecting actions with
-explicit form-local pending labels applied on the native click, so the visible
-pending state does not wait for a React commit. Labeled clicks are stopped in
-window capture so descendant React click handlers cannot delay that paint; other
-window listeners still run. Submits restart with requestSubmit, and non-submit
-actions replay their click, on the following macrotask after MutationObserver
-callbacks have run. Feedback and completion notices live in the root toast layer
-and do not shift the primary layout. Browser coverage holds responses open so
-network or navigation completion cannot satisfy the latency gate.
+review with an actionable toast. Human-review mutations create row-specific
+progress toasts immediately, update them in place after synchronization, and
+keep simultaneous notices expanded as a bounded vertical stack. A client fetch
+timeout is indeterminate: the journal keeps the projection and refreshes
+canonical state instead of rolling back a write that may still commit. A bulk
+result with zero successes is a failure from the mutation endpoint, not a
+successful projection. Undo becomes available only after the original answer is
+accepted; its cached restored row remains non-interactive until the undo commit
+is accepted, then reconciles with the canonical revision of the current view.
+JavaScript-disabled review forms retain redirecting server actions as a
+fallback. Navigational and security-sensitive workflows use their existing
+redirecting actions with explicit form-local pending labels applied on the
+native click, so the visible pending state does not wait for a React commit.
+Labeled clicks are stopped in window capture so descendant React click handlers
+cannot delay that paint; other window listeners still run. Submits restart with
+requestSubmit, and non-submit actions replay their click, on the following
+macrotask after MutationObserver callbacks have run. Feedback and completion
+notices live in the root toast layer and do not shift the primary layout.
+Browser coverage holds responses open so network or navigation completion cannot
+satisfy the latency gate.
 
 ## File Handling
 
@@ -312,6 +315,18 @@ Rules:
 - Do not hardcode caller-specific source semantics or downstream execution.
 - Skipped state is presentation-only; it is not backend lifecycle state and does
   not create output.
+- Queue ordering supports one or more ordered keys over priority, row type,
+  normalized numeric card-visual score, visible title, caller, created time, or
+  updated time. Missing numeric visuals always sort last. The database applies
+  the full ordering before bounded pagination; recency and input id remain
+  deterministic trailing tie-breakers.
+- Search, filters, and sorting are separate URL-backed view controls. Priority
+  and row-type filters allow multiple values within each facet, combine facets
+  with AND semantics, and run in the database before bounded pagination. The
+  active filters remain visible as individually removable chips.
+- Answer creation captures the input's prior ordering timestamp on the output
+  result. Pre-read undo restores that timestamp so the row returns to its prior
+  canonical queue position instead of becoming the newest item.
 - Browser rendering trusts only already-sanitized typed fields from server-only
   queue reads. Unsafe colors are ignored at render time, unsupported icons use a
   fixed fallback, unsafe links are omitted, and caller-provided component,

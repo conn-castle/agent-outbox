@@ -1,17 +1,46 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode
+} from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import {
+  closestCenter,
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy
+} from "@dnd-kit/sortable";
+import {
+  restrictToParentElement,
+  restrictToVerticalAxis
+} from "@dnd-kit/modifiers";
+import { CSS } from "@dnd-kit/utilities";
 import {
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Filter,
+  GripVertical,
   ListChecks,
+  Plus,
+  RotateCcw,
   Search,
-  SlidersHorizontal,
   X
 } from "lucide-react";
 import { toast } from "sonner";
@@ -26,11 +55,21 @@ import type {
 import type { StatusResult } from "../../server/status.ts";
 import type { HumanAccountIdentityDisplay } from "../../shared/account-display.ts";
 import {
+  defaultHumanReviewSortDirection,
   humanReviewHref,
+  humanReviewMatchesFacets,
   humanReviewViewFromSearchParams,
+  isDefaultHumanReviewOrdering,
   writeHumanReviewView,
+  type HumanReviewSort,
+  type HumanReviewSortDirection,
+  type HumanReviewSortRule,
   type HumanReviewView
 } from "../../shared/human-review-view";
+import {
+  compareHumanReviewRows,
+  compareHumanReviewTypeNames
+} from "../../shared/human-review-sort";
 import { AccountBanner } from "./AccountBanner";
 import {
   type HumanMutationSubmission,
@@ -57,7 +96,19 @@ const WORKSPACE_ID_LIMIT = 100;
 
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority" },
-  { value: "updated_at", label: "Recent" }
+  { value: "type", label: "Type" },
+  { value: "visual_score", label: "Visual score" },
+  { value: "title", label: "Title" },
+  { value: "caller", label: "Caller" },
+  { value: "created_at", label: "Created" },
+  { value: "updated_at", label: "Last updated" }
+] as const;
+
+const PRIORITY_FILTER_OPTIONS = [
+  { value: "urgent", label: "Urgent" },
+  { value: "high", label: "High" },
+  { value: "normal", label: "Normal" },
+  { value: "low", label: "Low" }
 ] as const;
 
 export type HumanReviewNotice = {
@@ -75,6 +126,7 @@ export function ReviewWorkspace({
   session,
   identity,
   rows,
+  typeOptions,
   detail,
   banner,
   notice,
@@ -87,6 +139,7 @@ export function ReviewWorkspace({
   session: HumanAccountSession;
   identity: HumanAccountIdentityDisplay;
   rows: HumanReviewListRow[];
+  typeOptions: string[];
   detail: HumanReviewDetail | null;
   banner: StatusResult<HumanAccountBannerData>;
   notice: HumanReviewNotice | null;
@@ -103,6 +156,16 @@ export function ReviewWorkspace({
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [openViewControl, setOpenViewControl] = useState<
+    "filter" | "sort" | null
+  >(null);
+  const [useViewControlSheet, setUseViewControlSheet] = useState(false);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const [controlView, setControlView] = useState(view);
+  const controlViewRef = useRef(view);
+  const requestedViewHref = useRef<string | null>(null);
+  const incomingViewRef = useRef(view);
+  incomingViewRef.current = view;
   const [hydratedAccountId, setHydratedAccountId] = useState<string | null>(
     null
   );
@@ -115,7 +178,16 @@ export function ReviewWorkspace({
   const canonicalGeneration = useRef(0);
   const successGenerations = useRef(new Map<string, number>());
   const retriedCanonicalRefreshes = useRef(new Set<string>());
+  const indeterminateSuccessMessages = useRef(new Map<string, string>());
   const consumedNoticeEpoch = useRef<string | null>(null);
+  const viewConfigurationKey = [
+    view.status,
+    view.priorities.join(","),
+    view.types.join(","),
+    view.sorts.map(({ key, direction }) => `${key}:${direction}`).join(","),
+    view.page
+  ].join("\0");
+  const canonicalViewHref = humanReviewHref(view);
 
   useEffect(() => {
     const persisted = readWorkspaceState(session.accountId);
@@ -124,6 +196,68 @@ export function ReviewWorkspace({
     setSelectionMode((persisted?.selectedIds.length ?? 0) > 0);
     setHydratedAccountId(session.accountId);
   }, [session.accountId]);
+
+  useEffect(() => {
+    if (
+      requestedViewHref.current !== null &&
+      requestedViewHref.current !== canonicalViewHref
+    ) {
+      return;
+    }
+    requestedViewHref.current = null;
+    const incomingView = incomingViewRef.current;
+    controlViewRef.current = incomingView;
+    setControlView(incomingView);
+  }, [canonicalViewHref]);
+
+  useEffect(() => {
+    const clearRequestedView = () => {
+      requestedViewHref.current = null;
+    };
+    window.addEventListener("popstate", clearRequestedView);
+    return () => window.removeEventListener("popstate", clearRequestedView);
+  }, []);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 800px)");
+    const synchronize = () => setUseViewControlSheet(query.matches);
+    synchronize();
+    query.addEventListener("change", synchronize);
+    return () => query.removeEventListener("change", synchronize);
+  }, []);
+
+  useEffect(() => {
+    if (openViewControl === null) return;
+    const closeViewControl = () => {
+      const trigger = document.querySelector<HTMLElement>(
+        `[data-view-popover-trigger="${openViewControl}"]`
+      );
+      setOpenViewControl(null);
+      return trigger;
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          "[data-view-popover-control], [data-view-popover-surface]"
+        )
+      ) {
+        return;
+      }
+      closeViewControl();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeViewControl()?.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openViewControl]);
 
   useEffect(() => {
     if (hydratedAccountId !== session.accountId) {
@@ -207,7 +341,10 @@ export function ReviewWorkspace({
     notice?.undo?.callerId ?? ""
   ].join("\0");
 
-  function updateView(changes: Partial<HumanReviewView>) {
+  function updateView(
+    changes: Partial<HumanReviewView>,
+    navigation: "replace" | "push" = "replace"
+  ) {
     const params = new URLSearchParams(window.location.search);
     params.delete("item");
     params.delete("error");
@@ -222,13 +359,18 @@ export function ReviewWorkspace({
     params.delete("resolved");
     params.delete("subject");
     params.delete("compose");
-    // Seed from the URL, not the `view` prop: the prop lags router.replace
-    // until the server round-trip completes, so rapid successive control
-    // changes would silently revert earlier ones.
-    const next = { ...humanReviewViewFromSearchParams(params), ...changes };
+    // Compose from the latest optimistic view. Both the rendered prop and the
+    // browser URL can lag router.replace during rapid, sequential changes.
+    const draft = { ...controlViewRef.current, ...changes };
+    const canonicalParams = new URLSearchParams();
+    writeHumanReviewView(canonicalParams, draft);
+    const next = humanReviewViewFromSearchParams(canonicalParams);
+    controlViewRef.current = next;
+    setControlView(next);
+    requestedViewHref.current = humanReviewHref(next);
     writeHumanReviewView(params, next);
     const href = `${window.location.pathname}?${params.toString()}`;
-    router.replace(href, { scroll: false });
+    router[navigation](href, { scroll: false });
   }
 
   function clearRedirectNoticeFromUrl() {
@@ -280,13 +422,16 @@ export function ReviewWorkspace({
     cancelDebouncedSearch();
     searchTimer.current = setTimeout(() => {
       searchTimer.current = null;
-      updateView({ search: nextSearch, page: 1 });
+      const normalizedSearch = nextSearch.trim();
+      pendingSearch.current = normalizedSearch;
+      setSearch(normalizedSearch);
+      updateView({ search: normalizedSearch, page: 1 });
     }, 300);
   }
 
   useEffect(() => {
     cancelDebouncedSearch();
-  }, [view.status, view.sort, view.page]);
+  }, [viewConfigurationKey]);
   useEffect(() => {
     const currentId = detail?.inputItemId ?? null;
     if (currentId !== null && currentId !== previousDetailId.current) {
@@ -301,29 +446,34 @@ export function ReviewWorkspace({
 
   function submitSearch() {
     cancelDebouncedSearch();
-    updateView({ search: currentSearch(), page: 1 });
+    const normalizedSearch = currentSearch().trim();
+    pendingSearch.current = normalizedSearch;
+    setSearch(normalizedSearch);
+    updateView({ search: normalizedSearch, page: 1 });
   }
 
-  function updateViewImmediately(changes: Partial<HumanReviewView>) {
+  function updateViewImmediately(
+    changes: Partial<HumanReviewView>,
+    navigation: "replace" | "push" = "replace"
+  ) {
     cancelDebouncedSearch();
-    const nextSearch = currentSearch();
+    const nextSearch = currentSearch().trim();
+    if (nextSearch !== search) {
+      pendingSearch.current = nextSearch;
+      setSearch(nextSearch);
+    }
     updateView(
       nextSearch === view.search
         ? changes
-        : { ...changes, search: nextSearch, page: 1 }
+        : { ...changes, search: nextSearch, page: 1 },
+      navigation
     );
   }
 
   function onStatusNavigate(status: HumanReviewView["status"]) {
     return (event: { preventDefault: () => void }) => {
-      // The rendered href already includes `search` state. Only take over when
-      // the in-flight input is ahead of that commit; otherwise let Link keep
-      // its navigation (including hover prefetch).
-      if (currentSearch() === search) {
-        return;
-      }
       event.preventDefault();
-      updateViewImmediately({ status, page: 1 });
+      updateViewImmediately({ status, page: 1 }, "push");
     };
   }
 
@@ -351,17 +501,18 @@ export function ReviewWorkspace({
     const restored = new Map<string, HumanReviewListRow>();
     for (const { mutation } of humanMutations) {
       if (mutation.operation !== "undo") continue;
-      if (view.status !== "pending" && !mutation.requiresCanonicalPendingRow) {
-        continue;
-      }
+      if (view.status !== "pending") continue;
       for (const row of mutation.rowSnapshots) {
-        if (!baseIds.has(row.inputItemId)) {
+        if (
+          !baseIds.has(row.inputItemId) &&
+          humanReviewRowMatchesView(row, view)
+        ) {
           restored.set(row.inputItemId, row);
         }
       }
     }
     return [...restored.values()];
-  }, [humanMutations, rows, view.status]);
+  }, [humanMutations, rows, view]);
   const lockedIds = useMemo(() => {
     const ids = new Set<string>();
     for (const { record, mutation } of humanMutations) {
@@ -372,13 +523,16 @@ export function ReviewWorkspace({
     return ids;
   }, [humanMutations]);
 
-  const projectedRows = useMemo(
-    () =>
-      [...rows, ...restoredRows].filter(
-        (row) => !hiddenIds.has(row.inputItemId)
-      ),
-    [hiddenIds, restoredRows, rows]
-  );
+  const projectedRows = useMemo(() => {
+    const projected = [...rows, ...restoredRows].filter(
+      (row) => !hiddenIds.has(row.inputItemId)
+    );
+    return restoredRows.length > 0
+      ? projected.sort((left, right) =>
+          compareHumanReviewRows(left, right, view)
+        )
+      : projected;
+  }, [hiddenIds, restoredRows, rows, view]);
   const synchronizingMutationCount = humanMutations.filter(
     ({ record }) => record.status !== "succeeded"
   ).length;
@@ -386,6 +540,7 @@ export function ReviewWorkspace({
     synchronizingMutationCount > 0
       ? `${synchronizingMutationCount} review ${synchronizingMutationCount === 1 ? "update" : "updates"} waiting to synchronize.`
       : "";
+  const viewStatus = humanReviewViewAnnouncement(view);
 
   useEffect(() => {
     if (previousCanonicalRows.current === rows) return;
@@ -423,9 +578,10 @@ export function ReviewWorkspace({
                     candidate.inputItemId === mutation.inputItemIds[index]
                 );
                 return (
-                  row?.status === "pending" &&
                   snapshot !== undefined &&
-                  row.currentRevision >= snapshot.currentRevision
+                  (!humanReviewRowMatchesView(snapshot, view) ||
+                    (row?.status === "pending" &&
+                      row.currentRevision >= snapshot.currentRevision))
                 );
               })
             : canonicalRows.every(
@@ -439,6 +595,13 @@ export function ReviewWorkspace({
                 (row) => row === undefined || row.status !== "pending"
               );
       if (reflected) {
+        const confirmedMessage = indeterminateSuccessMessages.current.get(
+          record.id
+        );
+        if (confirmedMessage) {
+          toast.success(confirmedMessage, { id: record.id });
+          indeterminateSuccessMessages.current.delete(record.id);
+        }
         successGenerations.current.delete(record.id);
         retriedCanonicalRefreshes.current.delete(record.id);
         dismiss(record.id);
@@ -447,7 +610,7 @@ export function ReviewWorkspace({
         router.refresh();
       }
     }
-  }, [dismiss, humanMutations, router, rows]);
+  }, [dismiss, humanMutations, router, rows, view]);
 
   const visibleRows = useMemo(() => {
     return [...projectedRows].sort((left, right) => {
@@ -509,7 +672,6 @@ export function ReviewWorkspace({
     requiresCanonicalPendingRow = submission.operation === "undo" &&
       rowSnapshots.some((row) => row.status === "pending")
   ) {
-    toast.dismiss();
     if (notice) {
       consumedNoticeEpoch.current = noticeEpoch;
     }
@@ -525,7 +687,8 @@ export function ReviewWorkspace({
         : rowSnapshots,
       requiresCanonicalPendingRow
     };
-    enqueue({
+    const feedback = mutationFeedback(submission, rowSnapshots);
+    const mutationId = enqueue({
       scope: HUMAN_MUTATION_SCOPE,
       optimistic,
       execute: () =>
@@ -536,7 +699,7 @@ export function ReviewWorkspace({
           successGenerations.current.delete(mutationId);
           retriedCanonicalRefreshes.current.delete(mutationId);
           dismiss(mutationId);
-          toast.warning(result.message, {
+          toast.warning(feedback.failure(result.message), {
             id: mutationId,
             duration: Infinity
           });
@@ -544,12 +707,13 @@ export function ReviewWorkspace({
         }
         successGenerations.current.set(mutationId, canonicalGeneration.current);
         if (result.operation === "answer") {
-          toast.success(result.message, {
+          toast.success(feedback.success, {
             id: mutationId,
             action: {
               label: "Undo",
               onClick: () => {
                 dismiss(mutationId);
+                toast.dismiss(mutationId);
                 const undoForm = new FormData();
                 undoForm.set("inputItemId", result.undo.inputItemId);
                 undoForm.set("callerId", result.undo.callerId);
@@ -575,24 +739,34 @@ export function ReviewWorkspace({
           });
           return;
         }
-        toast.success(result.message, { id: mutationId });
+        toast.success(
+          result.operation === "undo" ? feedback.success : result.message,
+          { id: mutationId }
+        );
       },
       onIndeterminate: (_error, mutationId) => {
         successGenerations.current.set(mutationId, canonicalGeneration.current);
+        indeterminateSuccessMessages.current.set(mutationId, feedback.success);
+        toast.warning(feedback.indeterminate, {
+          id: mutationId,
+          duration: Infinity
+        });
       },
       onError: (error, mutationId) => {
+        indeterminateSuccessMessages.current.delete(mutationId);
         successGenerations.current.delete(mutationId);
         retriedCanonicalRefreshes.current.delete(mutationId);
         const message =
           error instanceof HumanMutationError
             ? error.message
             : "Action is temporarily unavailable.";
-        toast.error(message, {
+        toast.error(feedback.failure(message), {
           id: mutationId,
           duration: Infinity
         });
       }
     });
+    toast.loading(feedback.pending, { id: mutationId });
   }
 
   useEffect(() => {
@@ -728,6 +902,7 @@ export function ReviewWorkspace({
 
   return (
     <main
+      ref={workspaceRef}
       className="human-workspace"
       data-workspace-hydrated={
         hydratedAccountId === session.accountId ? "true" : "false"
@@ -738,6 +913,9 @@ export function ReviewWorkspace({
           className="app-brand product-wordmark"
           href="/human"
           aria-label="Agent Outbox home"
+          onNavigate={() => {
+            requestedViewHref.current = null;
+          }}
         >
           <img src="/agent-outbox-mark.svg" alt="" width="36" height="36" />
           <span>
@@ -748,7 +926,7 @@ export function ReviewWorkspace({
           <Link
             className={view.status === "answered" ? undefined : "active"}
             href={humanReviewHref({
-              ...view,
+              ...controlView,
               search,
               status: "pending",
               page: 1
@@ -761,7 +939,7 @@ export function ReviewWorkspace({
           <Link
             className={view.status === "answered" ? "active" : undefined}
             href={humanReviewHref({
-              ...view,
+              ...controlView,
               search,
               status: "answered",
               page: 1
@@ -794,6 +972,14 @@ export function ReviewWorkspace({
         aria-atomic="true"
       >
         {actionStatus}
+      </div>
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {viewStatus}
       </div>
 
       <div className="workspace-body queue-only">
@@ -890,16 +1076,29 @@ export function ReviewWorkspace({
                 </label>
               </form>
               <div className="filter-controls">
-                <SlidersHorizontal aria-hidden="true" />
-                <ViewSelect
-                  label="Sort"
-                  value={view.sort}
-                  options={SORT_OPTIONS}
-                  onChange={(sort) =>
-                    updateViewImmediately({
-                      sort: sort as HumanReviewView["sort"],
-                      page: 1
-                    })
+                <ReviewFilterControl
+                  view={controlView}
+                  typeOptions={typeOptions}
+                  open={openViewControl === "filter"}
+                  sheet={useViewControlSheet}
+                  portalTarget={workspaceRef.current}
+                  onOpenChange={(open) =>
+                    setOpenViewControl(open ? "filter" : null)
+                  }
+                  onChange={(changes) =>
+                    updateViewImmediately({ ...changes, page: 1 })
+                  }
+                />
+                <ReviewSortControl
+                  view={controlView}
+                  open={openViewControl === "sort"}
+                  sheet={useViewControlSheet}
+                  portalTarget={workspaceRef.current}
+                  onOpenChange={(open) =>
+                    setOpenViewControl(open ? "sort" : null)
+                  }
+                  onChange={(changes) =>
+                    updateViewImmediately({ ...changes, page: 1 })
                   }
                 />
               </div>
@@ -921,6 +1120,12 @@ export function ReviewWorkspace({
                   {selectionMode ? "Done" : "Select items"}
                 </span>
               </button>
+              <ActiveFilterChips
+                view={controlView}
+                onChange={(changes) =>
+                  updateViewImmediately({ ...changes, page: 1 })
+                }
+              />
             </section>
           </header>
 
@@ -939,7 +1144,7 @@ export function ReviewWorkspace({
               onSelectedChange={setRowSelected}
               onSkipToggle={toggleSkipped}
               selectionMode={selectionMode}
-              view={view}
+              view={controlView}
               renderedAt={renderedAt}
               onMutation={handleHumanMutation}
               lockedIds={lockedIds}
@@ -954,22 +1159,36 @@ export function ReviewWorkspace({
                 {view.status === "pending" ? (
                   <Link
                     href={humanReviewHref({
-                      ...view,
+                      ...controlView,
                       search: "",
                       status: "answered",
                       page: 1
                     })}
+                    onNavigate={(event) => {
+                      event.preventDefault();
+                      updateViewImmediately(
+                        { search: "", status: "answered", page: 1 },
+                        "push"
+                      );
+                    }}
                   >
                     Review answered decisions
                   </Link>
                 ) : (
                   <Link
                     href={humanReviewHref({
-                      ...view,
+                      ...controlView,
                       search: "",
                       status: "pending",
                       page: 1
                     })}
+                    onNavigate={(event) => {
+                      event.preventDefault();
+                      updateViewImmediately(
+                        { search: "", status: "pending", page: 1 },
+                        "push"
+                      );
+                    }}
                   >
                     Return to review queue
                   </Link>
@@ -1017,7 +1236,7 @@ export function ReviewWorkspace({
         <ReviewDetail
           key={detail?.inputItemId ?? "empty"}
           detail={detail}
-          view={view}
+          view={controlView}
           positionLabel={
             detailIndex >= 0
               ? `${detailIndex + 1} of ${visibleRows.length}`
@@ -1026,7 +1245,10 @@ export function ReviewWorkspace({
           previousItem={
             previousDetailRow
               ? {
-                  href: humanReviewHref(view, previousDetailRow.inputItemId),
+                  href: humanReviewHref(
+                    controlView,
+                    previousDetailRow.inputItemId
+                  ),
                   label: plainText(previousDetailRow.titleHtml)
                 }
               : null
@@ -1034,7 +1256,7 @@ export function ReviewWorkspace({
           nextItem={
             nextDetailRow
               ? {
-                  href: humanReviewHref(view, nextDetailRow.inputItemId),
+                  href: humanReviewHref(controlView, nextDetailRow.inputItemId),
                   label: plainText(nextDetailRow.titleHtml)
                 }
               : null
@@ -1047,56 +1269,655 @@ export function ReviewWorkspace({
   );
 }
 
-function ViewSelect({
-  label,
+function ViewPopoverLayer({
+  open,
+  sheet,
+  portalTarget,
+  closeLabel,
+  onClose,
+  children
+}: {
+  open: boolean;
+  sheet: boolean;
+  portalTarget: HTMLElement | null;
+  closeLabel: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  if (!open) return null;
+  const layer = (
+    <>
+      {sheet ? (
+        <button
+          type="button"
+          className="view-popover-scrim"
+          aria-label={closeLabel}
+          onClick={onClose}
+        />
+      ) : null}
+      {children}
+    </>
+  );
+  return sheet && portalTarget ? createPortal(layer, portalTarget) : layer;
+}
+
+function ReviewFilterControl({
+  view,
+  typeOptions,
+  open,
+  sheet,
+  portalTarget,
+  onOpenChange,
+  onChange
+}: {
+  view: HumanReviewView;
+  typeOptions: string[];
+  open: boolean;
+  sheet: boolean;
+  portalTarget: HTMLElement | null;
+  onOpenChange: (open: boolean) => void;
+  onChange: (changes: Partial<HumanReviewView>) => void;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const count = view.priorities.length + view.types.length;
+  const availableTypes = [...new Set([...typeOptions, ...view.types])].sort(
+    compareHumanReviewTypeNames
+  );
+  useEffect(() => {
+    if (open) popoverRef.current?.querySelector<HTMLElement>("input")?.focus();
+  }, [open]);
+  return (
+    <div
+      className={`view-control${count ? " active" : ""}${open ? " open" : ""}`}
+      data-view-popover-control
+    >
+      <button
+        type="button"
+        className="view-control-trigger"
+        aria-label={`Filter${count ? `, ${count} applied` : ""}`}
+        aria-expanded={open}
+        aria-controls="review-filter-popover"
+        aria-haspopup="dialog"
+        data-view-popover-trigger="filter"
+        onClick={() => onOpenChange(!open)}
+      >
+        <Filter aria-hidden="true" />
+        <span>Filter</span>
+        {count ? <strong className="view-control-count">{count}</strong> : null}
+        <ChevronDown aria-hidden="true" />
+      </button>
+      <ViewPopoverLayer
+        open={open}
+        sheet={sheet}
+        portalTarget={portalTarget}
+        closeLabel="Dismiss filter panel"
+        onClose={() => onOpenChange(false)}
+      >
+        <div
+          ref={popoverRef}
+          id="review-filter-popover"
+          className="view-popover filter-popover"
+          role="dialog"
+          aria-label="Filter reviews"
+          data-view-popover-surface
+        >
+          <div className="view-popover-heading">
+            <div>
+              <strong>Filter reviews</strong>
+              <span>Select any values you want to include.</span>
+            </div>
+            <div className="view-popover-actions">
+              {count ? (
+                <button
+                  type="button"
+                  className="view-reset-button"
+                  onClick={() => onChange({ priorities: [], types: [] })}
+                >
+                  Clear
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="sort-icon-button view-close-button"
+                aria-label="Close filter menu"
+                onClick={() => onOpenChange(false)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+          <FilterChoices
+            legend="Priority"
+            options={PRIORITY_FILTER_OPTIONS}
+            selected={view.priorities}
+            onChange={(priorities) =>
+              onChange({
+                priorities: priorities as HumanReviewView["priorities"]
+              })
+            }
+          />
+          <FilterChoices
+            legend="Type"
+            options={availableTypes.map((value) => ({ value, label: value }))}
+            selected={view.types}
+            emptyCopy="No review types in this view."
+            onChange={(types) => onChange({ types })}
+          />
+          <div className="view-popover-footer">
+            <button type="button" onClick={() => onOpenChange(false)}>
+              Done
+            </button>
+          </div>
+        </div>
+      </ViewPopoverLayer>
+    </div>
+  );
+}
+
+function FilterChoices({
+  legend,
+  options,
+  selected,
+  emptyCopy,
+  onChange
+}: {
+  legend: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  selected: readonly string[];
+  emptyCopy?: string;
+  onChange: (values: string[]) => void;
+}) {
+  return (
+    <fieldset className="filter-choice-group">
+      <legend>{legend}</legend>
+      {options.length ? (
+        <div className="filter-choice-list">
+          {options.map((option) => (
+            <label key={option.value}>
+              <input
+                type="checkbox"
+                checked={selected.includes(option.value)}
+                onChange={(event) =>
+                  onChange(
+                    event.target.checked
+                      ? [...selected, option.value]
+                      : selected.filter((value) => value !== option.value)
+                  )
+                }
+              />
+              <span>{option.label}</span>
+              {selected.includes(option.value) ? (
+                <Check aria-hidden="true" />
+              ) : null}
+            </label>
+          ))}
+        </div>
+      ) : (
+        <p className="filter-empty-copy">{emptyCopy}</p>
+      )}
+    </fieldset>
+  );
+}
+
+function ReviewSortControl({
+  view,
+  open,
+  sheet,
+  portalTarget,
+  onOpenChange,
+  onChange
+}: {
+  view: HumanReviewView;
+  open: boolean;
+  sheet: boolean;
+  portalTarget: HTMLElement | null;
+  onOpenChange: (open: boolean) => void;
+  onChange: (changes: Partial<HumanReviewView>) => void;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const previousRuleCount = useRef(view.sorts.length);
+  const focusRuleAfterFieldChange = useRef<number | null>(null);
+  const recipe = view.sorts.map(({ key }) => sortLabel(key)).join(" → ");
+  const custom = !isDefaultHumanReviewOrdering(view);
+  const unusedSort = SORT_OPTIONS.find(
+    (option) => !view.sorts.some((rule) => rule.key === option.value)
+  )?.value;
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+  );
+
+  function moveRule(from: number, to: number) {
+    if (to < 0 || to >= view.sorts.length || from === to) return;
+    onChange({ sorts: arrayMove(view.sorts, from, to) });
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    if (!event.over || event.active.id === event.over.id) return;
+    const from = view.sorts.findIndex((rule) => rule.key === event.active.id);
+    const to = view.sorts.findIndex((rule) => rule.key === event.over?.id);
+    if (from >= 0 && to >= 0) moveRule(from, to);
+  }
+
+  function closeAndRestoreFocus() {
+    onOpenChange(false);
+    triggerRef.current?.focus();
+  }
+
+  useEffect(() => {
+    if (open) popoverRef.current?.querySelector<HTMLElement>("select")?.focus();
+  }, [open]);
+  useEffect(() => {
+    const previous = previousRuleCount.current;
+    previousRuleCount.current = view.sorts.length;
+    if (!open || view.sorts.length <= previous) return;
+    popoverRef.current
+      ?.querySelector<HTMLElement>(
+        `[aria-label="Sort ${view.sorts.length} field"]`
+      )
+      ?.focus();
+  }, [open, view.sorts.length]);
+  useEffect(() => {
+    const rank = focusRuleAfterFieldChange.current;
+    if (!open || rank === null) return;
+    focusRuleAfterFieldChange.current = null;
+    popoverRef.current
+      ?.querySelector<HTMLElement>(`[aria-label="Sort ${rank} field"]`)
+      ?.focus();
+  }, [open, view.sorts]);
+
+  return (
+    <div
+      className={`view-control sort-control${custom ? " active" : ""}${open ? " open" : ""}`}
+      data-view-popover-control
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="view-control-trigger"
+        aria-label={`Sort: ${recipe}`}
+        aria-expanded={open}
+        aria-controls="review-sort-popover"
+        aria-haspopup="dialog"
+        data-view-popover-trigger="sort"
+        onClick={() => onOpenChange(!open)}
+      >
+        <span>Sort</span>
+        <strong>{recipe}</strong>
+        <ChevronDown aria-hidden="true" />
+      </button>
+      <ViewPopoverLayer
+        open={open}
+        sheet={sheet}
+        portalTarget={portalTarget}
+        closeLabel="Dismiss sort panel"
+        onClose={closeAndRestoreFocus}
+      >
+        <div
+          ref={popoverRef}
+          id="review-sort-popover"
+          className="view-popover sort-popover"
+          role="dialog"
+          aria-label="Sort reviews"
+          data-view-popover-surface
+        >
+          <div className="view-popover-heading">
+            <div>
+              <strong>Sort order</strong>
+              <span>
+                {view.sorts.length > 1
+                  ? "Drag rules into priority order."
+                  : "Choose how the queue should be ordered."}
+              </span>
+            </div>
+            <div className="view-popover-actions">
+              {custom ? (
+                <button
+                  type="button"
+                  className="view-reset-button"
+                  onClick={() =>
+                    onChange({ sorts: [{ key: "priority", direction: "asc" }] })
+                  }
+                >
+                  <RotateCcw aria-hidden="true" /> Reset
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="sort-done-button"
+                onClick={closeAndRestoreFocus}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+            accessibility={{
+              screenReaderInstructions: {
+                draggable:
+                  "Drag to reorder with a pointer, or use Arrow Up and Arrow Down while this handle is focused."
+              },
+              announcements: {
+                onDragStart: ({ active }) =>
+                  `Picked up ${sortLabel(active.id as HumanReviewSort)} sort.`,
+                onDragOver: ({ active, over }) =>
+                  over
+                    ? `${sortLabel(active.id as HumanReviewSort)} is over ${sortLabel(over.id as HumanReviewSort)}.`
+                    : undefined,
+                onDragEnd: ({ active, over }) =>
+                  over
+                    ? `Placed ${sortLabel(active.id as HumanReviewSort)} at ${sortLabel(over.id as HumanReviewSort)} position.`
+                    : `Dropped ${sortLabel(active.id as HumanReviewSort)} without changing its position.`,
+                onDragCancel: ({ active }) =>
+                  `Cancelled moving ${sortLabel(active.id as HumanReviewSort)}.`
+              }
+            }}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={view.sorts.map((rule) => rule.key)}
+              strategy={verticalListSortingStrategy}
+            >
+              <ol className="sort-rule-list">
+                {view.sorts.map((rule, index) => (
+                  <SortRule
+                    key={rule.key}
+                    rank={index + 1}
+                    total={view.sorts.length}
+                    sort={rule.key}
+                    direction={rule.direction}
+                    excluded={view.sorts
+                      .filter((_, ruleIndex) => ruleIndex !== index)
+                      .map(({ key }) => key)}
+                    onSortChange={(key) => {
+                      focusRuleAfterFieldChange.current = index + 1;
+                      const sorts = [...view.sorts];
+                      sorts[index] = {
+                        key,
+                        direction: defaultHumanReviewSortDirection(key)
+                      };
+                      onChange({ sorts });
+                    }}
+                    onDirectionChange={(direction) => {
+                      const sorts = [...view.sorts];
+                      sorts[index] = { ...rule, direction };
+                      onChange({ sorts });
+                    }}
+                    onMove={(offset) => moveRule(index, index + offset)}
+                    onRemove={
+                      view.sorts.length > 1
+                        ? () =>
+                            onChange({
+                              sorts: view.sorts.filter(
+                                (_, ruleIndex) => ruleIndex !== index
+                              )
+                            })
+                        : undefined
+                    }
+                  />
+                ))}
+              </ol>
+            </SortableContext>
+          </DndContext>
+          {unusedSort ? (
+            <button
+              type="button"
+              className="add-sort-button"
+              onClick={() =>
+                onChange({
+                  sorts: [
+                    ...view.sorts,
+                    {
+                      key: unusedSort,
+                      direction: defaultHumanReviewSortDirection(unusedSort)
+                    }
+                  ]
+                })
+              }
+            >
+              <Plus aria-hidden="true" /> Add sort field
+            </button>
+          ) : null}
+          {view.sorts.some((rule) => rule.key === "visual_score") ? (
+            <p className="sort-null-copy">
+              <span aria-hidden="true">↓</span>
+              Reviews without a numeric score stay at the bottom.
+            </p>
+          ) : null}
+        </div>
+      </ViewPopoverLayer>
+    </div>
+  );
+}
+
+function SortRule({
+  rank,
+  total,
+  sort,
+  direction,
+  excluded,
+  onSortChange,
+  onDirectionChange,
+  onMove,
+  onRemove
+}: {
+  rank: number;
+  total: number;
+  sort: HumanReviewSort;
+  direction: HumanReviewSortDirection;
+  excluded: HumanReviewSort[];
+  onSortChange: (sort: HumanReviewSort) => void;
+  onDirectionChange: (direction: HumanReviewSortDirection) => void;
+  onMove: (offset: -1 | 1) => void;
+  onRemove?: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    isDragging
+  } = useSortable({ id: sort, disabled: total < 2 });
+  const style = {
+    "--sort-rule-transform": CSS.Transform.toString(transform) ?? "none"
+  } as CSSProperties;
+
+  return (
+    <li
+      ref={setNodeRef}
+      className={`sort-rule${isDragging ? " dragging" : ""}`}
+      style={style}
+    >
+      <div className="sort-rule-row">
+        <span className="sort-rank" aria-hidden="true">
+          {rank}
+        </span>
+        {total > 1 ? (
+          <button
+            ref={setActivatorNodeRef}
+            type="button"
+            className="sort-drag-handle"
+            aria-label={`Reorder ${sortLabel(sort)} sort, position ${rank} of ${total}`}
+            aria-keyshortcuts="ArrowUp ArrowDown"
+            {...attributes}
+            {...listeners}
+            onKeyDown={(event) => {
+              const offset =
+                event.key === "ArrowUp"
+                  ? -1
+                  : event.key === "ArrowDown"
+                    ? 1
+                    : 0;
+              if (!offset || rank + offset < 1 || rank + offset > total) return;
+              event.preventDefault();
+              onMove(offset);
+            }}
+          >
+            <GripVertical aria-hidden="true" />
+          </button>
+        ) : (
+          <span className="sort-drag-placeholder" aria-hidden="true" />
+        )}
+        <div className="sort-rule-fields">
+          <SortSelect
+            ariaLabel={`Sort ${rank} field`}
+            value={sort}
+            options={SORT_OPTIONS.filter(
+              (option) => !excluded.includes(option.value)
+            )}
+            onChange={(value) => onSortChange(value as HumanReviewSort)}
+          />
+          <SortSelect
+            className="sort-direction-select"
+            ariaLabel={`Sort ${rank} direction`}
+            value={direction}
+            options={(["asc", "desc"] as const).map((value) => ({
+              value,
+              label: sortDirectionLabel(sort, value)
+            }))}
+            onChange={(value) =>
+              onDirectionChange(value as HumanReviewSortDirection)
+            }
+          />
+        </div>
+        {onRemove ? (
+          <button
+            type="button"
+            className="sort-remove-button"
+            onClick={onRemove}
+            aria-label={`Remove ${sortLabel(sort)} sort`}
+          >
+            <X aria-hidden="true" />
+          </button>
+        ) : (
+          <span className="sort-remove-placeholder" aria-hidden="true" />
+        )}
+      </div>
+    </li>
+  );
+}
+
+function SortSelect({
+  className,
+  ariaLabel,
   value,
   options,
   onChange
 }: {
-  label: string;
+  className?: string;
+  ariaLabel: string;
   value: string;
   options: ReadonlyArray<{ value: string; label: string }>;
   onChange: (value: string) => void;
 }) {
-  const detailsRef = useRef<HTMLDetailsElement>(null);
-  const selected = options.find((option) => option.value === value);
-
   return (
-    <details
-      className="view-select"
-      ref={detailsRef}
-      data-dismissible-disclosure
-    >
-      <summary
-        role="button"
-        aria-label={`${label}: ${selected?.label ?? value}`}
+    <label className={`sort-select${className ? ` ${className}` : ""}`}>
+      <span className="sr-only">{ariaLabel}</span>
+      <select
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
       >
-        <span>{label}</span>
-        <strong>{selected?.label ?? value}</strong>
-        <ChevronDown aria-hidden="true" />
-      </summary>
-      <div className="view-select-menu" role="menu" aria-label={label}>
-        {options.map((option) => {
-          const active = option.value === value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="menuitemradio"
-              aria-checked={active}
-              onClick={() => {
-                detailsRef.current?.removeAttribute("open");
-                onChange(option.value);
-              }}
-            >
-              <span>{option.label}</span>
-              {active ? <Check aria-hidden="true" /> : null}
-            </button>
-          );
-        })}
-      </div>
-    </details>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown aria-hidden="true" />
+    </label>
   );
+}
+
+function ActiveFilterChips({
+  view,
+  onChange
+}: {
+  view: HumanReviewView;
+  onChange: (changes: Partial<HumanReviewView>) => void;
+}) {
+  if (view.priorities.length === 0 && view.types.length === 0) return null;
+  return (
+    <div
+      className="active-filter-chips"
+      role="group"
+      aria-label="Applied filters"
+    >
+      <span>Showing</span>
+      {view.priorities.map((priority) => (
+        <button
+          key={priority}
+          type="button"
+          onClick={() =>
+            onChange({
+              priorities: view.priorities.filter((value) => value !== priority)
+            })
+          }
+          aria-label={`Remove Priority: ${titleCase(priority)} filter`}
+        >
+          Priority: {titleCase(priority)} <X aria-hidden="true" />
+        </button>
+      ))}
+      {view.types.map((type) => (
+        <button
+          key={type}
+          type="button"
+          onClick={() =>
+            onChange({ types: view.types.filter((value) => value !== type) })
+          }
+          aria-label={`Remove Type: ${type} filter`}
+        >
+          Type: {type} <X aria-hidden="true" />
+        </button>
+      ))}
+      <button
+        type="button"
+        className="clear-filter-chips"
+        onClick={() => onChange({ priorities: [], types: [] })}
+      >
+        Clear all
+      </button>
+    </div>
+  );
+}
+
+function sortLabel(sort: HumanReviewSort) {
+  return SORT_OPTIONS.find((option) => option.value === sort)?.label ?? sort;
+}
+
+function sortDirectionLabel(
+  sort: HumanReviewSort,
+  direction: HumanReviewSortDirection
+) {
+  if (sort === "priority")
+    return direction === "asc" ? "Urgent first" : "Low first";
+  if (sort === "type" || sort === "title" || sort === "caller")
+    return direction === "asc" ? "A–Z" : "Z–A";
+  if (sort === "visual_score")
+    return direction === "asc" ? "Low to high" : "High to low";
+  return direction === "desc" ? "Newest first" : "Oldest first";
+}
+
+function titleCase(value: string) {
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function humanReviewViewAnnouncement(view: HumanReviewView) {
+  const sort = view.sorts
+    .map(
+      ({ key, direction }) =>
+        `${sortLabel(key)}, ${sortDirectionLabel(key, direction)}`
+    )
+    .join(", then ");
+  const filters = [
+    ...view.priorities.map((priority) => `priority ${priority}`),
+    ...view.types.map((type) => `type ${type}`)
+  ];
+  return `View updated. Sorted by ${sort}.${filters.length ? ` Filtered by ${filters.join(", ")}.` : ""}`;
 }
 
 function workspaceStateKey(accountId: string) {
@@ -1187,6 +2008,76 @@ function plainText(html: string) {
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function matchesReviewSearch(row: HumanReviewListRow, search: string) {
+  const term = search.trim().toLowerCase();
+  if (!term) return true;
+  return [
+    plainText(row.titleHtml),
+    plainText(row.subtitleHtml),
+    plainText(row.summaryHtml),
+    row.callerItemId,
+    row.rowType.display,
+    row.caller.displayName
+  ].some((value) => value.toLowerCase().includes(term));
+}
+
+function humanReviewRowMatchesView(
+  row: HumanReviewListRow,
+  view: HumanReviewView
+) {
+  return (
+    view.status === "pending" &&
+    humanReviewMatchesFacets(row, view) &&
+    matchesReviewSearch(row, view.search)
+  );
+}
+
+function mutationFeedback(
+  submission: HumanMutationSubmission,
+  rowSnapshots: HumanReviewListRow[]
+) {
+  const subject =
+    normalizedFormText(submission.formData, "noticeSubject") ??
+    (rowSnapshots.length === 1
+      ? plainText(rowSnapshots[0]?.titleHtml ?? "")
+      : null);
+  const action = normalizedFormText(submission.formData, "noticeAction");
+  const quotedSubject = subject ? `“${subject}”` : "this review";
+
+  if (submission.operation === "undo") {
+    return {
+      pending: `Restoring ${quotedSubject}…`,
+      success: `Restored ${quotedSubject} to its prior queue position.`,
+      indeterminate: `Still confirming the restore for ${quotedSubject}.`,
+      failure: (message: string) =>
+        `Could not restore ${quotedSubject}: ${message}`
+    };
+  }
+  if (submission.operation === "bulk-answer") {
+    const count = submission.inputItemIds.length;
+    return {
+      pending: `Saving ${count} ${count === 1 ? "review" : "reviews"}…`,
+      success: `Saved ${count} ${count === 1 ? "review" : "reviews"}.`,
+      indeterminate: `Still confirming ${count} ${count === 1 ? "review" : "reviews"}.`,
+      failure: (message: string) => message
+    };
+  }
+  const actionCopy = action ? `${action} for ` : "response for ";
+  return {
+    pending: `Saving ${actionCopy}${quotedSubject}…`,
+    success: `Saved ${actionCopy}${quotedSubject}.`,
+    indeterminate: `Still confirming ${actionCopy}${quotedSubject}.`,
+    failure: (message: string) => `Could not save ${quotedSubject}: ${message}`
+  };
+}
+
+function normalizedFormText(formData: FormData, key: string) {
+  const value = formData.get(key);
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized ? normalized.slice(0, 160) : null;
 }
 
 function queueCountCopy(

@@ -326,11 +326,11 @@ test("authenticated review workspace renders content actions and preserves contr
   await page.goto("/human");
   await openReviewTools(page);
 
-  await chooseViewOption(page, "Sort", "Recent");
+  await choosePrimarySort(page, "Last updated");
   await expect(
     reviewLinkByTitle(page, "Payments smoke check failed after deploy")
   ).toBeVisible();
-  await chooseViewOption(page, "Sort", "Priority");
+  await choosePrimarySort(page, "Priority");
 
   await reviewRowByTitle(page, "Review neighborhood permit brief")
     .getByRole("button", { name: "Defer" })
@@ -353,8 +353,10 @@ test("authenticated review workspace renders content actions and preserves contr
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
   await openReviewTools(page);
-  await page.getByLabel("Search").fill("follow-up");
-  await expect(page.getByLabel("Search")).toHaveValue("follow-up");
+  await page.getByRole("textbox", { name: "Search" }).fill("follow-up");
+  await expect(page.getByRole("textbox", { name: "Search" })).toHaveValue(
+    "follow-up"
+  );
   await expect(page).toHaveURL(/search=follow-up/);
   await expect(
     reviewLinkByTitle(page, "Choose follow-up window")
@@ -363,7 +365,7 @@ test("authenticated review workspace renders content actions and preserves contr
     reviewLinkByTitle(page, "Review neighborhood permit brief")
   ).toHaveCount(0);
 
-  await page.getByLabel("Search").fill("");
+  await page.getByRole("textbox", { name: "Search" }).fill("");
   await page.getByRole("link", { name: "History" }).click();
   await expect(page).not.toHaveURL(/search=/);
   await expect(
@@ -418,16 +420,30 @@ test("primary navigation and queue disclosures behave consistently", async ({
   await account.locator("summary").click();
   await expect(account).toHaveAttribute("open", "");
 
-  const sortDisclosure = page.locator("details.view-select").filter({
-    has: page.getByRole("button", { name: /^Sort:/ })
-  });
   await account.locator("summary").click();
   await expect(account).not.toHaveAttribute("open", "");
   await openReviewTools(page);
-  await sortDisclosure.locator("summary").click();
-  await expect(sortDisclosure).toHaveAttribute("open", "");
-  await sortDisclosure.locator("summary").click();
-  await expect(sortDisclosure).not.toHaveAttribute("open", "");
+  const sortTrigger = page.getByLabel("Sort: Priority");
+  await sortTrigger.click();
+  await expect(sortTrigger).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByRole("dialog", { name: "Sort reviews" })
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sortTrigger).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("dialog", { name: "Sort reviews" })).toHaveCount(
+    0
+  );
+  await expect(sortTrigger).toBeFocused();
+
+  await sortTrigger.click();
+  const sortScrim = page.getByRole("button", { name: "Dismiss sort panel" });
+  if (await sortScrim.isVisible()) {
+    await sortScrim.click();
+  } else {
+    await page.getByRole("heading", { name: "Needs review" }).click();
+  }
+  await expect(sortTrigger).toHaveAttribute("aria-expanded", "false");
 
   const rowDisclosure = page.locator("details.row-overflow").first();
   await rowDisclosure.locator("summary").click();
@@ -615,6 +631,42 @@ test("narrow review rows preserve complete decision context and actions", async 
   ).toContainText("the data-import rehearsal.");
 });
 
+test("narrow pill visuals stay inside their row context", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "One desktop browser covers the explicit phone width");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  const deployment = reviewRowByTitle(
+    page,
+    "Payments smoke check failed after deploy"
+  );
+  const context = deployment.locator(".row-context");
+  const pill = context.locator(".pill-visual");
+  await expect(pill).toHaveAttribute("title", "1 failed");
+  await pill.locator("strong").evaluate((label) => {
+    label.textContent =
+      "Net terms required — awaiting final finance authorization";
+  });
+  await expect
+    .poll(async () => {
+      const [contextBox, pillBox] = await Promise.all([
+        context.boundingBox(),
+        pill.boundingBox()
+      ]);
+      return Boolean(
+        contextBox &&
+        pillBox &&
+        pillBox.x >= contextBox.x - 1 &&
+        pillBox.x + pillBox.width <= contextBox.x + contextBox.width + 1
+      );
+    })
+    .toBe(true);
+});
+
 test("desktop detail modal stays within a readable responsive measure", async ({
   page,
   isMobile
@@ -667,7 +719,9 @@ test("routine reviews can be completed directly from the queue", async ({
 
   const completionNotice = page.locator("[data-sonner-toast]");
   await expect(completionNotice).toHaveCount(1);
-  await expect(completionNotice).toContainText("Done.");
+  await expect(completionNotice).toContainText(
+    "Saved Approve permit brief for “Review neighborhood permit brief”."
+  );
   await expect(page).not.toHaveURL(/notice=/);
   expect(humanPosts).toEqual(["mutation"]);
   await page.getByRole("button", { name: "Close toast" }).click();
@@ -677,7 +731,9 @@ test("routine reviews can be completed directly from the queue", async ({
   await followUpRow.scrollIntoViewIfNeeded();
   await followUpRow.getByRole("button", { name: "Approve follow-up" }).click();
   await expect(page.locator("[data-sonner-toast]")).toHaveCount(1);
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText(
+    "Saved Approve follow-up for “Choose follow-up window”."
+  );
   await expect(page).not.toHaveURL(/notice=/);
   expect(humanPosts).toEqual(["mutation", "mutation"]);
   await expect(page).not.toHaveURL(/item=/);
@@ -727,7 +783,7 @@ test("queue actions preserve a bottom scroll position", async ({ page }) => {
   expect(scrollTopBeforeAction).toBeGreaterThan(0);
 
   await lastQuickAction.click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
   expect(
     await queue.evaluate((element) => Math.round(element.scrollTop))
   ).toBeGreaterThan(0);
@@ -789,12 +845,287 @@ test("a second queue action is retained while the first is synchronizing", async
     })
     .toBe(2);
   await expect(page.locator("[data-sonner-toast]")).toHaveCount(2);
+  const toastBoxes = await page
+    .locator("[data-sonner-toast]")
+    .evaluateAll((toasts) =>
+      toasts
+        .map((toast) => toast.getBoundingClientRect())
+        .sort((left, right) => left.top - right.top)
+        .map(({ top, bottom }) => ({ top, bottom }))
+    );
+  expect(toastBoxes[0]?.bottom).toBeLessThanOrEqual(toastBoxes[1]?.top ?? 0);
   await expect(
     reviewRowByTitle(page, "Reply to Meridian about the renewal delay")
   ).toContainText("answeredDecision: Approve to send");
   await expect(
     reviewRowByTitle(page, "Review neighborhood permit brief")
   ).toContainText("answeredDecision: Approve");
+});
+
+test("toasts expose immediate row context and undo restores queue order", async ({
+  page
+}) => {
+  const requestStarted = deferred();
+  const releaseResponse = deferred();
+  await page.route("**/human/mutations", async (route) => {
+    requestStarted.resolve();
+    await releaseResponse.promise;
+    await route.continue();
+  });
+  await page.goto("/human?sort=updated_at");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+
+  const title = "Review neighborhood permit brief";
+  const row = reviewRowByTitle(page, title);
+  const rows = page.locator("article.review-row");
+  const originalIndex = await rows.evaluateAll(
+    (nodes, expectedTitle) =>
+      nodes.findIndex((node) => node.textContent?.includes(expectedTitle)),
+    title
+  );
+  expect(originalIndex).toBeGreaterThanOrEqual(0);
+
+  await row.getByRole("button", { name: "Approve permit brief" }).click();
+  await requestStarted.promise;
+  await expect(
+    page.locator("[data-sonner-toast]").filter({
+      hasText: "Saving Approve permit brief"
+    })
+  ).toContainText(`“${title}”…`);
+
+  releaseResponse.resolve();
+  const savedToast = page.locator("[data-sonner-toast]").filter({
+    hasText: `Saved Approve permit brief for “${title}”.`
+  });
+  await savedToast.getByRole("button", { name: "Undo" }).click();
+  await expect(
+    page.locator("[data-sonner-toast]").filter({
+      hasText: `Restored “${title}” to its prior queue position.`
+    })
+  ).toBeVisible();
+  await expect(row).toBeVisible();
+  const restoredIndex = await rows.evaluateAll(
+    (nodes, expectedTitle) =>
+      nodes.findIndex((node) => node.textContent?.includes(expectedTitle)),
+    title
+  );
+  expect(restoredIndex).toBe(originalIndex);
+});
+
+test("review controls support type then priority compound sorting", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await openReviewTools(page);
+  await choosePrimarySort(page, "Type", { keepOpen: true });
+  if (
+    (await page.getByLabel("Sort: Type").getAttribute("aria-expanded")) !==
+    "true"
+  ) {
+    await page.getByLabel("Sort: Type").click();
+  }
+  await page.getByRole("button", { name: "Add sort field" }).click();
+  await expect(page.getByLabel("Sort 2 field")).toBeVisible();
+  await expect(page.getByLabel("Sort 2 field")).toBeFocused();
+  await expect(page).toHaveURL(/order=type%3Aasc/);
+  await expect(page).toHaveURL(/order=priority%3Aasc/);
+  await expect(page.getByLabel("Sort: Type → Priority")).toBeVisible();
+  await expect(page.locator("article.review-row").first()).toContainText(
+    "Decision Check"
+  );
+});
+
+test("sort rules remain clickable and reorder by pointer and keyboard", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await openReviewTools(page);
+  await page.getByLabel("Sort: Priority").click();
+  await page.getByRole("button", { name: "Add sort field" }).click();
+
+  const secondaryHandle = page.getByRole("button", {
+    name: "Reorder Type sort, position 2 of 2"
+  });
+  await secondaryHandle.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByLabel("Sort: Type → Priority")).toBeVisible();
+  await expect(page).toHaveURL(/order=type%3Aasc/);
+  await expect(page).toHaveURL(/order=priority%3Aasc/);
+
+  const primaryHandle = page.getByRole("button", {
+    name: "Reorder Type sort, position 1 of 2"
+  });
+  const targetHandle = page.getByRole("button", {
+    name: "Reorder Priority sort, position 2 of 2"
+  });
+  const primaryBox = await primaryHandle.boundingBox();
+  const secondaryBox = await targetHandle.boundingBox();
+  expect(primaryBox).not.toBeNull();
+  expect(secondaryBox).not.toBeNull();
+  await page.mouse.move(
+    primaryBox!.x + primaryBox!.width / 2,
+    primaryBox!.y + primaryBox!.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    secondaryBox!.x + secondaryBox!.width / 2,
+    secondaryBox!.y + secondaryBox!.height / 2,
+    { steps: 8 }
+  );
+  await page.mouse.up();
+  await expect(page.getByLabel("Sort: Priority → Type")).toBeVisible();
+  await expect(page).toHaveURL(/order=priority%3Aasc/);
+  await expect(page).toHaveURL(/order=type%3Aasc/);
+
+  await page.getByLabel("Sort 1 field").selectOption({ label: "Visual score" });
+  await expect(page.getByLabel("Sort 1 field")).toBeFocused();
+  await expect(page).toHaveURL(/order=visual_score%3Adesc/);
+  await expect(page.getByLabel("Sort 1 direction")).toHaveValue("desc");
+  await expect(
+    page.getByText(/without a numeric score stay at the bottom/)
+  ).toBeVisible();
+  await expect(page.locator("article.review-row").nth(0)).toContainText(
+    "Publish the instruction-ablation result"
+  );
+  await expect(page.locator("article.review-row").nth(1)).toContainText(
+    "Review neighborhood permit brief"
+  );
+  await page.getByLabel("Sort 1 direction").selectOption("asc");
+  await expect(page).toHaveURL(/order=visual_score%3Aasc/);
+  await expect(page.locator("article.review-row").nth(0)).toContainText(
+    "Categorize Cloudflare · $240.00"
+  );
+  await expect(page.locator("article.review-row").nth(1)).toContainText(
+    "Choose follow-up window"
+  );
+  await page.getByLabel("Sort 2 field").selectOption({ label: "Caller" });
+  await expect(page).toHaveURL(/order=caller%3Aasc/);
+  await page.getByRole("button", { name: "Remove Caller sort" }).click();
+  await expect(page.getByLabel("Sort 2 field")).toHaveCount(0);
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByLabel("Sort: Visual score")).toBeFocused();
+});
+
+test("review filters are visible, composable, removable, and reset pagination", async ({
+  page
+}) => {
+  await page.goto("/human?fixture_dataset=pagination&page=2");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await openReviewTools(page);
+  await page.getByLabel("Filter", { exact: true }).click();
+  await page.getByRole("checkbox", { name: "High" }).check();
+  await expect(page).toHaveURL(/priority=high/);
+  await expect(page).not.toHaveURL(/page=2/);
+
+  await page.getByRole("checkbox", { name: "Research Question" }).check();
+  await expect(page).toHaveURL(/type=Research\+Question/);
+  await expect(page.getByLabel("Filter, 2 applied")).toBeVisible();
+  await expect(page.getByLabel("Applied filters")).toContainText(
+    "Priority: High"
+  );
+  await expect(page.getByLabel("Applied filters")).toContainText(
+    "Type: Research Question"
+  );
+  await expect(page.locator("article.review-row")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Close filter menu" }).click();
+  await page
+    .getByRole("button", { name: "Remove Type: Research Question filter" })
+    .click();
+  await expect(page).not.toHaveURL(/type=Research/);
+  await page.getByRole("button", { name: "Clear all" }).click();
+  await expect(page).not.toHaveURL(/priority=/);
+  await expect(page.getByLabel("Applied filters")).toHaveCount(0);
+});
+
+test("sort control supports every field and arbitrary priority changes", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await openReviewTools(page);
+  await page.getByLabel("Sort: Priority").click();
+
+  for (let rank = 2; rank <= 7; rank += 1) {
+    await page.getByRole("button", { name: "Add sort field" }).click();
+    await expect(page.getByLabel(`Sort ${rank} field`)).toBeFocused();
+  }
+  await expect(
+    page.getByRole("button", { name: "Add sort field" })
+  ).toHaveCount(0);
+  const fields = await page
+    .locator(".sort-rule-fields > .sort-select:first-child select")
+    .evaluateAll((selects) =>
+      selects.map((select) => (select as HTMLSelectElement).value)
+    );
+  expect(new Set(fields).size).toBe(7);
+
+  const lastHandle = page.getByRole("button", {
+    name: "Reorder Last updated sort, position 7 of 7"
+  });
+  await lastHandle.focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(
+    page.getByRole("button", {
+      name: "Reorder Last updated sort, position 6 of 7"
+    })
+  ).toBeFocused();
+
+  await page.getByRole("button", { name: "Remove Created sort" }).click();
+  await expect(page.getByLabel("Sort 7 field")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Add sort field" })
+  ).toBeVisible();
+});
+
+test("sort rules own their direction and reset it when the field changes", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await openReviewTools(page);
+  await page.getByLabel("Sort: Priority").click();
+  await page.getByLabel("Sort 1 direction").selectOption("desc");
+  await expect(page).toHaveURL(/order=priority%3Adesc/);
+  await page.getByLabel("Sort 1 field").selectOption({ label: "Type" });
+  await expect(page).toHaveURL(/order=type%3Aasc/);
+  await expect(page.getByLabel("Sort 1 direction")).toHaveValue("asc");
+});
+
+test("canonical search and status navigation preserve pending view changes", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await openReviewTools(page);
+  const search = page.getByRole("textbox", { name: "Search" });
+  await search.fill("follow-up ");
+  await expect(search).toHaveValue("follow-up ");
+  const filterTrigger = page.getByLabel("Filter", { exact: true });
+  await filterTrigger.click();
+  await expect(filterTrigger).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByRole("dialog", { name: "Filter reviews" })
+  ).toBeVisible();
+  const highFilter = page.getByRole("checkbox", { name: "High" });
+  await highFilter.check();
+  await expect(highFilter).toBeChecked();
+  await expect(page).toHaveURL(/search=follow-up(?:&|$)/);
+  await expect(page).not.toHaveURL(/follow-up\+/);
+  await expect(page).toHaveURL(/priority=high/);
+  await page.getByRole("button", { name: "Done" }).click();
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "History" })
+    .click();
+  await expect(page).toHaveURL(/status=answered/);
+  await expect(page).toHaveURL(/search=follow-up/);
+  await expect(page).toHaveURL(/priority=high/);
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/status=answered/);
+  await expect(page).toHaveURL(/search=follow-up/);
+  await expect(page).toHaveURL(/priority=high/);
 });
 
 test("a client mutation timeout keeps the optimistic projection", async ({
@@ -825,7 +1156,9 @@ test("a client mutation timeout keeps the optimistic projection", async ({
   await requestStarted.promise;
   await aborted;
   await expect(row).toBeHidden();
-  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+  await expect(page.locator("[data-sonner-toast]")).toContainText(
+    "Still confirming"
+  );
 });
 
 test("an all-failed bulk mutation restores the selected rows", async ({
@@ -880,7 +1213,9 @@ test("undo from a History toast does not leave a pending snapshot in History", a
   );
   await row.getByRole("button", { name: "Approve to send" }).click();
   const toast = page.locator("[data-sonner-toast]");
-  await expect(toast).toContainText("Done.");
+  await expect(toast).toContainText(
+    "Saved Approve to send for “Reply to Meridian about the renewal delay”."
+  );
 
   await page
     .getByRole("navigation", { name: "Primary" })
@@ -890,7 +1225,7 @@ test("undo from a History toast does not leave a pending snapshot in History", a
   await expect(row).toBeVisible();
   await toast.getByRole("button", { name: "Undo" }).click();
   await expect(
-    page.locator("[data-sonner-toast]").filter({ hasText: "Undone." })
+    page.locator("[data-sonner-toast]").filter({ hasText: "Restored" })
   ).toBeVisible();
   await expect(row).toHaveCount(0);
 });
@@ -977,7 +1312,7 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
   const approve = row.getByRole("button", { name: "Approve permit brief" });
   await expect(approve).toBeEnabled();
   const existingNotice = page.locator("[data-sonner-toast]");
-  await expect(existingNotice).toContainText("Done.");
+  await expect(existingNotice).toContainText("Saved response for this review.");
   const workspaceBody = page.locator(".workspace-body");
   const workspaceTopBeforeAction = await workspaceBody.evaluate(
     (element) => element.getBoundingClientRect().top
@@ -1029,14 +1364,10 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
   ).not.toBeNull();
   expect(Number(responseMs)).toBeLessThanOrEqual(20);
   await expect(row).toBeHidden();
-  await expect(existingNotice).toBeHidden();
-  expect(
-    await page
-      .getByText(/Submitting|Saving the decision/)
-      .evaluateAll((elements) =>
-        elements.filter((element) => element.getClientRects().length > 0)
-      )
-  ).toHaveLength(0);
+  await expect(existingNotice).toHaveCount(2);
+  await expect(
+    existingNotice.filter({ hasText: "Saving Approve permit brief" })
+  ).toContainText("“Review neighborhood permit brief”…");
   expect(
     await workspaceBody.evaluate(
       (element) => element.getBoundingClientRect().top
@@ -1045,7 +1376,12 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
 
   releaseActionResponse.resolve();
   const completionNotice = page.locator("[data-sonner-toast]");
-  await expect(completionNotice).toHaveText(/Done\.\s*Undo/);
+  const savedNotice = completionNotice.filter({
+    hasText:
+      "Saved Approve permit brief for “Review neighborhood permit brief”."
+  });
+  await expect(savedNotice).toBeVisible();
+  await expect(savedNotice.getByRole("button", { name: "Undo" })).toBeVisible();
   await expect(page.locator(".human-notice")).toHaveCount(0);
   expect(
     await workspaceBody.evaluate(
@@ -1103,7 +1439,7 @@ test("human actions submit undo and narrow bulk actions through server actions",
     "Answered with Archive"
   );
   await page.getByRole("button", { name: "Undo answer" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Undone.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Restored");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000525");
   await expect(
@@ -1149,7 +1485,7 @@ test("undo from detail closes the modal before the server answers", async ({
   ).toBe(false);
 
   releaseActionResponse.resolve();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Undone.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Restored");
 });
 
 test("failed file upload notice is not re-emitted by the browser", async ({
@@ -1168,7 +1504,7 @@ test("failed file upload notice is not re-emitted by the browser", async ({
   await page.getByRole("button", { name: "Attach evidence" }).click();
 
   await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "Action failed: invalid request."
+    "Could not save “Review neighborhood permit brief”: Action failed: invalid request."
   );
   await expect(
     reviewLinkByTitle(page, "Review neighborhood permit brief")
@@ -1210,7 +1546,7 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
 
   // Submitting from page 2 must land back on page 2, not a reset view.
   await decisionSurface.getByRole("button", { name: "Approve" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
   await expect(page).toHaveURL(/page=2/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
@@ -1218,7 +1554,9 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
     await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   }
   await openReviewTools(page);
-  await page.getByLabel("Search").fill("Beyond one hundred");
+  await page
+    .getByRole("textbox", { name: "Search" })
+    .fill("Beyond one hundred");
   await expect(page).toHaveURL(/search=Beyond\+one\+hundred/);
   await expect(page).not.toHaveURL(/page=2/);
   await expect(
@@ -1245,7 +1583,7 @@ test("review search sends one request after the trailing debounce", async ({
   const searchRequests = trackHumanSearchRequests(page);
 
   await openReviewTools(page);
-  await page.getByLabel("Search").fill("follow-up");
+  await page.getByRole("textbox", { name: "Search" }).fill("follow-up");
   expect(searchRequests).toHaveLength(0);
   await page.clock.runFor(299);
   expect(searchRequests).toHaveLength(0);
@@ -1264,7 +1602,7 @@ test("Enter and the Search button submit immediately and cancel debounce", async
   await page.clock.pauseAt(new Date("2026-07-11T10:00:00Z"));
   const searchRequests = trackHumanSearchRequests(page);
   await openReviewTools(page);
-  const searchInput = page.getByLabel("Search");
+  const searchInput = page.getByRole("textbox", { name: "Search" });
 
   await searchInput.fill("follow-up");
   await searchInput.press("Enter");
@@ -1273,25 +1611,27 @@ test("Enter and the Search button submit immediately and cancel debounce", async
   await page.clock.runFor(300);
   expect(searchRequests).toHaveLength(1);
 
-  await page.getByLabel("Search").fill("neighborhood permit");
+  await page
+    .getByRole("textbox", { name: "Search" })
+    .fill("neighborhood permit");
   await page.getByRole("button", { name: "Search" }).click();
   await expect(page).toHaveURL(/search=neighborhood\+permit/);
   await expect.poll(() => searchRequests.length).toBe(2);
   await page.clock.runFor(300);
   expect(searchRequests).toHaveLength(2);
 
-  await page.getByLabel("Search").fill("summary");
-  await chooseViewOption(page, "Sort", "Recent");
+  await page.getByRole("textbox", { name: "Search" }).fill("summary");
+  await choosePrimarySort(page, "Last updated");
   await expect(page).toHaveURL(/search=summary/);
-  await expect(page).toHaveURL(/sort=updated_at/);
+  await expect(page).toHaveURL(/order=updated_at%3Adesc/);
   await expect.poll(() => searchRequests.length).toBe(3);
   await page.clock.runFor(300);
   expect(searchRequests).toHaveLength(3);
 
-  await page.getByLabel("Search").fill("follow-up");
+  await page.getByRole("textbox", { name: "Search" }).fill("follow-up");
   await page.getByRole("button", { name: "Search" }).click();
   await expect(page).toHaveURL(/search=follow-up/);
-  await page.getByLabel("Search").fill("");
+  await page.getByRole("textbox", { name: "Search" }).fill("");
   await page.getByRole("link", { name: "History" }).click();
   await expect(page).toHaveURL(/status=answered/);
   await expect(page).not.toHaveURL(/search=/);
@@ -1337,7 +1677,7 @@ test("bulk actions only submit selected rows visible in the current filter", asy
   );
 
   await openReviewTools(page);
-  await page.getByLabel("Search").fill("follow-up");
+  await page.getByRole("textbox", { name: "Search" }).fill("follow-up");
   await expect(page.locator(".bulk-actions")).toContainText(
     "1 selected pending row"
   );
@@ -1420,12 +1760,22 @@ async function openReviewTools(page: Page) {
   }
 }
 
-async function chooseViewOption(page: Page, label: "Sort", option: string) {
-  await page.getByRole("button", { name: new RegExp(`^${label}:`) }).click();
-  await page
-    .getByRole("menu", { name: label })
-    .getByRole("menuitemradio", { name: option })
-    .click();
+async function choosePrimarySort(
+  page: Page,
+  option: string,
+  { keepOpen = false }: { keepOpen?: boolean } = {}
+) {
+  const trigger = page.getByLabel(/^Sort:/);
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") {
+    await trigger.click();
+  }
+  await page.getByLabel("Sort 1 field").selectOption({ label: option });
+  if (!keepOpen) {
+    await page
+      .getByRole("dialog", { name: "Sort reviews" })
+      .getByRole("button", { name: "Done" })
+      .click();
+  }
 }
 
 async function openSecondaryActions(page: Page) {
@@ -1469,7 +1819,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     buffer: Buffer.from("browser fixture file")
   });
   await page.getByRole("button", { name: "Attach evidence" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
@@ -1479,33 +1829,33 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     .getByLabel("Requested change")
     .fill("Tighten the handoff language.");
   await page.getByRole("button", { name: "Request edit" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
   await openSecondaryActions(page);
   await page.getByRole("button", { name: "Set review lane" }).click();
   await page.getByLabel("Operations").check();
   await page.getByRole("button", { name: "Set review lane" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date", exact: true }).click();
   await page.getByLabel("Follow-up date").fill("2026-07-15");
   await page.getByRole("button", { name: "Pick date" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
   await page.getByRole("button", { name: "Pick date and time" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Select checks" }).click();
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
   await page.getByRole("button", { name: "Select checks" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Done.");
+  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
 });
 
 test("row popup actions open a focused composer instead of the full detail", async ({
@@ -1781,7 +2131,7 @@ test("queue J does not steal typing from search or move past the last row", asyn
 }) => {
   await page.goto("/human");
   await openReviewTools(page);
-  const search = page.getByLabel("Search");
+  const search = page.getByRole("textbox", { name: "Search" });
   await search.click();
   await page.keyboard.press("j");
   await expect(search).toHaveValue("j");
@@ -1818,7 +2168,7 @@ test("mobile review navigation preserves the queue view", async ({
   ).toBeVisible();
   await page.getByRole("link", { name: "Close detail", exact: true }).click();
 
-  await expect(page).toHaveURL(/sort=updated_at/);
+  await expect(page).toHaveURL(/order=updated_at%3Adesc/);
   await expect(
     page.getByRole("link", { name: "Review queue" })
   ).toHaveAttribute("aria-current", "page");
