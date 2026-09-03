@@ -47,9 +47,14 @@ const (
 	CodeRateLimitExceeded        ErrorCode = "rate_limit_exceeded"
 	CodeQuotaLimitExceeded       ErrorCode = "quota_limit_exceeded"
 	CodeStorageLimitExceeded     ErrorCode = "storage_limit_exceeded"
+	CodeRetentionLimitExceeded   ErrorCode = "retention_limit_exceeded"
+	CodeBillingGraceExpired      ErrorCode = "billing_grace_expired"
 	CodeAuthorizationPending     ErrorCode = "authorization_pending"
 	CodeTemporaryUnavailable     ErrorCode = "temporary_unavailable"
 	CodeInternalError            ErrorCode = "internal_error"
+	CodeAPIUnavailable           ErrorCode = "api_unavailable"
+	CodeAPIResponseInvalid       ErrorCode = "api_response_invalid"
+	CodeLocalIO                  ErrorCode = "local_io_error"
 	CodeUsage                    ErrorCode = "usage_error"
 	CodeConfig                   ErrorCode = "config_error"
 	CodeCallerSelectionConflict  ErrorCode = "caller_selection_conflict"
@@ -81,9 +86,14 @@ var exitCodeByErrorCode = map[ErrorCode]int{
 	CodeRateLimitExceeded:        ExitTemporary,
 	CodeQuotaLimitExceeded:       ExitTemporary,
 	CodeStorageLimitExceeded:     ExitTemporary,
+	CodeRetentionLimitExceeded:   ExitTemporary,
+	CodeBillingGraceExpired:      ExitUnavailable,
 	CodeAuthorizationPending:     ExitTemporary,
 	CodeTemporaryUnavailable:     ExitTemporary,
 	CodeInternalError:            ExitSoftware,
+	CodeAPIUnavailable:           ExitTemporary,
+	CodeAPIResponseInvalid:       ExitTemporary,
+	CodeLocalIO:                  ExitTemporary,
 	CodeUsage:                    ExitUsage,
 	CodeConfig:                   ExitConfig,
 	CodeCallerSelectionConflict:  ExitConfig,
@@ -99,10 +109,10 @@ type FieldError struct {
 }
 
 type LimitMetadata struct {
-	LimitName       string  `json:"limit_name"`
-	LimitReasonCode string  `json:"limit_reason_code"`
-	LimitReason     string  `json:"limit_reason"`
-	LimitResetsAt   *string `json:"limit_resets_at"`
+	LimitName       string  `json:"limit_name,omitempty"`
+	LimitReasonCode string  `json:"limit_reason_code,omitempty"`
+	LimitReason     string  `json:"limit_reason,omitempty"`
+	LimitResetsAt   *string `json:"limit_resets_at,omitempty"`
 }
 
 type UpgradeMetadata struct {
@@ -113,6 +123,8 @@ type UpgradeMetadata struct {
 type AppError struct {
 	Code              ErrorCode        `json:"code"`
 	Message           string           `json:"message"`
+	HTTPStatus        int              `json:"http_status,omitempty"`
+	UpstreamErrorCode ErrorCode        `json:"upstream_error_code,omitempty"`
 	Fields            []FieldError     `json:"fields,omitempty"`
 	ErrorID           string           `json:"error_id,omitempty"`
 	RequestID         string           `json:"request_id,omitempty"`
@@ -120,6 +132,7 @@ type AppError struct {
 	RetryAfterSeconds *int             `json:"retry_after_seconds,omitempty"`
 	Limit             *LimitMetadata   `json:"limit,omitempty"`
 	Upgrade           *UpgradeMetadata `json:"upgrade,omitempty"`
+	WriteOutcome      string           `json:"write_outcome,omitempty"`
 	ExitCode          int              `json:"-"`
 	cause             error
 }

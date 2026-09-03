@@ -735,7 +735,7 @@ func runRevokeFlow(ctx context.Context, opts Options, runtime *controlPlaneRunti
 func runBrowserFlow(ctx context.Context, opts Options, operation string, start func(callbackURL string) (browserStartData, error)) (browserCallbackResult, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return browserCallbackResult{}, foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Could not bind a local callback listener on 127.0.0.1.")
+		return browserCallbackResult{}, foundation.NewAppError(foundation.CodeLocalIO, "Could not bind a local callback listener on 127.0.0.1.")
 	}
 	defer listener.Close()
 
@@ -761,7 +761,7 @@ func runBrowserFlow(ctx context.Context, opts Options, operation string, start f
 	go func() {
 		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			select {
-			case callbacks <- browserCallbackResult{Err: foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Local callback listener failed.")}:
+			case callbacks <- browserCallbackResult{Err: foundation.NewAppError(foundation.CodeLocalIO, "Local callback listener failed.")}:
 			default:
 			}
 		}

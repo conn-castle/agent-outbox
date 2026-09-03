@@ -456,7 +456,7 @@ func TestCallerConnectDevicePollHonorsRetryMetadata(t *testing.T) {
 			if polls == 1 {
 				w.Header().Set("Retry-After", "7")
 				w.WriteHeader(http.StatusAccepted)
-				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
+				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","correlation_id":"corr_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
 				return
 			}
 			writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_device","caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_device","prefix":"aob_live","last_chars":"zzzz","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, apiKey))
@@ -519,12 +519,12 @@ func TestCallerConnectDevicePollStopsAtDeviceExpiry(t *testing.T) {
 			polls++
 			if polls > 1 {
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_after_expiry","error":{"code":"invalid_request","message":"Poll happened after expiry."}}`)
+				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_after_expiry","correlation_id":"corr_after_expiry","error":{"code":"invalid_request","message":"Poll happened after expiry."}}`)
 				return
 			}
 			w.Header().Set("Retry-After", "7")
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
+			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","correlation_id":"corr_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
 		default:
 			t.Fatalf("unexpected request: %s", r.URL.Path)
 		}
@@ -578,7 +578,7 @@ func TestCallerConnectDevicePollRequestStopsAtDeviceExpiry(t *testing.T) {
 			case <-time.After(50 * time.Millisecond):
 				w.Header().Set("Retry-After", "5")
 				w.WriteHeader(http.StatusAccepted)
-				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
+				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","correlation_id":"corr_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
 			}
 		default:
 			t.Fatalf("unexpected request: %s", r.URL.Path)
@@ -645,7 +645,7 @@ func TestCallerConnectDeviceStartRequiresValidExpiry(t *testing.T) {
 				case "/api/caller/connect/device/poll":
 					polls++
 					w.WriteHeader(http.StatusBadRequest)
-					_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_unexpected_poll","error":{"code":"invalid_request","message":"Unexpected poll."}}`)
+					_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_unexpected_poll","correlation_id":"corr_unexpected_poll","error":{"code":"invalid_request","message":"Unexpected poll."}}`)
 				default:
 					t.Fatalf("unexpected request: %s", r.URL.Path)
 				}
@@ -684,12 +684,12 @@ func TestDeviceSetupCodeFlowStopsAtDeviceExpiry(t *testing.T) {
 			polls++
 			if polls > 1 {
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_after_expiry","error":{"code":"invalid_request","message":"Poll happened after expiry."}}`)
+				_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_after_expiry","correlation_id":"corr_after_expiry","error":{"code":"invalid_request","message":"Poll happened after expiry."}}`)
 				return
 			}
 			w.Header().Set("Retry-After", "7")
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
+			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_pending","correlation_id":"corr_pending","error":{"code":"authorization_pending","message":"Approval pending."}}`)
 		default:
 			t.Fatalf("unexpected request: %s", r.URL.Path)
 		}
@@ -1075,8 +1075,8 @@ func TestCallerConnectRollsBackLocalStateWhenActivateDefinitivelyDidNotCommit(t 
 		case "/api/caller/connect/device/poll":
 			writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_connect","caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_pending","prefix":"aob_live","last_chars":"pend","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, pendingKey))
 		case "/api/caller/connect/activate":
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_bad_activate","error":{"code":"validation_failed","message":"Activation request was invalid."}}`)
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_bad_activate","correlation_id":"corr_bad_activate","error":{"code":"validation_failed","message":"Activation request was invalid."}}`)
 		default:
 			t.Fatalf("unexpected request: %s", r.URL.Path)
 		}
@@ -1300,8 +1300,8 @@ func TestCallerRotateRestoresOldStateWhenActivateDefinitivelyDidNotCommit(t *tes
 		case "/api/caller/rotate/exchange":
 			writeEnvelope(w, fmt.Sprintf(`{"caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"replacement_credential":{"api_key":%q,"key_id":"key_new","prefix":"aob_live","last_chars":"newx","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"},"replaces_credential":{"key_id":"key_old","last_chars":"oldx"}}`, newKey))
 		case "/api/caller/rotate/activate":
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_bad_activate","error":{"code":"validation_failed","message":"Activation request was invalid."}}`)
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_bad_activate","correlation_id":"corr_bad_activate","error":{"code":"validation_failed","message":"Activation request was invalid."}}`)
 		default:
 			t.Fatalf("unexpected request: %s", r.URL.Path)
 		}
@@ -1682,7 +1682,7 @@ func TestDuplicateConnectSurfacesCallerAlreadyExistsWithoutLocalMutation(t *test
 			writeEnvelope(w, `{"device_code":"dev_connect","user_code":"ABCD-EFGH","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=ABCD-EFGH","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
 		case "/api/caller/connect/device/poll":
 			w.WriteHeader(http.StatusConflict)
-			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_dup","error":{"code":"caller_already_exists","message":"Caller already exists for this account."}}`)
+			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_dup","correlation_id":"corr_dup","error":{"code":"caller_already_exists","message":"Caller already exists for this account."}}`)
 		default:
 			t.Fatalf("unexpected request: %s", r.URL.Path)
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -126,6 +127,261 @@ func TestAPIClientParsesErrorEnvelopeRetryAfterAndDoesNotRetry(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("request count = %d, want no retry", requests)
+	}
+}
+
+func TestAPIClientRejectsMalformedErrorEnvelopeWithoutInventingServiceClassification(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Correlation-ID", "corr_proxy")
+		w.Header().Set("Retry-After", "4")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_body"}`)
+	}))
+	defer server.Close()
+
+	client := APIClient{
+		BaseURL:      server.URL,
+		NewRequestID: func() string { return "req_client" },
+	}
+	_, err := client.Do(context.Background(), http.MethodGet, "/api/example", "bearer-fixture", nil, nil)
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	if appErr.Code != CodeAPIResponseInvalid {
+		t.Fatalf("error code = %q, want %q", appErr.Code, CodeAPIResponseInvalid)
+	}
+	if appErr.HTTPStatus != http.StatusBadGateway {
+		t.Fatalf("http status = %d, want %d", appErr.HTTPStatus, http.StatusBadGateway)
+	}
+	if appErr.RequestID != "req_body" || appErr.CorrelationID != "corr_proxy" {
+		t.Fatalf("response ids = %q/%q", appErr.RequestID, appErr.CorrelationID)
+	}
+	if appErr.RetryAfterSeconds == nil || *appErr.RetryAfterSeconds != 4 {
+		t.Fatalf("retry-after was not preserved")
+	}
+	if appErr.WriteOutcome != "" {
+		t.Fatalf("read failure write outcome = %q, want omitted", appErr.WriteOutcome)
+	}
+
+	var rendered bytes.Buffer
+	RenderError(&rendered, true, appErr)
+	errorBody := renderedErrorBody(t, rendered.Bytes())
+	if errorBody["http_status"] != float64(http.StatusBadGateway) {
+		t.Fatalf("rendered http status = %v", errorBody["http_status"])
+	}
+	if errorBody["code"] != string(CodeAPIResponseInvalid) {
+		t.Fatalf("rendered error code = %v", errorBody["code"])
+	}
+}
+
+func TestAPIClientRetainsGeneratedRequestIDWhenResponseCannotEchoIt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+
+	client := APIClient{
+		BaseURL:      server.URL,
+		NewRequestID: func() string { return "req_client" },
+	}
+	_, err := client.Do(context.Background(), http.MethodGet, "/api/example", "bearer-fixture", nil, nil)
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	if appErr.Code != CodeAPIResponseInvalid || appErr.RequestID != "req_client" {
+		t.Fatalf("error code/request id = %q/%q", appErr.Code, appErr.RequestID)
+	}
+	if appErr.CorrelationID != "" {
+		t.Fatalf("invented correlation id = %q", appErr.CorrelationID)
+	}
+}
+
+func TestAPIClientClassifiesTransportAndBodyReadFailuresAsUnavailable(t *testing.T) {
+	t.Run("transport", func(t *testing.T) {
+		client := APIClient{
+			BaseURL: "https://app.example",
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("fixture transport failure")
+			})},
+			NewRequestID: func() string { return "req_transport" },
+		}
+
+		_, err := client.Do(context.Background(), http.MethodGet, "/api/example", "bearer-fixture", nil, nil)
+		assertAPIUnavailable(t, err, "req_transport")
+	})
+
+	t.Run("response body", func(t *testing.T) {
+		client := APIClient{
+			BaseURL: "https://app.example",
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(errorReader{err: errors.New("fixture body failure")}),
+				}, nil
+			})},
+			NewRequestID: func() string { return "req_body_read" },
+		}
+
+		_, err := client.Do(context.Background(), http.MethodGet, "/api/example", "bearer-fixture", nil, nil)
+		assertAPIUnavailable(t, err, "req_body_read")
+	})
+}
+
+func TestAPIClientPreservesSafeUnderlyingErrorFactsFromInvalidEnvelope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_partial","error":{"code":"temporary_unavailable","message":"sensitive upstream text","fields":[{"path":"payload","code":"unsafe","message":"sensitive field text"}],"retry_after_seconds":3,"error_id":"err_partial","limit":{"limit_name":"api_requests","limit_reason_code":"api_limit","limit_reason":"sensitive limit text","limit_resets_at":"2026-09-04T00:00:00Z"},"upgrade":{"message":"sensitive upgrade text","url":"https://example.test/private"}}}`)
+	}))
+	defer server.Close()
+
+	_, err := (APIClient{BaseURL: server.URL}).Do(context.Background(), http.MethodGet, "/api/example", "bearer-fixture", nil, nil)
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	if appErr.Code != CodeAPIResponseInvalid || appErr.UpstreamErrorCode != CodeTemporaryUnavailable {
+		t.Fatalf("error code/upstream code = %q/%q", appErr.Code, appErr.UpstreamErrorCode)
+	}
+	if appErr.ErrorID != "err_partial" {
+		t.Fatalf("error id = %q", appErr.ErrorID)
+	}
+	if appErr.RetryAfterSeconds == nil || *appErr.RetryAfterSeconds != 3 {
+		t.Fatalf("body retry metadata was not preserved")
+	}
+	if appErr.Limit == nil || appErr.Limit.LimitName != "api_requests" || appErr.Limit.LimitReasonCode != "api_limit" || appErr.Limit.LimitReason != "" {
+		t.Fatalf("safe partial limit metadata = %#v", appErr.Limit)
+	}
+	if appErr.Upgrade != nil || len(appErr.Fields) != 0 {
+		t.Fatalf("untrusted structured metadata survived: fields=%#v upgrade=%#v", appErr.Fields, appErr.Upgrade)
+	}
+	var rendered bytes.Buffer
+	RenderError(&rendered, true, appErr)
+	for _, forbidden := range []string{"sensitive upstream text", "sensitive field text", "sensitive limit text", "sensitive upgrade text", "example.test/private"} {
+		if strings.Contains(rendered.String(), forbidden) {
+			t.Fatalf("rendered diagnostics included untrusted text %q: %s", forbidden, rendered.String())
+		}
+	}
+}
+
+func TestAPIClientDropsSecretsAndFreeTextFromInvalidEnvelopeDiagnostics(t *testing.T) {
+	const secret = "aob_live_keyid_supersecret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Request-ID", "req_"+secret)
+		w.Header().Set("X-Correlation-ID", "corr."+secret)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_`+secret+`","correlation_id":"corr.`+secret+`","error":{"code":"`+secret+`","message":"upstream `+secret+`","fields":[{"path":"payload","code":"unsafe","message":"field `+secret+`"}],"error_id":"err_`+secret+`","retry_after_seconds":3,"limit":{"limit_name":"limit_`+secret+`","limit_reason_code":"reason_`+secret+`","limit_reason":"limit `+secret+`"},"upgrade":{"url":"https://example.test/?key=`+secret+`"}}}`)
+	}))
+	defer server.Close()
+
+	client := APIClient{BaseURL: server.URL, NewRequestID: func() string { return "req_generated" }}
+	_, err := client.Do(context.Background(), http.MethodGet, "/api/example", secret, nil, nil)
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	var rendered bytes.Buffer
+	RenderError(&rendered, true, appErr)
+	if strings.Contains(rendered.String(), secret) {
+		t.Fatalf("rendered diagnostics leaked credential: %s", rendered.String())
+	}
+	if appErr.RequestID != "req_generated" || appErr.CorrelationID != "" || appErr.UpstreamErrorCode != "" || appErr.ErrorID != "" || appErr.Limit != nil || appErr.Upgrade != nil || len(appErr.Fields) != 0 {
+		t.Fatalf("unsafe malformed-envelope metadata survived sanitization: %#v", appErr)
+	}
+}
+
+func TestAPIClientWriteOutcomesDistinguishValidErrorsAndAmbiguousResponses(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		body        string
+		wantCode    ErrorCode
+		wantOutcome string
+	}{
+		{
+			name:        "classified rejection",
+			status:      http.StatusTooManyRequests,
+			body:        `{"ok":false,"request_id":"req_write","correlation_id":"corr_write","error":{"code":"rate_limit_exceeded","message":"Rate limit exceeded."}}`,
+			wantCode:    CodeRateLimitExceeded,
+			wantOutcome: "not_accepted",
+		},
+		{
+			name:        "malformed response",
+			status:      http.StatusServiceUnavailable,
+			body:        `{}`,
+			wantCode:    CodeAPIResponseInvalid,
+			wantOutcome: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer server.Close()
+
+			client := APIClient{
+				BaseURL:      server.URL,
+				NewRequestID: func() string { return "req_client" },
+			}
+			_, err := client.DoWrite(context.Background(), http.MethodPost, "/api/input/send", "bearer-fixture", map[string]string{"caller_item_id": "stable"}, nil)
+			appErr, ok := err.(*AppError)
+			if !ok {
+				t.Fatalf("error type = %T, want *AppError", err)
+			}
+			if appErr.Code != tt.wantCode || appErr.WriteOutcome != tt.wantOutcome {
+				t.Fatalf("error code/write outcome = %q/%q, want %q/%q", appErr.Code, appErr.WriteOutcome, tt.wantCode, tt.wantOutcome)
+			}
+		})
+	}
+}
+
+func TestAPIClientWriteSuccessWithUndecodableDataReportsAccepted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true,"request_id":"req_write","correlation_id":"corr_write","data":"not-an-object"}`)
+	}))
+	defer server.Close()
+
+	var out struct {
+		Value string `json:"value"`
+	}
+	_, err := (APIClient{BaseURL: server.URL}).DoWrite(context.Background(), http.MethodPost, "/api/input/send", "bearer-fixture", map[string]string{"caller_item_id": "stable"}, &out)
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	if appErr.Code != CodeAPIResponseInvalid || appErr.WriteOutcome != "accepted" {
+		t.Fatalf("error code/write outcome = %q/%q", appErr.Code, appErr.WriteOutcome)
+	}
+}
+
+func TestAPIClientRawWriteSuccessRequiresNonemptyObjectData(t *testing.T) {
+	for _, data := range []string{"", `null`, `[]`, `{}`, `"not-an-object"`} {
+		t.Run(data, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				body := `{"ok":true,"request_id":"req_write","correlation_id":"corr_write"}`
+				if data != "" {
+					body = `{"ok":true,"request_id":"req_write","correlation_id":"corr_write","data":` + data + `}`
+				}
+				_, _ = io.WriteString(w, body)
+			}))
+			defer server.Close()
+
+			var out json.RawMessage
+			_, err := (APIClient{BaseURL: server.URL}).DoWrite(context.Background(), http.MethodPost, "/api/input/send", "bearer-fixture", nil, &out)
+			appErr, ok := err.(*AppError)
+			if !ok {
+				t.Fatalf("error type = %T, want *AppError", err)
+			}
+			if appErr.Code != CodeAPIResponseInvalid || appErr.WriteOutcome != "accepted" {
+				t.Fatalf("error code/write outcome = %q/%q", appErr.Code, appErr.WriteOutcome)
+			}
+		})
 	}
 }
 
@@ -331,6 +587,79 @@ func TestAPIClientDownloadAcceptsFilesAtOrBelowLimit(t *testing.T) {
 	}
 }
 
+func TestAPIClientDownloadClassifiesResponseReadFailureAsUnavailable(t *testing.T) {
+	client := APIClient{
+		BaseURL: "https://app.example",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(errorReader{err: errors.New("fixture download read failure")}),
+			}, nil
+		})},
+		NewRequestID: func() string { return "req_download" },
+	}
+
+	dst := &countingWriter{}
+	_, err := client.Download(context.Background(), "/api/output/out_1/files/file_1", "bearer-fixture", dst)
+	assertAPIUnavailable(t, err, "req_download")
+	if dst.bytes != 0 {
+		t.Fatalf("destination bytes = %d, want 0", dst.bytes)
+	}
+}
+
+func TestAPIClientDownloadClassifiesDestinationWriteFailureAsLocalIO(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "file bytes")
+	}))
+	defer server.Close()
+
+	_, err := (APIClient{BaseURL: server.URL}).Download(
+		context.Background(),
+		"/api/output/out_1/files/file_1",
+		"bearer-fixture",
+		errorWriter{err: errors.New("fixture destination failure")},
+	)
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	if appErr.Code != CodeLocalIO {
+		t.Fatalf("error code = %q, want %q", appErr.Code, CodeLocalIO)
+	}
+}
+
+func TestKnownAPIErrorCodesHaveExpectedHTTPStatuses(t *testing.T) {
+	want := map[ErrorCode]int{
+		CodeInvalidRequest: http.StatusBadRequest, CodeInvalidJSON: http.StatusBadRequest,
+		CodeRequestTooLarge:  http.StatusRequestEntityTooLarge,
+		CodeValidationFailed: http.StatusUnprocessableEntity, CodeUnsupportedIcon: http.StatusUnprocessableEntity,
+		CodeUnsafeHTML: http.StatusUnprocessableEntity, CodeUnsafeColor: http.StatusUnprocessableEntity,
+		CodeInvalidActionResponse: http.StatusUnprocessableEntity,
+		CodeUpgradeRequired:       http.StatusPaymentRequired, CodeBillingGraceExpired: http.StatusPaymentRequired,
+		CodeAuthenticationRequired: http.StatusUnauthorized, CodeInvalidCallerCredentials: http.StatusUnauthorized,
+		CodeAuthorizationFailed: http.StatusForbidden, CodeNotFound: http.StatusNotFound,
+		CodeCallerAlreadyExists: http.StatusConflict, CodePendingContentConflict: http.StatusConflict,
+		CodeAnsweredUnacknowledged: http.StatusConflict, CodeInputNotPending: http.StatusConflict,
+		CodeStaleInputRevision: http.StatusConflict, CodeOutputAlreadyRead: http.StatusConflict,
+		CodeRateLimitExceeded: http.StatusTooManyRequests, CodeQuotaLimitExceeded: http.StatusTooManyRequests,
+		CodeStorageLimitExceeded: http.StatusTooManyRequests, CodeRetentionLimitExceeded: http.StatusTooManyRequests,
+		CodeAuthorizationPending: http.StatusAccepted, CodeTemporaryUnavailable: http.StatusServiceUnavailable,
+		CodeInternalError: http.StatusInternalServerError,
+	}
+	if len(want) != 27 {
+		t.Fatalf("status contract covers %d codes, want 27", len(want))
+	}
+	for code, status := range want {
+		if !knownAPIErrorCode(code) {
+			t.Errorf("knownAPIErrorCode(%q) = false", code)
+		}
+		if got := expectedHTTPStatus(code); got != status {
+			t.Errorf("expectedHTTPStatus(%q) = %d, want %d", code, got, status)
+		}
+	}
+}
+
 func assertDownloadOversizeError(t *testing.T, err error) {
 	t.Helper()
 
@@ -338,12 +667,45 @@ func assertDownloadOversizeError(t *testing.T, err error) {
 	if !ok {
 		t.Fatalf("error type = %T, want *AppError", err)
 	}
-	if appErr.Code != CodeTemporaryUnavailable {
-		t.Fatalf("error code = %q, want %q", appErr.Code, CodeTemporaryUnavailable)
+	if appErr.Code != CodeAPIResponseInvalid {
+		t.Fatalf("error code = %q, want %q", appErr.Code, CodeAPIResponseInvalid)
 	}
 	if appErr.Message != "Output file exceeded the maximum size." {
 		t.Fatalf("error message = %q", appErr.Message)
 	}
+}
+
+func assertAPIUnavailable(t *testing.T, err error, requestID string) {
+	t.Helper()
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	if appErr.Code != CodeAPIUnavailable || appErr.RequestID != requestID {
+		t.Fatalf("error code/request id = %q/%q, want %q/%q", appErr.Code, appErr.RequestID, CodeAPIUnavailable, requestID)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+type errorWriter struct {
+	err error
+}
+
+func (w errorWriter) Write([]byte) (int, error) {
+	return 0, w.err
 }
 
 type countingWriter struct {

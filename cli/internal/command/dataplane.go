@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -171,7 +172,7 @@ func inputJSONFileCommand(use string, short string, apiPath string, opts Options
 				return err
 			}
 			var data json.RawMessage
-			meta, err := runtime.Client.Do(cmd.Context(), http.MethodPost, apiPath, runtime.Bearer, body, &data)
+			meta, err := runtime.Client.DoWrite(cmd.Context(), http.MethodPost, apiPath, runtime.Bearer, body, &data)
 			if err != nil {
 				return err
 			}
@@ -208,7 +209,7 @@ func inputDeleteCommand(opts Options, flags *rootFlags) *cobra.Command {
 				return err
 			}
 			var data json.RawMessage
-			meta, err := runtime.Client.Do(
+			meta, err := runtime.Client.DoWrite(
 				cmd.Context(),
 				http.MethodPost,
 				"/api/input/delete",
@@ -384,7 +385,7 @@ func outputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 
 			var data json.RawMessage
 			path := "/api/output/" + url.PathEscape(args[0]) + "/read"
-			meta, err := runtime.Client.Do(cmd.Context(), http.MethodPost, path, runtime.Bearer, nil, &data)
+			meta, err := runtime.Client.DoWrite(cmd.Context(), http.MethodPost, path, runtime.Bearer, nil, &data)
 			if err != nil {
 				return err
 			}
@@ -473,7 +474,7 @@ func outputAckCommand(opts Options, flags *rootFlags) *cobra.Command {
 			}
 			var data json.RawMessage
 			path := "/api/output/" + url.PathEscape(args[0]) + "/ack"
-			meta, err := runtime.Client.Do(cmd.Context(), http.MethodPost, path, runtime.Bearer, nil, &data)
+			meta, err := runtime.Client.DoWrite(cmd.Context(), http.MethodPost, path, runtime.Bearer, nil, &data)
 			if err != nil {
 				return err
 			}
@@ -681,12 +682,18 @@ func fetchPages(ctx context.Context, runtime *apiRuntime, kind string, page page
 	}
 
 	for {
-		nextPage, err := fetchPage(ctx, runtime, kind, page.PageSize, cursor)
+		nextPage, meta, err := fetchPage(ctx, runtime, kind, page.PageSize, cursor)
 		if err != nil {
+			if kind == "read-all" && len(result.Data.Items) > 0 {
+				var appErr *foundation.AppError
+				if errors.As(err, &appErr) && appErr.WriteOutcome != "accepted" {
+					appErr.WriteOutcome = "unknown"
+				}
+			}
 			return nil, err
 		}
 		if err := validatePage(nextPage); err != nil {
-			return nil, err
+			return nil, invalidPageResponseError(kind, err.Error(), meta)
 		}
 		if result.Data.ReadyCount == nil && nextPage.ReadyCount != nil {
 			result.Data.ReadyCount = nextPage.ReadyCount
@@ -713,11 +720,19 @@ func fetchPages(ctx context.Context, runtime *apiRuntime, kind string, page page
 
 		nextCursor := strings.TrimSpace(*nextPage.NextCursor)
 		if seenCursors[nextCursor] {
-			return nil, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned a repeated pagination cursor.")
+			return nil, invalidPageResponseError(kind, "Agent Outbox API returned a repeated pagination cursor.", meta)
 		}
 		seenCursors[nextCursor] = true
 		cursor = nextCursor
 	}
+}
+
+func invalidPageResponseError(kind string, message string, meta *foundation.APIResponse) *foundation.AppError {
+	appErr := foundation.NewAPIResponseInvalidError(message, meta)
+	if kind == "read-all" {
+		appErr.WriteOutcome = "accepted"
+	}
+	return appErr
 }
 
 func unavailableCount(data paginatedData) int {
@@ -727,7 +742,7 @@ func unavailableCount(data paginatedData) int {
 	return *data.UnavailableCount
 }
 
-func fetchPage(ctx context.Context, runtime *apiRuntime, kind string, pageSize int, cursor string) (*queuePage, error) {
+func fetchPage(ctx context.Context, runtime *apiRuntime, kind string, pageSize int, cursor string) (*queuePage, *foundation.APIResponse, error) {
 	var page queuePage
 	switch kind {
 	case "input-list":
@@ -736,16 +751,16 @@ func fetchPage(ctx context.Context, runtime *apiRuntime, kind string, pageSize i
 		if cursor != "" {
 			values.Set("cursor", cursor)
 		}
-		_, err := runtime.Client.Do(ctx, http.MethodGet, "/api/input/list?"+values.Encode(), runtime.Bearer, nil, &page)
-		return &page, err
+		meta, err := runtime.Client.Do(ctx, http.MethodGet, "/api/input/list?"+values.Encode(), runtime.Bearer, nil, &page)
+		return &page, meta, err
 	case "check":
 		values := url.Values{}
 		values.Set("limit", fmt.Sprintf("%d", pageSize))
 		if cursor != "" {
 			values.Set("cursor", cursor)
 		}
-		_, err := runtime.Client.Do(ctx, http.MethodGet, "/api/output/check?"+values.Encode(), runtime.Bearer, nil, &page)
-		return &page, err
+		meta, err := runtime.Client.Do(ctx, http.MethodGet, "/api/output/check?"+values.Encode(), runtime.Bearer, nil, &page)
+		return &page, meta, err
 	case "read-all":
 		body := struct {
 			Limit  int     `json:"limit"`
@@ -754,10 +769,10 @@ func fetchPage(ctx context.Context, runtime *apiRuntime, kind string, pageSize i
 		if cursor != "" {
 			body.Cursor = &cursor
 		}
-		_, err := runtime.Client.Do(ctx, http.MethodPost, "/api/output/read-all", runtime.Bearer, body, &page)
-		return &page, err
+		meta, err := runtime.Client.DoWrite(ctx, http.MethodPost, "/api/output/read-all", runtime.Bearer, body, &page)
+		return &page, meta, err
 	default:
-		return nil, foundation.NewAppError(foundation.CodeInternalError, "Unknown pagination kind.")
+		return nil, nil, foundation.NewAppError(foundation.CodeInternalError, "Unknown pagination kind.")
 	}
 }
 
@@ -808,14 +823,14 @@ func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string
 			return nil, foundation.NewUsageError("Output path already exists; pass --force to overwrite it.")
 		}
 	} else if !os.IsNotExist(err) {
-		return nil, foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Could not inspect output path.")
+		return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not inspect output path.")
 	}
 
 	dir := filepath.Dir(outputPath)
 	base := filepath.Base(outputPath)
 	file, err := os.CreateTemp(dir, "."+base+".tmp-*")
 	if err != nil {
-		return nil, foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Could not open output path for writing.")
+		return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not open output path for writing.")
 	}
 	tempPath := file.Name()
 	closeFile := true
@@ -829,7 +844,7 @@ func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string
 		}
 	}()
 	if err := file.Chmod(0o600); err != nil {
-		return nil, foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Could not secure output file permissions.")
+		return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not secure output file permissions.")
 	}
 
 	meta, err := runtime.Client.Download(ctx, apiPath, runtime.Bearer, file)
@@ -837,22 +852,22 @@ func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string
 		return nil, err
 	}
 	if err := file.Sync(); err != nil {
-		return nil, foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Could not finish writing output file.")
+		return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not finish writing output file.")
 	}
 	if err := file.Close(); err != nil {
 		closeFile = false
-		return nil, foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Could not finish writing output file.")
+		return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not finish writing output file.")
 	}
 	closeFile = false
 	if !force {
 		if _, err := os.Stat(outputPath); err == nil {
 			return nil, foundation.NewUsageError("Output path already exists; pass --force to overwrite it.")
 		} else if !os.IsNotExist(err) {
-			return nil, foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Could not inspect output path.")
+			return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not inspect output path.")
 		}
 	}
 	if err := os.Rename(tempPath, outputPath); err != nil {
-		return nil, foundation.NewAppError(foundation.CodeTemporaryUnavailable, "Could not move output file into place.")
+		return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not move output file into place.")
 	}
 	keepTemp = true
 	return meta, nil

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -56,6 +57,7 @@ type APIResponse struct {
 	RequestID         string
 	CorrelationID     string
 	RetryAfterSeconds *int
+	HTTPStatus        int
 }
 
 type DownloadResponse struct {
@@ -65,12 +67,19 @@ type DownloadResponse struct {
 }
 
 type apiEnvelope struct {
-	OK            bool            `json:"ok"`
+	OK            *bool           `json:"ok"`
 	RequestID     string          `json:"request_id"`
 	CorrelationID string          `json:"correlation_id"`
 	Data          json.RawMessage `json:"data"`
 	Error         *apiErrorBody   `json:"error"`
 }
+
+type requestKind int
+
+const (
+	readRequest requestKind = iota
+	writeRequest
+)
 
 type apiErrorBody struct {
 	Code              ErrorCode        `json:"code"`
@@ -83,6 +92,17 @@ type apiErrorBody struct {
 }
 
 func (c APIClient) Do(ctx context.Context, method string, apiPath string, bearerToken string, body any, out any) (*APIResponse, error) {
+	return c.do(ctx, method, apiPath, bearerToken, body, out, readRequest)
+}
+
+// DoWrite performs a request whose successful processing mutates durable
+// server state. Errors report whether acceptance is known so callers never
+// have to infer write safety from a transport or response-contract failure.
+func (c APIClient) DoWrite(ctx context.Context, method string, apiPath string, bearerToken string, body any, out any) (*APIResponse, error) {
+	return c.do(ctx, method, apiPath, bearerToken, body, out, writeRequest)
+}
+
+func (c APIClient) do(ctx context.Context, method string, apiPath string, bearerToken string, body any, out any, kind requestKind) (*APIResponse, error) {
 	base, err := normalizeBaseURL(c.BaseURL)
 	if err != nil {
 		return nil, err
@@ -106,7 +126,8 @@ func (c APIClient) Do(ctx context.Context, method string, apiPath string, bearer
 		return nil, WrapConfigError("Could not build API request.", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Request-ID", c.requestID())
+	requestID := c.requestID()
+	req.Header.Set("X-Request-ID", requestID)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -120,45 +141,58 @@ func (c APIClient) Do(ctx context.Context, method string, apiPath string, bearer
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not reach Agent Outbox API.", cause: err}
+		return nil, responseFailure(CodeAPIUnavailable, "Could not reach Agent Outbox API.", &APIResponse{RequestID: requestID}, kind, err)
 	}
 	defer resp.Body.Close()
 
 	responseMeta := &APIResponse{
-		RequestID:         resp.Header.Get("X-Request-ID"),
-		CorrelationID:     resp.Header.Get("X-Correlation-ID"),
+		RequestID:         firstSafeDiagnosticID(resp.Header.Get("X-Request-ID"), requestID),
+		CorrelationID:     firstSafeDiagnosticID(resp.Header.Get("X-Correlation-ID")),
 		RetryAfterSeconds: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now()),
+		HTTPStatus:        resp.StatusCode,
 	}
 
 	data, oversized, err := readBodyWithLimit(resp.Body, maxJSONResponseBytes)
 	if err != nil {
-		return responseMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not read Agent Outbox API response.", cause: err}
+		return responseMeta, responseFailure(CodeAPIUnavailable, "Could not read Agent Outbox API response.", responseMeta, kind, err)
 	}
 	if oversized {
-		return responseMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Agent Outbox API response exceeded the maximum size."}
+		return responseMeta, responseFailure(CodeAPIResponseInvalid, "Agent Outbox API response exceeded the maximum size.", responseMeta, kind, nil)
 	}
 
 	var envelope apiEnvelope
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return responseMeta, statusError(resp.StatusCode, responseMeta, "Agent Outbox API returned a non-JSON response.")
+		return responseMeta, responseFailure(CodeAPIResponseInvalid, "Agent Outbox API returned a non-JSON response.", responseMeta, kind, err)
 	}
-	if envelope.RequestID != "" {
+	if safeDiagnosticID(envelope.RequestID) {
 		responseMeta.RequestID = envelope.RequestID
 	}
-	if envelope.CorrelationID != "" {
+	if safeDiagnosticID(envelope.CorrelationID) {
 		responseMeta.CorrelationID = envelope.CorrelationID
 	}
 
-	if !envelope.OK {
-		appErr := appErrorFromEnvelope(&envelope, responseMeta)
+	if err := validateEnvelope(&envelope, resp.StatusCode); err != nil {
+		return responseMeta, invalidEnvelopeFailure(&envelope, responseMeta, kind, err.Error())
+	}
+
+	if !*envelope.OK {
+		appErr := appErrorFromEnvelope(&envelope, responseMeta, kind)
 		return responseMeta, appErr
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return responseMeta, statusError(resp.StatusCode, responseMeta, "Agent Outbox API returned an unsuccessful response.")
+	if _, ok := out.(*json.RawMessage); ok && !isNonEmptyJSONObject(envelope.Data) {
+		appErr := responseFailure(CodeAPIResponseInvalid, "Agent Outbox API response data is not a nonempty JSON object.", responseMeta, kind, nil)
+		if kind == writeRequest {
+			appErr.WriteOutcome = "accepted"
+		}
+		return responseMeta, appErr
 	}
 	if out != nil && len(envelope.Data) > 0 {
 		if err := json.Unmarshal(envelope.Data, out); err != nil {
-			return responseMeta, WrapConfigError("Could not decode Agent Outbox API response data.", err)
+			appErr := responseFailure(CodeAPIResponseInvalid, "Could not decode Agent Outbox API response data.", responseMeta, kind, err)
+			if kind == writeRequest {
+				appErr.WriteOutcome = "accepted"
+			}
+			return responseMeta, appErr
 		}
 	}
 	return responseMeta, nil
@@ -179,7 +213,8 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 		return nil, WrapConfigError("Could not build API request.", err)
 	}
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("X-Request-ID", c.requestID())
+	requestID := c.requestID()
+	req.Header.Set("X-Request-ID", requestID)
 	if bearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 	}
@@ -190,14 +225,15 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not reach Agent Outbox API.", cause: err}
+		return nil, responseFailure(CodeAPIUnavailable, "Could not reach Agent Outbox API.", &APIResponse{RequestID: requestID}, readRequest, err)
 	}
 	defer resp.Body.Close()
 
 	responseMeta := APIResponse{
-		RequestID:         resp.Header.Get("X-Request-ID"),
-		CorrelationID:     resp.Header.Get("X-Correlation-ID"),
+		RequestID:         firstSafeDiagnosticID(resp.Header.Get("X-Request-ID"), requestID),
+		CorrelationID:     firstSafeDiagnosticID(resp.Header.Get("X-Correlation-ID")),
 		RetryAfterSeconds: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now()),
+		HTTPStatus:        resp.StatusCode,
 	}
 	downloadMeta := &DownloadResponse{
 		APIResponse:   responseMeta,
@@ -208,48 +244,55 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, oversized, readErr := readBodyWithLimit(resp.Body, maxJSONResponseBytes)
 		if readErr != nil {
-			return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not read Agent Outbox API response.", cause: readErr}
+			return downloadMeta, responseFailure(CodeAPIUnavailable, "Could not read Agent Outbox API response.", &downloadMeta.APIResponse, readRequest, readErr)
 		}
 		if oversized {
-			return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Agent Outbox API response exceeded the maximum size."}
+			return downloadMeta, responseFailure(CodeAPIResponseInvalid, "Agent Outbox API response exceeded the maximum size.", &downloadMeta.APIResponse, readRequest, nil)
 		}
 		var envelope apiEnvelope
 		if err := json.Unmarshal(data, &envelope); err != nil {
-			return downloadMeta, statusError(resp.StatusCode, &downloadMeta.APIResponse, "Agent Outbox API returned an unsuccessful file-download response.")
+			return downloadMeta, responseFailure(CodeAPIResponseInvalid, "Agent Outbox API returned a non-JSON file-download error response.", &downloadMeta.APIResponse, readRequest, err)
 		}
-		if envelope.RequestID != "" {
+		if safeDiagnosticID(envelope.RequestID) {
 			downloadMeta.RequestID = envelope.RequestID
 		}
-		if envelope.CorrelationID != "" {
+		if safeDiagnosticID(envelope.CorrelationID) {
 			downloadMeta.CorrelationID = envelope.CorrelationID
 		}
-		return downloadMeta, appErrorFromEnvelope(&envelope, &downloadMeta.APIResponse)
+		if err := validateEnvelope(&envelope, resp.StatusCode); err != nil {
+			return downloadMeta, invalidEnvelopeFailure(&envelope, &downloadMeta.APIResponse, readRequest, err.Error())
+		}
+		return downloadMeta, appErrorFromEnvelope(&envelope, &downloadMeta.APIResponse, readRequest)
 	}
 
 	if resp.ContentLength > maxOutputFileDownloadBytes {
-		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Output file exceeded the maximum size."}
+		return downloadMeta, responseFailure(CodeAPIResponseInvalid, "Output file exceeded the maximum size.", &downloadMeta.APIResponse, readRequest, nil)
 	}
 	staged, err := os.CreateTemp("", "agent-outbox-download-*")
 	if err != nil {
-		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not stage output file bytes.", cause: err}
+		return downloadMeta, responseFailure(CodeLocalIO, "Could not stage output file bytes.", &downloadMeta.APIResponse, readRequest, err)
 	}
 	defer func() {
 		_ = staged.Close()
 		_ = os.Remove(staged.Name())
 	}()
 
-	oversized, err := copyBodyWithLimit(staged, resp.Body, maxOutputFileDownloadBytes)
+	trackedBody := &readErrorTracker{reader: resp.Body}
+	oversized, err := copyBodyWithLimit(staged, trackedBody, maxOutputFileDownloadBytes)
 	if err != nil {
-		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not stage output file bytes.", cause: err}
+		if trackedBody.err != nil {
+			return downloadMeta, responseFailure(CodeAPIUnavailable, "Could not read Agent Outbox API response.", &downloadMeta.APIResponse, readRequest, trackedBody.err)
+		}
+		return downloadMeta, responseFailure(CodeLocalIO, "Could not stage output file bytes.", &downloadMeta.APIResponse, readRequest, err)
 	}
 	if oversized {
-		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Output file exceeded the maximum size."}
+		return downloadMeta, responseFailure(CodeAPIResponseInvalid, "Output file exceeded the maximum size.", &downloadMeta.APIResponse, readRequest, nil)
 	}
 	if _, err := staged.Seek(0, io.SeekStart); err != nil {
-		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not stage output file bytes.", cause: err}
+		return downloadMeta, responseFailure(CodeLocalIO, "Could not stage output file bytes.", &downloadMeta.APIResponse, readRequest, err)
 	}
 	if _, err := io.Copy(dst, staged); err != nil {
-		return downloadMeta, &AppError{Code: CodeTemporaryUnavailable, Message: "Could not write output file bytes.", cause: err}
+		return downloadMeta, responseFailure(CodeLocalIO, "Could not write output file bytes.", &downloadMeta.APIResponse, readRequest, err)
 	}
 	return downloadMeta, nil
 }
@@ -279,6 +322,24 @@ func readBodyWithLimit(reader io.Reader, byteLimit int64) ([]byte, bool, error) 
 		return nil, false, err
 	}
 	return data, int64(len(data)) > byteLimit, nil
+}
+
+type readErrorTracker struct {
+	reader io.Reader
+	err    error
+}
+
+func (r *readErrorTracker) Read(data []byte) (int, error) {
+	n, err := r.reader.Read(data)
+	if err != nil && !errors.Is(err, io.EOF) {
+		r.err = err
+	}
+	return n, err
+}
+
+func isNonEmptyJSONObject(data json.RawMessage) bool {
+	var object map[string]json.RawMessage
+	return json.Unmarshal(data, &object) == nil && object != nil && len(object) > 0
 }
 
 func joinBaseAndPath(base string, apiPath string) (string, error) {
@@ -324,10 +385,7 @@ func (c APIClient) requestID() string {
 	return "req_" + hex.EncodeToString(random)
 }
 
-func appErrorFromEnvelope(envelope *apiEnvelope, meta *APIResponse) *AppError {
-	if envelope.Error == nil {
-		return statusError(500, meta, "Agent Outbox API returned an error envelope without an error.")
-	}
+func appErrorFromEnvelope(envelope *apiEnvelope, meta *APIResponse, kind requestKind) *AppError {
 	retryAfter := envelope.Error.RetryAfterSeconds
 	if retryAfter == nil {
 		retryAfter = meta.RetryAfterSeconds
@@ -335,6 +393,7 @@ func appErrorFromEnvelope(envelope *apiEnvelope, meta *APIResponse) *AppError {
 	return &AppError{
 		Code:              envelope.Error.Code,
 		Message:           envelope.Error.Message,
+		HTTPStatus:        meta.HTTPStatus,
 		Fields:            envelope.Error.Fields,
 		ErrorID:           envelope.Error.ErrorID,
 		RequestID:         meta.RequestID,
@@ -342,32 +401,189 @@ func appErrorFromEnvelope(envelope *apiEnvelope, meta *APIResponse) *AppError {
 		RetryAfterSeconds: retryAfter,
 		Limit:             envelope.Error.Limit,
 		Upgrade:           envelope.Error.Upgrade,
+		WriteOutcome:      writeOutcome(kind, "not_accepted"),
 	}
 }
 
-func statusError(status int, meta *APIResponse, message string) *AppError {
-	code := CodeTemporaryUnavailable
-	switch {
-	case status == http.StatusUnauthorized:
-		code = CodeAuthenticationRequired
-	case status == http.StatusForbidden:
-		code = CodeAuthorizationFailed
-	case status == http.StatusNotFound:
-		code = CodeNotFound
-	case status == http.StatusConflict:
-		code = CodePendingContentConflict
-	case status >= 400 && status < 500:
-		code = CodeInvalidRequest
-	case status >= 500:
-		code = CodeTemporaryUnavailable
+func validateEnvelope(envelope *apiEnvelope, status int) error {
+	if envelope.OK == nil {
+		return errors.New("Agent Outbox API response is missing the required ok field.")
 	}
+	if *envelope.OK {
+		if status < 200 || status >= 300 {
+			return errors.New("Agent Outbox API returned a success envelope with an unsuccessful HTTP status.")
+		}
+		if len(envelope.Data) == 0 {
+			return errors.New("Agent Outbox API success response is missing data.")
+		}
+		if envelope.Error != nil {
+			return errors.New("Agent Outbox API success response unexpectedly contains an error.")
+		}
+		return nil
+	}
+	if !safeDiagnosticID(envelope.RequestID) || !safeDiagnosticID(envelope.CorrelationID) {
+		return errors.New("Agent Outbox API error response is missing required request or correlation identifiers.")
+	}
+	if envelope.Error == nil {
+		return errors.New("Agent Outbox API error response is missing an error object.")
+	}
+	if len(envelope.Data) > 0 {
+		return errors.New("Agent Outbox API error response unexpectedly contains data.")
+	}
+	if !knownAPIErrorCode(envelope.Error.Code) || strings.TrimSpace(envelope.Error.Message) == "" {
+		return errors.New("Agent Outbox API error response does not contain a usable public error code and message.")
+	}
+	if envelope.Error.RetryAfterSeconds != nil && *envelope.Error.RetryAfterSeconds < 0 {
+		return errors.New("Agent Outbox API error response contains invalid retry metadata.")
+	}
+	if envelope.Error.ErrorID != "" && !safeDiagnosticID(envelope.Error.ErrorID) {
+		return errors.New("Agent Outbox API error response contains an invalid error identifier.")
+	}
+	if status != expectedHTTPStatus(envelope.Error.Code) {
+		return errors.New("Agent Outbox API error response code does not match its HTTP status.")
+	}
+	return nil
+}
+
+func expectedHTTPStatus(code ErrorCode) int {
+	switch code {
+	case CodeInvalidRequest, CodeInvalidJSON:
+		return http.StatusBadRequest
+	case CodeRequestTooLarge:
+		return http.StatusRequestEntityTooLarge
+	case CodeValidationFailed, CodeUnsupportedIcon, CodeUnsafeHTML, CodeUnsafeColor, CodeInvalidActionResponse:
+		return http.StatusUnprocessableEntity
+	case CodeUpgradeRequired, CodeBillingGraceExpired:
+		return http.StatusPaymentRequired
+	case CodeAuthenticationRequired, CodeInvalidCallerCredentials:
+		return http.StatusUnauthorized
+	case CodeAuthorizationFailed:
+		return http.StatusForbidden
+	case CodeNotFound:
+		return http.StatusNotFound
+	case CodeCallerAlreadyExists, CodePendingContentConflict, CodeAnsweredUnacknowledged,
+		CodeInputNotPending, CodeStaleInputRevision, CodeOutputAlreadyRead:
+		return http.StatusConflict
+	case CodeRateLimitExceeded, CodeQuotaLimitExceeded, CodeStorageLimitExceeded, CodeRetentionLimitExceeded:
+		return http.StatusTooManyRequests
+	case CodeAuthorizationPending:
+		return http.StatusAccepted
+	case CodeTemporaryUnavailable:
+		return http.StatusServiceUnavailable
+	case CodeInternalError:
+		return http.StatusInternalServerError
+	default:
+		return 0
+	}
+}
+
+func knownAPIErrorCode(code ErrorCode) bool {
+	switch code {
+	case CodeInvalidRequest, CodeInvalidJSON, CodeRequestTooLarge, CodeValidationFailed,
+		CodeUnsupportedIcon, CodeUnsafeHTML, CodeUnsafeColor, CodeInvalidActionResponse,
+		CodeUpgradeRequired, CodeAuthenticationRequired, CodeInvalidCallerCredentials,
+		CodeAuthorizationFailed, CodeNotFound, CodeCallerAlreadyExists,
+		CodePendingContentConflict, CodeAnsweredUnacknowledged, CodeInputNotPending,
+		CodeStaleInputRevision, CodeOutputAlreadyRead, CodeRateLimitExceeded,
+		CodeQuotaLimitExceeded, CodeStorageLimitExceeded, CodeRetentionLimitExceeded,
+		CodeBillingGraceExpired, CodeAuthorizationPending,
+		CodeTemporaryUnavailable, CodeInternalError:
+		return true
+	default:
+		return false
+	}
+}
+
+func responseFailure(code ErrorCode, message string, meta *APIResponse, kind requestKind, cause error) *AppError {
 	return &AppError{
 		Code:              code,
 		Message:           message,
+		HTTPStatus:        meta.HTTPStatus,
 		RequestID:         meta.RequestID,
 		CorrelationID:     meta.CorrelationID,
 		RetryAfterSeconds: meta.RetryAfterSeconds,
+		WriteOutcome:      writeOutcome(kind, "unknown"),
+		cause:             cause,
 	}
+}
+
+func NewAPIResponseInvalidError(message string, meta *APIResponse) *AppError {
+	if meta == nil {
+		meta = &APIResponse{}
+	}
+	return responseFailure(CodeAPIResponseInvalid, message, meta, readRequest, nil)
+}
+
+func invalidEnvelopeFailure(envelope *apiEnvelope, meta *APIResponse, kind requestKind, message string) *AppError {
+	appErr := responseFailure(CodeAPIResponseInvalid, message, meta, kind, nil)
+	if kind == writeRequest && envelope.OK != nil && *envelope.OK && meta.HTTPStatus >= 200 && meta.HTTPStatus < 300 {
+		appErr.WriteOutcome = "accepted"
+	}
+	if envelope.Error == nil {
+		return appErr
+	}
+	if knownAPIErrorCode(envelope.Error.Code) && strings.TrimSpace(envelope.Error.Message) != "" {
+		appErr.UpstreamErrorCode = envelope.Error.Code
+	}
+	if safeDiagnosticID(envelope.Error.ErrorID) {
+		appErr.ErrorID = envelope.Error.ErrorID
+	}
+	if envelope.Error.RetryAfterSeconds != nil && *envelope.Error.RetryAfterSeconds >= 0 {
+		appErr.RetryAfterSeconds = envelope.Error.RetryAfterSeconds
+	}
+	appErr.Limit = safePartialLimitMetadata(envelope.Error.Limit)
+	return appErr
+}
+
+func safePartialLimitMetadata(limit *LimitMetadata) *LimitMetadata {
+	if limit == nil || !safeDiagnosticID(limit.LimitName) || !safeDiagnosticID(limit.LimitReasonCode) {
+		return nil
+	}
+	result := &LimitMetadata{
+		LimitName:       limit.LimitName,
+		LimitReasonCode: limit.LimitReasonCode,
+	}
+	if limit.LimitResetsAt != nil {
+		if _, err := time.Parse(time.RFC3339, *limit.LimitResetsAt); err == nil {
+			result.LimitResetsAt = limit.LimitResetsAt
+		}
+	}
+	return result
+}
+
+func writeOutcome(kind requestKind, outcome string) string {
+	if kind == writeRequest {
+		return outcome
+	}
+	return ""
+}
+
+func firstSafeDiagnosticID(values ...string) string {
+	for _, value := range values {
+		if safeDiagnosticID(value) {
+			return value
+		}
+	}
+	return ""
+}
+
+func safeDiagnosticID(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	if strings.Contains(strings.ToLower(value), "aob_live_") {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			strings.ContainsRune("._:-", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func retryAfterSeconds(value string, now time.Time) *int {
