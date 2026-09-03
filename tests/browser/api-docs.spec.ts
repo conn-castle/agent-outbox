@@ -590,12 +590,27 @@ test("the compact legal header keeps its navigation inside the menu", async ({
   test.skip(!isMobile, "Compact-header contract");
 
   await page.goto("/privacy-policy");
+  await expect(
+    page.getByRole("heading", { name: "Privacy Policy", level: 1 })
+  ).toBeVisible();
 
   const primaryNav = page.getByRole("navigation", { name: "Primary" });
   const toggle = primaryNav.getByRole("button", { name: "Menu" });
   await expect(toggle).toBeVisible();
-  await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    primaryNav.getByRole("link", { name: "Get started" })
+  ).toBeVisible();
 
-  await toggle.click();
+  // SiteNav is a client island. A single click before hydration is a no-op,
+  // and closed compact links are display:none so getByRole cannot see them.
+  await expect(async () => {
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+      await toggle.click();
+    }
+    await expect(toggle).toHaveAttribute("aria-expanded", "true", {
+      timeout: 500
+    });
+  }).toPass();
   await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeVisible();
 });
