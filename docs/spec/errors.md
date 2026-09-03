@@ -55,6 +55,27 @@ structured logs. Error ids must not encode review content or secrets.
 `fields`, `retry_after_seconds`, `limit`, `upgrade`, and `error_id` are omitted
 or null when not relevant.
 
+CLI errors produced after an HTTP response was received also include the safe
+numeric `http_status`. For data-plane operations that mutate queue state, CLI
+errors include `write_outcome`: `not_accepted` when the command received a
+definitive rejection before any mutation was accepted, `accepted` when a valid
+success response proved acceptance but its data was unusable, or `unknown` when
+the command cannot prove its complete effect. Valid `internal_error` and
+`temporary_unavailable` envelopes are `unknown` because they do not prove the
+mutation was rejected. A multi-page `output read --all` that accepts an earlier
+page and then receives a rejection or ambiguous failure reports `unknown`,
+because some results were marked read even though the command did not finish. If
+every attempted page returned an accepted success but the last page data was
+unusable, it reports `accepted`. Reconcile an `unknown` input write by its
+stable `caller_item_id`; do not create a new id for a retry.
+
+When an invalid envelope still contains a known public error-code candidate, the
+CLI preserves it as `upstream_error_code` without treating it as Agent Outbox's
+classification. It also retains safe error, request, and correlation
+identifiers, numeric retry metadata, and content-free limit identifiers that
+could be decoded. Credential-shaped identifiers, the raw response, and untrusted
+upstream messages are discarded.
+
 Field-error paths are stable enough for agents to point at invalid input, but
 they must not echo raw HTML, free-text answers, file contents, caller API keys,
 or full request bodies.
@@ -95,23 +116,24 @@ The CLI uses BSD `sysexits`-style numeric exits for stable agent branching. `0`
 means success. Unknown local failures use `1`. API error codes from the catalog
 below map as follows:
 
-| Exit code | Name              | Error codes                                                                                                                                         |
-| --------: | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-|        64 | usage             | `invalid_request`, `usage_error`, and local command-line usage errors.                                                                              |
-|        65 | data              | `invalid_json`, `request_too_large`, `validation_failed`, `unsupported_icon`, `unsafe_html`, `unsafe_color`, `invalid_action_response`.             |
-|        66 | not found         | `not_found`.                                                                                                                                        |
-|        69 | unavailable       | `upgrade_required`.                                                                                                                                 |
-|        70 | software          | `internal_error`.                                                                                                                                   |
-|        73 | conflict          | `caller_already_exists`, `pending_content_conflict`, `answered_unacknowledged`, `input_not_pending`, `stale_input_revision`, `output_already_read`. |
-|        74 | secret store      | `secret_store_error`.                                                                                                                               |
-|        75 | temporary failure | `rate_limit_exceeded`, `quota_limit_exceeded`, `storage_limit_exceeded`, `authorization_pending`, `temporary_unavailable`.                          |
-|        77 | permission        | `authentication_required`, `invalid_caller_credentials`, `authorization_failed`.                                                                    |
-|        78 | config            | Local CLI config and caller-selection errors such as `config_error`, `caller_selection_conflict`, `ambiguous_caller`, and `unknown_caller`.         |
+| Exit code | Name              | Error codes                                                                                                                                                                                                         |
+| --------: | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|        64 | usage             | `invalid_request`, `usage_error`, and local command-line usage errors.                                                                                                                                              |
+|        65 | data              | `invalid_json`, `request_too_large`, `validation_failed`, `unsupported_icon`, `unsafe_html`, `unsafe_color`, `invalid_action_response`.                                                                             |
+|        66 | not found         | `not_found`.                                                                                                                                                                                                        |
+|        69 | unavailable       | `upgrade_required`, `billing_grace_expired`.                                                                                                                                                                        |
+|        70 | software          | `internal_error`.                                                                                                                                                                                                   |
+|        73 | conflict          | `caller_already_exists`, `pending_content_conflict`, `answered_unacknowledged`, `input_not_pending`, `stale_input_revision`, `output_already_read`.                                                                 |
+|        74 | secret store      | `secret_store_error`.                                                                                                                                                                                               |
+|        75 | temporary failure | `rate_limit_exceeded`, `quota_limit_exceeded`, `storage_limit_exceeded`, `retention_limit_exceeded`, `authorization_pending`, `temporary_unavailable`, `api_unavailable`, `api_response_invalid`, `local_io_error`. |
+|        77 | permission        | `authentication_required`, `invalid_caller_credentials`, `authorization_failed`.                                                                                                                                    |
+|        78 | config            | Local CLI config and caller-selection errors such as `config_error`, `caller_selection_conflict`, `ambiguous_caller`, and `unknown_caller`.                                                                         |
 
 ## Local CLI Error Codes
 
-These codes are emitted by the local CLI JSON error renderer and do not have an
-HTTP status. They use the same envelope shape as API errors.
+These codes are emitted by the local CLI rather than classified by the Agent
+Outbox API. They use the same envelope shape as API errors. API-boundary errors
+include `http_status` only when an HTTP response was received.
 
 | Code                        | Exit code | Meaning                                                                                                                                        |
 | --------------------------- | --------: | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -121,6 +143,9 @@ HTTP status. They use the same envelope shape as API errors.
 | `ambiguous_caller`          |        78 | More than one local caller is configured and no explicit caller selector was supplied.                                                         |
 | `unknown_caller`            |        78 | The selected local caller name is absent from the selected config file.                                                                        |
 | `secret_store_error`        |        74 | The owner-only local credentials file or selected caller credential is missing, malformed, insecurely permissioned, unreadable, or unwritable. |
+| `api_unavailable`           |        75 | The CLI could not obtain or finish reading an API response. This is not an Agent Outbox service error classification.                          |
+| `api_response_invalid`      |        75 | The CLI received a response that did not satisfy the public API envelope contract or could not decode its typed data.                          |
+| `local_io_error`            |        75 | Local non-secret file or stream I/O failed. This is not an Agent Outbox service error classification.                                          |
 
 ## Error Catalog
 

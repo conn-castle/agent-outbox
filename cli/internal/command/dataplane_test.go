@@ -85,6 +85,83 @@ func TestInputSendPostsFileAndRendersStableJSON(t *testing.T) {
 	}
 }
 
+func TestInputSendMalformedResponseReportsUnknownWriteOutcome(t *testing.T) {
+	inputPath := filepath.Join(t.TempDir(), "input.json")
+	if err := os.WriteFile(inputPath, []byte(`{
+  "caller_item_id": "item_ambiguous",
+  "row_type": {"display": "Email", "icon": "mail"},
+  "title": "Title",
+  "subtitle": "Subtitle",
+  "summary": "Summary",
+  "link_buttons": [],
+  "actions": [{"display": "Approve", "icon": "check", "value": "approve", "overflow": false, "popup": {"kind": "none"}}]
+}`), 0o600); err != nil {
+		t.Fatalf("write input fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Correlation-ID", "corr_proxy")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "send", "--file", inputPath})
+	if code != foundation.ExitTemporary {
+		t.Fatalf("exit code = %d, want temporary; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for ambiguous write")
+	}
+	for _, fragment := range []string{
+		`"code":"api_response_invalid"`,
+		`"http_status":503`,
+		`"request_id":"req_cli"`,
+		`"correlation_id":"corr_proxy"`,
+		`"write_outcome":"unknown"`,
+	} {
+		if !strings.Contains(stderr, fragment) {
+			t.Fatalf("stderr missing %s: %s", fragment, stderr)
+		}
+	}
+	if strings.Contains(stderr, `"code":"temporary_unavailable"`) {
+		t.Fatalf("malformed response was misclassified as a service transient: %s", stderr)
+	}
+}
+
+func TestInputSendAcceptedResponseWithUnusableDataReportsAccepted(t *testing.T) {
+	inputPath := filepath.Join(t.TempDir(), "input.json")
+	if err := os.WriteFile(inputPath, []byte(`{
+  "caller_item_id": "item_accepted",
+  "row_type": {"display": "Email", "icon": "mail"},
+  "title": "Title",
+  "subtitle": "Subtitle",
+  "summary": "Summary",
+  "link_buttons": [],
+  "actions": [{"display": "Approve", "icon": "check", "value": "approve", "overflow": false, "popup": {"kind": "none"}}]
+}`), 0o600); err != nil {
+		t.Fatalf("write input fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true,"request_id":"req_accepted","correlation_id":"corr_accepted","data":{}}`)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "send", "--file", inputPath})
+	if code != foundation.ExitTemporary {
+		t.Fatalf("exit code = %d, want temporary; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for unusable response data")
+	}
+	for _, fragment := range []string{`"code":"api_response_invalid"`, `"write_outcome":"accepted"`, `"request_id":"req_accepted"`} {
+		if !strings.Contains(stderr, fragment) {
+			t.Fatalf("stderr missing %s: %s", fragment, stderr)
+		}
+	}
+}
+
 func TestInputSendRejectsInvalidSchemaBeforeHTTP(t *testing.T) {
 	inputPath := filepath.Join(t.TempDir(), "input.json")
 	if err := os.WriteFile(inputPath, []byte(`{"caller_item_id":"item_1"}`), 0o600); err != nil {
@@ -366,6 +443,38 @@ func TestOutputReadAllAutoPagesWithPostBodies(t *testing.T) {
 	}
 }
 
+func TestOutputReadAllLaterRejectionReportsEarlierAcceptedPage(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("request body was not JSON: %v", err)
+		}
+		if body["cursor"] == nil {
+			_, _ = io.WriteString(w, `{"ok":true,"data":{"items":[{"output_result_id":"out_1","caller_id":"caller_123","caller_item_id":"item_1","action_value":"approve","response":{"kind":"none"},"answered_at":"2026-07-02T20:00:00Z","answered_by":"user_123"}],"unavailable_outputs":[],"unavailable_count":0,"has_more":true,"next_cursor":"cursor_2","returned_count":1,"page_limit":1}}`)
+			return
+		}
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_rate","correlation_id":"corr_rate","error":{"code":"rate_limit_exceeded","message":"Rate limit exceeded."}}`)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "output", "read", "--all", "--page-size", "1"})
+	if code != foundation.ExitTemporary {
+		t.Fatalf("exit code = %d, want temporary; stderr: %s", code, stderr)
+	}
+	if requests != 2 {
+		t.Fatalf("request count = %d, want 2", requests)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for incomplete read-all")
+	}
+	if !strings.Contains(stderr, `"code":"rate_limit_exceeded"`) || !strings.Contains(stderr, `"write_outcome":"unknown"`) {
+		t.Fatalf("stderr did not require reconciliation after an earlier accepted page: %s", stderr)
+	}
+}
+
 func TestOutputReadAllTextWarnsForUnavailableOutputs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -586,8 +695,8 @@ func TestOutputFileGetForcePreservesExistingFileWhenDownloadIsOversized(t *testi
 	if strings.Contains(stdout, rawBytes) || strings.Contains(stderr, rawBytes) {
 		t.Fatalf("raw bytes leaked into command output; stdout=%q stderr=%q", stdout, stderr)
 	}
-	if !strings.Contains(stderr, `"code":"temporary_unavailable"`) {
-		t.Fatalf("stderr missing temporary-unavailable error: %s", stderr)
+	if !strings.Contains(stderr, `"code":"api_response_invalid"`) {
+		t.Fatalf("stderr missing invalid-response error: %s", stderr)
 	}
 	written, err := os.ReadFile(outputPath)
 	if err != nil {
@@ -696,8 +805,8 @@ func TestOutputFileGetStdoutRejectsLengthlessOversizeWithoutRawBytes(t *testing.
 	if strings.Contains(stderr, "raw-download-test-bytes") {
 		t.Fatalf("raw bytes leaked into diagnostics: %q", stderr)
 	}
-	if !strings.Contains(stderr, "temporary_unavailable") {
-		t.Fatalf("stderr missing temporary-unavailable error: %s", stderr)
+	if !strings.Contains(stderr, "api_response_invalid") {
+		t.Fatalf("stderr missing invalid-response error: %s", stderr)
 	}
 }
 

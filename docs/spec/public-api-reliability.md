@@ -115,6 +115,19 @@ Several lifecycle conditions intentionally share a status:
 - `5xx` means retry only operations that are safe for the caller’s current
   state, using bounded exponential backoff and jitter.
 
+The CLI distinguishes valid API errors from transport and response-contract
+failures. For a mutating data-plane command, inspect `write_outcome` before
+retrying: `not_accepted` is a definitive rejection, `accepted` means the server
+returned success even though the CLI could not decode its data, and `unknown`
+requires reconciliation. Valid `internal_error` and `temporary_unavailable`
+envelopes report `unknown` because a server-side failure can follow a committed
+write. A multi-page `output read --all` reports `unknown` when an earlier page
+was accepted and a later page was rejected or ambiguous, so assume returned
+results may already have been marked read and fetch them again by stable result
+id or by repeating the read. In particular, retry `input send` with the same
+`caller_item_id` and content only after checking the caller-scoped input list;
+never invent a new id to work around an ambiguous response.
+
 Every JSON response includes `request_id` and `correlation_id`. Preserve them in
 content-safe operational logs and support reports. The generated
 [error-code reference](public-api-reference.md#error-codes) lists every public
