@@ -315,11 +315,11 @@ Rules:
 - Do not hardcode caller-specific source semantics or downstream execution.
 - Skipped state is presentation-only; it is not backend lifecycle state and does
   not create output.
-- Queue ordering supports a primary and optional secondary key over priority,
-  row type, normalized numeric card-visual score, visible title, caller, created
-  time, or updated time. Missing numeric visuals always sort last. The database
-  applies the full ordering before bounded pagination; recency and input id
-  remain deterministic trailing tie-breakers.
+- Queue ordering supports one or more ordered keys over priority, row type,
+  normalized numeric card-visual score, visible title, caller, created time, or
+  updated time. Missing numeric visuals always sort last. The database applies
+  the full ordering before bounded pagination; recency and input id remain
+  deterministic trailing tie-breakers.
 - Search, filters, and sorting are separate URL-backed view controls. Priority
   and row-type filters allow multiple values within each facet, combine facets
   with AND semantics, and run in the database before bounded pagination. The

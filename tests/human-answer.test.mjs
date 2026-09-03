@@ -760,7 +760,8 @@ test(
         `update public.agent_outbox_output_results set previous_input_updated_at = null where output_result_id = $1`,
         [legacyAnswer.outputResultId]
       );
-      const fallbackStartedAt = Date.now();
+      const fallbackNow = await client.query("select now() as now");
+      const fallbackStartedAt = fallbackNow.rows[0].now;
       const legacyUndo = await undoHumanAnswerBeforeReadInTransaction(
         (statement) => client.query(statement.sql, statement.values),
         {
@@ -777,9 +778,10 @@ test(
         `select updated_at from public.agent_outbox_input_items where input_item_id = $1`,
         [ids.inputItemId]
       );
-      assert.ok(
-        legacyRestored.rows[0].updated_at.getTime() >= fallbackStartedAt,
-        "legacy outputs without a captured timestamp must fall back to restore time"
+      assert.equal(
+        legacyRestored.rows[0].updated_at.toISOString(),
+        fallbackStartedAt.toISOString(),
+        "legacy outputs without a captured timestamp must fall back to the transaction now()"
       );
     } catch (error) {
       bodyError = error;

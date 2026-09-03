@@ -553,9 +553,10 @@ export function humanReviewTypeOptionsStatement(
   }
   return {
     sql: `
-      select distinct i.row_type_display
+      select i.row_type_display
       from public.agent_outbox_input_items i
       where ${filters.join("\n        and ")}
+      group by i.row_type_display
       order by
         translate(
           i.row_type_display,

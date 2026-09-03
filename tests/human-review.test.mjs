@@ -772,9 +772,12 @@ test("human review list statement scopes rows by account and supports focused fi
 test("human review type options stay status scoped and ignore active facets", () => {
   const statement = humanReviewTypeOptionsStatement(context, "answered");
   assert.deepEqual(statement.values, [context.accountId, "answered"]);
-  assert.match(statement.sql, /select distinct i\.row_type_display/);
+  assert.match(statement.sql, /select i\.row_type_display/);
+  assert.doesNotMatch(statement.sql, /select\s+distinct/i);
   assert.match(statement.sql, /where i\.account_id = \$1/);
   assert.match(statement.sql, /i\.status = \$2/);
+  assert.match(statement.sql, /group by i\.row_type_display/);
+  assert.match(statement.sql, /order by\s+translate\(\s*i\.row_type_display/);
   assert.doesNotMatch(statement.sql, /limit|offset/i);
 });
 

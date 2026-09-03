@@ -1702,8 +1702,7 @@ function SortRule({
   onSortChange,
   onDirectionChange,
   onMove,
-  onRemove,
-  fieldRef
+  onRemove
 }: {
   rank: number;
   total: number;
@@ -1714,7 +1713,6 @@ function SortRule({
   onDirectionChange: (direction: HumanReviewSortDirection) => void;
   onMove: (offset: -1 | 1) => void;
   onRemove?: () => void;
-  fieldRef?: React.RefObject<HTMLSelectElement | null>;
 }) {
   const {
     attributes,
@@ -1766,7 +1764,6 @@ function SortRule({
         )}
         <div className="sort-rule-fields">
           <SortSelect
-            fieldRef={fieldRef}
             ariaLabel={`Sort ${rank} field`}
             value={sort}
             options={SORT_OPTIONS.filter(
@@ -1809,21 +1806,18 @@ function SortSelect({
   ariaLabel,
   value,
   options,
-  onChange,
-  fieldRef
+  onChange
 }: {
   className?: string;
   ariaLabel: string;
   value: string;
   options: ReadonlyArray<{ value: string; label: string }>;
   onChange: (value: string) => void;
-  fieldRef?: React.RefObject<HTMLSelectElement | null>;
 }) {
   return (
     <label className={`sort-select${className ? ` ${className}` : ""}`}>
       <span className="sr-only">{ariaLabel}</span>
       <select
-        ref={fieldRef}
         aria-label={ariaLabel}
         value={value}
         onChange={(event) => onChange(event.target.value)}

@@ -33,6 +33,7 @@ import {
   parseUndoHumanAnswerForm
 } from "../src/server/human-action-form.ts";
 import { CLIENT_EVENT_BODY_BYTE_LIMIT } from "../src/shared/client-events-contract.ts";
+import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../src/shared/human-review-view.ts";
 import { SYSTEM_CONTRACT } from "../src/shared/system-contract.ts";
 import {
   clientEventServerTestInternals,
@@ -1556,17 +1557,7 @@ test("human review server actions emit failure telemetry only on failure paths",
           }
         },
         "../../src/shared/human-review-view": {
-          HUMAN_REVIEW_VIEW_PARAM_KEYS: [
-            "search",
-            "status",
-            "priority",
-            "type",
-            "sort",
-            "dir",
-            "then",
-            "then_dir",
-            "page"
-          ]
+          HUMAN_REVIEW_VIEW_PARAM_KEYS
         }
       })
     );
@@ -1579,6 +1570,7 @@ test("human review server actions emit failure telemetry only on failure paths",
   submitForm.set("popupKind", "none");
   submitForm.set("view.page", "2");
   submitForm.set("view.then", "priority");
+  submitForm.append("view.order", "type:asc");
   submitForm.append("view.priority", "urgent");
   submitForm.append("view.priority", "high");
 
@@ -1606,6 +1598,11 @@ test("human review server actions emit failure telemetry only on failure paths",
   );
   assert.match(redirects[0] ?? "", /page=2/);
   assert.match(redirects[0] ?? "", /then=priority/);
+  assert.match(
+    redirects[0] ?? "",
+    /order=type%3Aasc/,
+    "server-action redirects must preserve canonical sort order"
+  );
 
   emitted.length = 0;
   redirects.length = 0;
