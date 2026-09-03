@@ -1096,10 +1096,20 @@ test("canonical search and status navigation preserve pending view changes", asy
   page
 }) => {
   await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await openReviewTools(page);
-  await page.getByRole("textbox", { name: "Search" }).fill("follow-up ");
-  await page.getByLabel("Filter", { exact: true }).click();
-  await page.getByRole("checkbox", { name: "High" }).check();
+  const search = page.getByRole("textbox", { name: "Search" });
+  await search.fill("follow-up ");
+  await expect(search).toHaveValue("follow-up ");
+  const filterTrigger = page.getByLabel("Filter", { exact: true });
+  await filterTrigger.click();
+  await expect(filterTrigger).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.getByRole("dialog", { name: "Filter reviews" })
+  ).toBeVisible();
+  const highFilter = page.getByRole("checkbox", { name: "High" });
+  await highFilter.check();
+  await expect(highFilter).toBeChecked();
   await expect(page).toHaveURL(/search=follow-up(?:&|$)/);
   await expect(page).not.toHaveURL(/follow-up\+/);
   await expect(page).toHaveURL(/priority=high/);
