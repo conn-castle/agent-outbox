@@ -60,12 +60,14 @@ numeric `http_status`. For data-plane operations that mutate queue state, CLI
 errors include `write_outcome`: `not_accepted` when the command received a
 definitive rejection before any mutation was accepted, `accepted` when a valid
 success response proved acceptance but its data was unusable, or `unknown` when
-the command cannot prove its complete effect. A multi-page `output read --all`
-that accepts an earlier page and then receives a rejection or ambiguous failure
-reports `unknown`, because some results were marked read even though the command
-did not finish. If every attempted page returned an accepted success but the
-last page data was unusable, it reports `accepted`. Reconcile an `unknown` input
-write by its stable `caller_item_id`; do not create a new id for a retry.
+the command cannot prove its complete effect. Valid `internal_error` and
+`temporary_unavailable` envelopes are `unknown` because they do not prove the
+mutation was rejected. A multi-page `output read --all` that accepts an earlier
+page and then receives a rejection or ambiguous failure reports `unknown`,
+because some results were marked read even though the command did not finish. If
+every attempted page returned an accepted success but the last page data was
+unusable, it reports `accepted`. Reconcile an `unknown` input write by its
+stable `caller_item_id`; do not create a new id for a retry.
 
 When an invalid envelope still contains a known public error-code candidate, the
 CLI preserves it as `upstream_error_code` without treating it as Agent Outbox's

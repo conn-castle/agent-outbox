@@ -309,6 +309,20 @@ func TestAPIClientWriteOutcomesDistinguishValidErrorsAndAmbiguousResponses(t *te
 			wantOutcome: "not_accepted",
 		},
 		{
+			name:        "internal error",
+			status:      http.StatusInternalServerError,
+			body:        `{"ok":false,"request_id":"req_write","correlation_id":"corr_write","error":{"code":"internal_error","message":"Unexpected server error."}}`,
+			wantCode:    CodeInternalError,
+			wantOutcome: "unknown",
+		},
+		{
+			name:        "temporary unavailable",
+			status:      http.StatusServiceUnavailable,
+			body:        `{"ok":false,"request_id":"req_write","correlation_id":"corr_write","error":{"code":"temporary_unavailable","message":"Temporarily unavailable."}}`,
+			wantCode:    CodeTemporaryUnavailable,
+			wantOutcome: "unknown",
+		},
+		{
 			name:        "malformed response",
 			status:      http.StatusServiceUnavailable,
 			body:        `{}`,
@@ -338,6 +352,28 @@ func TestAPIClientWriteOutcomesDistinguishValidErrorsAndAmbiguousResponses(t *te
 				t.Fatalf("error code/write outcome = %q/%q, want %q/%q", appErr.Code, appErr.WriteOutcome, tt.wantCode, tt.wantOutcome)
 			}
 		})
+	}
+}
+
+func TestAPIClientTypedSuccessRejectsNullData(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true,"request_id":"req_write","correlation_id":"corr_write","data":null}`)
+	}))
+	defer server.Close()
+
+	var out struct {
+		Value string `json:"value"`
+	}
+	_, err := (APIClient{BaseURL: server.URL}).DoWrite(context.Background(), http.MethodPost, "/api/input/send", "bearer-fixture", map[string]string{"caller_item_id": "stable"}, &out)
+	appErr, ok := err.(*AppError)
+	if !ok {
+		t.Fatalf("error type = %T, want *AppError", err)
+	}
+	if appErr.Code != CodeAPIResponseInvalid || appErr.WriteOutcome != "accepted" {
+		t.Fatalf("error code/write outcome = %q/%q", appErr.Code, appErr.WriteOutcome)
+	}
+	if out.Value != "" {
+		t.Fatalf("typed output was decoded from null data: %#v", out)
 	}
 }
 

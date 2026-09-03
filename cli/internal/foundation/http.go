@@ -342,6 +342,10 @@ func isNonEmptyJSONObject(data json.RawMessage) bool {
 	return json.Unmarshal(data, &object) == nil && object != nil && len(object) > 0
 }
 
+func isJSONNull(data json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(data), []byte("null"))
+}
+
 func joinBaseAndPath(base string, apiPath string) (string, error) {
 	parsed, err := url.Parse(base)
 	if err != nil {
@@ -401,7 +405,7 @@ func appErrorFromEnvelope(envelope *apiEnvelope, meta *APIResponse, kind request
 		RetryAfterSeconds: retryAfter,
 		Limit:             envelope.Error.Limit,
 		Upgrade:           envelope.Error.Upgrade,
-		WriteOutcome:      writeOutcome(kind, "not_accepted"),
+		WriteOutcome:      writeOutcome(kind, envelopeWriteOutcome(envelope.Error.Code)),
 	}
 }
 
@@ -413,7 +417,7 @@ func validateEnvelope(envelope *apiEnvelope, status int) error {
 		if status < 200 || status >= 300 {
 			return errors.New("Agent Outbox API returned a success envelope with an unsuccessful HTTP status.")
 		}
-		if len(envelope.Data) == 0 {
+		if len(envelope.Data) == 0 || isJSONNull(envelope.Data) {
 			return errors.New("Agent Outbox API success response is missing data.")
 		}
 		if envelope.Error != nil {
@@ -556,6 +560,15 @@ func writeOutcome(kind requestKind, outcome string) string {
 		return outcome
 	}
 	return ""
+}
+
+func envelopeWriteOutcome(code ErrorCode) string {
+	switch code {
+	case CodeInternalError, CodeTemporaryUnavailable:
+		return "unknown"
+	default:
+		return "not_accepted"
+	}
 }
 
 func firstSafeDiagnosticID(values ...string) string {
