@@ -94,6 +94,26 @@
       "package": "@clerk/nextjs",
       "source": "npm view @clerk/nextjs version engines peerDependencies --json"
     },
+    "dndKitCore": {
+      "version": "6.3.1",
+      "package": "@dnd-kit/core",
+      "source": "corepack pnpm view @dnd-kit/core version"
+    },
+    "dndKitModifiers": {
+      "version": "9.0.0",
+      "package": "@dnd-kit/modifiers",
+      "source": "corepack pnpm view @dnd-kit/modifiers version"
+    },
+    "dndKitSortable": {
+      "version": "10.0.0",
+      "package": "@dnd-kit/sortable",
+      "source": "corepack pnpm view @dnd-kit/sortable version"
+    },
+    "dndKitUtilities": {
+      "version": "3.2.2",
+      "package": "@dnd-kit/utilities",
+      "source": "corepack pnpm view @dnd-kit/utilities version"
+    },
     "supabaseJs": {
       "version": "2.112.4",
       "package": "@supabase/supabase-js",

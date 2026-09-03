@@ -11,8 +11,17 @@ import { applicationSecurityHeaders } from "./src/server/http-security";
 const sentryNextjsEdgeEntry =
   "./node_modules/@sentry/nextjs/build/esm/edge/index.js";
 
+const publicAppHostname = process.env.PUBLIC_APP_BASE_URL
+  ? new URL(process.env.PUBLIC_APP_BASE_URL).hostname
+  : null;
+
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["127.0.0.1"],
+  allowedDevOrigins: [
+    "127.0.0.1",
+    ...(publicAppHostname && publicAppHostname !== "127.0.0.1"
+      ? [publicAppHostname]
+      : [])
+  ],
   devIndicators:
     process.env.AGENT_OUTBOX_BROWSER_FIXTURE === "1" ? false : undefined,
   experimental: {

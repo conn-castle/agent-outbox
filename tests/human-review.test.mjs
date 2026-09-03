@@ -14,6 +14,7 @@ import {
   humanReviewListInTransaction,
   humanReviewPageInTransaction,
   humanReviewListStatement,
+  humanReviewTypeOptionsStatement,
   runHumanReviewQueryCanary
 } from "../src/server/human-review.ts";
 import {
@@ -42,6 +43,10 @@ import {
   writeHumanReviewView
 } from "../src/shared/human-review-view.ts";
 import {
+  compareHumanReviewRows,
+  humanReviewVisualScore
+} from "../src/shared/human-review-sort.ts";
+import {
   accountCanManageBilling,
   accountCanUpgrade,
   accountStorageLabel,
@@ -65,12 +70,15 @@ const context = {
 const inputItemId = "00000000-0000-4000-8000-000000000003";
 const callerId = "00000000-0000-4000-8000-000000000005";
 const outputResultId = "00000000-0000-4000-8000-000000000004";
+const defaultHumanReviewView = humanReviewViewFromRecord(undefined);
 
 test("human review view parsing and links share canonical defaults", () => {
   assert.deepEqual(humanReviewViewFromRecord(undefined), {
     search: "",
     status: "pending",
-    sort: "priority",
+    priorities: [],
+    types: [],
+    sorts: [{ key: "priority", direction: "asc" }],
     page: 1
   });
 
@@ -81,7 +89,9 @@ test("human review view parsing and links share canonical defaults", () => {
   assert.deepEqual(parsed, {
     search: "invoice",
     status: "answered",
-    sort: "updated_at",
+    priorities: [],
+    types: [],
+    sorts: [{ key: "updated_at", direction: "desc" }],
     page: 3
   });
   assert.deepEqual(
@@ -95,19 +105,78 @@ test("human review view parsing and links share canonical defaults", () => {
   );
   assert.equal(
     humanReviewHref(parsed, inputItemId),
-    `/human?search=invoice&status=answered&sort=updated_at&page=3&item=${inputItemId}`
+    `/human?search=invoice&status=answered&order=updated_at%3Adesc&page=3&item=${inputItemId}`
   );
   assert.equal(
     humanReviewHref(parsed, inputItemId, "attach_signed_nda"),
-    `/human?search=invoice&status=answered&sort=updated_at&page=3&item=${inputItemId}&compose=attach_signed_nda`
+    `/human?search=invoice&status=answered&order=updated_at%3Adesc&page=3&item=${inputItemId}&compose=attach_signed_nda`
+  );
+
+  const compound = humanReviewViewFromSearchParams(
+    new URLSearchParams("sort=type&then=priority")
+  );
+  assert.deepEqual(compound, {
+    search: "",
+    status: "pending",
+    priorities: [],
+    types: [],
+    sorts: [
+      { key: "type", direction: "asc" },
+      { key: "priority", direction: "asc" }
+    ],
+    page: 1
+  });
+  assert.equal(
+    humanReviewHref(compound),
+    "/human?order=type%3Aasc&order=priority%3Aasc"
+  );
+  assert.deepEqual(
+    humanReviewViewFromRecord({ sort: "type", then: "type" }).sorts,
+    [{ key: "type", direction: "asc" }],
+    "a duplicate secondary key must collapse to the canonical no-op value"
+  );
+
+  const faceted = humanReviewViewFromSearchParams(
+    new URLSearchParams(
+      "priority=high&priority=urgent&priority=invalid&type=Release&type=Copy+review&type=Release&sort=type&dir=desc&then=priority&then_dir=desc"
+    )
+  );
+  assert.deepEqual(faceted, {
+    search: "",
+    status: "pending",
+    priorities: ["urgent", "high"],
+    types: ["Copy review", "Release"],
+    sorts: [
+      { key: "type", direction: "desc" },
+      { key: "priority", direction: "desc" }
+    ],
+    page: 1
+  });
+  const canonical = new URLSearchParams("fixture_design=1");
+  writeHumanReviewView(canonical, faceted);
+  assert.equal(
+    canonical.toString(),
+    "fixture_design=1&priority=urgent&priority=high&type=Copy+review&type=Release&order=type%3Adesc&order=priority%3Adesc"
+  );
+  assert.deepEqual(humanReviewViewFromSearchParams(canonical), faceted);
+  const canonicalAgain = new URLSearchParams(canonical);
+  writeHumanReviewView(
+    canonicalAgain,
+    humanReviewViewFromSearchParams(canonicalAgain)
+  );
+  assert.equal(canonicalAgain.toString(), canonical.toString());
+  assert.deepEqual(humanReviewViewFromRecord({ type: "Retired type" }).types, [
+    "Retired type"
+  ]);
+  assert.deepEqual(
+    humanReviewViewFromRecord({ type: "  Padded source type  " }).types,
+    ["  Padded source type  "],
+    "type facets must preserve the exact stored display value"
   );
 
   const retained = new URLSearchParams("fixture_signup=1&status=all&page=7");
   writeHumanReviewView(retained, {
-    search: "",
-    status: "pending",
-    sort: "priority",
-    page: 1
+    ...defaultHumanReviewView
   });
   assert.equal(retained.toString(), "fixture_signup=1");
   assert.equal(
@@ -123,6 +192,51 @@ test("human review view parsing and links share canonical defaults", () => {
       invalidPage
     );
   }
+});
+
+test("human review view round-trips every supported sort field and its default direction", () => {
+  const cases =
+    /** @type {Array<[import("../src/shared/human-review-view.ts").HumanReviewSort, import("../src/shared/human-review-view.ts").HumanReviewSortDirection]>} */ ([
+      ["visual_score", "desc"],
+      ["title", "asc"],
+      ["caller", "asc"],
+      ["created_at", "desc"]
+    ]);
+  for (const [sort, expectedDirection] of cases) {
+    const parsed = humanReviewViewFromSearchParams(
+      new URLSearchParams(`sort=${sort}&then=priority`)
+    );
+    assert.equal(parsed.sorts[0].key, sort);
+    assert.equal(parsed.sorts[0].direction, expectedDirection);
+    const params = new URLSearchParams();
+    writeHumanReviewView(params, parsed);
+    assert.deepEqual(humanReviewViewFromSearchParams(params), parsed);
+  }
+});
+
+test("human review view accepts every sort field in order and removes duplicates", () => {
+  const params = new URLSearchParams();
+  for (const order of [
+    "type:asc",
+    "priority:desc",
+    "visual_score:desc",
+    "title:asc",
+    "caller:desc",
+    "created_at:asc",
+    "updated_at:desc",
+    "type:desc",
+    "invalid:asc"
+  ])
+    params.append("order", order);
+  assert.deepEqual(humanReviewViewFromSearchParams(params).sorts, [
+    { key: "type", direction: "asc" },
+    { key: "priority", direction: "desc" },
+    { key: "visual_score", direction: "desc" },
+    { key: "title", direction: "asc" },
+    { key: "caller", direction: "desc" },
+    { key: "created_at", direction: "asc" },
+    { key: "updated_at", direction: "desc" }
+  ]);
 });
 
 test("fixture resolved-item cookies keep the newest entries within a byte budget", () => {
@@ -152,10 +266,7 @@ test("fixture resolved-item cookies keep the newest entries within a byte budget
 test("fixture resolved items leave pending and appear as answered history", () => {
   /** @type {import("../src/shared/human-review-view.ts").HumanReviewView} */
   const pendingView = {
-    search: "",
-    status: "pending",
-    sort: "priority",
-    page: 1
+    ...defaultHumanReviewView
   };
   const target = browserFixtureReviewPage(pendingView).rows[0];
   assert.ok(target);
@@ -188,10 +299,7 @@ test("fixture resolved items leave pending and appear as answered history", () =
 test("fixture resolved marker leaves pending and appears as answered history", () => {
   /** @type {import("../src/shared/human-review-view.ts").HumanReviewView} */
   const pendingView = {
-    search: "",
-    status: "pending",
-    sort: "priority",
-    page: 1
+    ...defaultHumanReviewView
   };
   const target = browserFixtureReviewPage(pendingView).rows[0];
   assert.ok(target);
@@ -614,7 +722,9 @@ test("human review list statement scopes rows by account and supports focused fi
   const statement = humanReviewListStatement(context, {
     status: "pending",
     search: "Acme",
-    sort: "priority",
+    priorities: ["urgent", "high"],
+    types: ["Release", "Copy review"],
+    sorts: [{ key: "priority", direction: "asc" }],
     limit: 25
   });
 
@@ -622,6 +732,10 @@ test("human review list statement scopes rows by account and supports focused fi
     context.accountId,
     "pending",
     "%Acme%",
+    "urgent",
+    "high",
+    "Release",
+    "Copy review",
     25,
     0
   ]);
@@ -646,7 +760,246 @@ test("human review list statement scopes rows by account and supports focused fi
   );
   assert.match(statement.sql, /or i\.caller_item_id ilike \$3/);
   assert.match(statement.sql, /or i\.row_type_display ilike \$3/);
+  assert.match(statement.sql, /i\.priority in \(\$4, \$5\)/);
+  assert.match(statement.sql, /i\.row_type_display in \(\$6, \$7\)/);
+  assert.ok(
+    statement.sql.indexOf("i.priority in") <
+      statement.sql.lastIndexOf("order by")
+  );
   assert.match(statement.sql, /case i\.priority/);
+});
+
+test("human review type options stay status scoped and ignore active facets", () => {
+  const statement = humanReviewTypeOptionsStatement(context, "answered");
+  assert.deepEqual(statement.values, [context.accountId, "answered"]);
+  assert.match(statement.sql, /select distinct i\.row_type_display/);
+  assert.match(statement.sql, /where i\.account_id = \$1/);
+  assert.match(statement.sql, /i\.status = \$2/);
+  assert.doesNotMatch(statement.sql, /limit|offset/i);
+});
+
+test("human review list statement composes type and priority before recency", () => {
+  const statement = humanReviewListStatement(context, {
+    status: "pending",
+    sorts: [
+      { key: "type", direction: "asc" },
+      { key: "priority", direction: "asc" }
+    ]
+  });
+  const typeIndex = statement.sql.indexOf(
+    "translate(\n          i.row_type_display"
+  );
+  const priorityIndex = statement.sql.indexOf("case i.priority");
+  const recentIndex = statement.sql.indexOf("i.updated_at desc");
+  const stableIndex = statement.sql.indexOf("i.input_item_id", recentIndex);
+  assert.ok(typeIndex > 0);
+  assert.ok(priorityIndex > typeIndex);
+  assert.ok(recentIndex > priorityIndex);
+  assert.ok(stableIndex > recentIndex);
+});
+
+test("human review list statement supports canonical text, date, and null-last visual sorts", () => {
+  const visual = humanReviewListStatement(context, {
+    sorts: [{ key: "visual_score", direction: "desc" }]
+  });
+  assert.match(
+    visual.sql,
+    /i\.card_visual_kind in \('numeric_bar', 'progress_ring'\)/
+  );
+  assert.match(
+    visual.sql,
+    /jsonb_typeof\(i\.card_visual_payload -> 'value'\) = 'number'/
+  );
+  assert.match(visual.sql, /end\) desc nulls last/);
+
+  const titleAndCaller = humanReviewListStatement(context, {
+    sorts: [
+      { key: "title", direction: "asc" },
+      { key: "caller", direction: "asc" }
+    ]
+  });
+  assert.match(titleAndCaller.sql, /regexp_replace\(i\.title_html/);
+  assert.match(titleAndCaller.sql, /'\[\[:space:\]\]\+'/);
+  assert.match(titleAndCaller.sql, /btrim\(regexp_replace/);
+  assert.match(titleAndCaller.sql, /translate\([\s\S]*c\.display_name/);
+
+  const created = humanReviewListStatement(context, {
+    sorts: [{ key: "created_at", direction: "desc" }]
+  });
+  assert.match(created.sql, /order by\s+i\.created_at desc/);
+});
+
+test("human review row comparator applies secondary priority and stable recency", () => {
+  const template = browserFixtureReviewPage({
+    ...defaultHumanReviewView
+  }).rows[0];
+  assert.ok(template);
+  const low =
+    /** @type {import("../src/server/human-review.ts").HumanReviewListRow} */ ({
+      ...template,
+      inputItemId: "00000000-0000-4000-8000-000000000001",
+      rowType: { ...template.rowType, display: "Émail" },
+      priority: "low",
+      updatedAt: "2026-06-30T12:00:00.000Z"
+    });
+  const urgent =
+    /** @type {import("../src/server/human-review.ts").HumanReviewListRow} */ ({
+      ...template,
+      inputItemId: "00000000-0000-4000-8000-000000000002",
+      rowType: { ...template.rowType, display: "Émail" },
+      priority: "urgent",
+      updatedAt: "2026-06-30T12:00:00.000Z"
+    });
+  assert.ok(
+    compareHumanReviewRows(low, urgent, {
+      sorts: [
+        { key: "type", direction: "asc" },
+        { key: "priority", direction: "asc" }
+      ]
+    }) > 0,
+    "priority must order rows whose primary type key is equal"
+  );
+  assert.ok(
+    compareHumanReviewRows(low, urgent, {
+      sorts: [
+        { key: "updated_at", direction: "desc" },
+        { key: "priority", direction: "asc" }
+      ]
+    }) > 0,
+    "priority must break equal recency values"
+  );
+
+  const newerLow = { ...low, updatedAt: "2026-07-01T12:00:00.000Z" };
+  assert.ok(
+    compareHumanReviewRows(newerLow, urgent, {
+      sorts: [
+        { key: "updated_at", direction: "desc" },
+        { key: "priority", direction: "asc" }
+      ]
+    }) < 0,
+    "the primary recency key must win before secondary priority"
+  );
+});
+
+test("visual score normalizes numeric visuals and keeps missing values last in both directions", () => {
+  const template = browserFixtureReviewPage(defaultHumanReviewView).rows[0];
+  assert.ok(template);
+  const score = (
+    /** @type {string} */ id,
+    /** @type {import("../src/server/human-review.ts").HumanReviewListRow["cardVisual"]} */ cardVisual
+  ) =>
+    /** @type {import("../src/server/human-review.ts").HumanReviewListRow} */ ({
+      ...template,
+      inputItemId: id,
+      cardVisual
+    });
+  const high = score("high", {
+    kind: "numeric_bar",
+    payload: {
+      label: "Readiness",
+      value: 9,
+      display: "9",
+      unit: null,
+      min_value: 0,
+      max_value: 10
+    }
+  });
+  const low = score("low", {
+    kind: "progress_ring",
+    payload: {
+      label: "Confidence",
+      value: 20,
+      display: "20",
+      unit: "%",
+      min_value: 0,
+      max_value: 100,
+      color: null
+    }
+  });
+  const none = score("none", null);
+  const invalid = score("invalid", {
+    kind: "numeric_bar",
+    payload: {
+      label: "Invalid",
+      value: 5,
+      display: "5",
+      unit: null,
+      min_value: 10,
+      max_value: 10
+    }
+  });
+  assert.equal(humanReviewVisualScore(high), 90);
+  assert.equal(humanReviewVisualScore(invalid), null);
+
+  for (const direction of /** @type {const} */ (["asc", "desc"])) {
+    const rows = [none, high, invalid, low].sort((left, right) =>
+      compareHumanReviewRows(left, right, {
+        sorts: [{ key: "visual_score", direction }]
+      })
+    );
+    assert.deepEqual(
+      rows
+        .slice(-2)
+        .map((row) => row.inputItemId)
+        .sort(),
+      ["invalid", "none"],
+      `null scores must stay last for ${direction}`
+    );
+    assert.deepEqual(
+      rows.slice(0, 2).map((row) => row.inputItemId),
+      direction === "asc" ? ["low", "high"] : ["high", "low"]
+    );
+  }
+});
+
+test("title sorting compares visible text rather than markup", () => {
+  const template = browserFixtureReviewPage(defaultHumanReviewView).rows[0];
+  assert.ok(template);
+  const alpha = {
+    ...template,
+    inputItemId: "alpha",
+    titleHtml: "<b>Alpha</b>"
+  };
+  const beta = { ...template, inputItemId: "beta", titleHtml: "Beta" };
+  assert.ok(
+    compareHumanReviewRows(alpha, beta, {
+      sorts: [{ key: "title", direction: "asc" }]
+    }) < 0
+  );
+});
+
+test("browser fixture applies compound type then priority ordering", () => {
+  const rows = browserFixtureReviewPage({
+    ...defaultHumanReviewView,
+    sorts: [
+      { key: "type", direction: "asc" },
+      { key: "priority", direction: "asc" }
+    ]
+  }).rows;
+  assert.deepEqual(
+    rows.slice(0, 3).map((row) => [row.rowType.display, row.priority]),
+    [
+      ["Campaign", "high"],
+      ["CI task", "low"],
+      ["Copy review", "high"]
+    ]
+  );
+});
+
+test("browser fixture applies structured facets before sorting and pagination", () => {
+  const rows = browserFixtureReviewPage({
+    ...defaultHumanReviewView,
+    priorities: ["high"],
+    types: ["Campaign", "Copy review"],
+    sorts: [{ key: "type", direction: "desc" }]
+  }).rows;
+  assert.deepEqual(
+    rows.map((row) => [row.rowType.display, row.priority]),
+    [
+      ["Copy review", "high"],
+      ["Campaign", "high"]
+    ]
+  );
 });
 
 test("human review page trims its private sentinel and reports another page", async () => {
@@ -668,7 +1021,7 @@ test("human review page trims its private sentinel and reports another page", as
   assert.ok(call);
   assert.ok(call.values);
   assert.deepEqual(call.values.slice(-2), [101, 100]);
-  assert.match(call.sql, /order by i\.updated_at desc, i\.input_item_id/);
+  assert.match(call.sql, /order by\s+i\.updated_at desc,\s+i\.input_item_id/);
   assert.match(call.sql, /limit \$3\s+offset \$4/);
 });
 

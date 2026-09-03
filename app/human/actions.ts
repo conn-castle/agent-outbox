@@ -414,16 +414,16 @@ function noticeText(formData: FormData, key: string) {
 }
 
 /**
- * View state (search/status/sort/page) submitted as hidden `view.*` fields by
+ * View state (search/status/primary sort/secondary sort/page) submitted as
+ * hidden `view.*` fields by
  * `ViewStateFields` so post-action redirects restore the user's current view.
  * Values are re-validated server-side by `humanReviewView` on the next render.
  */
-function viewParamsFromForm(formData: FormData): Record<string, string> {
-  const params: Record<string, string> = {};
+function viewParamsFromForm(formData: FormData) {
+  const params = new URLSearchParams();
   for (const key of HUMAN_REVIEW_VIEW_PARAM_KEYS) {
-    const value = formData.get(`view.${key}`);
-    if (typeof value === "string" && value !== "") {
-      params[key] = value;
+    for (const value of formData.getAll(`view.${key}`)) {
+      if (typeof value === "string" && value !== "") params.append(key, value);
     }
   }
   return params;
@@ -434,10 +434,8 @@ function refreshHumanPage(
   params: Record<string, string>
 ): never {
   revalidatePath(humanPath);
-  const query = new URLSearchParams({
-    ...viewParamsFromForm(formData),
-    ...params
-  });
+  const query = viewParamsFromForm(formData);
+  for (const [key, value] of Object.entries(params)) query.set(key, value);
   redirect(`${humanPath}?${query.toString()}`);
 }
 
@@ -464,10 +462,13 @@ function redirectHumanMutationResult(
   formData: FormData,
   result: HumanMutationResult
 ): never {
+  const subject = noticeText(formData, "noticeSubject");
+  const action = noticeText(formData, "noticeAction");
   if (!result.ok) {
     refreshHumanPage(formData, {
       ...(result.inputItemIds[0] ? { item: result.inputItemIds[0] } : {}),
       error: result.code,
+      ...(subject ? { subject } : {}),
       ...(result.failedActionKind
         ? { failedActionKind: result.failedActionKind }
         : {})
@@ -482,7 +483,9 @@ function redirectHumanMutationResult(
         resolved: result.inputItemIds[0],
         undo_target: result.undo.inputItemId,
         undo_actor: result.undo.callerId,
-        undo_result: result.undo.outputResultId
+        undo_result: result.undo.outputResultId,
+        ...(subject ? { subject } : {}),
+        ...(action ? { action } : {})
       });
     case "bulk-answer":
       refreshHumanPage(formData, {
@@ -493,7 +496,8 @@ function redirectHumanMutationResult(
     case "undo":
       refreshHumanPage(formData, {
         item: result.inputItemIds[0],
-        notice: "answer_undone"
+        notice: "answer_undone",
+        ...(subject ? { subject } : {})
       });
   }
 }

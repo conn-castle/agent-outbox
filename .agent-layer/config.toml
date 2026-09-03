@@ -8,7 +8,7 @@ mode = "yolo"
 
 [agents.antigravity]
 enabled = true
-model = "Gemini 3.7 Flash (High)"
+model = "Gemini 3.8 Flash (High)"
 
 [agents.claude]
 disable_question_tool = true

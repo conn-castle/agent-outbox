@@ -713,6 +713,7 @@ function mockHumanAnswerQuery(calls, rowsByKind) {
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
+          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-observability",
           caller_audit_id: "audit-caller-observability"
         }
@@ -1555,7 +1556,17 @@ test("human review server actions emit failure telemetry only on failure paths",
           }
         },
         "../../src/shared/human-review-view": {
-          HUMAN_REVIEW_VIEW_PARAM_KEYS: ["search", "status", "sort", "page"]
+          HUMAN_REVIEW_VIEW_PARAM_KEYS: [
+            "search",
+            "status",
+            "priority",
+            "type",
+            "sort",
+            "dir",
+            "then",
+            "then_dir",
+            "page"
+          ]
         }
       })
     );
@@ -1567,6 +1578,9 @@ test("human review server actions emit failure telemetry only on failure paths",
   submitForm.set("actionValue", "approve");
   submitForm.set("popupKind", "none");
   submitForm.set("view.page", "2");
+  submitForm.set("view.then", "priority");
+  submitForm.append("view.priority", "urgent");
+  submitForm.append("view.priority", "high");
 
   const failingSubmit = loadHumanActions({
     transactionResult: {
@@ -1585,7 +1599,13 @@ test("human review server actions emit failure telemetry only on failure paths",
     }
   ]);
   assert.match(redirects[0] ?? "", /error=stale_input_revision/);
+  assert.match(
+    redirects[0] ?? "",
+    /priority=urgent&priority=high/,
+    "server-action redirects must preserve repeated filters"
+  );
   assert.match(redirects[0] ?? "", /page=2/);
+  assert.match(redirects[0] ?? "", /then=priority/);
 
   emitted.length = 0;
   redirects.length = 0;

@@ -261,6 +261,7 @@ export function CardVisual({
     return (
       <div
         className={`card-visual pill-visual${icon ? " pill-visual-with-icon" : ""}`}
+        title={visual.payload.text}
         style={
           {
             "--visual-color": paletteColor ?? "var(--review-accent)",

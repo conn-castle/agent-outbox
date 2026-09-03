@@ -139,7 +139,13 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
   return (
     <AppActionContext.Provider value={value}>
       {children}
-      <Toaster position="bottom-right" richColors closeButton />
+      <Toaster
+        position="bottom-right"
+        richColors
+        closeButton
+        expand
+        visibleToasts={6}
+      />
     </AppActionContext.Provider>
   );
 }

@@ -113,16 +113,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Guide slugs, source paths, navigation labels, rewrite mappings, static route params, and route expectations are maintained in separate lists that can drift.
     Next step: Identify the canonical documentation manifest and derive or validate all route consumers against it.
 
-- Issue 2026-08-17 fixture-search-parity: Design-fixture search differs from production
-    Priority: Medium. Area: Human review / Design fixture
-    Description: Searching for a visible row type such as `CI task` returns no fixture result because fixture matching omits `rowType.display`, while production search includes it.
-    Next step: Align fixture search fields with the production search contract.
-
-- Issue 2026-08-17 fixture-sort-behavior: The design fixture's visible Sort control has no effect
-    Priority: Medium. Area: Human review / Design fixture
-    Description: The authored initial order is always preserved after a person explicitly selects a sort option, so the interactive fixture demonstrates behavior the product does not have.
-    Next step: Preserve the intended initial mock order while honoring subsequent explicit sort selections.
-
 - Issue 2026-08-17 overflow-derived-state: Overflow availability is stored twice
     Priority: Low. Area: Human review / Data model
     Description: `hasOverflowActions` duplicates information already derivable from `bulkActions[].overflow` across the DTO, production mapper, fixture mappers, and UI.

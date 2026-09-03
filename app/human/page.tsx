@@ -13,6 +13,7 @@ import {
   browserFixtureHumanSession,
   browserFixtureReviewDetail,
   browserFixtureReviewPage,
+  browserFixtureReviewTypeOptions,
   humanBrowserFixtureEnabled
 } from "../../src/server/human-review-fixture";
 import { readFixtureResolvedItems } from "../../src/server/human-review-fixture-state";
@@ -20,6 +21,7 @@ import {
   humanReviewAccountBannerInTransaction,
   humanReviewDetailInTransaction,
   humanReviewPageInTransaction,
+  humanReviewTypeOptionsInTransaction,
   REVIEW_PAGE_SIZE
 } from "../../src/server/human-review";
 import {
@@ -78,6 +80,7 @@ export default async function HumanReviewPage({
         session={session}
         identity={browserFixtureAccountIdentity()}
         rows={fixturePage.rows}
+        typeOptions={browserFixtureReviewTypeOptions(view, fixtureOptions)}
         detail={
           selectedItem
             ? browserFixtureReviewDetail(selectedItem, fixtureOptions)
@@ -161,6 +164,7 @@ export default async function HumanReviewPage({
         humanSession.account.label
       )}
       rows={pageData.rows}
+      typeOptions={pageData.typeOptions}
       detail={pageData.detail}
       banner={pageData.banner}
       notice={notice}
@@ -252,7 +256,9 @@ async function loadHumanReviewPageDataInTransaction(
   const page = await humanReviewPageInTransaction(query, session, {
     status: view.status,
     search: view.search,
-    sort: view.sort,
+    priorities: view.priorities,
+    types: view.types,
+    sorts: view.sorts,
     offset: (view.page - 1) * REVIEW_PAGE_SIZE
   });
   const rows = page.rows;
@@ -260,18 +266,26 @@ async function loadHumanReviewPageDataInTransaction(
     ? await humanReviewDetailInTransaction(query, session, selectedItem)
     : null;
   const banner = await humanReviewAccountBannerInTransaction(query, session);
-  return { rows, detail, banner, hasNext: page.hasNext };
+  const typeOptions = await humanReviewTypeOptionsInTransaction(
+    query,
+    session,
+    view.status
+  );
+  return { rows, detail, banner, typeOptions, hasNext: page.hasNext };
 }
 
 function humanReviewNotice(
   params: Record<string, string | string[] | undefined> | undefined
 ): HumanReviewNotice | null {
+  const subject = firstSearchParam(params?.subject)?.slice(0, 160);
+  const action = firstSearchParam(params?.action)?.slice(0, 160);
+  const quotedSubject = subject ? `“${subject}”` : "this review";
   const error = firstSearchParam(params?.error);
   if (error) {
     const failedActionKind = firstSearchParam(params?.failedActionKind);
     return {
       kind: "error",
-      message: `Action failed: ${error.replaceAll("_", " ")}.`,
+      message: `Action for ${quotedSubject} failed: ${error.replaceAll("_", " ")}.`,
       failedActionKind:
         failedActionKind === "file_upload" ? "file_upload" : undefined
     };
@@ -284,14 +298,17 @@ function humanReviewNotice(
     const outputResultId = firstSearchParam(params?.undo_result);
     return {
       kind: "notice",
-      message: "Done.",
+      message: `Saved ${action ? `${action} for ` : "response for "}${quotedSubject}.`,
       ...(inputItemId && callerId && outputResultId
         ? { undo: { inputItemId, callerId, outputResultId } }
         : {})
     };
   }
   if (notice === "answer_undone") {
-    return { kind: "notice", message: "Undone." };
+    return {
+      kind: "notice",
+      message: `Restored ${quotedSubject} to its prior queue position.`
+    };
   }
   if (notice === "bulk_answered") {
     const answered = firstSearchParam(params?.answered) ?? "0";

@@ -15,6 +15,14 @@ import {
 import { browserFixtureDesignReviewDetails } from "./human-review-design-fixture.ts";
 export { BROWSER_FIXTURE_REFERENCE_TIME } from "./human-review-design-fixture.ts";
 import type { HumanReviewView } from "../shared/human-review-view.ts";
+import {
+  compareHumanReviewRows,
+  compareHumanReviewTypeNames
+} from "../shared/human-review-sort.ts";
+import {
+  humanReviewMatchesFacets,
+  isDefaultHumanReviewOrdering
+} from "../shared/human-review-view.ts";
 
 export { humanBrowserFixtureEnabled } from "./human-review-fixture-gate.ts";
 
@@ -117,25 +125,20 @@ export function browserFixtureReviewPage(
     const resolved = resolvedIds.has(row.inputItemId);
     const effectiveStatus = resolved ? "answered" : row.status;
     if (effectiveStatus !== view.status) return false;
+    if (!humanReviewMatchesFacets(row, view)) return false;
     if (!terms) return true;
     return [
       stripTags(row.titleHtml),
       stripTags(row.subtitleHtml),
       stripTags(row.summaryHtml),
       row.callerItemId,
+      row.rowType.display,
       row.caller.displayName
     ].some((field) => field.toLowerCase().includes(terms));
   });
-  if (!browserFixtureUsesDesignData())
-    filtered.sort((left, right) => {
-      if (view.sort === "priority") {
-        const weights = { urgent: 0, high: 1, normal: 2, low: 3 };
-        const priority = weights[left.priority] - weights[right.priority];
-        if (priority !== 0) return priority;
-      }
-      const updated = right.updatedAt.localeCompare(left.updatedAt);
-      return updated || left.inputItemId.localeCompare(right.inputItemId);
-    });
+  if (!browserFixtureUsesDesignData() || !isDefaultHumanReviewOrdering(view)) {
+    filtered.sort((left, right) => compareHumanReviewRows(left, right, view));
+  }
   const overlayed = filtered.map((row) =>
     applyFixtureResolvedState(
       row,
@@ -149,6 +152,30 @@ export function browserFixtureReviewPage(
     rows: window.slice(0, REVIEW_PAGE_SIZE),
     hasNext: window.length > REVIEW_PAGE_SIZE
   };
+}
+
+export function browserFixtureReviewTypeOptions(
+  view: Pick<HumanReviewView, "status">,
+  options: BrowserFixtureReviewOptions = {}
+) {
+  const resolvedItems = options.resolvedItems ?? {};
+  const resolvedIds = new Set(
+    [options.resolvedItemId, ...Object.keys(resolvedItems)].filter(
+      (id): id is string => Boolean(id)
+    )
+  );
+  return [
+    ...new Set(
+      browserFixtureReviewRows(options)
+        .filter((row) => {
+          const status = resolvedIds.has(row.inputItemId)
+            ? "answered"
+            : row.status;
+          return status === view.status;
+        })
+        .map((row) => row.rowType.display)
+    )
+  ].sort(compareHumanReviewTypeNames);
 }
 
 export function browserFixtureReviewDetail(

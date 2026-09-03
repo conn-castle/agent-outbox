@@ -292,6 +292,7 @@ test("human answer service rejects stale revisions before creating output", asyn
           status: "pending",
           current_revision: 4,
           non_file_payload_bytes: 100,
+          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -326,6 +327,7 @@ test("human answer service creates one output and audit rows without raw answer 
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
+          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -360,7 +362,7 @@ test("human answer service creates one output and audit rows without raw answer 
   );
   assert.ok(outputInsert);
   assert.ok(outputInsert.values);
-  assert.deepEqual(outputInsert.values.slice(0, 11), [
+  assert.deepEqual(outputInsert.values.slice(0, 12), [
     baseAnswerInput.accountId,
     baseAnswerInput.callerId,
     baseAnswerInput.inputItemId,
@@ -371,6 +373,7 @@ test("human answer service creates one output and audit rows without raw answer 
     34,
     "2026-06-30T12:00:00.000Z",
     baseAnswerInput.humanUserId,
+    "2026-06-29T09:00:00.000Z",
     "2026-07-14T12:00:00.000Z"
   ]);
 
@@ -411,6 +414,7 @@ test("human answer service stores uploaded bytes in one output file row and cont
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
+          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -502,6 +506,7 @@ test("human answer service rejects oversized uploaded files before reading bytes
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
+          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -654,6 +659,12 @@ test(
         ids.userId
       ]);
 
+      const originalInput = await client.query(
+        `select updated_at from public.agent_outbox_input_items where input_item_id = $1`,
+        [ids.inputItemId]
+      );
+      const originalUpdatedAt = originalInput.rows[0].updated_at.toISOString();
+
       const answer = await createHumanAnswerInTransaction(
         (statement) => client.query(statement.sql, statement.values),
         {
@@ -675,7 +686,7 @@ test(
 
       const answeredRows = await client.query(
         `
-          select i.status, i.answered_at, o.expires_at
+          select i.status, i.answered_at, o.expires_at, o.previous_input_updated_at
           from public.agent_outbox_input_items i
           join public.agent_outbox_output_results o
             on o.input_item_id = i.input_item_id
@@ -687,6 +698,10 @@ test(
       assert.equal(
         answeredRows.rows[0].expires_at.toISOString(),
         "2026-07-14T12:00:00.000Z"
+      );
+      assert.equal(
+        answeredRows.rows[0].previous_input_updated_at.toISOString(),
+        originalUpdatedAt
       );
 
       const undo = await undoHumanAnswerBeforeReadInTransaction(
@@ -711,16 +726,61 @@ test(
 
       const restoredRows = await client.query(
         `
-          select status, current_revision
+          select status, current_revision, updated_at
           from public.agent_outbox_input_items
           where input_item_id = $1
         `,
         [ids.inputItemId]
       );
-      assert.deepEqual(restoredRows.rows[0], {
-        status: "pending",
-        current_revision: 2
-      });
+      assert.equal(restoredRows.rows[0].status, "pending");
+      assert.equal(restoredRows.rows[0].current_revision, 2);
+      assert.equal(
+        restoredRows.rows[0].updated_at.toISOString(),
+        originalUpdatedAt
+      );
+
+      const legacyAnswer = await createHumanAnswerInTransaction(
+        (statement) => client.query(statement.sql, statement.values),
+        {
+          accountId: ids.accountId,
+          callerId: ids.callerId,
+          humanUserId: ids.userId,
+          requestId: "req-db-test-legacy",
+          correlationId: "corr-db-test-legacy",
+          inputItemId: ids.inputItemId,
+          expectedRevision: 2,
+          actionValue: "approve",
+          response: { kind: "none" },
+          answeredAt: new Date("2026-06-30T13:00:00.000Z")
+        }
+      );
+      assert.equal(legacyAnswer.ok, true);
+      if (!legacyAnswer.ok) assert.fail("expected legacy fallback answer");
+      await client.query(
+        `update public.agent_outbox_output_results set previous_input_updated_at = null where output_result_id = $1`,
+        [legacyAnswer.outputResultId]
+      );
+      const fallbackStartedAt = Date.now();
+      const legacyUndo = await undoHumanAnswerBeforeReadInTransaction(
+        (statement) => client.query(statement.sql, statement.values),
+        {
+          accountId: ids.accountId,
+          callerId: ids.callerId,
+          humanUserId: ids.userId,
+          requestId: "req-db-test-legacy",
+          correlationId: "corr-db-test-legacy",
+          outputResultId: legacyAnswer.outputResultId
+        }
+      );
+      assert.equal(legacyUndo.ok, true);
+      const legacyRestored = await client.query(
+        `select updated_at from public.agent_outbox_input_items where input_item_id = $1`,
+        [ids.inputItemId]
+      );
+      assert.ok(
+        legacyRestored.rows[0].updated_at.getTime() >= fallbackStartedAt,
+        "legacy outputs without a captured timestamp must fall back to restore time"
+      );
     } catch (error) {
       bodyError = error;
     } finally {
