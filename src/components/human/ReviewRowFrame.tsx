@@ -16,7 +16,8 @@ export function ReviewRowFrame({
   details,
   footer,
   actions,
-  slotClassNames
+  slotClassNames,
+  onNavigate
 }: {
   className: string;
   style?: CSSProperties;
@@ -31,6 +32,7 @@ export function ReviewRowFrame({
   details?: ReactNode;
   footer?: ReactNode;
   actions?: ReactNode;
+  onNavigate?: () => void;
   slotClassNames?: Partial<
     Record<"title" | "visual" | "summary" | "details" | "actions", string>
   >;
@@ -46,6 +48,7 @@ export function ReviewRowFrame({
               className={classes("row-link", slotClassNames?.title)}
               href={href}
               aria-label={ariaLabel}
+              onNavigate={onNavigate}
             >
               <span className="row-link-heading">{title}</span>
               {subtitle}
@@ -63,6 +66,7 @@ export function ReviewRowFrame({
                 className={classes("row-details-link", slotClassNames?.details)}
                 href={href}
                 aria-label={ariaLabel}
+                onNavigate={onNavigate}
               >
                 <span>{details ?? "Details"}</span>
                 <ChevronRight />

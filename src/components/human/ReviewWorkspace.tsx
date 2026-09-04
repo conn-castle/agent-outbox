@@ -76,7 +76,7 @@ import {
   type OnHumanMutation
 } from "./ActionForms";
 import { BulkActions } from "./BulkActions";
-import { ReviewDetail } from "./ReviewDetail";
+import { ReviewDetail, ReviewDetailLoading } from "./ReviewDetail";
 import { ReviewList } from "./ReviewList";
 import {
   HUMAN_MUTATION_SCOPE,
@@ -156,6 +156,10 @@ export function ReviewWorkspace({
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [pendingDetail, setPendingDetail] = useState<{
+    inputItemId: string;
+    label: string;
+  } | null>(null);
   const [openViewControl, setOpenViewControl] = useState<
     "filter" | "sort" | null
   >(null);
@@ -439,6 +443,10 @@ export function ReviewWorkspace({
     }
     previousDetailId.current = currentId;
   }, [detail?.inputItemId]);
+
+  useEffect(() => {
+    setPendingDetail(null);
+  }, [composeAction, detail?.inputItemId, detailOpen]);
 
   function currentSearch() {
     return pendingSearch.current ?? search;
@@ -1148,6 +1156,9 @@ export function ReviewWorkspace({
               renderedAt={renderedAt}
               onMutation={handleHumanMutation}
               lockedIds={lockedIds}
+              onDetailNavigate={(inputItemId, label) =>
+                setPendingDetail({ inputItemId, label })
+              }
             />
             {!hasNext && visibleRows.length > 0 ? (
               <div className="queue-end">
@@ -1228,6 +1239,17 @@ export function ReviewWorkspace({
           ) : null}
         </section>
       </div>
+
+      {pendingDetail &&
+      (!detailOpen || detail?.inputItemId !== pendingDetail.inputItemId) ? (
+        <ReviewDetailLoading
+          label={pendingDetail.label}
+          onCancel={() => {
+            setPendingDetail(null);
+            router.push(humanReviewHref(controlView), { scroll: false });
+          }}
+        />
+      ) : null}
 
       {detailOpen &&
       detail &&

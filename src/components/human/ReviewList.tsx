@@ -28,7 +28,8 @@ export function ReviewList({
   view,
   renderedAt,
   onMutation,
-  lockedIds
+  lockedIds,
+  onDetailNavigate
 }: {
   rows: HumanReviewListRow[];
   selectedId: string | null;
@@ -41,6 +42,7 @@ export function ReviewList({
   renderedAt: string;
   onMutation: OnHumanMutation;
   lockedIds: Set<string>;
+  onDetailNavigate: (inputItemId: string, label: string) => void;
 }) {
   if (rows.length === 0) {
     return (
@@ -67,20 +69,22 @@ export function ReviewList({
         const overflowActions = row.bulkActions.filter(
           (action) => action.overflow
         );
-        const contextLinks = (row.linkButtons ?? []).flatMap((link) => {
-          const href = safeHref(link.url);
-          return href
-            ? [
-                {
-                  key: link.displayOrder,
-                  display: link.display,
-                  icon: link.icon,
-                  href,
-                  external: true
-                }
-              ]
-            : [];
-        });
+        const contextLinks = (row.linkButtons ?? [])
+          .flatMap((link) => {
+            const href = safeHref(link.url);
+            return href
+              ? [
+                  {
+                    key: link.displayOrder,
+                    display: link.display,
+                    icon: link.icon,
+                    href,
+                    external: true
+                  }
+                ]
+              : [];
+          })
+          .slice(0, 4);
         return (
           <OptimisticReviewRow key={row.inputItemId} onMutation={onMutation}>
             {(handleMutation) => (
@@ -203,6 +207,9 @@ export function ReviewList({
                                         row.inputItemId,
                                         action.value
                                       )}
+                                      onNavigate={() =>
+                                        onDetailNavigate(row.inputItemId, title)
+                                      }
                                     >
                                       <HumanIcon name={action.icon} />
                                       <span>{action.display}</span>
@@ -236,6 +243,7 @@ export function ReviewList({
                   }
                   href={rowHref}
                   ariaLabel={`Open review details for ${title}`}
+                  onNavigate={() => onDetailNavigate(row.inputItemId, title)}
                   title={
                     <SafeHtml
                       html={htmlWithoutAnchors(row.titleHtml)}
@@ -294,6 +302,9 @@ export function ReviewList({
                                   row.inputItemId,
                                   action.value
                                 )}
+                                onNavigate={() =>
+                                  onDetailNavigate(row.inputItemId, title)
+                                }
                                 title={action.display}
                               >
                                 <HumanIcon name={action.icon} />
