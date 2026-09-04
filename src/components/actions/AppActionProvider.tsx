@@ -12,8 +12,6 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { Toaster } from "sonner";
-
 import { installImmediateActionFeedback } from "./immediate-action-feedback";
 
 installImmediateActionFeedback();
@@ -139,13 +137,6 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
   return (
     <AppActionContext.Provider value={value}>
       {children}
-      <Toaster
-        position="bottom-right"
-        richColors
-        closeButton
-        expand
-        visibleToasts={6}
-      />
     </AppActionContext.Provider>
   );
 }

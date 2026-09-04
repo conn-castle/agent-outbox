@@ -799,11 +799,7 @@ function rootLayoutTestRequire(specifier) {
   if (specifier === "../src/components/SiteHeader") {
     return { SiteHeader: () => React.createElement("header") };
   }
-  if (
-    specifier === "sonner/dist/styles.css" ||
-    specifier === "./globals.css" ||
-    specifier === "./review-workspace.css"
-  ) {
+  if (specifier === "./globals.css" || specifier === "./review-workspace.css") {
     return {};
   }
 
