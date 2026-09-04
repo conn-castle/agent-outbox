@@ -680,7 +680,8 @@ test("desktop detail modal stays within a readable responsive measure", async ({
   await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
   const detail = page.getByRole("region", { name: "Review detail" });
   await expect.poll(() => elementWidth(detail)).toBeGreaterThanOrEqual(640);
-  await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(900);
+  // 69rem queue/modal cap at the 16px root used by the desktop project.
+  await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(69 * 16);
 });
 
 test("routine reviews can be completed directly from the queue", async ({
@@ -2222,6 +2223,49 @@ test("queue J and K move between rows and Enter opens details", async ({
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/item=/);
   await expect(page.getByRole("dialog")).toBeVisible();
+});
+
+test("queue Enter shows the loading dialog while detail RSC is delayed", async ({
+  page
+}) => {
+  await page.goto("/human");
+  const firstRow = page.locator(".review-list .row-link").first();
+  await expect(firstRow).toBeVisible();
+
+  const detailRequestStarted = deferred();
+  const releaseDetailResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      request.url().includes("item=")
+    ) {
+      detailRequestStarted.resolve();
+      await releaseDetailResponse.promise;
+    }
+    await route.continue();
+  });
+
+  await page.keyboard.press("j");
+  await expect(firstRow).toBeFocused();
+  const title = (await firstRow.getAttribute("aria-label"))?.replace(
+    /^Open review details for /,
+    ""
+  );
+  expect(title).toBeTruthy();
+
+  await page.keyboard.press("Enter");
+  await detailRequestStarted.promise;
+  await expect(
+    page.getByRole("dialog", {
+      name: `Loading review details for ${title}`
+    })
+  ).toBeVisible();
+  releaseDetailResponse.resolve();
+  await expect(
+    page.getByRole("region", { name: "Review detail" })
+  ).toBeVisible();
 });
 
 test("queue J does not steal typing from search or move past the last row", async ({

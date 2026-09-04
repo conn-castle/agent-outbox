@@ -864,20 +864,6 @@ export function ReviewWorkspace({
       const rows = [
         ...document.querySelectorAll<HTMLElement>(".review-list .row-link")
       ];
-      if (key === "enter") {
-        const focused = document.activeElement;
-        if (
-          focused instanceof HTMLAnchorElement &&
-          focused.classList.contains("row-link")
-        ) {
-          const href = focused.getAttribute("href");
-          if (href) {
-            event.preventDefault();
-            router.push(href);
-          }
-        }
-        return;
-      }
       if (
         key !== "j" &&
         key !== "k" &&
@@ -906,7 +892,7 @@ export function ReviewWorkspace({
 
     window.addEventListener("keydown", moveQueueFocus);
     return () => window.removeEventListener("keydown", moveQueueFocus);
-  }, [router]);
+  }, []);
 
   return (
     <main
