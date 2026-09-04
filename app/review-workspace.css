@@ -3189,32 +3189,24 @@ body:has(.shell > .human-workspace) {
 .human-workspace .context-links {
   display: flex;
   min-width: 0;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.7rem;
-  overflow: hidden;
 }
 
 .human-workspace .context-links a {
   display: inline-flex;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 0.22rem;
-  overflow: hidden;
   border-radius: 0.28rem;
   color: var(--review-accent-dark);
   font-size: var(--queue-type-meta);
   font-weight: 500;
+  overflow-wrap: anywhere;
   text-decoration: none;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.human-workspace .context-links a > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .human-workspace .context-links a:hover {
@@ -4052,20 +4044,21 @@ body:has(.shell > .human-workspace) {
   .human-workspace .row-heading-context .context-links {
     width: 100%;
     margin-left: 0;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     column-gap: 0.9rem;
     row-gap: 0;
     padding-bottom: 0.2rem;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .human-workspace .row-heading-context .context-links a {
     max-width: 100%;
     flex: 0 1 auto;
     min-height: 2.75rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
   }
 
   .human-workspace .review-pagination {
@@ -4666,7 +4659,7 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .detail-modal.compose-modal {
-  width: min(69rem, calc(100% - 2rem));
+  width: min(28rem, calc(100vw - 2rem));
 }
 
 .human-workspace .detail-loading-pane {

@@ -7,7 +7,6 @@ import {
   type MouseEvent,
   type PointerEvent
 } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Check,
@@ -20,10 +19,6 @@ import {
 
 import type { HumanReviewDetail as HumanReviewDetailDto } from "../../server/human-review.ts";
 import {
-  humanReviewHref,
-  type HumanReviewView
-} from "../../shared/human-review-view";
-import {
   ActionComposer,
   ActionTrigger,
   UndoAnswerForm,
@@ -34,22 +29,21 @@ import { CardVisual, HumanIcon, LinkButtons, SafeHtml } from "./TypedContent";
 
 export function ReviewDetail({
   detail,
-  view,
   positionLabel,
   previousItem,
   nextItem,
   composeAction,
+  onClose,
   onMutation
 }: {
   detail: HumanReviewDetailDto | null;
-  view: HumanReviewView;
   positionLabel: string | null;
   previousItem: { href: string; label: string } | null;
   nextItem: { href: string; label: string } | null;
   composeAction?: string | null;
+  onClose: () => void;
   onMutation: OnHumanMutation;
 }) {
-  const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const backdropPressRef = useRef(false);
   const requestedCompose = composeAction
@@ -62,7 +56,6 @@ export function ReviewDetail({
     requestedCompose?.value ?? null
   );
   const [closing, setClosing] = useState(false);
-  const closeHref = humanReviewHref(view);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -76,7 +69,7 @@ export function ReviewDetail({
     if (closing) return;
     setClosing(true);
     dialogRef.current?.close();
-    router.push(closeHref, { scroll: false });
+    onClose();
   }
 
   function handleBackdropPointerDown(event: PointerEvent<HTMLDialogElement>) {

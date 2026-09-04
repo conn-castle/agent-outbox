@@ -684,6 +684,35 @@ test("desktop detail modal stays within a readable responsive measure", async ({
   await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(69 * 16);
 });
 
+test("queue context links remain complete and readable", async ({ page }) => {
+  await page.goto("/human");
+
+  const row = reviewRowByTitle(
+    page,
+    "Payments smoke check failed after deploy"
+  );
+  const links = row.locator(".context-links a");
+  await expect(links).toHaveCount(5);
+  await expect(
+    links.getByText("Read the full production rollback safety procedure")
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      row.locator(".row-heading-context").evaluate((context) => {
+        const contextBox = context.getBoundingClientRect();
+        return [...context.querySelectorAll("a")].every((link) => {
+          const linkBox = link.getBoundingClientRect();
+          return (
+            link.scrollWidth <= link.clientWidth + 1 &&
+            linkBox.left >= contextBox.left - 1 &&
+            linkBox.right <= contextBox.right + 1
+          );
+        });
+      })
+    )
+    .toBe(true);
+});
+
 test("routine reviews can be completed directly from the queue", async ({
   page
 }) => {
@@ -1561,16 +1590,61 @@ test("detail navigation shows immediate progress and closes before navigation fi
     .getByRole("button", { name: "Close detail", exact: true })
     .click();
   await closeRequestStarted.promise;
-  expect(
-    await page
-      .locator("dialog.detail-modal")
-      .evaluate((dialog) =>
-        dialog instanceof HTMLDialogElement ? dialog.open : false
-      )
-  ).toBe(false);
+  await expect(page.locator("dialog.detail-modal")).toHaveCount(0);
   expect(await page.locator("[inert]").count()).toBe(0);
   releaseCloseResponse.resolve();
   await closing;
+});
+
+test("cancelling delayed detail navigation keeps the queue closed and usable", async ({
+  page
+}) => {
+  await page.goto("/human");
+
+  const detailRequestStarted = deferred();
+  const releaseDetailResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      request.url().includes("item=")
+    ) {
+      detailRequestStarted.resolve();
+      await releaseDetailResponse.promise;
+    }
+    await route.continue();
+  });
+
+  const opening = reviewLinkByTitle(
+    page,
+    "Review neighborhood permit brief"
+  ).click();
+  await detailRequestStarted.promise;
+  const loading = page.getByRole("dialog", {
+    name: "Loading review details for Review neighborhood permit brief"
+  });
+  await expect(loading).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(loading).toHaveCount(0);
+  await expect(page).not.toHaveURL(/item=/);
+
+  releaseDetailResponse.resolve();
+  await opening;
+  await expect(page.getByRole("region", { name: "Review detail" })).toHaveCount(
+    0
+  );
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+  await expect(page.locator("[inert]")).toHaveCount(0);
+  await expect(
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
+  ).toBeVisible();
+
+  await reviewLinkByTitle(page, "Choose follow-up window").click();
+  await expect(
+    page.getByRole("region", { name: "Review detail" })
+  ).toBeVisible();
 });
 
 test("failed file upload notice is not re-emitted by the browser", async ({
@@ -1969,9 +2043,9 @@ test("row popup actions open a focused composer instead of the full detail", asy
         const composerWidth = await detail.evaluate(
           (element) => element.getBoundingClientRect().width
         );
-        return Math.abs(queueWidth - composerWidth);
+        return { composerWidth, queueWidth };
       })
-      .toBeLessThanOrEqual(1);
+      .toEqual({ composerWidth: 28 * 16, queueWidth: 69 * 16 });
   }
 
   await field.fill("2026-07-20");

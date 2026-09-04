@@ -160,6 +160,7 @@ export function ReviewWorkspace({
     inputItemId: string;
     label: string;
   } | null>(null);
+  const [detailDismissed, setDetailDismissed] = useState(false);
   const [openViewControl, setOpenViewControl] = useState<
     "filter" | "sort" | null
   >(null);
@@ -217,6 +218,7 @@ export function ReviewWorkspace({
   useEffect(() => {
     const clearRequestedView = () => {
       requestedViewHref.current = null;
+      setDetailDismissed(false);
     };
     window.addEventListener("popstate", clearRequestedView);
     return () => window.removeEventListener("popstate", clearRequestedView);
@@ -445,8 +447,19 @@ export function ReviewWorkspace({
   }, [detail?.inputItemId]);
 
   useEffect(() => {
-    setPendingDetail(null);
-  }, [composeAction, detail?.inputItemId, detailOpen]);
+    if (
+      pendingDetail &&
+      detailOpen &&
+      detail?.inputItemId === pendingDetail.inputItemId
+    ) {
+      setPendingDetail(null);
+    }
+  }, [detail?.inputItemId, detailOpen, pendingDetail]);
+
+  useEffect(() => {
+    if (!detailDismissed || !detailOpen) return;
+    router.replace(humanReviewHref(controlViewRef.current), { scroll: false });
+  }, [detailDismissed, detailOpen, router]);
 
   function currentSearch() {
     return pendingSearch.current ?? search;
@@ -670,9 +683,17 @@ export function ReviewWorkspace({
     );
     enqueueHumanMutation(submission, rowSnapshots);
     if (detail && submission.inputItemIds.includes(detail.inputItemId)) {
+      setDetailDismissed(true);
+      setPendingDetail(null);
       router.replace(humanReviewHref(view), { scroll: false });
     }
   };
+
+  function closeDetail() {
+    setDetailDismissed(true);
+    setPendingDetail(null);
+    router.push(humanReviewHref(controlViewRef.current), { scroll: false });
+  }
 
   function enqueueHumanMutation(
     submission: HumanMutationSubmission,
@@ -1142,9 +1163,10 @@ export function ReviewWorkspace({
               renderedAt={renderedAt}
               onMutation={handleHumanMutation}
               lockedIds={lockedIds}
-              onDetailNavigate={(inputItemId, label) =>
-                setPendingDetail({ inputItemId, label })
-              }
+              onDetailNavigate={(inputItemId, label) => {
+                setDetailDismissed(false);
+                setPendingDetail({ inputItemId, label });
+              }}
             />
             {!hasNext && visibleRows.length > 0 ? (
               <div className="queue-end">
@@ -1226,25 +1248,24 @@ export function ReviewWorkspace({
         </section>
       </div>
 
-      {pendingDetail &&
+      {!detailDismissed &&
+      pendingDetail &&
       (!detailOpen || detail?.inputItemId !== pendingDetail.inputItemId) ? (
         <ReviewDetailLoading
           label={pendingDetail.label}
-          onCancel={() => {
-            setPendingDetail(null);
-            router.push(humanReviewHref(controlView), { scroll: false });
-          }}
+          onCancel={closeDetail}
         />
       ) : null}
 
-      {detailOpen &&
+      {!detailDismissed &&
+      detailOpen &&
       detail &&
+      (!pendingDetail || detail.inputItemId === pendingDetail.inputItemId) &&
       !hiddenIds.has(detail.inputItemId) &&
       !lockedIds.has(detail.inputItemId) ? (
         <ReviewDetail
           key={detail?.inputItemId ?? "empty"}
           detail={detail}
-          view={controlView}
           positionLabel={
             detailIndex >= 0
               ? `${detailIndex + 1} of ${visibleRows.length}`
@@ -1270,6 +1291,7 @@ export function ReviewWorkspace({
               : null
           }
           composeAction={composeAction}
+          onClose={closeDetail}
           onMutation={handleHumanMutation}
         />
       ) : null}

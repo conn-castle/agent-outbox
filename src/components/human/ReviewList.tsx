@@ -69,22 +69,20 @@ export function ReviewList({
         const overflowActions = row.bulkActions.filter(
           (action) => action.overflow
         );
-        const contextLinks = (row.linkButtons ?? [])
-          .flatMap((link) => {
-            const href = safeHref(link.url);
-            return href
-              ? [
-                  {
-                    key: link.displayOrder,
-                    display: link.display,
-                    icon: link.icon,
-                    href,
-                    external: true
-                  }
-                ]
-              : [];
-          })
-          .slice(0, 4);
+        const contextLinks = (row.linkButtons ?? []).flatMap((link) => {
+          const href = safeHref(link.url);
+          return href
+            ? [
+                {
+                  key: link.displayOrder,
+                  display: link.display,
+                  icon: link.icon,
+                  href,
+                  external: true
+                }
+              ]
+            : [];
+        });
         return (
           <OptimisticReviewRow key={row.inputItemId} onMutation={onMutation}>
             {(handleMutation) => (

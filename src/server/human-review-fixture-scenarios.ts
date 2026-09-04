@@ -868,6 +868,18 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           display: "Open safety note",
           icon: "external-link",
           url: "https://example.com/safety-note"
+        },
+        {
+          displayOrder: 3,
+          display: "Inspect release metrics",
+          icon: "external-link",
+          url: "https://metrics.example.com/releases/2026-08-14"
+        },
+        {
+          displayOrder: 4,
+          display: "Read the full production rollback safety procedure",
+          icon: "file",
+          url: "https://docs.example.com/production-rollback-safety"
         }
       ],
       actions: [
