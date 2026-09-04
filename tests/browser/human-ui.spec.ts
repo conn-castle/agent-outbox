@@ -300,7 +300,7 @@ test("authenticated review workspace renders content actions and preserves contr
   ).toHaveAttribute("href", "https://example.com/context/steward-brief-101");
   await expect(detail.locator(".link-buttons")).toHaveCount(0);
   const closeBox = await detail
-    .getByRole("link", { name: "Close detail" })
+    .getByRole("button", { name: "Close detail" })
     .boundingBox();
   const stepperBox = await detail
     .getByRole("navigation", { name: "Review navigation" })
@@ -348,7 +348,7 @@ test("authenticated review workspace renders content actions and preserves contr
     page.getByRole("button", { name: "Pick date and time" })
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Close detail", exact: true }).click();
+  await page.getByRole("button", { name: "Close detail", exact: true }).click();
   await expect(page).not.toHaveURL(/item=/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
@@ -381,7 +381,9 @@ test("authenticated review workspace renders content actions and preserves contr
   await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000517/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   if (isMobile) {
-    await page.getByRole("link", { name: "Close detail", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Close detail", exact: true })
+      .click();
     await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   }
   await expect(page.getByRole("link", { name: "History" })).toHaveAttribute(
@@ -678,7 +680,37 @@ test("desktop detail modal stays within a readable responsive measure", async ({
   await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
   const detail = page.getByRole("region", { name: "Review detail" });
   await expect.poll(() => elementWidth(detail)).toBeGreaterThanOrEqual(640);
-  await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(900);
+  // 69rem queue/modal cap at the 16px root used by the desktop project.
+  await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(69 * 16);
+});
+
+test("queue context links remain complete and readable", async ({ page }) => {
+  await page.goto("/human");
+
+  const row = reviewRowByTitle(
+    page,
+    "Payments smoke check failed after deploy"
+  );
+  const links = row.locator(".context-links a");
+  await expect(links).toHaveCount(5);
+  await expect(
+    links.getByText("Read the full production rollback safety procedure")
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      row.locator(".row-heading-context").evaluate((context) => {
+        const contextBox = context.getBoundingClientRect();
+        return [...context.querySelectorAll("a")].every((link) => {
+          const linkBox = link.getBoundingClientRect();
+          return (
+            link.scrollWidth <= link.clientWidth + 1 &&
+            linkBox.left >= contextBox.left - 1 &&
+            linkBox.right <= contextBox.right + 1
+          );
+        });
+      })
+    )
+    .toBe(true);
 });
 
 test("routine reviews can be completed directly from the queue", async ({
@@ -1488,6 +1520,133 @@ test("undo from detail closes the modal before the server answers", async ({
   await expect(page.locator("[data-sonner-toast]")).toContainText("Restored");
 });
 
+test("detail navigation shows immediate progress and closes before navigation finishes", async ({
+  page,
+  isMobile
+}) => {
+  await page.goto("/human");
+
+  const detailRequestStarted = deferred();
+  const releaseDetailResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      request.url().includes("item=")
+    ) {
+      detailRequestStarted.resolve();
+      await releaseDetailResponse.promise;
+    }
+    await route.continue();
+  });
+
+  const opening = reviewLinkByTitle(
+    page,
+    "Review neighborhood permit brief"
+  ).click();
+  await detailRequestStarted.promise;
+  await expect(
+    page.getByRole("dialog", {
+      name: "Loading review details for Review neighborhood permit brief"
+    })
+  ).toBeVisible();
+  releaseDetailResponse.resolve();
+  await opening;
+
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect(detail).toBeVisible();
+  if (!isMobile) {
+    await expect
+      .poll(async () => {
+        const queueWidth = await page
+          .locator(".queue-pane")
+          .evaluate((element) => element.getBoundingClientRect().width);
+        const detailWidth = await detail.evaluate(
+          (element) => element.getBoundingClientRect().width
+        );
+        return Math.abs(queueWidth - detailWidth);
+      })
+      .toBeLessThanOrEqual(1);
+  }
+
+  const closeRequestStarted = deferred();
+  const releaseCloseResponse = deferred();
+  await page.unroute("**/human**");
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      !request.url().includes("item=")
+    ) {
+      closeRequestStarted.resolve();
+      await releaseCloseResponse.promise;
+    }
+    await route.continue();
+  });
+
+  const closing = page
+    .getByRole("button", { name: "Close detail", exact: true })
+    .click();
+  await closeRequestStarted.promise;
+  await expect(page.locator("dialog.detail-modal")).toHaveCount(0);
+  expect(await page.locator("[inert]").count()).toBe(0);
+  releaseCloseResponse.resolve();
+  await closing;
+});
+
+test("cancelling delayed detail navigation keeps the queue closed and usable", async ({
+  page
+}) => {
+  await page.goto("/human");
+
+  const detailRequestStarted = deferred();
+  const releaseDetailResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      request.url().includes("item=")
+    ) {
+      detailRequestStarted.resolve();
+      await releaseDetailResponse.promise;
+    }
+    await route.continue();
+  });
+
+  const opening = reviewLinkByTitle(
+    page,
+    "Review neighborhood permit brief"
+  ).click();
+  await detailRequestStarted.promise;
+  const loading = page.getByRole("dialog", {
+    name: "Loading review details for Review neighborhood permit brief"
+  });
+  await expect(loading).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(loading).toHaveCount(0);
+  await expect(page).not.toHaveURL(/item=/);
+
+  releaseDetailResponse.resolve();
+  await opening;
+  await expect(page.getByRole("region", { name: "Review detail" })).toHaveCount(
+    0
+  );
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+  await expect(page.locator("[inert]")).toHaveCount(0);
+  await expect(
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
+  ).toBeVisible();
+
+  await reviewLinkByTitle(page, "Choose follow-up window").click();
+  await expect(
+    page.getByRole("region", { name: "Review detail" })
+  ).toBeVisible();
+});
+
 test("failed file upload notice is not re-emitted by the browser", async ({
   page
 }) => {
@@ -1859,7 +2018,8 @@ test("popup controls cover typed response kinds", async ({ page }) => {
 });
 
 test("row popup actions open a focused composer instead of the full detail", async ({
-  page
+  page,
+  isMobile
 }) => {
   await page.goto("/human");
   await reviewRowByTitle(page, "Choose follow-up window")
@@ -1874,6 +2034,19 @@ test("row popup actions open a focused composer instead of the full detail", asy
   await expect(
     detail.getByRole("navigation", { name: "Review navigation" })
   ).toHaveCount(0);
+  if (!isMobile) {
+    await expect
+      .poll(async () => {
+        const queueWidth = await page
+          .locator(".queue-pane")
+          .evaluate((element) => element.getBoundingClientRect().width);
+        const composerWidth = await detail.evaluate(
+          (element) => element.getBoundingClientRect().width
+        );
+        return { composerWidth, queueWidth };
+      })
+      .toEqual({ composerWidth: 28 * 16, queueWidth: 69 * 16 });
+  }
 
   await field.fill("2026-07-20");
   const paneBox = await detail.boundingBox();
@@ -2126,6 +2299,49 @@ test("queue J and K move between rows and Enter opens details", async ({
   await expect(page.getByRole("dialog")).toBeVisible();
 });
 
+test("queue Enter shows the loading dialog while detail RSC is delayed", async ({
+  page
+}) => {
+  await page.goto("/human");
+  const firstRow = page.locator(".review-list .row-link").first();
+  await expect(firstRow).toBeVisible();
+
+  const detailRequestStarted = deferred();
+  const releaseDetailResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      request.url().includes("item=")
+    ) {
+      detailRequestStarted.resolve();
+      await releaseDetailResponse.promise;
+    }
+    await route.continue();
+  });
+
+  await page.keyboard.press("j");
+  await expect(firstRow).toBeFocused();
+  const title = (await firstRow.getAttribute("aria-label"))?.replace(
+    /^Open review details for /,
+    ""
+  );
+  expect(title).toBeTruthy();
+
+  await page.keyboard.press("Enter");
+  await detailRequestStarted.promise;
+  await expect(
+    page.getByRole("dialog", {
+      name: `Loading review details for ${title}`
+    })
+  ).toBeVisible();
+  releaseDetailResponse.resolve();
+  await expect(
+    page.getByRole("region", { name: "Review detail" })
+  ).toBeVisible();
+});
+
 test("queue J does not steal typing from search or move past the last row", async ({
   page
 }) => {
@@ -2166,7 +2382,7 @@ test("mobile review navigation preserves the queue view", async ({
   await expect(
     page.getByRole("region", { name: "Review detail" })
   ).toBeVisible();
-  await page.getByRole("link", { name: "Close detail", exact: true }).click();
+  await page.getByRole("button", { name: "Close detail", exact: true }).click();
 
   await expect(page).toHaveURL(/order=updated_at%3Adesc/);
   await expect(

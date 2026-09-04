@@ -1267,6 +1267,7 @@ body:has(.shell > .human-workspace) {
   font-weight: 540;
   line-height: 1.46;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .human-workspace .detail-body {
@@ -1275,6 +1276,12 @@ body:has(.shell > .human-workspace) {
   font-size: 0.76rem;
   line-height: 1.6;
   overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.human-workspace .detail-summary :where(pre, code),
+.human-workspace .detail-body :where(pre, code) {
+  white-space: pre-wrap;
 }
 
 .human-workspace .detail-body > :first-child {
@@ -3189,17 +3196,17 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .context-links a {
   display: inline-flex;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 0.22rem;
-  overflow: hidden;
   border-radius: 0.28rem;
   color: var(--review-accent-dark);
   font-size: var(--queue-type-meta);
   font-weight: 500;
+  overflow-wrap: anywhere;
   text-decoration: none;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .human-workspace .context-links a:hover {
@@ -4627,7 +4634,7 @@ body:has(.shell > .human-workspace) {
    supplies focus containment and Escape handling while the queue stays intact
    behind it. */
 .human-workspace .detail-modal {
-  width: min(48rem, calc(100vw - 2rem));
+  width: min(69rem, calc(100% - 2rem));
   height: fit-content;
   max-width: none;
   max-height: calc(100dvh - 2rem);
@@ -4653,6 +4660,56 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .detail-modal.compose-modal {
   width: min(28rem, calc(100vw - 2rem));
+}
+
+.human-workspace .detail-loading-pane {
+  display: flex;
+  min-height: 8rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  padding: 2rem;
+}
+
+.human-workspace .detail-loading-pane > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+
+.human-workspace .detail-loading-pane strong,
+.human-workspace .detail-loading-pane span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.human-workspace .detail-loading-pane span {
+  color: var(--review-muted);
+  font-size: var(--queue-type-meta);
+}
+
+.human-workspace .detail-loading-spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
+  border: 2px solid var(--review-line-strong);
+  border-top-color: var(--review-accent-dark);
+  border-radius: 50%;
+  animation: detail-loading-spin 700ms linear infinite;
+}
+
+@keyframes detail-loading-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .human-workspace .detail-loading-spinner {
+    animation: none;
+    border-color: var(--review-accent-dark);
+  }
 }
 
 .human-workspace .detail-modal::backdrop {
