@@ -369,6 +369,76 @@ export function UndoAnswerForm({
   );
 }
 
+export function LastAnswerUndoForm({
+  undo,
+  actionLabel,
+  disabled = false,
+  onMutation
+}: {
+  undo: {
+    inputItemId: string;
+    callerId: string;
+    outputResultId: string;
+  };
+  actionLabel: string | null;
+  disabled?: boolean;
+  onMutation: OnHumanMutation;
+}) {
+  const formAction = useProgressiveFormAction(undoHumanAnswer);
+  const label = actionLabel ? `Undo “${actionLabel}”` : "Undo last answer";
+  return (
+    <form className="last-undo-form" action={formAction} noValidate>
+      <ViewStateFields />
+      <input type="hidden" name="inputItemId" value={undo.inputItemId} />
+      <input type="hidden" name="callerId" value={undo.callerId} />
+      <input type="hidden" name="outputResultId" value={undo.outputResultId} />
+      {actionLabel ? (
+        <input type="hidden" name="noticeAction" value={actionLabel} />
+      ) : null}
+      <LastUndoSubmit
+        label={label}
+        disabled={disabled}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const form = event.currentTarget.form;
+          if (!form) return;
+          onMutation({
+            operation: "undo",
+            inputItemIds: [undo.inputItemId],
+            formData: new FormData(form)
+          });
+        }}
+      />
+    </form>
+  );
+}
+
+function LastUndoSubmit({
+  label,
+  disabled,
+  onClick
+}: {
+  label: string;
+  disabled: boolean;
+  onClick?: MouseEventHandler<HTMLButtonElement>;
+}) {
+  const status = useFormStatus();
+  return (
+    <button
+      className="last-undo-button"
+      type="submit"
+      title={label}
+      aria-label={label}
+      data-testid="last-answer-undo"
+      disabled={disabled || status.pending}
+      onClick={onClick}
+    >
+      <span aria-hidden="true">{label}</span>
+    </button>
+  );
+}
+
 function ActionResponseFields({
   action,
   onValidityChange

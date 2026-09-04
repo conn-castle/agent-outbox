@@ -749,23 +749,15 @@ test("routine reviews can be completed directly from the queue", async ({
   ).toBeVisible();
   await row.getByRole("button", { name: "Approve permit brief" }).click();
 
-  const completionNotice = page.locator("[data-sonner-toast]");
-  await expect(completionNotice).toHaveCount(1);
-  await expect(completionNotice).toContainText(
-    "Saved Approve permit brief for “Review neighborhood permit brief”."
-  );
+  await expect(lastUndoButton(page, "Approve permit brief")).toBeVisible();
   await expect(page).not.toHaveURL(/notice=/);
   expect(humanPosts).toEqual(["mutation"]);
-  await page.getByRole("button", { name: "Close toast" }).click();
-  await expect(completionNotice).toHaveCount(0);
 
   const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
   await followUpRow.scrollIntoViewIfNeeded();
   await followUpRow.getByRole("button", { name: "Approve follow-up" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toHaveCount(1);
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "Saved Approve follow-up for “Choose follow-up window”."
-  );
+  await expect(lastUndoButton(page, "Approve follow-up")).toBeVisible();
+  await expect(lastUndoButton(page, "Approve permit brief")).toHaveCount(0);
   await expect(page).not.toHaveURL(/notice=/);
   expect(humanPosts).toEqual(["mutation", "mutation"]);
   await expect(page).not.toHaveURL(/item=/);
@@ -815,7 +807,7 @@ test("queue actions preserve a bottom scroll position", async ({ page }) => {
   expect(scrollTopBeforeAction).toBeGreaterThan(0);
 
   await lastQuickAction.click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page)).toBeVisible();
   expect(
     await queue.evaluate((element) => Math.round(element.scrollTop))
   ).toBeGreaterThan(0);
@@ -876,16 +868,8 @@ test("a second queue action is retained while the first is synchronizing", async
       message: "The queued second intent should synchronize after the first."
     })
     .toBe(2);
-  await expect(page.locator("[data-sonner-toast]")).toHaveCount(2);
-  const toastBoxes = await page
-    .locator("[data-sonner-toast]")
-    .evaluateAll((toasts) =>
-      toasts
-        .map((toast) => toast.getBoundingClientRect())
-        .sort((left, right) => left.top - right.top)
-        .map(({ top, bottom }) => ({ top, bottom }))
-    );
-  expect(toastBoxes[0]?.bottom).toBeLessThanOrEqual(toastBoxes[1]?.top ?? 0);
+  await expect(lastUndoButton(page, "Approve permit brief")).toBeVisible();
+  await expect(lastUndoButton(page, "Approve to send")).toHaveCount(0);
   await expect(
     reviewRowByTitle(page, "Reply to Meridian about the renewal delay")
   ).toContainText("answeredDecision: Approve to send");
@@ -894,14 +878,16 @@ test("a second queue action is retained while the first is synchronizing", async
   ).toContainText("answeredDecision: Approve");
 });
 
-test("toasts expose immediate row context and undo restores queue order", async ({
-  page
-}) => {
+test("last-action undo restores queue order", async ({ page }) => {
   const requestStarted = deferred();
   const releaseResponse = deferred();
+  let mutationRequests = 0;
   await page.route("**/human/mutations", async (route) => {
-    requestStarted.resolve();
-    await releaseResponse.promise;
+    mutationRequests += 1;
+    if (mutationRequests === 1) {
+      requestStarted.resolve();
+      await releaseResponse.promise;
+    }
     await route.continue();
   });
   await page.goto("/human?sort=updated_at");
@@ -919,22 +905,10 @@ test("toasts expose immediate row context and undo restores queue order", async 
 
   await row.getByRole("button", { name: "Approve permit brief" }).click();
   await requestStarted.promise;
-  await expect(
-    page.locator("[data-sonner-toast]").filter({
-      hasText: "Saving Approve permit brief"
-    })
-  ).toContainText(`“${title}”…`);
+  await expect(row).toBeHidden();
 
   releaseResponse.resolve();
-  const savedToast = page.locator("[data-sonner-toast]").filter({
-    hasText: `Saved Approve permit brief for “${title}”.`
-  });
-  await savedToast.getByRole("button", { name: "Undo" }).click();
-  await expect(
-    page.locator("[data-sonner-toast]").filter({
-      hasText: `Restored “${title}” to its prior queue position.`
-    })
-  ).toBeVisible();
+  await lastUndoButton(page, "Approve permit brief").click();
   await expect(row).toBeVisible();
   const restoredIndex = await rows.evaluateAll(
     (nodes, expectedTitle) =>
@@ -1188,9 +1162,8 @@ test("a client mutation timeout keeps the optimistic projection", async ({
   await requestStarted.promise;
   await aborted;
   await expect(row).toBeHidden();
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "Still confirming"
-  );
+  await expect(lastActionError(page)).toHaveCount(0);
+  await expect(lastUndoButton(page)).toHaveCount(0);
 });
 
 test("an all-failed bulk mutation restores the selected rows", async ({
@@ -1227,14 +1200,14 @@ test("an all-failed bulk mutation restores the selected rows", async ({
     .getByRole("button", { name: "Apply Approve permit brief" })
     .click();
 
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
+  await expect(lastActionError(page)).toContainText(
     "Bulk action complete: 0 answered, 2 failed."
   );
   await expect(permitRow).toBeVisible();
   await expect(followUpRow).toBeVisible();
 });
 
-test("undo from a History toast does not leave a pending snapshot in History", async ({
+test("last-action undo from History does not leave a pending snapshot in History", async ({
   page
 }) => {
   await page.goto("/human");
@@ -1244,10 +1217,7 @@ test("undo from a History toast does not leave a pending snapshot in History", a
     "Reply to Meridian about the renewal delay"
   );
   await row.getByRole("button", { name: "Approve to send" }).click();
-  const toast = page.locator("[data-sonner-toast]");
-  await expect(toast).toContainText(
-    "Saved Approve to send for “Reply to Meridian about the renewal delay”."
-  );
+  await expect(lastUndoButton(page, "Approve to send")).toBeVisible();
 
   await page
     .getByRole("navigation", { name: "Primary" })
@@ -1255,10 +1225,7 @@ test("undo from a History toast does not leave a pending snapshot in History", a
     .click();
   await expect(page).toHaveURL(/status=answered/);
   await expect(row).toBeVisible();
-  await toast.getByRole("button", { name: "Undo" }).click();
-  await expect(
-    page.locator("[data-sonner-toast]").filter({ hasText: "Restored" })
-  ).toBeVisible();
+  await lastUndoButton(page, "Approve to send").click();
   await expect(row).toHaveCount(0);
 });
 
@@ -1295,7 +1262,7 @@ test("a failed optimistic queue action rolls back its local projection", async (
 
   releaseFailure.resolve();
   await expect(row).toBeVisible();
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
+  await expect(lastActionError(page)).toContainText(
     "The decision could not be saved."
   );
 });
@@ -1343,8 +1310,7 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
   const row = reviewRowByTitle(page, "Review neighborhood permit brief");
   const approve = row.getByRole("button", { name: "Approve permit brief" });
   await expect(approve).toBeEnabled();
-  const existingNotice = page.locator("[data-sonner-toast]");
-  await expect(existingNotice).toContainText("Saved response for this review.");
+  await expect(lastUndoButton(page)).toHaveCount(0);
   const workspaceBody = page.locator(".workspace-body");
   const workspaceTopBeforeAction = await workspaceBody.evaluate(
     (element) => element.getBoundingClientRect().top
@@ -1396,10 +1362,6 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
   ).not.toBeNull();
   expect(Number(responseMs)).toBeLessThanOrEqual(20);
   await expect(row).toBeHidden();
-  await expect(existingNotice).toHaveCount(2);
-  await expect(
-    existingNotice.filter({ hasText: "Saving Approve permit brief" })
-  ).toContainText("“Review neighborhood permit brief”…");
   expect(
     await workspaceBody.evaluate(
       (element) => element.getBoundingClientRect().top
@@ -1407,13 +1369,7 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
   ).toBe(workspaceTopBeforeAction);
 
   releaseActionResponse.resolve();
-  const completionNotice = page.locator("[data-sonner-toast]");
-  const savedNotice = completionNotice.filter({
-    hasText:
-      "Saved Approve permit brief for “Review neighborhood permit brief”."
-  });
-  await expect(savedNotice).toBeVisible();
-  await expect(savedNotice.getByRole("button", { name: "Undo" })).toBeVisible();
+  await expect(lastUndoButton(page, "Approve permit brief")).toBeVisible();
   await expect(page.locator(".human-notice")).toHaveCount(0);
   expect(
     await workspaceBody.evaluate(
@@ -1451,9 +1407,8 @@ test("human actions submit undo and narrow bulk actions through server actions",
   await page
     .getByRole("button", { name: "Apply Approve permit brief" })
     .click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "Bulk action complete: 2 answered, 0 failed."
-  );
+  await expect(permitRow).toHaveCount(0);
+  await expect(followUpRow).toHaveCount(0);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
@@ -1470,8 +1425,13 @@ test("human actions submit undo and narrow bulk actions through server actions",
   await expect(page.getByLabel("Answered state")).toContainText(
     "Answered with Archive"
   );
+  const undoResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/human/mutations") &&
+      response.request().method() === "POST"
+  );
   await page.getByRole("button", { name: "Undo answer" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Restored");
+  await undoResponse;
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000525");
   await expect(
@@ -1517,7 +1477,7 @@ test("undo from detail closes the modal before the server answers", async ({
   ).toBe(false);
 
   releaseActionResponse.resolve();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Restored");
+  await expect(page.locator("#human-optimistic-status")).toHaveText("");
 });
 
 test("detail navigation shows immediate progress and closes before navigation finishes", async ({
@@ -1662,7 +1622,7 @@ test("failed file upload notice is not re-emitted by the browser", async ({
   });
   await page.getByRole("button", { name: "Attach evidence" }).click();
 
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
+  await expect(lastActionError(page)).toContainText(
     "Could not save “Review neighborhood permit brief”: Action failed: invalid request."
   );
   await expect(
@@ -1705,7 +1665,7 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
 
   // Submitting from page 2 must land back on page 2, not a reset view.
   await decisionSurface.getByRole("button", { name: "Approve" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Approve")).toBeVisible();
   await expect(page).toHaveURL(/page=2/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
@@ -1841,10 +1801,20 @@ test("bulk actions only submit selected rows visible in the current filter", asy
     "1 selected pending row"
   );
   await page.getByRole("button", { name: "Apply Approve follow-up" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "Bulk action complete: 1 answered, 0 failed."
+  await expect(reviewRowByTitle(page, "Choose follow-up window")).toHaveCount(
+    0
   );
 });
+
+function lastUndoButton(page: Page, action?: string) {
+  return action
+    ? page.getByRole("button", { name: `Undo “${action}”`, exact: true })
+    : page.getByTestId("last-answer-undo");
+}
+
+function lastActionError(page: Page) {
+  return page.locator(".last-action-error");
+}
 
 function reviewRowByTitle(page: Page, title: string) {
   return page.locator("article.review-row").filter({
@@ -1978,7 +1948,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     buffer: Buffer.from("browser fixture file")
   });
   await page.getByRole("button", { name: "Attach evidence" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Attach evidence")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
@@ -1988,33 +1958,33 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     .getByLabel("Requested change")
     .fill("Tighten the handoff language.");
   await page.getByRole("button", { name: "Request edit" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Request edit")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
   await openSecondaryActions(page);
   await page.getByRole("button", { name: "Set review lane" }).click();
   await page.getByLabel("Operations").check();
   await page.getByRole("button", { name: "Set review lane" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Set review lane")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date", exact: true }).click();
   await page.getByLabel("Follow-up date").fill("2026-07-15");
   await page.getByRole("button", { name: "Pick date" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Pick date")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
   await page.getByRole("button", { name: "Pick date and time" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Pick date and time")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Select checks" }).click();
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
   await page.getByRole("button", { name: "Select checks" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Select checks")).toBeVisible();
 });
 
 test("row popup actions open a focused composer instead of the full detail", async ({

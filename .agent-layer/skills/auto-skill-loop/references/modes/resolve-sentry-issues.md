@@ -1,20 +1,36 @@
 # Resolve Sentry Issues
 
 This is one iteration of a repeated loop whose purpose is to clear actionable
-unresolved issues from the `agent-panel` Sentry project, one PR at a time. Read
-`docs/ops/systems/sentry.md`, `docs/ops/systems/axiom.md`, and
-`docs/ops/DEBUGGING.md` before selecting work, and follow their current access,
-query, correlation, shared-project, synthetic-traffic, release-health, and
-post-release resolution guidance.
+unresolved issues from the Agent Outbox Sentry project, one PR at a time. Before
+selecting work, read `docs/ops/services/sentry.md` and `docs/ops/monitoring.md`.
+After selecting an issue, read `docs/ops/debugging.md` and the service runbook
+for each relevant provider. Read `docs/ops/release.md` only when deciding
+whether a fix has reached production. Follow those runbooks' current access,
+data-safety, correlation, runtime-capture, source-map, and production-release
+guidance.
 
-Refresh the complete unresolved inventory. Resolve synthetic issues and
-already-deployed fixes only when they meet the documented ordinary-resolution
-policy. From the remaining real errors, select the highest-value coherent
-root-cause fix that fits in one PR and can be implemented without a human
-decision, prioritizing current production impact and prerequisites. Corroborate
-each selected Sentry issue with Axiom or local log evidence before changing
-code. Leave merged fixes unresolved while they await the required deployment
-evidence, and treat work already covered by an open PR as in flight.
+Use the repository's `pnpm run sentry -- ...` wrapper for Sentry access and
+verify its configured organization and project before triage. Refresh the
+complete unresolved inventory, accounting for the `issues list` page and row
+limits; if a limit is reached, use supported narrower queries until the full
+inventory is represented. From real production errors, select the highest-value
+coherent root-cause fix that fits in one PR and can be implemented without a
+human decision, prioritizing current production impact and prerequisites.
+
+Corroborate the selected issue with the matching Cloudflare Workers log by
+`error_id`, route, operation, release, and UTC window when those fields are
+available. Use the relevant provider or local evidence when the failure is not a
+Worker runtime error. If the available evidence cannot establish the defect,
+improve safe observability instead of guessing at a fix.
+
+Treat work already covered by an open PR as in flight. Leave real issues
+unresolved until the fix is deployed to production and current Sentry and
+runtime evidence shows that release is serving without recurrence. Resolve
+repo-owned smoke/canary issues only after confirming that they contain no real
+failure and were produced by the documented Agent Outbox verification path.
+Resolve issues only by explicit issue ID; never use `--all` or another bulk
+selector for an issue-state mutation. Synthetic cleanup is triage, not the PR's
+implementation task, so continue selecting work after resolving a canary issue.
 
 Do not demote severity, suppress or filter capture, mute an issue, or reclassify
 an event. Those actions require human approval. Preserve failure visibility and

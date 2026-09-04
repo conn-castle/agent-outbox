@@ -137,6 +137,82 @@ body:has(.shell > .human-workspace) {
   min-height: 3.25rem;
 }
 
+.human-workspace .last-action-error {
+  display: flex;
+  min-width: 0;
+  max-width: 16rem;
+  align-items: center;
+  gap: 0.28rem;
+  min-height: 2.15rem;
+  padding: 0.2rem 0.3rem 0.2rem 0.58rem;
+  border: 1px solid rgba(243, 196, 190, 0.32);
+  border-radius: 999px;
+  background: rgba(181, 43, 49, 0.18);
+  color: #f3c4be;
+  font-size: 0.68rem;
+  font-weight: 620;
+}
+
+.human-workspace .last-action-error > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.human-workspace .last-action-error > button {
+  display: grid;
+  width: 1.7rem;
+  height: 1.7rem;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+}
+
+.human-workspace .last-action-error > button:hover,
+.human-workspace .last-action-error > button:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.human-workspace .last-undo-form {
+  min-width: 0;
+}
+
+.human-workspace .last-undo-button {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 12.5rem;
+  min-height: 2.15rem;
+  align-items: center;
+  padding: 0.2rem 0.72rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #f8f5ee;
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.human-workspace .last-undo-button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.human-workspace .last-undo-button:hover,
+.human-workspace .last-undo-button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.human-workspace .last-undo-button:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
 .human-workspace .account-banner {
   position: relative;
   min-width: 0;
@@ -3931,6 +4007,15 @@ body:has(.shell > .human-workspace) {
 
   .human-workspace .app-account {
     display: flex;
+  }
+
+  .human-workspace .last-action-error {
+    max-width: 8.5rem;
+  }
+
+  .human-workspace .last-undo-button {
+    max-width: 9rem;
+    min-height: 2.75rem;
   }
 
   .human-workspace .app-brand > span {

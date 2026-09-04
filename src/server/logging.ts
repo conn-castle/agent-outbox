@@ -7,6 +7,7 @@ export type RuntimeLogEvent = {
   error_id?: string;
   error_name?: string;
   sentry_captured?: boolean;
+  sentry_scope_attached?: boolean;
   sentry_capture_rate_limited?: boolean;
   request_id?: string;
   environment?: string | null;
@@ -17,6 +18,9 @@ export type RuntimeLogEvent = {
   status_code?: number;
   duration_ms?: number;
   operation: string;
+  path_shape?: string;
+  multipart_boundary?: string;
+  content_length_state?: string;
   operation_kind?: string;
   account_id?: string;
   caller_id?: string;
@@ -38,6 +42,7 @@ const SAFE_LOG_KEYS = new Set([
   "error_id",
   "error_name",
   "sentry_captured",
+  "sentry_scope_attached",
   "sentry_capture_rate_limited",
   "request_id",
   "environment",
@@ -48,6 +53,9 @@ const SAFE_LOG_KEYS = new Set([
   "status_code",
   "duration_ms",
   "operation",
+  "path_shape",
+  "multipart_boundary",
+  "content_length_state",
   "operation_kind",
   "account_id",
   "caller_id",

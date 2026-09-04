@@ -2,7 +2,6 @@ import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import Script from "next/script";
 import type { ReactNode } from "react";
-import "sonner/dist/styles.css";
 
 import { AppActionProvider } from "../src/components/actions/AppActionProvider";
 import { ClientEventsInit } from "../src/components/observability/ClientEventsInit";
