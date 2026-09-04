@@ -1,7 +1,7 @@
 export const NEXT_REQUEST_ERROR_OPERATION = "next_request_error";
 export const NEXT_REQUEST_ERROR_MESSAGE = "Next.js request error captured.";
 
-export type PathShape = "contains_dot" | "extensionless";
+export type PathShape = "contains_dot" | "extensionless" | "unknown";
 export type MultipartBoundaryState =
   | "not_multipart"
   | "absent"
@@ -46,7 +46,7 @@ const RFC2045_TOKEN_PATTERN = /^[^\x00-\x20()<>@,;:\\"/[\]?=]+$/;
 const FALLBACK_CLASSIFICATION: NextRequestErrorClassification = {
   route: "unknown",
   method: "other",
-  path_shape: "extensionless",
+  path_shape: "unknown",
   multipart_boundary: "unknown",
   content_length_state: "unknown"
 };
@@ -103,9 +103,12 @@ function classifyMethod(method: unknown) {
 }
 
 function classifyPathShape(path: unknown): PathShape {
-  return originalPathname(path).includes(".")
-    ? "contains_dot"
-    : "extensionless";
+  const pathname = originalPathname(path);
+  if (!pathname) {
+    return "unknown";
+  }
+
+  return pathname.includes(".") ? "contains_dot" : "extensionless";
 }
 
 function originalPathname(path: unknown) {

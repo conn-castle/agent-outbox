@@ -85,7 +85,21 @@ test("classifyNextRequestError maps original path shape without returning the pa
       { path: "", method: "GET", headers: {} },
       { routePath: "/_not-found/page" }
     ).path_shape,
-    "extensionless"
+    "unknown"
+  );
+  assert.equal(
+    classifyNextRequestError(
+      { method: "GET", headers: {} },
+      { routePath: "/_not-found/page" }
+    ).path_shape,
+    "unknown"
+  );
+  assert.equal(
+    classifyNextRequestError(
+      /** @type {any} */ ({ path: null, method: "GET", headers: {} }),
+      { routePath: "/_not-found/page" }
+    ).path_shape,
+    "unknown"
   );
 });
 
@@ -391,6 +405,36 @@ test("classifyNextRequestError reports unavailable header metadata as unknown", 
 
   assert.equal(classification.multipart_boundary, "unknown");
   assert.equal(classification.content_length_state, "unknown");
+});
+
+test("classifyNextRequestError reports unknown path shape for unclassified or non-string paths and fallbacks", () => {
+  assert.equal(
+    classifyNextRequestError(
+      /** @type {any} */ ({ path: 42, method: "POST" }),
+      { routePath: "/_not-found/page" }
+    ).path_shape,
+    "unknown"
+  );
+  assert.deepEqual(classifyNextRequestError(null, null), {
+    route: "unknown",
+    method: "other",
+    path_shape: "unknown",
+    multipart_boundary: "unknown",
+    content_length_state: "unknown"
+  });
+
+  const throwingRequest = /** @type {any} */ ({
+    get path() {
+      throw new Error("unexpected error reading path");
+    }
+  });
+  assert.deepEqual(classifyNextRequestError(throwingRequest, null), {
+    route: "unknown",
+    method: "other",
+    path_shape: "unknown",
+    multipart_boundary: "unknown",
+    content_length_state: "unknown"
+  });
 });
 
 test("classifyNextRequestError never reads a request body", () => {

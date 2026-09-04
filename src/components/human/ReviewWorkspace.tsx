@@ -168,9 +168,6 @@ export function ReviewWorkspace({
   const [lastUndo, setLastUndo] = useState<LastAnswerUndo | null>(() =>
     lastAnswerUndoFromNotice(notice)
   );
-  const lastUndoRef = useRef(lastUndo);
-  lastUndoRef.current = lastUndo;
-  const lastUndoSnapshotsRef = useRef<HumanReviewListRow[]>([]);
   const [lastError, setLastError] = useState<string | null>(() =>
     notice?.kind === "error" ? notice.message : null
   );
@@ -744,9 +741,6 @@ export function ReviewWorkspace({
     ) {
       setLastError(null);
     }
-    if (submission.operation === "answer") {
-      lastUndoSnapshotsRef.current = rowSnapshots;
-    }
     enqueue({
       scope: HUMAN_MUTATION_SCOPE,
       optimistic,
@@ -764,7 +758,6 @@ export function ReviewWorkspace({
         }
         successGenerations.current.set(mutationId, canonicalGeneration.current);
         if (result.operation === "answer") {
-          lastUndoSnapshotsRef.current = rowSnapshots;
           setLastUndo({
             inputItemId: result.undo.inputItemId,
             callerId: result.undo.callerId,
@@ -779,13 +772,24 @@ export function ReviewWorkspace({
           return;
         }
         if (result.operation === "undo") {
-          lastUndoSnapshotsRef.current = [];
-          setLastUndo(null);
+          const restoredOutputResultId = normalizedFormText(
+            submission.formData,
+            "outputResultId"
+          );
+          setLastUndo((current) => {
+            if (!current) {
+              return null;
+            }
+            const matchesAnswer =
+              result.inputItemIds.includes(current.inputItemId) &&
+              (!restoredOutputResultId ||
+                current.outputResultId === restoredOutputResultId);
+            return matchesAnswer ? null : current;
+          });
           setLastError(null);
           return;
         }
         if (result.operation === "bulk-answer") {
-          lastUndoSnapshotsRef.current = [];
           setLastUndo(null);
           if (result.failed > 0) {
             setLastError(result.message);
@@ -974,9 +978,7 @@ export function ReviewWorkspace({
               onMutation={(submission) => {
                 enqueueHumanMutation(
                   submission,
-                  lastUndoSnapshotsRef.current.length > 0
-                    ? lastUndoSnapshotsRef.current
-                    : (lastUndoRef.current?.rowSnapshots ?? []),
+                  lastUndo.rowSnapshots,
                   viewRef.current.status === "pending"
                 );
               }}
