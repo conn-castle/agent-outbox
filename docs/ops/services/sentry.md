@@ -1,5 +1,21 @@
 # Sentry
 
+## Repository scope
+
+This repository owns Sentry project **`agent-outbox`** in organization
+**`conn-castle`**, with issue IDs prefixed **`AGENT-OUTBOX-`**. Error
+inventories, triage, fixes, and issue-state changes in this repository must be
+limited to that project. Do not query or change another project's issues, or
+move implementation to a sibling repository, unless the user explicitly requests
+that scope. Organization-wide credentials do not grant task authorization across
+projects.
+
+If a skill, dispatch prompt, or copied runbook names another project, treat it
+as a scope mismatch and correct the task context before proceeding. Never
+substitute a sibling repository's Sentry runbook or authentication mechanism
+when access fails here. Include the project name in inventory reports so issue
+counts cannot be mistaken for another app's.
+
 ## Tool
 
 Use the official Sentry CLI through the repository wrapper:
@@ -11,6 +27,34 @@ pnpm run sentry -- --help
 The wrapper reads the auth token, organization slug, and project slug directly
 from their canonical production SSM parameters with AWS SSO profile `conn` and
 injects them only into the child process. It does not print or cache values.
+
+Sentry operator authentication is **SSM-backed only**. A missing `SENTRY_*`
+variable in the parent shell is expected, not an authentication failure. Do not
+create `~/.sentryclirc`, put Sentry credentials in `.agent-layer/.env` or
+`.env.local`, or ask the user to export a token. Use the wrapper to test access:
+
+```bash
+pnpm run sentry -- info
+pnpm run sentry -- issues list --project agent-outbox --query 'is:unresolved' --max-rows 100
+```
+
+Confirm `info` reports organization `conn-castle` and project `agent-outbox`. If
+either differs, stop and report the configuration mismatch rather than querying
+the configured foreign project. Use `--query 'is:unresolved'` to filter the
+inventory; do not rely on `--status unresolved`, which can still return resolved
+rows with the pinned CLI. Check returned statuses and account for row and page
+limits before reporting a complete count.
+
+If the wrapper reports an expired AWS SSO session, authenticate and retry:
+
+```bash
+aws sso login --profile conn --use-device-code --no-browser
+```
+
+For other SSM failures, report the wrapper's actionable error; do not fall back
+to local Sentry secrets. See
+[secrets.md](../secrets.md#direct-ssm-backed-operator-commands) for the
+canonical secret-management workflow.
 
 Run wrapper help first, then run command-specific help before using flags that
 are not already proven in this repository.

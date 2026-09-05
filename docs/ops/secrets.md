@@ -258,8 +258,11 @@ child process from SSM; they do not create a plaintext cache.
 Inspect unresolved production Sentry issues:
 
 ```bash
-pnpm run sentry -- issues list --query 'is:unresolved' --max-rows 100
+pnpm run sentry -- issues list --project agent-outbox --query 'is:unresolved' --max-rows 100
 ```
+
+Follow the [Sentry runbook](services/sentry.md) for repository scope,
+authentication verification, and SSO recovery.
 
 Production database credentials are not exposed through this local wrapper.
 Production Flyway migrations run only inside the protected formal release
