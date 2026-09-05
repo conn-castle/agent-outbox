@@ -51,7 +51,7 @@ help:
 bootstrap: setup
 
 setup:
-	corepack install -g --cache-only pnpm@11.9.0
+	corepack install -g --cache-only pnpm@11.25.0
 	corepack pnpm install --frozen-lockfile
 
 doctor:
