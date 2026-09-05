@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Hosted human-review queue and CLI for agent-prepared work.",
   "license": "PolyForm-Perimeter-1.0.1",
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@11.25.0",
   "devEngines": {
     "runtime": {
       "name": "node",
@@ -14,7 +14,7 @@
     },
     "packageManager": {
       "name": "pnpm",
-      "version": "11.9.0",
+      "version": "11.25.0",
       "onFail": "download"
     }
   },
@@ -22,7 +22,7 @@
     "node": ">=22.13.0 <25"
   },
   "scripts": {
-    "setup": "corepack install -g --cache-only pnpm@11.9.0 && corepack pnpm install --frozen-lockfile",
+    "setup": "corepack install -g --cache-only pnpm@11.25.0 && corepack pnpm install --frozen-lockfile",
     "dev": "node scripts/dev.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

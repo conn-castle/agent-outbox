@@ -33,7 +33,7 @@ else
   container_output_dir="/workspace/$relative_output_dir"
 fi
 
-image="agent-outbox-marketing-playwright:1.61.1"
+image="agent-outbox-marketing-playwright:1.62.1"
 docker build --platform linux/amd64 --file "$repo_root/Dockerfile.marketing" --tag "$image" "$repo_root"
 docker run --rm --platform linux/amd64 \
   --volume "$repo_root:/workspace" \
