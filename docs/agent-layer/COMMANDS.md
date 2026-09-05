@@ -44,7 +44,7 @@ make setup
 
 Run from: repo root Prerequisites: Node `22.13.0` or newer with Corepack
 available; CI provisions Node `24.18.0` before running this command. Notes: Uses
-Corepack to cache pnpm `11.9.0`, then installs from the lockfile using
+Corepack to cache pnpm `11.25.0`, then installs from the lockfile using
 `corepack pnpm`. Project scripts run on pinned Node `24.18.0`. Fails when
 Corepack cannot activate pnpm, package metadata is missing, or the lockfile
 cannot be installed exactly.

@@ -1,5 +1,5 @@
 {
-  "verifiedAsOf": "2026-08-29",
+  "verifiedAsOf": "2026-09-05",
   "node": {
     "version": "24.18.0",
     "lts": "Krypton",
@@ -28,7 +28,7 @@
   },
   "packageManager": {
     "name": "pnpm",
-    "version": "11.9.0",
+    "version": "11.25.0",
     "source": "npm view pnpm version engines --json"
   },
   "flyway": {
@@ -48,7 +48,7 @@
       "source": "npm view markdownlint-cli2 version engines --json"
     },
     "ignore": {
-      "version": "7.0.6",
+      "version": "7.0.8",
       "package": "ignore",
       "source": "npm view ignore version engines --json"
     },
@@ -75,7 +75,7 @@
   },
   "runtimePins": {
     "next": {
-      "version": "16.3.3",
+      "version": "16.3.4",
       "package": "next",
       "source": "npm view next version engines peerDependencies --json"
     },
@@ -90,7 +90,7 @@
       "source": "npm view react-dom version --json"
     },
     "clerkNextjs": {
-      "version": "7.8.2",
+      "version": "7.8.4",
       "package": "@clerk/nextjs",
       "source": "npm view @clerk/nextjs version engines peerDependencies --json"
     },
@@ -120,12 +120,12 @@
       "source": "npm view @supabase/supabase-js version engines --json"
     },
     "sentryNextjs": {
-      "version": "10.71.0",
+      "version": "10.73.0",
       "package": "@sentry/nextjs",
       "source": "npm view @sentry/nextjs version engines peerDependencies --json"
     },
     "lucideReact": {
-      "version": "1.34.0",
+      "version": "1.39.0",
       "package": "lucide-react",
       "source": "corepack pnpm view lucide-react version"
     },
@@ -140,7 +140,7 @@
       "source": "corepack pnpm view pg-cloudflare version --json"
     },
     "stripeNode": {
-      "version": "22.5.0",
+      "version": "22.6.1",
       "package": "stripe",
       "source": "npm view stripe version engines --json"
     },
@@ -150,7 +150,7 @@
       "source": "corepack pnpm view marked version engines --json"
     },
     "typebox": {
-      "version": "1.3.19",
+      "version": "1.3.25",
       "package": "typebox",
       "source": "corepack pnpm view typebox version engines --json"
     }
@@ -172,7 +172,7 @@
       "source": "corepack pnpm view @types/pg@8 version --json"
     },
     "playwrightTest": {
-      "version": "1.61.1",
+      "version": "1.62.1",
       "package": "@playwright/test",
       "source": "corepack pnpm view @playwright/test version"
     },
@@ -182,7 +182,7 @@
       "source": "corepack pnpm view sharp version engines --json"
     },
     "cloudflareOpenNext": {
-      "version": "1.20.4",
+      "version": "1.20.5",
       "package": "@opennextjs/cloudflare",
       "source": "pnpm view @opennextjs/cloudflare version engines peerDependencies bin --json"
     },
@@ -192,14 +192,14 @@
       "source": "pnpm view rclone.js version engines --json"
     },
     "tsx": {
-      "version": "4.23.12",
+      "version": "4.23.13",
       "package": "tsx",
       "source": "corepack pnpm view tsx version engines --json"
     }
   },
   "providerCli": {
     "cloudflareWrangler": {
-      "version": "4.126.0",
+      "version": "4.128.0",
       "package": "wrangler",
       "source": "pnpm view wrangler version engines --json",
       "authCheck": ["wrangler", "whoami", "--env-file", "/dev/null"]
@@ -211,7 +211,7 @@
       "authCheck": ["clerk", "whoami", "--json"]
     },
     "supabase": {
-      "version": "2.115.0",
+      "version": "2.116.0",
       "package": "supabase",
       "source": "npm view supabase version --json",
       "authCheck": ["supabase", "projects", "list", "--output", "json"]
@@ -223,7 +223,7 @@
       "authCheck": ["stripe", "whoami", "--format", "json"]
     },
     "sentry": {
-      "version": "3.6.2",
+      "version": "3.7.0",
       "package": "@sentry/cli",
       "source": "npm view @sentry/cli version engines --json",
       "authCheck": ["sentry-cli", "info", "--no-defaults"]
