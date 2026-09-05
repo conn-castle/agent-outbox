@@ -216,9 +216,10 @@ to fixture or server state.
 
 Each journal entry reconciles independently after a canonical refresh. A failed
 write removes only its own optimistic projection and restores the affected
-review with an actionable toast. Human-review mutations create row-specific
-progress toasts immediately, update them in place after synchronization, and
-keep simultaneous notices expanded as a bounded vertical stack. A client fetch
+review, with the failure shown in the application bar. The row leaving the
+pending queue is the success signal. After an answer is accepted, a single
+last-action Undo control appears in that same bar and is replaced by the next
+successful answer. Older eligible reversals stay in History. A client fetch
 timeout is indeterminate: the journal keeps the projection and refreshes
 canonical state instead of rolling back a write that may still commit. A bulk
 result with zero successes is a failure from the mutation endpoint, not a
@@ -232,10 +233,9 @@ native click, so the visible pending state does not wait for a React commit.
 Labeled clicks are stopped in window capture so descendant React click handlers
 cannot delay that paint; other window listeners still run. Submits restart with
 requestSubmit, and non-submit actions replay their click, on the following
-macrotask after MutationObserver callbacks have run. Feedback and completion
-notices live in the root toast layer and do not shift the primary layout.
-Browser coverage holds responses open so network or navigation completion cannot
-satisfy the latency gate.
+macrotask after MutationObserver callbacks have run. Browser coverage holds
+responses open so network or navigation completion cannot satisfy the latency
+gate.
 
 ## File Handling
 

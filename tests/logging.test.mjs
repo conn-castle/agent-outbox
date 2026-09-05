@@ -64,3 +64,43 @@ test("safeLogEvent strips request bodies and arbitrary caller-controlled fields"
     "Error"
   );
 });
+
+test("safeLogEvent keeps next request error diagnostics and strips raw request metadata", () => {
+  /** @type {import("../src/server/logging.ts").RuntimeLogEvent & { path: string, boundary: string, content_type: string, content_length: string }} */
+  const unsafeEvent = {
+    level: "error",
+    error_id: "err_request_error",
+    error_name: "TypeError",
+    sentry_scope_attached: true,
+    surface: "app",
+    route: "/_not-found/page",
+    method: "POST",
+    operation: "next_request_error",
+    path_shape: "contains_dot",
+    multipart_boundary: "unquoted",
+    content_length_state: "positive",
+    message: "Next.js request error captured.",
+    path: "/wp-login.php?token=supersecret",
+    boundary: "----WebKitFormBoundary7MA4YWxkTrZu0gW",
+    content_type: "multipart/form-data; boundary=----broken",
+    content_length: "512"
+  };
+  const event = safeLogEvent(unsafeEvent);
+
+  assert.equal(event.path_shape, "contains_dot");
+  assert.equal(event.sentry_scope_attached, true);
+  assert.equal(event.multipart_boundary, "unquoted");
+  assert.equal(event.content_length_state, "positive");
+  assert.equal(event.route, "/_not-found/page");
+  assert.equal(event.operation, "next_request_error");
+  assert.equal("path" in event, false);
+  assert.equal("boundary" in event, false);
+  assert.equal("content_type" in event, false);
+  assert.equal("content_length" in event, false);
+  const serialized = JSON.stringify(event);
+  assert.equal(serialized.includes("/wp-login.php"), false);
+  assert.equal(serialized.includes("supersecret"), false);
+  assert.equal(serialized.includes("WebKitFormBoundary"), false);
+  assert.equal(serialized.includes("----broken"), false);
+  assert.equal(serialized.includes("512"), false);
+});

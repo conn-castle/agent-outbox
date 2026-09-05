@@ -66,6 +66,18 @@ operator-actionable handled failures. Useful fields include:
 - `account_id` or an opaque audit-safe account id when useful
 - `caller_id` or an opaque audit-safe caller id when useful
 - `operation`
+- `path_shape` on Next.js `onRequestError` logs: `contains_dot`,
+  `extensionless`, or `unknown` for the original request path. The raw path is
+  never logged; `contains_dot` means the request would also miss the middleware
+  matcher that skips dotted paths.
+- `multipart_boundary` on Next.js `onRequestError` logs: `not_multipart`,
+  `absent`, `empty`, `quoted`, `unquoted`, `malformed`, or `multiple`. Use this
+  to distinguish a missing multipart boundary from a declared boundary without
+  recording the boundary token or deciding whether the body was complete.
+  `unknown` means the hook did not provide usable header metadata.
+- `content_length_state` on Next.js `onRequestError` logs: `absent`, `zero`,
+  `positive`, `invalid`, or `unknown`. The raw Content-Length value is never
+  logged.
 - `limit_name` for quota and rate-limit denials
 - `sentry_captured` on every 5xx failure log: whether this failure reached
   Sentry
@@ -87,6 +99,27 @@ explicit `sentry_captured: false`. Alert on error-level logs, not on
 `sentry_captured` alone; `sentry_captured: false` on a `500` indicates capture
 was attempted but disabled or failed (for example a missing production DSN or
 release).
+
+Next.js `onRequestError` failures use `operation=next_request_error` and keep
+the SDK's unhandled `auto.function.nextjs.on_request_error` capture. Each hook
+invocation generates one `error_id` shared by the Sentry event tags/context and
+the structured Worker log. `sentry_scope_attached` reports whether Sentry scope
+setup and tagging succeeded before capture; `false` means the capture was
+retried without the added scope after scope setup failed. The log message is a
+fixed safe string; it never includes the exception text, original path, query,
+headers, boundary token, or body. `sentry_captured` keeps its canonical meaning:
+it is true only when capture was enabled and the Sentry delegate returned
+successfully (and may be `false` even if `sentry_scope_attached` was `true`
+should capture throw or be disabled). After a recurrence, list the Sentry events
+with tags and match the Worker log row by `error_id`:
+
+```bash
+pnpm run sentry -- events list --show-tags
+```
+
+Compare `path_shape`, `multipart_boundary`, and `content_length_state` across
+the Sentry event and the Worker log to choose the next root-cause branch without
+guessing at the original request.
 
 ## Log Safety
 

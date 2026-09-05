@@ -98,7 +98,8 @@ var terminalDocs = []docsTopic{
 		Body: strings.Join([]string{
 			"JSON errors have ok=false and an error object with a stable code, message, and optional request/correlation ids.",
 			"Exit codes are stable for agent branching: 64 usage, 65 data, 66 not found, 69 upgrade required, 70 software, 73 conflict, 74 secret store, 75 temporary, 77 permission, and 78 config.",
-			"API error metadata may include field errors, retry-after seconds, limit details, and upgrade metadata.",
+			"API error metadata may include HTTP status, field errors, retry-after seconds, limit details, upgrade metadata, and safe trace identifiers.",
+			"api_unavailable and api_response_invalid are local API-boundary failures, not Agent Outbox service classifications. Mutating data-plane failures include write_outcome so callers can reconcile unknown acceptance safely; internal_error and temporary_unavailable writes are unknown, and output read --all can be unknown after earlier pages were accepted.",
 			"Errors and diagnostics must not include caller API keys, file bytes, raw review HTML, full request bodies, or bearer headers.",
 		}, "\n"),
 		RelatedDocs: []string{"docs/spec/errors.md"},

@@ -7,7 +7,6 @@ import {
   type MouseEvent,
   type PointerEvent
 } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Check,
@@ -20,10 +19,6 @@ import {
 
 import type { HumanReviewDetail as HumanReviewDetailDto } from "../../server/human-review.ts";
 import {
-  humanReviewHref,
-  type HumanReviewView
-} from "../../shared/human-review-view";
-import {
   ActionComposer,
   ActionTrigger,
   UndoAnswerForm,
@@ -34,22 +29,21 @@ import { CardVisual, HumanIcon, LinkButtons, SafeHtml } from "./TypedContent";
 
 export function ReviewDetail({
   detail,
-  view,
   positionLabel,
   previousItem,
   nextItem,
   composeAction,
+  onClose,
   onMutation
 }: {
   detail: HumanReviewDetailDto | null;
-  view: HumanReviewView;
   positionLabel: string | null;
   previousItem: { href: string; label: string } | null;
   nextItem: { href: string; label: string } | null;
   composeAction?: string | null;
+  onClose: () => void;
   onMutation: OnHumanMutation;
 }) {
-  const router = useRouter();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const backdropPressRef = useRef(false);
   const requestedCompose = composeAction
@@ -61,7 +55,7 @@ export function ReviewDetail({
   const [activeActionValue, setActiveActionValue] = useState<string | null>(
     requestedCompose?.value ?? null
   );
-  const closeHref = humanReviewHref(view);
+  const [closing, setClosing] = useState(false);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -72,7 +66,10 @@ export function ReviewDetail({
   }, []);
 
   function closeDetail() {
-    router.push(closeHref);
+    if (closing) return;
+    setClosing(true);
+    dialogRef.current?.close();
+    onClose();
   }
 
   function handleBackdropPointerDown(event: PointerEvent<HTMLDialogElement>) {
@@ -105,13 +102,14 @@ export function ReviewDetail({
           </span>
           <h2>Review unavailable</h2>
           <p>This review could not be loaded.</p>
-          <Link
+          <button
             className="mobile-back"
-            href={closeHref}
+            type="button"
             aria-label="Close detail"
+            onClick={closeDetail}
           >
             Close
-          </Link>
+          </button>
         </section>
       </dialog>
     );
@@ -180,14 +178,15 @@ export function ReviewDetail({
               )}
             </nav>
           )}
-          <Link
+          <button
             className="mobile-back"
-            href={closeHref}
+            type="button"
             aria-label="Close detail"
+            onClick={closeDetail}
           >
             <X className="close-icon" aria-hidden="true" />
             <span className="close-copy">Close</span>
-          </Link>
+          </button>
         </div>
 
         <div className="detail-scroll">
@@ -362,6 +361,57 @@ export function ReviewDetail({
               ) : null}
             </>
           )}
+        </div>
+      </section>
+    </dialog>
+  );
+}
+
+export function ReviewDetailLoading({
+  label,
+  onCancel
+}: {
+  label: string;
+  onCancel: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const backdropPressRef = useRef(false);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="detail-modal detail-loading-modal"
+      aria-label={`Loading review details for ${label}`}
+      onCancel={(event) => {
+        event.preventDefault();
+        dialogRef.current?.close();
+        onCancel();
+      }}
+      onPointerDown={(event) => {
+        backdropPressRef.current = event.target === event.currentTarget;
+      }}
+      onClick={(event) => {
+        if (backdropPressRef.current && event.target === event.currentTarget) {
+          dialogRef.current?.close();
+          onCancel();
+        }
+        backdropPressRef.current = false;
+      }}
+    >
+      <section className="detail-pane detail-loading-pane" aria-live="polite">
+        <span className="detail-loading-spinner" aria-hidden="true" />
+        <div>
+          <strong>Loading details…</strong>
+          <span>{label}</span>
         </div>
       </section>
     </dialog>

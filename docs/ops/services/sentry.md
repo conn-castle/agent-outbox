@@ -34,6 +34,16 @@ are not already proven in this repository.
   `pnpm run sentry -- issues list`.
 - Cross-check user-visible `error_id` values with Cloudflare Workers logs when
   investigating runtime failures.
+- Next.js request-parser failures use `operation=next_request_error` and add the
+  high-cardinality `error_id` correlation tag alongside low-cardinality
+  `path_shape`, `multipart_boundary`, and `content_length_state` tags plus
+  matching `agent_outbox` context. After a recurrence, inspect events with
+  `pnpm run sentry -- events list --show-tags` and match the Worker log row by
+  `error_id`. `path_shape=contains_dot` means the original path would skip the
+  dotted-path middleware matcher. `multipart_boundary=absent` is a multipart
+  request with no boundary parameter; `quoted` or `unquoted` means a boundary
+  was declared. These fields never include the raw path, boundary token, query,
+  headers, or body.
 - GitHub sign-in launch failures are grouped by the safe
   `client_event.github_sign_in_*` operation. Use the corresponding Cloudflare
   log row for the server-generated `error_id` and capture outcome. The server

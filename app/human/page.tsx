@@ -299,6 +299,7 @@ function humanReviewNotice(
     return {
       kind: "notice",
       message: `Saved ${action ? `${action} for ` : "response for "}${quotedSubject}.`,
+      ...(action ? { actionLabel: action } : {}),
       ...(inputItemId && callerId && outputResultId
         ? { undo: { inputItemId, callerId, outputResultId } }
         : {})

@@ -43,7 +43,6 @@ import {
   Search,
   X
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { useAppActions } from "../actions/AppActionProvider";
 import type { HumanAccountSession } from "../../server/human-session.ts";
@@ -72,11 +71,12 @@ import {
 } from "../../shared/human-review-sort";
 import { AccountBanner } from "./AccountBanner";
 import {
+  LastAnswerUndoForm,
   type HumanMutationSubmission,
   type OnHumanMutation
 } from "./ActionForms";
 import { BulkActions } from "./BulkActions";
-import { ReviewDetail } from "./ReviewDetail";
+import { ReviewDetail, ReviewDetailLoading } from "./ReviewDetail";
 import { ReviewList } from "./ReviewList";
 import {
   HUMAN_MUTATION_SCOPE,
@@ -115,11 +115,20 @@ export type HumanReviewNotice = {
   kind: "notice" | "error";
   message: string;
   failedActionKind?: "file_upload";
+  actionLabel?: string;
   undo?: {
     inputItemId: string;
     callerId: string;
     outputResultId: string;
   };
+};
+
+type LastAnswerUndo = {
+  inputItemId: string;
+  callerId: string;
+  outputResultId: string;
+  actionLabel: string | null;
+  rowSnapshots: HumanReviewListRow[];
 };
 
 export function ReviewWorkspace({
@@ -156,6 +165,17 @@ export function ReviewWorkspace({
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [lastUndo, setLastUndo] = useState<LastAnswerUndo | null>(() =>
+    lastAnswerUndoFromNotice(notice)
+  );
+  const [lastError, setLastError] = useState<string | null>(() =>
+    notice?.kind === "error" ? notice.message : null
+  );
+  const [pendingDetail, setPendingDetail] = useState<{
+    inputItemId: string;
+    label: string;
+  } | null>(null);
+  const [detailDismissed, setDetailDismissed] = useState(false);
   const [openViewControl, setOpenViewControl] = useState<
     "filter" | "sort" | null
   >(null);
@@ -178,7 +198,6 @@ export function ReviewWorkspace({
   const canonicalGeneration = useRef(0);
   const successGenerations = useRef(new Map<string, number>());
   const retriedCanonicalRefreshes = useRef(new Set<string>());
-  const indeterminateSuccessMessages = useRef(new Map<string, string>());
   const consumedNoticeEpoch = useRef<string | null>(null);
   const viewConfigurationKey = [
     view.status,
@@ -213,6 +232,7 @@ export function ReviewWorkspace({
   useEffect(() => {
     const clearRequestedView = () => {
       requestedViewHref.current = null;
+      setDetailDismissed(false);
     };
     window.addEventListener("popstate", clearRequestedView);
     return () => window.removeEventListener("popstate", clearRequestedView);
@@ -440,6 +460,21 @@ export function ReviewWorkspace({
     previousDetailId.current = currentId;
   }, [detail?.inputItemId]);
 
+  useEffect(() => {
+    if (
+      pendingDetail &&
+      detailOpen &&
+      detail?.inputItemId === pendingDetail.inputItemId
+    ) {
+      setPendingDetail(null);
+    }
+  }, [detail?.inputItemId, detailOpen, pendingDetail]);
+
+  useEffect(() => {
+    if (!detailDismissed || !detailOpen) return;
+    router.replace(humanReviewHref(controlViewRef.current), { scroll: false });
+  }, [detailDismissed, detailOpen, router]);
+
   function currentSearch() {
     return pendingSearch.current ?? search;
   }
@@ -595,13 +630,6 @@ export function ReviewWorkspace({
                 (row) => row === undefined || row.status !== "pending"
               );
       if (reflected) {
-        const confirmedMessage = indeterminateSuccessMessages.current.get(
-          record.id
-        );
-        if (confirmedMessage) {
-          toast.success(confirmedMessage, { id: record.id });
-          indeterminateSuccessMessages.current.delete(record.id);
-        }
         successGenerations.current.delete(record.id);
         retriedCanonicalRefreshes.current.delete(record.id);
         dismiss(record.id);
@@ -662,9 +690,17 @@ export function ReviewWorkspace({
     );
     enqueueHumanMutation(submission, rowSnapshots);
     if (detail && submission.inputItemIds.includes(detail.inputItemId)) {
+      setDetailDismissed(true);
+      setPendingDetail(null);
       router.replace(humanReviewHref(view), { scroll: false });
     }
   };
+
+  function closeDetail() {
+    setDetailDismissed(true);
+    setPendingDetail(null);
+    router.push(humanReviewHref(controlViewRef.current), { scroll: false });
+  }
 
   function enqueueHumanMutation(
     submission: HumanMutationSubmission,
@@ -676,6 +712,18 @@ export function ReviewWorkspace({
       consumedNoticeEpoch.current = noticeEpoch;
     }
     clearRedirectNoticeFromUrl();
+    if (submission.operation === "undo") {
+      for (const { record, mutation } of humanMutations) {
+        if (
+          mutation.operation !== "undo" &&
+          mutation.inputItemIds.some((id) =>
+            submission.inputItemIds.includes(id)
+          )
+        ) {
+          dismiss(record.id);
+        }
+      }
+    }
     const optimistic: HumanOptimisticMutation = {
       operation: submission.operation,
       inputItemIds: submission.inputItemIds,
@@ -687,8 +735,13 @@ export function ReviewWorkspace({
         : rowSnapshots,
       requiresCanonicalPendingRow
     };
-    const feedback = mutationFeedback(submission, rowSnapshots);
-    const mutationId = enqueue({
+    if (
+      submission.operation === "answer" ||
+      submission.operation === "bulk-answer"
+    ) {
+      setLastError(null);
+    }
+    enqueue({
       scope: HUMAN_MUTATION_SCOPE,
       optimistic,
       execute: () =>
@@ -699,109 +752,77 @@ export function ReviewWorkspace({
           successGenerations.current.delete(mutationId);
           retriedCanonicalRefreshes.current.delete(mutationId);
           dismiss(mutationId);
-          toast.warning(feedback.failure(result.message), {
-            id: mutationId,
-            duration: Infinity
-          });
+          setLastUndo(null);
+          setLastError(result.message);
           return;
         }
         successGenerations.current.set(mutationId, canonicalGeneration.current);
         if (result.operation === "answer") {
-          toast.success(feedback.success, {
-            id: mutationId,
-            action: {
-              label: "Undo",
-              onClick: () => {
-                dismiss(mutationId);
-                toast.dismiss(mutationId);
-                const undoForm = new FormData();
-                undoForm.set("inputItemId", result.undo.inputItemId);
-                undoForm.set("callerId", result.undo.callerId);
-                undoForm.set("outputResultId", result.undo.outputResultId);
-                enqueueHumanMutation(
-                  {
-                    operation: "undo",
-                    inputItemIds: [result.undo.inputItemId],
-                    formData: undoForm
-                  },
-                  rowSnapshots,
-                  viewRef.current.status === "pending"
-                );
-              }
+          setLastUndo({
+            inputItemId: result.undo.inputItemId,
+            callerId: result.undo.callerId,
+            outputResultId: result.undo.outputResultId,
+            actionLabel: normalizedFormText(
+              submission.formData,
+              "noticeAction"
+            ),
+            rowSnapshots
+          });
+          setLastError(null);
+          return;
+        }
+        if (result.operation === "undo") {
+          const restoredOutputResultId = normalizedFormText(
+            submission.formData,
+            "outputResultId"
+          );
+          setLastUndo((current) => {
+            if (!current) {
+              return null;
             }
+            const matchesAnswer =
+              result.inputItemIds.includes(current.inputItemId) &&
+              (!restoredOutputResultId ||
+                current.outputResultId === restoredOutputResultId);
+            return matchesAnswer ? null : current;
           });
+          setLastError(null);
           return;
         }
-        if (result.operation === "bulk-answer" && result.failed > 0) {
-          toast.warning(result.message, {
-            id: mutationId,
-            duration: Infinity
-          });
-          return;
+        if (result.operation === "bulk-answer") {
+          setLastUndo(null);
+          if (result.failed > 0) {
+            setLastError(result.message);
+          }
         }
-        toast.success(
-          result.operation === "undo" ? feedback.success : result.message,
-          { id: mutationId }
-        );
       },
       onIndeterminate: (_error, mutationId) => {
         successGenerations.current.set(mutationId, canonicalGeneration.current);
-        indeterminateSuccessMessages.current.set(mutationId, feedback.success);
-        toast.warning(feedback.indeterminate, {
-          id: mutationId,
-          duration: Infinity
-        });
       },
       onError: (error, mutationId) => {
-        indeterminateSuccessMessages.current.delete(mutationId);
         successGenerations.current.delete(mutationId);
         retriedCanonicalRefreshes.current.delete(mutationId);
         const message =
           error instanceof HumanMutationError
             ? error.message
             : "Action is temporarily unavailable.";
-        toast.error(feedback.failure(message), {
-          id: mutationId,
-          duration: Infinity
-        });
+        setLastError(mutationFailureMessage(submission, rowSnapshots, message));
       }
     });
-    toast.loading(feedback.pending, { id: mutationId });
   }
 
   useEffect(() => {
     if (!notice) return;
     if (consumedNoticeEpoch.current === noticeEpoch) return;
-    const options = {
-      id: noticeEpoch,
-      ...(notice.undo
-        ? {
-            action: {
-              label: "Undo",
-              onClick: () => {
-                const formData = new FormData();
-                formData.set("inputItemId", notice.undo?.inputItemId ?? "");
-                formData.set("callerId", notice.undo?.callerId ?? "");
-                formData.set(
-                  "outputResultId",
-                  notice.undo?.outputResultId ?? ""
-                );
-                handleHumanMutation({
-                  operation: "undo",
-                  inputItemIds: [notice.undo?.inputItemId ?? ""],
-                  formData
-                });
-              }
-            }
-          }
-        : {}),
-      ...(notice.kind === "error" ? { duration: Infinity } : {})
-    };
-    if (notice.kind === "error") {
-      toast.error(notice.message, options);
-    } else {
-      toast.success(notice.message, options);
+    consumedNoticeEpoch.current = noticeEpoch;
+    const undo = lastAnswerUndoFromNotice(notice);
+    if (undo) {
+      setLastUndo((current) => current ?? undo);
+      setLastError(null);
+    } else if (notice.kind === "error") {
+      setLastError(notice.message);
     }
+    clearRedirectNoticeFromUrl();
   }, [notice, noticeEpoch]);
 
   function setRowSelected(inputItemId: string, selected: boolean) {
@@ -856,20 +877,6 @@ export function ReviewWorkspace({
       const rows = [
         ...document.querySelectorAll<HTMLElement>(".review-list .row-link")
       ];
-      if (key === "enter") {
-        const focused = document.activeElement;
-        if (
-          focused instanceof HTMLAnchorElement &&
-          focused.classList.contains("row-link")
-        ) {
-          const href = focused.getAttribute("href");
-          if (href) {
-            event.preventDefault();
-            router.push(href);
-          }
-        }
-        return;
-      }
       if (
         key !== "j" &&
         key !== "k" &&
@@ -898,7 +905,7 @@ export function ReviewWorkspace({
 
     window.addEventListener("keydown", moveQueueFocus);
     return () => window.removeEventListener("keydown", moveQueueFocus);
-  }, [router]);
+  }, []);
 
   return (
     <main
@@ -951,6 +958,32 @@ export function ReviewWorkspace({
           </Link>
         </nav>
         <div className="app-account">
+          {lastError ? (
+            <p className="last-action-error" role="alert" title={lastError}>
+              <span>{lastError}</span>
+              <button
+                type="button"
+                aria-label="Dismiss error"
+                onClick={() => setLastError(null)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </p>
+          ) : null}
+          {lastUndo ? (
+            <LastAnswerUndoForm
+              undo={lastUndo}
+              actionLabel={lastUndo.actionLabel}
+              disabled={lockedIds.has(lastUndo.inputItemId)}
+              onMutation={(submission) => {
+                enqueueHumanMutation(
+                  submission,
+                  lastUndo.rowSnapshots,
+                  viewRef.current.status === "pending"
+                );
+              }}
+            />
+          ) : null}
           <AccountBanner banner={banner} identity={identity} />
           <span className="sr-only" data-testid="fixture-account-id">
             {session.account.accountId}
@@ -1148,6 +1181,10 @@ export function ReviewWorkspace({
               renderedAt={renderedAt}
               onMutation={handleHumanMutation}
               lockedIds={lockedIds}
+              onDetailNavigate={(inputItemId, label) => {
+                setDetailDismissed(false);
+                setPendingDetail({ inputItemId, label });
+              }}
             />
             {!hasNext && visibleRows.length > 0 ? (
               <div className="queue-end">
@@ -1229,14 +1266,24 @@ export function ReviewWorkspace({
         </section>
       </div>
 
-      {detailOpen &&
+      {!detailDismissed &&
+      pendingDetail &&
+      (!detailOpen || detail?.inputItemId !== pendingDetail.inputItemId) ? (
+        <ReviewDetailLoading
+          label={pendingDetail.label}
+          onCancel={closeDetail}
+        />
+      ) : null}
+
+      {!detailDismissed &&
+      detailOpen &&
       detail &&
+      (!pendingDetail || detail.inputItemId === pendingDetail.inputItemId) &&
       !hiddenIds.has(detail.inputItemId) &&
       !lockedIds.has(detail.inputItemId) ? (
         <ReviewDetail
           key={detail?.inputItemId ?? "empty"}
           detail={detail}
-          view={controlView}
           positionLabel={
             detailIndex >= 0
               ? `${detailIndex + 1} of ${visibleRows.length}`
@@ -1262,6 +1309,7 @@ export function ReviewWorkspace({
               : null
           }
           composeAction={composeAction}
+          onClose={closeDetail}
           onMutation={handleHumanMutation}
         />
       ) : null}
@@ -2034,43 +2082,37 @@ function humanReviewRowMatchesView(
   );
 }
 
-function mutationFeedback(
+function lastAnswerUndoFromNotice(
+  notice: HumanReviewNotice | null
+): LastAnswerUndo | null {
+  if (!notice?.undo) return null;
+  return {
+    inputItemId: notice.undo.inputItemId,
+    callerId: notice.undo.callerId,
+    outputResultId: notice.undo.outputResultId,
+    actionLabel: notice.actionLabel ?? null,
+    rowSnapshots: []
+  };
+}
+
+function mutationFailureMessage(
   submission: HumanMutationSubmission,
-  rowSnapshots: HumanReviewListRow[]
+  rowSnapshots: HumanReviewListRow[],
+  message: string
 ) {
+  if (submission.operation === "bulk-answer") {
+    return message;
+  }
   const subject =
     normalizedFormText(submission.formData, "noticeSubject") ??
     (rowSnapshots.length === 1
       ? plainText(rowSnapshots[0]?.titleHtml ?? "")
       : null);
-  const action = normalizedFormText(submission.formData, "noticeAction");
   const quotedSubject = subject ? `“${subject}”` : "this review";
-
   if (submission.operation === "undo") {
-    return {
-      pending: `Restoring ${quotedSubject}…`,
-      success: `Restored ${quotedSubject} to its prior queue position.`,
-      indeterminate: `Still confirming the restore for ${quotedSubject}.`,
-      failure: (message: string) =>
-        `Could not restore ${quotedSubject}: ${message}`
-    };
+    return `Could not restore ${quotedSubject}: ${message}`;
   }
-  if (submission.operation === "bulk-answer") {
-    const count = submission.inputItemIds.length;
-    return {
-      pending: `Saving ${count} ${count === 1 ? "review" : "reviews"}…`,
-      success: `Saved ${count} ${count === 1 ? "review" : "reviews"}.`,
-      indeterminate: `Still confirming ${count} ${count === 1 ? "review" : "reviews"}.`,
-      failure: (message: string) => message
-    };
-  }
-  const actionCopy = action ? `${action} for ` : "response for ";
-  return {
-    pending: `Saving ${actionCopy}${quotedSubject}…`,
-    success: `Saved ${actionCopy}${quotedSubject}.`,
-    indeterminate: `Still confirming ${actionCopy}${quotedSubject}.`,
-    failure: (message: string) => `Could not save ${quotedSubject}: ${message}`
-  };
+  return `Could not save ${quotedSubject}: ${message}`;
 }
 
 function normalizedFormText(formData: FormData, key: string) {

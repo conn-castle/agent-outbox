@@ -300,7 +300,7 @@ test("authenticated review workspace renders content actions and preserves contr
   ).toHaveAttribute("href", "https://example.com/context/steward-brief-101");
   await expect(detail.locator(".link-buttons")).toHaveCount(0);
   const closeBox = await detail
-    .getByRole("link", { name: "Close detail" })
+    .getByRole("button", { name: "Close detail" })
     .boundingBox();
   const stepperBox = await detail
     .getByRole("navigation", { name: "Review navigation" })
@@ -348,7 +348,7 @@ test("authenticated review workspace renders content actions and preserves contr
     page.getByRole("button", { name: "Pick date and time" })
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Close detail", exact: true }).click();
+  await page.getByRole("button", { name: "Close detail", exact: true }).click();
   await expect(page).not.toHaveURL(/item=/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
@@ -381,7 +381,9 @@ test("authenticated review workspace renders content actions and preserves contr
   await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000517/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   if (isMobile) {
-    await page.getByRole("link", { name: "Close detail", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Close detail", exact: true })
+      .click();
     await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   }
   await expect(page.getByRole("link", { name: "History" })).toHaveAttribute(
@@ -678,7 +680,37 @@ test("desktop detail modal stays within a readable responsive measure", async ({
   await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
   const detail = page.getByRole("region", { name: "Review detail" });
   await expect.poll(() => elementWidth(detail)).toBeGreaterThanOrEqual(640);
-  await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(900);
+  // 69rem queue/modal cap at the 16px root used by the desktop project.
+  await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(69 * 16);
+});
+
+test("queue context links remain complete and readable", async ({ page }) => {
+  await page.goto("/human");
+
+  const row = reviewRowByTitle(
+    page,
+    "Payments smoke check failed after deploy"
+  );
+  const links = row.locator(".context-links a");
+  await expect(links).toHaveCount(5);
+  await expect(
+    links.getByText("Read the full production rollback safety procedure")
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      row.locator(".row-heading-context").evaluate((context) => {
+        const contextBox = context.getBoundingClientRect();
+        return [...context.querySelectorAll("a")].every((link) => {
+          const linkBox = link.getBoundingClientRect();
+          return (
+            link.scrollWidth <= link.clientWidth + 1 &&
+            linkBox.left >= contextBox.left - 1 &&
+            linkBox.right <= contextBox.right + 1
+          );
+        });
+      })
+    )
+    .toBe(true);
 });
 
 test("routine reviews can be completed directly from the queue", async ({
@@ -717,23 +749,15 @@ test("routine reviews can be completed directly from the queue", async ({
   ).toBeVisible();
   await row.getByRole("button", { name: "Approve permit brief" }).click();
 
-  const completionNotice = page.locator("[data-sonner-toast]");
-  await expect(completionNotice).toHaveCount(1);
-  await expect(completionNotice).toContainText(
-    "Saved Approve permit brief for “Review neighborhood permit brief”."
-  );
+  await expect(lastUndoButton(page, "Approve permit brief")).toBeVisible();
   await expect(page).not.toHaveURL(/notice=/);
   expect(humanPosts).toEqual(["mutation"]);
-  await page.getByRole("button", { name: "Close toast" }).click();
-  await expect(completionNotice).toHaveCount(0);
 
   const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
   await followUpRow.scrollIntoViewIfNeeded();
   await followUpRow.getByRole("button", { name: "Approve follow-up" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toHaveCount(1);
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "Saved Approve follow-up for “Choose follow-up window”."
-  );
+  await expect(lastUndoButton(page, "Approve follow-up")).toBeVisible();
+  await expect(lastUndoButton(page, "Approve permit brief")).toHaveCount(0);
   await expect(page).not.toHaveURL(/notice=/);
   expect(humanPosts).toEqual(["mutation", "mutation"]);
   await expect(page).not.toHaveURL(/item=/);
@@ -783,7 +807,7 @@ test("queue actions preserve a bottom scroll position", async ({ page }) => {
   expect(scrollTopBeforeAction).toBeGreaterThan(0);
 
   await lastQuickAction.click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page)).toBeVisible();
   expect(
     await queue.evaluate((element) => Math.round(element.scrollTop))
   ).toBeGreaterThan(0);
@@ -844,16 +868,8 @@ test("a second queue action is retained while the first is synchronizing", async
       message: "The queued second intent should synchronize after the first."
     })
     .toBe(2);
-  await expect(page.locator("[data-sonner-toast]")).toHaveCount(2);
-  const toastBoxes = await page
-    .locator("[data-sonner-toast]")
-    .evaluateAll((toasts) =>
-      toasts
-        .map((toast) => toast.getBoundingClientRect())
-        .sort((left, right) => left.top - right.top)
-        .map(({ top, bottom }) => ({ top, bottom }))
-    );
-  expect(toastBoxes[0]?.bottom).toBeLessThanOrEqual(toastBoxes[1]?.top ?? 0);
+  await expect(lastUndoButton(page, "Approve permit brief")).toBeVisible();
+  await expect(lastUndoButton(page, "Approve to send")).toHaveCount(0);
   await expect(
     reviewRowByTitle(page, "Reply to Meridian about the renewal delay")
   ).toContainText("answeredDecision: Approve to send");
@@ -862,14 +878,16 @@ test("a second queue action is retained while the first is synchronizing", async
   ).toContainText("answeredDecision: Approve");
 });
 
-test("toasts expose immediate row context and undo restores queue order", async ({
-  page
-}) => {
+test("last-action undo restores queue order", async ({ page }) => {
   const requestStarted = deferred();
   const releaseResponse = deferred();
+  let mutationRequests = 0;
   await page.route("**/human/mutations", async (route) => {
-    requestStarted.resolve();
-    await releaseResponse.promise;
+    mutationRequests += 1;
+    if (mutationRequests === 1) {
+      requestStarted.resolve();
+      await releaseResponse.promise;
+    }
     await route.continue();
   });
   await page.goto("/human?sort=updated_at");
@@ -887,22 +905,10 @@ test("toasts expose immediate row context and undo restores queue order", async 
 
   await row.getByRole("button", { name: "Approve permit brief" }).click();
   await requestStarted.promise;
-  await expect(
-    page.locator("[data-sonner-toast]").filter({
-      hasText: "Saving Approve permit brief"
-    })
-  ).toContainText(`“${title}”…`);
+  await expect(row).toBeHidden();
 
   releaseResponse.resolve();
-  const savedToast = page.locator("[data-sonner-toast]").filter({
-    hasText: `Saved Approve permit brief for “${title}”.`
-  });
-  await savedToast.getByRole("button", { name: "Undo" }).click();
-  await expect(
-    page.locator("[data-sonner-toast]").filter({
-      hasText: `Restored “${title}” to its prior queue position.`
-    })
-  ).toBeVisible();
+  await lastUndoButton(page, "Approve permit brief").click();
   await expect(row).toBeVisible();
   const restoredIndex = await rows.evaluateAll(
     (nodes, expectedTitle) =>
@@ -1156,9 +1162,8 @@ test("a client mutation timeout keeps the optimistic projection", async ({
   await requestStarted.promise;
   await aborted;
   await expect(row).toBeHidden();
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "Still confirming"
-  );
+  await expect(lastActionError(page)).toHaveCount(0);
+  await expect(lastUndoButton(page)).toHaveCount(0);
 });
 
 test("an all-failed bulk mutation restores the selected rows", async ({
@@ -1195,14 +1200,14 @@ test("an all-failed bulk mutation restores the selected rows", async ({
     .getByRole("button", { name: "Apply Approve permit brief" })
     .click();
 
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
+  await expect(lastActionError(page)).toContainText(
     "Bulk action complete: 0 answered, 2 failed."
   );
   await expect(permitRow).toBeVisible();
   await expect(followUpRow).toBeVisible();
 });
 
-test("undo from a History toast does not leave a pending snapshot in History", async ({
+test("last-action undo from History does not leave a pending snapshot in History", async ({
   page
 }) => {
   await page.goto("/human");
@@ -1212,10 +1217,7 @@ test("undo from a History toast does not leave a pending snapshot in History", a
     "Reply to Meridian about the renewal delay"
   );
   await row.getByRole("button", { name: "Approve to send" }).click();
-  const toast = page.locator("[data-sonner-toast]");
-  await expect(toast).toContainText(
-    "Saved Approve to send for “Reply to Meridian about the renewal delay”."
-  );
+  await expect(lastUndoButton(page, "Approve to send")).toBeVisible();
 
   await page
     .getByRole("navigation", { name: "Primary" })
@@ -1223,10 +1225,7 @@ test("undo from a History toast does not leave a pending snapshot in History", a
     .click();
   await expect(page).toHaveURL(/status=answered/);
   await expect(row).toBeVisible();
-  await toast.getByRole("button", { name: "Undo" }).click();
-  await expect(
-    page.locator("[data-sonner-toast]").filter({ hasText: "Restored" })
-  ).toBeVisible();
+  await lastUndoButton(page, "Approve to send").click();
   await expect(row).toHaveCount(0);
 });
 
@@ -1263,7 +1262,7 @@ test("a failed optimistic queue action rolls back its local projection", async (
 
   releaseFailure.resolve();
   await expect(row).toBeVisible();
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
+  await expect(lastActionError(page)).toContainText(
     "The decision could not be saved."
   );
 });
@@ -1311,8 +1310,7 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
   const row = reviewRowByTitle(page, "Review neighborhood permit brief");
   const approve = row.getByRole("button", { name: "Approve permit brief" });
   await expect(approve).toBeEnabled();
-  const existingNotice = page.locator("[data-sonner-toast]");
-  await expect(existingNotice).toContainText("Saved response for this review.");
+  await expect(lastUndoButton(page)).toHaveCount(0);
   const workspaceBody = page.locator(".workspace-body");
   const workspaceTopBeforeAction = await workspaceBody.evaluate(
     (element) => element.getBoundingClientRect().top
@@ -1364,10 +1362,6 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
   ).not.toBeNull();
   expect(Number(responseMs)).toBeLessThanOrEqual(20);
   await expect(row).toBeHidden();
-  await expect(existingNotice).toHaveCount(2);
-  await expect(
-    existingNotice.filter({ hasText: "Saving Approve permit brief" })
-  ).toContainText("“Review neighborhood permit brief”…");
   expect(
     await workspaceBody.evaluate(
       (element) => element.getBoundingClientRect().top
@@ -1375,13 +1369,7 @@ test("review actions disappear within 20 ms without shifting the workspace", asy
   ).toBe(workspaceTopBeforeAction);
 
   releaseActionResponse.resolve();
-  const completionNotice = page.locator("[data-sonner-toast]");
-  const savedNotice = completionNotice.filter({
-    hasText:
-      "Saved Approve permit brief for “Review neighborhood permit brief”."
-  });
-  await expect(savedNotice).toBeVisible();
-  await expect(savedNotice.getByRole("button", { name: "Undo" })).toBeVisible();
+  await expect(lastUndoButton(page, "Approve permit brief")).toBeVisible();
   await expect(page.locator(".human-notice")).toHaveCount(0);
   expect(
     await workspaceBody.evaluate(
@@ -1419,9 +1407,8 @@ test("human actions submit undo and narrow bulk actions through server actions",
   await page
     .getByRole("button", { name: "Apply Approve permit brief" })
     .click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "Bulk action complete: 2 answered, 0 failed."
-  );
+  await expect(permitRow).toHaveCount(0);
+  await expect(followUpRow).toHaveCount(0);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
@@ -1438,8 +1425,13 @@ test("human actions submit undo and narrow bulk actions through server actions",
   await expect(page.getByLabel("Answered state")).toContainText(
     "Answered with Archive"
   );
+  const undoResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/human/mutations") &&
+      response.request().method() === "POST"
+  );
   await page.getByRole("button", { name: "Undo answer" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Restored");
+  await undoResponse;
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000525");
   await expect(
@@ -1485,7 +1477,134 @@ test("undo from detail closes the modal before the server answers", async ({
   ).toBe(false);
 
   releaseActionResponse.resolve();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Restored");
+  await expect(page.locator("#human-optimistic-status")).toHaveText("");
+});
+
+test("detail navigation shows immediate progress and closes before navigation finishes", async ({
+  page,
+  isMobile
+}) => {
+  await page.goto("/human");
+
+  const detailRequestStarted = deferred();
+  const releaseDetailResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      request.url().includes("item=")
+    ) {
+      detailRequestStarted.resolve();
+      await releaseDetailResponse.promise;
+    }
+    await route.continue();
+  });
+
+  const opening = reviewLinkByTitle(
+    page,
+    "Review neighborhood permit brief"
+  ).click();
+  await detailRequestStarted.promise;
+  await expect(
+    page.getByRole("dialog", {
+      name: "Loading review details for Review neighborhood permit brief"
+    })
+  ).toBeVisible();
+  releaseDetailResponse.resolve();
+  await opening;
+
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect(detail).toBeVisible();
+  if (!isMobile) {
+    await expect
+      .poll(async () => {
+        const queueWidth = await page
+          .locator(".queue-pane")
+          .evaluate((element) => element.getBoundingClientRect().width);
+        const detailWidth = await detail.evaluate(
+          (element) => element.getBoundingClientRect().width
+        );
+        return Math.abs(queueWidth - detailWidth);
+      })
+      .toBeLessThanOrEqual(1);
+  }
+
+  const closeRequestStarted = deferred();
+  const releaseCloseResponse = deferred();
+  await page.unroute("**/human**");
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      !request.url().includes("item=")
+    ) {
+      closeRequestStarted.resolve();
+      await releaseCloseResponse.promise;
+    }
+    await route.continue();
+  });
+
+  const closing = page
+    .getByRole("button", { name: "Close detail", exact: true })
+    .click();
+  await closeRequestStarted.promise;
+  await expect(page.locator("dialog.detail-modal")).toHaveCount(0);
+  expect(await page.locator("[inert]").count()).toBe(0);
+  releaseCloseResponse.resolve();
+  await closing;
+});
+
+test("cancelling delayed detail navigation keeps the queue closed and usable", async ({
+  page
+}) => {
+  await page.goto("/human");
+
+  const detailRequestStarted = deferred();
+  const releaseDetailResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      request.url().includes("item=")
+    ) {
+      detailRequestStarted.resolve();
+      await releaseDetailResponse.promise;
+    }
+    await route.continue();
+  });
+
+  const opening = reviewLinkByTitle(
+    page,
+    "Review neighborhood permit brief"
+  ).click();
+  await detailRequestStarted.promise;
+  const loading = page.getByRole("dialog", {
+    name: "Loading review details for Review neighborhood permit brief"
+  });
+  await expect(loading).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(loading).toHaveCount(0);
+  await expect(page).not.toHaveURL(/item=/);
+
+  releaseDetailResponse.resolve();
+  await opening;
+  await expect(page.getByRole("region", { name: "Review detail" })).toHaveCount(
+    0
+  );
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+  await expect(page.locator("[inert]")).toHaveCount(0);
+  await expect(
+    reviewLinkByTitle(page, "Review neighborhood permit brief")
+  ).toBeVisible();
+
+  await reviewLinkByTitle(page, "Choose follow-up window").click();
+  await expect(
+    page.getByRole("region", { name: "Review detail" })
+  ).toBeVisible();
 });
 
 test("failed file upload notice is not re-emitted by the browser", async ({
@@ -1503,7 +1622,7 @@ test("failed file upload notice is not re-emitted by the browser", async ({
   });
   await page.getByRole("button", { name: "Attach evidence" }).click();
 
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
+  await expect(lastActionError(page)).toContainText(
     "Could not save “Review neighborhood permit brief”: Action failed: invalid request."
   );
   await expect(
@@ -1546,7 +1665,7 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
 
   // Submitting from page 2 must land back on page 2, not a reset view.
   await decisionSurface.getByRole("button", { name: "Approve" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Approve")).toBeVisible();
   await expect(page).toHaveURL(/page=2/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 
@@ -1682,10 +1801,20 @@ test("bulk actions only submit selected rows visible in the current filter", asy
     "1 selected pending row"
   );
   await page.getByRole("button", { name: "Apply Approve follow-up" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText(
-    "Bulk action complete: 1 answered, 0 failed."
+  await expect(reviewRowByTitle(page, "Choose follow-up window")).toHaveCount(
+    0
   );
 });
+
+function lastUndoButton(page: Page, action?: string) {
+  return action
+    ? page.getByRole("button", { name: `Undo “${action}”`, exact: true })
+    : page.getByTestId("last-answer-undo");
+}
+
+function lastActionError(page: Page) {
+  return page.locator(".last-action-error");
+}
 
 function reviewRowByTitle(page: Page, title: string) {
   return page.locator("article.review-row").filter({
@@ -1819,7 +1948,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     buffer: Buffer.from("browser fixture file")
   });
   await page.getByRole("button", { name: "Attach evidence" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Attach evidence")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
@@ -1829,37 +1958,38 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     .getByLabel("Requested change")
     .fill("Tighten the handoff language.");
   await page.getByRole("button", { name: "Request edit" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Request edit")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
   await openSecondaryActions(page);
   await page.getByRole("button", { name: "Set review lane" }).click();
   await page.getByLabel("Operations").check();
   await page.getByRole("button", { name: "Set review lane" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Set review lane")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date", exact: true }).click();
   await page.getByLabel("Follow-up date").fill("2026-07-15");
   await page.getByRole("button", { name: "Pick date" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Pick date")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
   await page.getByRole("button", { name: "Pick date and time" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Pick date and time")).toBeVisible();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Select checks" }).click();
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
   await page.getByRole("button", { name: "Select checks" }).click();
-  await expect(page.locator("[data-sonner-toast]")).toContainText("Saved");
+  await expect(lastUndoButton(page, "Select checks")).toBeVisible();
 });
 
 test("row popup actions open a focused composer instead of the full detail", async ({
-  page
+  page,
+  isMobile
 }) => {
   await page.goto("/human");
   await reviewRowByTitle(page, "Choose follow-up window")
@@ -1874,6 +2004,19 @@ test("row popup actions open a focused composer instead of the full detail", asy
   await expect(
     detail.getByRole("navigation", { name: "Review navigation" })
   ).toHaveCount(0);
+  if (!isMobile) {
+    await expect
+      .poll(async () => {
+        const queueWidth = await page
+          .locator(".queue-pane")
+          .evaluate((element) => element.getBoundingClientRect().width);
+        const composerWidth = await detail.evaluate(
+          (element) => element.getBoundingClientRect().width
+        );
+        return { composerWidth, queueWidth };
+      })
+      .toEqual({ composerWidth: 28 * 16, queueWidth: 69 * 16 });
+  }
 
   await field.fill("2026-07-20");
   const paneBox = await detail.boundingBox();
@@ -2126,6 +2269,49 @@ test("queue J and K move between rows and Enter opens details", async ({
   await expect(page.getByRole("dialog")).toBeVisible();
 });
 
+test("queue Enter shows the loading dialog while detail RSC is delayed", async ({
+  page
+}) => {
+  await page.goto("/human");
+  const firstRow = page.locator(".review-list .row-link").first();
+  await expect(firstRow).toBeVisible();
+
+  const detailRequestStarted = deferred();
+  const releaseDetailResponse = deferred();
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "GET" &&
+      request.headers()["rsc"] === "1" &&
+      request.url().includes("item=")
+    ) {
+      detailRequestStarted.resolve();
+      await releaseDetailResponse.promise;
+    }
+    await route.continue();
+  });
+
+  await page.keyboard.press("j");
+  await expect(firstRow).toBeFocused();
+  const title = (await firstRow.getAttribute("aria-label"))?.replace(
+    /^Open review details for /,
+    ""
+  );
+  expect(title).toBeTruthy();
+
+  await page.keyboard.press("Enter");
+  await detailRequestStarted.promise;
+  await expect(
+    page.getByRole("dialog", {
+      name: `Loading review details for ${title}`
+    })
+  ).toBeVisible();
+  releaseDetailResponse.resolve();
+  await expect(
+    page.getByRole("region", { name: "Review detail" })
+  ).toBeVisible();
+});
+
 test("queue J does not steal typing from search or move past the last row", async ({
   page
 }) => {
@@ -2166,7 +2352,7 @@ test("mobile review navigation preserves the queue view", async ({
   await expect(
     page.getByRole("region", { name: "Review detail" })
   ).toBeVisible();
-  await page.getByRole("link", { name: "Close detail", exact: true }).click();
+  await page.getByRole("button", { name: "Close detail", exact: true }).click();
 
   await expect(page).toHaveURL(/order=updated_at%3Adesc/);
   await expect(
