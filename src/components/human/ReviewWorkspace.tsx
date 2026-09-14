@@ -82,6 +82,7 @@ import {
   HUMAN_MUTATION_SCOPE,
   HumanMutationError,
   isHumanOptimisticMutation,
+  laterAnswerRetiresEarlierUndo,
   synchronizeHumanMutation,
   type HumanOptimisticMutation
 } from "./human-mutation-client";
@@ -638,9 +639,11 @@ export function ReviewWorkspace({
             if (earlier.record.id === record.id) break;
             if (
               earlier.mutation.operation === "undo" &&
-              earlier.mutation.inputItemIds.every((id) => {
-                const index = mutation.inputItemIds.indexOf(id);
-                return index >= 0 && canonicalRows[index]?.status !== "pending";
+              laterAnswerRetiresEarlierUndo({
+                laterOperation: mutation.operation,
+                laterInputItemIds: mutation.inputItemIds,
+                laterCanonicalRows: canonicalRows,
+                undoInputItemIds: earlier.mutation.inputItemIds
               })
             ) {
               successGenerations.current.delete(earlier.record.id);

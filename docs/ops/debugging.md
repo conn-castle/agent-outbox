@@ -61,16 +61,18 @@ Check whether:
 
 ## Human Save Reports A Missing Input
 
-`Input item was not found` means the submitted input id no longer exists in
-the authenticated account and caller scope. A browser can still display an
-older queue snapshot after caller deletion, output acknowledgement, or retention
+`Input item was not found` means the submitted input id no longer exists in the
+authenticated account and caller scope. A browser can still display an older
+queue snapshot after caller deletion, output acknowledgement, or retention
 cleanup. Acknowledgement removes the live input/output pair; it does not leave
 an answered input available for another response.
 
 Check whether the item reappeared after answer → undo → answer, and correlate
 the input id and UTC timing with caller acknowledgement or deletion. Queue
 reconciliation must retire an older undo snapshot when a later answer is
-reflected, including when no intermediate pending refresh reached the browser.
+reflected, including when no intermediate pending refresh reached the browser. A
+bulk-answer result reports counts rather than which IDs succeeded, so an omitted
+canonical row is not enough to retire an overlapping undo snapshot.
 Missing-input, already-answered, and stale-revision save failures refresh the
 queue and clear the obsolete local undo snapshot while preserving the error
 message. Answering preserves the input revision; undo increments it once.
