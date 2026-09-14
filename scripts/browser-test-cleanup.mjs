@@ -21,7 +21,9 @@ export default async function globalTeardown() {
 
   const containers = dockerIds("ps", ["-aq", "--filter", `label=${runLabel}`]);
   if (containers.length > 0) {
-    runDocker(["rm", "-f", ...containers]);
+    // -v also removes each container's anonymous postgres data volume, which
+    // carries no label of its own and would otherwise be unreachable.
+    runDocker(["rm", "-f", "-v", ...containers]);
   }
 
   const networks = dockerNetworkIds(runLabel);

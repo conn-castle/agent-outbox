@@ -630,6 +630,25 @@ export function ReviewWorkspace({
                 (row) => row === undefined || row.status !== "pending"
               );
       if (reflected) {
+        // A later answer can reach the server before the undo's pending row
+        // ever reaches this view. Retire that older restoration along with
+        // the answer, or it will resurrect the answered (possibly acked) item.
+        if (mutation.operation !== "undo") {
+          for (const earlier of humanMutations) {
+            if (earlier.record.id === record.id) break;
+            if (
+              earlier.mutation.operation === "undo" &&
+              earlier.mutation.inputItemIds.every((id) => {
+                const index = mutation.inputItemIds.indexOf(id);
+                return index >= 0 && canonicalRows[index]?.status !== "pending";
+              })
+            ) {
+              successGenerations.current.delete(earlier.record.id);
+              retriedCanonicalRefreshes.current.delete(earlier.record.id);
+              dismiss(earlier.record.id);
+            }
+          }
+        }
         successGenerations.current.delete(record.id);
         retriedCanonicalRefreshes.current.delete(record.id);
         dismiss(record.id);
@@ -730,7 +749,8 @@ export function ReviewWorkspace({
       rowSnapshots: requiresCanonicalPendingRow
         ? rowSnapshots.map((row) => ({
             ...row,
-            currentRevision: row.currentRevision + 2
+            // Answer preserves the revision; undo increments it once.
+            currentRevision: row.currentRevision + 1
           }))
         : rowSnapshots,
       requiresCanonicalPendingRow
@@ -802,6 +822,28 @@ export function ReviewWorkspace({
       onError: (error, mutationId) => {
         successGenerations.current.delete(mutationId);
         retriedCanonicalRefreshes.current.delete(mutationId);
+        if (
+          error instanceof HumanMutationError &&
+          (error.result?.code === "not_found" ||
+            error.result?.code === "input_not_pending" ||
+            error.result?.code === "stale_input_revision")
+        ) {
+          // The server has invalidated this snapshot. Drop older undo copies
+          // and fetch the current row before another answer is attempted.
+          for (const { record, mutation } of humanMutations) {
+            if (
+              mutation.operation === "undo" &&
+              mutation.inputItemIds.some((id) =>
+                submission.inputItemIds.includes(id)
+              )
+            ) {
+              successGenerations.current.delete(record.id);
+              retriedCanonicalRefreshes.current.delete(record.id);
+              dismiss(record.id);
+            }
+          }
+          router.refresh();
+        }
         const message =
           error instanceof HumanMutationError
             ? error.message
@@ -911,6 +953,7 @@ export function ReviewWorkspace({
     <main
       ref={workspaceRef}
       className="human-workspace"
+      data-review-mutation-count={humanMutations.length}
       data-workspace-hydrated={
         hydratedAccountId === session.accountId ? "true" : "false"
       }

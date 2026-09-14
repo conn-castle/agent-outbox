@@ -29,6 +29,7 @@ reasoning_effort = "medium" # codex only
 statusline = true
 
 [agents.codex.agent_specific]
+model_fallback = false
 
 [agents.codex.agent_specific.features]
 apps = false
@@ -86,3 +87,6 @@ selectors = ['skills/apple-design']
 [[skills.imports]]
 repository = 'https://github.com/nicholasjconn/skills'
 selectors = ['skills/tools/request-html-comments']
+
+[agents.codex.agent_specific.tui]
+whimsy = false

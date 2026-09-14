@@ -918,6 +918,109 @@ test("last-action undo restores queue order", async ({ page }) => {
   expect(restoredIndex).toBe(originalIndex);
 });
 
+for (const failure of [
+  null,
+  { code: "not_found", message: "Input item was not found." },
+  {
+    code: "input_not_pending",
+    message: "Human answer creation requires a pending input item."
+  },
+  {
+    code: "stale_input_revision",
+    message: "Input item revision changed before the answer was submitted."
+  }
+]) {
+  test(`undone item reconciles after ${failure?.code ?? "success"}`, async ({
+    page
+  }) => {
+    await page.goto("/human");
+    await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+    const row = reviewRowByTitle(page, "Review neighborhood permit brief");
+    const workspace = page.locator(".human-workspace");
+    const revision = row.locator('input[name="expectedRevision"]').first();
+    const originalRevision = Number(await revision.inputValue());
+    const inputItemId = await row
+      .locator('input[name="inputItemId"]')
+      .first()
+      .inputValue();
+    await row.getByRole("button", { name: "Approve permit brief" }).click();
+    await expect(lastUndoButton(page, "Approve permit brief")).toBeVisible();
+    // Let the first answer reach the canonical queue before holding undo refreshes.
+    await expect(workspace).toHaveAttribute("data-review-mutation-count", "0");
+    await expect(row).toHaveCount(0);
+
+    const releaseRefresh = deferred();
+    let answeringAgain = false;
+    await page.route("**/human**", async (route) => {
+      if (route.request().method() === "POST" && answeringAgain && failure) {
+        // For terminal failures, simulate another actor answering by advancing
+        // the fixture's canonical state, but report this submission as rejected.
+        // A revision conflict leaves the fixture pending at its canonical revision.
+        const response =
+          failure.code === "stale_input_revision"
+            ? undefined
+            : await route.fetch();
+        await route.fulfill({
+          response,
+          status: failure.code === "not_found" ? 404 : 409,
+          contentType: "application/json",
+          body: JSON.stringify({
+            ok: false,
+            operation: "answer",
+            inputItemIds: [inputItemId],
+            ...failure
+          })
+        });
+        return;
+      }
+      if (
+        route.request().method() === "GET" &&
+        route.request().headers()["rsc"] === "1"
+      ) {
+        await releaseRefresh.promise;
+      }
+      await route.continue();
+    });
+    try {
+      await lastUndoButton(page, "Approve permit brief").click();
+      await expect(
+        row.getByRole("button", { name: "Approve permit brief" })
+      ).toBeEnabled();
+      // The production server increments once on undo, not on answer.
+      await expect(revision).toHaveValue(String(originalRevision + 1));
+      answeringAgain = true;
+      await row.getByRole("button", { name: "Approve permit brief" }).click();
+      if (failure) {
+        await expect(page.locator(".last-action-error")).toContainText(
+          failure.message
+        );
+      } else {
+        await expect(
+          lastUndoButton(page, "Approve permit brief")
+        ).toBeVisible();
+      }
+    } finally {
+      releaseRefresh.resolve();
+    }
+    // Absence while the answer still optimistically hides the row is not proof.
+    // Wait for reconciliation to retire both the answer and the older undo.
+    await expect(workspace).toHaveAttribute("data-review-mutation-count", "0");
+    if (failure?.code === "stale_input_revision") {
+      await expect(revision).toHaveValue(String(originalRevision));
+      await expect(
+        row.getByRole("button", { name: "Approve permit brief" })
+      ).toBeEnabled();
+    } else {
+      await expect(row).toHaveCount(0);
+    }
+    if (failure) {
+      await expect(page.locator(".last-action-error")).toContainText(
+        failure.message
+      );
+    }
+  });
+}
+
 test("review controls support type then priority compound sorting", async ({
   page
 }) => {
