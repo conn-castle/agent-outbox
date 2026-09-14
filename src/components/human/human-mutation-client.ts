@@ -72,6 +72,35 @@ export function isHumanOptimisticMutation(
   );
 }
 
+export function laterAnswerRetiresEarlierUndo({
+  laterOperation,
+  laterInputItemIds,
+  laterCanonicalRows,
+  undoInputItemIds
+}: {
+  laterOperation: Exclude<HumanMutationOperation, "undo">;
+  laterInputItemIds: readonly string[];
+  laterCanonicalRows: readonly (
+    Pick<HumanReviewListRow, "status"> | undefined
+  )[];
+  undoInputItemIds: readonly string[];
+}): boolean {
+  return undoInputItemIds.every((id) => {
+    const index = laterInputItemIds.indexOf(id);
+    if (index < 0) {
+      return false;
+    }
+    const row = laterCanonicalRows[index];
+    // Bulk-answer success reports counts, not which IDs were answered. A
+    // missing canonical row is therefore not proof this undone item left
+    // pending; only retire it when the row is present and not pending.
+    if (laterOperation === "bulk-answer") {
+      return row !== undefined && row.status !== "pending";
+    }
+    return row?.status !== "pending";
+  });
+}
+
 export function isHumanMutationResult(
   value: unknown
 ): value is HumanMutationResult {

@@ -149,7 +149,10 @@ function cleanup() {
     return;
   }
   cleanedUp = true;
-  spawnSync("docker", ["rm", "-f", CONTAINER_NAME], { stdio: "ignore" });
+  // -v removes the anonymous volume postgres:17 creates from its VOLUME
+  // directive. Anonymous volumes inherit no labels, so nothing else can find
+  // them afterwards; without -v every run leaks one.
+  spawnSync("docker", ["rm", "-f", "-v", CONTAINER_NAME], { stdio: "ignore" });
   spawnSync("docker", ["network", "rm", NETWORK_NAME], { stdio: "ignore" });
 }
 

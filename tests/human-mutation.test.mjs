@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isHumanMutationResult } from "../src/components/human/human-mutation-client.ts";
+import {
+  isHumanMutationResult,
+  laterAnswerRetiresEarlierUndo
+} from "../src/components/human/human-mutation-client.ts";
 
 const itemId = "00000000-0000-4000-8000-000000000501";
 
@@ -83,6 +86,66 @@ test("isHumanMutationResult requires operation-specific success and failure fiel
       operation: "undo",
       message: "Undone.",
       inputItemIds: [itemId, itemId]
+    }),
+    false
+  );
+});
+
+const undoneId = "00000000-0000-4000-8000-000000000501";
+const otherId = "00000000-0000-4000-8000-000000000502";
+
+test("later single-answer retires an overlapping undo when the canonical row is absent", () => {
+  assert.equal(
+    laterAnswerRetiresEarlierUndo({
+      laterOperation: "answer",
+      laterInputItemIds: [undoneId],
+      laterCanonicalRows: [undefined],
+      undoInputItemIds: [undoneId]
+    }),
+    true
+  );
+});
+
+test("later single-answer does not retire an overlapping undo while that row is still pending", () => {
+  assert.equal(
+    laterAnswerRetiresEarlierUndo({
+      laterOperation: "answer",
+      laterInputItemIds: [undoneId],
+      laterCanonicalRows: [{ status: "pending" }],
+      undoInputItemIds: [undoneId]
+    }),
+    false
+  );
+});
+
+test("later bulk-answer does not retire an overlapping undo when that canonical row is absent", () => {
+  assert.equal(
+    laterAnswerRetiresEarlierUndo({
+      laterOperation: "bulk-answer",
+      laterInputItemIds: [undoneId, otherId],
+      laterCanonicalRows: [undefined, { status: "answered" }],
+      undoInputItemIds: [undoneId]
+    }),
+    false
+  );
+});
+
+test("later bulk-answer retires an overlapping undo only when that row is present and not pending", () => {
+  assert.equal(
+    laterAnswerRetiresEarlierUndo({
+      laterOperation: "bulk-answer",
+      laterInputItemIds: [undoneId, otherId],
+      laterCanonicalRows: [{ status: "answered" }, undefined],
+      undoInputItemIds: [undoneId]
+    }),
+    true
+  );
+  assert.equal(
+    laterAnswerRetiresEarlierUndo({
+      laterOperation: "bulk-answer",
+      laterInputItemIds: [undoneId, otherId],
+      laterCanonicalRows: [{ status: "pending" }, undefined],
+      undoInputItemIds: [undoneId]
     }),
     false
   );
