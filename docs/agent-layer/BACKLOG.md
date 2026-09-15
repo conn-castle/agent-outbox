@@ -45,6 +45,12 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
     Acceptance criteria: The page reports decision activity from canonical review history without changing queue or undo semantics, and the primary navigation exposes only Review queue, History, and Stats.
     Notes: Define the actual measures after observing real usage; do not add vanity metrics speculatively.
 
+- Backlog 2026-08-16 always-available-free-form-response: Optional always-visible free-form response
+    Priority: Medium. Area: human review, settings
+    Description: Add a dedicated setting that lets users keep a free-form response composer visible for every review, independently of caller-defined action buttons.
+    Acceptance criteria: Users can enable or disable the setting; when enabled, every review exposes the free-form response affordance without replacing or masquerading as an API-defined action.
+    Notes: Treat this as a product-level response mode, not another caller-configured button. Optional answer feedback shipped separately and does not satisfy this setting.
+
 - Backlog 2026-08-16 tight-review-mode: Ultra-compact review queue mode
     Priority: Medium. Area: human review, display settings
     Description: Add an optional tight mode that compresses the current review UI, hides most secondary information, and favors icon-only controls for high-density scanning.

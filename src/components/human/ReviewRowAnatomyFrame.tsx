@@ -9,7 +9,28 @@ import { resolveSupportedColor } from "../../shared/input-schema-rules.ts";
 import { actionAppearanceClass } from "./action-appearance";
 import { CardVisual } from "./TypedContent";
 import { ReviewRowFrame } from "./ReviewRowFrame";
-import { ReviewRowHeading } from "./ReviewRowHeading";
+import {
+  ReviewRowHeading,
+  type ReviewRowHeadingLink
+} from "./ReviewRowHeading";
+
+const ANATOMY_CONTEXT_LINKS: ReviewRowHeadingLink[] = [
+  {
+    key: "example-context-link",
+    display: REVIEW_ROW_ANATOMY_PARTS.contextLinks.label,
+    icon: "external-link",
+    href: "#review-row-anatomy"
+  }
+];
+
+const EXAMPLE_CONTEXT_LINKS: ReviewRowHeadingLink[] = [
+  {
+    key: "example-context-link",
+    display: "View thread",
+    icon: "external-link",
+    href: "#review-row-anatomy"
+  }
+];
 
 export type ReviewRowPreviewMode = "anatomy" | "example";
 
@@ -50,16 +71,9 @@ export function ReviewRowAnatomyFrame({
                       : "Acme Corp · 4 min ago"}
                   </span>
                 }
-                contextLinks={[
-                  {
-                    key: "example-context-link",
-                    display: annotated
-                      ? REVIEW_ROW_ANATOMY_PARTS.contextLinks.label
-                      : "View thread",
-                    icon: "external-link",
-                    href: "#review-row-anatomy"
-                  }
-                ]}
+                contextLinks={
+                  annotated ? ANATOMY_CONTEXT_LINKS : EXAMPLE_CONTEXT_LINKS
+                }
                 contextAfter={
                   annotated ? (
                     <span className="priority priority-high">

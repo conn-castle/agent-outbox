@@ -12,15 +12,7 @@ export type ReviewRowHeadingLink = {
   external?: boolean;
 };
 
-export function ReviewRowHeading({
-  rowTypeDisplay,
-  rowTypeIcon,
-  corner,
-  contextLinks = [],
-  contextAfter,
-  utilities,
-  slotClassNames
-}: {
+export type ReviewRowHeadingProps = {
   rowTypeDisplay: ReactNode;
   rowTypeIcon: string;
   corner?: ReactNode;
@@ -28,7 +20,19 @@ export function ReviewRowHeading({
   contextAfter?: ReactNode;
   utilities?: ReactNode;
   slotClassNames?: Partial<Record<"rowType" | "contextLinks", string>>;
-}) {
+};
+
+const EMPTY_CONTEXT_LINKS: ReviewRowHeadingLink[] = [];
+
+export function ReviewRowHeading({
+  rowTypeDisplay,
+  rowTypeIcon,
+  corner,
+  contextLinks = EMPTY_CONTEXT_LINKS,
+  contextAfter,
+  utilities,
+  slotClassNames
+}: ReviewRowHeadingProps) {
   const linksRef = useRef<HTMLSpanElement>(null);
   const [scroll, setScroll] = useState({
     overflow: false,
@@ -40,11 +44,17 @@ export function ReviewRowHeading({
     if (!links) return;
     function update() {
       if (!links) return;
-      setScroll({
-        overflow: links.scrollWidth > links.clientWidth + 1,
-        left: links.scrollLeft > 1,
-        right: links.scrollLeft + links.clientWidth < links.scrollWidth - 1
-      });
+      const overflow = links.scrollWidth > links.clientWidth + 1;
+      const left = links.scrollLeft > 1;
+      const right =
+        links.scrollLeft + links.clientWidth < links.scrollWidth - 1;
+      setScroll((current) =>
+        current.overflow === overflow &&
+        current.left === left &&
+        current.right === right
+          ? current
+          : { overflow, left, right }
+      );
     }
     const observer = new ResizeObserver(update);
     observer.observe(links);

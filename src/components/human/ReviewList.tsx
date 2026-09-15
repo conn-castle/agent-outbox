@@ -1,6 +1,6 @@
 import { Check, Copy, MoreVertical, AlarmClock, Undo2 } from "lucide-react";
 import Link from "next/link";
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 
 import type { HumanReviewListRow } from "../../server/human-review.ts";
@@ -13,7 +13,11 @@ import { InlineQuickAction, type OnHumanMutation } from "./ActionForms";
 import { formatQueueTimestamp, formatUtcTimestamp } from "./review-format";
 import { CardVisual, HumanIcon, SafeHtml, safeHref } from "./TypedContent";
 import { ReviewRowFrame } from "./ReviewRowFrame";
-import { ReviewRowHeading } from "./ReviewRowHeading";
+import {
+  ReviewRowHeading,
+  type ReviewRowHeadingLink,
+  type ReviewRowHeadingProps
+} from "./ReviewRowHeading";
 import { Feedback } from "./Feedback";
 import { actionAppearanceClass } from "./action-appearance";
 import { formatReviewPriority } from "./review-format";
@@ -76,20 +80,6 @@ export function ReviewList({
         const overflowActions = row.bulkActions.filter(
           (action) => action.overflow
         );
-        const contextLinks = (row.linkButtons ?? []).flatMap((link) => {
-          const href = safeHref(link.url);
-          return href
-            ? [
-                {
-                  key: link.displayOrder,
-                  display: link.display,
-                  icon: link.icon,
-                  href,
-                  external: true
-                }
-              ]
-            : [];
-        });
         return (
           <OptimisticReviewRow key={row.inputItemId} onMutation={onMutation}>
             {(handleMutation) => (
@@ -129,7 +119,8 @@ export function ReviewList({
                     ) : null
                   }
                   heading={
-                    <ReviewRowHeading
+                    <ReviewListHeading
+                      linkButtons={row.linkButtons}
                       rowTypeDisplay={row.rowType.display}
                       rowTypeIcon={row.rowType.icon}
                       corner={
@@ -148,7 +139,6 @@ export function ReviewList({
                           </time>
                         )
                       }
-                      contextLinks={contextLinks}
                       contextAfter={
                         <>
                           {skippedIds.has(row.inputItemId) ? (
@@ -348,6 +338,38 @@ export function ReviewList({
       })}
     </ol>
   );
+}
+
+function reviewRowContextLinks(
+  linkButtons: HumanReviewListRow["linkButtons"]
+): ReviewRowHeadingLink[] {
+  return (linkButtons ?? []).flatMap((link) => {
+    const href = safeHref(link.url);
+    return href
+      ? [
+          {
+            key: link.displayOrder,
+            display: link.display,
+            icon: link.icon,
+            href,
+            external: true
+          }
+        ]
+      : [];
+  });
+}
+
+function ReviewListHeading({
+  linkButtons,
+  ...heading
+}: Omit<ReviewRowHeadingProps, "contextLinks"> & {
+  linkButtons: HumanReviewListRow["linkButtons"];
+}) {
+  const contextLinks = useMemo(
+    () => reviewRowContextLinks(linkButtons),
+    [linkButtons]
+  );
+  return <ReviewRowHeading {...heading} contextLinks={contextLinks} />;
 }
 
 function CopyIdentifier({ identifier }: { identifier: string }) {
