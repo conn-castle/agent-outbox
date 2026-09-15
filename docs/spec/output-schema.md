@@ -66,6 +66,16 @@ Rules:
 
 ## Response Variants
 
+Every response variant may include an optional `feedback` string containing
+human feedback accompanying the selected answer. It is included in the same
+output result and counts toward the response payload byte limit. Empty feedback
+is omitted. Callers should consider feedback together with `action_value` and
+the typed response before acting.
+
+```json
+{ "kind": "none", "feedback": "Please rename this before proceeding." }
+```
+
 `none`:
 
 ```json

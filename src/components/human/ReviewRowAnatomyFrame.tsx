@@ -1,4 +1,4 @@
-import { MoreVertical, SkipForward } from "lucide-react";
+import { MoreVertical, AlarmClock } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import {
@@ -78,13 +78,13 @@ export function ReviewRowAnatomyFrame({
                         annotated
                       )}
                       type="button"
+                      aria-label="Snooze review"
+                      title="Snooze review"
                     >
-                      <SkipForward aria-hidden="true" />
-                      <span>
-                        {annotated
-                          ? REVIEW_ROW_ANATOMY_PARTS.skip.label
-                          : "Defer"}
-                      </span>
+                      <AlarmClock aria-hidden="true" />
+                      {annotated ? (
+                        <span>{REVIEW_ROW_ANATOMY_PARTS.skip.label}</span>
+                      ) : null}
                     </button>
                     <details className="row-overflow">
                       <summary

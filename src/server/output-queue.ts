@@ -751,8 +751,21 @@ function outputResponse(
   row: OutputRow,
   files: readonly OutputFileMetadataRow[]
 ): { ok: true; data: JsonValue } | { ok: false; error: ApiErrorInput } {
+  if (!isJsonRecord(row.response_payload)) {
+    return temporaryUnavailableError(
+      "Output response payload is temporarily unavailable."
+    );
+  }
+  const feedback = row.response_payload.feedback;
+  if (feedback !== undefined && typeof feedback !== "string") {
+    return temporaryUnavailableError(
+      "Output feedback is temporarily unavailable."
+    );
+  }
+  const feedbackFields: Record<string, JsonValue> =
+    feedback === undefined ? {} : { feedback };
   if (row.response_kind === "none") {
-    return { ok: true, data: { kind: "none" } };
+    return { ok: true, data: { kind: "none", ...feedbackFields } };
   }
 
   if (row.response_kind === "file_upload") {
@@ -776,6 +789,7 @@ function outputResponse(
       ok: true,
       data: {
         kind: "file_upload",
+        ...feedbackFields,
         file: {
           file_id: file.file_id,
           filename: file.filename,
@@ -785,12 +799,6 @@ function outputResponse(
         }
       }
     };
-  }
-
-  if (!isJsonRecord(row.response_payload)) {
-    return temporaryUnavailableError(
-      "Output response payload is temporarily unavailable."
-    );
   }
 
   return {

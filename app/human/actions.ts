@@ -94,7 +94,8 @@ export async function executeHumanAnswerMutation(
           inputItemId: parsed.inputItemId,
           expectedRevision: parsed.expectedRevision,
           actionValue: parsed.actionValue,
-          response: parsed.response
+          response: parsed.response,
+          feedback: parsed.feedback
         };
         return createHumanAnswerInTransaction(query, answerInput);
       }
@@ -183,6 +184,7 @@ export async function executeBulkHumanAnswersMutation(
       message: `Bulk action complete: ${parsed.items.length} answered, 0 failed.`,
       inputItemIds,
       answered: parsed.items.length,
+      answeredInputItemIds: inputItemIds,
       failed: 0
     };
   }
@@ -198,7 +200,7 @@ export async function executeBulkHumanAnswersMutation(
     );
   }
 
-  let answered = 0;
+  const answeredInputItemIds: string[] = [];
   let failed = 0;
   for (const item of parsed.items) {
     const result = await createHumanAnswer(context.connectionString, {
@@ -210,15 +212,17 @@ export async function executeBulkHumanAnswersMutation(
       inputItemId: item.inputItemId,
       expectedRevision: item.expectedRevision,
       actionValue: parsed.actionValue,
-      response: { kind: "none" }
+      response: { kind: "none" },
+      feedback: item.feedback
     });
     if (result.ok) {
-      answered += 1;
+      answeredInputItemIds.push(item.inputItemId);
     } else {
       failed += 1;
     }
   }
 
+  const answered = answeredInputItemIds.length;
   if (answered === 0 && failed > 0) {
     return humanMutationFailure(
       "bulk-answer",
@@ -238,6 +242,7 @@ export async function executeBulkHumanAnswersMutation(
     message: `Bulk action complete: ${answered} answered, ${failed} failed.`,
     inputItemIds,
     answered,
+    answeredInputItemIds,
     failed
   };
 }

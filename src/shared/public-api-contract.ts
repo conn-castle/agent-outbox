@@ -438,6 +438,7 @@ export const OutputReadAllRequestSchema = openObject(
 );
 
 const DateResponseSchema = closedObject({
+  feedback: Type.Optional(Type.String()),
   kind: Type.Literal("date_picker"),
   mode: Type.Literal("date"),
   value_date: Type.String({ format: "date" }),
@@ -445,6 +446,7 @@ const DateResponseSchema = closedObject({
 });
 
 const DateTimeResponseSchema = closedObject({
+  feedback: Type.Optional(Type.String()),
   kind: Type.Literal("date_picker"),
   mode: Type.Literal("datetime"),
   value_utc: Type.String({ format: "date-time" }),
@@ -453,20 +455,30 @@ const DateTimeResponseSchema = closedObject({
 
 export const ActionResponseSchema = Type.Union(
   [
-    closedObject({ kind: Type.Literal("none") }),
-    closedObject({ kind: Type.Literal("free_text"), text: Type.String() }),
+    closedObject({
+      kind: Type.Literal("none"),
+      feedback: Type.Optional(Type.String())
+    }),
+    closedObject({
+      kind: Type.Literal("free_text"),
+      text: Type.String(),
+      feedback: Type.Optional(Type.String())
+    }),
     closedObject({
       kind: Type.Literal("single_select"),
+      feedback: Type.Optional(Type.String()),
       value: ProtocolValueSchema
     }),
     closedObject({
       kind: Type.Literal("multi_select"),
+      feedback: Type.Optional(Type.String()),
       values: Type.Array(ProtocolValueSchema)
     }),
     DateResponseSchema,
     DateTimeResponseSchema,
     closedObject({
       kind: Type.Literal("file_upload"),
+      feedback: Type.Optional(Type.String()),
       file: closedObject({
         file_id: Type.String({ minLength: 1 }),
         filename: Type.String({ minLength: 1 }),
@@ -479,7 +491,7 @@ export const ActionResponseSchema = Type.Union(
   {
     $id: "ActionResponse",
     description:
-      "The human response. Date-picker responses share a kind and are distinguished by mode."
+      "The human response, with optional feedback accompanying the selected answer. Date-picker responses share a kind and are distinguished by mode."
   }
 );
 

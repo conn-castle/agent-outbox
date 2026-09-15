@@ -150,6 +150,7 @@ export function browserFixtureReviewPage(
   const window = overlayed.slice(offset, offset + REVIEW_PAGE_SIZE + 1);
   return {
     rows: window.slice(0, REVIEW_PAGE_SIZE),
+    totalCount: filtered.length,
     hasNext: window.length > REVIEW_PAGE_SIZE
   };
 }

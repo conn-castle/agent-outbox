@@ -1784,6 +1784,9 @@
               "kind": {
                 "type": "string",
                 "const": "none"
+              },
+              "feedback": {
+                "type": "string"
               }
             },
             "additionalProperties": false
@@ -1798,6 +1801,9 @@
               },
               "text": {
                 "type": "string"
+              },
+              "feedback": {
+                "type": "string"
               }
             },
             "additionalProperties": false
@@ -1809,6 +1815,9 @@
               "kind": {
                 "type": "string",
                 "const": "single_select"
+              },
+              "feedback": {
+                "type": "string"
               },
               "value": {
                 "type": "string",
@@ -1826,6 +1835,9 @@
                 "type": "string",
                 "const": "multi_select"
               },
+              "feedback": {
+                "type": "string"
+              },
               "values": {
                 "type": "array",
                 "items": {
@@ -1841,6 +1853,9 @@
             "type": "object",
             "required": ["kind", "mode", "value_date", "display_timezone"],
             "properties": {
+              "feedback": {
+                "type": "string"
+              },
               "kind": {
                 "type": "string",
                 "const": "date_picker"
@@ -1870,6 +1885,9 @@
             "type": "object",
             "required": ["kind", "mode", "value_utc", "display_timezone"],
             "properties": {
+              "feedback": {
+                "type": "string"
+              },
               "kind": {
                 "type": "string",
                 "const": "date_picker"
@@ -1902,6 +1920,9 @@
               "kind": {
                 "type": "string",
                 "const": "file_upload"
+              },
+              "feedback": {
+                "type": "string"
               },
               "file": {
                 "type": "object",
@@ -1940,7 +1961,7 @@
             "additionalProperties": false
           }
         ],
-        "description": "The human response. Date-picker responses share a kind and are distinguished by mode."
+        "description": "The human response, with optional feedback accompanying the selected answer. Date-picker responses share a kind and are distinguished by mode."
       },
       "InputSubmission": {
         "type": "object",

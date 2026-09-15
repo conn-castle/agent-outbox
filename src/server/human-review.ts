@@ -50,6 +50,7 @@ export type HumanReviewListOptions = {
 export type HumanReviewPage = {
   rows: HumanReviewListRow[];
   hasNext: boolean;
+  totalCount: number;
 };
 
 export type HumanAccountUsageMetric = {
@@ -254,7 +255,15 @@ export async function humanReviewPageInTransaction(
   const result = await query<HumanReviewRow>(
     humanReviewListStatementWithLimit(context, options, REVIEW_PAGE_QUERY_LIMIT)
   );
+  const count = await query<{ total_count: string }>(
+    humanReviewCountStatement(context, options)
+  );
+  const totalCount = Number(count.rows[0]?.total_count);
+  if (!Number.isSafeInteger(totalCount) || totalCount < 0) {
+    throw new Error("Human review count is unavailable or invalid.");
+  }
   return {
+    totalCount,
     rows: result.rows
       .slice(0, MAX_REVIEW_LIST_LIMIT)
       .map(reviewListRowFromDatabase),
@@ -482,6 +491,45 @@ function humanReviewListStatementWithLimit(
   options: HumanReviewListOptions,
   limit: number
 ): TransactionContextStatement {
+  const { values, filters } = humanReviewFilters(context, options);
+  values.push(limit);
+  const limitParameter = values.length;
+  values.push(options.offset ?? 0);
+
+  return {
+    sql: `
+      ${reviewRowSelect()}
+      where ${filters.join("\n        and ")}
+      ${reviewRowOrderBy(options.sorts)}
+      limit $${limitParameter}
+      offset $${values.length}
+    `,
+    values
+  };
+}
+
+export function humanReviewCountStatement(
+  context: AuthorizedHumanAccountContext,
+  options: HumanReviewListOptions = {}
+): TransactionContextStatement {
+  const { values, filters } = humanReviewFilters(context, options);
+  return {
+    sql: `
+      select count(*)::text as total_count
+      from public.agent_outbox_input_items i
+      join public.agent_outbox_callers c
+        on c.account_id = i.account_id
+       and c.caller_id = i.caller_id
+      where ${filters.join("\n        and ")}
+    `,
+    values
+  };
+}
+
+function humanReviewFilters(
+  context: AuthorizedHumanAccountContext,
+  options: HumanReviewListOptions
+) {
   const values: (string | number)[] = [context.accountId];
   const filters = ["i.account_id = $1"];
   const status =
@@ -525,20 +573,7 @@ function humanReviewListStatementWithLimit(
     filters.push(`i.row_type_display in (${placeholders.join(", ")})`);
   }
 
-  values.push(limit);
-  const limitParameter = values.length;
-  values.push(options.offset ?? 0);
-
-  return {
-    sql: `
-      ${reviewRowSelect()}
-      where ${filters.join("\n        and ")}
-      ${reviewRowOrderBy(options.sorts)}
-      limit $${limitParameter}
-      offset $${values.length}
-    `,
-    values
-  };
+  return { values, filters };
 }
 
 export function humanReviewTypeOptionsStatement(

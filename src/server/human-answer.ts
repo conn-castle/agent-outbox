@@ -133,6 +133,7 @@ export type CreateHumanAnswerInput = HumanAnswerActorContext & {
   expectedRevision: number;
   actionValue: string;
   response: HumanActionResponse;
+  feedback?: string;
   answeredAt?: Date;
 };
 
@@ -289,7 +290,8 @@ export async function createHumanAnswerInTransaction(
       popupPayload: action.popup_payload,
       optionValues: optionResult.rows.map((row) => row.option_value)
     },
-    input.response
+    input.response,
+    input.feedback
   );
 
   if (!payloadResult.ok) {
@@ -597,6 +599,23 @@ export function outputForPreReadUndoStatement(
 }
 
 export function validatedResponsePayload(
+  action: PopupActionForValidation,
+  response: unknown,
+  feedback?: unknown
+): StoredPayload | HumanAnswerFailure {
+  if (feedback !== undefined && typeof feedback !== "string") {
+    return invalidActionResponse("feedback", "Feedback must be text.");
+  }
+  const payload = validatedActionPayload(action, response);
+  if (!payload.ok || !feedback?.trim()) return payload;
+  return storedPayload(
+    payload.responseKind,
+    { ...(payload.responsePayload as Record<string, JsonValue>), feedback },
+    payload.file
+  );
+}
+
+function validatedActionPayload(
   action: PopupActionForValidation,
   response: unknown
 ): StoredPayload | HumanAnswerFailure {

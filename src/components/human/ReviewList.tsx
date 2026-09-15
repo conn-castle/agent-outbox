@@ -1,4 +1,4 @@
-import { Check, MoreVertical, SkipForward, Undo2 } from "lucide-react";
+import { Check, Copy, MoreVertical, AlarmClock, Undo2 } from "lucide-react";
 import Link from "next/link";
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -14,6 +14,7 @@ import { formatQueueTimestamp, formatUtcTimestamp } from "./review-format";
 import { CardVisual, HumanIcon, SafeHtml, safeHref } from "./TypedContent";
 import { ReviewRowFrame } from "./ReviewRowFrame";
 import { ReviewRowHeading } from "./ReviewRowHeading";
+import { Feedback } from "./Feedback";
 import { actionAppearanceClass } from "./action-appearance";
 import { formatReviewPriority } from "./review-format";
 
@@ -29,6 +30,9 @@ export function ReviewList({
   renderedAt,
   onMutation,
   lockedIds,
+  feedbackDrafts,
+  onFeedbackChange,
+  feedbackError,
   onDetailNavigate
 }: {
   rows: HumanReviewListRow[];
@@ -42,6 +46,9 @@ export function ReviewList({
   renderedAt: string;
   onMutation: OnHumanMutation;
   lockedIds: Set<string>;
+  feedbackDrafts: Record<string, string>;
+  onFeedbackChange: (inputItemId: string, text: string) => boolean;
+  feedbackError: string | null;
   onDetailNavigate: (inputItemId: string, label: string) => void;
 }) {
   if (rows.length === 0) {
@@ -144,16 +151,23 @@ export function ReviewList({
                       contextLinks={contextLinks}
                       contextAfter={
                         <>
-                          <span className="sr-only">
-                            {formatReviewPriority(row.priority)}
-                          </span>
                           {skippedIds.has(row.inputItemId) ? (
-                            <span className="status-pill">skipped</span>
+                            <span className="status-pill">snoozed</span>
                           ) : null}
                         </>
                       }
                       utilities={
                         <>
+                          <CopyIdentifier identifier={row.callerItemId} />
+                          {row.status === "pending" ? (
+                            <Feedback
+                              value={feedbackDrafts[row.inputItemId] ?? ""}
+                              onChange={(text) =>
+                                onFeedbackChange(row.inputItemId, text)
+                              }
+                              error={feedbackError}
+                            />
+                          ) : null}
                           {row.status === "pending" ? (
                             <button
                               className="row-skip-button"
@@ -161,28 +175,25 @@ export function ReviewList({
                               disabled={row.skipDisabled}
                               title={
                                 row.skipDisabled
-                                  ? "Skipping is disabled for this review"
-                                  : undefined
+                                  ? "Snoozing is disabled for this review"
+                                  : skippedIds.has(row.inputItemId)
+                                    ? "Return review to queue"
+                                    : "Snooze review"
                               }
                               aria-label={
                                 row.skipDisabled
-                                  ? "Defer unavailable for this review"
+                                  ? "Snooze unavailable for this review"
                                   : skippedIds.has(row.inputItemId)
                                     ? "Return review to queue"
-                                    : "Defer review"
+                                    : "Snooze review"
                               }
                               onClick={() => onSkipToggle(row.inputItemId)}
                             >
                               {skippedIds.has(row.inputItemId) ? (
                                 <Undo2 aria-hidden="true" />
                               ) : (
-                                <SkipForward aria-hidden="true" />
+                                <AlarmClock aria-hidden="true" />
                               )}
-                              <span>
-                                {skippedIds.has(row.inputItemId)
-                                  ? "Return"
-                                  : "Defer"}
-                              </span>
                             </button>
                           ) : null}
                           {row.status === "pending" &&
@@ -243,10 +254,19 @@ export function ReviewList({
                   ariaLabel={`Open review details for ${title}`}
                   onNavigate={() => onDetailNavigate(row.inputItemId, title)}
                   title={
-                    <SafeHtml
-                      html={htmlWithoutAnchors(row.titleHtml)}
-                      className="row-title"
-                    />
+                    <div className="row-title-line">
+                      <SafeHtml
+                        html={htmlWithoutAnchors(row.titleHtml)}
+                        className="row-title"
+                      />
+                      <span
+                        className={`row-priority priority-${row.priority}`}
+                        aria-label={formatReviewPriority(row.priority)}
+                      >
+                        {row.priority.charAt(0).toUpperCase() +
+                          row.priority.slice(1)}
+                      </span>
+                    </div>
                   }
                   subtitle={
                     <SafeHtml
@@ -327,6 +347,74 @@ export function ReviewList({
         );
       })}
     </ol>
+  );
+}
+
+function CopyIdentifier({ identifier }: { identifier: string }) {
+  const [status, setStatus] = useState<"idle" | "copied" | "error">("idle");
+  async function copy() {
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(identifier);
+      } else {
+        // Clipboard API requires HTTPS; support the trusted-LAN HTTP preview.
+        const field = document.createElement("textarea");
+        field.value = identifier;
+        field.style.position = "fixed";
+        field.style.opacity = "0";
+        document.body.append(field);
+        const focused = document.activeElement;
+        try {
+          field.select();
+          if (!document.execCommand("copy")) throw new Error("Copy denied");
+        } finally {
+          field.remove();
+          if (focused instanceof HTMLElement) focused.focus();
+        }
+      }
+      setStatus("copied");
+    } catch {
+      setStatus("error");
+    }
+  }
+  return (
+    <span className="row-identifier-copy">
+      <button
+        type="button"
+        className="row-copy-button"
+        aria-label={
+          status === "copied" ? "Identifier copied" : "Copy identifier"
+        }
+        title={status === "copied" ? "Identifier copied" : "Copy identifier"}
+        onClick={copy}
+        onBlur={() => {
+          if (status === "copied") setStatus("idle");
+        }}
+      >
+        {status === "copied" ? (
+          <Check aria-hidden="true" />
+        ) : (
+          <Copy aria-hidden="true" />
+        )}
+      </button>
+      <span className="sr-only" role="status">
+        {status === "copied" ? "Identifier copied" : ""}
+      </span>
+      {status === "error" ? (
+        <span className="row-copy-error" role="alert">
+          Copy failed. Select and copy the identifier:
+          <input
+            aria-label="Review identifier"
+            readOnly
+            value={identifier}
+            onFocus={(event) => event.target.select()}
+          />
+          <button type="button" onClick={() => setStatus("idle")}>
+            Dismiss
+          </button>
+        </span>
+      ) : null}
+    </span>
   );
 }
 

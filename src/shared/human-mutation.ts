@@ -27,6 +27,7 @@ export type HumanBulkMutationSuccess = {
   message: string;
   inputItemIds: string[];
   answered: number;
+  answeredInputItemIds: string[];
   failed: number;
 };
 

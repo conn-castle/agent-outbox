@@ -58,6 +58,7 @@ test("isHumanMutationResult requires operation-specific success and failure fiel
       message: "Bulk action complete: 1 answered, 1 failed.",
       inputItemIds: [itemId],
       answered: 1,
+      answeredInputItemIds: [itemId],
       failed: 1
     }),
     true

@@ -78,6 +78,7 @@ import {
 import { BulkActions } from "./BulkActions";
 import { ReviewDetail, ReviewDetailLoading } from "./ReviewDetail";
 import { ReviewList } from "./ReviewList";
+import { useFeedbackDrafts } from "./Feedback";
 import {
   HUMAN_MUTATION_SCOPE,
   HumanMutationError,
@@ -142,6 +143,7 @@ export function ReviewWorkspace({
   notice,
   view,
   hasNext,
+  totalCount,
   detailOpen,
   composeAction,
   renderedAt
@@ -155,11 +157,13 @@ export function ReviewWorkspace({
   notice: HumanReviewNotice | null;
   view: HumanReviewView;
   hasNext: boolean;
+  totalCount: number;
   detailOpen: boolean;
   composeAction?: string | null;
   renderedAt: string;
 }) {
   const router = useRouter();
+  const feedback = useFeedbackDrafts(session.accountId, session.userId);
   const { mutations, enqueue, dismiss } = useAppActions();
   const [search, setSearch] = useState(view.search);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -686,15 +690,11 @@ export function ReviewWorkspace({
     }
     return count;
   }, [projectedRows, selectedIds]);
-  const pendingCount = projectedRows.filter(
-    (row) => row.status === "pending"
-  ).length;
-  const queueCount = queueCountCopy(
-    view.status,
-    pendingCount,
-    projectedRows.length,
-    hasNext,
-    view.page
+  // Apply only the local projection's delta; refreshed server totals already
+  // account for answers that have left the canonical page.
+  const projectedTotalCount = Math.max(
+    0,
+    totalCount + projectedRows.length - rows.length
   );
   const detailIndex = detail
     ? visibleRows.findIndex((row) => row.inputItemId === detail.inputItemId)
@@ -730,6 +730,17 @@ export function ReviewWorkspace({
     requiresCanonicalPendingRow = submission.operation === "undo" &&
       rowSnapshots.some((row) => row.status === "pending")
   ) {
+    if (
+      submission.operation === "answer" ||
+      submission.operation === "bulk-answer"
+    ) {
+      for (const id of submission.inputItemIds) {
+        submission.formData.set(
+          submission.operation === "answer" ? "feedback" : `feedback.${id}`,
+          feedback.drafts[id] ?? ""
+        );
+      }
+    }
     if (notice) {
       consumedNoticeEpoch.current = noticeEpoch;
     }
@@ -771,6 +782,18 @@ export function ReviewWorkspace({
         synchronizeHumanMutation(submission.operation, submission.formData),
       refreshOnSuccess: true,
       onSuccess: (result, mutationId) => {
+        const answeredIds =
+          result.operation === "answer"
+            ? result.inputItemIds
+            : result.operation === "bulk-answer"
+              ? result.answeredInputItemIds
+              : [];
+        for (const id of answeredIds) {
+          const sent = submission.formData.get(
+            result.operation === "answer" ? "feedback" : `feedback.${id}`
+          );
+          if (typeof sent === "string") feedback.clearSubmitted(id, sent);
+        }
         if (result.operation === "bulk-answer" && result.answered === 0) {
           successGenerations.current.delete(mutationId);
           retriedCanonicalRefreshes.current.delete(mutationId);
@@ -1075,8 +1098,8 @@ export function ReviewWorkspace({
                   : "Answered reviews"}
               </h2>
               <div className="queue-count" aria-label="Current view summary">
-                <strong>{queueCount.value}</strong>
-                <span>{queueCount.label}</span>
+                <strong>{projectedRows.length}</strong>
+                <span>shown of {projectedTotalCount} matching reviews</span>
               </div>
               <span
                 className="queue-heading-shortcuts"
@@ -1215,7 +1238,11 @@ export function ReviewWorkspace({
           />
 
           <div className="queue-scroll">
+            {feedback.error ? <p role="alert">{feedback.error}</p> : null}
             <ReviewList
+              feedbackDrafts={feedback.drafts}
+              onFeedbackChange={feedback.change}
+              feedbackError={feedback.error}
               rows={visibleRows}
               selectedId={detail?.inputItemId ?? null}
               selectedIds={selectedIds}
@@ -1328,6 +1355,9 @@ export function ReviewWorkspace({
       !hiddenIds.has(detail.inputItemId) &&
       !lockedIds.has(detail.inputItemId) ? (
         <ReviewDetail
+          feedback={feedback.drafts[detail.inputItemId] ?? ""}
+          onFeedbackChange={(text) => feedback.change(detail.inputItemId, text)}
+          feedbackError={feedback.error}
           key={detail?.inputItemId ?? "empty"}
           detail={detail}
           positionLabel={
@@ -2166,24 +2196,4 @@ function normalizedFormText(formData: FormData, key: string) {
   if (typeof value !== "string") return null;
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized ? normalized.slice(0, 160) : null;
-}
-
-function queueCountCopy(
-  status: HumanReviewView["status"],
-  pendingCount: number,
-  rowCount: number,
-  hasNext: boolean,
-  page: number
-): { value: string; label: string } {
-  const pageScoped = page > 1 || hasNext;
-  if (status === "answered") {
-    return {
-      value: `${rowCount}`,
-      label: pageScoped ? "shown" : "answered"
-    };
-  }
-  return {
-    value: `${pendingCount}`,
-    label: pageScoped ? "shown" : "remaining"
-  };
 }

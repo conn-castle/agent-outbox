@@ -26,6 +26,7 @@ import {
 } from "./ActionForms";
 import { formatReviewPriority, formatUtcTimestamp } from "./review-format";
 import { CardVisual, HumanIcon, LinkButtons, SafeHtml } from "./TypedContent";
+import { Feedback } from "./Feedback";
 
 export function ReviewDetail({
   detail,
@@ -34,6 +35,9 @@ export function ReviewDetail({
   nextItem,
   composeAction,
   onClose,
+  feedback,
+  onFeedbackChange,
+  feedbackError,
   onMutation
 }: {
   detail: HumanReviewDetailDto | null;
@@ -42,6 +46,9 @@ export function ReviewDetail({
   nextItem: { href: string; label: string } | null;
   composeAction?: string | null;
   onClose: () => void;
+  feedback: string;
+  onFeedbackChange: (text: string) => boolean;
+  feedbackError: string | null;
   onMutation: OnHumanMutation;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -191,6 +198,13 @@ export function ReviewDetail({
 
         <div className="detail-scroll">
           <header className="detail-header">
+            {detail.status === "pending" ? (
+              <Feedback
+                value={feedback}
+                onChange={onFeedbackChange}
+                error={feedbackError}
+              />
+            ) : null}
             <div className="detail-heading-copy">
               <p className="detail-kicker">
                 <HumanIcon name={detail.rowType.icon} />

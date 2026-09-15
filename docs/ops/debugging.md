@@ -71,11 +71,12 @@ Check whether the item reappeared after answer → undo → answer, and correlat
 the input id and UTC timing with caller acknowledgement or deletion. Queue
 reconciliation must retire an older undo snapshot when a later answer is
 reflected, including when no intermediate pending refresh reached the browser. A
-bulk-answer result reports counts rather than which IDs succeeded, so an omitted
-canonical row is not enough to retire an overlapping undo snapshot.
-Missing-input, already-answered, and stale-revision save failures refresh the
-queue and clear the obsolete local undo snapshot while preserving the error
-message. Answering preserves the input revision; undo increments it once.
+bulk mutation's optimistic snapshot includes all attempted IDs, including
+failures, so an omitted canonical row alone is not enough to retire an
+overlapping undo snapshot. Missing-input, already-answered, and stale-revision
+save failures refresh the queue and clear the obsolete local undo snapshot while
+preserving the error message. Answering preserves the input revision; undo
+increments it once.
 
 ## File Upload Or Download Failure
 

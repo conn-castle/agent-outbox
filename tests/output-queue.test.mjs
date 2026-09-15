@@ -226,7 +226,7 @@ test("read one returns payload and file metadata only, then marks the result rea
     [
       outputRow({
         response_kind: "file_upload",
-        response_payload: {}
+        response_payload: { feedback: "Read the attachment first." }
       })
     ],
     [
@@ -258,6 +258,7 @@ test("read one returns payload and file metadata only, then marks the result rea
       action_value: "send",
       response: {
         kind: "file_upload",
+        feedback: "Read the attachment first.",
         file: {
           file_id: "00000000-0000-4000-8000-000000000201",
           filename: "receipt.pdf",
@@ -275,6 +276,55 @@ test("read one returns payload and file metadata only, then marks the result rea
   const marked = markReadCall(query);
   assert.ok(marked);
   assert.match(marked.sql, /first_read_at = coalesce/);
+});
+
+test("single and paged output reads deliver feedback alongside fixed and typed answers", async () => {
+  for (const kind of [
+    "none",
+    "free_text",
+    "single_select",
+    "multi_select",
+    "date_picker"
+  ]) {
+    const payload = {
+      none: {},
+      free_text: { text: "Answer" },
+      single_select: { value: "yes" },
+      multi_select: { values: ["yes"] },
+      date_picker: {
+        mode: "date",
+        value_date: "2026-09-14",
+        display_timezone: "UTC"
+      }
+    }[kind];
+    const row = outputRow({
+      response_kind: kind,
+      response_payload: { ...payload, feedback: "Qualification" }
+    });
+    const single = await readOutputResultInTransaction(
+      fakeQuery([[row], [], []]),
+      identity,
+      outputOneId
+    );
+    assert.equal(single.ok, true);
+    assert.ok("response" in single.data);
+    assert.deepEqual(single.data.response, {
+      ...payload,
+      kind,
+      feedback: "Qualification"
+    });
+    const page = await readAllOutputPageInTransaction(
+      fakeQuery([[row], [], []]),
+      identity,
+      25,
+      null
+    );
+    assert.equal(page.ok, true);
+    assert.ok("items" in page.data);
+    assert.ok("response" in page.data.items[0]);
+    assert.deepEqual(page.data.items[0].response, single.data.response);
+    assert.equal(page.data.items.length, 1);
+  }
 });
 
 test("read one fails loud on invalid file metadata before marking output read", async () => {

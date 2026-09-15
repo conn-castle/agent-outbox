@@ -93,6 +93,7 @@ export default async function HumanReviewPage({
         notice={notice}
         view={view}
         hasNext={fixturePage.hasNext}
+        totalCount={fixturePage.totalCount}
         detailOpen={selectedItem !== undefined}
         composeAction={composeAction}
         renderedAt={renderedAt}
@@ -170,6 +171,7 @@ export default async function HumanReviewPage({
       notice={notice}
       view={view}
       hasNext={pageData.hasNext}
+      totalCount={pageData.totalCount}
       detailOpen={selectedItem !== undefined}
       composeAction={composeAction}
       renderedAt={renderedAt}
@@ -271,7 +273,14 @@ async function loadHumanReviewPageDataInTransaction(
     session,
     view.status
   );
-  return { rows, detail, banner, typeOptions, hasNext: page.hasNext };
+  return {
+    rows,
+    detail,
+    banner,
+    typeOptions,
+    hasNext: page.hasNext,
+    totalCount: page.totalCount
+  };
 }
 
 function humanReviewNotice(
