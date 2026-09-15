@@ -14,6 +14,7 @@ export type ParsedHumanAnswerForm =
       expectedRevision: number;
       actionValue: string;
       response: HumanActionResponse;
+      feedback?: string;
     }
   | { ok: false };
 
@@ -38,6 +39,7 @@ export type BulkAnswerItem = {
   inputItemId: string;
   callerId: string;
   expectedRevision: number;
+  feedback?: string;
 };
 
 export function parseHumanAnswerForm(
@@ -48,12 +50,14 @@ export function parseHumanAnswerForm(
   const expectedRevision = integerField(formData, "expectedRevision");
   const actionValue = stringField(formData, "actionValue");
   const popupKind = popupKindField(formData);
+  const feedback = feedbackField(formData, "feedback");
   if (
     !inputItemId ||
     !callerId ||
     expectedRevision == null ||
     !actionValue ||
-    !popupKind
+    !popupKind ||
+    feedback === null
   ) {
     return { ok: false };
   }
@@ -69,7 +73,8 @@ export function parseHumanAnswerForm(
     callerId,
     expectedRevision,
     actionValue,
-    response
+    response,
+    ...(feedback ? { feedback } : {})
   };
 }
 
@@ -94,6 +99,9 @@ export function parseBulkHumanAnswersForm(
       return { ok: false };
     }
     inputItemIds.add(item.inputItemId);
+    const feedback = feedbackField(formData, `feedback.${item.inputItemId}`);
+    if (feedback === null) return { ok: false };
+    if (feedback) item.feedback = feedback;
     items.push(item);
   }
 
@@ -204,6 +212,13 @@ function stringField(formData: FormData, key: string) {
 function rawStringField(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value : null;
+}
+
+function feedbackField(formData: FormData, key: string) {
+  const values = formData.getAll(key);
+  if (values.length === 0) return undefined;
+  if (values.length !== 1 || typeof values[0] !== "string") return null;
+  return values[0].trim() ? values[0] : undefined;
 }
 
 function uuidField(formData: FormData, key: string) {

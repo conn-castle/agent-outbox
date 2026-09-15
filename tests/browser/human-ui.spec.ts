@@ -14,6 +14,233 @@ test.beforeEach(({ page }) => {
   page.on("pageerror", rethrowPageError);
 });
 
+test("feedback stays local across reloads and failures, then accompanies one answer", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  const row = reviewRowByTitle(
+    page,
+    "Reply to Meridian about the renewal delay"
+  );
+  const requests: Request[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/human/mutations")) requests.push(request);
+  });
+  const button = row.getByRole("button", { name: "Add feedback" });
+  await expect(button).toHaveText("");
+  await button.click();
+  const popup = page.getByRole("dialog", { name: "Feedback", exact: true });
+  await expect(popup.getByRole("textbox", { name: "Feedback" })).toBeFocused();
+  await popup
+    .getByRole("textbox", { name: "Feedback" })
+    .fill("Please rename this before proceeding.");
+  await popup.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(popup).toBeHidden();
+  await expect(
+    row.getByRole("button", { name: "Edit feedback" })
+  ).toBeFocused();
+  await expect(row.locator(".feedback-dot")).toBeVisible();
+  expect(requests).toHaveLength(0);
+  await page.reload();
+  await expect(
+    row.getByRole("button", { name: "Edit feedback" })
+  ).toBeVisible();
+  await row.getByRole("button", { name: "Edit feedback" }).click();
+  await expect(popup.getByRole("textbox", { name: "Feedback" })).toHaveValue(
+    "Please rename this before proceeding."
+  );
+  await popup.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.route("**/human/mutations", (route) =>
+    route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        operation: "answer",
+        inputItemIds: [],
+        code: "temporary_unavailable",
+        message: "Please retry."
+      })
+    })
+  );
+  await row.getByRole("button", { name: "Approve to send" }).click();
+  await expect(lastActionError(page)).toContainText("Please retry.");
+  await expect(
+    row.getByRole("button", { name: "Edit feedback" })
+  ).toBeVisible();
+  expect(requests).toHaveLength(1);
+  expect(requests[0].postData()).toContain('name="feedback"');
+  expect(requests[0].postData()).toContain(
+    "Please rename this before proceeding."
+  );
+  await page.unroute("**/human/mutations");
+  await row.getByRole("button", { name: "Approve to send" }).click();
+  await expect(lastUndoButton(page)).toBeVisible();
+  expect(requests).toHaveLength(2);
+  expect(requests[1].postData()).toContain(
+    "Please rename this before proceeding."
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          Object.keys(localStorage).filter((key) =>
+            key.startsWith("agent-outbox:feedback:")
+          ).length
+      )
+    )
+    .toBe(0);
+});
+
+test("feedback in a detail popup can be cleared without submitting or closing details", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await reviewLinkByTitle(
+    page,
+    "Reply to Meridian about the renewal delay"
+  ).click();
+  const detail = page.getByRole("dialog", {
+    name: "Review detail",
+    exact: true
+  });
+  await detail.getByRole("button", { name: "Add feedback" }).click();
+  const popup = page.getByRole("dialog", { name: "Feedback", exact: true });
+  await popup.getByRole("textbox", { name: "Feedback" }).fill("A draft");
+  await popup.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(popup).toBeHidden();
+  await expect(detail).toBeVisible();
+  await detail.getByRole("button", { name: "Edit feedback" }).click();
+  await popup.getByRole("textbox", { name: "Feedback" }).fill("");
+  await popup.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    detail.getByRole("button", { name: "Add feedback" })
+  ).toBeVisible();
+  await expect(detail.locator(".feedback-dot")).toHaveCount(0);
+});
+
+test("feedback Cancel, Escape, and outside clicks discard edits without closing details", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await reviewLinkByTitle(
+    page,
+    "Reply to Meridian about the renewal delay"
+  ).click();
+  const detail = page.getByRole("dialog", {
+    name: "Review detail",
+    exact: true
+  });
+  const popup = page.getByRole("dialog", { name: "Feedback", exact: true });
+  const mutations: Request[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/human/mutations")) mutations.push(request);
+  });
+  for (const saved of ["", "Saved feedback"]) {
+    if (saved) {
+      await detail.getByRole("button", { name: "Add feedback" }).click();
+      await popup.getByRole("textbox", { name: "Feedback" }).fill(saved);
+      await popup.getByRole("button", { name: "Save", exact: true }).click();
+    }
+    const icon = detail.getByRole("button", {
+      name: saved ? "Edit feedback" : "Add feedback"
+    });
+    for (const dismissal of ["cancel", "escape", "outside"]) {
+      await icon.click();
+      await expect(
+        popup.getByRole("textbox", { name: "Feedback" })
+      ).toHaveValue(saved);
+      await expect(popup.getByRole("button")).toHaveCount(2);
+      await popup
+        .getByRole("textbox", { name: "Feedback" })
+        .fill("Unsaved edits");
+      await popup.getByRole("heading", { name: "Feedback" }).click();
+      await expect(popup).toBeVisible();
+      if (dismissal === "cancel")
+        await popup
+          .getByRole("button", { name: "Cancel", exact: true })
+          .click();
+      else if (dismissal === "escape") await page.keyboard.press("Escape");
+      else await page.mouse.click(5, 5);
+      await expect(popup).toBeHidden();
+      await expect(detail).toBeVisible();
+      await expect(icon).toBeFocused();
+      await expect(detail.locator(".feedback-dot")).toHaveCount(saved ? 1 : 0);
+    }
+    await icon.click();
+    await expect(popup.getByRole("textbox", { name: "Feedback" })).toHaveValue(
+      saved
+    );
+    await popup.getByRole("button", { name: "Cancel", exact: true }).click();
+  }
+  expect(mutations).toHaveLength(0);
+});
+
+test("bulk answers include each feedback draft and clear only successful entries", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  const permit = reviewRowByTitle(page, "Review neighborhood permit brief");
+  const followUp = reviewRowByTitle(page, "Choose follow-up window");
+  for (const [row, text] of [
+    [permit, "Permit feedback"],
+    [followUp, "Follow-up feedback"]
+  ] as const) {
+    await row.getByRole("button", { name: "Add feedback" }).click();
+    const popup = page.getByRole("dialog", { name: "Feedback", exact: true });
+    await popup.getByRole("textbox", { name: "Feedback" }).fill(text);
+    await popup.getByRole("button", { name: "Save", exact: true }).click();
+  }
+  await page.route("**/human/mutations", async (route) => {
+    const body = route.request().postData();
+    expect(body).toContain(
+      'name="feedback.00000000-0000-4000-8000-000000000511"'
+    );
+    expect(body).toContain("Permit feedback");
+    expect(body).toContain(
+      'name="feedback.00000000-0000-4000-8000-000000000512"'
+    );
+    expect(body).toContain("Follow-up feedback");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        operation: "bulk-answer",
+        message: "Bulk action complete: 1 answered, 1 failed.",
+        inputItemIds: [
+          "00000000-0000-4000-8000-000000000511",
+          "00000000-0000-4000-8000-000000000512"
+        ],
+        answeredInputItemIds: ["00000000-0000-4000-8000-000000000511"],
+        answered: 1,
+        failed: 1
+      })
+    });
+  });
+  await openReviewTools(page);
+  await page
+    .getByRole("button", { name: /^(Select items|Bulk select)$/ })
+    .click();
+  await permit.getByRole("checkbox", { name: "Select review" }).check();
+  await followUp.getByRole("checkbox", { name: "Select review" }).check();
+  await page
+    .getByRole("button", { name: "Apply Approve permit brief" })
+    .click();
+  await expect(lastActionError(page)).toContainText("1 answered, 1 failed");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Object.keys(localStorage)
+          .filter((key) => key.startsWith("agent-outbox:feedback:"))
+          .map((key) => localStorage.getItem(key))
+      )
+    )
+    .toEqual(["Follow-up feedback"]);
+});
+
 test("first-time self-serve signup fixture lands on a provisioned human account", async ({
   page
 }) => {
@@ -333,11 +560,11 @@ test("authenticated review workspace renders content actions and preserves contr
   await choosePrimarySort(page, "Priority");
 
   await reviewRowByTitle(page, "Review neighborhood permit brief")
-    .getByRole("button", { name: "Defer" })
+    .getByRole("button", { name: "Snooze" })
     .click();
   await expect(
     reviewRowByTitle(page, "Review neighborhood permit brief")
-  ).toContainText("skipped");
+  ).toContainText("snoozed");
   await reviewLinkByTitle(page, "Choose follow-up window").click();
   await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000512/);
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
@@ -493,7 +720,7 @@ test("review queue and history remain disjoint", async ({ page }) => {
   ).toHaveCount(0);
 });
 
-test("queue-only workspace keeps pagination visible and rows independently scrollable", async ({
+test("the document scrolls through the queue to pagination and reports shown and total counts", async ({
   page
 }) => {
   await page.goto("/human?fixture_dataset=pagination");
@@ -503,16 +730,27 @@ test("queue-only workspace keeps pagination visible and rows independently scrol
   await expect(queue).toBeVisible();
   await expect(pagination).toBeVisible();
   await expect(page.getByLabel("Current view summary")).toHaveText(
-    /100\s*shown/
+    /100\s*shown of 109 matching reviews/
   );
   await expect(page.getByLabel("Current view summary")).not.toContainText(
     "of 100 remaining"
   );
   await expect
     .poll(() =>
-      queue.evaluate((element) => element.scrollHeight > element.clientHeight)
+      page.evaluate(
+        () => document.documentElement.scrollHeight > window.innerHeight
+      )
     )
     .toBe(true);
+  await expect
+    .poll(() =>
+      queue.evaluate(
+        (element) => element.scrollHeight <= element.clientHeight + 1
+      )
+    )
+    .toBe(true);
+  await pagination.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   const geometry = await page.locator(".queue-pane").evaluate((pane) => {
     const queue = pane.querySelector(".queue-scroll")!.getBoundingClientRect();
     const pagination = pane
@@ -540,6 +778,20 @@ test("queue-only workspace keeps pagination visible and rows independently scrol
   expect(geometry.buttonBottoms[0]).toBeCloseTo(
     geometry.buttonBottoms[1] ?? 0,
     0
+  );
+  await pagination.getByRole("button", { name: "Next 100" }).click();
+  await expect(page.getByLabel("Current view summary")).toHaveText(
+    /9\s*shown of 109 matching reviews/
+  );
+  await page.goto(
+    "/human?fixture_dataset=pagination&search=Beyond%20one%20hundred"
+  );
+  await expect(page.getByLabel("Current view summary")).toHaveText(
+    /1\s*shown of 1 matching reviews/
+  );
+  await page.goto("/human?fixture_dataset=pagination&page=99");
+  await expect(page.getByLabel("Current view summary")).toHaveText(
+    /0\s*shown of 109 matching reviews/
   );
 });
 
@@ -684,7 +936,9 @@ test("desktop detail modal stays within a readable responsive measure", async ({
   await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(69 * 16);
 });
 
-test("queue context links remain complete and readable", async ({ page }) => {
+test("queue context links stay on one horizontally scrollable line and priority is visible", async ({
+  page
+}) => {
   await page.goto("/human");
 
   const row = reviewRowByTitle(
@@ -693,24 +947,145 @@ test("queue context links remain complete and readable", async ({ page }) => {
   );
   const links = row.locator(".context-links a");
   await expect(links).toHaveCount(5);
+  const strip = row.getByRole("group", { name: "Context links" });
+  await expect(row.getByRole("button", { name: /Scroll links/ })).toHaveCount(
+    0
+  );
+  await expect(strip).toHaveAttribute("tabindex", "0");
+  await strip.hover();
+  await page.mouse.wheel(200, 0);
+  await expect
+    .poll(() =>
+      row.locator(".context-links").evaluate((element) => element.scrollLeft)
+    )
+    .toBeGreaterThan(0);
   await expect(
     links.getByText("Read the full production rollback safety procedure")
   ).toBeVisible();
   await expect
     .poll(() =>
-      row.locator(".row-heading-context").evaluate((context) => {
-        const contextBox = context.getBoundingClientRect();
-        return [...context.querySelectorAll("a")].every((link) => {
-          const linkBox = link.getBoundingClientRect();
-          return (
-            link.scrollWidth <= link.clientWidth + 1 &&
-            linkBox.left >= contextBox.left - 1 &&
-            linkBox.right <= contextBox.right + 1
-          );
-        });
+      row.locator(".context-links").evaluate((context) => {
+        const anchors = [...context.querySelectorAll("a")];
+        const top = anchors[0].getBoundingClientRect().top;
+        return (
+          context.scrollWidth > context.clientWidth &&
+          anchors.every(
+            (link) =>
+              Math.abs(link.getBoundingClientRect().top - top) <= 1 &&
+              getComputedStyle(link).whiteSpace === "nowrap"
+          )
+        );
       })
     )
     .toBe(true);
+  await links.last().focus();
+  await expect
+    .poll(() =>
+      row.locator(".context-links").evaluate((element) => element.scrollLeft)
+    )
+    .toBeGreaterThan(0);
+  await expect(links.last()).toBeFocused();
+  await strip.hover();
+  await page.mouse.wheel(10000, 0);
+  await expect
+    .poll(() =>
+      strip.evaluate(
+        (element) =>
+          element.scrollWidth - element.clientWidth - element.scrollLeft
+      )
+    )
+    .toBeLessThan(2);
+  const lastBox = await links.last().boundingBox();
+  const stripBox = await row.locator(".context-links").boundingBox();
+  expect(lastBox!.x + lastBox!.width).toBeLessThanOrEqual(
+    stripBox!.x + stripBox!.width + 1
+  );
+  await expect(row.locator(".row-priority")).toHaveText("Urgent");
+  await expect(row.locator(".row-priority")).toBeVisible();
+  expect(
+    await row
+      .locator(".row-priority")
+      .evaluate((element) => element.getBoundingClientRect().width)
+  ).toBeGreaterThan(30);
+  const priority = await row.locator(".row-priority").boundingBox();
+  const subtitle = await row.locator(".row-subtitle").boundingBox();
+  const titleBox = await row.locator(".row-title").boundingBox();
+  await expect(row.locator(".row-title-line > .row-priority")).toBeVisible();
+  expect(priority!.y + priority!.height).toBeLessThanOrEqual(subtitle!.y + 1);
+  if (Math.abs(priority!.y - titleBox!.y) < 6) {
+    expect(priority!.x - titleBox!.x - titleBox!.width).toBeGreaterThanOrEqual(
+      0
+    );
+    expect(priority!.x - titleBox!.x - titleBox!.width).toBeLessThan(12);
+  }
+  const snooze = reviewRowByTitle(
+    page,
+    "Review neighborhood permit brief"
+  ).getByRole("button", {
+    name: "Snooze review",
+    exact: true
+  });
+  await expect(snooze).toHaveText("");
+  await expect(snooze).toHaveAttribute("title", "Snooze review");
+  expect(
+    await row
+      .locator(".row-priority")
+      .evaluate((element) => getComputedStyle(element).borderRadius)
+  ).toBe("999px");
+  await expect(
+    reviewRowByTitle(page, "Review neighborhood permit brief").getByRole(
+      "button",
+      { name: /Scroll links/ }
+    )
+  ).toHaveCount(0);
+});
+
+test("copy identifier copies the caller reference and reports clipboard failures", async ({
+  page
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as unknown as { copiedIdentifier: string }).copiedIdentifier =
+            text;
+        }
+      }
+    });
+  });
+  await page.goto("/human");
+  const row = reviewRowByTitle(page, "Review neighborhood permit brief");
+  await row
+    .getByRole("button", { name: "Copy identifier", exact: true })
+    .click();
+  await expect(
+    row.getByRole("button", { name: "Identifier copied", exact: true })
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { copiedIdentifier: string }).copiedIdentifier
+    )
+  ).toBe("steward-brief-101");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          throw new Error("Clipboard denied");
+        }
+      }
+    });
+  });
+  await row
+    .getByRole("button", { name: "Identifier copied", exact: true })
+    .click();
+  await expect(row.getByRole("alert")).toContainText("Copy failed");
+  await expect(
+    row.getByRole("textbox", { name: "Review identifier" })
+  ).toHaveValue("steward-brief-101");
+  await row.getByRole("button", { name: "Dismiss", exact: true }).click();
+  await expect(row.getByRole("alert")).toHaveCount(0);
 });
 
 test("routine reviews can be completed directly from the queue", async ({
@@ -779,7 +1154,7 @@ test("routine reviews can be completed directly from the queue", async ({
     page.getByRole("heading", { name: "Answered reviews" })
   ).toBeVisible();
   await expect(page.getByLabel("Current view summary")).toHaveText(
-    /\d+\+?\s*answered/
+    /\d+\s*shown of \d+ matching reviews/
   );
   await expect(
     reviewLinkByTitle(page, "Review neighborhood permit brief")
@@ -801,16 +1176,16 @@ test("queue actions preserve a bottom scroll position", async ({ page }) => {
     .locator("form.inline-action-form button")
     .last();
   await lastQuickAction.scrollIntoViewIfNeeded();
-  const scrollTopBeforeAction = await queue.evaluate((element) =>
-    Math.round(element.scrollTop)
+  const scrollTopBeforeAction = await page.evaluate(() =>
+    Math.round(window.scrollY)
   );
   expect(scrollTopBeforeAction).toBeGreaterThan(0);
 
   await lastQuickAction.click();
   await expect(lastUndoButton(page)).toBeVisible();
-  expect(
-    await queue.evaluate((element) => Math.round(element.scrollTop))
-  ).toBeGreaterThan(0);
+  expect(await page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(
+    0
+  );
 });
 
 test("a second queue action is retained while the first is synchronizing", async ({
@@ -1285,6 +1660,7 @@ test("an all-failed bulk mutation restores the selected rows", async ({
           "00000000-0000-4000-8000-000000000512"
         ],
         answered: 0,
+        answeredInputItemIds: [],
         failed: 2
       })
     });
@@ -2159,9 +2535,7 @@ test("canonical row visuals and popup constraints expose only supported semantic
     "background-color",
     "rgb(108, 105, 96)"
   );
-  await expect(numericRow.getByText("Urgent priority")).toHaveText(
-    "Urgent priority"
-  );
+  await expect(numericRow.getByLabel("Urgent priority")).toHaveText("Urgent");
   await expect(numericRow.locator(".row-link")).toHaveJSProperty(
     "tagName",
     "A"

@@ -91,8 +91,8 @@ export function laterAnswerRetiresEarlierUndo({
       return false;
     }
     const row = laterCanonicalRows[index];
-    // Bulk-answer success reports counts, not which IDs were answered. A
-    // missing canonical row is therefore not proof this undone item left
+    // The optimistic bulk mutation includes all attempted IDs, including
+    // failures. A missing canonical row is not proof this undone item left
     // pending; only retire it when the row is present and not pending.
     if (laterOperation === "bulk-answer") {
       return row !== undefined && row.status !== "pending";
@@ -131,6 +131,9 @@ export function isHumanMutationResult(
     return (
       typeof result.answered === "number" &&
       Number.isFinite(result.answered) &&
+      Array.isArray(result.answeredInputItemIds) &&
+      result.answeredInputItemIds.length === result.answered &&
+      result.answeredInputItemIds.every((id) => inputItemIds.includes(id)) &&
       typeof result.failed === "number" &&
       Number.isFinite(result.failed)
     );

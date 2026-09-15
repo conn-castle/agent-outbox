@@ -105,11 +105,17 @@ the action rail is a fixed-width right column and the visual/Details column is
 fixed within the fluid content area. At 800 pixels and below, actions move below
 the content. At 520 pixels and below, the metadata links, title, visual,
 summary, and Details reflow into one column, with Details below the summary. The
-row height is always content-driven. Metadata can wrap, titles can wrap, visual
-labels ellipsize, summaries clamp to two lines, and the number of actions can
-increase row height. Subtitles are single-line on larger layouts and clamp to
-two wrapped lines at 520 pixels and below. The stable scrollbar gutter is
-browser-owned width reserved outside the row content.
+row height is always content-driven. Context links stay on one line and scroll
+horizontally when they overflow; edge fades indicate more content, with a thin
+native scrollbar and keyboard-accessible links. Each link keeps its complete
+label. Other metadata and titles can wrap, visual labels ellipsize, summaries
+clamp to two lines, and the number of actions can increase row height. Subtitles
+are single-line on larger layouts and clamp to two wrapped lines at 520 pixels
+and below. The review queue uses document scrolling, with pagination following
+the cards. Its summary reports the number shown on the current page and the
+total matching the active status, search, and filters. Each card shows a compact
+priority pill immediately after its title, wrapping with the title when space is
+limited.
 
 | Slot                | Contents                                                                                                                                                         |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -126,12 +132,18 @@ Product controls are not caller-content slots:
 - **Details** is always available and opens the complete decision surface;
   optional caller `details` supplies a rich-content section inside that surface,
   labeled **Details**.
-- **Defer** is product-owned; `skip_disabled` controls whether it is available.
+- **Snooze** is product-owned; `skip_disabled` controls whether it is available.
+  Its icon-only button retains a tooltip and accessible name at every width. It
+  moves the review behind other entries locally, without scheduling a reminder.
+- **Copy identifier** copies the caller-provided `caller_item_id`, not the
+  internal database ID. The icon confirms success; failures expose the
+  identifier for manual copying.
 - **More actions** is product-owned and appears on pending rows when one or more
   actions use `overflow: true`. Answered rows keep the result and undo flow
   instead of live overflow decision controls.
 
-The stable scrollbar gutter is responsive infrastructure, not caller content.
+The anatomy examples reserve a scrollbar gutter as responsive infrastructure,
+not caller content.
 
 Visual variants contain these fields:
 
@@ -228,6 +240,21 @@ page-, collection-, account-, or system-level concerns. Do not allocate row
 slots for them.
 
 ## Render typed decisions deliberately
+
+The hosted review card includes an icon-only feedback utility, separate from
+answer buttons. Its tooltip is “Add feedback” when empty and “Edit feedback”
+when a draft is present; a dot marks the latter state. The popup's Save button
+keeps feedback in browser-local storage scoped to the account, user, and entry.
+Saving does not submit an answer. Cancel, Escape, and clicking outside dismiss
+the popup without saving edits. Saved drafts survive reloads in that browser,
+but do not sync between devices or modify the input queue. Browser storage
+failures are shown to the user.
+
+Selecting an answer sends its feedback in the same submission, including each
+entry's own draft during bulk answers. Drafts clear only for successfully
+answered entries; failures retain them. See the
+[output feedback contract](https://github.com/conn-castle/agent-outbox/blob/main/docs/spec/output-schema.md#response-variants)
+for delivery.
 
 The request defines the human interaction; the output reports the selected
 action and its typed response. Keep action and option `value` fields stable even

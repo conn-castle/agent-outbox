@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "0.4.4",
+  "releaseVersion": "0.4.5",
   "assets": [
     {
       "id": "queueDesktop",
@@ -9,7 +9,7 @@
       "route": "/human?status=all",
       "width": 1440,
       "height": 960,
-      "sha256": "1d061b328b843c681a41510e827776ae9b24ae8e436f573611153ffc9c6bce07"
+      "sha256": "7ca58078fd0b8c91c2e04046de9f8e0ebf6de14d17879217ca4e541cd46e239f"
     },
     {
       "id": "detailTablet",
@@ -18,7 +18,7 @@
       "route": "/human?status=all&item=c685b264-dc53-478d-8326-df3438613f11",
       "width": 768,
       "height": 1024,
-      "sha256": "84b52005928b222a5cc8fe2ce934854209c1ef1badcbf131b7fdee6814bb2ac0"
+      "sha256": "eaf7551e1827ef15f76a1b7df31c1e1f423c70e13d4b9837ce2983ae4ecaab7c"
     },
     {
       "id": "queueMobile",
@@ -27,7 +27,7 @@
       "route": "/human?status=all",
       "width": 430,
       "height": 932,
-      "sha256": "84610771686461913b9c217c9e9980dfc423cf0ff971a350e0e4ea8b35010a45"
+      "sha256": "e9bdecff54be8c3a4f7b2626cebf9ec8954453137c7aedccc32e93998bec2e89"
     }
   ]
 }

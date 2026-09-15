@@ -240,7 +240,7 @@ test("review-row anatomy uses the live structure and exposes content sizing", as
   expect(headingToTitleGap).toBeGreaterThanOrEqual(4);
   expect(headingToTitleGap).toBeLessThanOrEqual(8);
   await expect(
-    page.locator(".row-skip-button .lucide-skip-forward")
+    page.locator(".row-skip-button .lucide-alarm-clock")
   ).toBeVisible();
   await expect(
     page.locator('.row-utilities summary[aria-label="More actions"]')

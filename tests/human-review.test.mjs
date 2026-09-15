@@ -1011,7 +1011,7 @@ test("human review page trims its private sentinel and reports another page", as
       input_item_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`
     })
   );
-  const query = fakeQuery([databaseRows]);
+  const query = fakeQuery([databaseRows, [{ total_count: "240" }]]);
 
   const page = await humanReviewPageInTransaction(query, context, {
     status: "pending",
@@ -1020,6 +1020,7 @@ test("human review page trims its private sentinel and reports another page", as
 
   assert.equal(page.rows.length, 100);
   assert.equal(page.hasNext, true);
+  assert.equal(page.totalCount, 240);
   const call = query.calls[0];
   assert.ok(call);
   assert.ok(call.values);
@@ -1028,10 +1029,39 @@ test("human review page trims its private sentinel and reports another page", as
   assert.match(call.sql, /limit \$3\s+offset \$4/);
 });
 
+test("human review totals remain available on empty pages and fail loudly when unavailable", async () => {
+  const query = fakeQuery([[], [{ total_count: "12" }]]);
+  const page = await humanReviewPageInTransaction(query, context, {
+    status: "pending",
+    offset: 200,
+    search: "literal%_!",
+    priorities: ["high"],
+    types: ["Email"]
+  });
+  assert.deepEqual(page, { rows: [], hasNext: false, totalCount: 12 });
+  const count = query.calls[1];
+  assert.deepEqual(count.values, [
+    context.accountId,
+    "pending",
+    "%literal!%!_!!%",
+    "high",
+    "Email"
+  ]);
+  assert.doesNotMatch(count.sql, /limit|offset/i);
+  assert.match(count.sql, /i\.account_id = \$1/);
+  assert.match(count.sql, /i\.status = \$2/);
+  assert.match(count.sql, /i\.priority in \(\$4\)/);
+  assert.match(count.sql, /i\.row_type_display in \(\$5\)/);
+  await assert.rejects(
+    humanReviewPageInTransaction(fakeQuery([[], []]), context),
+    /count is unavailable or invalid/
+  );
+});
+
 test("human review runtime canary executes the production queue query in an isolated human context", async () => {
   /** @type {import("../src/server/database.ts").ProductTransactionContext[]} */
   const transactionContexts = [];
-  const query = fakeQuery([[]]);
+  const query = fakeQuery([[], [{ total_count: "0" }]]);
   await runHumanReviewQueryCanary(
     "postgresql://app-role",
     "req-human-review-canary",
@@ -1607,6 +1637,31 @@ test("human action form parser rejects malformed hidden fields before database w
   const invalidUndo = undoForm();
   invalidUndo.set("outputResultId", "not-a-uuid");
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
+});
+
+test("human forms accept independent feedback and reject non-text or duplicate feedback", () => {
+  const form = answerForm();
+  form.set("feedback", "Keep this qualification.");
+  const textAnswer = parseHumanAnswerForm(form);
+  assert.equal(textAnswer.ok, true);
+  assert.equal(textAnswer.feedback, "Keep this qualification.");
+  form.set("popupKind", "none");
+  const quickAnswer = parseHumanAnswerForm(form);
+  assert.equal(quickAnswer.ok, true);
+  assert.deepEqual(quickAnswer.response, { kind: "none" });
+  assert.equal(quickAnswer.feedback, "Keep this qualification.");
+  form.append("feedback", "Duplicate");
+  assert.equal(parseHumanAnswerForm(form).ok, false);
+  form.set("feedback", new File(["no"], "feedback.txt"));
+  assert.equal(parseHumanAnswerForm(form).ok, false);
+  const bulk = bulkForm();
+  bulk.set(`feedback.${inputItemId}`, "Bulk qualification.");
+  const parsed = parseBulkHumanAnswersForm(bulk);
+  assert.equal(parsed.ok, true);
+  assert.equal(
+    parsed.items.find((item) => item.inputItemId === inputItemId)?.feedback,
+    "Bulk qualification."
+  );
 });
 
 test("browser fixture renders queue timestamps against a frozen reference", () => {

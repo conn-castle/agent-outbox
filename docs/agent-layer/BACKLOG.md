@@ -49,7 +49,7 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
     Priority: Medium. Area: human review, settings
     Description: Add a dedicated setting that lets users keep a free-form response composer visible for every review, independently of caller-defined action buttons.
     Acceptance criteria: Users can enable or disable the setting; when enabled, every review exposes the free-form response affordance without replacing or masquerading as an API-defined action.
-    Notes: Treat this as a product-level response mode, not another caller-configured button.
+    Notes: Treat this as a product-level response mode, not another caller-configured button. Optional answer feedback shipped separately and does not satisfy this setting.
 
 - Backlog 2026-08-16 tight-review-mode: Ultra-compact review queue mode
     Priority: Medium. Area: human review, display settings

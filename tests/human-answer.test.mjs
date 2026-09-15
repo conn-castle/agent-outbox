@@ -46,6 +46,92 @@ const baseAnswerInput = {
   answeredAt: new Date("2026-06-30T12:00:00.000Z")
 };
 
+test("feedback accompanies every response kind without replacing or bypassing the answer", () => {
+  /** @type {Array<[Parameters<typeof validatedResponsePayload>[0], import("../src/server/human-answer.ts").HumanActionResponse]>} */
+  const cases = [
+    [{ popupKind: "none", popupPayload: {} }, { kind: "none" }],
+    [
+      { popupKind: "free_text", popupPayload: {} },
+      { kind: "free_text", text: "Answer" }
+    ],
+    [
+      { popupKind: "single_select", popupPayload: {}, optionValues: ["yes"] },
+      { kind: "single_select", value: "yes" }
+    ],
+    [
+      { popupKind: "multi_select", popupPayload: {}, optionValues: ["yes"] },
+      { kind: "multi_select", values: ["yes"] }
+    ],
+    [
+      { popupKind: "date_picker", popupPayload: { mode: "date" } },
+      {
+        kind: "date_picker",
+        mode: "date",
+        value_date: "2026-09-14",
+        display_timezone: "UTC"
+      }
+    ],
+    [
+      { popupKind: "date_picker", popupPayload: { mode: "datetime" } },
+      {
+        kind: "date_picker",
+        mode: "datetime",
+        value_utc: "2026-09-14T12:00:00Z",
+        display_timezone: "UTC"
+      }
+    ],
+    [
+      { popupKind: "file_upload", popupPayload: {} },
+      {
+        kind: "file_upload",
+        file: new File(["file"], "note.txt", { type: "text/plain" })
+      }
+    ]
+  ];
+  for (const [action, response] of cases) {
+    const result = validatedResponsePayload(
+      action,
+      response,
+      "A qualification."
+    );
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(
+      JSON.parse(JSON.stringify(result.responsePayload)).feedback,
+      "A qualification."
+    );
+    assert.equal(result.responseKind, response.kind);
+    assert.equal(
+      result.responsePayloadBytes,
+      Buffer.byteLength(JSON.stringify(result.responsePayload))
+    );
+  }
+  /** @type {Parameters<typeof validatedResponsePayload>[0]} */
+  const action = { popupKind: "none", popupPayload: {} };
+  assert.deepEqual(
+    validatedResponsePayload(action, { kind: "none" }, " \n "),
+    validatedResponsePayload(action, { kind: "none" })
+  );
+  assert.equal(
+    validatedResponsePayload(action, { kind: "none" }, 123).ok,
+    false
+  );
+  assert.equal(
+    validatedResponsePayload(
+      action,
+      { kind: "free_text", text: "Wrong kind" },
+      "Feedback"
+    ).ok,
+    false
+  );
+  const oversized = validatedResponsePayload(
+    action,
+    { kind: "none" },
+    "😀".repeat(HUMAN_ANSWER_RESPONSE_BYTE_LIMIT / 4)
+  );
+  assert.equal(oversized.ok, false);
+  assert.equal(oversized.code, "request_too_large");
+});
+
 test("human answer statement builders scope by explicit account caller and input context", () => {
   assert.deepEqual(
     targetInputForAnswerStatement({
@@ -314,7 +400,7 @@ test("human answer service rejects stale revisions before creating output", asyn
   );
 });
 
-test("human answer service creates one output and audit rows without raw answer content", async () => {
+test("human answer service creates one output with feedback and content-safe audit rows", async () => {
   /** @type {TransactionContextStatement[]} */
   const calls = [];
   const result = await createHumanAnswerInTransaction(
@@ -341,7 +427,7 @@ test("human answer service creates one output and audit rows without raw answer 
       ],
       outputRows: [{ output_result_id: "output-1" }]
     }),
-    baseAnswerInput
+    { ...baseAnswerInput, feedback: "Please rename this." }
   );
 
   assert.deepEqual(result, {
@@ -351,8 +437,11 @@ test("human answer service creates one output and audit rows without raw answer 
     callerItemId: "caller-item-1",
     actionValue: "approve",
     responseKind: "free_text",
-    responsePayload: { text: "Use the revised answer." },
-    responsePayloadBytes: 34,
+    responsePayload: {
+      text: "Use the revised answer.",
+      feedback: "Please rename this."
+    },
+    responsePayloadBytes: 67,
     answeredAt: "2026-06-30T12:00:00.000Z",
     expiresAt: "2026-07-14T12:00:00.000Z"
   });
@@ -369,8 +458,8 @@ test("human answer service creates one output and audit rows without raw answer 
     "caller-item-1",
     "approve",
     "free_text",
-    '{"text":"Use the revised answer."}',
-    34,
+    '{"text":"Use the revised answer.","feedback":"Please rename this."}',
+    67,
     "2026-06-30T12:00:00.000Z",
     baseAnswerInput.humanUserId,
     "2026-06-29T09:00:00.000Z",
@@ -386,6 +475,7 @@ test("human answer service creates one output and audit rows without raw answer 
     ["input_answered", "output_created"]
   );
   assert.doesNotMatch(JSON.stringify(auditCalls), /Use the revised answer/);
+  assert.doesNotMatch(JSON.stringify(auditCalls), /Please rename this/);
   assert.deepEqual(
     auditCalls.map((call) => {
       const metadata = call.values?.[16];
@@ -918,6 +1008,7 @@ test(
         { offset: 0 }
       );
       assert.equal(firstPage.hasNext, true);
+      assert.equal(firstPage.totalCount, sortedItemIds.length);
       assert.deepEqual(
         firstPage.rows.map((row) => row.inputItemId),
         sortedItemIds.slice(0, 100)
@@ -929,6 +1020,7 @@ test(
         { offset: 100 }
       );
       assert.equal(secondPage.hasNext, false);
+      assert.equal(secondPage.totalCount, sortedItemIds.length);
       assert.deepEqual(
         secondPage.rows.map((row) => row.inputItemId),
         sortedItemIds.slice(100)
@@ -942,6 +1034,7 @@ test(
         reviewContext,
         { search: "50%_off!" }
       );
+      assert.equal(literalSearch.totalCount, 1);
       assert.deepEqual(
         literalSearch.rows.map((row) => row.inputItemId),
         [markerItemId]
@@ -969,6 +1062,14 @@ test(
         { search: "strong" }
       );
       assert.deepEqual(markupSearch.rows, []);
+      assert.equal(markupSearch.totalCount, 0);
+      const emptyPage = await humanReviewPageInTransaction(
+        query,
+        reviewContext,
+        { offset: 1000 }
+      );
+      assert.deepEqual(emptyPage.rows, []);
+      assert.equal(emptyPage.totalCount, sortedItemIds.length);
     } catch (error) {
       bodyError = error;
     } finally {
