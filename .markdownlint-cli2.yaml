@@ -17,6 +17,7 @@ ignores:
   - ".grok-config/**"
   - ".agy/**"
   - ".next/**"
+  - ".next-browser/**"
   - ".open-next/**"
   - "node_modules/**"
   - "AGENTS.md"

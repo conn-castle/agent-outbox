@@ -56,6 +56,14 @@ jobs:
       - name: Run browser smoke tests
         run: make browser
 
+      - name: Upload browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-check-browser-failures
+          path: test-results/
+          retention-days: 7
+
   migration-replay:
     name: make migration-replay
     runs-on: ubuntu-latest

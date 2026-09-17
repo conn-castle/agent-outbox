@@ -2371,7 +2371,13 @@ function trackHumanSearchRequests(page: Page) {
   const requests: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname === "/human" && url.searchParams.has("search")) {
+    // Optimized builds also prefetch links containing the current search.
+    // Count submitted navigations, not speculative background fetches.
+    if (
+      url.pathname === "/human" &&
+      url.searchParams.has("search") &&
+      request.headers()["next-router-prefetch"] !== "1"
+    ) {
       requests.push(url.toString());
     }
   });

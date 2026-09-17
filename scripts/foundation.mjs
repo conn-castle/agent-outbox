@@ -464,6 +464,7 @@ function clean() {
     "dist",
     "build",
     ".next",
+    ".next-browser",
     ".open-next",
     ".turbo",
     ".wrangler",

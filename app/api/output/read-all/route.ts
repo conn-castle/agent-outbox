@@ -3,7 +3,7 @@ import {
   apiRequestContext,
   apiSuccessResponse
 } from "../../../../src/server/api-errors";
-import { readJsonBodyWithLimit } from "../../../../src/server/input-schema";
+import { readJsonBodyWithLimit } from "../../../../src/server/request-body";
 import { handleOutputReadAllRequest } from "../../../../src/server/output-queue";
 
 export const runtime = "nodejs";

@@ -24,13 +24,17 @@ export default defineConfig({
   testDir: "./tests/browser",
   testIgnore: "marketing-capture.spec.ts",
   globalTeardown: "./scripts/browser-test-cleanup.mjs",
+  // Keep browser/client memory bounded independently of host CPU count.
+  // All tests share one prebuilt server and disposable database.
+  workers: 1,
   timeout: 30_000,
   expect: {
     timeout: 10_000
   },
   use: {
     baseURL,
-    trace: "on-first-retry"
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure"
   },
   projects: [
     {
@@ -46,6 +50,8 @@ export default defineConfig({
     command: `APP_BASE_URL=${baseURL} PUBLIC_APP_BASE_URL=${baseURL} PORT=${port} AGENT_OUTBOX_BROWSER_RUN_ID=${runId} exec node scripts/browser-web-server.mjs`,
     url: baseURL,
     reuseExistingServer: false,
-    timeout: 120_000
+    // Covers a cold optimized build, image pulls and database migrations.
+    // CI's job timeout still bounds the complete browser gate.
+    timeout: 600_000
   }
 });

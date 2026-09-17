@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 
+import { browserBuildEnvironment } from "./browser-build-config.ts";
 import { validateBrowserFixtureRunId } from "./browser-fixture-run-id.mjs";
 
 const POSTGRES_IMAGE = "postgres:17";
@@ -25,6 +26,7 @@ const CONTAINER_NAME = `agent-outbox-browser-postgres-${RUN_ID}`;
 const HASH_SECRET = "agent-outbox-browser-fixture-hash-secret";
 const BROWSER_FIXTURE_LABEL = "agent-outbox.browser-fixture=1";
 const BROWSER_FIXTURE_RUN_LABEL = `agent-outbox.browser-fixture-run=${RUN_ID}`;
+const browserEnvironment = browserBuildEnvironment();
 
 /** @type {import("node:child_process").ChildProcess | undefined} */
 let nextProcess;
@@ -35,6 +37,11 @@ process.once("SIGTERM", () => stop(143));
 process.once("SIGHUP", () => stop(129));
 
 try {
+  // Compile separately from browser execution. Never reuse a possibly stale
+  // fixture build or place fixture-enabled artifacts in the deployable .next.
+  run("corepack", ["pnpm", "exec", "next", "build"], {
+    env: browserEnvironment
+  });
   run(
     "docker",
     [
@@ -100,17 +107,13 @@ try {
   const appDatabaseUrl = `postgresql://agent_outbox_app:${APP_ROLE_PASSWORD}@127.0.0.1:${postgresHostPort()}/${DATABASE_NAME}`;
   nextProcess = spawn(
     "corepack",
-    ["pnpm", "exec", "next", "dev", "-p", APP_PORT],
+    ["pnpm", "exec", "next", "start", "-H", "127.0.0.1", "-p", APP_PORT],
     {
       env: {
-        ...process.env,
-        APP_ENV: "test",
+        ...browserEnvironment,
         PORT: APP_PORT,
         APP_BASE_URL,
         PUBLIC_APP_BASE_URL,
-        AGENT_OUTBOX_BROWSER_FIXTURE: "1",
-        AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE: "1",
-        AGENT_OUTBOX_CONNECT_CLERK_FIXTURE: "1",
         DATABASE_APP_ROLE_URL: appDatabaseUrl,
         CALLER_KEY_HASH_SECRET: HASH_SECRET
       },

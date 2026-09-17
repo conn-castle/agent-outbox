@@ -8,7 +8,8 @@ const SAFE_FIXTURE_CLERK_USER_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 export function callerConnectClerkFixtureEnabled() {
   return (
-    process.env.NODE_ENV !== "production" &&
+    (process.env.NODE_ENV !== "production" ||
+      process.env.AGENT_OUTBOX_COMPILED_BROWSER_FIXTURE === "1") &&
     process.env.APP_ENV === "test" &&
     process.env[CALLER_CONNECT_CLERK_FIXTURE_FLAG] === "1"
   );

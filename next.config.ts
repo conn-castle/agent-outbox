@@ -1,5 +1,6 @@
 import { withSentryConfig } from "@sentry/nextjs/config";
 import type { NextConfig } from "next";
+import { browserBuildConfig } from "./scripts/browser-build-config";
 
 import {
   runtimeRelease,
@@ -16,6 +17,7 @@ const publicAppHostname = process.env.PUBLIC_APP_BASE_URL
   : null;
 
 const nextConfig: NextConfig = {
+  ...browserBuildConfig(),
   allowedDevOrigins: [
     "127.0.0.1",
     ...(publicAppHostname && publicAppHostname !== "127.0.0.1"
