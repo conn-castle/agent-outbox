@@ -24,6 +24,7 @@ test("undo restores only the last answer, in its original queue position, across
   );
   await expectQueue(page, pending);
   await page.reload();
+  await expectHydrated(page);
   await expectQueue(page, pending);
   await expectHistory(page, [permit, followUp], [email]);
 
@@ -47,6 +48,7 @@ test("undo restores only the last answer, in its original queue position, across
     initial.filter((title) => title !== followUp)
   );
   await page.reload();
+  await expectHydrated(page);
   await expectQueue(
     page,
     initial.filter((title) => title !== followUp)
@@ -130,11 +132,13 @@ for (const outcome of ["all", "partial", "none"] as const) {
         .click();
       await expectQueueMembership(page, pending);
       await page.reload();
+      await expectHydrated(page);
       await expectQueueMembership(page, pending);
       if (outcome !== "all") {
         // A failed bulk item must remain actionable, not just visibly present.
         await answer(page, "Approve follow-up");
         await page.reload();
+        await expectHydrated(page);
         await expectQueueMembership(
           page,
           pending.filter((title) => title !== followUp)
@@ -184,6 +188,7 @@ test("rejected undo keeps every answered item in History and restores no queue r
   await sortByTitle(page);
   await expectQueueMembership(page, pending);
   await page.reload();
+  await expectHydrated(page);
   await expectQueueMembership(page, pending);
   await expectHistory(
     page,
@@ -197,8 +202,14 @@ async function openQueue(page: Page) {
     throw error;
   });
   await page.goto("/human");
-  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await expectHydrated(page);
   return page.locator(".row-title").allTextContents();
+}
+
+async function expectHydrated(page: Page) {
+  // /human/mutations is client-only. SSR queue rows can already satisfy
+  // membership assertions via the server-action fallback.
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
 }
 
 function row(page: Page, title: string) {
@@ -216,6 +227,7 @@ function mutationResponse(page: Page) {
 }
 
 async function answer(page: Page, action: string) {
+  await expectHydrated(page);
   const response = mutationResponse(page);
   await page.getByRole("button", { name: action, exact: true }).click();
   expect((await response).ok()).toBe(true);
@@ -225,6 +237,7 @@ async function answer(page: Page, action: string) {
 }
 
 async function undo(page: Page) {
+  await expectHydrated(page);
   const response = mutationResponse(page);
   await page.getByTestId("last-answer-undo").click();
   await response;
