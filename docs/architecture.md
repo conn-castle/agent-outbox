@@ -214,9 +214,13 @@ database remains canonical, and the journal is not offline storage. This
 ordering preserves every rapid intent and avoids conflicting concurrent writes
 to fixture or server state.
 
-Each journal entry reconciles independently after a canonical refresh. A failed
-write removes only its own optimistic projection and restores the affected
-review, with the failure shown in the application bar. The row leaving the
+The queue projects the latest journal action for each item. Confirmed writes
+supersede earlier actions only for the items they changed; earlier state remains
+available until then so a rejected action can roll back correctly. Canonical
+refreshes retire settled projections. See
+[queue reconciliation debugging](ops/debugging.md#human-save-reports-a-missing-input)
+for bulk-result handling. A failed write removes only its own optimistic
+projection, with the failure shown in the application bar. The row leaving the
 pending queue is the success signal. After an answer is accepted, a single
 last-action Undo control appears in that same bar and is replaced by the next
 successful answer. Older eligible reversals stay in History. A client fetch

@@ -697,7 +697,7 @@ test("pre-read undo delegates unread restoration to the existing database functi
 });
 
 test(
-  "phase 4 local database human answer service creates and restores unread output",
+  "database queue and history preserve other items across answer, undo, and re-answer",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
   async () => {
     assert.ok(databaseUrl);
@@ -710,6 +710,36 @@ test(
       inputItemId: crypto.randomUUID(),
       actionId: crypto.randomUUID()
     };
+    const otherItemId = crypto.randomUUID();
+    const untouchedItemId = crypto.randomUUID();
+    /** @type {import("../src/server/authorization.ts").AuthorizedHumanAccountContext} */
+    const reviewContext = {
+      surface: "human",
+      accountId: ids.accountId,
+      userId: ids.userId,
+      role: "owner"
+    };
+    /** @type {ProductTransactionQuery} */
+    const query = (statement) => client.query(statement.sql, statement.values);
+    /** @param {string[]} pendingIds @param {string[]} answeredIds */
+    async function assertQueues(pendingIds, answeredIds) {
+      for (const [
+        status,
+        expected
+      ] of /** @type {Array<["pending" | "answered", string[]]>} */ ([
+        ["pending", pendingIds],
+        ["answered", answeredIds]
+      ])) {
+        const page = await humanReviewPageInTransaction(query, reviewContext, {
+          status
+        });
+        assert.equal(page.totalCount, expected.length);
+        assert.deepEqual(
+          page.rows.map((row) => row.inputItemId).sort(),
+          [...expected].sort()
+        );
+      }
+    }
     /** @type {unknown} */
     let bodyError;
 
@@ -730,6 +760,24 @@ test(
         ids.userId
       ]);
       await seedDatabaseRows(client, ids);
+      for (const itemId of [otherItemId, untouchedItemId]) {
+        await client.query(
+          `
+          insert into public.agent_outbox_input_items(
+            input_item_id, account_id, caller_id, caller_item_id, caller_item_id_hash,
+            row_type_display, row_type_icon, title_html, subtitle_html, summary_html, non_file_payload_bytes
+          ) values ($1::uuid, $2, $3, $1::uuid::text, $1::uuid::text, 'Review', 'inbox', 'Other review', 'Subtitle', 'Summary', 25)
+        `,
+          [itemId, ids.accountId, ids.callerId]
+        );
+        await client.query(
+          `
+          insert into public.agent_outbox_input_actions(input_action_id, input_item_id, display_order, display, icon, action_value, popup_kind)
+          values ($1, $2, 0, 'Approve', 'check', 'approve', 'none')
+        `,
+          [crypto.randomUUID(), itemId]
+        );
+      }
       await client.query("commit");
       await client.query("begin");
       await client.query("select set_config($1, $2, true)", [
@@ -754,6 +802,19 @@ test(
         [ids.inputItemId]
       );
       const originalUpdatedAt = originalInput.rows[0].updated_at.toISOString();
+      await assertQueues([ids.inputItemId, otherItemId, untouchedItemId], []);
+      const otherAnswer = await createHumanAnswerInTransaction(query, {
+        accountId: ids.accountId,
+        callerId: ids.callerId,
+        humanUserId: ids.userId,
+        requestId: "req-db-other",
+        correlationId: "corr-db-other",
+        inputItemId: otherItemId,
+        expectedRevision: 1,
+        actionValue: "approve",
+        response: { kind: "none" }
+      });
+      assert.equal(otherAnswer.ok, true);
 
       const answer = await createHumanAnswerInTransaction(
         (statement) => client.query(statement.sql, statement.values),
@@ -773,6 +834,7 @@ test(
 
       assert.equal(answer.ok, true);
       assert.equal(answer.responseKind, "none");
+      await assertQueues([untouchedItemId], [ids.inputItemId, otherItemId]);
 
       const answeredRows = await client.query(
         `
@@ -824,6 +886,7 @@ test(
       );
       assert.equal(restoredRows.rows[0].status, "pending");
       assert.equal(restoredRows.rows[0].current_revision, 2);
+      await assertQueues([ids.inputItemId, untouchedItemId], [otherItemId]);
       assert.equal(
         restoredRows.rows[0].updated_at.toISOString(),
         originalUpdatedAt
@@ -845,6 +908,7 @@ test(
         }
       );
       assert.equal(legacyAnswer.ok, true);
+      await assertQueues([untouchedItemId], [ids.inputItemId, otherItemId]);
       if (!legacyAnswer.ok) assert.fail("expected legacy fallback answer");
       await client.query(
         `update public.agent_outbox_output_results set previous_input_updated_at = null where output_result_id = $1`,
@@ -864,6 +928,7 @@ test(
         }
       );
       assert.equal(legacyUndo.ok, true);
+      await assertQueues([ids.inputItemId, untouchedItemId], [otherItemId]);
       const legacyRestored = await client.query(
         `select updated_at from public.agent_outbox_input_items where input_item_id = $1`,
         [ids.inputItemId]

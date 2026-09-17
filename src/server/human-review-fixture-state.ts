@@ -1,3 +1,5 @@
+import { browserFixtureReviewDetail } from "./human-review-fixture.ts";
+
 const COOKIE_NAME = "agent_outbox_fixture_resolved";
 const MAX_RESOLVED_ITEMS = 50;
 const MAX_COOKIE_BYTES = 3500;
@@ -8,6 +10,8 @@ export type FixtureResolvedItem = {
   actionDisplay: string;
   callerId: string;
   answeredAt: string;
+  currentRevision?: number;
+  undone?: boolean;
 };
 
 export async function readFixtureResolvedItems(): Promise<
@@ -22,6 +26,7 @@ export async function recordFixtureResolvedItems(
     inputItemId: string;
     callerId: string;
     actionDisplay: string;
+    currentRevision: number;
   }>
 ) {
   if (items.length === 0) {
@@ -31,6 +36,18 @@ export async function recordFixtureResolvedItems(
   const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
   const answeredAt = new Date().toISOString();
   for (const item of items) {
+    const canonical = browserFixtureReviewDetail(item.inputItemId, {
+      resolvedItems: current
+    });
+    if (
+      !canonical ||
+      canonical.status !== "pending" ||
+      canonical.currentRevision !== item.currentRevision
+    ) {
+      throw new Error(
+        "Browser fixture answer requires a pending item at its current revision."
+      );
+    }
     if (
       !UUID_PATTERN.test(item.inputItemId) ||
       !UUID_PATTERN.test(item.callerId)
@@ -40,13 +57,14 @@ export async function recordFixtureResolvedItems(
     current[item.inputItemId] = {
       actionDisplay: item.actionDisplay.slice(0, 160) || "Answered",
       callerId: item.callerId,
-      answeredAt
+      answeredAt,
+      currentRevision: item.currentRevision
     };
   }
   writeResolvedItems(store, current);
 }
 
-export async function forgetFixtureResolvedItem(inputItemId: string) {
+export async function restoreFixtureResolvedItem(inputItemId: string) {
   if (!UUID_PATTERN.test(inputItemId)) {
     return;
   }
@@ -55,7 +73,14 @@ export async function forgetFixtureResolvedItem(inputItemId: string) {
   if (!(inputItemId in current)) {
     return;
   }
-  delete current[inputItemId];
+  const previous = current[inputItemId];
+  if (previous.undone) return;
+  // Keep the production undo revision across subsequent server renders.
+  current[inputItemId] = {
+    ...previous,
+    currentRevision: (previous.currentRevision ?? 1) + 1,
+    undone: true
+  };
   writeResolvedItems(store, current);
 }
 
@@ -96,7 +121,11 @@ function isResolvedItem(value: unknown): value is FixtureResolvedItem {
     item.actionDisplay.length > 0 &&
     typeof item.callerId === "string" &&
     UUID_PATTERN.test(item.callerId) &&
-    typeof item.answeredAt === "string"
+    typeof item.answeredAt === "string" &&
+    (item.currentRevision === undefined ||
+      (Number.isSafeInteger(item.currentRevision) &&
+        Number(item.currentRevision) > 0)) &&
+    (item.undone === undefined || typeof item.undone === "boolean")
   );
 }
 

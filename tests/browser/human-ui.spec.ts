@@ -1305,15 +1305,13 @@ for (const failure of [
     message: "Input item revision changed before the answer was submitted."
   }
 ]) {
-  test(`undone item reconciles after ${failure?.code ?? "success"}`, async ({
+  test(`re-answer after undo preserves queue membership after ${failure?.code ?? "success"}`, async ({
     page
   }) => {
     await page.goto("/human");
     await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
     const row = reviewRowByTitle(page, "Review neighborhood permit brief");
-    const workspace = page.locator(".human-workspace");
-    const revision = row.locator('input[name="expectedRevision"]').first();
-    const originalRevision = Number(await revision.inputValue());
+    const initialTitles = await page.locator(".row-title").allTextContents();
     const inputItemId = await row
       .locator('input[name="inputItemId"]')
       .first()
@@ -1321,7 +1319,11 @@ for (const failure of [
     await row.getByRole("button", { name: "Approve permit brief" }).click();
     await expect(lastUndoButton(page, "Approve permit brief")).toBeVisible();
     // Let the first answer reach the canonical queue before holding undo refreshes.
-    await expect(workspace).toHaveAttribute("data-review-mutation-count", "0");
+    await openReviewTools(page);
+    await choosePrimarySort(page, "Title");
+    await expect(
+      page.getByRole("status").filter({ hasText: "View updated." })
+    ).toContainText("Sorted by Title");
     await expect(row).toHaveCount(0);
 
     const releaseRefresh = deferred();
@@ -1361,8 +1363,6 @@ for (const failure of [
       await expect(
         row.getByRole("button", { name: "Approve permit brief" })
       ).toBeEnabled();
-      // The production server increments once on undo, not on answer.
-      await expect(revision).toHaveValue(String(originalRevision + 1));
       answeringAgain = true;
       await row.getByRole("button", { name: "Approve permit brief" }).click();
       if (failure) {
@@ -1377,11 +1377,25 @@ for (const failure of [
     } finally {
       releaseRefresh.resolve();
     }
-    // Absence while the answer still optimistically hides the row is not proof.
-    // Wait for reconciliation to retire both the answer and the older undo.
-    await expect(workspace).toHaveAttribute("data-review-mutation-count", "0");
+    // Check the complete visible queue after a fresh server-rendered view,
+    // then again after reload. Internal journal state is not the contract.
+    await openReviewTools(page);
+    await choosePrimarySort(page, "Last updated");
+    await expect(
+      page.getByRole("status").filter({ hasText: "View updated." })
+    ).toContainText("Sorted by Last updated");
+    const expectedTitles =
+      failure?.code === "stale_input_revision"
+        ? initialTitles
+        : initialTitles.filter(
+            (title) => title !== "Review neighborhood permit brief"
+          );
+    await expect
+      .poll(async () =>
+        (await page.locator(".row-title").allTextContents()).sort()
+      )
+      .toEqual([...expectedTitles].sort());
     if (failure?.code === "stale_input_revision") {
-      await expect(revision).toHaveValue(String(originalRevision));
       await expect(
         row.getByRole("button", { name: "Approve permit brief" })
       ).toBeEnabled();
@@ -1393,6 +1407,12 @@ for (const failure of [
         failure.message
       );
     }
+    await page.reload();
+    await expect
+      .poll(async () =>
+        (await page.locator(".row-title").allTextContents()).sort()
+      )
+      .toEqual([...expectedTitles].sort());
   });
 }
 
@@ -2414,6 +2434,10 @@ async function interceptClientEvents(page: Page) {
 }
 
 test("popup controls cover typed response kinds", async ({ page }) => {
+  async function restoreLastAnswer() {
+    await lastUndoButton(page).click();
+    await expect(lastUndoButton(page)).toHaveCount(0);
+  }
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
   await openSecondaryActions(page);
@@ -2428,6 +2452,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   });
   await page.getByRole("button", { name: "Attach evidence" }).click();
   await expect(lastUndoButton(page, "Attach evidence")).toBeVisible();
+  await restoreLastAnswer();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
 
@@ -2438,6 +2463,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
     .fill("Tighten the handoff language.");
   await page.getByRole("button", { name: "Request edit" }).click();
   await expect(lastUndoButton(page, "Request edit")).toBeVisible();
+  await restoreLastAnswer();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
   await openSecondaryActions(page);
@@ -2451,12 +2477,14 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await page.getByLabel("Follow-up date").fill("2026-07-15");
   await page.getByRole("button", { name: "Pick date" }).click();
   await expect(lastUndoButton(page, "Pick date")).toBeVisible();
+  await restoreLastAnswer();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await expect(lastUndoButton(page, "Pick date and time")).toBeVisible();
+  await restoreLastAnswer();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Select checks" }).click();

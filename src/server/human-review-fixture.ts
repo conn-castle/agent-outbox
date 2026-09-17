@@ -76,17 +76,13 @@ export function browserFixtureHumanSession(
   };
 }
 
-export type BrowserFixtureResolvedItem = {
-  actionDisplay: string;
-  callerId: string;
-  answeredAt: string;
-};
+export type BrowserFixtureResolvedItem =
+  import("./human-review-fixture-state").FixtureResolvedItem;
 
 type BrowserFixtureReviewOptions = {
   includePaginationRows?: boolean;
   resolvedItemId?: string;
   resolvedItems?: Record<string, BrowserFixtureResolvedItem>;
-  answeredOverlay?: boolean;
 };
 
 export function browserFixtureReviewRows(
@@ -117,9 +113,10 @@ export function browserFixtureReviewPage(
   const stripTags = (html: string) => html.replaceAll(/<[^>]*>/g, " ");
   const resolvedItems = options.resolvedItems ?? {};
   const resolvedIds = new Set(
-    [options.resolvedItemId, ...Object.keys(resolvedItems)].filter(
-      (id): id is string => Boolean(id)
-    )
+    [
+      options.resolvedItemId,
+      ...Object.keys(resolvedItems).filter((id) => !resolvedItems[id].undone)
+    ].filter((id): id is string => Boolean(id))
   );
   const filtered = browserFixtureReviewRows(effectiveOptions).filter((row) => {
     const resolved = resolvedIds.has(row.inputItemId);
@@ -161,9 +158,10 @@ export function browserFixtureReviewTypeOptions(
 ) {
   const resolvedItems = options.resolvedItems ?? {};
   const resolvedIds = new Set(
-    [options.resolvedItemId, ...Object.keys(resolvedItems)].filter(
-      (id): id is string => Boolean(id)
-    )
+    [
+      options.resolvedItemId,
+      ...Object.keys(resolvedItems).filter((id) => !resolvedItems[id].undone)
+    ].filter((id): id is string => Boolean(id))
   );
   return [
     ...new Set(
@@ -181,7 +179,7 @@ export function browserFixtureReviewTypeOptions(
 
 export function browserFixtureReviewDetail(
   inputItemId: string | null,
-  _options: BrowserFixtureReviewOptions = {}
+  options: BrowserFixtureReviewOptions = {}
 ): HumanReviewDetail | null {
   // Direct item links do not carry the fixture-only dataset flag. Keep tail
   // details addressable so pagination navigation and server-action redirects
@@ -191,20 +189,23 @@ export function browserFixtureReviewDetail(
     ? (details.find((candidate) => candidate.inputItemId === inputItemId) ??
       null)
     : (details[0] ?? null);
-  if (!detail || !_options.answeredOverlay) {
+  if (!detail) {
     return detail;
   }
   return applyFixtureResolvedState(
     detail,
-    _options.resolvedItems?.[detail.inputItemId]
+    options.resolvedItems?.[detail.inputItemId]
   );
 }
 
 function applyFixtureResolvedState<T extends HumanReviewListRow>(
   row: T,
   resolved: BrowserFixtureResolvedItem | undefined,
-  isResolved = Boolean(resolved)
+  isResolved = Boolean(resolved && !resolved.undone)
 ): T {
+  if (resolved?.currentRevision !== undefined) {
+    row = { ...row, currentRevision: resolved.currentRevision };
+  }
   if (!isResolved) {
     return row;
   }
