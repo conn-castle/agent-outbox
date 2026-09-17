@@ -13,9 +13,9 @@ import {
 import { callerCredentialLastUsedStatement } from "../src/server/caller-api-auth.ts";
 import {
   INPUT_REQUEST_BODY_BYTE_LIMIT,
-  parseInputSubmission,
   readJsonBodyWithLimit
-} from "../src/server/input-schema.ts";
+} from "../src/server/request-body.ts";
+import { parseInputSubmission } from "../src/server/input-schema.ts";
 import { SUPPORTED_COLORS } from "../src/shared/input-schema-rules.ts";
 import {
   InputSubmissionSchema,

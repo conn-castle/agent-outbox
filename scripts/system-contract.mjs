@@ -427,8 +427,10 @@ export function systemContractDriftFailures(contract = readSystemContract()) {
     "SYSTEM_CONTRACT.billingDowngradeGraceDays"
   ]);
   requireMarkers(failures, "src/server/input-schema.ts", [
+    "SYSTEM_CONTRACT.hostedAppBaseUrl"
+  ]);
+  requireMarkers(failures, "src/server/request-body.ts", [
     "SYSTEM_CONTRACT.inputSubmissionBodyBytes",
-    "SYSTEM_CONTRACT.hostedAppBaseUrl",
     '${INPUT_REQUEST_BODY_BYTE_LIMIT.toLocaleString("en-US")} byte limit'
   ]);
   requireMarkers(failures, "src/server/human-answer.ts", [

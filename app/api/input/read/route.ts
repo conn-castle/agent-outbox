@@ -4,7 +4,7 @@ import {
   apiSuccessResponse
 } from "../../../../src/server/api-errors";
 import { handleInputReadRequest } from "../../../../src/server/input-read";
-import { readJsonBodyWithLimit } from "../../../../src/server/input-schema";
+import { readJsonBodyWithLimit } from "../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 

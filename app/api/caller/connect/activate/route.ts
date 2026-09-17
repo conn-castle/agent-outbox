@@ -4,7 +4,7 @@ import {
   apiSuccessResponse
 } from "../../../../../src/server/api-errors";
 import { handleConnectActivateRequest } from "../../../../../src/server/caller-connect";
-import { readJsonBodyWithLimit } from "../../../../../src/server/input-schema";
+import { readJsonBodyWithLimit } from "../../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 

@@ -169,11 +169,11 @@ review fixture and caller-connect Clerk fixture, including signup handoff,
 list/detail review, popup controls, skipped ordering, search/filter/sort,
 narrow bulk compatibility, pre-read undo, no-undo-after-read state,
 hostile-content rendering, and live caller-connect browser/device approval
-against a disposable migrated `postgres:17` database. It starts a local Next.js
-server with `APP_ENV=test`, `AGENT_OUTBOX_BROWSER_FIXTURE=1`, and
-`AGENT_OUTBOX_CONNECT_CLERK_FIXTURE=1`; it must not require real Clerk or
-provider credentials. The fixture bypasses the production Clerk path only when
-the gate variables are set by the Playwright web server.
+against a disposable migrated `postgres:17` database. It first compiles an
+optimized test-only build into `.next-browser`, then serves it with `next start`
+on loopback; it must not require real Clerk or provider credentials. See the
+[browser build and fixture isolation contract](../ops/release.md#pre-release-gate)
+for the canonical build, environment, and artifact rules.
 
 - Build the app
 

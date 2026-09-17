@@ -304,17 +304,17 @@ function loadBillingModuleForTest(reportRuntimeFailure) {
             }
           };
         }
-        if (specifier === "./input-schema.ts") {
-          return { async readJsonBodyWithLimit() {} };
+        if (specifier === "./request-body.ts") {
+          return {
+            async readJsonBodyWithLimit() {},
+            readRawRequestBodyWithLimit
+          };
         }
         if (specifier === "./env.ts") {
           return { absoluteHttpOrigin };
         }
         if (specifier === "./logging.ts") {
           return { durationSinceMs, emitRuntimeLog, safeErrorName };
-        }
-        if (specifier === "./request-body.ts") {
-          return { readRawRequestBodyWithLimit };
         }
         if (specifier === "./sentry.ts") {
           return { reportRuntimeFailure };
@@ -581,7 +581,7 @@ function loadCallerRouteModuleForTest(
         apiRequestContext,
         apiSuccessResponse
       },
-      "../../../../../src/server/input-schema": {
+      "../../../../../src/server/request-body": {
         async readJsonBodyWithLimit() {
           return { ok: true, value: {} };
         }

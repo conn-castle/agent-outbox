@@ -9,6 +9,7 @@
 /dist/
 /build/
 /.next/
+/.next-browser/
 next-env.d.ts
 /.open-next/
 /tsconfig.tsbuildinfo

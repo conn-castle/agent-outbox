@@ -6,6 +6,25 @@ values in approved operator-controlled stores, not in this file.
 
 ## Pre-Release Gate
 
+Browser verification builds an optimized, test-only Next.js application into
+`.next-browser`, then serves it on loopback with `next start` and a disposable
+database. Compilation finishes before browser execution; the harness rebuilds
+before every run. `.next-browser` must never be deployed; normal builds use
+`.next` and embed a disabled fixture gate. Browser-build compilation clears the
+application database URL to prevent reads from a developer database during
+prerendering; only the runtime server receives the disposable database URL. The
+test build requires `AGENT_OUTBOX_BROWSER_BUILD=1`, `APP_ENV=test`, and loopback
+HTTP base URLs. Runtime fixture flags cannot enable fixtures in a normal
+production build. `tsconfig.browser.json` keeps generated test-build types
+separate from `.next`.
+
+Browser verification uses one Playwright worker to limit browser memory
+pressure. This does not impose a hard memory cap on the build or server. Failed
+tests retain traces, screenshots, and error context under `test-results/`; CI
+and Release Check upload these as `ci-browser-failures` and
+`release-check-browser-failures` artifacts for seven days. Inspect the original
+failure artifact before rerunning a failed gate.
+
 Commit a new stable `package.json` version such as `0.1.0` in the release pull
 request. Version `0.0.0`, prerelease versions, reused tags, uncommitted
 versions, and non-`main` refs fail before deployment. The committed package

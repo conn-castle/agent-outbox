@@ -4,7 +4,7 @@ import {
   apiSuccessResponse
 } from "../../../../../src/server/api-errors";
 import { handleRevokeConfirmRequest } from "../../../../../src/server/caller-credential-operations";
-import { readJsonBodyWithLimit } from "../../../../../src/server/input-schema";
+import { readJsonBodyWithLimit } from "../../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 

@@ -13,7 +13,7 @@ import {
   STRIPE_WEBHOOK_BODY_BYTE_LIMIT
 } from "../src/server/billing.ts";
 import { billingHumanSessionFromClerkUser } from "../src/server/billing-session.ts";
-import { INPUT_REQUEST_BODY_BYTE_LIMIT } from "../src/server/input-schema.ts";
+import { INPUT_REQUEST_BODY_BYTE_LIMIT } from "../src/server/request-body.ts";
 
 const config = {
   secretKey: "sk_test_placeholder",

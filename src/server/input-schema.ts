@@ -10,7 +10,6 @@ import {
   limitErrorMetadata,
   type LimitProfileSelector
 } from "./limits.ts";
-import { readRawRequestBodyWithLimit } from "./request-body.ts";
 import {
   isSupportedColor,
   SUPPORTED_ACTION_STYLES,
@@ -26,9 +25,6 @@ import {
   publicInputSubmissionShapeMatches,
   publicSchemaFieldErrors
 } from "../shared/public-api-contract.ts";
-
-export const INPUT_REQUEST_BODY_BYTE_LIMIT =
-  SYSTEM_CONTRACT.inputSubmissionBodyBytes;
 
 export type QueuePriority = "low" | "normal" | "high" | "urgent";
 export type PopupKind =
@@ -164,10 +160,6 @@ export type NormalizedPopupOption = {
   icon: string | null;
 };
 
-export type JsonBodyParseResult =
-  | { ok: true; bytes: number; value: unknown }
-  | { ok: false; error: ApiErrorInput };
-
 export type InputSubmissionParseResult =
   | { ok: true; submission: NormalizedInputSubmission }
   | { ok: false; error: ApiErrorInput };
@@ -230,38 +222,6 @@ const ALLOWED_HTML_ELEMENTS = new Set([
   "span",
   "a"
 ]);
-
-export async function readJsonBodyWithLimit(
-  request: Request
-): Promise<JsonBodyParseResult> {
-  const body = await readRawRequestBodyWithLimit(
-    request,
-    INPUT_REQUEST_BODY_BYTE_LIMIT
-  );
-  if (!body.ok) {
-    return {
-      ok: false,
-      error: requestTooLargeError()
-    };
-  }
-
-  try {
-    return {
-      ok: true,
-      bytes: body.bytes,
-      value: JSON.parse(body.buffer.toString("utf8"))
-    };
-  } catch {
-    return {
-      ok: false,
-      error: {
-        status: 400,
-        code: "invalid_json",
-        message: "Request body must be valid JSON."
-      }
-    };
-  }
-}
 
 export function parseInputDeleteBody(value: unknown): InputDeleteParseResult {
   const fields: ApiFieldError[] = [];
@@ -557,20 +517,6 @@ export function stableStringify(value: unknown): string {
   }
 
   return JSON.stringify(value);
-}
-
-function requestTooLargeError(): ApiErrorInput {
-  return {
-    status: 413,
-    code: "request_too_large",
-    message: `Input request body exceeds the ${INPUT_REQUEST_BODY_BYTE_LIMIT.toLocaleString("en-US")} byte limit.`,
-    limit: {
-      limit_name: "input_request_body_bytes_excluding_files",
-      limit_reason_code: "input_request_too_large",
-      limit_reason: "Input request body exceeds the accepted byte ceiling.",
-      limit_resets_at: null
-    }
-  };
 }
 
 function parseRowType(value: unknown, fields: ApiFieldError[], path: string) {

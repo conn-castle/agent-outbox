@@ -8,10 +8,12 @@ import {
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
-import { readJsonBodyWithLimit } from "./input-schema.ts";
 import { absoluteHttpOrigin } from "./env.ts";
 import { durationSinceMs, emitRuntimeLog, safeErrorName } from "./logging.ts";
-import { readRawRequestBodyWithLimit } from "./request-body.ts";
+import {
+  readJsonBodyWithLimit,
+  readRawRequestBodyWithLimit
+} from "./request-body.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
 const BILLING_GRACE_DAYS = SYSTEM_CONTRACT.billingDowngradeGraceDays;
