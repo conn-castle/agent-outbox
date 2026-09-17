@@ -16,13 +16,15 @@ import { installImmediateActionFeedback } from "./immediate-action-feedback";
 
 installImmediateActionFeedback();
 
-export type AppMutationStatus = "queued" | "syncing" | "succeeded";
+export type AppMutationStatus =
+  "queued" | "syncing" | "succeeded" | "indeterminate";
 
 export type AppMutationRecord = {
   id: string;
   scope: string;
   status: AppMutationStatus;
   optimistic: unknown;
+  result?: unknown;
 };
 
 type EnqueueMutation<TResult> = {
@@ -30,6 +32,10 @@ type EnqueueMutation<TResult> = {
   optimistic: unknown;
   execute: () => Promise<TResult>;
   refreshOnSuccess?: boolean;
+  reconcileEarlier?: (
+    earlier: AppMutationRecord,
+    result: TResult
+  ) => unknown | null;
   onSuccess?: (result: TResult, mutationId: string) => void;
   onIndeterminate?: (error: unknown, mutationId: string) => void;
   onError?: (error: unknown, mutationId: string) => void;
@@ -74,13 +80,31 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
     setMutations(next);
   }, []);
 
-  const markSucceeded = useCallback((mutationId: string) => {
-    const succeeded: AppMutationRecord[] = mutationsRef.current.map((record) =>
-      record.id === mutationId ? { ...record, status: "succeeded" } : record
-    );
-    mutationsRef.current = succeeded;
-    setMutations(succeeded);
-  }, []);
+  const markSettled = useCallback(
+    (
+      mutationId: string,
+      status: "succeeded" | "indeterminate",
+      result?: unknown,
+      reconcileEarlier?: (earlier: AppMutationRecord) => unknown | null
+    ) => {
+      const targetIndex = mutationsRef.current.findIndex(
+        (record) => record.id === mutationId
+      );
+      const succeeded = mutationsRef.current.flatMap(
+        (record, index): AppMutationRecord[] => {
+          if (record.id === mutationId) return [{ ...record, status, result }];
+          if (index < targetIndex && reconcileEarlier) {
+            const optimistic = reconcileEarlier(record);
+            return optimistic === null ? [] : [{ ...record, optimistic }];
+          }
+          return [record];
+        }
+      );
+      mutationsRef.current = succeeded;
+      setMutations(succeeded);
+    },
+    []
+  );
 
   const enqueue = useCallback(
     <TResult,>(mutation: EnqueueMutation<TResult>) => {
@@ -106,14 +130,24 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
         setMutations(syncing);
         try {
           const result = await mutation.execute();
-          markSucceeded(mutationId);
+          markSettled(
+            mutationId,
+            "succeeded",
+            result,
+            mutation.reconcileEarlier
+              ? (earlier) =>
+                  earlier.scope === mutation.scope
+                    ? mutation.reconcileEarlier!(earlier, result)
+                    : earlier.optimistic
+              : undefined
+          );
           mutation.onSuccess?.(result, mutationId);
           if (mutation.refreshOnSuccess) {
             startTransition(() => router.refresh());
           }
         } catch (error) {
           if (isIndeterminateClientTimeout(error)) {
-            markSucceeded(mutationId);
+            markSettled(mutationId, "indeterminate");
             mutation.onIndeterminate?.(error, mutationId);
             startTransition(() => router.refresh());
             return;
@@ -126,7 +160,7 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
       syncTail.current = syncTail.current.then(synchronize, synchronize);
       return mutationId;
     },
-    [dismiss, markSucceeded, router]
+    [dismiss, markSettled, router]
   );
 
   const value = useMemo(

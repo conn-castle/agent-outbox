@@ -62,7 +62,8 @@ export async function executeHumanAnswerMutation(
       {
         inputItemId: parsed.inputItemId,
         callerId: parsed.callerId,
-        actionDisplay
+        actionDisplay,
+        currentRevision: parsed.expectedRevision
       }
     ]);
     revalidatePath(humanPath);
@@ -173,6 +174,7 @@ export async function executeBulkHumanAnswersMutation(
       parsed.items.map((item) => ({
         inputItemId: item.inputItemId,
         callerId: item.callerId,
+        currentRevision: item.expectedRevision,
         actionDisplay:
           noticeText(formData, "noticeAction") ?? parsed.actionValue
       }))
@@ -263,9 +265,9 @@ export async function executeUndoHumanAnswerMutation(
   }
 
   if (humanBrowserFixtureEnabled()) {
-    const { forgetFixtureResolvedItem } =
+    const { restoreFixtureResolvedItem } =
       await import("../../src/server/human-review-fixture-state");
-    await forgetFixtureResolvedItem(parsed.inputItemId);
+    await restoreFixtureResolvedItem(parsed.inputItemId);
     revalidatePath(humanPath);
     return {
       ok: true,

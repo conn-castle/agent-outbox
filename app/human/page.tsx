@@ -66,8 +66,7 @@ export default async function HumanReviewPage({
       includePaginationRows:
         firstSearchParam(params?.fixture_dataset) === "pagination",
       resolvedItemId: firstSearchParam(params?.resolved),
-      resolvedItems,
-      answeredOverlay: view.status === "answered"
+      resolvedItems
     };
     const session = browserFixtureHumanSession({
       firstTimeSignup: firstSearchParam(params?.fixture_signup) === "1",

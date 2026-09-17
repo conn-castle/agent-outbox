@@ -83,7 +83,7 @@ import {
   HUMAN_MUTATION_SCOPE,
   HumanMutationError,
   isHumanOptimisticMutation,
-  laterAnswerRetiresEarlierUndo,
+  isHumanMutationResult,
   synchronizeHumanMutation,
   type HumanOptimisticMutation
 } from "./human-mutation-client";
@@ -519,60 +519,83 @@ export function ReviewWorkspace({
 
   const humanMutations = useMemo(
     () =>
-      mutations.flatMap((record) =>
-        record.scope === HUMAN_MUTATION_SCOPE &&
-        isHumanOptimisticMutation(record.optimistic)
-          ? [{ record, mutation: record.optimistic }]
-          : []
-      ),
+      mutations.flatMap((record) => {
+        const optimistic = record.optimistic;
+        if (
+          record.scope !== HUMAN_MUTATION_SCOPE ||
+          !isHumanOptimisticMutation(optimistic)
+        )
+          return [];
+        const result = record.result;
+        const mutation =
+          isHumanMutationResult(result) &&
+          result.ok &&
+          result.operation === "bulk-answer"
+            ? {
+                ...optimistic,
+                inputItemIds: result.answeredInputItemIds.filter((id) =>
+                  optimistic.inputItemIds.includes(id)
+                )
+              }
+            : optimistic;
+        return [{ record, mutation }];
+      }),
     [mutations]
   );
-  const hiddenIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const { mutation } of humanMutations) {
-      if (mutation.operation !== "undo") {
-        mutation.inputItemIds.forEach((id) => ids.add(id));
-      }
+  // Project the latest intent per item. Older entries stay available for rollback
+  // until a confirmed result supersedes precisely the affected items.
+  const itemMutations = useMemo(() => {
+    const latest = new Map<string, (typeof humanMutations)[number]>();
+    for (const entry of humanMutations) {
+      for (const id of entry.mutation.inputItemIds) latest.set(id, entry);
     }
-    return ids;
+    return latest;
   }, [humanMutations]);
-  const restoredRows = useMemo(() => {
-    const baseIds = new Set(rows.map((row) => row.inputItemId));
-    const restored = new Map<string, HumanReviewListRow>();
-    for (const { mutation } of humanMutations) {
-      if (mutation.operation !== "undo") continue;
-      if (view.status !== "pending") continue;
-      for (const row of mutation.rowSnapshots) {
-        if (
-          !baseIds.has(row.inputItemId) &&
-          humanReviewRowMatchesView(row, view)
-        ) {
-          restored.set(row.inputItemId, row);
-        }
-      }
-    }
-    return [...restored.values()];
-  }, [humanMutations, rows, view]);
+  const hiddenIds = useMemo(
+    () =>
+      new Set(
+        [...itemMutations]
+          .filter(([, { mutation }]) => mutation.operation !== "undo")
+          .map(([id]) => id)
+      ),
+    [itemMutations]
+  );
   const lockedIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const { record, mutation } of humanMutations) {
+    for (const [id, { record, mutation }] of itemMutations) {
       if (mutation.operation === "undo" && record.status !== "succeeded") {
-        mutation.inputItemIds.forEach((id) => ids.add(id));
+        ids.add(id);
       }
     }
     return ids;
-  }, [humanMutations]);
+  }, [itemMutations]);
 
   const projectedRows = useMemo(() => {
-    const projected = [...rows, ...restoredRows].filter(
-      (row) => !hiddenIds.has(row.inputItemId)
-    );
-    return restoredRows.length > 0
-      ? projected.sort((left, right) =>
+    const projected = new Map(rows.map((row) => [row.inputItemId, row]));
+    let restored = false;
+    for (const [id, { mutation }] of itemMutations) {
+      if (mutation.operation !== "undo") {
+        projected.delete(id);
+        continue;
+      }
+      if (view.status !== "pending") continue;
+      const snapshot = mutation.rowSnapshots.find(
+        (row) => row.inputItemId === id
+      );
+      if (!snapshot || !humanReviewRowMatchesView(snapshot, view)) continue;
+      const canonical = projected.get(id);
+      if (!canonical || canonical.currentRevision < snapshot.currentRevision) {
+        projected.set(id, snapshot);
+        restored = true;
+      }
+    }
+    const projectedRows = [...projected.values()];
+    return restored
+      ? projectedRows.sort((left, right) =>
           compareHumanReviewRows(left, right, view)
         )
-      : projected;
-  }, [hiddenIds, restoredRows, rows, view]);
+      : projectedRows;
+  }, [itemMutations, rows, view]);
   const synchronizingMutationCount = humanMutations.filter(
     ({ record }) => record.status !== "succeeded"
   ).length;
@@ -590,20 +613,14 @@ export function ReviewWorkspace({
 
   useEffect(() => {
     for (const { record, mutation } of humanMutations) {
-      if (record.status !== "succeeded") continue;
+      if (record.status !== "succeeded" && record.status !== "indeterminate")
+        continue;
       const successGeneration = successGenerations.current.get(record.id);
       if (successGeneration === undefined) {
         continue;
       }
       const minimumGeneration = successGeneration + 1;
       if (canonicalGeneration.current < minimumGeneration) {
-        if (
-          canonicalGeneration.current > successGeneration &&
-          !retriedCanonicalRefreshes.current.has(record.id)
-        ) {
-          retriedCanonicalRefreshes.current.add(record.id);
-          router.refresh();
-        }
         continue;
       }
       const canonicalRows = mutation.inputItemIds.map((id) =>
@@ -627,7 +644,8 @@ export function ReviewWorkspace({
             : canonicalRows.every(
                 (row) => row === undefined || row.status === "pending"
               )
-          : mutation.operation === "bulk-answer"
+          : mutation.operation === "bulk-answer" &&
+              record.status === "indeterminate"
             ? canonicalRows.some(
                 (row) => row === undefined || row.status !== "pending"
               )
@@ -638,17 +656,17 @@ export function ReviewWorkspace({
         // A later answer can reach the server before the undo's pending row
         // ever reaches this view. Retire that older restoration along with
         // the answer, or it will resurrect the answered (possibly acked) item.
-        if (mutation.operation !== "undo") {
+        if (
+          mutation.operation === "answer" &&
+          record.status === "indeterminate"
+        ) {
           for (const earlier of humanMutations) {
             if (earlier.record.id === record.id) break;
             if (
               earlier.mutation.operation === "undo" &&
-              laterAnswerRetiresEarlierUndo({
-                laterOperation: mutation.operation,
-                laterInputItemIds: mutation.inputItemIds,
-                laterCanonicalRows: canonicalRows,
-                undoInputItemIds: earlier.mutation.inputItemIds
-              })
+              earlier.mutation.inputItemIds.every((id) =>
+                mutation.inputItemIds.includes(id)
+              )
             ) {
               successGenerations.current.delete(earlier.record.id);
               retriedCanonicalRefreshes.current.delete(earlier.record.id);
@@ -745,18 +763,6 @@ export function ReviewWorkspace({
       consumedNoticeEpoch.current = noticeEpoch;
     }
     clearRedirectNoticeFromUrl();
-    if (submission.operation === "undo") {
-      for (const { record, mutation } of humanMutations) {
-        if (
-          mutation.operation !== "undo" &&
-          mutation.inputItemIds.some((id) =>
-            submission.inputItemIds.includes(id)
-          )
-        ) {
-          dismiss(record.id);
-        }
-      }
-    }
     const optimistic: HumanOptimisticMutation = {
       operation: submission.operation,
       inputItemIds: submission.inputItemIds,
@@ -781,6 +787,31 @@ export function ReviewWorkspace({
       execute: () =>
         synchronizeHumanMutation(submission.operation, submission.formData),
       refreshOnSuccess: true,
+      reconcileEarlier: (earlier, result) => {
+        if (!isHumanOptimisticMutation(earlier.optimistic))
+          return earlier.optimistic;
+        const completedIds =
+          result.operation === "bulk-answer"
+            ? result.answeredInputItemIds
+            : result.inputItemIds;
+        const remainingIds = earlier.optimistic.inputItemIds.filter(
+          (id) => !completedIds.includes(id)
+        );
+        if (remainingIds.length === earlier.optimistic.inputItemIds.length)
+          return earlier.optimistic;
+        if (remainingIds.length === 0) {
+          successGenerations.current.delete(earlier.id);
+          retriedCanonicalRefreshes.current.delete(earlier.id);
+          return null;
+        }
+        return {
+          ...earlier.optimistic,
+          inputItemIds: remainingIds,
+          rowSnapshots: earlier.optimistic.rowSnapshots.filter((row) =>
+            remainingIds.includes(row.inputItemId)
+          )
+        };
+      },
       onSuccess: (result, mutationId) => {
         const answeredIds =
           result.operation === "answer"
