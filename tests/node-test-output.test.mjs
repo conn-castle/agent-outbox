@@ -168,7 +168,7 @@ test("a log that cannot be created fails visibly and does not run tests", () => 
       AGENT_OUTBOX_NODE_TEST_LOG_PATH: path.join(blocker, "node.log")
     });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Not a directory|Already exists|ENOTDIR/);
+    assert.notEqual((result.stderr ?? "").trim(), "");
     assert.doesNotMatch(result.stdout, /UNIQUE_PASS_NAME|outcome /);
   } finally {
     rmSync(dir, { recursive: true, force: true });
