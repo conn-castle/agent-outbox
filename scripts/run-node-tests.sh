@@ -40,4 +40,4 @@ exec node --test \
   --test-reporter=./scripts/node-test-stdio-reporter.mjs \
   --test-reporter-destination=stdout \
   "$@" \
-  2> >(tee "$stderr_log" >&2)
+  2> >(tee -i "$stderr_log" >&2)
