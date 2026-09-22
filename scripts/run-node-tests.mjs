@@ -268,5 +268,7 @@ if (invokedAsCli()) {
   const result = await runNodeTests(process.argv.slice(2), {
     forwardSignals: true
   });
-  process.exit(result.exitCode);
+  // Assigning exitCode lets pending stderr diagnostics flush. process.exit
+  // can drop a write that has not drained.
+  process.exitCode = result.exitCode;
 }

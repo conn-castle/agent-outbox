@@ -30,6 +30,14 @@ function fixture(name) {
   return path.join(ROOT, "tests/fixtures/node-test-output", name);
 }
 
+function procAvailable() {
+  try {
+    return statSync("/proc/self/stat").isFile();
+  } catch {
+    return false;
+  }
+}
+
 function devFullAvailable() {
   try {
     return statSync("/dev/full").isCharacterDevice();
@@ -289,6 +297,7 @@ test(
   { timeout: 10_000 },
   async () => {
     const child = spawn(process.execPath, [RUNNER, fixture("hang.mjs")], {
+      detached: true,
       stdio: "ignore"
     });
     try {
@@ -307,9 +316,13 @@ test(
         child.signalCode === null &&
         typeof wrapperPid === "number"
       ) {
-        try {
-          process.kill(-processGroup(wrapperPid), "SIGKILL");
-        } catch {
+        if (procAvailable()) {
+          try {
+            process.kill(-processGroup(wrapperPid), "SIGKILL");
+          } catch {
+            child.kill("SIGKILL");
+          }
+        } else {
           child.kill("SIGKILL");
         }
       }
@@ -319,9 +332,13 @@ test(
 
 test(
   "SIGINT prints the log path and outcome and leaves no runner",
-  { timeout: 10_000 },
+  {
+    timeout: 10_000,
+    skip: procAvailable() ? false : "/proc is not available on this platform"
+  },
   async () => {
     const child = spawn(process.execPath, [RUNNER, fixture("hang.mjs")], {
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stdout = "";

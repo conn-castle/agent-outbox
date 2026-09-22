@@ -178,6 +178,14 @@ export default async function* nodeTestStdioReporter(source) {
     endedWithNewline = text.endsWith("\n");
     return text;
   };
+  // Raw stdout/stderr is forwarded unchanged. Structured records start on
+  // their own line when that raw output has no trailing newline.
+  /**
+   * @param {string} text
+   * @returns {string}
+   */
+  const trackStructured = (text) =>
+    track(endedWithNewline ? text : `\n${text}`);
   // Emit the path before any event so an interruption still names the log.
   yield track(`log ${displayPath(logFile)}\n`);
   for await (const event of source) {
@@ -188,7 +196,7 @@ export default async function* nodeTestStdioReporter(source) {
           aggregateLines.push(formatDiagnostic(data));
           break;
         }
-        yield track(formatDiagnostic(data));
+        yield trackStructured(formatDiagnostic(data));
         break;
       case "test:stdout":
       case "test:stderr":
@@ -200,18 +208,18 @@ export default async function* nodeTestStdioReporter(source) {
         if (data.todo !== undefined && data.todo !== false) {
           // A todo failure does not increment fail N. Keep the error, but do
           // not label it with the fail token.
-          yield track(
+          yield trackStructured(
             formatAnnotated(data, "todo") + indentDetail(errorDetail(data))
           );
           break;
         }
-        yield track(formatFailure(data));
+        yield trackStructured(formatFailure(data));
         break;
       case "test:pass":
         if (data.skip !== undefined && data.skip !== false) {
-          yield track(formatAnnotated(data, "skip"));
+          yield trackStructured(formatAnnotated(data, "skip"));
         } else if (data.todo !== undefined && data.todo !== false) {
-          yield track(formatAnnotated(data, "todo"));
+          yield trackStructured(formatAnnotated(data, "todo"));
         }
         break;
       case "test:summary":
@@ -220,16 +228,18 @@ export default async function* nodeTestStdioReporter(source) {
         }
         break;
       case "test:interrupted":
-        yield track("interrupted\n");
+        yield trackStructured("interrupted\n");
         for (const test of data.tests ?? []) {
-          yield track(`interrupted ${test.name ?? ""}${location(test)}\n`);
+          yield trackStructured(
+            `interrupted ${test.name ?? ""}${location(test)}\n`
+          );
         }
         if (!summaryEmitted) {
           summaryEmitted = true;
           if (rootSummary) {
-            yield track(formatSummary(rootSummary, logFile));
+            yield trackStructured(formatSummary(rootSummary, logFile));
           } else {
-            yield track(
+            yield trackStructured(
               aggregateLines.join("") +
                 `outcome interrupted\nlog ${displayPath(logFile)}\n`
             );
