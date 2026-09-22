@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import test from "node:test";
 
 test("DIAGNOSTICS_PASS_NAME", (t) => {
@@ -9,4 +10,10 @@ test("DIAGNOSTICS_PASS_NAME", (t) => {
   t.diagnostic("NODE_TEST_OUTPUT_DIAGNOSTIC");
   console.log("::warning::keep-me");
   console.log('{"level":"warn","message":"keep-json"}');
+});
+
+test("skipped case", { skip: "SKIP_REASON" }, () => {});
+
+test("todo that fails", { todo: "TODO_REASON" }, () => {
+  assert.equal(1, 2);
 });

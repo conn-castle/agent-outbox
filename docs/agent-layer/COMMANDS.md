@@ -159,11 +159,8 @@ other test output. The spec log is the test transcript, including passing
 names. The `.stderr` file is what the root Node process writes to stderr, and
 that stream is also shown on the terminal. Logs are kept. An interrupted run
 prints the paths before Node replaces the shell; Node can omit the final spec
-summary from the spec file. If `NO_COLOR` and `FORCE_COLOR` are both set, Node
-prints a warning on stderr and into the `.stderr` file. This repository does
-not unset either variable. The conflict seen in Agent Layer dispatch plus the
-Grok command wrapper is outside this repo.
-Tests should cover behavior that matters, including toolchain/package
+summary from the spec file. Tests should cover behavior that matters,
+including toolchain/package
 consistency and secret-safe diagnostics.
 
 - Browser smoke test

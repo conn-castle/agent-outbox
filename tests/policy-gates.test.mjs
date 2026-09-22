@@ -189,12 +189,7 @@ test("collect-changed-files enumerates a complete local git diff including renam
     /** @param {string[]} args */
     const git = (args) =>
       execFileSync("git", args, { cwd: tmpDir, encoding: "utf8" });
-    const init = spawnSync("git", ["init", "--initial-branch=main"], {
-      cwd: tmpDir,
-      encoding: "utf8"
-    });
-    assert.equal(init.status, 0, init.stderr);
-    assert.doesNotMatch(init.stderr ?? "", /hint:/);
+    git(["init", "--initial-branch=main"]);
     git(["config", "user.email", "policy-gates@example.com"]);
     git(["config", "user.name", "Policy Gates"]);
     git(["config", "commit.gpgsign", "false"]);
