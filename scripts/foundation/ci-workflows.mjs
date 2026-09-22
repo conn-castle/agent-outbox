@@ -316,7 +316,10 @@ export function validatePolicyGatesWorkflow(workflowContentsByPath) {
  */
 export function validateDatabaseTestCommand(packageJson, makefileContent) {
   const failures = [];
-  const expectedScript = "node --test --test-concurrency=1 tests/*.test.mjs";
+  // scripts/run-node-tests.sh appends these arguments, unchanged, after the
+  // reporter flags. Node still applies --test-concurrency=1 in that position.
+  const expectedScript =
+    "bash scripts/run-node-tests.sh --test-concurrency=1 tests/*.test.mjs";
   if (packageJson.scripts?.["test:database"] !== expectedScript) {
     failures.push(
       `package.json test:database must be exactly: ${expectedScript}`
