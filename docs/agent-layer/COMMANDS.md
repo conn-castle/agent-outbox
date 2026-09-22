@@ -152,8 +152,14 @@ make test
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs the
-pinned Node built-in test runner. Tests should cover behavior that matters,
-including toolchain/package consistency and secret-safe diagnostics.
+pinned Node built-in test runner. The command writes the complete runner
+output to a new file under `.agent-layer/tmp/node-test-logs/` and prints the
+outcome, counts, log path, warnings, failures, skipped tests, and other test
+output. Passing test names stay in that log. An interrupted run still prints
+the log path and an outcome; the log file can be truncated, which is the same
+limit as Node's spec reporter when its destination is a file. Tests should
+cover behavior that matters, including toolchain/package consistency and
+secret-safe diagnostics.
 
 - Browser smoke test
 
@@ -619,7 +625,9 @@ Run from: repo root Prerequisites: `make setup` has completed and Flyway
 migrations have been applied to a disposable target database. Notes: This is the
 canonical command used after migration replay in CI and release-check. It
 serially discovers every root `tests/*.test.mjs` file, so new database-gated
-tests are included automatically.
+tests are included automatically. It uses the same Node test output as
+`make test`: a complete log under `.agent-layer/tmp/node-test-logs/` and a
+short terminal summary.
 `DATABASE_MIGRATION_URL` must use the established privileged migration owner
 (superuser, or `BYPASSRLS` with SET-capable membership in `agent_outbox_app`),
 never the restricted runtime `agent_outbox_app`.

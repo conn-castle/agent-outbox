@@ -316,7 +316,10 @@ export function validatePolicyGatesWorkflow(workflowContentsByPath) {
  */
 export function validateDatabaseTestCommand(packageJson, makefileContent) {
   const failures = [];
-  const expectedScript = "node --test --test-concurrency=1 tests/*.test.mjs";
+  // run-node-tests.mjs must forward these arguments to node --test in this
+  // order. tests/node-test-output.test.mjs asserts that forwarding.
+  const expectedScript =
+    "node scripts/run-node-tests.mjs --test-concurrency=1 tests/*.test.mjs";
   if (packageJson.scripts?.["test:database"] !== expectedScript) {
     failures.push(
       `package.json test:database must be exactly: ${expectedScript}`

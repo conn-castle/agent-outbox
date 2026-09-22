@@ -366,7 +366,8 @@ jobs:
 test("validateDatabaseTestCommand enforces the serialized root test command chain", () => {
   const validPackageJson = {
     scripts: {
-      "test:database": "node --test --test-concurrency=1 tests/*.test.mjs"
+      "test:database":
+        "node scripts/run-node-tests.mjs --test-concurrency=1 tests/*.test.mjs"
     }
   };
   const validMakefile = `test-database:
@@ -388,7 +389,7 @@ test("validateDatabaseTestCommand enforces the serialized root test command chai
       validMakefile
     ),
     [
-      "package.json test:database must be exactly: node --test --test-concurrency=1 tests/*.test.mjs"
+      "package.json test:database must be exactly: node scripts/run-node-tests.mjs --test-concurrency=1 tests/*.test.mjs"
     ]
   );
   for (const hook of ["pretest:database", "posttest:database"]) {
@@ -415,7 +416,7 @@ test("validateDatabaseTestCommand enforces the serialized root test command chai
       validMakefile
     ),
     [
-      "package.json test:database must be exactly: node --test --test-concurrency=1 tests/*.test.mjs"
+      "package.json test:database must be exactly: node scripts/run-node-tests.mjs --test-concurrency=1 tests/*.test.mjs"
     ]
   );
   assert.deepEqual(
