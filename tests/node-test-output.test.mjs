@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -163,12 +163,12 @@ test("a log that cannot be created fails visibly and does not run tests", () => 
   const dir = mkdtempSync(path.join(os.tmpdir(), "node-test-log-"));
   try {
     const blocker = path.join(dir, "not-a-directory");
-    writeFileSync(blocker, "x");
+    mkdirSync(blocker);
     const result = runScript([fixture("quiet.mjs")], {
-      AGENT_OUTBOX_NODE_TEST_LOG_PATH: path.join(blocker, "node.log")
+      AGENT_OUTBOX_NODE_TEST_LOG_PATH: blocker
     });
     assert.notEqual(result.status, 0);
-    assert.notEqual((result.stderr ?? "").trim(), "");
+    assert.match(result.stderr ?? "", /not-a-directory/);
     assert.doesNotMatch(result.stdout, /UNIQUE_PASS_NAME|outcome /);
   } finally {
     rmSync(dir, { recursive: true, force: true });
