@@ -152,8 +152,19 @@ make test
 ```
 
 Run from: repo root Prerequisites: `make setup` has completed. Notes: Runs the
-pinned Node built-in test runner. Tests should cover behavior that matters,
-including toolchain/package consistency and secret-safe diagnostics.
+pinned Node built-in test runner through bash. Each run writes a new spec
+log and a sibling `.stderr` file under `.agent-layer/tmp/node-test-logs/`, and
+prints counts, the outcome, both paths, warnings, failures, skips, todos, and
+other test output. The spec log is the test transcript, including passing
+names. The `.stderr` file is what the root Node process writes to stderr, and
+that stream is also shown on the terminal. Logs are kept. An interrupted run
+prints the paths before Node replaces the shell; Node can omit the final spec
+summary from the spec file. If `NO_COLOR` and `FORCE_COLOR` are both set, Node
+prints a warning on stderr and into the `.stderr` file. This repository does
+not unset either variable. The conflict seen in Agent Layer dispatch plus the
+Grok command wrapper is outside this repo.
+Tests should cover behavior that matters, including toolchain/package
+consistency and secret-safe diagnostics.
 
 - Browser smoke test
 
@@ -619,7 +630,9 @@ Run from: repo root Prerequisites: `make setup` has completed and Flyway
 migrations have been applied to a disposable target database. Notes: This is the
 canonical command used after migration replay in CI and release-check. It
 serially discovers every root `tests/*.test.mjs` file, so new database-gated
-tests are included automatically.
+tests are included automatically. It uses the same spec log, stderr sidecar,
+and short summary as `make test`. `--test-concurrency=1` is forwarded to
+`node --test`.
 `DATABASE_MIGRATION_URL` must use the established privileged migration owner
 (superuser, or `BYPASSRLS` with SET-capable membership in `agent_outbox_app`),
 never the restricted runtime `agent_outbox_app`.
