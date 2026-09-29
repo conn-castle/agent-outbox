@@ -850,6 +850,54 @@ test("review rows keep the canonical responsive topology across documented break
     .toBe(true);
 });
 
+test("caller rich text renders as valid row markup without adding summary spacing", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "One desktop browser covers explicit viewport changes");
+
+  await page.goto("/human");
+  const rows = page.locator("article.review-row");
+  await expect(rows.first()).toBeVisible();
+  const flowInsidePhrasing = await rows.evaluateAll((elements) =>
+    elements.flatMap((row) =>
+      [
+        ...row.querySelectorAll(
+          "div, p, ul, ol, table, blockquote, pre, h3, h4, h5, h6"
+        )
+      ]
+        .filter((element) => {
+          const host = element.parentElement?.closest(
+            "span, p, strong, em, b, i, u, code, label, button, time"
+          );
+          return host !== null && host !== undefined && row.contains(host);
+        })
+        .map((element) => element.outerHTML.slice(0, 120))
+    )
+  );
+  expect(flowInsidePhrasing).toEqual([]);
+
+  const row = reviewRowByTitle(page, "Review neighborhood permit brief");
+  for (const width of [1024, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const offsets = await row.evaluate((element) => {
+      // The summary slot is a grid item, so child margins cannot collapse
+      // through it in either the clamped or the narrow block layout.
+      const summary = element
+        .querySelector(".row-summary-link")!
+        .getBoundingClientRect();
+      const paragraph = element
+        .querySelector(".row-proposal > p")!
+        .getBoundingClientRect();
+      return [
+        paragraph.top - summary.top,
+        summary.bottom - paragraph.bottom
+      ].map((offset) => Math.round(Math.abs(offset)));
+    });
+    expect(offsets, `summary paragraph offsets at ${width}px`).toEqual([0, 0]);
+  }
+});
+
 test("narrow review rows preserve complete decision context and actions", async ({
   page,
   isMobile
