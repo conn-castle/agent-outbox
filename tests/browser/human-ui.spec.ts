@@ -984,6 +984,46 @@ test("desktop detail modal stays within a readable responsive measure", async ({
   await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(69 * 16);
 });
 
+test("queue priority pills are visibly distinct without changing the caller accent tint", async ({
+  page
+}) => {
+  const pillAppearance = (title: string) =>
+    reviewRowByTitle(page, title)
+      .locator(".row-priority")
+      .evaluate((element) => {
+        const style = getComputedStyle(element);
+        return [
+          style.color,
+          style.backgroundColor,
+          style.borderTopStyle,
+          style.borderTopColor
+        ].join("|");
+      });
+
+  await page.goto("/human");
+  // Both pending fixture rows use the orange caller accent; one is Urgent,
+  // one is High.
+  const rowTint = (title: string) =>
+    reviewRowByTitle(page, title).evaluate(
+      (element) => getComputedStyle(element).backgroundImage
+    );
+  await page.mouse.move(0, 0);
+  expect(await rowTint("Reply to Meridian about the renewal delay")).toBe(
+    await rowTint("Choose follow-up window")
+  );
+
+  const appearances = [
+    await pillAppearance("Payments smoke check failed after deploy"),
+    await pillAppearance("Publish the instruction-ablation result"),
+    await pillAppearance("Maya Chen wants to connect")
+  ];
+  await page.goto("/human?status=answered");
+  appearances.push(
+    await pillAppearance("Confirm the electrician’s arrival window")
+  );
+  expect(new Set(appearances).size).toBe(4);
+});
+
 test("queue context links stay on one horizontally scrollable line and priority is visible", async ({
   page
 }) => {

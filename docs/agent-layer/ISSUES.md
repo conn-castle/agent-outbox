@@ -43,12 +43,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text.
     Open question: Whether search and sort should operate on decoded text, which requires server-side decoding or stored plain-text columns.
 
-- Issue 2026-08-17 queue-priority-treatment: Queue priority lacks a meaningful visible treatment
-    Priority: Medium. Area: Human review / Visual design
-    Description: Priority is conveyed mainly through screen-reader text and a very small background-mix change that shares the caller-accent channel, so Low, Normal, High, and Urgent are not visibly distinct as documented.
-    Next step: Implement and verify the canonical visible priority treatment without conflating it with caller accent.
-
-
 - Issue 2026-08-17 legacy-color-transition: Existing arbitrary persisted colors lack a transition policy
     Priority: High. Area: Human review / Data compatibility
     Description: The former runtime accepted safe CSS colors, the current API accepts only named colors, and unrestricted legacy database values now silently fall back during rendering.
