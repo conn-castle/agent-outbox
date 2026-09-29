@@ -90,7 +90,7 @@ export function ReviewList({
                 inert={locked || undefined}
               >
                 <ReviewRowFrame
-                  className={`review-row row-status-${row.status} row-priority-${row.priority}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
+                  className={`review-row row-status-${row.status}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
                     selectionMode ? " selection-mode" : ""
                   }`}
                   style={

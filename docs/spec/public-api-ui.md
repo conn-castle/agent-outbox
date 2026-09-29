@@ -103,7 +103,8 @@ and below. The review queue uses document scrolling, with pagination following
 the cards. Its summary reports the number shown on the current page and the
 total matching the active status, search, and filters. Each card shows a compact
 priority pill immediately after its title, wrapping with the title when space is
-limited.
+limited. Urgent, High, Normal, and Low pills each have a distinct appearance;
+priority never changes the row's caller accent tint.
 
 The anatomy table describes the represented slots, product controls, and row
 modifiers. Live rows also include a product-owned **Copy identifier** control,

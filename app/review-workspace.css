@@ -1853,18 +1853,6 @@ body:has(.shell > .human-workspace) {
   box-shadow: none;
 }
 
-.human-workspace .review-row.row-priority-urgent {
-  --row-accent-mix: 13%;
-}
-
-.human-workspace .review-row.row-priority-high {
-  --row-accent-mix: 11%;
-}
-
-.human-workspace .review-row.row-priority-low {
-  --row-accent-mix: 7%;
-}
-
 .human-workspace .review-row.row-accent-default {
   --row-accent-mix: 9%;
   --row-hover-accent: var(--review-accent);
@@ -2064,6 +2052,11 @@ body:has(.shell > .human-workspace) {
   color: var(--review-accent-dark);
   border-color: color-mix(in srgb, var(--review-accent-dark) 35%, transparent);
   background: var(--review-accent-soft);
+}
+
+.human-workspace .row-priority.priority-low {
+  border-style: dashed;
+  background: transparent;
 }
 
 .human-workspace .context-links-scroller::before,
@@ -3303,6 +3296,11 @@ body:has(.shell > .human-workspace) {
 .human-workspace .detail-meta .priority-urgent {
   background: var(--review-red-soft);
   color: var(--review-red);
+}
+
+.human-workspace .detail-meta .priority-low {
+  border: 1px dashed var(--review-line-strong);
+  background: transparent;
 }
 
 .human-workspace .detail-meta > .context-links {

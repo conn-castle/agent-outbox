@@ -47,7 +47,7 @@ export function ReviewRowAnatomyFrame({
       <div className="review-list">
         <div className="review-row-container">
           <ReviewRowFrame
-            className={`review-row review-row-anatomy row-priority-high ${annotated ? "annotated" : "review-row-example"}`}
+            className={`review-row review-row-anatomy ${annotated ? "annotated" : "review-row-example"}`}
             style={
               {
                 "--row-accent": accent,
