@@ -33,6 +33,11 @@ import {
 } from "../src/components/human/review-format.ts";
 import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
 import {
+  parseValidSubmission,
+  richPublicInput,
+  storedRowsFromSubmission
+} from "./helpers/canonical-input.mjs";
+import {
   isSupportedColor,
   SUPPORTED_LUCIDE_ICON_NAMES
 } from "../src/shared/input-schema-rules.ts";
@@ -71,6 +76,24 @@ const inputItemId = "00000000-0000-4000-8000-000000000003";
 const callerId = "00000000-0000-4000-8000-000000000005";
 const outputResultId = "00000000-0000-4000-8000-000000000004";
 const defaultHumanReviewView = humanReviewViewFromRecord(undefined);
+
+function javascriptWhitespaceClass() {
+  const codePoints = [];
+  for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) continue;
+    if (/\s/u.test(String.fromCodePoint(codePoint))) {
+      codePoints.push(`\\u${codePoint.toString(16).padStart(4, "0")}`);
+    }
+  }
+  return codePoints.join("");
+}
+
+/** @param {string} sql */
+function visibleTextWhitespaceClasses(sql) {
+  return [...sql.matchAll(/'\[((?:\\u[0-9a-f]{4})+)\]\+'/g)].map(
+    (match) => match[1]
+  );
+}
 
 test("human review view parsing and links share canonical defaults", () => {
   assert.deepEqual(humanReviewViewFromRecord(undefined), {
@@ -599,6 +622,19 @@ test("browser fixture storyboards cover every declared review renderer option an
       `${optionalDateField} string variation`
     );
   }
+  const civilDatePayloads = datePayloads.filter(
+    (payload) => payload.mode === "date"
+  );
+  assert.ok(
+    civilDatePayloads.some((payload) => payload.display_timezone == null),
+    "date mode null timezone"
+  );
+  assert.ok(
+    civilDatePayloads.some(
+      (payload) => payload.display_timezone === "America/New_York"
+    ),
+    "date mode configured timezone"
+  );
 
   const filePayloads = details.flatMap((detail) =>
     detail.actions
@@ -756,8 +792,14 @@ test("human review list statement scopes rows by account and supports focused fi
   assert.match(statement.sql, /i\.status = \$2/);
   assert.match(
     statement.sql,
-    /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\) ilike \$3/
+    /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\),\s+'\[[^\]]+\]\+',\s+' ',\s+'g'\s+\)\) ilike \$3/
   );
+  assert.deepEqual(visibleTextWhitespaceClasses(statement.sql), [
+    javascriptWhitespaceClass(),
+    javascriptWhitespaceClass(),
+    javascriptWhitespaceClass()
+  ]);
+  assert.doesNotMatch(statement.sql, /\[\[:space:\]\]/);
   assert.match(statement.sql, /or i\.caller_item_id ilike \$3/);
   assert.match(statement.sql, /or i\.row_type_display ilike \$3/);
   assert.match(statement.sql, /i\.priority in \(\$4, \$5\)/);
@@ -822,7 +864,11 @@ test("human review list statement supports canonical text, date, and null-last v
     ]
   });
   assert.match(titleAndCaller.sql, /regexp_replace\(i\.title_html/);
-  assert.match(titleAndCaller.sql, /'\[\[:space:\]\]\+'/);
+  assert.deepEqual(
+    [...new Set(visibleTextWhitespaceClasses(titleAndCaller.sql))],
+    [javascriptWhitespaceClass()]
+  );
+  assert.doesNotMatch(titleAndCaller.sql, /\[\[:space:\]\]/);
   assert.match(titleAndCaller.sql, /btrim\(regexp_replace/);
   assert.match(titleAndCaller.sql, /translate\([\s\S]*c\.display_name/);
 
@@ -968,6 +1014,33 @@ test("title sorting compares visible text rather than markup", () => {
     compareHumanReviewRows(alpha, beta, {
       sorts: [{ key: "title", direction: "asc" }]
     }) < 0
+  );
+});
+
+test("browser fixture search collapses the same visible text as production", () => {
+  const collapsed = browserFixtureReviewPage(
+    {
+      ...defaultHumanReviewView,
+      search: "Send: “Your"
+    },
+    { includePaginationRows: true }
+  );
+  assert.ok(
+    collapsed.rows.some((row) => row.callerItemId === "fixture-page-005"),
+    "the space inserted for </strong> must collapse before matching"
+  );
+
+  const uncollapsed = browserFixtureReviewPage(
+    {
+      ...defaultHumanReviewView,
+      search: "Send:  “Your"
+    },
+    { includePaginationRows: true }
+  );
+  assert.equal(
+    uncollapsed.rows.some((row) => row.callerItemId === "fixture-page-005"),
+    false,
+    "the search term itself is not whitespace-collapsed"
   );
 });
 
@@ -1158,7 +1231,6 @@ test("human review list shapes caller affordances and output read state", async 
         }
       ],
       linkButtons: [],
-      hasOverflowActions: false,
       output: {
         outputResultId: "00000000-0000-4000-8000-000000000004",
         actionValue: "approve",
@@ -1204,7 +1276,10 @@ test("human review detail lazily shapes links actions options and answerable sta
         action_value: "upload",
         overflow: true,
         popup_kind: "file_upload",
-        popup_payload: {}
+        popup_payload: {
+          label: "Attach file",
+          accept_mime_types: ["text/plain"]
+        }
       }
     ],
     [
@@ -1272,7 +1347,7 @@ test("human review detail lazily shapes links actions options and answerable sta
       value: "upload",
       overflow: true,
       popupKind: "file_upload",
-      popupPayload: { label: "", accept_mime_types: null },
+      popupPayload: { label: "Attach file", accept_mime_types: ["text/plain"] },
       answerable: true,
       options: []
     }
@@ -1283,42 +1358,212 @@ test("human review detail lazily shapes links actions options and answerable sta
   );
 });
 
+test("human review detail decodes every popup payload the input writer persists", async () => {
+  const submission = parseValidSubmission();
+  const stored = storedRowsFromSubmission(inputItemId, submission);
+  const query = detailQueryWithActions(
+    stored.actions.map((action) => ({
+      ...action,
+      popup_payload: jsonRoundTrip(action.popup_payload)
+    }))
+  );
+
+  const detail = await humanReviewDetailInTransaction(
+    query,
+    context,
+    inputItemId
+  );
+
+  assert.deepEqual(
+    detail?.actions.map((action) => [action.popupKind, action.popupPayload]),
+    submission.actions.map((action) => [action.popupKind, action.popupPayload])
+  );
+});
+
+test("human review detail fails loudly for malformed persisted popup payloads", async () => {
+  const cases = [
+    {
+      popup_kind: "free_text",
+      popup_payload: {
+        label: "Reason",
+        placeholder: null,
+        default_value: null,
+        min_length: null,
+        max_length: null
+      },
+      error:
+        /Malformed persisted popup_payload for input action action-1: multiline must be a boolean, got missing\./
+    },
+    {
+      popup_kind: "free_text",
+      popup_payload: {
+        label: "Reason",
+        placeholder: 7,
+        default_value: null,
+        multiline: false,
+        min_length: null,
+        max_length: null
+      },
+      error: /placeholder must be a string or null, got number\./
+    },
+    {
+      popup_kind: "single_select",
+      popup_payload: {},
+      error: /label must be a string, got missing\./
+    },
+    {
+      popup_kind: "multi_select",
+      popup_payload: { label: "Pick", min_selected: "1", max_selected: 2 },
+      error: /min_selected must be a finite number, got string\./
+    },
+    {
+      popup_kind: "date_picker",
+      popup_payload: {
+        label: "When",
+        mode: "time",
+        placeholder: null,
+        display_timezone: null,
+        min_value: null,
+        max_value: null
+      },
+      error: /mode must be "date" or "datetime", got string\./
+    },
+    {
+      popup_kind: "file_upload",
+      popup_payload: { label: "Attach", accept_mime_types: ["text/plain", 1] },
+      error: /accept_mime_types must be an array of strings or null/
+    },
+    {
+      popup_kind: "none",
+      popup_payload: [],
+      error:
+        /Malformed persisted popup_payload for input action action-1: expected a JSON object\./
+    }
+  ];
+
+  for (const { error, ...action } of cases) {
+    await assert.rejects(
+      () =>
+        humanReviewDetailInTransaction(
+          detailQueryWithActions([persistedAction(action)]),
+          context,
+          inputItemId
+        ),
+      error,
+      `${action.popup_kind} ${JSON.stringify(action.popup_payload)}`
+    );
+  }
+});
+
 test("human review detail fails loudly for an unrecognized persisted popup kind", async () => {
-  const query = fakeQuery([
-    [reviewRow({ details_html: "<p>Details</p>" })],
-    [],
-    [
-      {
-        input_action_id: "action-1",
-        display_order: 0,
-        display: "Approve",
-        icon: "check",
-        action_value: "approve",
-        overflow: false,
-        action_tone: null,
-        action_style: null,
-        popup_kind: "mystery",
-        popup_payload: {}
-      }
-    ],
-    [],
-    [
-      {
-        account_id: context.accountId,
-        label: "Review account",
-        tier: "hosted_paid",
-        billing_status: "active",
-        billing_grace_ends_at: null
-      }
-    ],
-    [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
-    []
+  const query = detailQueryWithActions([
+    persistedAction({ popup_kind: "mystery", popup_payload: {} })
   ]);
 
   await assert.rejects(
     () => humanReviewDetailInTransaction(query, context, inputItemId),
-    /Unsupported persisted popup_kind: "mystery"/
+    /Unsupported persisted popup_kind for input action action-1: "mystery"/
   );
+});
+
+test("human review list decodes every card visual the input writer persists", async () => {
+  const numeric = {
+    label: "Confidence",
+    value: 42,
+    display: "42%",
+    min_value: 0,
+    max_value: 100
+  };
+  const submissions = [
+    null,
+    { kind: "numeric_bar", ...numeric },
+    { kind: "progress_ring", ...numeric },
+    { kind: "pill", text: "Hot", color: "red" }
+  ].map((cardVisual) =>
+    parseValidSubmission(richPublicInput({ card_visual: cardVisual }))
+  );
+  const query = fakeQuery([
+    submissions.map((submission) => {
+      const { root } = storedRowsFromSubmission(inputItemId, submission);
+      return reviewRow({
+        card_visual_kind: root.card_visual_kind,
+        card_visual_payload: jsonRoundTrip(root.card_visual_payload)
+      });
+    })
+  ]);
+
+  const rows = await humanReviewListInTransaction(query, context, {});
+
+  assert.deepEqual(
+    rows.map((row) => row.cardVisual),
+    submissions.map((submission) => submission.cardVisual)
+  );
+});
+
+test("human review list fails loudly for malformed persisted card visuals", async () => {
+  const cases = [
+    {
+      card_visual_kind: "numeric_bar",
+      card_visual_payload: {
+        label: "Confidence",
+        display: "42%",
+        unit: null,
+        min_value: 0,
+        max_value: 100
+      },
+      error: new RegExp(
+        `Malformed persisted card_visual_payload for input item ${inputItemId}: value must be a finite number, got missing\\.`
+      )
+    },
+    {
+      card_visual_kind: "progress_ring",
+      card_visual_payload: {
+        label: "Confidence",
+        value: 42,
+        display: "42%",
+        unit: null,
+        min_value: 0,
+        max_value: 100,
+        color: 3
+      },
+      error: /color must be a string or null, got number\./
+    },
+    {
+      card_visual_kind: "pill",
+      card_visual_payload: { text: "Hot", icon: null },
+      error: /color must be a string, got missing\./
+    },
+    {
+      card_visual_kind: "pill",
+      card_visual_payload: "Hot",
+      error: /card_visual_payload for input item .+: expected a JSON object\./
+    },
+    {
+      card_visual_kind: null,
+      card_visual_payload: [],
+      error: /card_visual_payload for input item .+: expected a JSON object\./
+    },
+    {
+      card_visual_kind: "sparkline",
+      card_visual_payload: {},
+      error: new RegExp(
+        `Unsupported persisted card_visual_kind for input item ${inputItemId}: "sparkline"`
+      )
+    }
+  ];
+
+  for (const { error, ...overrides } of cases) {
+    await assert.rejects(
+      () =>
+        humanReviewListInTransaction(
+          fakeQuery([[reviewRow(overrides)]]),
+          context,
+          {}
+        ),
+      error,
+      JSON.stringify(overrides)
+    );
+  }
 });
 
 test("human review detail returns null for cross-account or missing rows", async () => {
@@ -1489,6 +1734,53 @@ test("human action form parser rejects malformed hidden fields before database w
     expectedRevision: 2,
     actionValue: "upload",
     response: { kind: "file_upload", file: uploadedFile }
+  });
+
+  const civilDate = answerForm();
+  civilDate.set("actionValue", "pick_date");
+  civilDate.set("popupKind", "date_picker");
+  civilDate.set("response.mode", "date");
+  civilDate.set("response.value_date", "2026-07-15");
+  assert.deepEqual(parseHumanAnswerForm(civilDate), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "pick_date",
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-07-15",
+      display_timezone: null
+    }
+  });
+
+  const configuredCivilDate = answerForm();
+  configuredCivilDate.set("actionValue", "pick_date");
+  configuredCivilDate.set("popupKind", "date_picker");
+  configuredCivilDate.set("response.mode", "date");
+  configuredCivilDate.set("response.display_timezone", "America/New_York");
+  configuredCivilDate.set("response.value_date", "2026-07-15");
+  assert.deepEqual(parseHumanAnswerForm(configuredCivilDate), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "pick_date",
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-07-15",
+      display_timezone: "America/New_York"
+    }
+  });
+
+  const datetimeWithoutTimezone = answerForm();
+  datetimeWithoutTimezone.set("popupKind", "date_picker");
+  datetimeWithoutTimezone.set("response.mode", "datetime");
+  datetimeWithoutTimezone.set("response.value_local", "2026-07-16T09:30");
+  assert.deepEqual(parseHumanAnswerForm(datetimeWithoutTimezone), {
+    ok: false
   });
 
   const invalidDate = answerForm();
@@ -1772,6 +2064,59 @@ function reviewRow(overrides = {}) {
     link_buttons: [],
     ...overrides
   };
+}
+
+/**
+ * Mirrors the JSON.stringify write into a jsonb column.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function jsonRoundTrip(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+/**
+ * @param {Partial<QueryResultRow>} overrides
+ * @returns {QueryResultRow}
+ */
+function persistedAction(overrides) {
+  return {
+    input_action_id: "action-1",
+    display_order: 0,
+    display: "Respond",
+    icon: "check",
+    action_value: "respond",
+    overflow: false,
+    action_tone: null,
+    action_style: null,
+    popup_kind: "none",
+    popup_payload: {},
+    ...overrides
+  };
+}
+
+/**
+ * @param {QueryResultRow[]} actions
+ * @returns {MockProductTransactionQuery}
+ */
+function detailQueryWithActions(actions) {
+  return fakeQuery([
+    [reviewRow()],
+    [],
+    actions,
+    [],
+    [
+      {
+        account_id: context.accountId,
+        label: "Review account",
+        tier: "hosted_paid",
+        billing_status: "active",
+        billing_grace_ends_at: null
+      }
+    ],
+    [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
+    []
+  ]);
 }
 
 /**

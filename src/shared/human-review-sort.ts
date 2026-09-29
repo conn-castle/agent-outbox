@@ -1,4 +1,5 @@
 import type { HumanReviewListRow } from "../server/human-review.ts";
+import { htmlTagStrippedText } from "./html-text.ts";
 import type {
   HumanReviewSort,
   HumanReviewSortDirection,
@@ -55,8 +56,8 @@ function compareByKey(
     }
     case "title":
       return compareHumanReviewTypeNames(
-        plainText(left.titleHtml),
-        plainText(right.titleHtml)
+        htmlTagStrippedText(left.titleHtml),
+        htmlTagStrippedText(right.titleHtml)
       );
     case "caller":
       return compareHumanReviewTypeNames(
@@ -124,11 +125,4 @@ function compareNullableNumbers(
   if (left === null) return right === null ? 0 : 1;
   if (right === null) return -1;
   return direction === "asc" ? left - right : right - left;
-}
-
-function plainText(value: string) {
-  return value
-    .replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }

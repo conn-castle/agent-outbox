@@ -69,6 +69,7 @@ import {
   compareHumanReviewRows,
   compareHumanReviewTypeNames
 } from "../../shared/human-review-sort";
+import { htmlTagStrippedText, htmlToPlainText } from "../../shared/html-text";
 import { AccountBanner } from "./AccountBanner";
 import {
   LastAnswerUndoForm,
@@ -1204,7 +1205,7 @@ export function ReviewWorkspace({
                       setSearch(event.target.value);
                       applyDebouncedSearch(event.target.value);
                     }}
-                    placeholder="Search title, customer, or summary"
+                    placeholder="Search title, subtitle, summary, caller, type, or item ID"
                   />
                 </label>
               </form>
@@ -1403,7 +1404,7 @@ export function ReviewWorkspace({
                     controlView,
                     previousDetailRow.inputItemId
                   ),
-                  label: plainText(previousDetailRow.titleHtml)
+                  label: htmlToPlainText(previousDetailRow.titleHtml)
                 }
               : null
           }
@@ -1411,7 +1412,7 @@ export function ReviewWorkspace({
             nextDetailRow
               ? {
                   href: humanReviewHref(controlView, nextDetailRow.inputItemId),
-                  label: plainText(nextDetailRow.titleHtml)
+                  label: htmlToPlainText(nextDetailRow.titleHtml)
                 }
               : null
           }
@@ -2158,20 +2159,13 @@ function removeIds(ids: Set<string>, removals: Set<string>) {
   return next;
 }
 
-function plainText(html: string) {
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function matchesReviewSearch(row: HumanReviewListRow, search: string) {
   const term = search.trim().toLowerCase();
   if (!term) return true;
   return [
-    plainText(row.titleHtml),
-    plainText(row.subtitleHtml),
-    plainText(row.summaryHtml),
+    htmlTagStrippedText(row.titleHtml),
+    htmlTagStrippedText(row.subtitleHtml),
+    htmlTagStrippedText(row.summaryHtml),
     row.callerItemId,
     row.rowType.display,
     row.caller.displayName
@@ -2213,7 +2207,7 @@ function mutationFailureMessage(
   const subject =
     normalizedFormText(submission.formData, "noticeSubject") ??
     (rowSnapshots.length === 1
-      ? plainText(rowSnapshots[0]?.titleHtml ?? "")
+      ? htmlToPlainText(rowSnapshots[0]?.titleHtml ?? "")
       : null);
   const quotedSubject = subject ? `“${subject}”` : "this review";
   if (submission.operation === "undo") {

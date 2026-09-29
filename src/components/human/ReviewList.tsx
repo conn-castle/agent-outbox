@@ -8,6 +8,7 @@ import {
   humanReviewHref,
   type HumanReviewView
 } from "../../shared/human-review-view";
+import { htmlToPlainText } from "../../shared/html-text";
 import { resolveSupportedColor } from "../../shared/input-schema-rules.ts";
 import { InlineQuickAction, type OnHumanMutation } from "./ActionForms";
 import { formatQueueTimestamp, formatUtcTimestamp } from "./review-format";
@@ -71,7 +72,7 @@ export function ReviewList({
     <ol className="review-list" aria-label="Review queue">
       {rows.map((row) => {
         const locked = lockedIds.has(row.inputItemId);
-        const title = plainText(row.titleHtml);
+        const title = htmlToPlainText(row.titleHtml);
         const selected = row.inputItemId === selectedId;
         const rowAccentColor = row.rowAccentColor
           ? resolveSupportedColor(row.rowAccentColor)
@@ -89,7 +90,7 @@ export function ReviewList({
                 inert={locked || undefined}
               >
                 <ReviewRowFrame
-                  className={`review-row row-status-${row.status} row-priority-${row.priority}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
+                  className={`review-row row-status-${row.status}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
                     selectionMode ? " selection-mode" : ""
                   }`}
                   style={
@@ -459,13 +460,6 @@ function OptimisticReviewRow({
 
 function quickActionClass(action: HumanReviewListRow["bulkActions"][number]) {
   return actionAppearanceClass("inline-action-button", action);
-}
-
-function plainText(html: string) {
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function htmlWithoutAnchors(html: string) {
