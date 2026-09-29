@@ -33,6 +33,11 @@ import {
 } from "../src/components/human/review-format.ts";
 import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
 import {
+  parseValidSubmission,
+  richPublicInput,
+  storedRowsFromSubmission
+} from "./helpers/canonical-input.mjs";
+import {
   isSupportedColor,
   SUPPORTED_LUCIDE_ICON_NAMES
 } from "../src/shared/input-schema-rules.ts";
@@ -1216,7 +1221,10 @@ test("human review detail lazily shapes links actions options and answerable sta
         action_value: "upload",
         overflow: true,
         popup_kind: "file_upload",
-        popup_payload: {}
+        popup_payload: {
+          label: "Signed PDF",
+          accept_mime_types: ["application/pdf"]
+        }
       }
     ],
     [
@@ -1284,7 +1292,10 @@ test("human review detail lazily shapes links actions options and answerable sta
       value: "upload",
       overflow: true,
       popupKind: "file_upload",
-      popupPayload: { label: "", accept_mime_types: null },
+      popupPayload: {
+        label: "Signed PDF",
+        accept_mime_types: ["application/pdf"]
+      },
       answerable: true,
       options: []
     }
@@ -1295,43 +1306,213 @@ test("human review detail lazily shapes links actions options and answerable sta
   );
 });
 
-test("human review detail fails loudly for an unrecognized persisted popup kind", async () => {
-  const query = fakeQuery([
-    [reviewRow({ details_html: "<p>Details</p>" })],
-    [],
-    [
-      {
-        input_action_id: "action-1",
-        display_order: 0,
-        display: "Approve",
-        icon: "check",
-        action_value: "approve",
-        overflow: false,
-        action_tone: null,
-        action_style: null,
-        popup_kind: "mystery",
-        popup_payload: {}
-      }
-    ],
-    [],
-    [
-      {
-        account_id: context.accountId,
-        label: "Review account",
-        tier: "hosted_paid",
-        billing_status: "active",
-        billing_grace_ends_at: null
-      }
-    ],
-    [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
-    []
-  ]);
+for (const cardVisual of [
+  undefined,
+  {
+    kind: "numeric_bar",
+    label: "Confidence",
+    value: 92,
+    display: "92",
+    unit: "%",
+    min_value: 0,
+    max_value: 100
+  },
+  { kind: "pill", text: "Needs review", icon: "check", color: "blue" }
+]) {
+  test(`human review detail decodes every accepted popup and ${cardVisual?.kind ?? "progress_ring"} visual as persisted`, async () => {
+    const submission = parseValidSubmission(
+      richPublicInput(cardVisual ? { card_visual: cardVisual } : {})
+    );
+    // Stored rows pass through jsonb, so decode what JSON serialization keeps.
+    const stored = JSON.parse(
+      JSON.stringify(storedRowsFromSubmission(inputItemId, submission))
+    );
+    const query = fakeQuery([
+      [
+        reviewRow({
+          card_visual_kind: stored.root.card_visual_kind,
+          card_visual_payload: stored.root.card_visual_payload
+        })
+      ],
+      [],
+      stored.actions,
+      stored.options,
+      [
+        {
+          account_id: context.accountId,
+          label: "Review account",
+          tier: "hosted_paid",
+          billing_status: "active",
+          billing_grace_ends_at: null
+        }
+      ],
+      [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
+      []
+    ]);
 
-  await assert.rejects(
-    () => humanReviewDetailInTransaction(query, context, inputItemId),
-    /Unsupported persisted popup_kind: "mystery"/
-  );
-});
+    const detail = await humanReviewDetailInTransaction(
+      query,
+      context,
+      inputItemId
+    );
+
+    assert.deepEqual(detail?.cardVisual, submission.cardVisual);
+    assert.deepEqual(
+      detail?.actions.map((action) => [action.popupKind, action.popupPayload]),
+      submission.actions.map((action) => [
+        action.popupKind,
+        action.popupPayload
+      ])
+    );
+  });
+}
+
+for (const { name, popupKind, popupPayload, expected } of [
+  {
+    name: "an unrecognized popup kind",
+    popupKind: "mystery",
+    popupPayload: {},
+    expected:
+      /Unsupported persisted popup_kind for input action action-1: "mystery"/
+  },
+  {
+    name: "a non-object payload",
+    popupKind: "single_select",
+    popupPayload: "Pick one",
+    expected:
+      /Invalid persisted popup_payload for input action action-1: payload must be an object\./
+  },
+  {
+    name: "a missing label",
+    popupKind: "single_select",
+    popupPayload: {},
+    expected:
+      /Invalid persisted popup_payload for input action action-1: label must be a string\./
+  },
+  {
+    name: "an unsupported date-picker mode",
+    popupKind: "date_picker",
+    popupPayload: {
+      label: "Due",
+      mode: "week",
+      placeholder: null,
+      display_timezone: null,
+      min_value: null,
+      max_value: null
+    },
+    expected:
+      /Invalid persisted popup_payload for input action action-1: mode must be "date" or "datetime"\./
+  },
+  {
+    name: "a non-boolean multiline flag",
+    popupKind: "free_text",
+    popupPayload: {
+      label: "Notes",
+      placeholder: null,
+      default_value: null,
+      multiline: "yes",
+      min_length: null,
+      max_length: null
+    },
+    expected:
+      /Invalid persisted popup_payload for input action action-1: multiline must be a boolean\./
+  },
+  {
+    name: "a non-numeric selection bound",
+    popupKind: "multi_select",
+    popupPayload: { label: "Checks", min_selected: "1", max_selected: 2 },
+    expected:
+      /Invalid persisted popup_payload for input action action-1: min_selected must be a finite number\./
+  },
+  {
+    name: "a non-string accepted MIME type",
+    popupKind: "file_upload",
+    popupPayload: { label: "Upload", accept_mime_types: ["text/plain", 7] },
+    expected:
+      /Invalid persisted popup_payload for input action action-1: accept_mime_types must be an array of strings or null\./
+  }
+]) {
+  test(`human review detail fails loudly for ${name} in a persisted popup`, async () => {
+    const query = fakeQuery([
+      [reviewRow()],
+      [],
+      [
+        {
+          input_action_id: "action-1",
+          display_order: 0,
+          display: "Respond",
+          icon: "check",
+          action_value: "respond",
+          overflow: false,
+          action_tone: null,
+          action_style: null,
+          popup_kind: popupKind,
+          popup_payload: popupPayload
+        }
+      ],
+      [],
+      [
+        {
+          account_id: context.accountId,
+          label: "Review account",
+          tier: "hosted_paid",
+          billing_status: "active",
+          billing_grace_ends_at: null
+        }
+      ],
+      [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
+      []
+    ]);
+
+    await assert.rejects(
+      () => humanReviewDetailInTransaction(query, context, inputItemId),
+      expected
+    );
+  });
+}
+
+for (const { name, kind, payload, expected } of [
+  {
+    name: "an unrecognized card visual kind",
+    kind: "sparkline",
+    payload: {},
+    expected:
+      /Unsupported persisted card_visual_kind for input item 00000000-0000-4000-8000-000000000003: "sparkline"/
+  },
+  {
+    name: "a non-numeric card visual value",
+    kind: "numeric_bar",
+    payload: {
+      label: "Confidence",
+      value: "92",
+      display: "92",
+      unit: "%",
+      min_value: 0,
+      max_value: 100
+    },
+    expected:
+      /Invalid persisted card_visual_payload for input item 00000000-0000-4000-8000-000000000003: value must be a finite number\./
+  },
+  {
+    name: "a missing pill color",
+    kind: "pill",
+    payload: { text: "Needs review", icon: null },
+    expected:
+      /Invalid persisted card_visual_payload for input item 00000000-0000-4000-8000-000000000003: color must be a string\./
+  }
+]) {
+  test(`human review page fails loudly for ${name}`, async () => {
+    const query = fakeQuery([
+      [reviewRow({ card_visual_kind: kind, card_visual_payload: payload })],
+      [{ total_count: "1" }]
+    ]);
+
+    await assert.rejects(
+      () => humanReviewPageInTransaction(query, context, { status: "pending" }),
+      expected
+    );
+  });
+}
 
 test("human review detail returns null for cross-account or missing rows", async () => {
   const query = fakeQuery([[]]);

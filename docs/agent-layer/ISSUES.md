@@ -63,11 +63,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: The former runtime accepted safe CSS colors, the current API accepts only named colors, and unrestricted legacy database values now silently fall back during rendering.
     Next step: Inventory persisted values and establish an explicit migration or compatibility path before release.
 
-- Issue 2026-08-17 persisted-review-payload-decoding: Malformed persisted payloads silently become plausible UI
-    Priority: High. Area: Human review / Data integrity
-    Description: Database mapping converts invalid action and visual strings, numbers, and modes into empty values, zeroes, or `date`, concealing bad persisted data.
-    Next step: Make invalid persisted payloads fail through an actionable, observable error path.
-
 - Issue 2026-08-17 raw-doc-relative-links: Canonical Markdown contains broken relative links
     Priority: Medium. Area: API documentation
     Description: The web renderer rewrites links to generated reference and OpenAPI routes, but the canonical Markdown targets files that do not exist at those relative paths when read directly.

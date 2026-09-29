@@ -872,10 +872,7 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
     subtitleHtml: row.subtitle_html,
     cornerHtml: row.corner_html,
     summaryHtml: row.summary_html,
-    cardVisual: cardVisualFromDatabase(
-      row.card_visual_kind,
-      row.card_visual_payload
-    ),
+    cardVisual: cardVisualFromDatabase(row),
     skipDisabled: row.skip_disabled,
     createdAt: timestampValue(row.created_at),
     updatedAt: timestampValue(row.updated_at),
@@ -886,11 +883,7 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
       slug: row.caller_slug,
       revoked: row.caller_revoked_at != null
     },
-    bulkActions: (row.bulk_actions ?? []).map((action) => ({
-      ...action,
-      popupKind: action.popupKind ?? "none",
-      overflow: action.overflow ?? false
-    })),
+    bulkActions: row.bulk_actions ?? [],
     linkButtons: row.link_buttons ?? [],
     output:
       row.output_result_id && row.output_action_value && row.output_answered_at
@@ -931,7 +924,10 @@ function reviewActionFromDatabase(
     answerable,
     options
   };
-  const payload = recordValue(action.popup_payload);
+  const payload = persistedPayload(
+    action.popup_payload,
+    `popup_payload for input action ${action.input_action_id}`
+  );
   switch (action.popup_kind) {
     case "none":
       return { ...base, popupKind: "none", popupPayload: {} };
@@ -940,28 +936,28 @@ function reviewActionFromDatabase(
         ...base,
         popupKind: "free_text",
         popupPayload: {
-          label: stringValue(payload.label),
-          placeholder: nullableStringValue(payload.placeholder),
-          default_value: nullableStringValue(payload.default_value),
-          multiline: payload.multiline === true,
-          min_length: nullableNumberValue(payload.min_length),
-          max_length: nullableNumberValue(payload.max_length)
+          label: persistedString(payload, "label"),
+          placeholder: persistedNullableString(payload, "placeholder"),
+          default_value: persistedNullableString(payload, "default_value"),
+          multiline: persistedBoolean(payload, "multiline"),
+          min_length: persistedNullableNumber(payload, "min_length"),
+          max_length: persistedNullableNumber(payload, "max_length")
         }
       };
     case "single_select":
       return {
         ...base,
         popupKind: "single_select",
-        popupPayload: { label: stringValue(payload.label) }
+        popupPayload: { label: persistedString(payload, "label") }
       };
     case "multi_select":
       return {
         ...base,
         popupKind: "multi_select",
         popupPayload: {
-          label: stringValue(payload.label),
-          min_selected: numberValue(payload.min_selected),
-          max_selected: numberValue(payload.max_selected)
+          label: persistedString(payload, "label"),
+          min_selected: persistedNumber(payload, "min_selected"),
+          max_selected: persistedNumber(payload, "max_selected")
         }
       };
     case "date_picker":
@@ -969,12 +965,15 @@ function reviewActionFromDatabase(
         ...base,
         popupKind: "date_picker",
         popupPayload: {
-          label: stringValue(payload.label),
-          mode: payload.mode === "datetime" ? "datetime" : "date",
-          placeholder: nullableStringValue(payload.placeholder),
-          display_timezone: nullableStringValue(payload.display_timezone),
-          min_value: nullableStringValue(payload.min_value),
-          max_value: nullableStringValue(payload.max_value)
+          label: persistedString(payload, "label"),
+          mode: persistedDatePickerMode(payload),
+          placeholder: persistedNullableString(payload, "placeholder"),
+          display_timezone: persistedNullableString(
+            payload,
+            "display_timezone"
+          ),
+          min_value: persistedNullableString(payload, "min_value"),
+          max_value: persistedNullableString(payload, "max_value")
         }
       };
     case "file_upload":
@@ -982,78 +981,147 @@ function reviewActionFromDatabase(
         ...base,
         popupKind: "file_upload",
         popupPayload: {
-          label: stringValue(payload.label),
-          accept_mime_types: Array.isArray(payload.accept_mime_types)
-            ? payload.accept_mime_types.filter(
-                (value): value is string => typeof value === "string"
-              )
-            : null
+          label: persistedString(payload, "label"),
+          accept_mime_types: persistedNullableStringArray(
+            payload,
+            "accept_mime_types"
+          )
         }
       };
     default:
       throw new Error(
-        `Unsupported persisted popup_kind: ${JSON.stringify(action.popup_kind)}`
+        `Unsupported persisted popup_kind for input action ${action.input_action_id}: ${JSON.stringify(action.popup_kind)}`
       );
   }
 }
 
 function cardVisualFromDatabase(
-  kind: string | null,
-  rawPayload: unknown
+  row: HumanReviewRow
 ): NormalizedCardVisual | null {
-  const payload = recordValue(rawPayload);
-  if (kind === "numeric_bar" || kind === "progress_ring") {
-    const numeric = {
-      label: stringValue(payload.label),
-      value: numberValue(payload.value),
-      display: stringValue(payload.display),
-      unit: nullableStringValue(payload.unit),
-      min_value: numberValue(payload.min_value),
-      max_value: numberValue(payload.max_value)
-    };
-    return kind === "numeric_bar"
-      ? { kind, payload: numeric }
-      : {
-          kind,
-          payload: {
-            ...numeric,
-            color: nullableStringValue(payload.color)
-          }
-        };
+  const kind = row.card_visual_kind;
+  if (kind == null) {
+    return null;
   }
+  if (kind !== "numeric_bar" && kind !== "progress_ring" && kind !== "pill") {
+    throw new Error(
+      `Unsupported persisted card_visual_kind for input item ${row.input_item_id}: ${JSON.stringify(kind)}`
+    );
+  }
+  const payload = persistedPayload(
+    row.card_visual_payload,
+    `card_visual_payload for input item ${row.input_item_id}`
+  );
   if (kind === "pill") {
     return {
       kind,
       payload: {
-        text: stringValue(payload.text),
-        icon: nullableStringValue(payload.icon),
-        color: stringValue(payload.color)
+        text: persistedString(payload, "text"),
+        icon: persistedNullableString(payload, "icon"),
+        color: persistedString(payload, "color")
       }
     };
   }
-  return null;
+  const numeric = {
+    label: persistedString(payload, "label"),
+    value: persistedNumber(payload, "value"),
+    display: persistedString(payload, "display"),
+    unit: persistedNullableString(payload, "unit"),
+    min_value: persistedNumber(payload, "min_value"),
+    max_value: persistedNumber(payload, "max_value")
+  };
+  return kind === "numeric_bar"
+    ? { kind, payload: numeric }
+    : {
+        kind,
+        payload: {
+          ...numeric,
+          color: persistedNullableString(payload, "color")
+        }
+      };
 }
 
-function recordValue(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+/**
+ * A persisted JSON payload paired with the column and row it came from, so a
+ * malformed field fails with an error that locates the bad stored data.
+ */
+type PersistedPayload = {
+  source: string;
+  fields: Record<string, unknown>;
+};
+
+function persistedPayload(value: unknown, source: string): PersistedPayload {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Invalid persisted ${source}: payload must be an object.`);
+  }
+  return { source, fields: value as Record<string, unknown> };
 }
 
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value : "";
+function invalidPersistedField(
+  payload: PersistedPayload,
+  key: string,
+  expected: string
+) {
+  return new Error(
+    `Invalid persisted ${payload.source}: ${key} must be ${expected}.`
+  );
 }
 
-function nullableStringValue(value: unknown) {
-  return typeof value === "string" ? value : null;
+function persistedString(payload: PersistedPayload, key: string) {
+  const value = payload.fields[key];
+  if (typeof value !== "string") {
+    throw invalidPersistedField(payload, key, "a string");
+  }
+  return value;
 }
 
-function numberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+function persistedNullableString(payload: PersistedPayload, key: string) {
+  const value = payload.fields[key];
+  if (value !== null && typeof value !== "string") {
+    throw invalidPersistedField(payload, key, "a string or null");
+  }
+  return value;
 }
 
-function nullableNumberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function persistedNullableStringArray(payload: PersistedPayload, key: string) {
+  const value = payload.fields[key];
+  if (
+    value !== null &&
+    !(
+      Array.isArray(value) &&
+      value.every((entry): entry is string => typeof entry === "string")
+    )
+  ) {
+    throw invalidPersistedField(payload, key, "an array of strings or null");
+  }
+  return value;
+}
+
+function persistedNumber(payload: PersistedPayload, key: string) {
+  const value = payload.fields[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw invalidPersistedField(payload, key, "a finite number");
+  }
+  return value;
+}
+
+function persistedNullableNumber(payload: PersistedPayload, key: string) {
+  return payload.fields[key] === null ? null : persistedNumber(payload, key);
+}
+
+function persistedBoolean(payload: PersistedPayload, key: string) {
+  const value = payload.fields[key];
+  if (typeof value !== "boolean") {
+    throw invalidPersistedField(payload, key, "a boolean");
+  }
+  return value;
+}
+
+function persistedDatePickerMode(payload: PersistedPayload) {
+  const value = payload.fields.mode;
+  if (value !== "date" && value !== "datetime") {
+    throw invalidPersistedField(payload, "mode", '"date" or "datetime"');
+  }
+  return value;
 }
 
 function nullableTimestampValue(value: string | Date | null): string | null {
