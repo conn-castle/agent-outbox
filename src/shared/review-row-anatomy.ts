@@ -136,13 +136,13 @@ export const REVIEW_ROW_ANATOMY_PARTS = {
     sizeBehavior: null
   },
   priority: {
-    label: "Priority treatment",
+    label: "Priority",
     description:
-      "Controls ordering and a restrained visible Low, Normal, High, or Urgent treatment; it never implies an unsupplied deadline.",
+      "Shows Low, Normal, High, or Urgent as a compact pill after the title and controls queue ordering; it never implies an unsupplied deadline.",
     fields: ["priority"],
     owner: "caller",
-    kind: "modifier",
-    sizeBehavior: null
+    kind: "content",
+    sizeBehavior: "horizontal"
   }
 } as const satisfies Record<
   string,

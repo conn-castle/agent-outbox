@@ -21,7 +21,7 @@ import {
 } from "./ReviewRowHeading";
 import { Feedback } from "./Feedback";
 import { actionAppearanceClass } from "./action-appearance";
-import { formatReviewPriority } from "./review-format";
+import { ReviewRowPriority } from "./ReviewRowPriority";
 
 export function ReviewList({
   rows,
@@ -90,7 +90,7 @@ export function ReviewList({
                 inert={locked || undefined}
               >
                 <ReviewRowFrame
-                  className={`review-row row-status-${row.status} row-priority-${row.priority}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
+                  className={`review-row row-status-${row.status}${rowAccentColor ? "" : " row-accent-default"}${selected ? " selected" : ""}${
                     selectionMode ? " selection-mode" : ""
                   }`}
                   style={
@@ -250,13 +250,7 @@ export function ReviewList({
                         html={htmlWithoutAnchors(row.titleHtml)}
                         className="row-title"
                       />
-                      <span
-                        className={`row-priority priority-${row.priority}`}
-                        aria-label={formatReviewPriority(row.priority)}
-                      >
-                        {row.priority.charAt(0).toUpperCase() +
-                          row.priority.slice(1)}
-                      </span>
+                      <ReviewRowPriority priority={row.priority} />
                     </div>
                   }
                   subtitle={

@@ -9,6 +9,7 @@ import { resolveSupportedColor } from "../../shared/input-schema-rules.ts";
 import { actionAppearanceClass } from "./action-appearance";
 import { CardVisual } from "./TypedContent";
 import { ReviewRowFrame } from "./ReviewRowFrame";
+import { ReviewRowPriority } from "./ReviewRowPriority";
 import {
   ReviewRowHeading,
   type ReviewRowHeadingLink
@@ -47,7 +48,7 @@ export function ReviewRowAnatomyFrame({
       <div className="review-list">
         <div className="review-row-container">
           <ReviewRowFrame
-            className={`review-row review-row-anatomy row-priority-high ${annotated ? "annotated" : "review-row-example"}`}
+            className={`review-row review-row-anatomy ${annotated ? "annotated" : "review-row-example"}`}
             style={
               {
                 "--row-accent": accent,
@@ -73,15 +74,6 @@ export function ReviewRowAnatomyFrame({
                 }
                 contextLinks={
                   annotated ? ANATOMY_CONTEXT_LINKS : EXAMPLE_CONTEXT_LINKS
-                }
-                contextAfter={
-                  annotated ? (
-                    <span className="priority priority-high">
-                      {REVIEW_ROW_ANATOMY_PARTS.priority.label}
-                    </span>
-                  ) : (
-                    <span className="sr-only">High priority</span>
-                  )
                 }
                 utilities={
                   <>
@@ -128,11 +120,19 @@ export function ReviewRowAnatomyFrame({
             href="#review-row-anatomy"
             ariaLabel="Review row anatomy details"
             title={
-              <span className="row-title">
-                {annotated
-                  ? "Title"
-                  : "Reply to Acme Corp about the revised launch date"}
-              </span>
+              <div className="row-title-line">
+                <span className="row-title">
+                  {annotated
+                    ? "Title"
+                    : "Reply to Acme Corp about the revised launch date"}
+                </span>
+                <ReviewRowPriority
+                  priority="high"
+                  className={slotClass("priority", "", annotated)}
+                >
+                  {annotated ? REVIEW_ROW_ANATOMY_PARTS.priority.label : null}
+                </ReviewRowPriority>
+              </div>
             }
             subtitle={
               <span className="row-subtitle">

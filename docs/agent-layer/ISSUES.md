@@ -28,6 +28,15 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-09-29 row-priority-accessible-name: Queue row priority is hidden from assistive technology
+    Priority: Low. Area: Human review / Accessibility
+    Description: The priority pill sits inside the row's `a.row-link`, whose `aria-label` ("Open review details for …", `ReviewRowFrame`) replaces its content in the accessible name, and the pill's own `aria-label` is on a generic `span`, where ARIA prohibits naming.
+    Next step: Expose each row's priority in its accessible name or description and drop the prohibited span label.
+
+- Issue 2026-09-29 api-docs-header-contrast: API docs header text is dark on the ink header on the UI guide page
+    Priority: Low. Area: API documentation / Visual design
+    Description: On `/docs/api/ui`, the nested `.human-workspace` anatomy previews make the `.shell:has(.human-workspace)` topbar rules in `app/globals.css` apply, so the brand and nav text compute to `rgb(35, 40, 44)` and `#697175` on the near-ink `api-docs.css` header, while `/docs/api` shows light text.
+
 - Issue 2026-09-29 anatomy-missing-row-utilities: Row anatomy omits live row utilities
     Priority: Low. Area: API documentation / Human review
     Description: `ReviewRowAnatomyFrame` claims to render the live row, but live pending rows also show the Copy identifier and feedback utilities, which have no `REVIEW_ROW_ANATOMY_PARTS` entry and do not appear in the anatomy previews or table.
@@ -37,16 +46,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Low. Area: Human review / Search
     Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text.
     Open question: Whether search and sort should operate on decoded text, which requires server-side decoding or stored plain-text columns.
-
-- Issue 2026-08-17 queue-priority-treatment: Queue priority lacks a meaningful visible treatment
-    Priority: Medium. Area: Human review / Visual design
-    Description: Priority is conveyed mainly through screen-reader text and a very small background-mix change that shares the caller-accent channel, so Low, Normal, High, and Urgent are not visibly distinct as documented.
-    Next step: Implement and verify the canonical visible priority treatment without conflating it with caller accent.
-
-- Issue 2026-08-17 review-css-override-layer: Review styling has conflicting duplicate definitions
-    Priority: High. Area: Human review / CSS architecture
-    Description: Multiple `.human-workspace` token blocks and repeated queue selectors define competing values, leaving an appended override layer that silently wins and obscures the effective design.
-    Next step: Consolidate the accepted appearance into one canonical style definition per token and component state.
 
 - Issue 2026-08-17 legacy-color-transition: Existing arbitrary persisted colors lack a transition policy
     Priority: High. Area: Human review / Data compatibility

@@ -13,42 +13,53 @@
 
 body:has(.shell > .human-workspace) {
   min-width: 20rem;
-  background: #f3efe6;
+  /* Mirrors --review-canvas; body is an ancestor, so the token is unavailable. */
+  background: #f6f5f1;
 }
 
 .human-workspace {
   /* Brand anchors: ink, review paper, warm canvas, and amber. The remaining
      colors are contrast-safe semantic shades derived for status UI. */
   --review-ink: #101416;
-  --review-paper: #fffdf8;
-  --review-paper-soft: #faf6ee;
-  --review-canvas: #f3efe6;
-  --review-line: #e2dbcf;
-  --review-line-strong: #cfc5b7;
-  --review-text: #202526;
-  --review-muted: #667074;
-  --review-faint: #5f696b;
+  --review-paper: #fcfcfa;
+  --review-paper-soft: #f6f5f1;
+  --review-canvas: #f6f5f1;
+  --review-line: #d4cdc1;
+  --review-line-strong: #c9c5ba;
+  --review-text: #23282c;
+  --review-muted: #5f676b;
+  --review-faint: #687078;
   --review-accent: #f2a347;
-  --review-accent-dark: #a84e18;
-  --review-accent-soft: #fff0dc;
-  --review-green: #39714f;
-  --review-green-soft: #e9f2e9;
-  --review-red: #ad463b;
-  --review-red-soft: #fae8e4;
-  --review-gold: #906000;
-  --review-gold-soft: #f7edd8;
+  --review-accent-light: #f7bd69;
+  --review-accent-dark: #a85722;
+  --review-accent-soft: #fbf1df;
+  --review-green: #237a4b;
+  --review-green-soft: #eaf4ee;
+  --review-red: #b52b31;
+  --review-red-soft: #faeaeb;
+  --review-gold: #a86612;
+  --review-gold-soft: #f8eedf;
   --review-visual-neutral: #6c6960;
+  --queue-type-label: 0.75rem;
+  --queue-type-meta: 0.8125rem;
+  --queue-type-body: 0.875rem;
+  --queue-type-title: 1rem;
   position: relative;
   z-index: 0;
   display: grid;
-  grid-template-rows: 3.25rem minmax(0, 1fr);
+  grid-template-rows: 3.75rem minmax(0, 1fr);
   width: 100%;
   min-height: 100dvh;
+  margin: 0 auto;
   background: var(--review-canvas);
   color: var(--review-text);
   color-scheme: light;
   font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   font-optical-sizing: auto;
 }
 
@@ -99,13 +110,14 @@ body:has(.shell > .human-workspace) {
   z-index: 60;
   display: grid;
   grid-row: 1;
-  grid-template-columns: minmax(12rem, 1fr) auto;
   align-items: center;
-  min-height: 3.25rem;
-  padding-inline: max(1rem, calc((100vw - 100rem) / 2));
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid #3a3730;
   background: var(--review-ink);
   color: #f8f5ee;
+  grid-template-columns: minmax(12rem, 1fr) auto auto;
+  gap: 1rem;
+  min-height: 3.75rem;
+  padding-inline: max(1rem, calc((100vw - 69rem) / 2));
 }
 
 .human-workspace .app-brand {
@@ -114,16 +126,17 @@ body:has(.shell > .human-workspace) {
   --wordmark-gap: 0.48rem;
   --wordmark-baseline-shift: 0.16rem;
   justify-self: start;
-  min-height: 3.25rem;
   color: #f8f5ee;
 }
 
 .human-workspace .app-location {
-  display: none;
-  color: #c9cdcb;
-  font-size: 0.69rem;
-  font-weight: 690;
   letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: #b7b2a7;
+  font-size: var(--queue-type-meta);
+  font-weight: 500;
 }
 
 .human-workspace .app-account {
@@ -133,7 +146,6 @@ body:has(.shell > .human-workspace) {
   justify-self: end;
   gap: 0.85rem;
   min-width: 0;
-  min-height: 3.25rem;
 }
 
 .human-workspace .last-action-error {
@@ -229,10 +241,11 @@ body:has(.shell > .human-workspace) {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.055);
   color: #e8e9e5;
-  font-size: 0.64rem;
-  font-weight: 640;
   list-style: none;
   cursor: pointer;
+  font-size: var(--queue-type-meta);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .human-workspace .account-banner > summary:hover,
@@ -265,8 +278,8 @@ body:has(.shell > .human-workspace) {
   border-radius: 50%;
   background: #f5cf9f;
   color: #743712;
-  font-size: 0.67rem;
-  font-weight: 800;
+  font-size: var(--queue-type-label);
+  font-weight: 700;
 }
 
 .human-workspace .account-popover {
@@ -282,7 +295,7 @@ body:has(.shell > .human-workspace) {
   overflow-y: auto;
   border: 1px solid var(--review-line-strong);
   border-radius: 0.75rem;
-  background: rgba(255, 253, 248, 0.94);
+  background: color-mix(in srgb, var(--review-paper) 94%, transparent);
   color: var(--review-text);
   box-shadow: 0 1.2rem 3rem rgba(17, 22, 23, 0.22);
   backdrop-filter: blur(20px) saturate(145%);
@@ -556,7 +569,7 @@ body:has(.shell > .human-workspace) {
 
 @media (prefers-reduced-transparency: reduce) {
   .human-workspace .account-popover {
-    background: #fffdf8;
+    background: var(--review-paper);
     backdrop-filter: none;
   }
 }
@@ -619,24 +632,20 @@ body:has(.shell > .human-workspace) {
   grid-row: 2;
   grid-template-columns: minmax(0, 1fr) var(--detail-pane-width);
   gap: 0.75rem;
-  width: min(calc(100% - 2rem), 100rem);
+  width: min(calc(100% - 2rem), 92rem);
   min-height: 0;
-  margin: 0.75rem auto 0;
+  margin: 1.5rem auto 0;
 }
 
 .human-workspace .workspace-body.queue-only {
   display: block;
+  width: min(calc(100% - 2rem), 69rem);
 }
 
 .human-workspace .queue-pane,
 .human-workspace .detail-pane {
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
-  border: 1px solid var(--review-line-strong);
-  border-radius: 0.7rem 0.7rem 0 0;
-  background: var(--review-paper);
-  box-shadow: 0 0.8rem 2.6rem rgba(50, 43, 36, 0.07);
 }
 
 .human-workspace .queue-pane {
@@ -646,6 +655,10 @@ body:has(.shell > .human-workspace) {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   container-name: review-queue;
   container-type: inline-size;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* Queue tools */
@@ -653,32 +666,36 @@ body:has(.shell > .human-workspace) {
 .human-workspace .queue-header {
   position: relative;
   z-index: 20;
-  display: flex;
   grid-row: 1;
   align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 1rem;
-  min-height: 3.7rem;
-  padding: 0.55rem 0.65rem 0.55rem 0.95rem;
-  border-bottom: 1px solid var(--review-line);
-  background: rgba(255, 253, 248, 0.94);
-  backdrop-filter: blur(18px) saturate(135%);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .human-workspace .queue-heading {
-  display: flex;
   align-items: center;
-  gap: 0.6rem;
-  flex: none;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 0.65rem;
+  width: 100%;
 }
 
 .human-workspace .queue-heading h2 {
   margin: 0;
   color: var(--review-text);
-  font-size: 1.05rem;
-  font-weight: 760;
-  line-height: 1.1;
-  letter-spacing: -0.035em;
+  grid-column: 1;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.75rem, 2.2vw, 2rem);
+  font-weight: 600;
+  letter-spacing: -0.028em;
+  line-height: 1.08;
 }
 
 .human-workspace .queue-heading-shortcuts {
@@ -708,32 +725,42 @@ body:has(.shell > .human-workspace) {
   align-items: center;
   gap: 0.25rem;
   min-height: 1.55rem;
-  padding: 0 0.5rem;
-  border: 1px solid var(--review-line-strong);
-  border-radius: 999px;
-  background: var(--review-paper-soft);
   color: var(--review-muted);
-  font-size: 0.62rem;
+  grid-column: 2;
+  align-self: end;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--queue-type-meta);
+  font-weight: 500;
 }
 
 .human-workspace .queue-count strong {
-  font-size: 0.69rem;
-  font-weight: 800;
   font-variant-numeric: tabular-nums;
+  font-size: var(--queue-type-meta);
+  font-weight: 700;
 }
 
 .human-workspace .review-controls {
-  display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 0.42rem;
   min-width: 0;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(17rem, 1fr) auto auto;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.55rem;
+  border: 1px solid var(--review-line);
+  border-radius: 0.5rem;
+  background: var(--review-paper);
+  box-shadow: 0 1px 2px rgba(23, 22, 18, 0.05);
 }
 
 .human-workspace .review-search {
   display: grid;
   grid-template-columns: 2.35rem minmax(0, 1fr);
-  width: clamp(10.5rem, 18vw, 16rem);
+  width: 100%;
 }
 
 .human-workspace .review-search label {
@@ -742,15 +769,13 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .review-search input {
   width: 100%;
-  min-height: 2.35rem;
   padding: 0 0.75rem;
   border: 1px solid var(--review-line-strong);
   border-left: 0;
   border-radius: 0 0.45rem 0.45rem 0;
-  background: var(--review-paper-soft);
   color: var(--review-text);
-  font-size: 0.72rem;
   outline: 0;
+  font-size: var(--queue-type-body);
 }
 
 .human-workspace .review-search input::placeholder {
@@ -761,13 +786,11 @@ body:has(.shell > .human-workspace) {
 .human-workspace .review-search > button {
   display: grid;
   width: 2.35rem;
-  min-height: 2.35rem;
   padding: 0;
   place-items: center;
   border: 1px solid var(--review-line-strong);
   border-right: 0;
   border-radius: 0.45rem 0 0 0.45rem;
-  background: var(--review-paper-soft);
   color: var(--review-muted);
 }
 
@@ -787,12 +810,12 @@ body:has(.shell > .human-workspace) {
 .human-workspace .filter-controls {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  min-height: 2.35rem;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--review-muted);
+  min-height: 2.2rem;
+  gap: 0.4rem;
 }
 
 .human-workspace .filter-controls label {
@@ -818,19 +841,30 @@ body:has(.shell > .human-workspace) {
 .human-workspace .selection-mode-button,
 .human-workspace .mobile-tools-button,
 .human-workspace .compact-selection-button {
-  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.38rem;
-  min-height: 2.35rem;
   padding: 0 0.68rem;
   border: 1px solid var(--review-line-strong);
   border-radius: 0.45rem;
-  background: var(--review-paper);
   color: var(--review-muted);
+  white-space: nowrap;
+}
+
+.human-workspace .selection-mode-button {
+  display: inline-flex;
+  min-height: 2.2rem;
+  background: var(--review-paper-soft);
+  font-size: var(--queue-type-meta);
+  font-weight: 600;
+}
+
+.human-workspace .mobile-tools-button,
+.human-workspace .compact-selection-button {
+  min-height: 2.35rem;
+  background: var(--review-paper);
   font-size: 0.67rem;
   font-weight: 700;
-  white-space: nowrap;
 }
 
 .human-workspace .compact-selection-button {
@@ -893,20 +927,14 @@ body:has(.shell > .human-workspace) {
   grid-row: 3;
   min-height: 0;
   overflow: visible;
-  background: var(--review-paper);
+  container: review-queue / inline-size;
+  margin-top: 1rem;
+  border: 1px solid var(--review-line);
+  border-bottom: 0;
+  background: transparent;
   scrollbar-gutter: stable;
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    #000 0,
-    #000 calc(100% - 2rem),
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    #000 0,
-    #000 calc(100% - 2rem),
-    transparent 100%
-  );
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .human-workspace .review-list,
@@ -924,8 +952,9 @@ body:has(.shell > .human-workspace) {
   min-height: 4.5rem;
   margin: 0;
   color: var(--review-faint);
-  font-size: 0.62rem;
-  font-weight: 650;
+  background: var(--review-paper);
+  font-size: var(--queue-type-label);
+  font-weight: 600;
 }
 
 .human-workspace .queue-end a {
@@ -937,8 +966,9 @@ body:has(.shell > .human-workspace) {
   border-radius: 0.38rem;
   background: var(--review-accent-soft);
   color: var(--review-accent-dark);
-  font-weight: 740;
   text-decoration: none;
+  font-size: var(--queue-type-meta);
+  font-weight: 600;
 }
 
 .human-workspace .queue-keyboard-hint {
@@ -967,7 +997,11 @@ body:has(.shell > .human-workspace) {
   display: flex;
   flex-direction: column;
   overflow: visible;
+  border: 1px solid var(--review-line-strong);
   border-top-color: #9d9284;
+  border-radius: 0.7rem 0.7rem 0 0;
+  background: var(--review-paper);
+  box-shadow: 0 0.8rem 2.6rem rgba(50, 43, 36, 0.07);
 }
 
 .human-workspace .detail-scroll {
@@ -1002,8 +1036,6 @@ body:has(.shell > .human-workspace) {
   background: transparent;
   margin: 0;
   color: var(--review-muted);
-  font-size: var(--queue-type-label);
-  font-weight: 650;
   text-decoration: none;
 }
 
@@ -1073,8 +1105,6 @@ body:has(.shell > .human-workspace) {
   border-radius: 0.4rem;
   color: var(--review-muted);
   background: var(--review-paper);
-  font-size: var(--queue-type-label);
-  font-weight: 650;
   text-decoration: none;
 }
 
@@ -1130,8 +1160,6 @@ body:has(.shell > .human-workspace) {
   gap: 0.35rem;
   margin: 0 0 0.48rem;
   color: var(--review-muted);
-  font-size: 0.6rem;
-  font-weight: 650;
 }
 
 .human-workspace .detail-kicker svg {
@@ -1152,7 +1180,6 @@ body:has(.shell > .human-workspace) {
 .human-workspace .detail-subtitle {
   margin-top: 0.55rem;
   color: var(--review-muted);
-  font-size: 0.76rem;
   line-height: 1.42;
 }
 
@@ -1165,7 +1192,6 @@ body:has(.shell > .human-workspace) {
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--review-line);
   color: var(--review-faint);
-  font-size: 0.57rem;
 }
 
 .human-workspace .detail-meta > .card-visual {
@@ -1290,15 +1316,16 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .detail-meta .priority {
+  display: inline-flex;
+  align-items: center;
   min-height: 1.5rem;
   padding: 0 0.45rem;
   border-radius: 999px;
   background: #eeece7;
   color: var(--review-muted);
-}
-
-.human-workspace .detail-meta .priority::before {
-  content: none;
+  font-size: var(--queue-type-label);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .human-workspace .detail-meta .priority-high {
@@ -1331,8 +1358,6 @@ body:has(.shell > .human-workspace) {
 .human-workspace .detail-section-label {
   margin: 0 0 0.45rem;
   color: var(--review-faint);
-  font-size: 0.57rem;
-  font-weight: 790;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -1340,17 +1365,16 @@ body:has(.shell > .human-workspace) {
 .human-workspace .detail-summary {
   max-width: 70ch;
   color: var(--review-text);
-  font-size: 0.9rem;
   font-weight: 540;
   line-height: 1.46;
   overflow-wrap: anywhere;
   white-space: pre-line;
+  font-size: var(--queue-type-body);
 }
 
 .human-workspace .detail-body {
   max-width: 70ch;
   color: #505a5c;
-  font-size: 0.76rem;
   line-height: 1.6;
   overflow-wrap: anywhere;
   white-space: pre-line;
@@ -1424,7 +1448,7 @@ body:has(.shell > .human-workspace) {
   border-radius: 0.45rem;
   background: #f0ece5;
   color: #303638;
-  font-size: 0.68rem;
+  font-size: var(--queue-type-label);
 }
 
 .human-workspace .link-buttons {
@@ -1449,7 +1473,6 @@ body:has(.shell > .human-workspace) {
   display: grid;
   gap: 0.18rem;
   margin-right: auto;
-  font-size: 0.66rem;
 }
 
 .human-workspace .answered-state > div span {
@@ -1647,9 +1670,7 @@ body:has(.shell > .human-workspace) {
 .human-workspace .secondary-button {
   width: 100%;
   min-height: 2.75rem;
-  border: 1px solid var(--review-line-strong);
-  background: var(--review-paper);
-  color: var(--review-text);
+  justify-content: center;
 }
 
 .human-workspace .action-triggers :where(.action-button, .secondary-button),
@@ -1799,7 +1820,6 @@ body:has(.shell > .human-workspace) {
   border-radius: 0.4rem;
   background: var(--review-paper-soft);
   color: var(--review-muted);
-  font-size: 0.61rem;
   font-weight: 700;
   list-style: none;
 }
@@ -2082,14 +2102,15 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .empty-state p {
   max-width: 19rem;
-  font-size: 0.72rem;
   line-height: 1.45;
+  font-size: var(--queue-type-meta);
 }
 
-/* Queue presentation adapted from the August 2026 UI design handoff. The
-   production workspace keeps its server-backed filters, lazy detail pane,
-   selection, pagination, and action forms while sharing the handoff's visual
-   hierarchy and row geometry. */
+/* Queue list presentation: row selection, status, and action controls;
+   header navigation links; view controls (search, filter, and sort popovers),
+   filter chips, and pagination; review-row geometry; the --queue-type-* text
+   sizes shared by detail and action surfaces; then the responsive viewport
+   and container rules for the workspace. */
 
 .human-workspace .row-select {
   position: absolute;
@@ -2115,34 +2136,10 @@ body:has(.shell > .human-workspace) {
   color: var(--review-muted);
   text-transform: capitalize;
   white-space: nowrap;
-}
-
-.human-workspace .priority {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  color: var(--review-muted);
-  white-space: nowrap;
-}
-
-.human-workspace .priority::before {
-  width: 0.34rem;
-  height: 0.34rem;
-  border-radius: 50%;
-  background: currentColor;
-  content: "";
-}
-
-.human-workspace .priority-urgent {
-  color: var(--review-red);
-}
-
-.human-workspace .priority-high {
-  color: var(--review-gold);
-}
-
-.human-workspace .priority-low {
-  color: var(--review-faint);
+  min-height: 1.4rem;
+  padding: 0 0.45rem;
+  font-size: var(--queue-type-label);
+  font-weight: 600;
 }
 
 .human-workspace .row-time {
@@ -2152,6 +2149,7 @@ body:has(.shell > .human-workspace) {
   color: var(--review-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  font-size: var(--queue-type-meta);
 }
 
 .human-workspace .action-form {
@@ -2163,7 +2161,6 @@ body:has(.shell > .human-workspace) {
 .human-workspace .secondary-button {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 0.38rem;
   border: 1px solid var(--review-line-strong);
   border-radius: 0.43rem;
@@ -2200,13 +2197,18 @@ body:has(.shell > .human-workspace) {
 .human-workspace .row-overflow > summary {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   border: 1px solid var(--review-line);
   border-radius: 0.43rem;
   background: var(--review-paper-soft);
   color: var(--review-muted);
   cursor: pointer;
   list-style: none;
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 2.25rem;
+  padding: 0 0.65rem;
+  font-size: var(--queue-type-meta);
+  font-weight: 600;
 }
 
 .human-workspace .row-overflow > summary::-webkit-details-marker {
@@ -2221,59 +2223,10 @@ body:has(.shell > .human-workspace) {
   padding: 0.3rem;
   border: 1px solid var(--review-line-strong);
   border-radius: 0.5rem;
-  background: rgba(255, 253, 248, 0.98);
+  background: color-mix(in srgb, var(--review-paper) 98%, transparent);
   box-shadow: 0 0.7rem 1.8rem rgba(39, 34, 29, 0.16);
   backdrop-filter: blur(18px);
-}
-
-.human-workspace {
-  --review-ink: #101416;
-  --review-paper: #fcfcfa;
-  --review-paper-soft: #f6f5f1;
-  --review-canvas: #f6f5f1;
-  --review-line: #d4cdc1;
-  --review-line-strong: #c9c5ba;
-  --review-text: #23282c;
-  --review-muted: #5f676b;
-  --review-faint: #687078;
-  --review-accent: #f2a347;
-  --review-accent-light: #f7bd69;
-  --review-accent-dark: #a85722;
-  --review-accent-soft: #fbf1df;
-  --review-green: #237a4b;
-  --review-green-soft: #eaf4ee;
-  --review-red: #b52b31;
-  --review-red-soft: #faeaeb;
-  --review-gold: #a86612;
-  --review-gold-soft: #f8eedf;
-  --queue-type-label: 0.75rem;
-  --queue-type-meta: 0.8125rem;
-  --queue-type-body: 0.875rem;
-  --queue-type-title: 1rem;
-  grid-template-rows: 3.75rem minmax(0, 1fr);
-  font-family:
-    ui-sans-serif,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-}
-
-.human-workspace .app-bar {
-  grid-template-columns: minmax(12rem, 1fr) auto auto;
-  gap: 1rem;
-  min-height: 3.75rem;
-  padding-inline: max(1rem, calc((100vw - 69rem) / 2));
-  border-color: #3a3730;
-}
-
-.human-workspace .app-location {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  color: #b7b2a7;
-  font-size: var(--queue-type-meta);
-  font-weight: 500;
+  min-width: 12rem;
 }
 
 .human-workspace .app-location a {
@@ -2294,57 +2247,9 @@ body:has(.shell > .human-workspace) {
   font-weight: 700;
 }
 
-.human-workspace .account-banner > summary {
-  font-size: var(--queue-type-meta);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.human-workspace .account-avatar {
-  font-size: var(--queue-type-label);
-  font-weight: 700;
-}
-
 .human-workspace .app-brand,
 .human-workspace .app-account {
   min-height: 3.75rem;
-}
-
-.human-workspace .workspace-body,
-.human-workspace .workspace-body.queue-only {
-  width: min(calc(100% - 2rem), 69rem);
-  margin-top: 1.5rem;
-  margin-inline: auto;
-}
-
-.human-workspace .workspace-body:not(.queue-only) {
-  width: min(calc(100% - 2rem), 92rem);
-}
-
-.human-workspace .queue-pane {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.human-workspace .queue-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1rem;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  backdrop-filter: none;
-}
-
-.human-workspace .queue-heading {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.25rem 0.65rem;
-  width: 100%;
 }
 
 .human-workspace .queue-eyebrow {
@@ -2358,73 +2263,14 @@ body:has(.shell > .human-workspace) {
   text-transform: uppercase;
 }
 
-.human-workspace .queue-heading h2 {
-  grid-column: 1;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.75rem, 2.2vw, 2rem);
-  font-weight: 600;
-  letter-spacing: -0.028em;
-  line-height: 1.08;
-}
-
-.human-workspace .queue-count {
-  grid-column: 2;
-  align-self: end;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  font-size: var(--queue-type-meta);
-  font-weight: 500;
-}
-
-.human-workspace .queue-count strong {
-  font-size: var(--queue-type-meta);
-  font-weight: 700;
-}
-
-.human-workspace .review-controls {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(17rem, 1fr) auto auto;
-  gap: 0.4rem;
-  width: 100%;
-  padding: 0.55rem;
-  border: 1px solid var(--review-line);
-  border-radius: 0.5rem;
-  background: var(--review-paper);
-  box-shadow: 0 1px 2px rgba(23, 22, 18, 0.05);
-}
-
-.human-workspace .review-search {
-  width: 100%;
-}
-
 .human-workspace .review-search input,
 .human-workspace .review-search > button {
   min-height: 2.2rem;
   background: var(--review-paper-soft);
 }
 
-.human-workspace .review-search input {
-  font-size: var(--queue-type-body);
-}
-
-.human-workspace .filter-controls {
-  min-height: 2.2rem;
-  gap: 0.4rem;
-}
-
 .human-workspace .sort-control > .view-control-trigger {
   max-width: 14rem;
-}
-
-.human-workspace .view-control-trigger,
-.human-workspace .selection-mode-button {
-  min-height: 2.2rem;
-  background: var(--review-paper-soft);
-  font-size: var(--queue-type-meta);
-  font-weight: 600;
 }
 
 .human-workspace .view-control {
@@ -2600,6 +2446,10 @@ body:has(.shell > .human-workspace) {
   align-items: center;
   justify-content: center;
   gap: 0.3rem;
+}
+
+.human-workspace .view-reset-button,
+.human-workspace .sort-icon-button {
   min-height: 2rem;
   border: 0;
   border-radius: 0.35rem;
@@ -2673,8 +2523,7 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .filter-choice-list label:hover,
-.human-workspace .filter-choice-list label:has(input:focus-visible),
-.human-workspace .filter-choice-list label:has(input:checked) {
+.human-workspace .filter-choice-list label:has(input:focus-visible) {
   border-color: var(--review-line);
   background: var(--review-paper-soft);
 }
@@ -3027,17 +2876,6 @@ body:has(.shell > .human-workspace) {
   text-underline-offset: 0.15rem;
 }
 
-.human-workspace .queue-scroll {
-  container: review-queue / inline-size;
-  margin-top: 1rem;
-  border: 1px solid var(--review-line);
-  border-bottom: 0;
-  background: transparent;
-  scrollbar-gutter: stable;
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-
 .human-workspace .review-pagination {
   grid-row: 4;
   display: grid;
@@ -3114,7 +2952,6 @@ body:has(.shell > .human-workspace) {
 .human-workspace .review-row.selected {
   --row-accent: var(--review-accent);
   --row-hover-accent: var(--review-accent);
-  --row-accent-mix: 9%;
   --row-visual-column: 9.5rem;
   --row-action-button-width: 11.25rem;
   position: relative;
@@ -3130,7 +2967,7 @@ body:has(.shell > .human-workspace) {
     90deg,
     color-mix(
         in srgb,
-        var(--row-accent) var(--row-accent-mix),
+        var(--row-accent) 9%,
         var(--review-paper)
       )
       0,
@@ -3139,20 +2976,7 @@ body:has(.shell > .human-workspace) {
   box-shadow: none;
 }
 
-.human-workspace .review-row.row-priority-urgent {
-  --row-accent-mix: 13%;
-}
-
-.human-workspace .review-row.row-priority-high {
-  --row-accent-mix: 11%;
-}
-
-.human-workspace .review-row.row-priority-low {
-  --row-accent-mix: 7%;
-}
-
 .human-workspace .review-row.row-accent-default {
-  --row-accent-mix: 9%;
   --row-hover-accent: var(--review-accent);
 }
 
@@ -3399,11 +3223,21 @@ body:has(.shell > .human-workspace) {
 .human-workspace .row-utilities .row-skip-button {
   grid-column: 3;
   grid-row: 1;
+  min-height: 1.75rem;
+  width: 2rem;
+  height: 2rem;
+  justify-content: center;
+  gap: 0.32rem;
+  padding: 0 0.45rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
 }
 
 .human-workspace .row-utilities .row-overflow {
   grid-column: 4;
   grid-row: 1;
+  width: auto;
 }
 
 .human-workspace .row-utilities :where(a, button) {
@@ -3419,18 +3253,6 @@ body:has(.shell > .human-workspace) {
   font-weight: 500;
   line-height: 1;
   text-decoration: none;
-}
-
-.human-workspace .row-utilities .row-skip-button {
-  min-height: 1.75rem;
-  width: 2rem;
-  height: 2rem;
-  justify-content: center;
-  gap: 0.32rem;
-  padding: 0 0.45rem;
-  border: 0;
-  border-radius: 0.35rem;
-  background: transparent;
 }
 
 .human-workspace .row-utilities .row-skip-button svg {
@@ -3675,22 +3497,6 @@ body:has(.shell > .human-workspace) {
   white-space: nowrap;
 }
 
-.human-workspace .status-pill,
-.human-workspace .status-indicator {
-  min-height: 1.4rem;
-  padding: 0 0.45rem;
-  font-size: var(--queue-type-label);
-  font-weight: 600;
-}
-
-.human-workspace .priority {
-  min-height: auto;
-  padding: 0;
-  background: transparent;
-  font-size: var(--queue-type-label);
-  font-weight: 600;
-}
-
 .human-workspace .row-footer {
   display: flex;
   grid-column: 1 / -1;
@@ -3707,10 +3513,6 @@ body:has(.shell > .human-workspace) {
   font-size: var(--queue-type-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.human-workspace .row-time {
-  font-size: var(--queue-type-meta);
 }
 
 .human-workspace .row-actions {
@@ -3751,22 +3553,6 @@ body:has(.shell > .human-workspace) {
   grid-row: 2;
 }
 
-.human-workspace .row-overflow > summary {
-  width: 100%;
-}
-
-.human-workspace .row-overflow > summary {
-  justify-content: flex-start;
-  min-height: 2.25rem;
-  padding: 0 0.65rem;
-  font-size: var(--queue-type-meta);
-  font-weight: 600;
-}
-
-.human-workspace .row-overflow-menu {
-  min-width: 12rem;
-}
-
 .human-workspace .row-overflow-menu :where(a, button, span) {
   font-size: var(--queue-type-meta);
   font-weight: 600;
@@ -3775,12 +3561,6 @@ body:has(.shell > .human-workspace) {
 .human-workspace .row-overflow-menu .inline-action-form {
   margin: 0;
   width: 100%;
-}
-
-.human-workspace .row-utilities .row-overflow,
-.human-workspace .row-utilities .row-overflow > summary,
-.human-workspace .row-utilities .row-overflow-disabled {
-  width: auto;
 }
 
 .human-workspace .row-utilities .row-overflow > summary,
@@ -3796,6 +3576,9 @@ body:has(.shell > .human-workspace) {
   border: 0;
   border-radius: 0.35rem;
   background: transparent;
+}
+
+.human-workspace .row-utilities .row-overflow > summary {
   color: var(--review-muted);
 }
 
@@ -3856,21 +3639,6 @@ body:has(.shell > .human-workspace) {
   text-overflow: ellipsis;
 }
 
-.human-workspace .queue-end {
-  background: var(--review-paper);
-  font-size: var(--queue-type-label);
-  font-weight: 600;
-}
-
-.human-workspace .queue-end a {
-  font-size: var(--queue-type-meta);
-  font-weight: 600;
-}
-
-.human-workspace .empty-state p {
-  font-size: var(--queue-type-meta);
-}
-
 .human-workspace .queue-keyboard-hint,
 .human-workspace .queue-keyboard-hint kbd {
   font-size: var(--queue-type-label);
@@ -3893,17 +3661,12 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .detail-subtitle,
 .human-workspace .detail-body,
-.human-workspace .detail-summary,
 .human-workspace .link-buttons .secondary-button,
 .human-workspace .action-button,
 .human-workspace .secondary-button,
 .human-workspace .secondary-actions > summary,
 .human-workspace .answered-state > div {
   font-size: var(--queue-type-meta);
-}
-
-.human-workspace .detail-summary {
-  font-size: var(--queue-type-body);
 }
 
 .human-workspace .detail-meta .visual-meta span {
@@ -3918,11 +3681,6 @@ body:has(.shell > .human-workspace) {
   font-variant-numeric: tabular-nums;
 }
 
-.human-workspace .detail-body pre,
-.human-workspace .detail-summary pre {
-  font-size: var(--queue-type-label);
-}
-
 @media (max-width: 800px) {
   .human-workspace .workspace-body,
   .human-workspace .workspace-body.queue-only {
@@ -3933,8 +3691,9 @@ body:has(.shell > .human-workspace) {
   }
 
   .human-workspace .account-banner > summary {
-    width: 2.25rem;
     padding: 0.2rem;
+    width: 2.75rem;
+    min-height: 2.75rem;
   }
 
   .human-workspace .account-banner > summary > span:last-child {
@@ -3952,11 +3711,6 @@ body:has(.shell > .human-workspace) {
   .human-workspace .mobile-tools-button,
   .human-workspace .compact-selection-button {
     display: inline-flex;
-    min-height: 2.75rem;
-  }
-
-  .human-workspace .account-banner > summary {
-    width: 2.75rem;
     min-height: 2.75rem;
   }
 
@@ -4134,7 +3888,6 @@ body:has(.shell > .human-workspace) {
     left: 1rem;
   }
 
-  .human-workspace .sort-popover,
   .human-workspace .view-control:first-child .sort-popover {
     right: 0;
     left: 0;
@@ -4252,8 +4005,7 @@ body:has(.shell > .human-workspace) {
   }
 
   .human-workspace .row-copy,
-  .human-workspace .row-body,
-  .human-workspace .row-actions {
+  .human-workspace .row-body {
     grid-column: 1;
   }
 
@@ -4308,6 +4060,10 @@ body:has(.shell > .human-workspace) {
     grid-column: 1;
     grid-row: 1;
     justify-self: start;
+    min-width: 0;
+    white-space: normal;
+    line-height: 1.25;
+    padding-block: 0.3rem;
   }
 
   .human-workspace .row-link {
@@ -4319,13 +4075,6 @@ body:has(.shell > .human-workspace) {
     grid-column: 2;
     grid-row: 1;
     grid-template-columns: 2.75rem 2.75rem auto 2.75rem;
-  }
-
-  .human-workspace .row-type {
-    min-width: 0;
-    white-space: normal;
-    line-height: 1.25;
-    padding-block: 0.3rem;
   }
 
   .human-workspace .row-utilities .row-skip-button {
@@ -4505,6 +4254,11 @@ body:has(.shell > .human-workspace) {
   background-color: #ffe6a8;
 }
 
+/* The priority pill's own fill would otherwise hide its ownership color. */
+.human-row-anatomy-page .row-priority.anatomy-owner-caller {
+  background-color: #dceeff;
+}
+
 .human-row-anatomy-page .anatomy-size-fixed {
   --anatomy-size-color: #326b91;
 }
@@ -4572,6 +4326,9 @@ body:has(.shell > .human-workspace) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.anatomy-legend {
   gap: 0.45rem;
 }
 
@@ -5015,6 +4772,9 @@ body:has(.shell > .human-workspace) {
   .human-workspace .action-triggers :where(.action-button, .secondary-button),
   .human-workspace .action-triggers .secondary-actions {
     flex: 1 1 8rem;
+  }
+
+  .human-workspace .action-triggers .secondary-actions {
     min-width: 0;
   }
 

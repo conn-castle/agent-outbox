@@ -123,6 +123,12 @@ test("review-row anatomy uses the live structure and exposes content sizing", as
   await expect(
     wideFrame.getByText("Reply to Acme Corp about the revised launch date")
   ).toBeVisible();
+  // The example row shows the live visible priority pill right after the title.
+  const examplePriority = wideFrame.locator(
+    ".row-title-line > .row-title + .row-priority"
+  );
+  await expect(examplePriority).toBeVisible();
+  await expect(examplePriority).toHaveText("High");
   await expect(wideFrame.locator(".row-type .lucide-mail")).toBeVisible();
   const exampleHeadingStyles = await wideFrame.evaluate((frame) => {
     const corner = frame.querySelector<HTMLElement>(".corner-meta")!;
