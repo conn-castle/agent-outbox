@@ -29,6 +29,7 @@ import type {
   HumanReviewListRow
 } from "../../server/human-review.ts";
 import {
+  isHttpUrl,
   resolveSupportedColor,
   SUPPORTED_LUCIDE_ICON_NAMES
 } from "../../shared/input-schema-rules.ts";
@@ -228,7 +229,7 @@ export function CardVisual({
           style={
             {
               "--ring-progress": `${metrics.percent}%`,
-              "--ring-color": paletteColor ?? "#326b91"
+              "--ring-color": paletteColor ?? undefined
             } as React.CSSProperties
           }
           aria-hidden="true"
@@ -297,14 +298,7 @@ function numericVisualMetrics(
 }
 
 export function safeHref(url: string) {
-  try {
-    const parsed = new URL(url);
-    return ["http:", "https:", "mailto:"].includes(parsed.protocol)
-      ? url
-      : null;
-  } catch {
-    return null;
-  }
+  return isHttpUrl(url) ? url : null;
 }
 
 function boundedPercent(value: number, min: number, max: number) {

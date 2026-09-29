@@ -11,6 +11,7 @@ import {
   type LimitProfileSelector
 } from "./limits.ts";
 import {
+  isHttpUrl,
   isSupportedColor,
   SUPPORTED_ACTION_STYLES,
   SUPPORTED_ACTION_TONES,
@@ -1290,25 +1291,13 @@ function requiredHttpUrl(
   path: string
 ) {
   const value = source[key];
-  if (typeof value !== "string") {
+  if (typeof value !== "string" || !isHttpUrl(value)) {
     fields.push(
       fieldError(path, "invalid_url", `${path} must be an http or https URL.`)
     );
     return "";
   }
-
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      throw new TypeError("unsupported protocol");
-    }
-    return url.toString();
-  } catch {
-    fields.push(
-      fieldError(path, "invalid_url", `${path} must be an http or https URL.`)
-    );
-    return "";
-  }
+  return new URL(value).toString();
 }
 
 function requiredHtml(

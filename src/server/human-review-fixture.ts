@@ -90,11 +90,7 @@ export function browserFixtureReviewRows(
   options: BrowserFixtureReviewOptions = {}
 ): HumanReviewListRow[] {
   return browserFixtureReviewDetails(options).map(
-    ({ detailsHtml: _details, actions, linkButtons, ...row }) => ({
-      ...row,
-      linkButtons,
-      hasOverflowActions: actions.some((action) => action.overflow)
-    })
+    ({ detailsHtml: _details, actions: _actions, ...row }) => row
   );
 }
 
@@ -228,7 +224,6 @@ function applyFixtureResolvedState<T extends HumanReviewListRow>(
             undoEligible: true
           },
           bulkActions: [],
-          hasOverflowActions: false,
           ...("actions" in row
             ? {
                 actions: (

@@ -2390,18 +2390,6 @@ async function elementWidth(locator: Locator) {
   );
 }
 
-async function dragHorizontally(page: Page, locator: Locator, delta: number) {
-  const box = await locator.boundingBox();
-  expect(box).not.toBeNull();
-  if (!box) return;
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x + delta, y);
-  await page.mouse.up();
-}
-
 function deferred() {
   let resolve: () => void = () => {};
   const promise = new Promise<void>((innerResolve) => {

@@ -115,7 +115,6 @@ export type HumanReviewListRow = {
   output: HumanReviewOutputState | null;
   bulkActions: HumanReviewBulkAction[];
   linkButtons?: HumanReviewLinkButton[];
-  hasOverflowActions?: boolean;
 };
 
 export type HumanReviewLinkButton = {
@@ -893,9 +892,6 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
       overflow: action.overflow ?? false
     })),
     linkButtons: row.link_buttons ?? [],
-    hasOverflowActions: (row.bulk_actions ?? []).some(
-      (action) => action.overflow
-    ),
     output:
       row.output_result_id && row.output_action_value && row.output_answered_at
         ? {

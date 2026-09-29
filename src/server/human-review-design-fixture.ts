@@ -84,7 +84,6 @@ export function detailFromNormalizedSubmission(
       overflow: action.overflow
     })),
     linkButtons: input.linkButtons.map((link) => ({ ...link })),
-    hasOverflowActions: actions.some((action) => action.overflow),
     actions
   };
 }
