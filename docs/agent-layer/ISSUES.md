@@ -53,11 +53,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: The placeholder names `customer`, but the API exposes callers and caller item IDs, and production search covers more fields than the placeholder communicates.
     Next step: Make the placeholder describe the actual searchable concepts without introducing an unsupported domain field.
 
-- Issue 2026-08-17 palette-drift: The tracked palette duplicates canonical colors without a parity check
-    Priority: High. Area: Brand system / Single source of truth
-    Description: The static palette page manually repeats supported color names and hex values from `input-schema-rules.ts`, allowing the public reference and API contract to drift.
-    Next step: Derive the tracked palette from canonical color data or add an enforceable parity check.
-
 - Issue 2026-08-17 review-css-override-layer: Review styling has conflicting duplicate definitions
     Priority: High. Area: Human review / CSS architecture
     Description: Multiple `.human-workspace` token blocks and repeated queue selectors define competing values, leaving an appended override layer that silently wins and obscures the effective design.
