@@ -391,6 +391,55 @@ test(
   }
 );
 test(
+  "Stripe webhook writer records completed events after the status column is dropped",
+  {
+    skip: phase3DatabaseVerificationUrl
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const client = new Client({
+      connectionString: phase3DatabaseVerificationUrl
+    });
+    const eventId = `evt_status_contract_${crypto.randomUUID()}`;
+    await client.connect();
+    try {
+      await client.query("begin");
+      await client.query(`
+        alter table public.agent_outbox_stripe_webhook_events
+          drop column processing_status;
+      `);
+      const processed = await processStripeEventInTransaction(
+        /** @type {any} */ (
+          (/** @type {any} */ statement) =>
+            client.query(statement.sql, statement.values)
+        ),
+        /** @type {any} */ ({
+          id: eventId,
+          created: 1783209600,
+          type: "test.ignored"
+        })
+      );
+      assert.equal(processed, true);
+      const recorded = await client.query(
+        `
+          select processed_at is not null as has_completion_time
+          from public.agent_outbox_stripe_webhook_events
+          where stripe_event_id = $1
+        `,
+        [eventId]
+      );
+      assert.deepEqual(recorded.rows, [{ has_completion_time: true }]);
+    } finally {
+      try {
+        await client.query("rollback");
+      } finally {
+        await client.end();
+      }
+    }
+  }
+);
+test(
   "Stripe webhook ordering migration backfills existing account projections",
   {
     skip: phase3DatabaseVerificationUrl
