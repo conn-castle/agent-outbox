@@ -90,6 +90,43 @@ test("API docs teach the workflow and expose the generated contract", async ({
   ).toBe(true);
 });
 
+test("embedded phone anatomy keeps live utility sizing and ownership color", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/docs/api/ui");
+
+  const frames = page.locator(".canonical-anatomy-frame");
+  const phoneFrame = frames.last();
+  const copyButton = phoneFrame.getByRole("button", {
+    name: "Copy identifier"
+  });
+  const feedbackButton = phoneFrame.getByRole("button", {
+    name: "Add feedback"
+  });
+  const productColor = await page
+    .locator(
+      '.anatomy-legend[aria-label="Slot ownership colors"] .anatomy-owner-product'
+    )
+    .evaluate((legend) => getComputedStyle(legend).backgroundColor);
+
+  await expect(copyButton).toHaveCSS("width", "44px");
+  await expect(copyButton).toHaveCSS("height", "44px");
+  await expect(
+    frames.first().getByRole("button", { name: "Copy identifier" })
+  ).toHaveCSS("width", "32px");
+  await expect(feedbackButton).toHaveCSS("background-color", productColor);
+  await feedbackButton.hover();
+  await expect(feedbackButton).toHaveCSS("background-color", productColor);
+
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto("/docs/api/row-anatomy?width=390");
+  await expect(page.getByRole("button", { name: "Copy identifier" })).toHaveCSS(
+    "width",
+    "44px"
+  );
+});
+
 test("review-row anatomy uses the live structure and exposes content sizing", async ({
   page
 }) => {

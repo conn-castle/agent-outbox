@@ -1,0 +1,6 @@
+.agent-layer/instructions/04_conventions.md
+.agent-layer/skills/auto-skill-loop/references/modes/resolve-sentry-issues.md
+.agent-layer/skills/release-prep
+.agent-layer/skills/ship-pr/references/repo-specific-pr-policy.md
+.agent-layer/tmp
+docs/agent-layer/ROADMAP.md
