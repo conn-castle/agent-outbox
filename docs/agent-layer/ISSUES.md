@@ -28,6 +28,16 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-09-29 docs-ui-topbar-contrast: API UI docs page renders the wordmark dark on the dark top bar
+    Priority: Medium. Area: API documentation / Visual design
+    Description: On `/docs/api/ui` the embedded row-anatomy preview carries `.human-workspace`, so the `.shell:has(.human-workspace)` topbar rules in `app/globals.css` apply; the "Agent" wordmark becomes near-invisible and the nav links and call-to-action are dimmed on the dark API-docs top bar. `/docs/api` is unaffected.
+    Open question: Whether to scope the workspace topbar rules or stop marking embedded anatomy previews as `.human-workspace`.
+
+- Issue 2026-09-29 review-ineffective-style-intents: Review styles show dropped intent and stale palette literals
+    Priority: Low. Area: Human review / Visual design
+    Description: Declarations that never applied were removed during CSS consolidation, leaving: the filter count badge as dark text on the accent-dark background (intended white); pressed context links still scaling under `prefers-reduced-motion: reduce`; the filter popover close button using accent-dark rather than muted; and a 0 min-height detail loading panel (intended 8rem). Old-palette literals (`#f3efe6` page background, `#fffdf8`/`rgba(255, 253, 248, …)` popovers, `#202526` anatomy colors) also no longer match the effective tokens.
+    Open question: Which of these former intents are still the desired design.
+
 - Issue 2026-09-29 anatomy-missing-row-utilities: Row anatomy omits live row utilities
     Priority: Low. Area: API documentation / Human review
     Description: `ReviewRowAnatomyFrame` claims to render the live row, but live pending rows also show the Copy identifier and feedback utilities, which have no `REVIEW_ROW_ANATOMY_PARTS` entry and do not appear in the anatomy previews or table.
@@ -42,11 +52,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Medium. Area: Human review / Visual design
     Description: Priority is conveyed mainly through screen-reader text and a very small background-mix change that shares the caller-accent channel, so Low, Normal, High, and Urgent are not visibly distinct as documented.
     Next step: Implement and verify the canonical visible priority treatment without conflating it with caller accent.
-
-- Issue 2026-08-17 review-css-override-layer: Review styling has conflicting duplicate definitions
-    Priority: High. Area: Human review / CSS architecture
-    Description: Multiple `.human-workspace` token blocks and repeated queue selectors define competing values, leaving an appended override layer that silently wins and obscures the effective design.
-    Next step: Consolidate the accepted appearance into one canonical style definition per token and component state.
 
 - Issue 2026-08-17 legacy-color-transition: Existing arbitrary persisted colors lack a transition policy
     Priority: High. Area: Human review / Data compatibility
