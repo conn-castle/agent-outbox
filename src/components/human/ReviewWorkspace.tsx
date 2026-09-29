@@ -1205,7 +1205,7 @@ export function ReviewWorkspace({
                       setSearch(event.target.value);
                       applyDebouncedSearch(event.target.value);
                     }}
-                    placeholder="Search title, customer, or summary"
+                    placeholder="Search text, caller, type, or item ID"
                   />
                 </label>
               </form>
