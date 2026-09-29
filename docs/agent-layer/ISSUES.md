@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-09-29 answer-popup-payload-decoding: Answer validation reads persisted popup payloads leniently
+    Priority: Medium. Area: Human answers / Data integrity
+    Description: `src/server/human-answer.ts` reads `popup_payload` through `numberField`/`stringField`, so a malformed stored `min_length` or `max_length` silently disables length limits and malformed `min_selected`/`max_selected` fall back to `0`/option count. The review display path in `src/server/human-review.ts` now rejects the same payloads strictly, so the two readers of one stored shape disagree.
+    Next step: Decode answer-path popup payloads with the same strict persisted-payload reader the review display uses.
+
 - Issue 2026-09-28 review-search-entity-text: Review search and title sort use entity-encoded text
     Priority: Low. Area: Human review / Search
     Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text. SQL search also does not collapse whitespace, while the client search mirror does.
@@ -67,11 +72,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: High. Area: Human review / Data compatibility
     Description: The former runtime accepted safe CSS colors, the current API accepts only named colors, and unrestricted legacy database values now silently fall back during rendering.
     Next step: Inventory persisted values and establish an explicit migration or compatibility path before release.
-
-- Issue 2026-08-17 persisted-review-payload-decoding: Malformed persisted payloads silently become plausible UI
-    Priority: High. Area: Human review / Data integrity
-    Description: Database mapping converts invalid action and visual strings, numbers, and modes into empty values, zeroes, or `date`, concealing bad persisted data.
-    Next step: Make invalid persisted payloads fail through an actionable, observable error path.
 
 - Issue 2026-08-17 raw-doc-relative-links: Canonical Markdown contains broken relative links
     Priority: Medium. Area: API documentation

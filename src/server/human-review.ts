@@ -872,10 +872,7 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
     subtitleHtml: row.subtitle_html,
     cornerHtml: row.corner_html,
     summaryHtml: row.summary_html,
-    cardVisual: cardVisualFromDatabase(
-      row.card_visual_kind,
-      row.card_visual_payload
-    ),
+    cardVisual: cardVisualFromDatabase(row),
     skipDisabled: row.skip_disabled,
     createdAt: timestampValue(row.created_at),
     updatedAt: timestampValue(row.updated_at),
@@ -886,12 +883,8 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
       slug: row.caller_slug,
       revoked: row.caller_revoked_at != null
     },
-    bulkActions: (row.bulk_actions ?? []).map((action) => ({
-      ...action,
-      popupKind: action.popupKind ?? "none",
-      overflow: action.overflow ?? false
-    })),
-    linkButtons: row.link_buttons ?? [],
+    bulkActions: row.bulk_actions,
+    linkButtons: row.link_buttons,
     output:
       row.output_result_id && row.output_action_value && row.output_answered_at
         ? {
@@ -931,7 +924,10 @@ function reviewActionFromDatabase(
     answerable,
     options
   };
-  const payload = recordValue(action.popup_payload);
+  const read = persistedPayload(
+    action.popup_payload,
+    `popup_payload for input action ${action.input_action_id} (${action.popup_kind})`
+  );
   switch (action.popup_kind) {
     case "none":
       return { ...base, popupKind: "none", popupPayload: {} };
@@ -940,28 +936,28 @@ function reviewActionFromDatabase(
         ...base,
         popupKind: "free_text",
         popupPayload: {
-          label: stringValue(payload.label),
-          placeholder: nullableStringValue(payload.placeholder),
-          default_value: nullableStringValue(payload.default_value),
-          multiline: payload.multiline === true,
-          min_length: nullableNumberValue(payload.min_length),
-          max_length: nullableNumberValue(payload.max_length)
+          label: read.string("label"),
+          placeholder: read.nullableString("placeholder"),
+          default_value: read.nullableString("default_value"),
+          multiline: read.boolean("multiline"),
+          min_length: read.nullableNumber("min_length"),
+          max_length: read.nullableNumber("max_length")
         }
       };
     case "single_select":
       return {
         ...base,
         popupKind: "single_select",
-        popupPayload: { label: stringValue(payload.label) }
+        popupPayload: { label: read.string("label") }
       };
     case "multi_select":
       return {
         ...base,
         popupKind: "multi_select",
         popupPayload: {
-          label: stringValue(payload.label),
-          min_selected: numberValue(payload.min_selected),
-          max_selected: numberValue(payload.max_selected)
+          label: read.string("label"),
+          min_selected: read.number("min_selected"),
+          max_selected: read.number("max_selected")
         }
       };
     case "date_picker":
@@ -969,12 +965,12 @@ function reviewActionFromDatabase(
         ...base,
         popupKind: "date_picker",
         popupPayload: {
-          label: stringValue(payload.label),
-          mode: payload.mode === "datetime" ? "datetime" : "date",
-          placeholder: nullableStringValue(payload.placeholder),
-          display_timezone: nullableStringValue(payload.display_timezone),
-          min_value: nullableStringValue(payload.min_value),
-          max_value: nullableStringValue(payload.max_value)
+          label: read.string("label"),
+          mode: read.oneOf("mode", ["date", "datetime"] as const),
+          placeholder: read.nullableString("placeholder"),
+          display_timezone: read.nullableString("display_timezone"),
+          min_value: read.nullableString("min_value"),
+          max_value: read.nullableString("max_value")
         }
       };
     case "file_upload":
@@ -982,12 +978,8 @@ function reviewActionFromDatabase(
         ...base,
         popupKind: "file_upload",
         popupPayload: {
-          label: stringValue(payload.label),
-          accept_mime_types: Array.isArray(payload.accept_mime_types)
-            ? payload.accept_mime_types.filter(
-                (value): value is string => typeof value === "string"
-              )
-            : null
+          label: read.string("label"),
+          accept_mime_types: read.nullableStringArray("accept_mime_types")
         }
       };
     default:
@@ -998,62 +990,119 @@ function reviewActionFromDatabase(
 }
 
 function cardVisualFromDatabase(
-  kind: string | null,
-  rawPayload: unknown
+  row: HumanReviewRow
 ): NormalizedCardVisual | null {
-  const payload = recordValue(rawPayload);
-  if (kind === "numeric_bar" || kind === "progress_ring") {
-    const numeric = {
-      label: stringValue(payload.label),
-      value: numberValue(payload.value),
-      display: stringValue(payload.display),
-      unit: nullableStringValue(payload.unit),
-      min_value: numberValue(payload.min_value),
-      max_value: numberValue(payload.max_value)
-    };
-    return kind === "numeric_bar"
-      ? { kind, payload: numeric }
-      : {
-          kind,
-          payload: {
-            ...numeric,
-            color: nullableStringValue(payload.color)
-          }
-        };
+  const kind = row.card_visual_kind;
+  if (kind == null) {
+    return null;
   }
+  if (kind !== "numeric_bar" && kind !== "progress_ring" && kind !== "pill") {
+    throw new Error(
+      `Unsupported persisted card_visual_kind: ${JSON.stringify(kind)}`
+    );
+  }
+  const read = persistedPayload(
+    row.card_visual_payload,
+    `card_visual_payload for input item ${row.input_item_id} (${kind})`
+  );
   if (kind === "pill") {
     return {
       kind,
       payload: {
-        text: stringValue(payload.text),
-        icon: nullableStringValue(payload.icon),
-        color: stringValue(payload.color)
+        text: read.string("text"),
+        icon: read.nullableString("icon"),
+        color: read.string("color")
       }
     };
   }
-  return null;
+  const numeric = {
+    label: read.string("label"),
+    value: read.number("value"),
+    display: read.string("display"),
+    unit: read.nullableString("unit"),
+    min_value: read.number("min_value"),
+    max_value: read.number("max_value")
+  };
+  return kind === "numeric_bar"
+    ? { kind, payload: numeric }
+    : { kind, payload: { ...numeric, color: read.nullableString("color") } };
 }
 
-function recordValue(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+/**
+ * Read a persisted JSON payload whose shape was fixed by input normalization.
+ * Any deviation means stored data is corrupt, so it throws instead of letting
+ * the review UI render plausible defaults. Messages name the offending JSON
+ * type, never the value, because payloads hold caller data.
+ */
+function persistedPayload(raw: unknown, source: string) {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`Malformed persisted ${source}: expected a JSON object.`);
+  }
+  const record = raw as Record<string, unknown>;
+  const field = <T>(
+    key: string,
+    expected: string,
+    accepts: (value: unknown) => value is T
+  ): T => {
+    const value = record[key];
+    if (!accepts(value)) {
+      throw new Error(
+        `Malformed persisted ${source}: ${key} must be ${expected}, got ${jsonType(value)}.`
+      );
+    }
+    return value;
+  };
+  return {
+    string: (key: string) => field(key, "a string", isString),
+    nullableString: (key: string) =>
+      field(
+        key,
+        "a string or null",
+        (value) => value === null || isString(value)
+      ),
+    number: (key: string) => field(key, "a finite number", isFiniteNumber),
+    nullableNumber: (key: string) =>
+      field(
+        key,
+        "a finite number or null",
+        (value) => value === null || isFiniteNumber(value)
+      ),
+    boolean: (key: string) =>
+      field(
+        key,
+        "a boolean",
+        (value): value is boolean => typeof value === "boolean"
+      ),
+    oneOf: <T extends string>(key: string, allowed: readonly T[]) =>
+      field(key, `one of ${allowed.join(", ")}`, (value): value is T =>
+        allowed.includes(value as T)
+      ),
+    nullableStringArray: (key: string) =>
+      field(
+        key,
+        "an array of strings or null",
+        (value) =>
+          value === null || (Array.isArray(value) && value.every(isString))
+      )
+  };
 }
 
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value : "";
+function jsonType(value: unknown) {
+  if (value === undefined) {
+    return "missing";
+  }
+  if (value === null) {
+    return "null";
+  }
+  return Array.isArray(value) ? "array" : typeof value;
 }
 
-function nullableStringValue(value: unknown) {
-  return typeof value === "string" ? value : null;
+function isString(value: unknown): value is string {
+  return typeof value === "string";
 }
 
-function numberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function nullableNumberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function nullableTimestampValue(value: string | Date | null): string | null {

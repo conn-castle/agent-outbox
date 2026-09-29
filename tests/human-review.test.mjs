@@ -32,6 +32,7 @@ import {
   visualUnitSuffix
 } from "../src/components/human/review-format.ts";
 import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
+import { parseInputSubmission } from "../src/server/input-schema.ts";
 import {
   isSupportedColor,
   SUPPORTED_LUCIDE_ICON_NAMES
@@ -1216,7 +1217,7 @@ test("human review detail lazily shapes links actions options and answerable sta
         action_value: "upload",
         overflow: true,
         popup_kind: "file_upload",
-        popup_payload: {}
+        popup_payload: { label: "Attach file", accept_mime_types: null }
       }
     ],
     [
@@ -1284,7 +1285,7 @@ test("human review detail lazily shapes links actions options and answerable sta
       value: "upload",
       overflow: true,
       popupKind: "file_upload",
-      popupPayload: { label: "", accept_mime_types: null },
+      popupPayload: { label: "Attach file", accept_mime_types: null },
       answerable: true,
       options: []
     }
@@ -1331,6 +1332,244 @@ test("human review detail fails loudly for an unrecognized persisted popup kind"
     () => humanReviewDetailInTransaction(query, context, inputItemId),
     /Unsupported persisted popup_kind: "mystery"/
   );
+});
+
+test("human review decodes every payload shape that input normalization persists", async () => {
+  const options = [
+    { display: "Alpha", value: "alpha" },
+    { display: "Beta", value: "beta" }
+  ];
+  const popups = [
+    { kind: "none" },
+    {
+      kind: "free_text",
+      label: "Reason",
+      placeholder: "Explain",
+      default_value: "Looks good",
+      multiline: true,
+      min_length: 2,
+      max_length: 200
+    },
+    { kind: "single_select", label: "Pick one", options },
+    { kind: "multi_select", label: "Pick some", options },
+    { kind: "date_picker", label: "When", mode: "datetime" },
+    {
+      kind: "date_picker",
+      label: "Due",
+      mode: "date",
+      placeholder: "Pick a day",
+      display_timezone: "America/New_York",
+      min_value: "2026-01-01",
+      max_value: "2026-12-31"
+    },
+    { kind: "file_upload", label: "Attach", accept_mime_types: ["image/*"] }
+  ];
+  const visuals = [
+    {
+      kind: "numeric_bar",
+      label: "Confidence",
+      value: 8,
+      display: "8/10",
+      unit: "pts",
+      min_value: 0,
+      max_value: 10
+    },
+    {
+      kind: "progress_ring",
+      label: "Done",
+      value: 3,
+      display: "3 of 4",
+      min_value: 0,
+      max_value: 4,
+      color: "green"
+    },
+    { kind: "pill", text: "Needs review", icon: "check", color: "blue" }
+  ];
+  const submissions = visuals.map((card_visual, index) =>
+    normalizedSubmission({
+      caller_item_id: `item-${index}`,
+      card_visual,
+      actions: popups.map((popup, order) => ({
+        display: `Action ${order}`,
+        icon: "check",
+        value: `action-${order}`,
+        overflow: false,
+        popup
+      }))
+    })
+  );
+
+  const rows = await humanReviewListInTransaction(
+    fakeQuery([
+      submissions.map((submission) =>
+        reviewRow({
+          card_visual_kind: submission.cardVisual?.kind ?? null,
+          card_visual_payload: persistedJson(submission.cardVisual?.payload)
+        })
+      )
+    ]),
+    context
+  );
+  assert.deepEqual(
+    rows.map((row) => row.cardVisual),
+    submissions.map((submission) => submission.cardVisual)
+  );
+
+  const actions = submissions[0].actions;
+  const detail = await humanReviewDetailInTransaction(
+    reviewDetailQuery(
+      actions.map((action) => ({
+        ...persistedActionRow(action),
+        popup_kind: action.popupKind,
+        popup_payload: persistedJson(action.popupPayload)
+      }))
+    ),
+    context,
+    inputItemId
+  );
+  assert.deepEqual(
+    detail?.actions.map(({ popupKind, popupPayload }) => ({
+      popupKind,
+      popupPayload
+    })),
+    actions.map(({ popupKind, popupPayload }) => ({ popupKind, popupPayload }))
+  );
+});
+
+test("human review detail fails loudly for malformed persisted popup payloads", async (t) => {
+  const cases = [
+    {
+      popup_kind: "free_text",
+      popup_payload: {
+        placeholder: null,
+        default_value: null,
+        multiline: false,
+        min_length: null,
+        max_length: null
+      },
+      error:
+        /popup_payload for input action action-1 \(free_text\): label must be a string, got missing/
+    },
+    {
+      popup_kind: "free_text",
+      popup_payload: {
+        label: "Reason",
+        placeholder: null,
+        default_value: null,
+        multiline: "yes",
+        min_length: null,
+        max_length: null
+      },
+      error: /multiline must be a boolean, got string/
+    },
+    {
+      popup_kind: "multi_select",
+      popup_payload: { label: "Pick", min_selected: "1", max_selected: 2 },
+      error: /min_selected must be a finite number, got string/
+    },
+    {
+      popup_kind: "date_picker",
+      popup_payload: {
+        label: "When",
+        mode: "week",
+        placeholder: null,
+        display_timezone: null,
+        min_value: null,
+        max_value: null
+      },
+      error: /mode must be one of date, datetime, got string/
+    },
+    {
+      popup_kind: "file_upload",
+      popup_payload: { label: "Attach", accept_mime_types: ["image/*", 7] },
+      error: /accept_mime_types must be an array of strings or null/
+    },
+    {
+      popup_kind: "none",
+      popup_payload: [],
+      error:
+        /popup_payload for input action action-1 \(none\): expected a JSON object/
+    }
+  ];
+  for (const { popup_kind, popup_payload, error } of cases) {
+    await t.test(`${popup_kind} ${JSON.stringify(popup_payload)}`, async () => {
+      await assert.rejects(
+        () =>
+          humanReviewDetailInTransaction(
+            reviewDetailQuery([
+              {
+                input_action_id: "action-1",
+                display_order: 0,
+                display: "Respond",
+                icon: "check",
+                action_value: "respond",
+                overflow: false,
+                action_tone: null,
+                action_style: null,
+                popup_kind,
+                popup_payload
+              }
+            ]),
+            context,
+            inputItemId
+          ),
+        error
+      );
+    });
+  }
+});
+
+test("human review list fails loudly for malformed persisted card visuals", async (t) => {
+  const cases = [
+    {
+      card_visual_kind: "numeric_bar",
+      card_visual_payload: {
+        label: "Confidence",
+        value: "8",
+        display: "8/10",
+        unit: null,
+        min_value: 0,
+        max_value: 10
+      },
+      error: new RegExp(
+        `card_visual_payload for input item ${inputItemId} \\(numeric_bar\\): value must be a finite number, got string`
+      )
+    },
+    {
+      card_visual_kind: "progress_ring",
+      card_visual_payload: {
+        label: "Done",
+        value: 3,
+        display: "3 of 4",
+        unit: null,
+        min_value: 0,
+        max_value: 4
+      },
+      error: /color must be a string or null, got missing/
+    },
+    {
+      card_visual_kind: "pill",
+      card_visual_payload: { text: "Needs review", icon: null, color: 3 },
+      error: /color must be a string, got number/
+    },
+    {
+      card_visual_kind: "sparkline",
+      card_visual_payload: {},
+      error: /Unsupported persisted card_visual_kind: "sparkline"/
+    }
+  ];
+  for (const { error, ...overrides } of cases) {
+    await t.test(overrides.card_visual_kind, async () => {
+      await assert.rejects(
+        () =>
+          humanReviewListInTransaction(
+            fakeQuery([[reviewRow(overrides)]]),
+            context
+          ),
+        error
+      );
+    });
+  }
 });
 
 test("human review detail returns null for cross-account or missing rows", async () => {
@@ -1831,6 +2070,75 @@ function reviewRow(overrides = {}) {
     link_buttons: [],
     ...overrides
   };
+}
+
+/**
+ * @param {Record<string, unknown>} input
+ */
+function normalizedSubmission(input) {
+  const result = parseInputSubmission(
+    {
+      row_type: { display: "Email Draft", icon: "mail" },
+      title: "Title",
+      subtitle: "Subtitle",
+      summary: "Summary",
+      link_buttons: [],
+      ...input
+    },
+    { limitProfile: "hosted-paid" }
+  );
+  assert.equal(result.ok, true, JSON.stringify(result));
+  return /** @type {Extract<typeof result, { ok: true }>} */ (result)
+    .submission;
+}
+
+/**
+ * Mirror the JSON text round trip a jsonb column applies to stored payloads.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function persistedJson(value) {
+  return JSON.parse(JSON.stringify(value ?? {}));
+}
+
+/**
+ * @param {import("../src/server/input-schema.ts").NormalizedInputAction} action
+ */
+function persistedActionRow(action) {
+  return {
+    input_action_id: `action-${action.displayOrder}`,
+    display_order: action.displayOrder,
+    display: action.display,
+    icon: action.icon,
+    action_value: action.value,
+    overflow: action.overflow,
+    action_tone: action.tone,
+    action_style: action.style
+  };
+}
+
+/**
+ * Queue the detail query results for one pending item with the given actions.
+ * @param {QueryResultRow[]} actions
+ */
+function reviewDetailQuery(actions) {
+  return fakeQuery([
+    [reviewRow()],
+    [],
+    actions,
+    [],
+    [
+      {
+        account_id: context.accountId,
+        label: "Review account",
+        tier: "hosted_paid",
+        billing_status: "active",
+        billing_grace_ends_at: null
+      }
+    ],
+    [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
+    []
+  ]);
 }
 
 /**
