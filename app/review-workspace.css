@@ -2580,6 +2580,7 @@ body:has(.shell > .human-workspace) {
    participating in layout sizing. */
 
 .human-row-anatomy-page {
+  --anatomy-owner-product-background: #ffe6a8;
   display: block;
   padding: 1rem;
   background: #eeeae2;
@@ -2653,7 +2654,7 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-row-anatomy-page .anatomy-owner-product {
-  background-color: #ffe6a8;
+  background-color: var(--anatomy-owner-product-background);
 }
 
 .human-row-anatomy-page .anatomy-size-fixed {
@@ -4105,6 +4106,10 @@ body:has(.shell > .human-workspace) {
   background: var(--review-paper-soft);
 }
 
+.human-row-anatomy-page .feedback-button.anatomy-owner-product {
+  background-color: var(--anatomy-owner-product-background);
+}
+
 .human-workspace .feedback-dialog {
   width: min(400px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
@@ -4636,11 +4641,6 @@ body:has(.shell > .human-workspace) {
     white-space: nowrap;
   }
 
-  .human-workspace .row-copy-button {
-    width: 2.75rem;
-    height: 2.75rem;
-  }
-
   .human-workspace .row-copy-error {
     left: 0;
     right: auto;
@@ -4737,6 +4737,11 @@ body:has(.shell > .human-workspace) {
 }
 
 @container review-queue (max-width: 520px) {
+  .human-workspace .row-copy-button {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
   .human-workspace .row-body {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

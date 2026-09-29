@@ -57,6 +57,24 @@ export const REVIEW_ROW_ANATOMY_PARTS = {
     kind: "content",
     sizeBehavior: "both"
   },
+  copyIdentifier: {
+    label: "Copy identifier",
+    description:
+      "Copies the caller-provided caller_item_id rather than the internal database ID. The icon confirms success; failures expose the identifier for manual copying.",
+    fields: ["caller_item_id"],
+    owner: "product",
+    kind: "control",
+    sizeBehavior: "fixed"
+  },
+  feedback: {
+    label: "Feedback",
+    description:
+      "Icon-only control for a local feedback draft, separate from answer buttons. The tooltip is Add feedback when empty and Edit feedback when a draft is present; a dot marks the latter. Saving does not submit an answer.",
+    fields: [],
+    owner: "product",
+    kind: "control",
+    sizeBehavior: "fixed"
+  },
   skip: {
     label: "Snooze",
     description:
