@@ -769,7 +769,7 @@ test("human review list statement scopes rows by account and supports focused fi
   assert.match(statement.sql, /i\.status = \$2/);
   assert.match(
     statement.sql,
-    /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\) ilike \$3/
+    /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\),\s+'\[\[:space:\]\]\+',\s+' ',\s+'g'\s+\)\) ilike \$3/
   );
   assert.match(statement.sql, /or i\.caller_item_id ilike \$3/);
   assert.match(statement.sql, /or i\.row_type_display ilike \$3/);

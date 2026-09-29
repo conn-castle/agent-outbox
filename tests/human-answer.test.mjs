@@ -1140,12 +1140,12 @@ test(
       await seedDatabaseRows(client, ids);
       for (const [index, extraItemId] of extraItemIds.entries()) {
         // The marker title exercises both LIKE-metacharacter escaping (the
-        // literal "50%_off!") and tag stripping (the visible phrase crosses
-        // the </strong> boundary). The decoy only matches "50%_off!" when %
-        // and _ are wrongly treated as wildcards.
+        // literal "50%_off!") and visible-text search (the phrase crosses the
+        // </strong> boundary and a whitespace run). The decoy only matches
+        // "50%_off!" when % and _ are wrongly treated as wildcards.
         const titleHtml =
           extraItemId === markerItemId
-            ? "<strong>Tail</strong> literal 50%_off! marker"
+            ? "<strong>Tail</strong>\n  literal 50%_off! marker"
             : extraItemId === decoyItemId
               ? "50 percent off! wildcard decoy"
               : `Bulk review item ${index}`;
@@ -1233,14 +1233,14 @@ test(
         [markerItemId]
       );
 
-      // The SQL replaces each tag with a single space, so the marker's
-      // visible title reads "Tail  literal ..." (two spaces where </strong>
-      // sat). The raw HTML column never contains this phrase, so the match
-      // proves the statement searches tag-stripped text.
+      // The marker's visible title reads "Tail literal ..." once the tag
+      // becomes a space and the whitespace run collapses, as the client
+      // search mirror renders it. The raw HTML column never contains this
+      // phrase, so the match proves the statement searches visible text.
       const strippedSearch = await humanReviewPageInTransaction(
         query,
         reviewContext,
-        { search: "Tail  literal" }
+        { search: "Tail literal" }
       );
       assert.deepEqual(
         strippedSearch.rows.map((row) => row.inputItemId),
