@@ -45,7 +45,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-09-28 review-search-entity-text: Review search and title sort use entity-encoded text
     Priority: Low. Area: Human review / Search
-    Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text. SQL search also does not collapse whitespace, while the client search mirror does.
+    Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text.
     Open question: Whether search and sort should operate on decoded text, which requires server-side decoding or stored plain-text columns.
 
 - Issue 2026-08-17 legacy-color-transition: Existing arbitrary persisted colors lack a transition policy
@@ -67,17 +67,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-07-11 stripe-webhook-status-contract-migration: Remove the transitional Stripe webhook status column after rollout
     Priority: Low. Area: Billing / Migrations
-    Description: The expand migration retains `processing_status` with a `processed` default so the new writer and the prior-release rollback writer remain compatible; the column is redundant after that rollback target is retired.
-    Next step: After this release is live and becomes the healthy rollback target for the next release, generate and review a forward contract migration that drops `processing_status`, replaces `agent_outbox_prune_stripe_webhook_events` in the same migration (its body filters on `processing_status`, and plpgsql bodies are not validated at column-drop time), and removes the explicit `processing_status`/`processed_at` write from `insertStripeWebhookEventStatement` in the same change.
+    Description: The expand migration retains `processing_status` with a `processed` default for compatibility with writers that name it; releases through v0.4.7 still write it explicitly, so the column cannot be dropped until a release whose writer omits it is live and is the rollback target.
+    Next step: Once a release containing the column-free `insertStripeWebhookEventStatement` is live and is the healthy rollback target, generate and review a forward contract migration that drops `processing_status`, replaces `agent_outbox_prune_stripe_webhook_events` in the same migration (its body filters on `processing_status`, and plpgsql bodies are not validated at column-drop time), and updates the table comment's rollout-compatible status wording.
 
 - Issue 2026-07-10 billing-checkout-latency: Authenticated Stripe checkout latency is unmeasured after the transaction fix
     Priority: Medium. Area: Billing / Performance
     Description: Checkout's three sequential fresh database transactions were consolidated into one transaction locally, but the previously observed 5–10 second deployed latency has not been re-measured, so Stripe API and hosted page-load time remain unquantified.
     Next step: After the next production deploy, capture one authenticated checkout with Worker tail and browser request timing; add stage-level timing only if the residual delay remains material.
     Notes: Blocked on a production deploy (explicit trigger); restored after review found the verification obligation was dropped without a recorded measurement.
-
-- Issue 2026-07-10 sentry-cli-api-schema-mismatch: Pinned sentry-cli cannot parse current Sentry API responses
-    Priority: Low. Area: Tooling / Observability
-    Description: `sentry-cli organizations list` (@sentry/cli 3.6.0) fails with "could not parse JSON response: missing field `requireEmailVerification`". Upstream merged PR #3352 on 2026-07-09 to use the current organization-list endpoint and remove the obsolete field, but stable 3.6.2 still does not include that fix; the operator workaround uses an explicit organization slug.
-    Next step: When the next stable @sentry/cli release includes upstream PR #3352, bump package.json/toolchain.json and pnpm-lock.yaml, then re-verify `sentry-cli organizations list` and remove the documented workaround.
-    Notes: Production source-map upload is unaffected (the @sentry/nextjs build plugin uploads via debug IDs).
