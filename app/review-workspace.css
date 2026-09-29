@@ -37,6 +37,7 @@ body:has(.shell > .human-workspace) {
   --review-red-soft: #fae8e4;
   --review-gold: #906000;
   --review-gold-soft: #f7edd8;
+  --review-visual-neutral: #6c6960;
   position: relative;
   z-index: 0;
   display: grid;
@@ -1507,7 +1508,7 @@ body:has(.shell > .human-workspace) {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #6c6960;
+  background: var(--review-visual-neutral);
 }
 
 .human-workspace .visual-unit {
@@ -1540,7 +1541,7 @@ body:has(.shell > .human-workspace) {
   inset: 0;
   border-radius: inherit;
   background: conic-gradient(
-    var(--ring-color) var(--ring-progress),
+    var(--ring-color, var(--review-visual-neutral)) var(--ring-progress),
     #dedbd4 var(--ring-progress)
   );
   content: "";
@@ -3592,7 +3593,7 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .row-context .numeric-bar .bar-fill {
-  background: var(--bar-color, #6c6960);
+  background: var(--bar-color, var(--review-visual-neutral));
 }
 
 .human-workspace .row-context .pill-visual {

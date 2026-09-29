@@ -2390,18 +2390,6 @@ async function elementWidth(locator: Locator) {
   );
 }
 
-async function dragHorizontally(page: Page, locator: Locator, delta: number) {
-  const box = await locator.boundingBox();
-  expect(box).not.toBeNull();
-  if (!box) return;
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x + delta, y);
-  await page.mouse.up();
-}
-
 function deferred() {
   let resolve: () => void = () => {};
   const promise = new Promise<void>((innerResolve) => {
@@ -2651,6 +2639,17 @@ test("canonical row visuals and popup constraints expose only supported semantic
   const progressRow = reviewRowByTitle(page, "Choose follow-up window");
   await expect(progressRow.locator(".ring svg")).toHaveCount(0);
   await expect(progressRow.locator(".visual-unit")).toHaveText("checks");
+  await progressRow.locator("a.row-link").click();
+  await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000512/);
+  const uncoloredRing = page.locator(".detail-meta .progress-ring .ring");
+  await expect(uncoloredRing).toBeVisible();
+  await expect(uncoloredRing).toHaveCSS(
+    "background-image",
+    /rgb\(108, 105, 96\)/,
+    { pseudo: "before" }
+  );
+  await page.getByRole("button", { name: "Close detail", exact: true }).click();
+  await expect(page).not.toHaveURL(/item=/);
 
   const coloredProgressRow = reviewRowByTitle(
     page,

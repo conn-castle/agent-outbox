@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { tsImport } from "tsx/esm/api";
+
 import {
   accountLimitProfile,
   deleteInputItem,
@@ -16,7 +18,10 @@ import {
   readJsonBodyWithLimit
 } from "../src/server/request-body.ts";
 import { parseInputSubmission } from "../src/server/input-schema.ts";
-import { SUPPORTED_COLORS } from "../src/shared/input-schema-rules.ts";
+import {
+  isHttpUrl,
+  SUPPORTED_COLORS
+} from "../src/shared/input-schema-rules.ts";
 import {
   InputSubmissionSchema,
   publicSchemaFieldErrors
@@ -28,6 +33,11 @@ import {
  * @typedef {import("pg").QueryResultRow} QueryResultRow
  * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
  */
+
+const { safeHref } = await tsImport(
+  "../src/components/human/TypedContent.tsx",
+  import.meta.url
+);
 
 const context = {
   requestId: "req-input-test",
@@ -366,6 +376,67 @@ test("input parser accepts only the named product color allowlist", () => {
         )
     );
   }
+});
+
+test("shared HTTP URL policy accepts http(s) and rejects mailto", () => {
+  assert.equal(isHttpUrl("https://example.com/source"), true);
+  assert.equal(isHttpUrl("http://example.com/source"), true);
+  assert.equal(isHttpUrl("mailto:person@example.com"), false);
+  assert.equal(isHttpUrl("javascript:alert(1)"), false);
+
+  assert.equal(
+    safeHref("https://example.com/source"),
+    "https://example.com/source"
+  );
+  assert.equal(
+    safeHref("http://example.com/source"),
+    "http://example.com/source"
+  );
+  assert.equal(safeHref("mailto:person@example.com"), null);
+  assert.equal(safeHref("javascript:alert(1)"), null);
+
+  for (const url of [
+    "https://example.com/source",
+    "http://example.com/source"
+  ]) {
+    const result = parseInputSubmission(
+      baseInput({
+        link_buttons: [
+          {
+            display: "Open Source",
+            icon: "external-link",
+            url
+          }
+        ]
+      }),
+      { limitProfile: "hosted-paid" }
+    );
+    assert.equal(result.ok, true, url);
+    if (result.ok) {
+      assert.equal(result.submission.linkButtons[0].url, url);
+    }
+  }
+
+  const mailto = parseInputSubmission(
+    baseInput({
+      link_buttons: [
+        {
+          display: "Email",
+          icon: "external-link",
+          url: "mailto:person@example.com"
+        }
+      ]
+    }),
+    { limitProfile: "hosted-paid" }
+  );
+  assert.equal(mailto.ok, false);
+  assert.ok(
+    !mailto.ok &&
+      mailto.error.fields?.some(
+        (field) =>
+          field.path === "link_buttons[0].url" && field.code === "invalid_url"
+      )
+  );
 });
 
 test("input parser rejects caller identity, unsafe HTML, unsafe colors, and invalid URLs", () => {

@@ -33,11 +33,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text. SQL search also does not collapse whitespace, while the client search mirror does.
     Open question: Whether search and sort should operate on decoded text, which requires server-side decoding or stored plain-text columns.
 
-- Issue 2026-08-17 row-popup-action-selection: Popup-bearing row actions lose their selected action
-    Priority: High. Area: Human review / Actions
-    Description: Selecting a row action such as `Request changes` opens Details without its composer active, forcing the person to locate and select the same action again.
-    Next step: Preserve action identity when routing into Details and open the selected action's popup directly.
-
 - Issue 2026-08-17 queue-priority-treatment: Queue priority lacks a meaningful visible treatment
     Priority: Medium. Area: Human review / Visual design
     Description: Priority is conveyed mainly through screen-reader text and a very small background-mix change that shares the caller-accent channel, so Low, Normal, High, and Urgent are not visibly distinct as documented.
@@ -53,11 +48,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Pagination can present values such as `100+ of 100 remaining`, and later pages expose only local row counts rather than queue totals.
     Next step: Audit available count semantics and ensure every displayed label accurately communicates its scope.
 
-- Issue 2026-08-17 sort-label-drift: One sort state has inconsistent labels
-    Priority: Low. Area: Human review / Controls
-    Description: The selector labels the canonical recent sort as `Recent`, while the compact tools summary calls the same value `Newest`.
-    Next step: Source both labels from one canonical presentation definition.
-
 - Issue 2026-08-17 search-placeholder-domain: Search copy invents a customer field
     Priority: Low. Area: Human review / Search
     Description: The placeholder names `customer`, but the API exposes callers and caller item IDs, and production search covers more fields than the placeholder communicates.
@@ -72,11 +62,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: High. Area: Brand system / Single source of truth
     Description: The static palette page manually repeats supported color names and hex values from `input-schema-rules.ts`, allowing the public reference and API contract to drift.
     Next step: Derive the tracked palette from canonical color data or add an enforceable parity check.
-
-- Issue 2026-08-17 progress-ring-fallback-color: Progress-ring fallback duplicates the canonical blue hex
-    Priority: Low. Area: Human review / Visual design
-    Description: The uncolored progress ring hardcodes `#326b91`, duplicating the palette mapping and assigning a caller-palette color when the caller supplied none.
-    Next step: Replace the copied literal with the appropriate canonical product-owned token.
 
 - Issue 2026-08-17 review-css-override-layer: Review styling has conflicting duplicate definitions
     Priority: High. Area: Human review / CSS architecture
@@ -102,21 +87,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Medium. Area: API documentation / Single source of truth
     Description: Guide slugs, source paths, navigation labels, rewrite mappings, static route params, and route expectations are maintained in separate lists that can drift.
     Next step: Identify the canonical documentation manifest and derive or validate all route consumers against it.
-
-- Issue 2026-08-17 overflow-derived-state: Overflow availability is stored twice
-    Priority: Low. Area: Human review / Data model
-    Description: `hasOverflowActions` duplicates information already derivable from `bulkActions[].overflow` across the DTO, production mapper, fixture mappers, and UI.
-    Next step: Remove or enforce parity for the redundant state so overflow availability has one source of truth.
-
-- Issue 2026-08-17 link-url-policy-drift: Link-button URL validation has two policies
-    Priority: Low. Area: Human review / Validation
-    Description: Canonical input permits HTTP(S), while a UI helper separately permits `mailto:`, creating a latent policy mismatch even though canonical data currently prevents it.
-    Next step: Make the UI consume the canonical URL policy instead of maintaining a second allowlist.
-
-- Issue 2026-08-17 dead-review-doc-helpers: Committed review and docs helpers are unused
-    Priority: Low. Area: Human review / Maintenance
-    Description: `PUBLIC_API_ROUTE_KEYS` has no consumers while route tests hardcode values, and `dragHorizontally` in `human-ui.spec.ts` has no caller.
-    Next step: Remove the dead helpers or connect them to the intended canonical consumers.
 
 - Issue 2026-07-11 human-review-search-seq-scan: Human review search filters cannot use indexes at scale
     Priority: Low. Area: Human review / Performance
