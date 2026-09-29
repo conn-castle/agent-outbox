@@ -43,16 +43,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Priority is conveyed mainly through screen-reader text and a very small background-mix change that shares the caller-accent channel, so Low, Normal, High, and Urgent are not visibly distinct as documented.
     Next step: Implement and verify the canonical visible priority treatment without conflating it with caller accent.
 
-- Issue 2026-08-17 queue-count-scope: Page-scoped counts are presented as queue totals
-    Priority: Medium. Area: Human review / Pagination
-    Description: Pagination can present values such as `100+ of 100 remaining`, and later pages expose only local row counts rather than queue totals.
-    Next step: Audit available count semantics and ensure every displayed label accurately communicates its scope.
-
-- Issue 2026-08-17 search-placeholder-domain: Search copy invents a customer field
-    Priority: Low. Area: Human review / Search
-    Description: The placeholder names `customer`, but the API exposes callers and caller item IDs, and production search covers more fields than the placeholder communicates.
-    Next step: Make the placeholder describe the actual searchable concepts without introducing an unsupported domain field.
-
 - Issue 2026-08-17 review-css-override-layer: Review styling has conflicting duplicate definitions
     Priority: High. Area: Human review / CSS architecture
     Description: Multiple `.human-workspace` token blocks and repeated queue selectors define competing values, leaving an appended override layer that silently wins and obscures the effective design.
