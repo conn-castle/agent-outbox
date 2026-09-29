@@ -2870,6 +2870,7 @@ test("queue J and K move between rows and Enter opens details", async ({
   page
 }) => {
   await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   const rows = page.locator(".review-list .row-link");
   await expect(rows.first()).toBeVisible();
 
@@ -2891,6 +2892,7 @@ test("queue Enter shows the loading dialog while detail RSC is delayed", async (
   page
 }) => {
   await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   const firstRow = page.locator(".review-list .row-link").first();
   await expect(firstRow).toBeVisible();
 
@@ -2944,6 +2946,7 @@ test("queue J does not steal typing from search or move past the last row", asyn
   ).not.toBeFocused();
 
   await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   const rows = page.locator(".review-list .row-link");
   await expect(rows.first()).toBeVisible();
   const count = await rows.count();
