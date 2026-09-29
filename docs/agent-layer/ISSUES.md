@@ -66,7 +66,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 - Issue 2026-08-17 persisted-review-payload-decoding: Malformed persisted payloads silently become plausible UI
     Priority: High. Area: Human review / Data integrity
     Description: Database mapping converts invalid action and visual strings, numbers, and modes into empty values, zeroes, or `date`, concealing bad persisted data.
-    Next step: Make invalid persisted payloads fail through an actionable, observable error path.
+    Next step: Resume PR #98 when the required codex sol high feedback-worker dispatch is available; recheck PR status before reconsidering implementation.
+    Notes: Pending implementation in https://github.com/conn-castle/agent-outbox/pull/98; open and unmerged, so unresolved on main. Do not select for fresh implementation while this PR remains open.
 
 - Issue 2026-08-17 raw-doc-relative-links: Canonical Markdown contains broken relative links
     Priority: Medium. Area: API documentation
