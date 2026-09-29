@@ -365,6 +365,7 @@ export async function humanReviewDetailInTransaction(
     })),
     actions: actions.rows.map((action) =>
       reviewActionFromDatabase(
+        row.input_item_id,
         action,
         optionsByActionId.get(action.input_action_id) ?? [],
         row.status === "pending" &&
@@ -873,6 +874,7 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
     cornerHtml: row.corner_html,
     summaryHtml: row.summary_html,
     cardVisual: cardVisualFromDatabase(
+      row.input_item_id,
       row.card_visual_kind,
       row.card_visual_payload
     ),
@@ -886,12 +888,8 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
       slug: row.caller_slug,
       revoked: row.caller_revoked_at != null
     },
-    bulkActions: (row.bulk_actions ?? []).map((action) => ({
-      ...action,
-      popupKind: action.popupKind ?? "none",
-      overflow: action.overflow ?? false
-    })),
-    linkButtons: row.link_buttons ?? [],
+    bulkActions: row.bulk_actions,
+    linkButtons: row.link_buttons,
     output:
       row.output_result_id && row.output_action_value && row.output_answered_at
         ? {
@@ -915,6 +913,7 @@ function boundedLimit(limit: number | undefined) {
 }
 
 function reviewActionFromDatabase(
+  inputItemId: string,
   action: ActionRow,
   options: HumanReviewActionOption[],
   answerable: boolean
@@ -931,7 +930,10 @@ function reviewActionFromDatabase(
     answerable,
     options
   };
-  const payload = recordValue(action.popup_payload);
+  const payload = persistedRecord(
+    action.popup_payload,
+    `input item ${inputItemId} action ${JSON.stringify(action.action_value)} popup_payload`
+  );
   switch (action.popup_kind) {
     case "none":
       return { ...base, popupKind: "none", popupPayload: {} };
@@ -940,28 +942,28 @@ function reviewActionFromDatabase(
         ...base,
         popupKind: "free_text",
         popupPayload: {
-          label: stringValue(payload.label),
-          placeholder: nullableStringValue(payload.placeholder),
-          default_value: nullableStringValue(payload.default_value),
-          multiline: payload.multiline === true,
-          min_length: nullableNumberValue(payload.min_length),
-          max_length: nullableNumberValue(payload.max_length)
+          label: persistedString(payload, "label"),
+          placeholder: persistedNullableString(payload, "placeholder"),
+          default_value: persistedNullableString(payload, "default_value"),
+          multiline: persistedBoolean(payload, "multiline"),
+          min_length: persistedNullableNumber(payload, "min_length"),
+          max_length: persistedNullableNumber(payload, "max_length")
         }
       };
     case "single_select":
       return {
         ...base,
         popupKind: "single_select",
-        popupPayload: { label: stringValue(payload.label) }
+        popupPayload: { label: persistedString(payload, "label") }
       };
     case "multi_select":
       return {
         ...base,
         popupKind: "multi_select",
         popupPayload: {
-          label: stringValue(payload.label),
-          min_selected: numberValue(payload.min_selected),
-          max_selected: numberValue(payload.max_selected)
+          label: persistedString(payload, "label"),
+          min_selected: persistedNumber(payload, "min_selected"),
+          max_selected: persistedNumber(payload, "max_selected")
         }
       };
     case "date_picker":
@@ -969,12 +971,15 @@ function reviewActionFromDatabase(
         ...base,
         popupKind: "date_picker",
         popupPayload: {
-          label: stringValue(payload.label),
-          mode: payload.mode === "datetime" ? "datetime" : "date",
-          placeholder: nullableStringValue(payload.placeholder),
-          display_timezone: nullableStringValue(payload.display_timezone),
-          min_value: nullableStringValue(payload.min_value),
-          max_value: nullableStringValue(payload.max_value)
+          label: persistedString(payload, "label"),
+          mode: persistedDatePickerMode(payload),
+          placeholder: persistedNullableString(payload, "placeholder"),
+          display_timezone: persistedNullableString(
+            payload,
+            "display_timezone"
+          ),
+          min_value: persistedNullableString(payload, "min_value"),
+          max_value: persistedNullableString(payload, "max_value")
         }
       };
     case "file_upload":
@@ -982,34 +987,38 @@ function reviewActionFromDatabase(
         ...base,
         popupKind: "file_upload",
         popupPayload: {
-          label: stringValue(payload.label),
-          accept_mime_types: Array.isArray(payload.accept_mime_types)
-            ? payload.accept_mime_types.filter(
-                (value): value is string => typeof value === "string"
-              )
-            : null
+          label: persistedString(payload, "label"),
+          accept_mime_types: persistedNullableStringArray(
+            payload,
+            "accept_mime_types"
+          )
         }
       };
     default:
-      throw new Error(
-        `Unsupported persisted popup_kind: ${JSON.stringify(action.popup_kind)}`
+      throw new PersistedReviewDataError(
+        `Unsupported persisted popup_kind: ${JSON.stringify(action.popup_kind)} for input item ${inputItemId}`
       );
   }
 }
 
 function cardVisualFromDatabase(
+  inputItemId: string,
   kind: string | null,
   rawPayload: unknown
 ): NormalizedCardVisual | null {
-  const payload = recordValue(rawPayload);
+  if (kind == null) {
+    return null;
+  }
+  const source = `input item ${inputItemId} card_visual_payload`;
   if (kind === "numeric_bar" || kind === "progress_ring") {
+    const payload = persistedRecord(rawPayload, source);
     const numeric = {
-      label: stringValue(payload.label),
-      value: numberValue(payload.value),
-      display: stringValue(payload.display),
-      unit: nullableStringValue(payload.unit),
-      min_value: numberValue(payload.min_value),
-      max_value: numberValue(payload.max_value)
+      label: persistedString(payload, "label"),
+      value: persistedNumber(payload, "value"),
+      display: persistedString(payload, "display"),
+      unit: persistedNullableString(payload, "unit"),
+      min_value: persistedNumber(payload, "min_value"),
+      max_value: persistedNumber(payload, "max_value")
     };
     return kind === "numeric_bar"
       ? { kind, payload: numeric }
@@ -1017,43 +1026,131 @@ function cardVisualFromDatabase(
           kind,
           payload: {
             ...numeric,
-            color: nullableStringValue(payload.color)
+            color: persistedNullableString(payload, "color")
           }
         };
   }
   if (kind === "pill") {
+    const payload = persistedRecord(rawPayload, source);
     return {
       kind,
       payload: {
-        text: stringValue(payload.text),
-        icon: nullableStringValue(payload.icon),
-        color: stringValue(payload.color)
+        text: persistedString(payload, "text"),
+        icon: persistedNullableString(payload, "icon"),
+        color: persistedString(payload, "color")
       }
     };
   }
-  return null;
+  throw new PersistedReviewDataError(
+    `Unsupported persisted card_visual_kind: ${JSON.stringify(kind)} for input item ${inputItemId}`
+  );
 }
 
-function recordValue(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+/** A persisted JSON object plus the location reported when a field is invalid. */
+type PersistedRecord = { source: string; fields: Record<string, unknown> };
+
+function persistedRecord(value: unknown, source: string): PersistedRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw invalidPersistedValue(source, "an object");
+  }
+  return { source, fields: value as Record<string, unknown> };
 }
 
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value : "";
+function persistedString(record: PersistedRecord, key: string): string {
+  const value = record.fields[key];
+  if (typeof value !== "string" || value.length < 1) {
+    throw invalidPersistedValue(
+      `${record.source}.${key}`,
+      "a non-empty string"
+    );
+  }
+  return value;
 }
 
-function nullableStringValue(value: unknown) {
-  return typeof value === "string" ? value : null;
+function persistedNullableString(
+  record: PersistedRecord,
+  key: string
+): string | null {
+  const value = record.fields[key];
+  if (value !== null && typeof value !== "string") {
+    throw invalidPersistedValue(`${record.source}.${key}`, "a string or null");
+  }
+  return value;
 }
 
-function numberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+function persistedNumber(record: PersistedRecord, key: string): number {
+  const value = record.fields[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw invalidPersistedValue(`${record.source}.${key}`, "a finite number");
+  }
+  return value;
 }
 
-function nullableNumberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function persistedNullableNumber(
+  record: PersistedRecord,
+  key: string
+): number | null {
+  const value = record.fields[key];
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw invalidPersistedValue(
+      `${record.source}.${key}`,
+      "a finite number or null"
+    );
+  }
+  return value;
+}
+
+function persistedBoolean(record: PersistedRecord, key: string): boolean {
+  const value = record.fields[key];
+  if (typeof value !== "boolean") {
+    throw invalidPersistedValue(`${record.source}.${key}`, "a boolean");
+  }
+  return value;
+}
+
+function persistedDatePickerMode(record: PersistedRecord) {
+  const value = record.fields.mode;
+  if (value !== "date" && value !== "datetime") {
+    throw invalidPersistedValue(
+      `${record.source}.mode`,
+      '"date" or "datetime"'
+    );
+  }
+  return value;
+}
+
+function persistedNullableStringArray(
+  record: PersistedRecord,
+  key: string
+): string[] | null {
+  const value = record.fields[key];
+  if (value === null) {
+    return null;
+  }
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry) => typeof entry === "string")
+  ) {
+    throw invalidPersistedValue(
+      `${record.source}.${key}`,
+      "an array of strings or null"
+    );
+  }
+  return value;
+}
+
+function invalidPersistedValue(source: string, expected: string) {
+  return new PersistedReviewDataError(
+    `Invalid persisted human review data: ${source} must be ${expected}.`
+  );
+}
+
+/** Persisted review data that the canonical input writer could not produce. */
+class PersistedReviewDataError extends Error {
+  override name = "PersistedReviewDataError";
 }
 
 function nullableTimestampValue(value: string | Date | null): string | null {
