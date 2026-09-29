@@ -38,11 +38,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Priority is conveyed mainly through screen-reader text and a very small background-mix change that shares the caller-accent channel, so Low, Normal, High, and Urgent are not visibly distinct as documented.
     Next step: Implement and verify the canonical visible priority treatment without conflating it with caller accent.
 
-- Issue 2026-08-17 civil-date-timezone: Civil-date responses invent timezone metadata
-    Priority: High. Area: Human review / Response data
-    Description: Date mode always displays and submits the browser timezone, and the human form/server path requires one, although the public date-response contract permits null.
-    Next step: Align date-mode display, submission, and server validation with the canonical nullable timezone contract.
-
 - Issue 2026-08-17 queue-count-scope: Page-scoped counts are presented as queue totals
     Priority: Medium. Area: Human review / Pagination
     Description: Pagination can present values such as `100+ of 100 remaining`, and later pages expose only local row counts rather than queue totals.

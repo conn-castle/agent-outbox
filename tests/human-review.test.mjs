@@ -599,6 +599,19 @@ test("browser fixture storyboards cover every declared review renderer option an
       `${optionalDateField} string variation`
     );
   }
+  const civilDatePayloads = datePayloads.filter(
+    (payload) => payload.mode === "date"
+  );
+  assert.ok(
+    civilDatePayloads.some((payload) => payload.display_timezone == null),
+    "date mode null timezone"
+  );
+  assert.ok(
+    civilDatePayloads.some(
+      (payload) => payload.display_timezone === "America/New_York"
+    ),
+    "date mode configured timezone"
+  );
 
   const filePayloads = details.flatMap((detail) =>
     detail.actions
@@ -1488,6 +1501,53 @@ test("human action form parser rejects malformed hidden fields before database w
     expectedRevision: 2,
     actionValue: "upload",
     response: { kind: "file_upload", file: uploadedFile }
+  });
+
+  const civilDate = answerForm();
+  civilDate.set("actionValue", "pick_date");
+  civilDate.set("popupKind", "date_picker");
+  civilDate.set("response.mode", "date");
+  civilDate.set("response.value_date", "2026-07-15");
+  assert.deepEqual(parseHumanAnswerForm(civilDate), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "pick_date",
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-07-15",
+      display_timezone: null
+    }
+  });
+
+  const configuredCivilDate = answerForm();
+  configuredCivilDate.set("actionValue", "pick_date");
+  configuredCivilDate.set("popupKind", "date_picker");
+  configuredCivilDate.set("response.mode", "date");
+  configuredCivilDate.set("response.display_timezone", "America/New_York");
+  configuredCivilDate.set("response.value_date", "2026-07-15");
+  assert.deepEqual(parseHumanAnswerForm(configuredCivilDate), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "pick_date",
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-07-15",
+      display_timezone: "America/New_York"
+    }
+  });
+
+  const datetimeWithoutTimezone = answerForm();
+  datetimeWithoutTimezone.set("popupKind", "date_picker");
+  datetimeWithoutTimezone.set("response.mode", "datetime");
+  datetimeWithoutTimezone.set("response.value_local", "2026-07-16T09:30");
+  assert.deepEqual(parseHumanAnswerForm(datetimeWithoutTimezone), {
+    ok: false
   });
 
   const invalidDate = answerForm();

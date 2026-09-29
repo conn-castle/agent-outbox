@@ -68,7 +68,7 @@ test("feedback accompanies every response kind without replacing or bypassing th
         kind: "date_picker",
         mode: "date",
         value_date: "2026-09-14",
-        display_timezone: "UTC"
+        display_timezone: null
       }
     ],
     [
@@ -225,7 +225,7 @@ test("human answer response validation enforces selected popup options and bound
         kind: "date_picker",
         mode: "date",
         value_date: "2026-06-30",
-        display_timezone: "Not/AZone"
+        display_timezone: "America/New_York"
       }
     ),
     {
@@ -236,11 +236,139 @@ test("human answer response validation enforces selected popup options and bound
         {
           path: "response.display_timezone",
           code: "invalid_action_response",
-          message: "Date-picker responses require an IANA timezone name."
+          message: "Date-picker timezone must match the selected action."
         }
       ]
     }
   );
+  assert.deepEqual(
+    validatedResponsePayload(
+      {
+        popupKind: "date_picker",
+        popupPayload: { mode: "date", display_timezone: "America/New_York" },
+        optionValues: []
+      },
+      {
+        kind: "date_picker",
+        mode: "date",
+        value_date: "2026-06-30",
+        display_timezone: "America/New_York"
+      }
+    ),
+    {
+      ok: true,
+      responseKind: "date_picker",
+      responsePayload: {
+        mode: "date",
+        value_date: "2026-06-30",
+        display_timezone: "America/New_York"
+      },
+      responsePayloadBytes: 79
+    }
+  );
+  assert.deepEqual(
+    validatedResponsePayload(
+      {
+        popupKind: "date_picker",
+        popupPayload: { mode: "datetime", display_timezone: null },
+        optionValues: []
+      },
+      {
+        kind: "date_picker",
+        mode: "datetime",
+        value_utc: "2026-06-30T12:00:00Z",
+        display_timezone: null
+      }
+    ),
+    {
+      ok: false,
+      code: "invalid_action_response",
+      message: "Action response does not match the selected action.",
+      fields: [
+        {
+          path: "response.display_timezone",
+          code: "invalid_action_response",
+          message:
+            "Date-picker datetime responses require the displayed timezone."
+        }
+      ]
+    }
+  );
+  assert.deepEqual(
+    validatedResponsePayload(
+      {
+        popupKind: "date_picker",
+        popupPayload: { mode: "date", display_timezone: null },
+        optionValues: []
+      },
+      {
+        kind: "date_picker",
+        mode: "date",
+        value_date: "2026-06-30",
+        display_timezone: null
+      }
+    ),
+    {
+      ok: true,
+      responseKind: "date_picker",
+      responsePayload: {
+        mode: "date",
+        value_date: "2026-06-30",
+        display_timezone: null
+      },
+      responsePayloadBytes: 65
+    }
+  );
+  /** @type {Array<[Record<string, unknown>, import("../src/server/human-answer.ts").HumanActionResponse, string]>} */
+  const timezoneMismatches = [
+    [
+      { mode: "date", display_timezone: "America/New_York" },
+      {
+        kind: "date_picker",
+        mode: "date",
+        value_date: "2026-06-30",
+        display_timezone: null
+      },
+      "Date-picker timezone must match the selected action."
+    ],
+    [
+      { mode: "datetime", display_timezone: null },
+      {
+        kind: "date_picker",
+        mode: "datetime",
+        value_utc: "2026-06-30T12:00:00Z",
+        display_timezone: "Not/AZone"
+      },
+      "Date-picker responses require an IANA timezone name."
+    ],
+    [
+      { mode: "datetime", display_timezone: "America/New_York" },
+      {
+        kind: "date_picker",
+        mode: "datetime",
+        value_utc: "2026-06-30T12:00:00Z",
+        display_timezone: "UTC"
+      },
+      "Date-picker timezone must match the selected action."
+    ]
+  ];
+  for (const [popupPayload, response, message] of timezoneMismatches) {
+    const result = validatedResponsePayload(
+      { popupKind: "date_picker", popupPayload, optionValues: [] },
+      response
+    );
+    assert.deepEqual(
+      result.ok ? null : result.fields,
+      [
+        {
+          path: "response.display_timezone",
+          code: "invalid_action_response",
+          message
+        }
+      ],
+      JSON.stringify(response)
+    );
+  }
 
   assert.deepEqual(
     validatedResponsePayload(

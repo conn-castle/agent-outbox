@@ -111,7 +111,9 @@ the typed response before acting.
 }
 ```
 
-Date mode is a civil date and must not be converted to UTC.
+Date mode is a civil date and must not be converted to UTC. Its
+`display_timezone` is the action's configured timezone, or `null` when the
+action sets none.
 
 `date_picker` datetime mode:
 
