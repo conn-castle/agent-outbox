@@ -67,8 +67,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-07-11 stripe-webhook-status-contract-migration: Remove the transitional Stripe webhook status column after rollout
     Priority: Low. Area: Billing / Migrations
-    Description: The expand migration retains `processing_status` with a `processed` default so the new writer and the prior-release rollback writer remain compatible; the column is redundant after that rollback target is retired.
-    Next step: After this release is live and becomes the healthy rollback target for the next release, generate and review a forward contract migration that drops `processing_status`, replaces `agent_outbox_prune_stripe_webhook_events` in the same migration (its body filters on `processing_status`, and plpgsql bodies are not validated at column-drop time), and removes the explicit `processing_status`/`processed_at` write from `insertStripeWebhookEventStatement` in the same change.
+    Description: The expand migration retains `processing_status` with a `processed` default for compatibility with writers that name it; releases through v0.4.7 still write it explicitly, so the column cannot be dropped until a release whose writer omits it is live and is the rollback target.
+    Next step: Once a release containing the column-free `insertStripeWebhookEventStatement` is live and is the healthy rollback target, generate and review a forward contract migration that drops `processing_status`, replaces `agent_outbox_prune_stripe_webhook_events` in the same migration (its body filters on `processing_status`, and plpgsql bodies are not validated at column-drop time), and updates the table comment's rollout-compatible status wording.
 
 - Issue 2026-07-10 billing-checkout-latency: Authenticated Stripe checkout latency is unmeasured after the transaction fix
     Priority: Medium. Area: Billing / Performance
