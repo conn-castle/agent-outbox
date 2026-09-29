@@ -28,11 +28,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-09-29 anatomy-missing-row-utilities: Row anatomy omits live row utilities
-    Priority: Low. Area: API documentation / Human review
-    Description: `ReviewRowAnatomyFrame` claims to render the live row, but live pending rows also show the Copy identifier and feedback utilities, which have no `REVIEW_ROW_ANATOMY_PARTS` entry and do not appear in the anatomy previews or table.
-    Next step: Add both utilities to the canonical anatomy data and frame, then drop the separate Copy identifier prose in `docs/spec/public-api-ui.md`.
-
 - Issue 2026-09-28 review-search-entity-text: Review search and title sort use entity-encoded text
     Priority: Low. Area: Human review / Search
     Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text. SQL search also does not collapse whitespace, while the client search mirror does.

@@ -105,6 +105,13 @@ test("review-row anatomy uses the live structure and exposes content sizing", as
   );
   await expect(previews).toHaveCount(4);
   await expect(previews.nth(3).locator(".review-row-anatomy")).toBeVisible();
+  const anatomyTable = page.locator(".anatomy-field-table");
+  await expect(
+    anatomyTable.getByRole("rowheader", { name: "Copy identifier" })
+  ).toBeVisible();
+  await expect(
+    anatomyTable.getByRole("rowheader", { name: "Feedback" })
+  ).toBeVisible();
 
   const galleryWidth = await page
     .locator(".review-row-anatomy-gallery")
@@ -241,6 +248,12 @@ test("review-row anatomy uses the live structure and exposes content sizing", as
   expect(headingToTitleGap).toBeLessThanOrEqual(8);
   await expect(
     page.locator(".row-skip-button .lucide-alarm-clock")
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Copy identifier", exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add feedback", exact: true })
   ).toBeVisible();
   await expect(
     page.locator('.row-utilities summary[aria-label="More actions"]')
