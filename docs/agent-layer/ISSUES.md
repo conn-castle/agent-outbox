@@ -35,7 +35,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-09-28 review-search-entity-text: Review search and title sort use entity-encoded text
     Priority: Low. Area: Human review / Search
-    Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text. SQL search also does not collapse whitespace, while the client search mirror does.
+    Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text.
     Open question: Whether search and sort should operate on decoded text, which requires server-side decoding or stored plain-text columns.
 
 - Issue 2026-08-17 queue-priority-treatment: Queue priority lacks a meaningful visible treatment
