@@ -8,7 +8,7 @@ semantics that a schema cannot express.
 ## Give a UI coding agent these sources
 
 A UI-focused coding agent should receive this guide and the
-[OpenAPI 3.1 document](openapi.json). It should also consult:
+[OpenAPI 3.1 document](../openapi.json). It should also consult:
 
 - [Review patterns](public-api-capabilities.md) to choose actions, popups, and
   typed responses.

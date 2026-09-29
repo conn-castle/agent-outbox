@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+
+import { marked } from "marked";
 
 import { limitErrorMetadata } from "../src/server/limits.ts";
 import { PUBLIC_CALLER_API_ERRORS } from "../src/shared/public-api-contract.ts";
@@ -180,6 +182,28 @@ test("branded docs bundle has curated guides and generated reference", () => {
   assert.match(reference, /pending_content_conflict/);
   assert.match(reference, /answered_unacknowledged/);
   assert.match(reference, /internal_error/);
+});
+
+test("published documentation links resolve when read as raw Markdown", () => {
+  /** @type {{ sourcePath: string, href: string }[]} */
+  const relativeLinks = [];
+  for (const document of generatedDocs.documents) {
+    marked.walkTokens(marked.lexer(document.source), (token) => {
+      if (token.type !== "link" || /^(#|https?:|mailto:)/.test(token.href)) {
+        return;
+      }
+      relativeLinks.push({ sourcePath: document.sourcePath, href: token.href });
+    });
+  }
+  assert.ok(relativeLinks.length > 0);
+
+  for (const { sourcePath, href } of relativeLinks) {
+    const target = new URL(
+      href.split("#")[0] ?? "",
+      new URL(sourcePath, repositoryRoot)
+    );
+    assert.ok(existsSync(target), `${sourcePath} links to missing ${href}`);
+  }
 });
 
 test("contract, guide examples, route parity, and generated artifacts are current", () => {
