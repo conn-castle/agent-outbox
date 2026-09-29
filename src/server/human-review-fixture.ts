@@ -7,6 +7,7 @@ import {
 import type { StatusResult } from "./status.ts";
 import type { HumanAccountBannerData } from "./human-review.ts";
 import type { HumanAccountIdentityDisplay } from "../shared/account-display.ts";
+import { htmlToPlainText } from "../shared/html-text.ts";
 import {
   browserFixtureCoreReviewDetails,
   fixtureUuid,
@@ -256,7 +257,7 @@ export function browserFixtureStoryboardScenarios(): BrowserFixtureStoryboardSce
       inputItemId: detail.inputItemId,
       callerItemId: detail.callerItemId,
       status: detail.status,
-      title: plainFixtureText(detail.titleHtml),
+      title: htmlToPlainText(detail.titleHtml),
       rowType: detail.rowType.display,
       caller: detail.caller.displayName,
       useCase,
@@ -498,14 +499,4 @@ function recordFixtureValue(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function plainFixtureText(html: string) {
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\s+/g, " ")
-    .trim();
 }

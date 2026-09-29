@@ -50,7 +50,7 @@ export function ReviewRowFrame({
               aria-label={ariaLabel}
               onNavigate={onNavigate}
             >
-              <span className="row-link-heading">{title}</span>
+              <div className="row-link-heading">{title}</div>
               {subtitle}
             </Link>
             <div className="row-side">

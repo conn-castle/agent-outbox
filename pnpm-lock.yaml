@@ -228,6 +228,9 @@ importers:
       '@supabase/supabase-js':
         specifier: 2.112.4
         version: 2.112.4(@opentelemetry/api@1.9.1)
+      entities:
+        specifier: 8.1.0
+        version: 8.1.0
       lucide-react:
         specifier: 1.39.0
         version: 1.39.0(react@19.2.8)
@@ -2774,6 +2777,10 @@ packages:
   entities@4.5.0:
     resolution: {integrity: sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw==}
     engines: {node: '>=0.12'}
+
+  entities@8.1.0:
+    resolution: {integrity: sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA==}
+    engines: {node: '>=20.19.0'}
 
   error-stack-parser-es@1.0.5:
     resolution: {integrity: sha512-5qucVt2XcuGMcEGgWI7i+yZpmpByQ8J1lHhcL7PwqCwu9FPP3VUXzT4ltHe5i2z9dePwEHcDVOAfSnHsOlCXRA==}
@@ -6605,6 +6612,8 @@ snapshots:
       strip-ansi: 6.0.1
 
   entities@4.5.0: {}
+
+  entities@8.1.0: {}
 
   error-stack-parser-es@1.0.5: {}
 

@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-09-28 review-search-entity-text: Review search and title sort use entity-encoded text
+    Priority: Low. Area: Human review / Search
+    Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text. SQL search also does not collapse whitespace, while the client search mirror does.
+    Open question: Whether search and sort should operate on decoded text, which requires server-side decoding or stored plain-text columns.
+
 - Issue 2026-08-17 row-popup-action-selection: Popup-bearing row actions lose their selected action
     Priority: High. Area: Human review / Actions
     Description: Selecting a row action such as `Request changes` opens Details without its composer active, forcing the person to locate and select the same action again.
@@ -48,30 +53,15 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Pagination can present values such as `100+ of 100 remaining`, and later pages expose only local row counts rather than queue totals.
     Next step: Audit available count semantics and ensure every displayed label accurately communicates its scope.
 
-- Issue 2026-08-17 summary-html-margins: Supported paragraph markup changes summary clamp geometry
-    Priority: Medium. Area: Human review / Content rendering
-    Description: Allowed `<p>` elements retain browser-default margins inside `.row-proposal`, making equivalent text consume different vertical space solely because of markup.
-    Next step: Normalize supported rich-text block spacing within the canonical summary layout.
-
 - Issue 2026-08-17 sort-label-drift: One sort state has inconsistent labels
     Priority: Low. Area: Human review / Controls
     Description: The selector labels the canonical recent sort as `Recent`, while the compact tools summary calls the same value `Newest`.
     Next step: Source both labels from one canonical presentation definition.
 
-- Issue 2026-08-17 html-plain-text-drift: HTML-to-text conversions disagree
-    Priority: Medium. Area: Human review / Accessibility
-    Description: Three separate converters produce different plain text, allowing accessible row labels to expose entities such as `&amp;` literally while answer notices decode them.
-    Next step: Consolidate plain-text derivation and verify consistent entity handling at every consumer.
-
 - Issue 2026-08-17 search-placeholder-domain: Search copy invents a customer field
     Priority: Low. Area: Human review / Search
     Description: The placeholder names `customer`, but the API exposes callers and caller item IDs, and production search covers more fields than the placeholder communicates.
     Next step: Make the placeholder describe the actual searchable concepts without introducing an unsupported domain field.
-
-- Issue 2026-08-17 review-row-invalid-nesting: Review rows render invalid span/div nesting
-    Priority: Medium. Area: Human review / Markup
-    Description: `SafeHtml` always emits a div, including when used inside `span.row-link-heading` and `span.row-heading-context`.
-    Next step: Make the safe-HTML wrapper valid for each host context and verify the rendered DOM structure.
 
 - Issue 2026-08-17 anatomy-table-duplication: Documentation authors a second row-anatomy source
     Priority: High. Area: API documentation / Single source of truth

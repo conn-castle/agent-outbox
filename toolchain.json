@@ -153,6 +153,11 @@
       "version": "1.3.25",
       "package": "typebox",
       "source": "corepack pnpm view typebox version engines --json"
+    },
+    "entities": {
+      "version": "8.1.0",
+      "package": "entities",
+      "source": "corepack pnpm view entities version engines --json"
     }
   },
   "runtimeDevTools": {

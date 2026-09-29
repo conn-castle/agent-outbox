@@ -19,6 +19,7 @@ import type {
   HumanReviewDetail,
   HumanReviewListRow
 } from "../../server/human-review.ts";
+import { htmlToPlainText } from "../../shared/html-text";
 import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../shared/human-review-view";
 import type { HumanMutationOperation } from "../../shared/human-mutation";
 import { HumanIcon } from "./TypedContent";
@@ -165,7 +166,7 @@ export function InlineQuickAction({
         actionValue={action.value}
         popupKind="none"
         actionLabel={action.display}
-        noticeSubject={plainText(row.titleHtml)}
+        noticeSubject={htmlToPlainText(row.titleHtml)}
         returnToQueue
       />
       <SubmitButton
@@ -240,7 +241,7 @@ export function ActionTrigger({
         actionValue={action.value}
         popupKind={action.popupKind}
         actionLabel={action.display}
-        noticeSubject={plainText(detail.titleHtml)}
+        noticeSubject={htmlToPlainText(detail.titleHtml)}
         returnToQueue
       />
       <SubmitButton
@@ -288,7 +289,7 @@ export function ActionComposer({
         actionValue={action.value}
         popupKind={action.popupKind}
         actionLabel={action.display}
-        noticeSubject={plainText(detail.titleHtml)}
+        noticeSubject={htmlToPlainText(detail.titleHtml)}
         returnToQueue
       />
       <header>
@@ -362,7 +363,7 @@ export function UndoAnswerForm({
       <input
         type="hidden"
         name="noticeSubject"
-        value={plainText(detail.titleHtml)}
+        value={htmlToPlainText(detail.titleHtml)}
       />
       <SubmitButton className="secondary-button" label="Undo answer" />
     </form>
@@ -802,19 +803,6 @@ function popupLabel(action: HumanReviewAction) {
 
 function stringValue(value: string | null | undefined) {
   return typeof value === "string" ? value : "";
-}
-
-function plainText(html: string) {
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function selectionGuidance(min: number, max: number) {
