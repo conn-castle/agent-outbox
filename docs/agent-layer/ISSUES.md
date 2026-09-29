@@ -38,11 +38,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Declarations that never applied were removed during CSS consolidation, leaving: the filter count badge as dark text on the accent-dark background (intended white); pressed context links still scaling under `prefers-reduced-motion: reduce`; the filter popover close button using accent-dark rather than muted; and a 0 min-height detail loading panel (intended 8rem). Old-palette literals (`#f3efe6` page background, `#fffdf8`/`rgba(255, 253, 248, …)` popovers, `#202526` anatomy colors) also no longer match the effective tokens.
     Open question: Which of these former intents are still the desired design.
 
-- Issue 2026-09-29 anatomy-missing-row-utilities: Row anatomy omits live row utilities
-    Priority: Low. Area: API documentation / Human review
-    Description: `ReviewRowAnatomyFrame` claims to render the live row, but live pending rows also show the Copy identifier and feedback utilities, which have no `REVIEW_ROW_ANATOMY_PARTS` entry and do not appear in the anatomy previews or table.
-    Next step: Add both utilities to the canonical anatomy data and frame, then drop the separate Copy identifier prose in `docs/spec/public-api-ui.md`.
-
 - Issue 2026-09-28 review-search-entity-text: Review search and title sort use entity-encoded text
     Priority: Low. Area: Human review / Search
     Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text.

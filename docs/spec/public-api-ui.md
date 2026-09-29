@@ -107,10 +107,7 @@ limited. Urgent, High, Normal, and Low pills each have a distinct appearance;
 priority never changes the row's caller accent tint.
 
 The anatomy table describes the represented slots, product controls, and row
-modifiers. Live rows also include a product-owned **Copy identifier** control,
-not shown in the anatomy, that copies the caller-provided `caller_item_id`
-rather than the internal database ID. The icon confirms success; failures expose
-the identifier for manual copying.
+modifiers.
 
 Visual variants contain these fields:
 
