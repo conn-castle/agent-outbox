@@ -14,8 +14,10 @@ const palettePage = new URL(
 
 test("the brand palette page lists exactly the supported API colors and values", async () => {
   const html = await readFile(palettePage, "utf8");
+  const rootBlock = html.match(/:root\s*\{([^}]*)\}/);
+  assert.ok(rootBlock, "palette page must declare a :root block");
   const rootValues = new Map(
-    [...html.matchAll(/--app-([a-z]+):\s*(#[0-9a-fA-F]{6});/g)].map(
+    [...rootBlock[1].matchAll(/--app-([a-z]+):\s*(#[0-9a-fA-F]{6});/g)].map(
       ([, name, value]) => [name, value.toLowerCase()]
     )
   );
