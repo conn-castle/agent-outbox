@@ -1,4 +1,4 @@
-import { MoreVertical, AlarmClock } from "lucide-react";
+import { MoreVertical, AlarmClock, Copy, MessageSquare } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import {
@@ -47,7 +47,7 @@ export function ReviewRowAnatomyFrame({
       <div className="review-list">
         <div className="review-row-container">
           <ReviewRowFrame
-            className={`review-row review-row-anatomy row-priority-high ${annotated ? "annotated" : "review-row-example"}`}
+            className={`review-row review-row-anatomy ${annotated ? "annotated" : "review-row-example"}`}
             style={
               {
                 "--row-accent": accent,
@@ -85,6 +85,34 @@ export function ReviewRowAnatomyFrame({
                 }
                 utilities={
                   <>
+                    <span
+                      className={slotClass(
+                        "copyIdentifier",
+                        "row-identifier-copy",
+                        annotated
+                      )}
+                    >
+                      <button
+                        className="row-copy-button"
+                        type="button"
+                        aria-label="Copy identifier"
+                        title="Copy identifier"
+                      >
+                        <Copy aria-hidden="true" />
+                      </button>
+                    </span>
+                    <button
+                      className={slotClass(
+                        "feedback",
+                        "feedback-button",
+                        annotated
+                      )}
+                      type="button"
+                      aria-label="Add feedback"
+                      title="Add feedback"
+                    >
+                      <MessageSquare aria-hidden="true" />
+                    </button>
                     <button
                       className={slotClass(
                         "skip",

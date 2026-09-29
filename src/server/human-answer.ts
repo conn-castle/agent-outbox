@@ -71,7 +71,7 @@ export type DatePickerDateResponse = {
   kind: "date_picker";
   mode: "date";
   value_date: string;
-  display_timezone: string;
+  display_timezone: string | null;
 };
 
 export type DatePickerDateTimeResponse = {
@@ -1102,28 +1102,17 @@ function validateDatePickerResponse(
     );
   }
 
-  if (typeof response.display_timezone !== "string") {
-    return invalidActionResponse(
-      "response.display_timezone",
-      "Date-picker responses require the displayed timezone."
-    );
-  }
-  if (!isIanaTimeZone(response.display_timezone)) {
-    return invalidActionResponse(
-      "response.display_timezone",
-      "Date-picker responses require an IANA timezone name."
-    );
-  }
-
   const configuredTimezone = stringField(popupPayload, "display_timezone");
-  if (configuredTimezone && response.display_timezone !== configuredTimezone) {
-    return invalidActionResponse(
-      "response.display_timezone",
-      "Date-picker timezone must match the selected action."
-    );
-  }
 
   if (response.mode === "date") {
+    // Civil dates show only the caller-configured timezone, so none is invented.
+    if (response.display_timezone !== configuredTimezone) {
+      return invalidActionResponse(
+        "response.display_timezone",
+        "Date-picker timezone must match the selected action."
+      );
+    }
+
     if (
       typeof response.value_date !== "string" ||
       !validDateOnly(response.value_date)
@@ -1146,8 +1135,27 @@ function validateDatePickerResponse(
     return storedPayload("date_picker", {
       mode: "date",
       value_date: response.value_date,
-      display_timezone: response.display_timezone
+      display_timezone: configuredTimezone
     });
+  }
+
+  if (typeof response.display_timezone !== "string") {
+    return invalidActionResponse(
+      "response.display_timezone",
+      "Date-picker datetime responses require the displayed timezone."
+    );
+  }
+  if (!isIanaTimeZone(response.display_timezone)) {
+    return invalidActionResponse(
+      "response.display_timezone",
+      "Date-picker responses require an IANA timezone name."
+    );
+  }
+  if (configuredTimezone && response.display_timezone !== configuredTimezone) {
+    return invalidActionResponse(
+      "response.display_timezone",
+      "Date-picker timezone must match the selected action."
+    );
   }
 
   if (

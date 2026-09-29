@@ -66,3 +66,12 @@ export function isSupportedColor(value: string): value is SupportedColor {
 export function resolveSupportedColor(value: string): string | null {
   return isSupportedColor(value) ? SUPPORTED_COLOR_VALUES[value] : null;
 }
+
+export function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}

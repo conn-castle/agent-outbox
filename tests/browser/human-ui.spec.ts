@@ -984,6 +984,46 @@ test("desktop detail modal stays within a readable responsive measure", async ({
   await expect.poll(() => elementWidth(detail)).toBeLessThanOrEqual(69 * 16);
 });
 
+test("queue priority pills are visibly distinct without changing the caller accent tint", async ({
+  page
+}) => {
+  const pillAppearance = (title: string) =>
+    reviewRowByTitle(page, title)
+      .locator(".row-priority")
+      .evaluate((element) => {
+        const style = getComputedStyle(element);
+        return [
+          style.color,
+          style.backgroundColor,
+          style.borderTopStyle,
+          style.borderTopColor
+        ].join("|");
+      });
+
+  await page.goto("/human");
+  // Both pending fixture rows use the orange caller accent; one is Urgent,
+  // one is High.
+  const rowTint = (title: string) =>
+    reviewRowByTitle(page, title).evaluate(
+      (element) => getComputedStyle(element).backgroundImage
+    );
+  await page.mouse.move(0, 0);
+  expect(await rowTint("Reply to Meridian about the renewal delay")).toBe(
+    await rowTint("Choose follow-up window")
+  );
+
+  const appearances = [
+    await pillAppearance("Payments smoke check failed after deploy"),
+    await pillAppearance("Publish the instruction-ablation result"),
+    await pillAppearance("Maya Chen wants to connect")
+  ];
+  await page.goto("/human?status=answered");
+  appearances.push(
+    await pillAppearance("Confirm the electrician’s arrival window")
+  );
+  expect(new Set(appearances).size).toBe(4);
+});
+
 test("queue context links stay on one horizontally scrollable line and priority is visible", async ({
   page
 }) => {
@@ -2390,18 +2430,6 @@ async function elementWidth(locator: Locator) {
   );
 }
 
-async function dragHorizontally(page: Page, locator: Locator, delta: number) {
-  const box = await locator.boundingBox();
-  expect(box).not.toBeNull();
-  if (!box) return;
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x + delta, y);
-  await page.mouse.up();
-}
-
 function deferred() {
   let resolve: () => void = () => {};
   const promise = new Promise<void>((innerResolve) => {
@@ -2529,8 +2557,27 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date", exact: true }).click();
   await page.getByLabel("Follow-up date").fill("2026-07-15");
+  await expect(page.getByText(/Displayed timezone/)).toHaveCount(0);
+  await expect(
+    page.locator('input[name="response.display_timezone"]')
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Pick date" }).click();
   await expect(lastUndoButton(page, "Pick date")).toBeVisible();
+  await restoreLastAnswer();
+
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
+  await page
+    .getByRole("button", { name: "Pick zoned date", exact: true })
+    .click();
+  await page.getByLabel("Zoned follow-up date").fill("2026-07-15");
+  await expect(
+    page.getByText("Displayed timezone: America/New_York")
+  ).toBeVisible();
+  await expect(
+    page.locator('input[name="response.display_timezone"]')
+  ).toHaveValue("America/New_York");
+  await page.getByRole("button", { name: "Pick zoned date" }).click();
+  await expect(lastUndoButton(page, "Pick zoned date")).toBeVisible();
   await restoreLastAnswer();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
@@ -2651,6 +2698,17 @@ test("canonical row visuals and popup constraints expose only supported semantic
   const progressRow = reviewRowByTitle(page, "Choose follow-up window");
   await expect(progressRow.locator(".ring svg")).toHaveCount(0);
   await expect(progressRow.locator(".visual-unit")).toHaveText("checks");
+  await progressRow.locator("a.row-link").click();
+  await expect(page).toHaveURL(/item=00000000-0000-4000-8000-000000000512/);
+  const uncoloredRing = page.locator(".detail-meta .progress-ring .ring");
+  await expect(uncoloredRing).toBeVisible();
+  await expect(uncoloredRing).toHaveCSS(
+    "background-image",
+    /rgb\(108, 105, 96\)/,
+    { pseudo: "before" }
+  );
+  await page.getByRole("button", { name: "Close detail", exact: true }).click();
+  await expect(page).not.toHaveURL(/item=/);
 
   const coloredProgressRow = reviewRowByTitle(
     page,
@@ -2749,6 +2807,7 @@ test("canonical row visuals and popup constraints expose only supported semantic
   await expect(datetime).toHaveAttribute("max", "2026-07-31T23:59");
   await expect(datetime).toHaveAttribute("aria-describedby", /.+/);
   await expect(page.getByText("UTC datetime", { exact: true })).toBeVisible();
+  await expect(page.getByText("Displayed timezone: UTC")).toBeVisible();
   await page.getByRole("button", { name: "Close action" }).click();
 
   await page.getByRole("button", { name: "Select checks" }).click();

@@ -1,29 +1,20 @@
 import { Marked, Renderer, type Token, type Tokens } from "marked";
 
 import generatedApiDocs from "../shared/api-docs.generated.json";
+import {
+  API_DOC_PAGES,
+  apiDocHref,
+  apiDocRouteForRelativeLink,
+  type ApiDocSlug
+} from "../shared/api-docs-manifest";
 
-export const apiDocNavigation = [
-  { slug: "quickstart", label: "Quick start", href: "/docs/api" },
-  { slug: "concepts", label: "How it works", href: "/docs/api/concepts" },
-  {
-    slug: "capabilities",
-    label: "Review patterns",
-    href: "/docs/api/capabilities"
-  },
-  {
-    slug: "ui",
-    label: "UI integration",
-    href: "/docs/api/ui"
-  },
-  {
-    slug: "reliability",
-    label: "Reliability",
-    href: "/docs/api/reliability"
-  },
-  { slug: "reference", label: "API reference", href: "/docs/api/reference" }
-] as const;
+export const apiDocNavigation = API_DOC_PAGES.map(({ slug, label }) => ({
+  slug,
+  label,
+  href: apiDocHref(slug)
+}));
 
-export type ApiDocSlug = (typeof apiDocNavigation)[number]["slug"];
+export type { ApiDocSlug };
 
 export type ApiDoc = {
   slug: ApiDocSlug;
@@ -36,16 +27,6 @@ export type ApiDocHeading = {
   depth: 2 | 3;
   id: string;
   text: string;
-};
-
-const routeBySourceName: Record<string, string> = {
-  "public-api.md": "/docs/api",
-  "public-api-concepts.md": "/docs/api/concepts",
-  "public-api-capabilities.md": "/docs/api/capabilities",
-  "public-api-ui.md": "/docs/api/ui",
-  "public-api-reliability.md": "/docs/api/reliability",
-  "public-api-reference.md": "/docs/api/reference",
-  "openapi.json": "/docs/api/openapi.json"
 };
 
 const documents = generatedApiDocs.documents.map((document) => {
@@ -63,14 +44,21 @@ const documents = generatedApiDocs.documents.map((document) => {
   return { ...document, slug: document.slug, title } satisfies ApiDoc;
 });
 
-for (const item of apiDocNavigation) {
-  if (!documents.some((document) => document.slug === item.slug)) {
-    throw new Error(`Generated API documentation is missing: ${item.slug}`);
+for (const page of API_DOC_PAGES) {
+  if (
+    !documents.some(
+      (document) =>
+        document.slug === page.slug && document.sourcePath === page.sourcePath
+    )
+  ) {
+    throw new Error(
+      `Generated API documentation is missing or stale: ${page.sourcePath}`
+    );
   }
 }
 
 export function isApiDocSlug(value: string): value is ApiDocSlug {
-  return apiDocNavigation.some((item) => item.slug === value);
+  return API_DOC_PAGES.some((page) => page.slug === value);
 }
 
 export function apiDocBySlug(slug: ApiDocSlug): ApiDoc {
@@ -93,7 +81,7 @@ export function renderApiDoc(document: ApiDoc) {
   };
 
   renderer.link = function link({ href, title, tokens }: Tokens.Link) {
-    const rewrittenHref = rewriteDocumentationHref(href);
+    const rewrittenHref = rewriteDocumentationHref(document.sourcePath, href);
     const renderedText = this.parser.parseInline(tokens);
     const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : "";
     const relAttribute = /^https?:\/\//.test(rewrittenHref)
@@ -127,17 +115,11 @@ function extractHeadings(markdown: string): ApiDocHeading[] {
   return headings;
 }
 
-function rewriteDocumentationHref(href: string) {
+function rewriteDocumentationHref(sourcePath: string, href: string) {
   if (href.startsWith("#") || /^(https?:|mailto:)/.test(href)) {
     return href;
   }
-  const hashIndex = href.indexOf("#");
-  const path = hashIndex === -1 ? href : href.slice(0, hashIndex);
-  const hash = hashIndex === -1 ? "" : href.slice(hashIndex);
-  const sourceName = path.split("/").at(-1) ?? path;
-  const route = routeBySourceName[sourceName];
-  if (route) return `${route}${hash}`;
-  throw new Error(`Unknown relative link in public API documentation: ${href}`);
+  return apiDocRouteForRelativeLink(sourcePath, href);
 }
 
 function firstHeading(source: string) {

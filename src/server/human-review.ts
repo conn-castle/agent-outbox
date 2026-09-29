@@ -115,7 +115,6 @@ export type HumanReviewListRow = {
   output: HumanReviewOutputState | null;
   bulkActions: HumanReviewBulkAction[];
   linkButtons?: HumanReviewLinkButton[];
-  hasOverflowActions?: boolean;
 };
 
 export type HumanReviewLinkButton = {
@@ -546,12 +545,12 @@ function humanReviewFilters(
       .replaceAll("%", "!%")
       .replaceAll("_", "!_");
     values.push(`%${escapedSearch}%`);
-    // Search visible text: strip markup from the HTML columns so allowed
-    // inline tags neither match tag names nor split matching phrases.
+    // Search visible text so allowed inline tags neither match tag names nor
+    // split matching phrases.
     filters.push(`(
-      regexp_replace(i.title_html, '<[^>]*>', ' ', 'g') ilike $${values.length} escape '!'
-      or regexp_replace(i.subtitle_html, '<[^>]*>', ' ', 'g') ilike $${values.length} escape '!'
-      or regexp_replace(i.summary_html, '<[^>]*>', ' ', 'g') ilike $${values.length} escape '!'
+      ${reviewVisibleTextSql("i.title_html")} ilike $${values.length} escape '!'
+      or ${reviewVisibleTextSql("i.subtitle_html")} ilike $${values.length} escape '!'
+      or ${reviewVisibleTextSql("i.summary_html")} ilike $${values.length} escape '!'
       or i.caller_item_id ilike $${values.length} escape '!'
       or i.row_type_display ilike $${values.length} escape '!'
       or c.display_name ilike $${values.length} escape '!'
@@ -807,15 +806,11 @@ function reviewSortExpressions(
       return reviewTextSortExpressions("i.row_type_display", suffix);
     case "visual_score":
       return [`${reviewVisualScoreExpression()}${suffix} nulls last`];
-    case "title": {
-      const title = `btrim(regexp_replace(
-        regexp_replace(i.title_html, '<[^>]*>', ' ', 'g'),
-        '[[:space:]]+',
-        ' ',
-        'g'
-      ))`;
-      return reviewTextSortExpressions(title, suffix);
-    }
+    case "title":
+      return reviewTextSortExpressions(
+        reviewVisibleTextSql("i.title_html"),
+        suffix
+      );
     case "caller":
       return reviewTextSortExpressions("c.display_name", suffix);
     case "created_at":
@@ -823,6 +818,48 @@ function reviewSortExpressions(
     case "updated_at":
       return [`i.updated_at${suffix}`];
   }
+}
+
+// JavaScript `\s`: ASCII whitespace, Unicode space separators, U+2028, U+2029,
+// and U+FEFF. Explicit points do not follow the database collation. POSIX
+// `[[:space:]]` omits U+FEFF.
+const JAVASCRIPT_WHITESPACE_CLASS = [
+  "\\u0009",
+  "\\u000a",
+  "\\u000b",
+  "\\u000c",
+  "\\u000d",
+  "\\u0020",
+  "\\u00a0",
+  "\\u1680",
+  "\\u2000",
+  "\\u2001",
+  "\\u2002",
+  "\\u2003",
+  "\\u2004",
+  "\\u2005",
+  "\\u2006",
+  "\\u2007",
+  "\\u2008",
+  "\\u2009",
+  "\\u200a",
+  "\\u2028",
+  "\\u2029",
+  "\\u202f",
+  "\\u205f",
+  "\\u3000",
+  "\\ufeff"
+].join("");
+
+// Tags become spaces and whitespace runs collapse, matching
+// `htmlTagStrippedText` in the client search and sort mirror.
+function reviewVisibleTextSql(htmlColumn: string) {
+  return `btrim(regexp_replace(
+        regexp_replace(${htmlColumn}, '<[^>]*>', ' ', 'g'),
+        '[${JAVASCRIPT_WHITESPACE_CLASS}]+',
+        ' ',
+        'g'
+      ))`;
 }
 
 function reviewTextSortExpressions(expression: string, suffix: string) {
@@ -893,9 +930,6 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
       overflow: action.overflow ?? false
     })),
     linkButtons: row.link_buttons ?? [],
-    hasOverflowActions: (row.bulk_actions ?? []).some(
-      (action) => action.overflow
-    ),
     output:
       row.output_result_id && row.output_action_value && row.output_answered_at
         ? {

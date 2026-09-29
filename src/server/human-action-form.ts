@@ -149,9 +149,6 @@ function responseFromForm(
         formData,
         "response.display_timezone"
       );
-      if (!displayTimezone) {
-        return null;
-      }
       if (mode === "date") {
         const valueDate = stringField(formData, "response.value_date");
         return valueDate
@@ -162,6 +159,9 @@ function responseFromForm(
               display_timezone: displayTimezone
             }
           : null;
+      }
+      if (!displayTimezone) {
+        return null;
       }
       if (mode === "datetime") {
         const valueUtc = utcFromLocalDateTime(

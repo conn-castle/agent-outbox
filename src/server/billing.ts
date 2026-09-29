@@ -422,20 +422,16 @@ export function insertStripeWebhookEventStatement(
   eventId: string,
   eventType: string
 ): TransactionContextStatement {
-  // The explicit processing_status/processed_at writes keep this insert valid
-  // on both the pre-V20260711114816 schema (NOT NULL, no default) and the
-  // migrated schema, so deploy and migration order are independent. Remove the
-  // explicit column write together with the tracked contract migration
-  // (ISSUES.md stripe-webhook-status-contract-migration).
+  // Omits the transitional processing_status column (and relies on the
+  // processed_at default) so this writer stays valid after the contract
+  // migration drops that column.
   return {
     sql: `
       insert into public.agent_outbox_stripe_webhook_events as webhook_event(
         stripe_event_id,
-        event_type,
-        processing_status,
-        processed_at
+        event_type
       )
-      values ($1, $2, 'processed', now())
+      values ($1, $2)
       on conflict (stripe_event_id) do nothing
       returning
         stripe_event_id,

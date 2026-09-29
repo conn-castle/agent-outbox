@@ -72,6 +72,24 @@ const callerId = "00000000-0000-4000-8000-000000000005";
 const outputResultId = "00000000-0000-4000-8000-000000000004";
 const defaultHumanReviewView = humanReviewViewFromRecord(undefined);
 
+function javascriptWhitespaceClass() {
+  const codePoints = [];
+  for (let codePoint = 0; codePoint <= 0x10ffff; codePoint += 1) {
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) continue;
+    if (/\s/u.test(String.fromCodePoint(codePoint))) {
+      codePoints.push(`\\u${codePoint.toString(16).padStart(4, "0")}`);
+    }
+  }
+  return codePoints.join("");
+}
+
+/** @param {string} sql */
+function visibleTextWhitespaceClasses(sql) {
+  return [...sql.matchAll(/'\[((?:\\u[0-9a-f]{4})+)\]\+'/g)].map(
+    (match) => match[1]
+  );
+}
+
 test("human review view parsing and links share canonical defaults", () => {
   assert.deepEqual(humanReviewViewFromRecord(undefined), {
     search: "",
@@ -599,6 +617,19 @@ test("browser fixture storyboards cover every declared review renderer option an
       `${optionalDateField} string variation`
     );
   }
+  const civilDatePayloads = datePayloads.filter(
+    (payload) => payload.mode === "date"
+  );
+  assert.ok(
+    civilDatePayloads.some((payload) => payload.display_timezone == null),
+    "date mode null timezone"
+  );
+  assert.ok(
+    civilDatePayloads.some(
+      (payload) => payload.display_timezone === "America/New_York"
+    ),
+    "date mode configured timezone"
+  );
 
   const filePayloads = details.flatMap((detail) =>
     detail.actions
@@ -756,8 +787,14 @@ test("human review list statement scopes rows by account and supports focused fi
   assert.match(statement.sql, /i\.status = \$2/);
   assert.match(
     statement.sql,
-    /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\) ilike \$3/
+    /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\),\s+'\[[^\]]+\]\+',\s+' ',\s+'g'\s+\)\) ilike \$3/
   );
+  assert.deepEqual(visibleTextWhitespaceClasses(statement.sql), [
+    javascriptWhitespaceClass(),
+    javascriptWhitespaceClass(),
+    javascriptWhitespaceClass()
+  ]);
+  assert.doesNotMatch(statement.sql, /\[\[:space:\]\]/);
   assert.match(statement.sql, /or i\.caller_item_id ilike \$3/);
   assert.match(statement.sql, /or i\.row_type_display ilike \$3/);
   assert.match(statement.sql, /i\.priority in \(\$4, \$5\)/);
@@ -822,7 +859,11 @@ test("human review list statement supports canonical text, date, and null-last v
     ]
   });
   assert.match(titleAndCaller.sql, /regexp_replace\(i\.title_html/);
-  assert.match(titleAndCaller.sql, /'\[\[:space:\]\]\+'/);
+  assert.deepEqual(
+    [...new Set(visibleTextWhitespaceClasses(titleAndCaller.sql))],
+    [javascriptWhitespaceClass()]
+  );
+  assert.doesNotMatch(titleAndCaller.sql, /\[\[:space:\]\]/);
   assert.match(titleAndCaller.sql, /btrim\(regexp_replace/);
   assert.match(titleAndCaller.sql, /translate\([\s\S]*c\.display_name/);
 
@@ -968,6 +1009,33 @@ test("title sorting compares visible text rather than markup", () => {
     compareHumanReviewRows(alpha, beta, {
       sorts: [{ key: "title", direction: "asc" }]
     }) < 0
+  );
+});
+
+test("browser fixture search collapses the same visible text as production", () => {
+  const collapsed = browserFixtureReviewPage(
+    {
+      ...defaultHumanReviewView,
+      search: "Send: “Your"
+    },
+    { includePaginationRows: true }
+  );
+  assert.ok(
+    collapsed.rows.some((row) => row.callerItemId === "fixture-page-005"),
+    "the space inserted for </strong> must collapse before matching"
+  );
+
+  const uncollapsed = browserFixtureReviewPage(
+    {
+      ...defaultHumanReviewView,
+      search: "Send:  “Your"
+    },
+    { includePaginationRows: true }
+  );
+  assert.equal(
+    uncollapsed.rows.some((row) => row.callerItemId === "fixture-page-005"),
+    false,
+    "the search term itself is not whitespace-collapsed"
   );
 });
 
@@ -1158,7 +1226,6 @@ test("human review list shapes caller affordances and output read state", async 
         }
       ],
       linkButtons: [],
-      hasOverflowActions: false,
       output: {
         outputResultId: "00000000-0000-4000-8000-000000000004",
         actionValue: "approve",
@@ -1489,6 +1556,53 @@ test("human action form parser rejects malformed hidden fields before database w
     expectedRevision: 2,
     actionValue: "upload",
     response: { kind: "file_upload", file: uploadedFile }
+  });
+
+  const civilDate = answerForm();
+  civilDate.set("actionValue", "pick_date");
+  civilDate.set("popupKind", "date_picker");
+  civilDate.set("response.mode", "date");
+  civilDate.set("response.value_date", "2026-07-15");
+  assert.deepEqual(parseHumanAnswerForm(civilDate), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "pick_date",
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-07-15",
+      display_timezone: null
+    }
+  });
+
+  const configuredCivilDate = answerForm();
+  configuredCivilDate.set("actionValue", "pick_date");
+  configuredCivilDate.set("popupKind", "date_picker");
+  configuredCivilDate.set("response.mode", "date");
+  configuredCivilDate.set("response.display_timezone", "America/New_York");
+  configuredCivilDate.set("response.value_date", "2026-07-15");
+  assert.deepEqual(parseHumanAnswerForm(configuredCivilDate), {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "pick_date",
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-07-15",
+      display_timezone: "America/New_York"
+    }
+  });
+
+  const datetimeWithoutTimezone = answerForm();
+  datetimeWithoutTimezone.set("popupKind", "date_picker");
+  datetimeWithoutTimezone.set("response.mode", "datetime");
+  datetimeWithoutTimezone.set("response.value_local", "2026-07-16T09:30");
+  assert.deepEqual(parseHumanAnswerForm(datetimeWithoutTimezone), {
+    ok: false
   });
 
   const invalidDate = answerForm();
