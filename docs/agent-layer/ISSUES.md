@@ -6,7 +6,21 @@ Note: This is an agent-layer memory file. It is primarily for agent use.
 Deferred defects, maintainability refactors, technical debt, risks, and engineering concerns. Add an entry only when you are not fixing it now.
 
 ## Format
-- Insert new entries immediately below `<!-- ENTRIES START -->` (most recent first).
+- Insert new entries immediately below `<!-- ENTRIES START -->
+- Issue 2026-09-29 human-answer-payload-decoding: Answer validation reads persisted popup bounds loosely
+    Priority: Medium. Area: Human answers / Data integrity
+    Description: `numberField`, `stringField`, and `acceptedMimeTypes` in `src/server/human-answer.ts` treat a malformed persisted `popup_payload` field (for example `min_length: "5"` or `max_selected: "2"`) as absent, so answer-time bounds are silently not enforced. The review page now rejects such payloads strictly in `src/server/human-review.ts`, which makes this mostly unreachable through the UI.
+    Next step: Make answer validation fail loudly on malformed persisted popup payload fields, consistent with the review-page decoder.
+` (most recent first).
+- Keep each entry **3–5 lines**.
+- Line 1 starts with `- Issue YYYY-MM-DD <id>:` and a short title.
+- Lines 2–5 are indented by **4 spaces** and use `Key: Value`.
+- Keep **exactly one blank line** between entries.
+- Prevent duplicates: search the file and merge/rewrite instead of adding near-duplicates.
+- When fixed, remove the entry from this file.
+- Describe the problem without choosing a solution or listing options.
+- Use `Next step` only when the action is useful regardless of the eventual solution. Otherwise, use `Open question: <decision needed>`.
+` (most recent first).
 - Keep each entry **3–5 lines**.
 - Line 1 starts with `- Issue YYYY-MM-DD <id>:` and a short title.
 - Lines 2–5 are indented by **4 spaces** and use `Key: Value`.
@@ -28,6 +42,20 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-09-29 human-answer-payload-decoding: Answer validation reads persisted popup bounds loosely
+    Priority: Medium. Area: Human answers / Data integrity
+    Description: `numberField`, `stringField`, and `acceptedMimeTypes` in `src/server/human-answer.ts` treat a malformed persisted `popup_payload` field (for example `min_length: "5"` or `max_selected: "2"`) as absent, so answer-time bounds are silently not enforced. The review page now rejects such payloads strictly in `src/server/human-review.ts`, which makes this mostly unreachable through the UI.
+    Next step: Make answer validation fail loudly on malformed persisted popup payload fields, consistent with the review-page decoder.
+` (most recent first).
+- Keep each entry **3–5 lines**.
+- Line 1 starts with `- Issue YYYY-MM-DD <id>:` and a short title.
+- Lines 2–5 are indented by **4 spaces** and use `Key: Value`.
+- Keep **exactly one blank line** between entries.
+- Prevent duplicates: search the file and merge/rewrite instead of adding near-duplicates.
+- When fixed, remove the entry from this file.
+- Describe the problem without choosing a solution or listing options.
+- Use `Next step` only when the action is useful regardless of the eventual solution. Otherwise, use `Open question: <decision needed>`.
+
 - Issue 2026-09-29 docs-ui-topbar-contrast: API UI docs page renders the wordmark dark on the dark top bar
     Priority: Medium. Area: API documentation / Visual design
     Description: On `/docs/api/ui` the embedded row-anatomy preview carries `.human-workspace`, so the `.shell:has(.human-workspace)` topbar rules in `app/globals.css` apply; the "Agent" wordmark becomes near-invisible and the nav links and call-to-action are dimmed on the dark API-docs top bar. `/docs/api` is unaffected.
@@ -47,12 +75,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: High. Area: Human review / Data compatibility
     Description: The former runtime accepted safe CSS colors, the current API accepts only named colors, and unrestricted legacy database values now silently fall back during rendering.
     Next step: Inventory persisted values and establish an explicit migration or compatibility path before release.
-
-- Issue 2026-08-17 persisted-review-payload-decoding: Malformed persisted payloads silently become plausible UI
-    Priority: High. Area: Human review / Data integrity
-    Description: Database mapping converts invalid action and visual strings, numbers, and modes into empty values, zeroes, or `date`, concealing bad persisted data.
-    Next step: Resume PR #98 when the required codex sol high feedback-worker dispatch is available; recheck PR status before reconsidering implementation.
-    Notes: Pending implementation in https://github.com/conn-castle/agent-outbox/pull/98; open and unmerged, so unresolved on main. Do not select for fresh implementation while this PR remains open.
 
 - Issue 2026-07-11 human-review-search-seq-scan: Human review search filters cannot use indexes at scale
     Priority: Low. Area: Human review / Performance
