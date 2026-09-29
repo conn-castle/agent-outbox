@@ -599,6 +599,19 @@ test("browser fixture storyboards cover every declared review renderer option an
       `${optionalDateField} string variation`
     );
   }
+  const civilDatePayloads = datePayloads.filter(
+    (payload) => payload.mode === "date"
+  );
+  assert.ok(
+    civilDatePayloads.some((payload) => payload.display_timezone == null),
+    "date mode null timezone"
+  );
+  assert.ok(
+    civilDatePayloads.some(
+      (payload) => payload.display_timezone === "America/New_York"
+    ),
+    "date mode configured timezone"
+  );
 
   const filePayloads = details.flatMap((detail) =>
     detail.actions

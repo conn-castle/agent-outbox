@@ -204,6 +204,26 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
         },
         {
           displayOrder: 2,
+          display: "Pick zoned date",
+          icon: "calendar",
+          value: "pick_zoned_date",
+          overflow: false,
+          tone: "brand",
+          style: "outline",
+          popupKind: "date_picker",
+          popupPayload: {
+            label: "Zoned follow-up date",
+            mode: "date",
+            placeholder: "YYYY-MM-DD",
+            display_timezone: "America/New_York",
+            min_value: "2026-07-01",
+            max_value: "2026-07-31"
+          },
+          answerable: true,
+          options: []
+        },
+        {
+          displayOrder: 3,
           display: "Pick date and time",
           icon: "clock",
           value: "pick_datetime",
@@ -223,7 +243,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           options: []
         },
         {
-          displayOrder: 3,
+          displayOrder: 4,
           display: "Select checks",
           icon: "check",
           value: "select_checks",

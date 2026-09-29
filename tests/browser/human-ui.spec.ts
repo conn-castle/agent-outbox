@@ -2526,6 +2526,21 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await restoreLastAnswer();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
+  await page
+    .getByRole("button", { name: "Pick zoned date", exact: true })
+    .click();
+  await page.getByLabel("Zoned follow-up date").fill("2026-07-15");
+  await expect(
+    page.getByText("Displayed timezone: America/New_York")
+  ).toBeVisible();
+  await expect(
+    page.locator('input[name="response.display_timezone"]')
+  ).toHaveValue("America/New_York");
+  await page.getByRole("button", { name: "Pick zoned date" }).click();
+  await expect(lastUndoButton(page, "Pick zoned date")).toBeVisible();
+  await restoreLastAnswer();
+
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date and time" }).click();
   await page.getByLabel("Follow-up instant").fill("2026-07-16T09:30");
   await page.getByRole("button", { name: "Pick date and time" }).click();
