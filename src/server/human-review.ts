@@ -1008,13 +1008,13 @@ function cardVisualFromDatabase(
   kind: string | null,
   rawPayload: unknown
 ): NormalizedCardVisual | null {
-  if (kind === null) {
-    return null;
-  }
   const payload = persistedPayload(
     `card_visual_payload for input item ${inputItemId}`,
     rawPayload
   );
+  if (kind === null) {
+    return null;
+  }
   if (kind === "numeric_bar" || kind === "progress_ring") {
     const numeric = {
       label: persistedString(payload, "label"),

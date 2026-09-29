@@ -1484,6 +1484,11 @@ test("human review list fails loudly for malformed persisted card visuals", asyn
       error: /card_visual_payload for input item .+: expected a JSON object\./
     },
     {
+      card_visual_kind: null,
+      card_visual_payload: [],
+      error: /card_visual_payload for input item .+: expected a JSON object\./
+    },
+    {
       card_visual_kind: "sparkline",
       card_visual_payload: {},
       error: new RegExp(
