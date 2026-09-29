@@ -1,7 +1,7 @@
 import { decodeHTML } from "entities";
 
-// Mirrors the production SQL title sort text: tags become spaces and character
-// references stay encoded, matching the encoded-text semantics of SQL search.
+// Mirrors the production SQL search and title sort text: tags become spaces,
+// whitespace runs collapse, and character references stay encoded.
 export function htmlTagStrippedText(html: string) {
   return collapseWhitespace(html.replace(/<[^>]*>/g, " "));
 }

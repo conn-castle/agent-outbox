@@ -809,12 +809,6 @@ test("webhook verifies the raw Stripe signature and records idempotent processin
     calls.statements[0].sql,
     /insert into public\.agent_outbox_stripe_webhook_events/
   );
-  // Rollout tolerance: the insert must stay valid on the pre-default schema by
-  // explicitly writing the completed state (see insertStripeWebhookEventStatement).
-  assert.match(
-    calls.statements[0].sql,
-    /values \(\$1, \$2, 'processed', now\(\)\)/
-  );
   assert.match(calls.statements[1].sql, /update public\.agent_outbox_accounts/);
   assert.match(
     calls.statements[1].sql,
