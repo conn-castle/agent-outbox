@@ -105,11 +105,11 @@ total matching the active status, search, and filters. Each card shows a compact
 priority pill immediately after its title, wrapping with the title when space is
 limited.
 
-The anatomy table describes each slot, product control, and row modifier. Live
-rows also include a product-owned **Copy identifier** control, not shown in the
-anatomy, that copies the caller-provided `caller_item_id` rather than the
-internal database ID. The icon confirms success; failures expose the identifier
-for manual copying.
+The anatomy table describes the represented slots, product controls, and row
+modifiers. Live rows also include a product-owned **Copy identifier** control,
+not shown in the anatomy, that copies the caller-provided `caller_item_id`
+rather than the internal database ID. The icon confirms success; failures expose
+the identifier for manual copying.
 
 Visual variants contain these fields:
 

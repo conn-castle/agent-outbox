@@ -104,7 +104,7 @@ export const REVIEW_ROW_ANATOMY_PARTS = {
   details: {
     label: "Details",
     description:
-      "Always available; opens the complete decision surface. Optional caller details supplies a rich-content section labeled Details inside that surface.",
+      "Always available; opens the complete decision surface. The optional caller details field supplies a rich-content section labeled Details inside that surface.",
     fields: [],
     owner: "product",
     kind: "control",
