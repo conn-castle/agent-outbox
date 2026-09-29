@@ -20,6 +20,15 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 - When fixed, remove the entry from this file.
 - Describe the problem without choosing a solution or listing options.
 - Use `Next step` only when the action is useful regardless of the eventual solution. Otherwise, use `Open question: <decision needed>`.
+` (most recent first).
+- Keep each entry **3–5 lines**.
+- Line 1 starts with `- Issue YYYY-MM-DD <id>:` and a short title.
+- Lines 2–5 are indented by **4 spaces** and use `Key: Value`.
+- Keep **exactly one blank line** between entries.
+- Prevent duplicates: search the file and merge/rewrite instead of adding near-duplicates.
+- When fixed, remove the entry from this file.
+- Describe the problem without choosing a solution or listing options.
+- Use `Next step` only when the action is useful regardless of the eventual solution. Otherwise, use `Open question: <decision needed>`.
 
 ### Entry template
 ```text
@@ -37,6 +46,15 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Medium. Area: Human answers / Data integrity
     Description: `numberField`, `stringField`, and `acceptedMimeTypes` in `src/server/human-answer.ts` treat a malformed persisted `popup_payload` field (for example `min_length: "5"` or `max_selected: "2"`) as absent, so answer-time bounds are silently not enforced. The review page now rejects such payloads strictly in `src/server/human-review.ts`, which makes this mostly unreachable through the UI.
     Next step: Make answer validation fail loudly on malformed persisted popup payload fields, consistent with the review-page decoder.
+` (most recent first).
+- Keep each entry **3–5 lines**.
+- Line 1 starts with `- Issue YYYY-MM-DD <id>:` and a short title.
+- Lines 2–5 are indented by **4 spaces** and use `Key: Value`.
+- Keep **exactly one blank line** between entries.
+- Prevent duplicates: search the file and merge/rewrite instead of adding near-duplicates.
+- When fixed, remove the entry from this file.
+- Describe the problem without choosing a solution or listing options.
+- Use `Next step` only when the action is useful regardless of the eventual solution. Otherwise, use `Open question: <decision needed>`.
 
 - Issue 2026-09-29 docs-ui-topbar-contrast: API UI docs page renders the wordmark dark on the dark top bar
     Priority: Medium. Area: API documentation / Visual design
@@ -52,11 +70,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Low. Area: Human review / Search
     Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text.
     Open question: Whether search and sort should operate on decoded text, which requires server-side decoding or stored plain-text columns.
-
-- Issue 2026-08-17 queue-priority-treatment: Queue priority lacks a meaningful visible treatment
-    Priority: Medium. Area: Human review / Visual design
-    Description: Priority is conveyed mainly through screen-reader text and a very small background-mix change that shares the caller-accent channel, so Low, Normal, High, and Urgent are not visibly distinct as documented.
-    Next step: Implement and verify the canonical visible priority treatment without conflating it with caller accent.
 
 - Issue 2026-08-17 legacy-color-transition: Existing arbitrary persisted colors lack a transition policy
     Priority: High. Area: Human review / Data compatibility
