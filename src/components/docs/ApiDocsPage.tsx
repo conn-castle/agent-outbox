@@ -6,6 +6,7 @@ import {
   renderApiDoc,
   type ApiDocSlug
 } from "../../server/api-docs";
+import { OPENAPI_DOCUMENT } from "../../shared/api-docs-manifest";
 import { SYSTEM_CONTRACT } from "../../shared/system-contract";
 import { ReviewRowAnatomyGallery } from "./ReviewRowAnatomyGallery";
 
@@ -58,7 +59,7 @@ export function ApiDocsPage({ slug }: { slug: ApiDocSlug }) {
               ))}
             </nav>
           </div>
-          <a className="api-docs-openapi" href="/docs/api/openapi.json">
+          <a className="api-docs-openapi" href={OPENAPI_DOCUMENT.href}>
             <span>OpenAPI 3.1</span>
             <strong>Download contract</strong>
           </a>

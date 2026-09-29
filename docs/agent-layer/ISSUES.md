@@ -59,16 +59,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Resume PR #98 when the required codex sol high feedback-worker dispatch is available; recheck PR status before reconsidering implementation.
     Notes: Pending implementation in https://github.com/conn-castle/agent-outbox/pull/98; open and unmerged, so unresolved on main. Do not select for fresh implementation while this PR remains open.
 
-- Issue 2026-08-17 raw-doc-relative-links: Canonical Markdown contains broken relative links
-    Priority: Medium. Area: API documentation
-    Description: The web renderer rewrites links to generated reference and OpenAPI routes, but the canonical Markdown targets files that do not exist at those relative paths when read directly.
-    Next step: Make canonical source links valid in raw Markdown as well as in the rendered docs site.
-
-- Issue 2026-08-17 api-doc-manifest-duplication: Documentation route metadata is repeated
-    Priority: Medium. Area: API documentation / Single source of truth
-    Description: Guide slugs, source paths, navigation labels, rewrite mappings, static route params, and route expectations are maintained in separate lists that can drift.
-    Next step: Identify the canonical documentation manifest and derive or validate all route consumers against it.
-
 - Issue 2026-07-11 human-review-search-seq-scan: Human review search filters cannot use indexes at scale
     Priority: Low. Area: Human review / Performance
     Description: `humanReviewListStatementWithLimit` (src/server/human-review.ts) filters with leading-wildcard `ilike` over `regexp_replace`-stripped HTML columns plus `caller_item_id`/`display_name`, so search scans all of an account's rows; queries are account-scoped via the indexed `account_id`, so this is only a concern for accounts with very large item counts.
