@@ -7,7 +7,9 @@ the product boundary.
 The caller-facing reference is generated from the executable TypeBox/OpenAPI
 contract in `src/shared/public-api-contract.ts`. The branded guides under
 `/docs/api` combine that mechanical reference with the intentionally authored
-public Markdown below. `pnpm docs:check` fails when either generated artifact is
+public Markdown below. `src/shared/api-docs-manifest.ts` lists the published
+pages; relative links between them must name real files so they work both on the
+site and in raw Markdown. `pnpm docs:check` fails when a generated artifact is
 stale.
 
 Raw HTTP is canonical. The `agent-outbox` CLI must be a wrapper over these
@@ -25,6 +27,8 @@ or error states that are unavailable through HTTP.
   UI-focused coding agents using the OpenAPI contract safely.
 - [public-api-reliability.md](public-api-reliability.md) - production retries,
   idempotency, credentials, files, errors, and retention.
+- [public-api-reference.md](public-api-reference.md) - generated public API
+  reference. Do not edit it directly.
 - [../openapi.json](../openapi.json) - generated, allowlisted OpenAPI 3.1 caller
   contract. Do not edit it directly.
 - [http-api.md](http-api.md) - routes, authentication, request headers, response

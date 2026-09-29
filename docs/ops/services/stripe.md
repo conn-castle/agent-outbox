@@ -63,14 +63,13 @@ Method Domains first. Official Stripe references:
 Webhook event ids are claimed inside the same database transaction that applies
 their billing changes. A committed ledger row therefore means the event
 completed; transaction rollback removes both the claim and billing changes so
-Stripe can retry. During the expand/deploy compatibility window, the schema
-retains `processing_status` with a `processed` default. The new writer
-explicitly writes `processing_status = 'processed'` and `processed_at = now()`,
-which is valid on both the pre-migration schema (NOT NULL, no default) and the
-migrated schema, so deploying this release and applying its migrations are
-order-independent. The webhook writer reads the receipt order assigned by the
-expanded ledger: before that migration it retains the prior projection behavior,
-and after the migration it atomically rejects strictly older projection updates
+Stripe can retry. The schema retains a transitional `processing_status` column
+with a `processed` default so earlier writers that still name the column remain
+valid as rollback targets. The current writer omits `processing_status` and
+relies on the `processed_at` default, so it stays valid once that column is
+dropped. The webhook writer reads the receipt order assigned by the expanded
+ledger: before that migration it retains the prior projection behavior, and
+after the migration it atomically rejects strictly older projection updates
 while using receipt order to break equal-second ties. Existing projections start
 from a conservative floor derived from their latest associated ledger receipt.
 If a prior or rollback writer changes billing state without advancing the new
@@ -78,9 +77,8 @@ tie-breaker, the database clears that floor so it cannot falsely suppress later
 events after the new writer returns. The prior writer can still explicitly write
 `processing` and transition it to `processed` inside the same transaction. No
 intermediate state is durably committed. Drop the compatibility column only in a
-later reviewed contract migration after this release is live and the rollback
-target no longer needs the prior writer; that contract migration must also
-remove the new writer's explicit column write and replace the prune function's
+later reviewed contract migration once no deployed or rollback-target release
+writes it; that contract migration must also replace the prune function's
 `processing_status` predicate. The ledger stores no raw webhook payload. Signed
 events whose required `created` ordering metadata violates the Stripe event
 contract fail before ledger insertion and return a retry-visible `503`; they are

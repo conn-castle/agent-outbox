@@ -75,7 +75,7 @@ export function ReviewRowHeading({
         </span>
         {rowTypeDisplay}
       </span>
-      <span className="row-heading-context">
+      <div className="row-heading-context">
         {corner}
         {contextLinks.length > 0 ? (
           <span
@@ -105,7 +105,7 @@ export function ReviewRowHeading({
           </span>
         ) : null}
         {contextAfter}
-      </span>
+      </div>
       {utilities ? <div className="row-utilities">{utilities}</div> : null}
     </>
   );

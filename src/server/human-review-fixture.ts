@@ -7,6 +7,7 @@ import {
 import type { StatusResult } from "./status.ts";
 import type { HumanAccountBannerData } from "./human-review.ts";
 import type { HumanAccountIdentityDisplay } from "../shared/account-display.ts";
+import { htmlTagStrippedText, htmlToPlainText } from "../shared/html-text.ts";
 import {
   browserFixtureCoreReviewDetails,
   fixtureUuid,
@@ -89,11 +90,7 @@ export function browserFixtureReviewRows(
   options: BrowserFixtureReviewOptions = {}
 ): HumanReviewListRow[] {
   return browserFixtureReviewDetails(options).map(
-    ({ detailsHtml: _details, actions, linkButtons, ...row }) => ({
-      ...row,
-      linkButtons,
-      hasOverflowActions: actions.some((action) => action.overflow)
-    })
+    ({ detailsHtml: _details, actions: _actions, ...row }) => row
   );
 }
 
@@ -108,9 +105,9 @@ export function browserFixtureReviewPage(
       view.search.toLowerCase().includes("beyond one hundred")
   };
   const terms = view.search.toLowerCase();
-  // Mirrors the production SQL exactly: tag-stripped matching over the three
-  // HTML columns plus plain matching on caller item id and caller display name.
-  const stripTags = (html: string) => html.replaceAll(/<[^>]*>/g, " ");
+  // Same visible text as production search and `htmlTagStrippedText`: tags
+  // become spaces and JavaScript whitespace runs collapse.
+  const visibleText = (html: string) => htmlTagStrippedText(html);
   const resolvedItems = options.resolvedItems ?? {};
   const resolvedIds = new Set(
     [
@@ -125,9 +122,9 @@ export function browserFixtureReviewPage(
     if (!humanReviewMatchesFacets(row, view)) return false;
     if (!terms) return true;
     return [
-      stripTags(row.titleHtml),
-      stripTags(row.subtitleHtml),
-      stripTags(row.summaryHtml),
+      visibleText(row.titleHtml),
+      visibleText(row.subtitleHtml),
+      visibleText(row.summaryHtml),
       row.callerItemId,
       row.rowType.display,
       row.caller.displayName
@@ -227,7 +224,6 @@ function applyFixtureResolvedState<T extends HumanReviewListRow>(
             undoEligible: true
           },
           bulkActions: [],
-          hasOverflowActions: false,
           ...("actions" in row
             ? {
                 actions: (
@@ -256,7 +252,7 @@ export function browserFixtureStoryboardScenarios(): BrowserFixtureStoryboardSce
       inputItemId: detail.inputItemId,
       callerItemId: detail.callerItemId,
       status: detail.status,
-      title: plainFixtureText(detail.titleHtml),
+      title: htmlToPlainText(detail.titleHtml),
       rowType: detail.rowType.display,
       caller: detail.caller.displayName,
       useCase,
@@ -498,14 +494,4 @@ function recordFixtureValue(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function plainFixtureText(html: string) {
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\s+/g, " ")
-    .trim();
 }

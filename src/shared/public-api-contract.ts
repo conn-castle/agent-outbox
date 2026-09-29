@@ -1130,10 +1130,6 @@ export const PUBLIC_API_OPERATIONS = [
   }
 ] as const satisfies readonly PublicApiOperation[];
 
-export const PUBLIC_API_ROUTE_KEYS = PUBLIC_API_OPERATIONS.map(
-  ({ method, path }) => `${method.toUpperCase()} ${path}`
-);
-
 function jsonPointerToFieldPath(pointer: string | undefined): string {
   if (!pointer) {
     return "";
