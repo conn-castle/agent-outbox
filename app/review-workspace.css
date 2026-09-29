@@ -4634,6 +4634,31 @@ body:has(.shell > .human-workspace) {
   line-height: 1.55;
 }
 
+.anatomy-size-definitions {
+  display: grid;
+  max-width: 54rem;
+  margin: 0;
+  gap: 0.35rem;
+  color: #4f4b43;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.anatomy-size-definitions dt {
+  display: inline;
+  color: #171612;
+  font-weight: 700;
+}
+
+.anatomy-size-definitions dt::after {
+  content: ": ";
+}
+
+.anatomy-size-definitions dd {
+  display: inline;
+  margin: 0;
+}
+
 .canonical-anatomy-frames {
   display: grid;
   justify-items: start;
@@ -4763,6 +4788,10 @@ body:has(.shell > .human-workspace) {
   font-size: 0.68rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.anatomy-field-table td:last-child {
+  line-height: 1.5;
 }
 
 .anatomy-field-table tbody th {

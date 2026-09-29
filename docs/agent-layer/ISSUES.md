@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-09-29 anatomy-missing-row-utilities: Row anatomy omits live row utilities
+    Priority: Low. Area: API documentation / Human review
+    Description: `ReviewRowAnatomyFrame` claims to render the live row, but live pending rows also show the Copy identifier and feedback utilities, which have no `REVIEW_ROW_ANATOMY_PARTS` entry and do not appear in the anatomy previews or table.
+    Next step: Add both utilities to the canonical anatomy data and frame, then drop the separate Copy identifier prose in `docs/spec/public-api-ui.md`.
+
 - Issue 2026-09-28 review-search-entity-text: Review search and title sort use entity-encoded text
     Priority: Low. Area: Human review / Search
     Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text. SQL search also does not collapse whitespace, while the client search mirror does.
@@ -47,11 +52,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Low. Area: Human review / Search
     Description: The placeholder names `customer`, but the API exposes callers and caller item IDs, and production search covers more fields than the placeholder communicates.
     Next step: Make the placeholder describe the actual searchable concepts without introducing an unsupported domain field.
-
-- Issue 2026-08-17 anatomy-table-duplication: Documentation authors a second row-anatomy source
-    Priority: High. Area: API documentation / Single source of truth
-    Description: The live table derives from `REVIEW_ROW_ANATOMY_PARTS`, while adjacent Markdown repeats the slots under inconsistent labels such as `Row type` versus `Classification chip`.
-    Next step: Remove the independently authored anatomy inventory so all presentations derive from the canonical component data.
 
 - Issue 2026-08-17 palette-drift: The tracked palette duplicates canonical colors without a parity check
     Priority: High. Area: Brand system / Single source of truth
