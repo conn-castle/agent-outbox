@@ -195,7 +195,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
             label: "Follow-up date",
             mode: "date",
             placeholder: "YYYY-MM-DD",
-            display_timezone: "UTC",
+            display_timezone: null,
             min_value: "2026-07-01",
             max_value: "2026-07-31"
           },

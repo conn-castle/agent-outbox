@@ -2517,6 +2517,10 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
   await page.getByRole("button", { name: "Pick date", exact: true }).click();
   await page.getByLabel("Follow-up date").fill("2026-07-15");
+  await expect(page.getByText(/Displayed timezone/)).toHaveCount(0);
+  await expect(
+    page.locator('input[name="response.display_timezone"]')
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Pick date" }).click();
   await expect(lastUndoButton(page, "Pick date")).toBeVisible();
   await restoreLastAnswer();
@@ -2748,6 +2752,7 @@ test("canonical row visuals and popup constraints expose only supported semantic
   await expect(datetime).toHaveAttribute("max", "2026-07-31T23:59");
   await expect(datetime).toHaveAttribute("aria-describedby", /.+/);
   await expect(page.getByText("UTC datetime", { exact: true })).toBeVisible();
+  await expect(page.getByText("Displayed timezone: UTC")).toBeVisible();
   await page.getByRole("button", { name: "Close action" }).click();
 
   await page.getByRole("button", { name: "Select checks" }).click();

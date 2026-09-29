@@ -606,14 +606,22 @@ function DatePickerFields({
 }) {
   const payload = action.popupPayload;
   const mode = payload.mode;
-  const timezone = useDisplayTimezone(payload.display_timezone);
+  const reviewTimezone = useDisplayTimezone(payload.display_timezone);
+  // Civil dates have no timezone unless the caller configured one to show.
+  const timezone = mode === "date" ? payload.display_timezone : reviewTimezone;
   const helperId = useId();
   const helper = payload.placeholder;
 
   return (
     <div className="date-fields">
       <input type="hidden" name="response.mode" value={mode} />
-      <input type="hidden" name="response.display_timezone" value={timezone} />
+      {timezone ? (
+        <input
+          type="hidden"
+          name="response.display_timezone"
+          value={timezone}
+        />
+      ) : null}
       {mode === "date" ? (
         <label className="action-field">
           <span>{popupLabel(action)}</span>
@@ -632,8 +640,8 @@ function DatePickerFields({
           <input
             type="datetime-local"
             name="response.value_local"
-            min={localDateTimeBound(payload.min_value, timezone)}
-            max={localDateTimeBound(payload.max_value, timezone)}
+            min={localDateTimeBound(payload.min_value, reviewTimezone)}
+            max={localDateTimeBound(payload.max_value, reviewTimezone)}
             aria-describedby={helper ? helperId : undefined}
             required
           />
@@ -644,7 +652,9 @@ function DatePickerFields({
           {helper}
         </p>
       ) : null}
-      <p className="form-note">Displayed timezone: {timezone}</p>
+      {timezone ? (
+        <p className="form-note">Displayed timezone: {timezone}</p>
+      ) : null}
     </div>
   );
 }
