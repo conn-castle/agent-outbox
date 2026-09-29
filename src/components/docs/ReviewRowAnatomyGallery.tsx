@@ -38,6 +38,15 @@ export function ReviewRowAnatomyGallery() {
         exact width below.
       </p>
 
+      <dl className="anatomy-size-definitions">
+        {Object.entries(REVIEW_ROW_SIZE_BEHAVIORS).map(([key, behavior]) => (
+          <div key={key}>
+            <dt>{behavior.label}</dt>
+            <dd>{behavior.description}</dd>
+          </div>
+        ))}
+      </dl>
+
       <div className="canonical-anatomy-frames">
         {REVIEW_ROW_ANATOMY_VIEWPORTS.map((viewport) => (
           <AnatomyPreviewCard key={viewport.key} viewport={viewport} />
@@ -53,6 +62,7 @@ export function ReviewRowAnatomyGallery() {
               <th>API setting</th>
               <th>Owner</th>
               <th>Content sizing</th>
+              <th>Description</th>
             </tr>
           </thead>
           <tbody>
@@ -77,6 +87,7 @@ export function ReviewRowAnatomyGallery() {
                     "Not a content box"
                   )}
                 </td>
+                <td>{slot.description}</td>
               </tr>
             ))}
           </tbody>
