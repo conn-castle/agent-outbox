@@ -46,7 +46,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 - Issue 2026-08-17 review-css-override-layer: Review styling has conflicting duplicate definitions
     Priority: High. Area: Human review / CSS architecture
     Description: Multiple `.human-workspace` token blocks and repeated queue selectors define competing values, leaving an appended override layer that silently wins and obscures the effective design.
-    Next step: Consolidate the accepted appearance into one canonical style definition per token and component state.
+    Next step: Resume PR #104 after a human applies `megachange-approved` through the GitHub web interface; recheck the latest head, checks, and reviews before proceeding.
+    Notes: Pending implementation in https://github.com/conn-castle/agent-outbox/pull/104; open and unmerged, so unresolved on main. Do not select for fresh implementation while this PR remains open.
 
 - Issue 2026-08-17 legacy-color-transition: Existing arbitrary persisted colors lack a transition policy
     Priority: High. Area: Human review / Data compatibility
