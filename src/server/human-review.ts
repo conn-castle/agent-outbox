@@ -820,12 +820,43 @@ function reviewSortExpressions(
   }
 }
 
+// JavaScript `\s`: ASCII whitespace, Unicode space separators, U+2028, U+2029,
+// and U+FEFF. Explicit points do not follow the database collation. POSIX
+// `[[:space:]]` omits U+FEFF.
+const JAVASCRIPT_WHITESPACE_CLASS = [
+  "\\u0009",
+  "\\u000a",
+  "\\u000b",
+  "\\u000c",
+  "\\u000d",
+  "\\u0020",
+  "\\u00a0",
+  "\\u1680",
+  "\\u2000",
+  "\\u2001",
+  "\\u2002",
+  "\\u2003",
+  "\\u2004",
+  "\\u2005",
+  "\\u2006",
+  "\\u2007",
+  "\\u2008",
+  "\\u2009",
+  "\\u200a",
+  "\\u2028",
+  "\\u2029",
+  "\\u202f",
+  "\\u205f",
+  "\\u3000",
+  "\\ufeff"
+].join("");
+
 // Tags become spaces and whitespace runs collapse, matching
 // `htmlTagStrippedText` in the client search and sort mirror.
 function reviewVisibleTextSql(htmlColumn: string) {
   return `btrim(regexp_replace(
         regexp_replace(${htmlColumn}, '<[^>]*>', ' ', 'g'),
-        '[[:space:]]+',
+        '[${JAVASCRIPT_WHITESPACE_CLASS}]+',
         ' ',
         'g'
       ))`;

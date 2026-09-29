@@ -1140,12 +1140,14 @@ test(
       await seedDatabaseRows(client, ids);
       for (const [index, extraItemId] of extraItemIds.entries()) {
         // The marker title exercises both LIKE-metacharacter escaping (the
-        // literal "50%_off!") and visible-text search (the phrase crosses the
-        // </strong> boundary and a whitespace run). The decoy only matches
-        // "50%_off!" when % and _ are wrongly treated as wildcards.
+        // literal "50%_off!") and visible-text search. The phrase crosses the
+        // </strong> boundary, a newline/space run, U+00A0, and U+FEFF.
+        // JavaScript `\s` collapses the last two; POSIX `[[:space:]]` does not.
+        // The decoy only matches "50%_off!" when % and _ are wrongly treated
+        // as wildcards.
         const titleHtml =
           extraItemId === markerItemId
-            ? "<strong>Tail</strong>\n  literal 50%_off! marker"
+            ? "<strong>Tail</strong>\n  literal\u00A0\uFEFFphrase 50%_off! marker"
             : extraItemId === decoyItemId
               ? "50 percent off! wildcard decoy"
               : `Bulk review item ${index}`;
@@ -1244,6 +1246,19 @@ test(
       );
       assert.deepEqual(
         strippedSearch.rows.map((row) => row.inputItemId),
+        [markerItemId]
+      );
+
+      // U+00A0 and U+FEFF sit between "literal" and "phrase". The search
+      // matches only when the SQL whitespace class collapses both the way
+      // JavaScript `\s` does.
+      const bomSeparatedSearch = await humanReviewPageInTransaction(
+        query,
+        reviewContext,
+        { search: "literal phrase" }
+      );
+      assert.deepEqual(
+        bomSeparatedSearch.rows.map((row) => row.inputItemId),
         [markerItemId]
       );
 
