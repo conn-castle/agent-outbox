@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { format } from "prettier";
+import { format, resolveConfig } from "prettier";
 
 import {
   PUBLIC_API_EXAMPLES,
@@ -12,6 +12,10 @@ import {
   publicSchemaMatches,
   validatePublicApiContract
 } from "../src/shared/public-api-contract.ts";
+import {
+  API_DOC_PAGES,
+  OPENAPI_DOCUMENT
+} from "../src/shared/api-docs-manifest.ts";
 import { SYSTEM_CONTRACT } from "../src/shared/system-contract.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -22,27 +26,12 @@ const bundleOutputPath = new URL(
   "../src/shared/api-docs.generated.json",
   import.meta.url
 );
-const openApiOutputPath = new URL("../docs/openapi.json", import.meta.url);
-
-const guideDocuments = [
-  { slug: "quickstart", sourcePath: "docs/spec/public-api.md" },
-  {
-    slug: "concepts",
-    sourcePath: "docs/spec/public-api-concepts.md"
-  },
-  {
-    slug: "capabilities",
-    sourcePath: "docs/spec/public-api-capabilities.md"
-  },
-  {
-    slug: "ui",
-    sourcePath: "docs/spec/public-api-ui.md"
-  },
-  {
-    slug: "reliability",
-    sourcePath: "docs/spec/public-api-reliability.md"
-  }
-] as const;
+const openApiOutputPath = repositoryUrl(OPENAPI_DOCUMENT.sourcePath);
+const referencePage = API_DOC_PAGES.find((page) => page.generated);
+if (!referencePage) {
+  throw new Error("API documentation manifest has no generated reference.");
+}
+const referenceOutputPath = repositoryUrl(referencePage.sourcePath);
 
 type JsonObject = Record<string, unknown>;
 
@@ -155,21 +144,23 @@ export function publicOpenApiDocument() {
   return document;
 }
 
-export function generatedApiDocsText() {
+export async function generatedApiDocsText() {
   const openapi = publicOpenApiDocument();
   const documents = [
-    ...guideDocuments.map(({ slug, sourcePath }) => {
-      const source = normalizedSource(
-        readFileSync(`${repositoryRoot}${sourcePath}`, "utf8")
-      );
-      validateGuideExamples(sourcePath, source);
-      return { slug, sourcePath, source, generated: false };
-    }),
+    ...API_DOC_PAGES.filter((page) => !page.generated).map(
+      ({ slug, sourcePath, generated }) => {
+        const source = normalizedSource(
+          readFileSync(`${repositoryRoot}${sourcePath}`, "utf8")
+        );
+        validateGuideExamples(sourcePath, source);
+        return { slug, sourcePath, source, generated };
+      }
+    ),
     {
-      slug: "reference",
-      sourcePath: "docs/openapi.json",
-      source: renderReferenceMarkdown(openapi),
-      generated: true
+      slug: referencePage.slug,
+      sourcePath: referencePage.sourcePath,
+      source: await generatedReferenceText(openapi),
+      generated: referencePage.generated
     }
   ];
   const sourceHash = createHash("sha256")
@@ -210,16 +201,37 @@ export async function generatedOpenApiText() {
   });
 }
 
+async function generatedReferenceText(
+  openapi: ReturnType<typeof publicOpenApiDocument>
+) {
+  const filepath = fileURLToPath(referenceOutputPath);
+  return format(renderReferenceMarkdown(openapi), {
+    ...(await resolveConfig(filepath)),
+    parser: "markdown",
+    filepath
+  });
+}
+
 export async function generateApiDocs() {
-  writeFileSync(bundleOutputPath, generatedApiDocsText(), "utf8");
+  writeFileSync(bundleOutputPath, await generatedApiDocsText(), "utf8");
   writeFileSync(openApiOutputPath, await generatedOpenApiText(), "utf8");
+  writeFileSync(
+    referenceOutputPath,
+    await generatedReferenceText(publicOpenApiDocument()),
+    "utf8"
+  );
 }
 
 export async function checkApiDocs() {
   checkGeneratedFile(
     bundleOutputPath,
-    generatedApiDocsText(),
+    await generatedApiDocsText(),
     "Generated API documentation bundle"
+  );
+  checkGeneratedFile(
+    referenceOutputPath,
+    await generatedReferenceText(publicOpenApiDocument()),
+    "Generated API reference"
   );
   checkGeneratedFile(
     openApiOutputPath,
@@ -489,7 +501,7 @@ function renderReferenceMarkdown(
     "",
     "This reference is generated from the same executable schemas used to check public examples and runtime request structure. Human-written guides explain when and why to use each operation; this page records the exact HTTP contract.",
     "",
-    "[Download the OpenAPI 3.1 document](openapi.json)",
+    "[Download the OpenAPI 3.1 document](../openapi.json)",
     "",
     "## Common request rules",
     "",
@@ -616,6 +628,10 @@ function checkGeneratedFile(path: URL, expected: string, label: string) {
       `${label} is stale. Run \`pnpm docs:generate\` and commit the result.`
     );
   }
+}
+
+function repositoryUrl(path: string) {
+  return new URL(`../${path}`, import.meta.url);
 }
 
 function normalizedSource(source: string) {

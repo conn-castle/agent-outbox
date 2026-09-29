@@ -8,7 +8,7 @@ semantics that a schema cannot express.
 ## Give a UI coding agent these sources
 
 A UI-focused coding agent should receive this guide and the
-[OpenAPI 3.1 document](openapi.json). It should also consult:
+[OpenAPI 3.1 document](../openapi.json). It should also consult:
 
 - [Review patterns](public-api-capabilities.md) to choose actions, popups, and
   typed responses.
@@ -69,9 +69,9 @@ owned by each individual action.
 
 ### Agent Outbox review row
 
-The human decision row has seven caller-content slots. Product controls,
-responsive infrastructure, and row modifiers are separate categories so API
-fields are not confused with product-owned layout.
+The human decision row separates caller-content slots from product controls,
+responsive infrastructure, and row modifiers so API fields are not confused with
+product-owned layout.
 
 The anatomy below is rendered by the same row-frame component and responsive CSS
 as the human review queue. Its labels replace caller content, but its slot
@@ -87,18 +87,6 @@ scrollbar, a horizontal trackpad gesture, or open that exact-width preview in a
 separate page. Ordinary vertical scrolling always continues down the page.
 
 <!-- review-row-anatomy -->
-
-The background legend distinguishes caller-controlled content from Agent Outbox
-controls. The border legend describes content-driven sizing within the current
-responsive layout:
-
-- **Fixed width + height:** content does not change either dimension.
-- **Width can grow:** a single-line slot can widen with content until its
-  available space is exhausted.
-- **Height can grow:** the slot keeps its column width while additional or
-  variant content can increase its height.
-- **Width + height can grow:** content can consume available width and add lines
-  vertically.
 
 Responsive reflow is separate from content-driven sizing. Above 800 CSS pixels,
 the action rail is a fixed-width right column and the visual/Details column is
@@ -117,33 +105,8 @@ total matching the active status, search, and filters. Each card shows a compact
 priority pill immediately after its title, wrapping with the title when space is
 limited.
 
-| Slot                | Contents                                                                                                                                                         |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Classification chip | `row_type.display` and `row_type.icon`.                                                                                                                          |
-| Corner metadata     | Optional `corner` context such as an amount, environment, or count. When absent, Agent Outbox shows a visually distinct product-owned update timestamp fallback. |
-| Title block         | Required `title` and `subtitle`. The queue title opens details, so nested links in those fields are flattened to text in the row.                                |
-| Summary             | Required `summary` describing the decision being requested.                                                                                                      |
-| Visual              | No visual, or one `numeric_bar`, `progress_ring`, or `pill` card visual.                                                                                         |
-| Context links       | Zero to 32 `link_buttons`, each with `display`, `icon`, and HTTP(S) `url`.                                                                                       |
-| Action bar          | Primary `actions` with `overflow: false`, each with `display`, `icon`, stable `value`, optional fixed `tone` and `style`, and its own `popup`.                   |
-
-Product controls are not caller-content slots:
-
-- **Details** is always available and opens the complete decision surface;
-  optional caller `details` supplies a rich-content section inside that surface,
-  labeled **Details**.
-- **Snooze** is product-owned; `skip_disabled` controls whether it is available.
-  Its icon-only button retains a tooltip and accessible name at every width. It
-  moves the review behind other entries locally, without scheduling a reminder.
-- **Copy identifier** copies the caller-provided `caller_item_id`, not the
-  internal database ID. The icon confirms success; failures expose the
-  identifier for manual copying.
-- **More actions** is product-owned and appears on pending rows when one or more
-  actions use `overflow: true`. Answered rows keep the result and undo flow
-  instead of live overflow decision controls.
-
-The anatomy examples reserve a scrollbar gutter as responsive infrastructure,
-not caller content.
+The anatomy table describes the represented slots, product controls, and row
+modifiers.
 
 Visual variants contain these fields:
 
@@ -152,16 +115,8 @@ Visual variants contain these fields:
 - `progress_ring`: the numeric-bar fields plus optional `color`;
 - `pill`: `text`, optional `icon`, and `color`.
 
-Keep these inputs as modifiers rather than allocating more content slots:
-
-- `priority` controls ordering and a restrained visible Low, Normal, High, or
-  Urgent priority treatment; it never implies an unsupplied deadline;
-- `row_accent_color` decorates the row container;
-- paired `actions[].tone` and `actions[].style` select a semantic button
-  treatment from fixed API values rather than arbitrary colors or CSS;
-- `actions[].overflow` places each action in the primary bar or the compact More
-  menu beside Skip;
-- `skip_disabled` controls the system skip affordance in the row metadata area.
+Paired `actions[].tone` and `actions[].style` select a semantic button treatment
+from fixed API values rather than arbitrary colors or CSS.
 
 The review row has ordinary interaction states such as rest, focus, and
 selection. Its lifecycle states are pending and answered-but-undoable. After a

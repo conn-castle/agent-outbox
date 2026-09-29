@@ -35,3 +35,8 @@ test("server-parity text strips tags without decoding references", () => {
     "AT&amp;T &lt;b&gt;"
   );
 });
+
+test("server-parity text collapses JavaScript whitespace including U+FEFF", () => {
+  assert.equal(htmlTagStrippedText("Visible\uFEFFphrase"), "Visible phrase");
+  assert.equal(htmlTagStrippedText("<b>Send:</b>\n  “Your"), "Send: “Your");
+});

@@ -477,8 +477,7 @@ svg {
 
 .main,
 .legal-main,
-.connect-main,
-.human-workspace {
+.connect-main {
   width: min(100% - 3rem, 1180px);
   margin: 0 auto;
 }
