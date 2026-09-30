@@ -39,10 +39,19 @@ export const REVIEW_ROW_ANATOMY_PARTS = {
     kind: "content",
     sizeBehavior: "horizontal"
   },
+  cardTime: {
+    label: "Card time",
+    description:
+      "Optional caller-owned event timestamp, shown as an unlabeled relative time. Missing values render nothing, independently of corner content.",
+    fields: ["card_time"],
+    owner: "caller",
+    kind: "content",
+    sizeBehavior: "horizontal"
+  },
   corner: {
     label: "Corner metadata",
     description:
-      "Optional context such as an amount, environment, or count. When absent, Agent Outbox shows a visually distinct product-owned update timestamp fallback.",
+      "Optional generic context such as an amount, environment, or count. Separate from card time; missing content renders nothing.",
     fields: ["corner"],
     owner: "caller",
     kind: "content",

@@ -19,6 +19,7 @@ export type HumanReviewSort =
   | "visual_score"
   | "title"
   | "caller"
+  | "card_time"
   | "created_at"
   | "updated_at";
 export type HumanReviewSortDirection = "asc" | "desc";
@@ -106,6 +107,7 @@ export function defaultHumanReviewSortDirection(
   sort: HumanReviewSort
 ): HumanReviewSortDirection {
   return sort === "visual_score" ||
+    sort === "card_time" ||
     sort === "created_at" ||
     sort === "updated_at"
     ? "desc"
@@ -162,6 +164,7 @@ function parseSort<TFallback extends HumanReviewSort | "none">(
     value === "visual_score" ||
     value === "title" ||
     value === "caller" ||
+    value === "card_time" ||
     value === "created_at" ||
     value === "updated_at"
     ? value

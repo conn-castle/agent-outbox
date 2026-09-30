@@ -311,17 +311,7 @@ export function parseInputSubmission(
   const titleHtml = requiredHtml(value, "title", fields, "title");
   const subtitleHtml = requiredHtml(value, "subtitle", fields, "subtitle");
   const cornerHtml = optionalHtml(value.corner, fields, "corner");
-  // Compatibility release: reads understand card_time before callers can set it.
-  if (value.card_time != null) {
-    fields.push(
-      fieldError(
-        "card_time",
-        "field_not_supported",
-        "card_time is not supported yet."
-      )
-    );
-  }
-  const cardTime = null;
+  const cardTime = parseCardTime(value.card_time, fields);
   const summaryHtml = requiredHtml(value, "summary", fields, "summary");
   const detailsHtml = optionalHtml(value.details, fields, "details");
   const linkButtons = parseLinkButtons(value.link_buttons, fields);
@@ -1558,6 +1548,26 @@ function isValidCivilDate(value: string) {
   return (
     Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
   );
+}
+
+function parseCardTime(value: unknown, fields: ApiFieldError[]) {
+  if (value == null) return null;
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) ||
+    value.startsWith("0000-") ||
+    !isValidUtcDateTime(value)
+  ) {
+    fields.push(
+      fieldError(
+        "card_time",
+        "invalid_datetime",
+        "card_time must be a UTC datetime (YYYY-MM-DDTHH:mm:ss[.sss]Z), with a year from 0001 to 9999 and at most three fractional digits."
+      )
+    );
+    return null;
+  }
+  return new Date(value).toISOString();
 }
 
 export function isValidUtcDateTime(value: string) {

@@ -24,7 +24,11 @@ import {
   UndoAnswerForm,
   type OnHumanMutation
 } from "./ActionForms";
-import { formatReviewPriority, formatUtcTimestamp } from "./review-format";
+import {
+  formatReviewPriority,
+  formatUtcTimestamp,
+  formatExactUtcTimestamp
+} from "./review-format";
 import { CardVisual, HumanIcon, LinkButtons, SafeHtml } from "./TypedContent";
 import { Feedback } from "./Feedback";
 
@@ -219,6 +223,34 @@ export function ReviewDetail({
                   className="detail-subtitle"
                 />
               )}
+              <dl className="detail-timestamps">
+                {detail.cardTime ? (
+                  <div>
+                    <dt>Card time</dt>
+                    <dd>
+                      <time dateTime={detail.cardTime}>
+                        {formatExactUtcTimestamp(detail.cardTime)}
+                      </time>
+                    </dd>
+                  </div>
+                ) : null}
+                <div>
+                  <dt>Added to Outbox</dt>
+                  <dd>
+                    <time dateTime={detail.createdAt}>
+                      {formatExactUtcTimestamp(detail.createdAt)}
+                    </time>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Updated in Outbox</dt>
+                  <dd>
+                    <time dateTime={detail.updatedAt}>
+                      {formatExactUtcTimestamp(detail.updatedAt)}
+                    </time>
+                  </dd>
+                </div>
+              </dl>
             </div>
           </header>
 

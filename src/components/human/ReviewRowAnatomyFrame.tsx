@@ -62,13 +62,26 @@ export function ReviewRowAnatomyFrame({
                     : "Email draft"
                 }
                 rowTypeIcon="mail"
+                cardTime={
+                  <span
+                    className={slotClass(
+                      "cardTime",
+                      "corner-meta row-time",
+                      annotated
+                    )}
+                  >
+                    {annotated
+                      ? REVIEW_ROW_ANATOMY_PARTS.cardTime.label
+                      : "4 min ago"}
+                  </span>
+                }
                 corner={
                   <span
                     className={slotClass("corner", "corner-meta", annotated)}
                   >
                     {annotated
                       ? REVIEW_ROW_ANATOMY_PARTS.corner.label
-                      : "Acme Corp · 4 min ago"}
+                      : "Acme Corp"}
                   </span>
                 }
                 contextLinks={

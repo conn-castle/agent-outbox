@@ -6,6 +6,14 @@ values in approved operator-controlled stores, not in this file.
 
 ## Pre-Release Gate
 
+Card-time activation has a two-release rollback gate: first deploy the
+compatibility release containing migration `V20260930001000` and canonical
+card-time read support, while it still rejects non-null submissions. Only then
+deploy the activation release, with that compatibility release (or a newer
+compatible release) as its captured rollback target. Once non-null `card_time`
+records exist, never roll back to earlier code: it cannot verify those records'
+fingerprints. Application rollback does not remove the nullable column.
+
 Browser verification builds an optimized, test-only Next.js application into
 `.next-browser`, then serves it on loopback with `next start` and a disposable
 database. Compilation finishes before browser execution; the harness rebuilds
@@ -30,6 +38,10 @@ request. Version `0.0.0`, prerelease versions, reused tags, uncommitted
 versions, and non-`main` refs fail before deployment. The committed package
 version is the single source for the numbered `v<version>` tag and GitHub
 Release.
+
+After changing the package version, run `corepack pnpm run docs:generate` and
+include the generated documentation changes in the release commit. The OpenAPI
+document embeds that version, and its documentation bundle hash changes with it.
 
 Before the first public CLI release, complete these one-time Homebrew
 preconditions:

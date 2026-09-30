@@ -109,6 +109,19 @@ priority never changes the row's caller accent tint.
 The anatomy table describes the represented slots, product controls, and row
 modifiers.
 
+Optional `card_time` appears as an unlabeled relative timestamp after the row
+type pill, before independent `corner` content and context links. Missing values
+render nothing; the header does not substitute the request's update time. The
+exact UTC value is also available on hover and through a semantic time element
+with an accessible Card time prefix. See
+[timestamp field rules](public-api-reference.md#schema-inputsubmission).
+
+Details show exact UTC Card time when supplied, Added to Outbox (`created_at`),
+and Updated in Outbox (`updated_at`), without requiring hover, in both review
+and action-compose modes. Card time, Created, and Last updated are independent
+sort choices. Missing card times remain last in either direction; ties continue
+to later sort rules. Changing the sort does not add metadata to the cards.
+
 Visual variants contain these fields:
 
 - `numeric_bar`: `label`, numeric `value`, formatted `display`, optional `unit`,
