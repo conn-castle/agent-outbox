@@ -33,6 +33,9 @@ else
   container_output_dir="/workspace/$relative_output_dir"
 fi
 
+# Keep output directories and Docker cache mountpoints writable by the host.
+mkdir -p -- "$output_dir/public" "$repo_root/node_modules" "$repo_root/.next"
+
 image="agent-outbox-marketing-playwright:1.63.0"
 docker build --platform linux/amd64 --file "$repo_root/Dockerfile.marketing" --tag "$image" "$repo_root"
 docker run --rm --platform linux/amd64 \

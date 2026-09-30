@@ -39,6 +39,10 @@ versions, and non-`main` refs fail before deployment. The committed package
 version is the single source for the numbered `v<version>` tag and GitHub
 Release.
 
+After changing the package version, run `corepack pnpm run docs:generate` and
+include the generated documentation changes in the release commit. The OpenAPI
+document embeds that version, and its documentation bundle hash changes with it.
+
 Before the first public CLI release, complete these one-time Homebrew
 preconditions:
 
