@@ -64,7 +64,7 @@ noise_mode = 'default'
 version_update_on_sync = true
 
 [dispatch]
-max_depth = 1
+max_depth = 3
 
 [notifications]
 chime = true
