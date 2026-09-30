@@ -15,6 +15,7 @@ export type ReviewRowHeadingLink = {
 export type ReviewRowHeadingProps = {
   rowTypeDisplay: ReactNode;
   rowTypeIcon: string;
+  cardTime?: ReactNode;
   corner?: ReactNode;
   contextLinks?: ReviewRowHeadingLink[];
   contextAfter?: ReactNode;
@@ -27,6 +28,7 @@ const EMPTY_CONTEXT_LINKS: ReviewRowHeadingLink[] = [];
 export function ReviewRowHeading({
   rowTypeDisplay,
   rowTypeIcon,
+  cardTime,
   corner,
   contextLinks = EMPTY_CONTEXT_LINKS,
   contextAfter,
@@ -76,6 +78,7 @@ export function ReviewRowHeading({
         {rowTypeDisplay}
       </span>
       <div className="row-heading-context">
+        {cardTime}
         {corner}
         {contextLinks.length > 0 ? (
           <span

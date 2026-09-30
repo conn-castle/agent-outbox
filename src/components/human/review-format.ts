@@ -46,6 +46,10 @@ export function formatUtcTimestamp(value: string) {
   return utcTimestampFormatter.format(new Date(value));
 }
 
+export function formatExactUtcTimestamp(value: string) {
+  return new Date(value).toISOString().replace("T", " ").replace("Z", " UTC");
+}
+
 export function formatReviewPriority(value: string) {
   switch (value) {
     case "urgent":

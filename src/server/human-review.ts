@@ -105,6 +105,7 @@ export type HumanReviewListRow = {
   titleHtml: string;
   subtitleHtml: string;
   cornerHtml: string | null;
+  cardTime: string | null;
   summaryHtml: string;
   cardVisual: NormalizedCardVisual | null;
   skipDisabled: boolean;
@@ -180,6 +181,7 @@ type HumanReviewRow = {
   title_html: string;
   subtitle_html: string;
   corner_html: string | null;
+  card_time: string | Date | null;
   summary_html: string;
   details_html?: string | null;
   card_visual_kind: string | null;
@@ -696,6 +698,7 @@ function reviewRowSelect(options: { includeDetails?: boolean } = {}) {
       i.title_html,
       i.subtitle_html,
       i.corner_html,
+      i.card_time,
       i.summary_html,
       ${detailsColumn}
       i.card_visual_kind,
@@ -815,6 +818,8 @@ function reviewSortExpressions(
       return reviewTextSortExpressions("c.display_name", suffix);
     case "created_at":
       return [`i.created_at${suffix}`];
+    case "card_time":
+      return [`i.card_time${suffix} nulls last`];
     case "updated_at":
       return [`i.updated_at${suffix}`];
   }
@@ -909,6 +914,7 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
     titleHtml: row.title_html,
     subtitleHtml: row.subtitle_html,
     cornerHtml: row.corner_html,
+    cardTime: nullableTimestampValue(row.card_time),
     summaryHtml: row.summary_html,
     cardVisual: cardVisualFromDatabase(
       row.input_item_id,

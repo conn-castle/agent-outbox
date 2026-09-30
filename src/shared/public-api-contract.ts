@@ -364,6 +364,17 @@ export const InputSubmissionSchema = openObject(
     title: Type.String({ minLength: 1 }),
     subtitle: Type.String({ minLength: 1 }),
     corner: Type.Optional(nullable(Type.String())),
+    card_time: Type.Optional(
+      nullable(
+        Type.String({
+          format: "date-time",
+          pattern:
+            "^(?!0000)\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$",
+          description:
+            "Optional caller-owned event time, separate from Outbox creation and update times. UTC only, years 0001–9999, at most millisecond precision. Omission or null clears it on replacement."
+        })
+      )
+    ),
     summary: Type.String({ minLength: 1 }),
     details: Type.Optional(nullable(Type.String())),
     link_buttons: Type.Array(LinkButtonSchema, { maxItems: 32 }),

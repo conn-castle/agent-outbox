@@ -34,6 +34,15 @@ export function compareHumanReviewRows(
       if (compared !== 0) return compared;
       continue;
     }
+    if (rule.key === "card_time") {
+      const compared = compareNullableNumbers(
+        left.cardTime === null ? null : Date.parse(left.cardTime),
+        right.cardTime === null ? null : Date.parse(right.cardTime),
+        rule.direction
+      );
+      if (compared !== 0) return compared;
+      continue;
+    }
     const compared = compareByKey(left, right, rule.key);
     if (compared !== 0) return rule.direction === "asc" ? compared : -compared;
   }
@@ -69,6 +78,7 @@ function compareByKey(
     case "updated_at":
       return left.updatedAt.localeCompare(right.updatedAt);
     case "visual_score":
+    case "card_time":
       return 0;
   }
 }
