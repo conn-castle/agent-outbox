@@ -37,10 +37,10 @@ export function sanitizedAnalyticsUrl(value: string, origin: string) {
     url.password = "";
     url.search = "";
     url.hash = "";
-    if (privatePath) {
-      url.pathname = url.pathname.split("/").slice(0, 2).join("/") || "/";
-    } else if (!internal) {
+    if (!internal) {
       url.pathname = "/";
+    } else if (privatePath) {
+      url.pathname = url.pathname.split("/").slice(0, 2).join("/") || "/";
     }
     return url.toString();
   } catch {

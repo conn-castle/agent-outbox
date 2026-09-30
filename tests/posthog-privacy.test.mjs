@@ -26,6 +26,108 @@ test("PostHog URL sanitization keeps direct referrers while removing private URL
   );
 });
 
+test("PostHog collapses external private-looking paths to the origin root", () => {
+  for (const prefix of [
+    "/api",
+    "/human",
+    "/caller",
+    "/sign-in",
+    "/sign-up",
+    "/upgrade"
+  ]) {
+    for (const suffix of ["", "/private-id"]) {
+      for (const external of [
+        "https://external.example",
+        "https://agent-outbox.dev.evil.example",
+        "https://agent-outbox.dev:8443"
+      ]) {
+        assert.equal(
+          sanitizedAnalyticsUrl(
+            `${external}${prefix}${suffix}?secret=value#fragment`,
+            origin
+          ),
+          `${external}/`
+        );
+      }
+      assert.equal(
+        sanitizedAnalyticsUrl(
+          `//external.example${prefix}${suffix}?secret=value#fragment`,
+          origin
+        ),
+        "https://external.example/"
+      );
+    }
+  }
+});
+
+test("PostHog preserves internal private-route prefixes across current and hosted origins", () => {
+  for (const current of [
+    origin,
+    "https://app.agent-outbox.dev",
+    "http://127.0.0.1:39010"
+  ]) {
+    for (const internal of new Set([
+      current,
+      origin,
+      "https://app.agent-outbox.dev"
+    ])) {
+      for (const prefix of [
+        "/api",
+        "/human",
+        "/caller",
+        "/sign-in",
+        "/sign-up",
+        "/upgrade"
+      ]) {
+        for (const suffix of ["", "/private-id"]) {
+          assert.equal(
+            sanitizedAnalyticsUrl(
+              `${internal}${prefix}${suffix}?secret=value#fragment`,
+              current
+            ),
+            `${internal}${prefix}`
+          );
+        }
+      }
+    }
+    assert.equal(
+      sanitizedAnalyticsUrl("/human/private-id?secret=value#fragment", current),
+      `${current}/human`
+    );
+  }
+});
+
+test("PostHog removes external private-looking paths from events and heatmap keys", () => {
+  const event = sanitizeAnalyticsEvent(
+    {
+      properties: {
+        $referrer: "https://external.example/api/private-id?secret=value",
+        $heatmap_data: {
+          "https://external.example/human/private-a": [[1, 2]],
+          "https://external.example/caller/private-b": [[3, 4]]
+        }
+      },
+      $set: {
+        $current_url: "https://external.example/sign-in/private-id#fragment"
+      },
+      $set_once: {
+        $initial_referrer: "https://external.example/upgrade/private-id"
+      }
+    },
+    origin
+  );
+
+  assert.equal(event.properties.$referrer, "https://external.example/");
+  assert.equal(event.$set.$current_url, "https://external.example/");
+  assert.equal(event.$set_once.$initial_referrer, "https://external.example/");
+  assert.deepEqual(event.properties.$heatmap_data, {
+    "https://external.example/": [
+      [1, 2],
+      [3, 4]
+    ]
+  });
+});
+
 test("PostHog sanitizes heatmap URL keys and combines collapsed points", () => {
   const event = sanitizeAnalyticsEvent(
     {
