@@ -281,10 +281,7 @@ export default function PrivacyPolicyPage() {
               the business, subject to applicable obligations.
             </li>
           </ul>
-          <p>
-            We do not sell personal information and do not share it for
-            cross-context behavioral advertising.
-          </p>
+          <p>We do not sell personal information.</p>
         </LegalSection>
 
         <LegalSection number={6} title="Data Retention">
