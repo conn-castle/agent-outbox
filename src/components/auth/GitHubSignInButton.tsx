@@ -24,7 +24,9 @@ type GitHubSignInFailure =
   | "github_sign_in_clerk_timeout"
   | "github_sign_in_same_page_stall";
 
-export function GitHubSignInButton() {
+export function GitHubSignInButton({
+  redirectUrl = "/human"
+}: { redirectUrl?: string } = {}) {
   const pathname = usePathname();
   const clerk = useClerk();
   const { signIn } = useSignIn();
@@ -98,8 +100,11 @@ export function GitHubSignInButton() {
       const result = await withTimeout(
         signIn.sso({
           strategy: "oauth_github",
-          redirectUrl: "/human",
-          redirectCallbackUrl: "/sign-in/sso-callback"
+          redirectUrl,
+          redirectCallbackUrl:
+            redirectUrl === "/human"
+              ? "/sign-in/sso-callback"
+              : `/sign-in/sso-callback?${new URLSearchParams({ redirect_url: redirectUrl })}`
         })
       );
       if (!ownsAttempt()) return;

@@ -1,4 +1,12 @@
-import { Check, Copy, MoreVertical, AlarmClock, Undo2 } from "lucide-react";
+import {
+  Check,
+  CircleAlert,
+  Copy,
+  Link2,
+  MoreVertical,
+  AlarmClock,
+  Undo2
+} from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -6,6 +14,7 @@ import { flushSync } from "react-dom";
 import type { HumanReviewListRow } from "../../server/human-review.ts";
 import {
   humanReviewHref,
+  humanReviewCardHref,
   type HumanReviewView
 } from "../../shared/human-review-view";
 import { htmlToPlainText } from "../../shared/html-text";
@@ -78,9 +87,10 @@ export function ReviewList({
           ? resolveSupportedColor(row.rowAccentColor)
           : null;
         const rowHref = humanReviewHref(view, row.inputItemId);
-        const overflowActions = row.bulkActions.filter(
-          (action) => action.overflow
-        );
+        const overflowActions =
+          row.status === "pending"
+            ? row.bulkActions.filter((action) => action.overflow)
+            : [];
         return (
           <OptimisticReviewRow key={row.inputItemId} onMutation={onMutation}>
             {(handleMutation) => (
@@ -153,7 +163,7 @@ export function ReviewList({
                       }
                       utilities={
                         <>
-                          <CopyIdentifier identifier={row.callerItemId} />
+                          <CopyReviewValue identifier={row.callerItemId} />
                           {row.status === "pending" ? (
                             <Feedback
                               value={feedbackDrafts[row.inputItemId] ?? ""}
@@ -191,56 +201,50 @@ export function ReviewList({
                               )}
                             </button>
                           ) : null}
-                          {row.status === "pending" &&
-                          overflowActions.length > 0 ? (
-                            <details
-                              className="row-overflow"
-                              data-dismissible-disclosure
-                            >
-                              <summary aria-label={`More actions for ${title}`}>
-                                <MoreVertical aria-hidden="true" />
-                              </summary>
-                              <div className="row-overflow-menu">
-                                {overflowActions.map((action) =>
-                                  action.popupKind !== "none" ? (
-                                    <Link
-                                      key={action.value}
-                                      className="row-overflow-item"
-                                      href={humanReviewHref(
-                                        view,
-                                        row.inputItemId,
-                                        action.value
-                                      )}
-                                      onNavigate={() =>
-                                        onDetailNavigate(row.inputItemId, title)
-                                      }
-                                    >
-                                      <HumanIcon name={action.icon} />
-                                      <span>{action.display}</span>
-                                    </Link>
-                                  ) : (
-                                    <InlineQuickAction
-                                      key={action.value}
-                                      row={row}
-                                      action={action}
-                                      className="row-overflow-item"
-                                      onMutation={handleMutation}
-                                    />
-                                  )
-                                )}
-                              </div>
-                            </details>
-                          ) : (
-                            <button
-                              className="row-overflow-disabled"
-                              type="button"
-                              aria-disabled="true"
-                              aria-label={`No more actions for ${title}`}
-                              title="No more actions"
-                            >
+                          <details
+                            className="row-overflow"
+                            data-dismissible-disclosure
+                          >
+                            <summary aria-label={`More actions for ${title}`}>
                               <MoreVertical aria-hidden="true" />
-                            </button>
-                          )}
+                            </summary>
+                            <div className="row-overflow-menu">
+                              <CopyReviewValue
+                                identifier={row.callerItemId}
+                                linkHref={humanReviewCardHref(
+                                  row.caller.callerId,
+                                  row.callerItemId
+                                )}
+                              />
+                              {overflowActions.map((action) =>
+                                action.popupKind !== "none" ? (
+                                  <Link
+                                    key={action.value}
+                                    className="row-overflow-item"
+                                    href={humanReviewHref(
+                                      view,
+                                      row.inputItemId,
+                                      action.value
+                                    )}
+                                    onNavigate={() =>
+                                      onDetailNavigate(row.inputItemId, title)
+                                    }
+                                  >
+                                    <HumanIcon name={action.icon} />
+                                    <span>{action.display}</span>
+                                  </Link>
+                                ) : (
+                                  <InlineQuickAction
+                                    key={action.value}
+                                    row={row}
+                                    action={action}
+                                    className="row-overflow-item"
+                                    onMutation={handleMutation}
+                                  />
+                                )
+                              )}
+                            </div>
+                          </details>
                         </>
                       }
                     />
@@ -377,16 +381,34 @@ function ReviewListHeading({
   return <ReviewRowHeading {...heading} contextLinks={contextLinks} />;
 }
 
-function CopyIdentifier({ identifier }: { identifier: string }) {
+function CopyReviewValue({
+  identifier,
+  linkHref
+}: {
+  identifier: string;
+  linkHref?: string;
+}) {
   const [status, setStatus] = useState<"idle" | "copied" | "error">("idle");
+  const label = linkHref ? "Copy link" : "Copy identifier";
+  const copiedLabel = linkHref ? "Link copied" : "Identifier copied";
+  const errorLabel = linkHref
+    ? "Copy failed. Try again."
+    : "Could not copy identifier. Try again.";
+  const buttonLabel =
+    status === "copied" ? copiedLabel : status === "error" ? errorLabel : label;
   async function copy() {
+    // Clear the previous alert before even an immediately rejected retry.
+    flushSync(() => setStatus("idle"));
+    const value = linkHref
+      ? new URL(linkHref, window.location.origin).href
+      : identifier;
     try {
       if (navigator.clipboard) {
-        await navigator.clipboard.writeText(identifier);
+        await navigator.clipboard.writeText(value);
       } else {
         // Clipboard API requires HTTPS; support the trusted-LAN HTTP preview.
         const field = document.createElement("textarea");
-        field.value = identifier;
+        field.value = value;
         field.style.position = "fixed";
         field.style.opacity = "0";
         document.body.append(field);
@@ -405,40 +427,42 @@ function CopyIdentifier({ identifier }: { identifier: string }) {
     }
   }
   return (
-    <span className="row-identifier-copy">
+    <span className={linkHref ? "row-link-copy" : "row-identifier-copy"}>
       <button
         type="button"
-        className="row-copy-button"
-        aria-label={
-          status === "copied" ? "Identifier copied" : "Copy identifier"
-        }
-        title={status === "copied" ? "Identifier copied" : "Copy identifier"}
+        className={`${linkHref ? "row-overflow-item" : "row-copy-button"}${status === "error" ? " copy-failed" : ""}`}
+        aria-label={buttonLabel}
+        title={buttonLabel}
         onClick={copy}
         onBlur={() => {
-          if (status === "copied") setStatus("idle");
+          setStatus("idle");
         }}
       >
         {status === "copied" ? (
           <Check aria-hidden="true" />
+        ) : status === "error" ? (
+          <CircleAlert aria-hidden="true" />
+        ) : linkHref ? (
+          <Link2 aria-hidden="true" />
         ) : (
           <Copy aria-hidden="true" />
         )}
+        {linkHref ? (
+          <span>
+            {status === "copied"
+              ? copiedLabel
+              : status === "error"
+                ? "Copy failed"
+                : label}
+          </span>
+        ) : null}
       </button>
       <span className="sr-only" role="status">
-        {status === "copied" ? "Identifier copied" : ""}
+        {status === "copied" ? copiedLabel : ""}
       </span>
       {status === "error" ? (
-        <span className="row-copy-error" role="alert">
-          Copy failed. Select and copy the identifier:
-          <input
-            aria-label="Review identifier"
-            readOnly
-            value={identifier}
-            onFocus={(event) => event.target.select()}
-          />
-          <button type="button" onClick={() => setStatus("idle")}>
-            Dismiss
-          </button>
+        <span className="sr-only" role="alert">
+          {errorLabel}
         </span>
       ) : null}
     </span>

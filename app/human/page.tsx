@@ -12,6 +12,7 @@ import {
   browserFixtureAccountIdentity,
   browserFixtureHumanSession,
   browserFixtureReviewDetail,
+  browserFixtureReviewCard,
   browserFixtureReviewPage,
   browserFixtureReviewTypeOptions,
   humanBrowserFixtureEnabled
@@ -20,6 +21,7 @@ import { readFixtureResolvedItems } from "../../src/server/human-review-fixture-
 import {
   humanReviewAccountBannerInTransaction,
   humanReviewDetailInTransaction,
+  humanReviewCardInTransaction,
   humanReviewPageInTransaction,
   humanReviewTypeOptionsInTransaction,
   REVIEW_PAGE_SIZE
@@ -55,10 +57,17 @@ export default async function HumanReviewPage({
   const renderedAt = fixtureEnabled
     ? BROWSER_FIXTURE_REFERENCE_TIME
     : new Date().toISOString();
-  const selectedItem = firstSearchParam(params?.item);
+  let selectedItem = firstSearchParam(params?.item);
+  const cardLink =
+    params?.caller_id !== undefined || params?.caller_item_id !== undefined
+      ? {
+          callerId: firstSearchParam(params?.caller_id) ?? "",
+          callerItemId: firstSearchParam(params?.caller_item_id) ?? ""
+        }
+      : null;
   const composeAction = firstSearchParam(params?.compose);
   const notice = humanReviewNotice(params);
-  const view = humanReviewViewFromRecord(params);
+  let view = humanReviewViewFromRecord(params);
 
   if (fixtureEnabled) {
     const resolvedItems = await readFixtureResolvedItems();
@@ -72,6 +81,21 @@ export default async function HumanReviewPage({
       firstTimeSignup: firstSearchParam(params?.fixture_signup) === "1",
       providerSubject: firstSearchParam(params?.fixture_provider_subject)
     });
+    if (cardLink) {
+      const card = browserFixtureReviewCard(
+        cardLink.callerId,
+        cardLink.callerItemId,
+        fixtureOptions
+      );
+      view = {
+        ...humanReviewViewFromRecord(undefined),
+        status: card?.status ?? "pending",
+        page: card?.page ?? 1
+      };
+      selectedItem = card?.inputItemId;
+      if (card?.page && card.page > 1)
+        fixtureOptions.includePaginationRows = true;
+    }
     const fixturePage = browserFixtureReviewPage(view, fixtureOptions);
     return (
       <ReviewWorkspace
@@ -93,7 +117,7 @@ export default async function HumanReviewPage({
         view={view}
         hasNext={fixturePage.hasNext}
         totalCount={fixturePage.totalCount}
-        detailOpen={selectedItem !== undefined}
+        detailOpen={cardLink !== null || selectedItem !== undefined}
         composeAction={composeAction}
         renderedAt={renderedAt}
       />
@@ -110,7 +134,19 @@ export default async function HumanReviewPage({
     );
   }
 
-  const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
+  const returnParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    for (const entry of Array.isArray(value)
+      ? value
+      : value === undefined
+        ? []
+        : [value]) {
+      returnParams.append(key, entry);
+    }
+  }
+  const session = await auth.protect({
+    unauthenticatedUrl: `/sign-in?${new URLSearchParams({ redirect_url: `/human?${returnParams}` })}`
+  });
   const [transaction, clerkIdentity] = await Promise.all([
     runHumanAccountTransaction(
       {
@@ -124,7 +160,8 @@ export default async function HumanReviewPage({
           query,
           humanSession,
           selectedItem ?? null,
-          view
+          view,
+          cardLink
         )
     ),
     loadClerkAccountIdentity(session.userId)
@@ -168,10 +205,10 @@ export default async function HumanReviewPage({
       detail={pageData.detail}
       banner={pageData.banner}
       notice={notice}
-      view={view}
+      view={pageData.view}
       hasNext={pageData.hasNext}
       totalCount={pageData.totalCount}
-      detailOpen={selectedItem !== undefined}
+      detailOpen={cardLink !== null || selectedItem !== undefined}
       composeAction={composeAction}
       renderedAt={renderedAt}
     />
@@ -252,8 +289,23 @@ async function loadHumanReviewPageDataInTransaction(
   query: ProductTransactionQuery,
   session: HumanAccountSession,
   selectedItem: string | null,
-  view: HumanReviewView
+  view: HumanReviewView,
+  cardLink: { callerId: string; callerItemId: string } | null
 ) {
+  if (cardLink) {
+    const card = await humanReviewCardInTransaction(
+      query,
+      session,
+      cardLink.callerId,
+      cardLink.callerItemId
+    );
+    view = {
+      ...humanReviewViewFromRecord(undefined),
+      status: card?.status ?? "pending",
+      page: card?.page ?? 1
+    };
+    selectedItem = card?.inputItemId ?? null;
+  }
   const page = await humanReviewPageInTransaction(query, session, {
     status: view.status,
     search: view.search,
@@ -273,6 +325,7 @@ async function loadHumanReviewPageDataInTransaction(
     view.status
   );
   return {
+    view,
     rows,
     detail,
     banner,

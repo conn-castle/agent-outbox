@@ -216,6 +216,19 @@ export function ReviewWorkspace({
   const canonicalViewHref = humanReviewHref(view);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("caller_id") && !params.has("caller_item_id")) return;
+    // Forms read their return view from the URL. Keep the resolved status/page
+    // there too, while preserving the shareable caller-owned card identity.
+    writeHumanReviewView(params, viewRef.current);
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}?${params}`
+    );
+  }, [canonicalViewHref]);
+
+  useEffect(() => {
     const persisted = readWorkspaceState(session.accountId);
     setSelectedIds(new Set(persisted?.selectedIds ?? []));
     setSkippedIds(new Set(persisted?.skippedIds ?? []));
@@ -374,6 +387,8 @@ export function ReviewWorkspace({
   ) {
     const params = new URLSearchParams(window.location.search);
     params.delete("item");
+    params.delete("caller_id");
+    params.delete("caller_item_id");
     params.delete("error");
     params.delete("failedActionKind");
     params.delete("notice");
@@ -726,6 +741,19 @@ export function ReviewWorkspace({
       ? visibleRows[detailIndex + 1]
       : null;
 
+  useEffect(() => {
+    if (!detailOpen || !detail || detailDismissed) return;
+    const frame = requestAnimationFrame(() => {
+      document
+        .getElementById(`review-row-${detail.inputItemId}`)
+        ?.scrollIntoView({
+          block: "center",
+          behavior: "instant"
+        });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [detailOpen, detail?.inputItemId, detailDismissed, visibleRows]);
+
   const handleHumanMutation: OnHumanMutation = (submission) => {
     const rowSnapshots = projectedRows.filter((row) =>
       submission.inputItemIds.includes(row.inputItemId)
@@ -742,6 +770,15 @@ export function ReviewWorkspace({
     setDetailDismissed(true);
     setPendingDetail(null);
     router.push(humanReviewHref(controlViewRef.current), { scroll: false });
+    if (detail) {
+      requestAnimationFrame(() => {
+        const row = document.getElementById(`review-row-${detail.inputItemId}`);
+        row?.scrollIntoView({ block: "center", behavior: "instant" });
+        row
+          ?.querySelector<HTMLElement>(".row-details-link")
+          ?.focus({ preventScroll: true });
+      });
+    }
   }
 
   function enqueueHumanMutation(
@@ -1383,16 +1420,19 @@ export function ReviewWorkspace({
 
       {!detailDismissed &&
       detailOpen &&
-      detail &&
-      (!pendingDetail || detail.inputItemId === pendingDetail.inputItemId) &&
-      !hiddenIds.has(detail.inputItemId) &&
-      !lockedIds.has(detail.inputItemId) ? (
+      (!pendingDetail || detail?.inputItemId === pendingDetail.inputItemId) &&
+      (!detail ||
+        (!hiddenIds.has(detail.inputItemId) &&
+          !lockedIds.has(detail.inputItemId))) ? (
         <ReviewDetail
-          feedback={feedback.drafts[detail.inputItemId] ?? ""}
-          onFeedbackChange={(text) => feedback.change(detail.inputItemId, text)}
+          feedback={detail ? (feedback.drafts[detail.inputItemId] ?? "") : ""}
+          onFeedbackChange={(text) =>
+            detail ? feedback.change(detail.inputItemId, text) : false
+          }
           feedbackError={feedback.error}
           key={detail?.inputItemId ?? "empty"}
           detail={detail}
+          renderedAt={renderedAt}
           positionLabel={
             detailIndex >= 0
               ? `${detailIndex + 1} of ${visibleRows.length}`

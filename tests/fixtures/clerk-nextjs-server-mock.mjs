@@ -17,20 +17,31 @@ export function createRouteMatcher(patterns) {
   };
 }
 
+export const clerkMiddlewareMock = { signedOut: false };
+
 /**
- * @param {(auth: { protect: () => Promise<void> }, request: Request) => unknown} handler
+ * @param {(auth: { protect: (options: { unauthenticatedUrl: string }) => Promise<void> }, request: Request) => unknown} handler
  * @returns {(request: Request) => unknown}
  */
 export function clerkMiddleware(handler) {
-  return (request) =>
-    handler(
-      {
-        protect: async () => {
-          throw new Error(
-            "Unexpected Clerk auth path in middleware missing-configuration test."
-          );
-        }
-      },
-      request
-    );
+  return async (request) => {
+    try {
+      return await handler(
+        {
+          protect: async ({ unauthenticatedUrl }) => {
+            if (clerkMiddlewareMock.signedOut) {
+              throw Response.redirect(unauthenticatedUrl, 307);
+            }
+            throw new Error(
+              "Unexpected Clerk auth path in middleware missing-configuration test."
+            );
+          }
+        },
+        request
+      );
+    } catch (error) {
+      if (error instanceof Response) return error;
+      throw error;
+    }
+  };
 }

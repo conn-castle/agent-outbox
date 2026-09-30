@@ -69,7 +69,7 @@ export const REVIEW_ROW_ANATOMY_PARTS = {
   copyIdentifier: {
     label: "Copy identifier",
     description:
-      "Copies the caller-provided caller_item_id rather than the internal database ID. The icon confirms success; failures expose the identifier for manual copying.",
+      "Copies the caller-provided caller_item_id rather than the internal database ID. The icon confirms success; failures show inline feedback and allow retrying the same control.",
     fields: ["caller_item_id"],
     owner: "product",
     kind: "control",

@@ -8,6 +8,11 @@ import {
   shouldFailClosedForMissingClerkConfiguration
 } from "../src/server/middleware-clerk-readiness.ts";
 import { middlewareFixtureBypassEnabled } from "../src/server/middleware-fixture-bypass.ts";
+import {
+  humanReviewCardHref,
+  humanReviewReturnHref
+} from "../src/shared/human-review-view.ts";
+import { clerkMiddlewareMock } from "./fixtures/clerk-nextjs-server-mock.mjs";
 
 /** @type {import("node:module").ResolveHookSync} */
 const resolveMiddlewareTestSpecifier = (specifier, context, nextResolve) => {
@@ -304,6 +309,40 @@ test("middleware fixture bypass passes through protected routes before Clerk", a
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-middleware-next"), "1");
   } finally {
+    restoreEnv(previous);
+  }
+});
+
+test("signed-out card visits preserve arbitrary IDs through the sign-in redirect", async () => {
+  const previous = captureMiddlewareEnv();
+  try {
+    setEnv("APP_ENV", "production");
+    setEnv("CLERK_SECRET_KEY", "sk_test");
+    setEnv("CLERK_PUBLISHABLE_KEY", "pk_test");
+    delete process.env.AGENT_OUTBOX_BROWSER_FIXTURE;
+    clerkMiddlewareMock.signedOut = true;
+    const destination = humanReviewCardHref(
+      "caller-one",
+      "email:thread /?#&+% café 東京"
+    );
+    const response = await middlewareResponse(
+      `https://app.example.test${destination}`
+    );
+    assert.equal(response.status, 307);
+    const location = response.headers.get("location");
+    assert.ok(location);
+    const signIn = new URL(location);
+    assert.equal(signIn.origin, "https://app.example.test");
+    assert.equal(signIn.pathname, "/sign-in");
+    assert.equal(signIn.searchParams.get("redirect_url"), destination);
+    assert.equal(
+      humanReviewReturnHref(
+        signIn.searchParams.get("redirect_url") ?? undefined
+      ),
+      destination
+    );
+  } finally {
+    clerkMiddlewareMock.signedOut = false;
     restoreEnv(previous);
   }
 });

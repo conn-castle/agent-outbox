@@ -30,6 +30,7 @@ import {
   type LimitWindowKind
 } from "./limits.ts";
 import {
+  humanReviewViewFromRecord,
   type HumanReviewSort,
   type HumanReviewSortDirection,
   type HumanReviewSortRule
@@ -373,6 +374,47 @@ export async function humanReviewDetailInTransaction(
           (action.popup_kind !== "file_upload" || fileUploadAnswerable)
       )
     )
+  };
+}
+
+export async function humanReviewCardInTransaction(
+  query: ProductTransactionQuery,
+  context: AuthorizedHumanAccountContext,
+  callerId: string,
+  callerItemId: string
+) {
+  // PostgreSQL text cannot contain a null byte, so these IDs cannot exist.
+  if (callerId.includes("\0") || callerItemId.includes("\0")) return null;
+  const result = await query<{
+    input_item_id: string;
+    status: HumanReviewStatus;
+    position: string;
+  }>({
+    sql: `
+      select input_item_id, status, position from (
+        select i.input_item_id::text as input_item_id, i.status,
+          i.caller_id::text as caller_id, i.caller_item_id,
+          row_number() over (
+            partition by i.status
+            ${reviewRowOrderBy(humanReviewViewFromRecord(undefined).sorts)}
+          )::text as position
+        from public.agent_outbox_input_items i
+        where i.account_id = $1
+      ) queue
+      where caller_id = $2 and caller_item_id = $3
+    `,
+    values: [context.accountId, callerId, callerItemId]
+  });
+  const row = result.rows[0];
+  if (!row) return null;
+  const position = Number(row.position);
+  if (!Number.isSafeInteger(position) || position < 1) {
+    throw new Error("Linked review queue position is unavailable or invalid.");
+  }
+  return {
+    inputItemId: row.input_item_id,
+    status: row.status,
+    page: Math.floor((position - 1) / REVIEW_PAGE_SIZE) + 1
   };
 }
 

@@ -22,6 +22,7 @@ import {
 } from "../shared/human-review-sort.ts";
 import {
   humanReviewMatchesFacets,
+  humanReviewViewFromRecord,
   isDefaultHumanReviewOrdering
 } from "../shared/human-review-view.ts";
 
@@ -193,6 +194,48 @@ export function browserFixtureReviewDetail(
     detail,
     options.resolvedItems?.[detail.inputItemId]
   );
+}
+
+export function browserFixtureReviewCard(
+  callerId: string,
+  callerItemId: string,
+  options: BrowserFixtureReviewOptions = {}
+) {
+  const rows = browserFixtureReviewRows({ includePaginationRows: true });
+  const row = rows.find(
+    (candidate) =>
+      candidate.caller.callerId === callerId &&
+      candidate.callerItemId === callerItemId
+  );
+  if (!row) return null;
+  const detail = browserFixtureReviewDetail(row.inputItemId, options)!;
+  const view = {
+    ...humanReviewViewFromRecord(undefined),
+    status: detail.status
+  } satisfies HumanReviewView;
+  const firstPage = browserFixtureReviewPage(view, {
+    ...options,
+    includePaginationRows: true
+  });
+  for (
+    let page = 1;
+    page <= Math.ceil(firstPage.totalCount / REVIEW_PAGE_SIZE);
+    page++
+  ) {
+    const window = browserFixtureReviewPage(
+      { ...view, page },
+      {
+        ...options,
+        includePaginationRows: true
+      }
+    );
+    if (
+      window.rows.some((candidate) => candidate.inputItemId === row.inputItemId)
+    ) {
+      return { inputItemId: row.inputItemId, status: detail.status, page };
+    }
+  }
+  throw new Error("Linked fixture review is missing from its queue.");
 }
 
 function applyFixtureResolvedState<T extends HumanReviewListRow>(

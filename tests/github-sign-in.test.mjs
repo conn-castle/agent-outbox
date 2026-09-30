@@ -86,6 +86,7 @@ function loadGitHubSignInButton({
     compiled,
     {
       console,
+      URLSearchParams,
       exports: testModule.exports,
       module: testModule,
       queueMicrotask,
@@ -136,7 +137,7 @@ function loadGitHubSignInButton({
 
   return {
     GitHubSignInButton:
-      /** @type {() => import("react").ReactElement | null} */ (
+      /** @type {(props?: { redirectUrl?: string }) => import("react").ReactElement | null} */ (
         testModule.exports.GitHubSignInButton
       ),
     /** @param {string} type */
@@ -226,6 +227,34 @@ test("GitHub sign-in resets abandoned Clerk state before provider launch", async
     ])
   );
   assert.deepEqual(events, ["github_sign_in_clerk_error"]);
+});
+
+test("GitHub sign-in returns to the requested review card", async () => {
+  const destination =
+    "/human?caller_id=caller-one&caller_item_id=email%3Athread";
+  let redirectUrl;
+  let redirectCallbackUrl;
+  const { GitHubSignInButton } = loadGitHubSignInButton({
+    signIn: {
+      async reset() {
+        return { error: null };
+      },
+      async sso(input) {
+        redirectUrl = input.redirectUrl;
+        redirectCallbackUrl = input.redirectCallbackUrl;
+        return { error: { message: "End fixture launch" } };
+      }
+    },
+    onEvent() {}
+  });
+  await clickGitHubButton(() =>
+    GitHubSignInButton({ redirectUrl: destination })
+  );
+  assert.equal(redirectUrl, destination);
+  assert.ok(redirectCallbackUrl);
+  const callback = new URL(redirectCallbackUrl, "https://app.agent-outbox.dev");
+  assert.equal(callback.pathname, "/sign-in/sso-callback");
+  assert.equal(callback.searchParams.get("redirect_url"), destination);
 });
 
 test("GitHub sign-in bounds a stuck Clerk call and resets before retry", async () => {
