@@ -158,6 +158,11 @@
       "version": "8.1.0",
       "package": "entities",
       "source": "corepack pnpm view entities version engines --json"
+    },
+    "posthogJs": {
+      "version": "1.435.1",
+      "package": "posthog-js",
+      "source": "corepack pnpm view posthog-js version --json"
     }
   },
   "runtimeDevTools": {

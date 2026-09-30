@@ -27,6 +27,7 @@
     "app/**/*.ts",
     "app/**/*.tsx",
     "instrumentation.ts",
+    "instrumentation-client.ts",
     "playwright.config.ts",
     "types/**/*.d.ts",
     "next.config.ts",

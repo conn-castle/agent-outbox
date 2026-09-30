@@ -23,7 +23,7 @@ export default function PrivacyPolicyPage() {
           primary service content remains available, and the choices available
           to you.
         </p>
-        <p className="legal-updated">Last updated: August 13, 2026</p>
+        <p className="legal-updated">Last updated: September 29, 2026</p>
       </header>
       <article className="legal-content">
         <section className="legal-section">
@@ -128,6 +128,11 @@ export default function PrivacyPolicyPage() {
               storage, or fingerprinting and does not retain the visitor IP in
               its analytics data.
             </li>
+            <li>
+              Cookie-based analytics records IP address, approximate location,
+              device and browser information, referrers, and interactions with
+              the website.
+            </li>
           </ul>
 
           <h3>Information you send us</h3>
@@ -208,6 +213,10 @@ export default function PrivacyPolicyPage() {
               and page-view analytics and does not access browser storage.
             </li>
             <li>
+              A product analytics provider uses analytics cookies and browser
+              storage to understand website traffic.
+            </li>
+            <li>
               The Agent Outbox command-line client keeps connection
               configuration and caller credentials on your device or accesses
               credentials through a credential-management mechanism you provide.
@@ -254,6 +263,10 @@ export default function PrivacyPolicyPage() {
               releases, and source-map-assisted diagnostics.
             </li>
             <li>
+              <strong>Product analytics provider:</strong> cookie-based website
+              traffic, performance, and interaction analytics.
+            </li>
+            <li>
               <strong>Zoho Mail:</strong> receipt and storage of contact-form
               and email messages delivered to contact@agent-outbox.dev.
             </li>
@@ -268,10 +281,7 @@ export default function PrivacyPolicyPage() {
               the business, subject to applicable obligations.
             </li>
           </ul>
-          <p>
-            We do not sell personal information and do not share it for
-            cross-context behavioral advertising.
-          </p>
+          <p>We do not sell personal information.</p>
         </LegalSection>
 
         <LegalSection number={6} title="Data Retention">
@@ -320,6 +330,10 @@ export default function PrivacyPolicyPage() {
               operational need and the configured retention of Cloudflare,
               Sentry, and Zoho Mail.
             </li>
+            <li>
+              Analytics data is retained for as long as it is useful for
+              understanding website traffic.
+            </li>
           </ul>
           <p>
             We may retain limited information longer when required for security,
@@ -363,6 +377,7 @@ export default function PrivacyPolicyPage() {
             . We may ask you to verify your identity and account authority
             before completing a request.
           </p>
+          <p>This website does not respond to browser Do Not Track signals.</p>
         </LegalSection>
 
         <LegalSection number={8} title="International Processing">

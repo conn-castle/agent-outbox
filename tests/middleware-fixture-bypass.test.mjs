@@ -12,7 +12,11 @@ import {
   humanReviewCardHref,
   humanReviewReturnHref
 } from "../src/shared/human-review-view.ts";
-import { clerkMiddlewareMock } from "./fixtures/clerk-nextjs-server-mock.mjs";
+import {
+  clerkMiddlewareCallCount,
+  clerkMiddlewareMock,
+  resetClerkMiddlewareCalls
+} from "./fixtures/clerk-nextjs-server-mock.mjs";
 
 /** @type {import("node:module").ResolveHookSync} */
 const resolveMiddlewareTestSpecifier = (specifier, context, nextResolve) => {
@@ -41,6 +45,29 @@ registerHooks({ resolve: resolveMiddlewareTestSpecifier });
 
 const { NextRequest } = await import("next/server.js");
 const { default: middleware } = await import("../middleware.ts");
+
+test("middleware bypasses lantern before host redirects and Clerk", async () => {
+  const previous = captureMiddlewareEnv();
+  try {
+    setEnv("NODE_ENV", "production");
+    setEnv("APP_ENV", "production");
+    setEnv("CLERK_SECRET_KEY", "sk_test");
+    setEnv("CLERK_PUBLISHABLE_KEY", "pk_test");
+    resetClerkMiddlewareCalls();
+
+    for (const host of ["agent-outbox.dev", "app.agent-outbox.dev"]) {
+      const response = await middleware(
+        new NextRequest(`https://${host}/lantern/e/`, { headers: { host } }),
+        /** @type {any} */ ({})
+      );
+      assert(response);
+      assert.equal(response.headers.get("x-middleware-next"), "1", host);
+    }
+    assert.equal(clerkMiddlewareCallCount(), 0);
+  } finally {
+    restoreEnv(previous);
+  }
+});
 
 test("middleware fixture bypass keeps browser fixture off caller approval pages until explicitly enabled", () => {
   const previous = {

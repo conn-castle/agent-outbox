@@ -50,6 +50,7 @@ const nextConfig: NextConfig = {
     ]
   },
   reactStrictMode: true,
+  skipTrailingSlashRedirect: true,
   poweredByHeader: false,
   turbopack: {
     // The app runs in Cloudflare workerd, so runtime Sentry imports should use

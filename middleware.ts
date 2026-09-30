@@ -44,6 +44,13 @@ export default function middleware(
   request: NextRequest,
   event: NextFetchEvent
 ) {
+  if (
+    request.nextUrl.pathname === "/lantern" ||
+    request.nextUrl.pathname.startsWith("/lantern/")
+  ) {
+    return NextResponse.next();
+  }
+
   const hostRedirect = hostedHostRedirect(
     request.url,
     request.headers.get("host") ?? ""

@@ -19,12 +19,23 @@ export function createRouteMatcher(patterns) {
 
 export const clerkMiddlewareMock = { signedOut: false };
 
+let clerkMiddlewareCalls = 0;
+
+export function resetClerkMiddlewareCalls() {
+  clerkMiddlewareCalls = 0;
+}
+
+export function clerkMiddlewareCallCount() {
+  return clerkMiddlewareCalls;
+}
+
 /**
  * @param {(auth: { protect: (options: { unauthenticatedUrl: string }) => Promise<void> }, request: Request) => unknown} handler
  * @returns {(request: Request) => unknown}
  */
 export function clerkMiddleware(handler) {
   return async (request) => {
+    clerkMiddlewareCalls += 1;
     try {
       return await handler(
         {

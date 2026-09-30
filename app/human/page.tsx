@@ -127,10 +127,12 @@ export default async function HumanReviewPage({
   const missing = requiredHumanSessionConfiguration();
   if (missing.length > 0) {
     return (
-      <MissingConfigurationPanel
-        title="Human review route is not configured"
-        missing={missing}
-      />
+      <div className="ph-no-capture">
+        <MissingConfigurationPanel
+          title="Human review route is not configured"
+          missing={missing}
+        />
+      </div>
     );
   }
 

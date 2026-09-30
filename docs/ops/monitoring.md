@@ -13,13 +13,13 @@ are out of scope for the MVP launch.
 
 ## Signals
 
-| Signal                   | Service                  | Purpose                                               |
-| ------------------------ | ------------------------ | ----------------------------------------------------- |
-| Application exceptions   | Sentry                   | Error grouping, release health, source maps           |
-| Server structured logs   | Cloudflare Workers logs  | Request and operational forensics                     |
-| Database platform logs   | Supabase logs            | Database connectivity, query, and service diagnostics |
-| Public traffic analytics | Cloudflare Web Analytics | Basic page and performance analytics                  |
-| Frontend app events      | Worker endpoint          | Sanitized browser error and UI consistency events     |
+| Signal                   | Service                              | Purpose                                               |
+| ------------------------ | ------------------------------------ | ----------------------------------------------------- |
+| Application exceptions   | Sentry                               | Error grouping, release health, source maps           |
+| Server structured logs   | Cloudflare Workers logs              | Request and operational forensics                     |
+| Database platform logs   | Supabase logs                        | Database connectivity, query, and service diagnostics |
+| Public traffic analytics | Cloudflare Web Analytics and PostHog | Basic page, performance, and interaction analytics    |
+| Frontend app events      | Worker endpoint                      | Sanitized browser error and UI consistency events     |
 
 Production Sentry capture requires `SENTRY_DSN` and a deploy-injected
 `SENTRY_RELEASE` value. Use the immutable release identifier for the deployed
@@ -28,6 +28,10 @@ pipeline. Sentry release/source-map upload is disabled unless `SENTRY_ORG`,
 `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`, `AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD=1`,
 and `AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH=1` are set. Ordinary production
 builds must not set the deploy/release-path flag.
+
+PostHog data flow, sensitive-content exclusions, and retention are canonical in
+[privacy-data-inventory.md](privacy-data-inventory.md); this runbook does not
+duplicate that policy.
 
 ## Regular Checks
 
@@ -39,8 +43,11 @@ Check these sources when validating production health:
 3. Supabase logs for failed or slow Postgres connections, pool saturation,
    migration failures, Row Level Security policy denials, storage growth, and
    cleanup job errors.
-4. Stripe webhook delivery history after billing-impacting changes.
-5. Clerk auth and signup configuration before exposing broad public signup.
+4. PostHog for unexpected traffic, page-view, performance, or interaction
+   changes; investigate without exporting or recording sensitive analytics
+   payloads.
+5. Stripe webhook delivery history after billing-impacting changes.
+6. Clerk auth and signup configuration before exposing broad public signup.
 
 Use the service's official CLI doc for each check:
 [services/sentry.md](services/sentry.md),
