@@ -14,6 +14,120 @@ test.beforeEach(({ page }) => {
   page.on("pageerror", rethrowPageError);
 });
 
+test("card time is separate from corner and lifecycle times, including compose mode", async ({
+  page
+}) => {
+  await page.goto("/human?search=Review+neighborhood+permit+brief");
+  const row = reviewRowByTitle(page, "Review neighborhood permit brief");
+  const time = row.locator("time.row-time");
+  await expect(time).toHaveAttribute("datetime", "2026-07-01T12:34:56.123Z");
+  await expect(time).toHaveAttribute("title", "2026-07-01 12:34:56.123 UTC");
+  await expect(row.locator(".row-heading-context .typed-html")).toHaveText(
+    "Rev 3"
+  );
+  expect(
+    await row
+      .locator(".row-heading-context")
+      .evaluate((element) => element.firstElementChild?.tagName)
+  ).toBe("TIME");
+  await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect(detail.locator(".detail-timestamps")).toContainText(
+    "Card time2026-07-01 12:34:56.123 UTC"
+  );
+  await expect(detail.locator(".detail-timestamps")).toContainText(
+    "Added to Outbox2026-07-01 13:00:00.000 UTC"
+  );
+  await expect(detail.locator(".detail-timestamps")).toContainText(
+    "Updated in Outbox2026-07-01 13:20:00.000 UTC"
+  );
+  await page.getByRole("button", { name: "Close detail", exact: true }).click();
+  await page.goto(
+    "/human?item=00000000-0000-4000-8000-000000000512&compose=pick_date"
+  );
+  await expect(detail.getByLabel("Follow-up date")).toBeVisible();
+  await expect(detail.getByText("Card time", { exact: true })).toBeVisible();
+  await expect(
+    detail.getByText("Added to Outbox", { exact: true })
+  ).toBeVisible();
+  await expect(
+    detail.getByText("Updated in Outbox", { exact: true })
+  ).toBeVisible();
+  await page.goto("/human?status=answered&search=electrician");
+  const absent = reviewRowByTitle(
+    page,
+    "Confirm the electrician’s arrival window"
+  );
+  await expect(absent.locator("time.row-time")).toHaveCount(0);
+  await reviewLinkByTitle(
+    page,
+    "Confirm the electrician’s arrival window"
+  ).click();
+  await expect(detail.locator(".detail-timestamps dt")).toHaveText([
+    "Added to Outbox",
+    "Updated in Outbox"
+  ]);
+});
+
+test("card time stays readable next to long corner content", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "Desktop covers the non-wrapping metadata row");
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await page.goto("/human?search=Review+neighborhood+permit+brief");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  const row = reviewRowByTitle(page, "Review neighborhood permit brief");
+  await row.locator(".row-heading-context .typed-html").evaluate((corner) => {
+    corner.textContent =
+      "A long caller-supplied corner describing the email thread and its source context. ".repeat(
+        3
+      );
+  });
+  const time = row.locator("time.row-time");
+  await expect(time).toBeVisible();
+  await expect
+    .poll(() =>
+      row
+        .locator(".row-heading-context .typed-html")
+        .evaluate((element) => element.scrollWidth > element.clientWidth)
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      time.evaluate((element) => element.scrollWidth <= element.clientWidth)
+    )
+    .toBe(true);
+});
+
+test("card time sorting uses newest first by default and keeps missing values last either way", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await openReviewTools(page);
+  await page.getByLabel("Sort: Priority").click();
+  await page.getByLabel("Sort 1 field").selectOption({ label: "Card time" });
+  await expect(page.getByLabel("Sort 1 direction")).toHaveValue("desc");
+  await expect(page).toHaveURL(/order=card_time%3Adesc/);
+  const rows = page.locator("article.review-row");
+  await expect(rows.nth(0).locator(".row-title")).toHaveText(
+    "Review neighborhood permit brief"
+  );
+  await expect(rows.nth(1).locator(".row-title")).toHaveText(
+    "Choose follow-up window"
+  );
+  await expect(rows.nth(2).locator("time.row-time")).toHaveCount(0);
+  await page.getByLabel("Sort 1 direction").selectOption("asc");
+  await expect(page).toHaveURL(/order=card_time%3Aasc/);
+  await expect(rows.nth(0).locator(".row-title")).toHaveText(
+    "Choose follow-up window"
+  );
+  await expect(rows.nth(1).locator(".row-title")).toHaveText(
+    "Review neighborhood permit brief"
+  );
+  await expect(rows.nth(2).locator("time.row-time")).toHaveCount(0);
+});
+
 test("feedback stays local across reloads and failures, then accompanies one answer", async ({
   page
 }) => {
@@ -1639,7 +1753,7 @@ test("sort control supports every field and arbitrary priority changes", async (
   await openReviewTools(page);
   await page.getByLabel("Sort: Priority").click();
 
-  for (let rank = 2; rank <= 7; rank += 1) {
+  for (let rank = 2; rank <= 8; rank += 1) {
     await page.getByRole("button", { name: "Add sort field" }).click();
     await expect(page.getByLabel(`Sort ${rank} field`)).toBeFocused();
   }
@@ -1651,21 +1765,21 @@ test("sort control supports every field and arbitrary priority changes", async (
     .evaluateAll((selects) =>
       selects.map((select) => (select as HTMLSelectElement).value)
     );
-  expect(new Set(fields).size).toBe(7);
+  expect(new Set(fields).size).toBe(8);
 
   const lastHandle = page.getByRole("button", {
-    name: "Reorder Last updated sort, position 7 of 7"
+    name: "Reorder Last updated sort, position 8 of 8"
   });
   await lastHandle.focus();
   await page.keyboard.press("ArrowUp");
   await expect(
     page.getByRole("button", {
-      name: "Reorder Last updated sort, position 6 of 7"
+      name: "Reorder Last updated sort, position 7 of 8"
     })
   ).toBeFocused();
 
   await page.getByRole("button", { name: "Remove Created sort" }).click();
-  await expect(page.getByLabel("Sort 7 field")).toHaveCount(0);
+  await expect(page.getByLabel("Sort 8 field")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Add sort field" })
   ).toBeVisible();
@@ -2760,7 +2874,7 @@ test("canonical row visuals and popup constraints expose only supported semantic
     page,
     "Confirm the electrician’s arrival window"
   );
-  await expect(fallbackRow.locator(".product-fallback-meta")).toBeVisible();
+  await expect(fallbackRow.locator(".row-time")).toHaveCount(0);
   await expect(fallbackRow.locator(".row-footer")).toContainText(
     "Decision: Approve reply"
   );

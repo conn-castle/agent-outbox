@@ -11,7 +11,7 @@ import {
 import { htmlToPlainText } from "../../shared/html-text";
 import { resolveSupportedColor } from "../../shared/input-schema-rules.ts";
 import { InlineQuickAction, type OnHumanMutation } from "./ActionForms";
-import { formatQueueTimestamp, formatUtcTimestamp } from "./review-format";
+import { formatQueueTimestamp, formatExactUtcTimestamp } from "./review-format";
 import { CardVisual, HumanIcon, SafeHtml, safeHref } from "./TypedContent";
 import { ReviewRowFrame } from "./ReviewRowFrame";
 import {
@@ -124,21 +124,25 @@ export function ReviewList({
                       linkButtons={row.linkButtons}
                       rowTypeDisplay={row.rowType.display}
                       rowTypeIcon={row.rowType.icon}
+                      cardTime={
+                        row.cardTime ? (
+                          <time
+                            className="corner-meta row-time"
+                            dateTime={row.cardTime}
+                            title={formatExactUtcTimestamp(row.cardTime)}
+                          >
+                            <span className="sr-only">Card time: </span>
+                            {formatQueueTimestamp(row.cardTime, renderedAt)}
+                          </time>
+                        ) : null
+                      }
                       corner={
                         row.cornerHtml ? (
                           <SafeHtml
                             html={row.cornerHtml}
                             className="corner-meta"
                           />
-                        ) : (
-                          <time
-                            className="corner-meta row-time product-fallback-meta"
-                            dateTime={row.updatedAt}
-                            title={`${formatUtcTimestamp(row.updatedAt)} UTC`}
-                          >
-                            {formatQueueTimestamp(row.updatedAt, renderedAt)}
-                          </time>
-                        )
+                        ) : null
                       }
                       contextAfter={
                         <>

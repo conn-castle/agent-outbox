@@ -27,6 +27,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       titleHtml: "<strong>Review neighborhood permit brief</strong>",
       subtitleHtml: "A resident-facing summary needs a final human check.",
       cornerHtml: "Rev 3",
+      cardTime: "2026-07-01T12:34:56.123Z",
       summaryHtml:
         "<p><strong>Send:</strong> “Your permit is ready for final review. The remaining neighborhood notice period ends July 8.”</p>",
       detailsHtml:
@@ -144,6 +145,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       titleHtml: "Choose follow-up window",
       subtitleHtml: "The caller needs a review date before continuing.",
       cornerHtml: "Scheduling task",
+      cardTime: "2026-07-01T12:00:00.000Z",
       summaryHtml:
         "<p><strong>Proposed follow-up:</strong> Wednesday, July 8 · 2:00–4:00 PM UTC.</p>",
       detailsHtml:
@@ -290,6 +292,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       subtitleHtml:
         "Exact outbound copy prepared from the contract thread and latest delivery note.",
       cornerHtml: "Rev 4",
+      cardTime: null,
       summaryHtml:
         "<p><strong>Send:</strong> “Hi Ana — we can hold your current pricing through September 30. The revised implementation plan is attached, and the only date that moved is the data-import rehearsal.”</p>",
       detailsHtml:
@@ -385,6 +388,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       subtitleHtml:
         "GitHub &lt;noreply@github.com&gt; · received 18 minutes ago",
       cornerHtml: "Inbox label",
+      cardTime: null,
       summaryHtml:
         "<p><strong>Recommendation: Archive.</strong> Automated digest; all 14 alerts concern repositories already marked read-only. Nine similar messages were archived.</p>",
       detailsHtml:
@@ -470,6 +474,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       titleHtml: "Maya Chen wants to connect",
       subtitleHtml: "Staff engineer · Retrieval systems",
       cornerHtml: "Profile context",
+      cardTime: null,
       summaryHtml:
         "<p><strong>Recommendation: Accept.</strong> Maya referenced your agent-harness benchmark and works on evaluation infrastructure at Fieldstone AI.</p>",
       detailsHtml:
@@ -551,6 +556,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       titleHtml: "Publish the instruction-ablation result",
       subtitleHtml: "Exact public copy · 252 of 280 characters",
       cornerHtml: "Rev 3",
+      cardTime: null,
       summaryHtml:
         "<p><strong>Post:</strong> “Removing one instruction cut cost 36.5% without reducing score. Agent instructions are production code: measure them, diff them, and keep humans in the loop.”</p>",
       detailsHtml:
@@ -660,6 +666,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       titleHtml: "Categorize Cloudflare · $240.00",
       subtitleHtml: "Business card •• 1842 · posted August 13",
       cornerHtml: "Anomaly signal",
+      cardTime: null,
       summaryHtml:
         "<p><strong>Suggested category:</strong> Software &amp; cloud services. The amount is 3× higher than the trailing monthly median.</p>",
       detailsHtml:
@@ -762,6 +769,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       titleHtml: "Which cost denominator should the benchmark use?",
       subtitleHtml: "Overnight analysis paused before recomputing 38 runs.",
       cornerHtml: "Blocked status",
+      cardTime: null,
       summaryHtml:
         "<p>The source reports both provider invoice cost and token-list-price cost. Choosing one changes the cross-harness comparison by 11–18%.</p>",
       detailsHtml:
@@ -851,6 +859,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       titleHtml: "Payments smoke check failed after deploy",
       subtitleHtml: "Production · checkout session test",
       cornerHtml: "Release gate",
+      cardTime: null,
       summaryHtml:
         "<p><strong>Failure:</strong> Stripe test checkout returned in 2.8s, above the 2.0s policy threshold. Error rate and payment completion remain normal.</p>",
       detailsHtml:
@@ -1022,6 +1031,7 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
       titleHtml: "Confirm the electrician’s arrival window",
       subtitleHtml: "+1 (518) 555-0148 · known contact",
       cornerHtml: null,
+      cardTime: null,
       summaryHtml:
         "<p><strong>Reply:</strong> “Tomorrow between 8:30 and 9 works. Please text when you’re on the way.”</p>",
       detailsHtml: null,
@@ -1105,6 +1115,7 @@ function normalizeCoreFixture(detail: HumanReviewDetail): HumanReviewDetail {
     title: detail.titleHtml,
     subtitle: detail.subtitleHtml,
     corner: detail.cornerHtml,
+    card_time: detail.cardTime,
     summary: detail.summaryHtml,
     details: detail.detailsHtml,
     link_buttons: detail.linkButtons.map(({ display, icon, url }) => ({

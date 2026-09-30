@@ -1718,6 +1718,7 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .row-time {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 0.25rem;
   font-variant-numeric: tabular-nums;
@@ -1957,11 +1958,6 @@ body:has(.shell > .human-workspace) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.human-workspace .product-fallback-meta {
-  color: var(--review-faint);
-  font-style: italic;
 }
 
 .human-workspace .context-links {
@@ -3109,6 +3105,31 @@ body:has(.shell > .human-workspace) {
   grid-column: 1;
   grid-row: 1;
   min-width: 0;
+}
+
+.human-workspace .detail-timestamps {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.9rem 0 0;
+  color: var(--review-muted);
+  font-size: var(--queue-type-meta);
+  line-height: 1.5;
+}
+
+.human-workspace .detail-timestamps > div {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.6rem;
+}
+
+.human-workspace .detail-timestamps dt {
+  min-width: 9em;
+  font-weight: 500;
+}
+
+.human-workspace .detail-timestamps dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .human-workspace .detail-header > .feedback-button {

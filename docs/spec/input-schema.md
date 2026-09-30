@@ -21,7 +21,8 @@ reads return that accepted shape as `raw_input`.
   "row_accent_color": "blue",
   "title": "<strong>Reply to Acme Corp</strong>",
   "subtitle": "Draft response prepared by Steward",
-  "corner": "2 min ago",
+  "corner": "Acme Corp",
+  "card_time": "2026-09-29T12:34:56.123Z",
   "summary": "Approve or edit the proposed response before it is sent.",
   "details": "<p>The customer asked for updated timing.</p>",
   "link_buttons": [],
@@ -58,6 +59,7 @@ Optional top-level fields:
 - `priority`, default `normal` when omitted or JSON `null`
 - `row_accent_color`
 - `corner`
+- `card_time`
 - `details`
 - `card_visual`
 - `skip_disabled`, default `false` when omitted or JSON `null`
@@ -76,6 +78,13 @@ The request must not include `caller_id`.
   Callers cannot submit arbitrary SVG, HTML, or unsupported icon keys.
 - `title`, `subtitle`, `corner`, `summary`, and `details` are sanitized HTML
   strings.
+- `card_time` is an optional caller-owned event instant, such as when the latest
+  email message arrived. It accepts only `YYYY-MM-DDTHH:mm:ss[.sss]Z`, with one
+  to three fractional digits when present and years 0001–9999. The date and time
+  must be valid; offsets, leap seconds, and excess precision are rejected with
+  422 `validation_failed` (`invalid_datetime`). Accepted values normalize to
+  millisecond UTC precision. Omitted or null means absent, and clears the value
+  on full replacement. A timestamp change requires replace, not send.
 - `link_buttons` are context links, not actions. Each link has `display`,
   `icon`, and `url`.
 - `card_visual.kind` is one of `numeric_bar`, `pill`, or `progress_ring`.
@@ -303,12 +312,9 @@ form: callers may omit defaulted and nullable fields on send and replace. Reads
 always return those fields explicitly (`priority`, `skip_disabled`,
 `row_accent_color`, `corner`, `card_time`, `details`, and `card_visual`).
 
-`card_time` is reserved for a caller-owned UTC event timestamp, independent of
-Outbox's creation and update times and generic `corner` content. This
-compatibility release returns stored values on reads, but rejects any non-null
-`card_time` on send or replace with 422 `validation_failed`
-(`field_not_supported`). Omission or null is accepted; complete replacement
-clears any previously stored value.
+`card_time` is independent of Outbox's `created_at` and `updated_at` lifecycle
+timestamps and generic `corner` content. Existing records without it remain
+null; neither lifecycle time nor corner content is substituted or backfilled.
 
 Values accepted into a live retained input must remain supported and readable
 for that item's retention window. Narrowing a public enum, pattern, or other

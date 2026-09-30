@@ -223,6 +223,7 @@ test("human review view round-trips every supported sort field and its default d
       ["visual_score", "desc"],
       ["title", "asc"],
       ["caller", "asc"],
+      ["card_time", "desc"],
       ["created_at", "desc"]
     ]);
   for (const [sort, expectedDirection] of cases) {
@@ -245,6 +246,7 @@ test("human review view accepts every sort field in order and removes duplicates
     "visual_score:desc",
     "title:asc",
     "caller:desc",
+    "card_time:asc",
     "created_at:asc",
     "updated_at:desc",
     "type:desc",
@@ -257,6 +259,7 @@ test("human review view accepts every sort field in order and removes duplicates
     { key: "visual_score", direction: "desc" },
     { key: "title", direction: "asc" },
     { key: "caller", direction: "desc" },
+    { key: "card_time", direction: "asc" },
     { key: "created_at", direction: "asc" },
     { key: "updated_at", direction: "desc" }
   ]);
@@ -1205,6 +1208,7 @@ test("human review list shapes caller affordances and output read state", async 
       titleHtml: "<strong>Title</strong>",
       subtitleHtml: "Subtitle",
       cornerHtml: "2 min",
+      cardTime: null,
       summaryHtml: "Summary",
       cardVisual: {
         kind: "pill",
@@ -2033,6 +2037,7 @@ function reviewRow(overrides = {}) {
     title_html: "<strong>Title</strong>",
     subtitle_html: "Subtitle",
     corner_html: "2 min",
+    card_time: null,
     summary_html: "Summary",
     details_html: null,
     card_visual_kind: "pill",

@@ -1231,6 +1231,19 @@ validation and described in the guides.
         }
       ]
     },
+    "card_time": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?!0000)\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?Z$",
+          "description": "Optional caller-owned event time, separate from Outbox creation and update times. UTC only, years 0001–9999, at most millisecond precision. Omission or null clears it on replacement."
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "summary": {
       "type": "string",
       "minLength": 1

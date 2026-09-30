@@ -35,6 +35,8 @@ fi
 
 # Keep output directories and Docker cache mountpoints writable by the host.
 mkdir -p -- "$output_dir/public" "$repo_root/node_modules" "$repo_root/.next"
+# Next.js rewrites this generated file; create it as the host user first.
+touch -- "$repo_root/next-env.d.ts"
 
 image="agent-outbox-marketing-playwright:1.63.0"
 docker build --platform linux/amd64 --file "$repo_root/Dockerfile.marketing" --tag "$image" "$repo_root"

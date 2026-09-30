@@ -59,6 +59,7 @@ export function detailFromNormalizedSubmission(
     titleHtml: input.titleHtml,
     subtitleHtml: input.subtitleHtml,
     cornerHtml: input.cornerHtml,
+    cardTime: input.cardTime,
     summaryHtml: input.summaryHtml,
     detailsHtml: input.detailsHtml,
     cardVisual: input.cardVisual,

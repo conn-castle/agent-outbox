@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "0.4.8",
+  "releaseVersion": "0.5.0",
   "assets": [
     {
       "id": "queueDesktop",
@@ -18,7 +18,7 @@
       "route": "/human?status=all&item=c685b264-dc53-478d-8326-df3438613f11",
       "width": 768,
       "height": 1024,
-      "sha256": "eaf7551e1827ef15f76a1b7df31c1e1f423c70e13d4b9837ce2983ae4ecaab7c"
+      "sha256": "e63f96063223ead77564211e018fadb31cf113ee061285a54bc2ac8ed9bb57d6"
     },
     {
       "id": "queueMobile",

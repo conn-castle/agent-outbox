@@ -103,6 +103,7 @@ const SORT_OPTIONS = [
   { value: "visual_score", label: "Visual score" },
   { value: "title", label: "Title" },
   { value: "caller", label: "Caller" },
+  { value: "card_time", label: "Card time" },
   { value: "created_at", label: "Created" },
   { value: "updated_at", label: "Last updated" }
 ] as const;
