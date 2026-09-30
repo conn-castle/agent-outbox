@@ -34,16 +34,19 @@ else
 fi
 
 # Keep output directories and Docker cache mountpoints writable by the host.
-mkdir -p -- "$output_dir/public" "$repo_root/node_modules" "$repo_root/.next"
+mkdir -p -- "$output_dir/public" "$repo_root/node_modules" "$repo_root/.next-browser" "$repo_root/test-results"
 # Next.js rewrites this generated file; create it as the host user first.
 touch -- "$repo_root/next-env.d.ts"
 
 image="agent-outbox-marketing-playwright:1.63.0"
 docker build --platform linux/amd64 --file "$repo_root/Dockerfile.marketing" --tag "$image" "$repo_root"
+# Mount test-results separately so Playwright clears its contents without
+# replacing the host-owned directory with a root-owned directory.
 docker run --rm --platform linux/amd64 \
   --volume "$repo_root:/workspace" \
+  --volume "$repo_root/test-results:/workspace/test-results" \
   --volume agent-outbox-marketing-node-modules-amd64:/workspace/node_modules \
-  --volume agent-outbox-marketing-next-amd64:/workspace/.next \
+  --volume agent-outbox-marketing-next-browser-amd64:/workspace/.next-browser \
   --env AGENT_OUTBOX_MARKETING_OUTPUT_DIR="$container_output_dir" \
   --env PLAYWRIGHT_HTML_OPEN=never \
   "$image" \
