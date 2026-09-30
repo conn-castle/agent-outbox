@@ -17,13 +17,24 @@ export function createRouteMatcher(patterns) {
   };
 }
 
+let clerkMiddlewareCalls = 0;
+
+export function resetClerkMiddlewareCalls() {
+  clerkMiddlewareCalls = 0;
+}
+
+export function clerkMiddlewareCallCount() {
+  return clerkMiddlewareCalls;
+}
+
 /**
  * @param {(auth: { protect: () => Promise<void> }, request: Request) => unknown} handler
  * @returns {(request: Request) => unknown}
  */
 export function clerkMiddleware(handler) {
-  return (request) =>
-    handler(
+  return (request) => {
+    clerkMiddlewareCalls += 1;
+    return handler(
       {
         protect: async () => {
           throw new Error(
@@ -33,4 +44,5 @@ export function clerkMiddleware(handler) {
       },
       request
     );
+  };
 }

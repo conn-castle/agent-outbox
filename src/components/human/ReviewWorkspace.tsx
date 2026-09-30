@@ -1011,7 +1011,7 @@ export function ReviewWorkspace({
   return (
     <main
       ref={workspaceRef}
-      className="human-workspace"
+      className="human-workspace ph-no-capture"
       data-review-mutation-count={humanMutations.length}
       data-workspace-hydrated={
         hydratedAccountId === session.accountId ? "true" : "false"

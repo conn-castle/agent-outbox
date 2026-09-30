@@ -7,15 +7,17 @@ export const dynamic = "force-dynamic";
 export default function SignOutPage() {
   if (!process.env.CLERK_PUBLISHABLE_KEY) {
     return (
-      <MissingConfigurationPanel
-        title="Clerk sign-out is not configured"
-        missing={["CLERK_PUBLISHABLE_KEY"]}
-      />
+      <div className="ph-no-capture">
+        <MissingConfigurationPanel
+          title="Clerk sign-out is not configured"
+          missing={["CLERK_PUBLISHABLE_KEY"]}
+        />
+      </div>
     );
   }
 
   return (
-    <main className="main auth-main">
+    <main className="main auth-main ph-no-capture">
       <section className="panel">
         <h1>Sign out</h1>
         <p>End the current Clerk-backed human session.</p>
