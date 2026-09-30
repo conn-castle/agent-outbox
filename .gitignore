@@ -27,7 +27,7 @@ tmp/
 /.agent-layer/tmp/
 
 # >>> agent-layer
-# Template hash: b4df258527153a85c15cca6b934e0647876b26afc6588feda76d2823aa98ab8d
+# Template hash: 5b6ad04c9700375672b3a082a9a02eb2e79ff3c7160173c8825f516ecc352e4e
 # Managed by Agent Layer. To customize, edit .agent-layer/gitignore.block
 # and re-run `al sync` to apply changes.
 
@@ -47,11 +47,16 @@ tmp/
 /.agent/
 /.agents/
 /.mcp.json
+/.mcp.json.tmp-*
 /.codex/
 /.copilot/
 /.gemini/
 /.grok/
 /.grok-config/
+/.muse/hooks.json
+/.muse/agent-layer-policy.json
+/.muse-config/
+/.muse-data/
 
 # Antigravity workspace marker (auto-created by agy; symlinks store per-user paths)
 /.antigravitycli/

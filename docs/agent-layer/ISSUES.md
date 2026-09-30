@@ -6,21 +6,7 @@ Note: This is an agent-layer memory file. It is primarily for agent use.
 Deferred defects, maintainability refactors, technical debt, risks, and engineering concerns. Add an entry only when you are not fixing it now.
 
 ## Format
-- Insert new entries immediately below `<!-- ENTRIES START -->
-- Issue 2026-09-29 human-answer-payload-decoding: Answer validation reads persisted popup bounds loosely
-    Priority: Medium. Area: Human answers / Data integrity
-    Description: `numberField`, `stringField`, and `acceptedMimeTypes` in `src/server/human-answer.ts` treat a malformed persisted `popup_payload` field (for example `min_length: "5"` or `max_selected: "2"`) as absent, so answer-time bounds are silently not enforced. The review page now rejects such payloads strictly in `src/server/human-review.ts`, which makes this mostly unreachable through the UI.
-    Next step: Make answer validation fail loudly on malformed persisted popup payload fields, consistent with the review-page decoder.
-` (most recent first).
-- Keep each entry **3–5 lines**.
-- Line 1 starts with `- Issue YYYY-MM-DD <id>:` and a short title.
-- Lines 2–5 are indented by **4 spaces** and use `Key: Value`.
-- Keep **exactly one blank line** between entries.
-- Prevent duplicates: search the file and merge/rewrite instead of adding near-duplicates.
-- When fixed, remove the entry from this file.
-- Describe the problem without choosing a solution or listing options.
-- Use `Next step` only when the action is useful regardless of the eventual solution. Otherwise, use `Open question: <decision needed>`.
-` (most recent first).
+- Insert new entries immediately below `<!-- ENTRIES START -->` (most recent first).
 - Keep each entry **3–5 lines**.
 - Line 1 starts with `- Issue YYYY-MM-DD <id>:` and a short title.
 - Lines 2–5 are indented by **4 spaces** and use `Key: Value`.

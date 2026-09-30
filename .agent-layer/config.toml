@@ -14,18 +14,18 @@ model = "Gemini 3.8 Flash (High)"
 disable_question_tool = true
 enabled = true
 local_config_dir = true
-model = "opus[1m]"
+model = "opus"
 reasoning_effort = "high" # low | medium | high | xhigh | max (custom values pass through with a warning)
 statusline = true
 
 [agents.claude_vscode]
-enabled = true
+enabled = false
 
 [agents.codex]
 enabled = true
 local_config_dir = true
-model = "gpt-5.6-sol"
-reasoning_effort = "medium" # codex only
+model = "gpt-6.1-sol"
+reasoning_effort = "xhigh" # codex only
 statusline = true
 
 [agents.codex.agent_specific]
@@ -38,18 +38,25 @@ computer_use = false
 in_app_browser = false
 plugins = false
 
+[agents.codex.agent_specific.tui]
+whimsy = false
+
 [agents.vscode]
-enabled = true
+enabled = false
 
 [agents.copilot_cli]
-enabled = true
-# model = "..."
+enabled = false
 
 [agents.grok]
-enabled = true
-# model = "grok-4.6" # grok-4.6 | grok-4.5
-# reasoning_effort = "high" # none | minimal | low | medium | high | xhigh | max
 disable_memory = true # force --no-memory / GROK_MEMORY=0
+enabled = true
+# model = "..."
+reasoning_effort = "xhigh" # none | minimal | low | medium | high | xhigh | max
+
+[agents.muse]
+enabled = true
+model = "muse-spark-1.3"
+reasoning_effort = "xhigh" # none | minimal | low | medium | high | xhigh | max | ultra
 
 [mcp]
 
@@ -64,7 +71,7 @@ noise_mode = 'default'
 version_update_on_sync = true
 
 [dispatch]
-max_depth = 1
+max_depth = 3
 
 [notifications]
 chime = true
@@ -87,6 +94,3 @@ selectors = ['skills/apple-design']
 [[skills.imports]]
 repository = 'https://github.com/nicholasjconn/skills'
 selectors = ['skills/tools/request-html-comments']
-
-[agents.codex.agent_specific.tui]
-whimsy = false
