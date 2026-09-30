@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type MouseEvent,
@@ -73,6 +74,7 @@ export function ReviewDetail({
     requestedCompose?.value ?? null
   );
   const [closing, setClosing] = useState(false);
+  const timestampTooltipId = useId();
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -242,14 +244,26 @@ export function ReviewDetail({
                 if (!value) return null;
                 const readable = formatQueueTimestamp(value, renderedAt);
                 const exact = formatExactUtcTimestamp(value);
+                const tooltipId = `${timestampTooltipId}-${label.replaceAll(/\s+/g, "-").toLowerCase()}`;
                 return (
                   <div key={label}>
                     <dt className="sr-only">{label}</dt>
                     <dd>
-                      <time dateTime={value} title={`${label}: ${exact}`}>
+                      <time
+                        dateTime={value}
+                        tabIndex={0}
+                        aria-describedby={tooltipId}
+                      >
                         <Icon aria-hidden="true" />
                         {readable}
                       </time>
+                      <span
+                        id={tooltipId}
+                        role="tooltip"
+                        className="timestamp-tooltip"
+                      >
+                        {label}: {exact}
+                      </span>
                       <span className="sr-only">; {exact}</span>
                     </dd>
                   </div>

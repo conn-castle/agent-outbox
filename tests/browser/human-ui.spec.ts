@@ -54,17 +54,30 @@ test("detail timestamps are compact, readable, and retain exact UTC values, incl
     ]
   ];
   for (const [index, [label, iso, exact]] of expectedTimes.entries()) {
-    await expect(times.nth(index)).toHaveAttribute("datetime", iso);
-    await expect(times.nth(index)).toHaveAttribute(
-      "title",
-      `${label}: ${exact}`
-    );
+    const time = times.nth(index);
+    await expect(time).toHaveAttribute("datetime", iso);
+    await expect(time).toHaveAttribute("tabindex", "0");
+    const tooltipId = await time.getAttribute("aria-describedby");
+    expect(tooltipId).toBeTruthy();
+    const tooltip = timestamps.locator(`[id="${tooltipId}"]`);
+    await expect(tooltip).toHaveAttribute("role", "tooltip");
+    await expect(tooltip).toHaveText(`${label}: ${exact}`);
+    await expect(tooltip).toBeHidden();
     await expect(timestamps.locator("dd").nth(index)).toMatchAriaSnapshot(`
       - definition:
         - time: 6 wk. ago
         - text: "; ${exact}"
     `);
-    await expect(times.nth(index).locator("svg")).toBeVisible();
+    await expect(time.locator("svg")).toBeVisible();
+    await time.focus();
+    await expect(time).toBeFocused();
+    await expect(tooltip).toBeVisible();
+    await time.blur();
+    await expect(tooltip).toBeHidden();
+    await time.hover();
+    await expect(tooltip).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(tooltip).toBeHidden();
   }
   await expect
     .poll(() =>

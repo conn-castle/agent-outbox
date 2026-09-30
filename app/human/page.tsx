@@ -5,7 +5,6 @@ import {
   ReviewWorkspace
 } from "../../src/components/human/ReviewWorkspace";
 import { createCorrelationId } from "../../src/server/correlation";
-import type { ProductTransactionQuery } from "../../src/server/database";
 import {
   BROWSER_FIXTURE_REFERENCE_TIME,
   browserFixtureAccountBanner,
@@ -18,24 +17,12 @@ import {
   humanBrowserFixtureEnabled
 } from "../../src/server/human-review-fixture";
 import { readFixtureResolvedItems } from "../../src/server/human-review-fixture-state";
-import {
-  humanReviewAccountBannerInTransaction,
-  humanReviewDetailInTransaction,
-  humanReviewCardInTransaction,
-  humanReviewPageInTransaction,
-  humanReviewTypeOptionsInTransaction,
-  REVIEW_PAGE_SIZE
-} from "../../src/server/human-review";
-import {
-  type HumanAccountSession,
-  requiredHumanSessionConfiguration,
-  runHumanAccountTransaction
-} from "../../src/server/human-session";
+import { loadHumanReviewPage } from "../../src/server/human-review-page";
+import { requiredHumanSessionConfiguration } from "../../src/server/human-session";
 import { MissingConfigurationPanel } from "../../src/server/ui";
 import {
   firstSearchParam,
-  humanReviewViewFromRecord,
-  type HumanReviewView
+  humanReviewViewFromRecord
 } from "../../src/shared/human-review-view";
 import {
   humanAccountIdentityOrFallback,
@@ -150,21 +137,18 @@ export default async function HumanReviewPage({
     unauthenticatedUrl: `/sign-in?${new URLSearchParams({ redirect_url: `/human?${returnParams}` })}`
   });
   const [transaction, clerkIdentity] = await Promise.all([
-    runHumanAccountTransaction(
+    loadHumanReviewPage(
       {
         clerkUserId: session.userId,
         requestId: createCorrelationId("human_req"),
         route: "/human",
         method: "GET"
       },
-      (query, humanSession) =>
-        loadHumanReviewPageDataInTransaction(
-          query,
-          humanSession,
-          selectedItem ?? null,
-          view,
-          cardLink
-        )
+      {
+        selectedItem: selectedItem ?? null,
+        view,
+        cardLink
+      }
     ),
     loadClerkAccountIdentity(session.userId)
   ]);
@@ -285,56 +269,6 @@ function providerLabel(provider: string) {
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
       .join(" ")
   );
-}
-
-async function loadHumanReviewPageDataInTransaction(
-  query: ProductTransactionQuery,
-  session: HumanAccountSession,
-  selectedItem: string | null,
-  view: HumanReviewView,
-  cardLink: { callerId: string; callerItemId: string } | null
-) {
-  if (cardLink) {
-    const card = await humanReviewCardInTransaction(
-      query,
-      session,
-      cardLink.callerId,
-      cardLink.callerItemId
-    );
-    view = {
-      ...humanReviewViewFromRecord(undefined),
-      status: card?.status ?? "pending",
-      page: card?.page ?? 1
-    };
-    selectedItem = card?.inputItemId ?? null;
-  }
-  const page = await humanReviewPageInTransaction(query, session, {
-    status: view.status,
-    search: view.search,
-    priorities: view.priorities,
-    types: view.types,
-    sorts: view.sorts,
-    offset: (view.page - 1) * REVIEW_PAGE_SIZE
-  });
-  const rows = page.rows;
-  const detail = selectedItem
-    ? await humanReviewDetailInTransaction(query, session, selectedItem)
-    : null;
-  const banner = await humanReviewAccountBannerInTransaction(query, session);
-  const typeOptions = await humanReviewTypeOptionsInTransaction(
-    query,
-    session,
-    view.status
-  );
-  return {
-    view,
-    rows,
-    detail,
-    banner,
-    typeOptions,
-    hasNext: page.hasNext,
-    totalCount: page.totalCount
-  };
 }
 
 function humanReviewNotice(

@@ -3080,6 +3080,7 @@ body:has(.shell > .human-workspace) {
 }
 
 .human-workspace .detail-header {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
@@ -3103,7 +3104,13 @@ body:has(.shell > .human-workspace) {
   line-height: 1.5;
 }
 
+.human-workspace .detail-header:has(.detail-timestamps time:hover),
+.human-workspace .detail-header:has(.detail-timestamps time:focus) {
+  z-index: 2;
+}
+
 .human-workspace .detail-timestamps dd {
+  position: relative;
   margin: 0;
   font-variant-numeric: tabular-nums;
 }
@@ -3113,6 +3120,48 @@ body:has(.shell > .human-workspace) {
   align-items: center;
   gap: 0.35rem;
   white-space: nowrap;
+  cursor: help;
+  border-radius: 0.25rem;
+}
+
+.human-workspace .detail-timestamps time:focus-visible {
+  outline: 3px solid rgba(243, 161, 68, 0.4);
+  outline-offset: 2px;
+}
+
+.human-workspace .detail-timestamps .timestamp-tooltip {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  width: max-content;
+  max-width: min(18rem, calc(100vw - 2rem));
+  margin: 0;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--review-line-strong);
+  border-radius: 0.4rem;
+  background: var(--review-paper);
+  color: var(--review-text);
+  font-size: var(--queue-type-meta);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  white-space: normal;
+  pointer-events: none;
+  visibility: hidden;
+  box-shadow:
+    0 0.25rem 0.75rem rgba(23, 22, 18, 0.08),
+    0 1.25rem 3rem rgba(23, 22, 18, 0.12);
+}
+
+.human-workspace .detail-timestamps dd:last-child .timestamp-tooltip {
+  right: 0;
+  left: auto;
+}
+
+.human-workspace .detail-timestamps time:hover + .timestamp-tooltip,
+.human-workspace .detail-timestamps time:focus + .timestamp-tooltip,
+.human-workspace .detail-timestamps time:focus-visible + .timestamp-tooltip {
+  visibility: visible;
 }
 
 .human-workspace .detail-timestamps svg {

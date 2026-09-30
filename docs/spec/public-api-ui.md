@@ -144,10 +144,11 @@ with an accessible Card time prefix. See
 Details group Card time when supplied, Added to Outbox (`created_at`), and
 Updated in Outbox (`updated_at`) into a compact row of icons and readable
 relative timestamps, in both review and action-compose modes. Field names and
-exact UTC values are available on hover and to assistive technology. The row
-wraps when needed. Card time, Created, and Last updated are independent sort
-choices. Missing card times remain last in either direction; ties continue to
-later sort rules. Changing the sort does not add metadata to the cards.
+exact UTC values are available on hover, on keyboard focus, and to assistive
+technology. The row wraps when needed. Card time, Created, and Last updated are
+independent sort choices. Missing card times remain last in either direction;
+ties continue to later sort rules. Changing the sort does not add metadata to
+the cards.
 
 Visual variants contain these fields:
 
