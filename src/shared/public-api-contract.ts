@@ -396,6 +396,7 @@ export const CanonicalRawInputSchema = closedObject(
     title: Type.String({ minLength: 1 }),
     subtitle: Type.String({ minLength: 1 }),
     corner: nullable(Type.String()),
+    card_time: nullable(Type.String({ format: "date-time" })),
     summary: Type.String({ minLength: 1 }),
     details: nullable(Type.String()),
     link_buttons: Type.Array(LinkButtonSchema, { maxItems: 32 }),
@@ -754,6 +755,7 @@ const canonicalRawInputExample = {
   ...inputSubmissionExample,
   row_accent_color: null,
   corner: null,
+  card_time: null,
   details: null,
   card_visual: null,
   skip_disabled: false

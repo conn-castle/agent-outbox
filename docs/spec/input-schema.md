@@ -291,15 +291,24 @@ The public form:
   stability.
 
 The stored fingerprint is computed from that same accepted content, including
-internal option order fields. Public `raw_input` is the fingerprint form with
-those internal fields removed. If reconstruction cannot match the stored
-fingerprint or the public canonical form, input and output reads fail with
-`temporary_unavailable` rather than returning a guessed body.
+internal option order fields. Nullable `card_time` is omitted from the
+fingerprint when absent to preserve historical hashes, but always appears in
+`raw_input`. Public `raw_input` otherwise removes internal option order fields.
+If reconstruction cannot match the stored fingerprint or the public canonical
+form, input and output reads fail with `temporary_unavailable` rather than
+returning a guessed body.
 
 The request `InputSubmission` schema remains weaker than the returned canonical
 form: callers may omit defaulted and nullable fields on send and replace. Reads
 always return those fields explicitly (`priority`, `skip_disabled`,
-`row_accent_color`, `corner`, `details`, and `card_visual`).
+`row_accent_color`, `corner`, `card_time`, `details`, and `card_visual`).
+
+`card_time` is reserved for a caller-owned UTC event timestamp, independent of
+Outbox's creation and update times and generic `corner` content. This
+compatibility release returns stored values on reads, but rejects any non-null
+`card_time` on send or replace with 422 `validation_failed`
+(`field_not_supported`). Omission or null is accepted; complete replacement
+clears any previously stored value.
 
 Values accepted into a live retained input must remain supported and readable
 for that item's retention window. Narrowing a public enum, pattern, or other

@@ -452,6 +452,7 @@ Success `data`:
     "title": "Reply to Acme Corp",
     "subtitle": "A customer response is ready for review.",
     "corner": null,
+    "card_time": null,
     "summary": "Approve the prepared response before it is sent.",
     "details": null,
     "link_buttons": [],

@@ -50,6 +50,7 @@ export type NormalizedInputSubmission = {
   titleHtml: string;
   subtitleHtml: string;
   cornerHtml: string | null;
+  cardTime: string | null;
   summaryHtml: string;
   detailsHtml: string | null;
   linkButtons: NormalizedInputLinkButton[];
@@ -310,6 +311,17 @@ export function parseInputSubmission(
   const titleHtml = requiredHtml(value, "title", fields, "title");
   const subtitleHtml = requiredHtml(value, "subtitle", fields, "subtitle");
   const cornerHtml = optionalHtml(value.corner, fields, "corner");
+  // Compatibility release: reads understand card_time before callers can set it.
+  if (value.card_time != null) {
+    fields.push(
+      fieldError(
+        "card_time",
+        "field_not_supported",
+        "card_time is not supported yet."
+      )
+    );
+  }
+  const cardTime = null;
   const summaryHtml = requiredHtml(value, "summary", fields, "summary");
   const detailsHtml = optionalHtml(value.details, fields, "details");
   const linkButtons = parseLinkButtons(value.link_buttons, fields);
@@ -370,6 +382,7 @@ export function parseInputSubmission(
     titleHtml,
     subtitleHtml,
     cornerHtml,
+    cardTime,
     summaryHtml,
     detailsHtml,
     linkButtons,
@@ -390,6 +403,7 @@ export function parseInputSubmission(
       titleHtml,
       subtitleHtml,
       cornerHtml,
+      cardTime,
       summaryHtml,
       detailsHtml,
       linkButtons,
@@ -412,6 +426,7 @@ export type CanonicalInputParts = {
   titleHtml: string;
   subtitleHtml: string;
   cornerHtml: string | null;
+  cardTime: string | null;
   summaryHtml: string;
   detailsHtml: string | null;
   linkButtons: ReadonlyArray<
@@ -444,6 +459,8 @@ export function canonicalInputForms(parts: CanonicalInputParts): {
     title: parts.titleHtml,
     subtitle: parts.subtitleHtml,
     corner: parts.cornerHtml,
+    // Null must stay absent from fingerprints so historical hashes still verify.
+    ...(parts.cardTime != null ? { card_time: parts.cardTime } : {}),
     summary: parts.summaryHtml,
     details: parts.detailsHtml,
     link_buttons: parts.linkButtons.map((button) => ({
@@ -474,6 +491,7 @@ export function canonicalInputForms(parts: CanonicalInputParts): {
     fingerprintForm,
     rawInput: {
       ...fingerprintForm,
+      card_time: parts.cardTime,
       actions: fingerprintForm.actions.map((action) => ({
         ...action,
         popup: publicPopup(action.popup as Record<string, unknown>)
