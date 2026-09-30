@@ -13,6 +13,7 @@ const child = spawn("pnpm", ["exec", "next", "dev", "-p", port], {
     ...process.env,
     APP_ENV: "test",
     AGENT_OUTBOX_BROWSER_FIXTURE: "1",
+    AGENT_OUTBOX_BROWSER_BUILD: "1",
     APP_BASE_URL: baseUrl,
     PUBLIC_APP_BASE_URL: publicBaseUrl,
     PORT: port

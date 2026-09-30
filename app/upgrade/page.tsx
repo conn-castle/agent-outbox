@@ -70,7 +70,7 @@ function UpgradePageContent({
   canOpenPortal: boolean;
 }) {
   return (
-    <main className="main billing-main">
+    <main className="main billing-main ph-no-capture">
       <a className="app-page-back" href="/human">
         Back to review queue
       </a>
