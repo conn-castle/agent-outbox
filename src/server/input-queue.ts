@@ -478,11 +478,12 @@ export function insertInputItemStatement(
         card_visual_payload,
         skip_disabled,
         normalized_content_fingerprint,
-        non_file_payload_bytes
+        non_file_payload_bytes,
+        card_time
       )
       values (
         $1, $2, $3, $4, 'pending', $5, 1, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15::jsonb, $16, $17, $18
+        $11, $12, $13, $14, $15::jsonb, $16, $17, $18, $19
       )
       on conflict (caller_id, caller_item_id) do nothing
       returning input_item_id, current_revision
@@ -514,6 +515,7 @@ export function updateInputItemStatement(
         skip_disabled = $13,
         normalized_content_fingerprint = $14,
         non_file_payload_bytes = $15,
+        card_time = $16,
         updated_at = now()
       where input_item_id = $1
       returning current_revision
@@ -533,7 +535,8 @@ export function updateInputItemStatement(
       JSON.stringify(submission.cardVisual?.payload ?? {}),
       submission.skipDisabled,
       submission.normalizedContentFingerprint,
-      submission.nonFilePayloadBytes
+      submission.nonFilePayloadBytes,
+      submission.cardTime
     ]
   };
 }
@@ -836,7 +839,8 @@ function inputItemValues(
     JSON.stringify(submission.cardVisual?.payload ?? {}),
     submission.skipDisabled,
     submission.normalizedContentFingerprint,
-    submission.nonFilePayloadBytes
+    submission.nonFilePayloadBytes,
+    submission.cardTime
   ];
 }
 

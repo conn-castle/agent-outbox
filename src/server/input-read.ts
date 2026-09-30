@@ -297,6 +297,7 @@ export function liveInputForReadStatement(
         i.title_html,
         i.subtitle_html,
         i.corner_html,
+        i.card_time,
         i.summary_html,
         i.details_html,
         i.card_visual_kind,

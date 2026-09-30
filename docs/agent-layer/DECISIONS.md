@@ -3,7 +3,7 @@
 Note: This is an agent-layer memory file. It is primarily for agent use.
 
 ## Purpose
-A rolling log of important, non-obvious decisions that materially affect future work (constraints, deferrals, irreversible tradeoffs). Only record decisions that future developers/agents would not learn just by reading the code. Do not log routine choices or standard best-practice decisions; if it is obvious from the code, leave it out.
+Record otherwise-lost rationale that materially constrains future work. Current architecture belongs in repository documentation; enforceable behavior belongs in code, tests, schemas, or configuration. Add an entry only when its future-guiding rationale cannot be recovered from those canonical sources. Importance alone does not justify duplicating a decision; omit routine choices and standard best practices.
 
 ## Format
 - Keep entries brief and durable (avoid restating obvious defaults).
@@ -150,3 +150,8 @@ A rolling log of important, non-obvious decisions that materially affect future 
     Decision: `make test` and `make test-database` create one unpruned spec log and a sibling `.stderr` sidecar under `.agent-layer/tmp/node-test-logs/`, then `exec` `node --test` with spec-to-file, a small stdout reporter, and bash `tee` of the root process stderr. The dot reporter is not used. `NO_COLOR` and `FORCE_COLOR` are left as they are.
     Reason: On Node 24.18.0, dot drops test diagnostics and test stdout/stderr, while spec keeps them and also prints every passing name. Root-process stderr is not a test event, so it never reaches the spec file. The `NO_COLOR` warning comes from Agent Layer plus the Grok command wrapper, not from this repo.
     Tradeoffs: Stdout omits passing names. An interrupted spec file can miss Node's final summary. The stderr sidecar stays separate so it cannot interleave with the spec writer. The launcher is bash because dash cannot tee stderr while keeping `exec`. Logs are not pruned. If either file cannot be created, the shell exits before starting Node.
+
+- Decision 2026-09-30 card-time-rollout: Prepare readable event timestamps before activation
+    Decision: Deploy card-time compatibility support before enabling non-null submissions in a later release. Once non-null records exist, rollback must target the compatibility release or newer.
+    Reason: Earlier code cannot verify fingerprints containing card_time. Null values stay omitted from fingerprints to preserve historical hashes while canonical responses return explicit null.
+    Tradeoffs: Two releases preserve readable input/output records during rollback without a feature flag. The compatibility release rejects non-null submissions and clears stored card_time on full replacement.
