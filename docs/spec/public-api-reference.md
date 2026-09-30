@@ -238,6 +238,7 @@ Success envelope: [`InputReadResponse`](#schema-inputreadresponse)
       ],
       "row_accent_color": null,
       "corner": null,
+      "card_time": null,
       "details": null,
       "card_visual": null,
       "skip_disabled": false
@@ -348,6 +349,7 @@ Success envelope: [`OutputResultResponse`](#schema-outputresultresponse)
       ],
       "row_accent_color": null,
       "corner": null,
+      "card_time": null,
       "details": null,
       "card_visual": null,
       "skip_disabled": false
@@ -1473,6 +1475,7 @@ validation and described in the guides.
     "title",
     "subtitle",
     "corner",
+    "card_time",
     "summary",
     "details",
     "link_buttons",
@@ -1555,6 +1558,17 @@ validation and described in the guides.
       "oneOf": [
         {
           "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "card_time": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
         },
         {
           "type": "null"

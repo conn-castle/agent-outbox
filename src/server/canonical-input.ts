@@ -119,6 +119,7 @@ export type CanonicalInputRootRow = {
   title_html: string;
   subtitle_html: string;
   corner_html: string | null;
+  card_time: string | Date | null;
   summary_html: string;
   details_html: string | null;
   card_visual_kind: string | null;
@@ -277,6 +278,7 @@ export function canonicalInputRootsStatement(
         i.title_html,
         i.subtitle_html,
         i.corner_html,
+        i.card_time,
         i.summary_html,
         i.details_html,
         i.card_visual_kind,
@@ -459,6 +461,7 @@ function canonicalPartsFromRows(args: {
     titleHtml: root.title_html,
     subtitleHtml: root.subtitle_html,
     cornerHtml: root.corner_html,
+    cardTime: root.card_time == null ? null : apiTimestamp(root.card_time),
     summaryHtml: root.summary_html,
     detailsHtml: root.details_html,
     linkButtons,

@@ -643,6 +643,7 @@
                       ],
                       "row_accent_color": null,
                       "corner": null,
+                      "card_time": null,
                       "details": null,
                       "card_visual": null,
                       "skip_disabled": false
@@ -915,6 +916,7 @@
                       ],
                       "row_accent_color": null,
                       "corner": null,
+                      "card_time": null,
                       "details": null,
                       "card_visual": null,
                       "skip_disabled": false
@@ -2292,6 +2294,7 @@
           "title",
           "subtitle",
           "corner",
+          "card_time",
           "summary",
           "details",
           "link_buttons",
@@ -2371,6 +2374,17 @@
             "oneOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "card_time": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
               },
               {
                 "type": "null"
