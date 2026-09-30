@@ -1,3 +1,5 @@
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
+
 export type AnalyticsEvent = {
   properties?: Record<string, unknown>;
   $set?: Record<string, unknown>;
@@ -14,8 +16,13 @@ export function sanitizedAnalyticsUrl(value: string, origin: string) {
 
   try {
     const url = new URL(value, origin);
-    const internal = url.origin === origin;
+    const internal = [
+      origin,
+      SYSTEM_CONTRACT.hostedWebsiteBaseUrl,
+      SYSTEM_CONTRACT.hostedAppBaseUrl
+    ].includes(url.origin);
     const privatePath = [
+      "/api",
       "/human",
       "/caller",
       "/sign-in",
@@ -26,6 +33,8 @@ export function sanitizedAnalyticsUrl(value: string, origin: string) {
         url.pathname === prefix || url.pathname.startsWith(`${prefix}/`)
     );
 
+    url.username = "";
+    url.password = "";
     url.search = "";
     url.hash = "";
     if (privatePath) {

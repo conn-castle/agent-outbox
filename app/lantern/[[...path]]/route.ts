@@ -51,11 +51,17 @@ export function posthogProxyTarget(request: Request) {
   return { assetRequest, target };
 }
 
-function forwardedRequestHeaders(request: Request) {
+function forwardedRequestHeaders(request: Request, assetRequest: boolean) {
   const headers = new Headers();
   for (const name of REQUEST_HEADER_ALLOWLIST) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
+  }
+  if (assetRequest) {
+    for (const name of ["if-none-match", "if-modified-since"]) {
+      const value = request.headers.get(name);
+      if (value) headers.set(name, value);
+    }
   }
   const clientIp = trustedClientIpAddress(request);
   if (clientIp) headers.set("x-forwarded-for", clientIp);
@@ -73,6 +79,12 @@ function forwardedResponseHeaders(response: Response, assetRequest: boolean) {
 }
 
 async function proxy(request: Request) {
+  // Browser routing can miss unload beacons. Never forward fixture traffic,
+  // even when a test explicitly enables client capture. Next inlines this flag.
+  if (process.env.AGENT_OUTBOX_COMPILED_BROWSER_FIXTURE === "1") {
+    return Response.json({}, { headers: { "cache-control": "no-store" } });
+  }
+
   const destination = posthogProxyTarget(request);
   if (!destination) {
     return new Response("Invalid analytics proxy path.", {
@@ -84,7 +96,7 @@ async function proxy(request: Request) {
   try {
     const response = await fetch(destination.target, {
       method: request.method,
-      headers: forwardedRequestHeaders(request),
+      headers: forwardedRequestHeaders(request, destination.assetRequest),
       body:
         request.method === "GET" || request.method === "HEAD"
           ? undefined

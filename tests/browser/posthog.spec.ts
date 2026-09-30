@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { gunzipSync } from "node:zlib";
 
 type CapturedEvent = { event: string; properties: Record<string, unknown> };
@@ -12,15 +12,48 @@ function decodedEvents(payload: Buffer): CapturedEvent[] {
   return Array.isArray(parsed) ? parsed : (parsed.batch ?? [parsed]);
 }
 
+// Chromium's protocol can omit Blob POST bodies. Observe the SDK's beacon
+// argument while exercising its pagehide handler. The separate unmocked
+// fixture-proxy test verifies that escaped beacons cannot reach PostHog.
+async function captureUnloadEvents(page: Page): Promise<CapturedEvent[]> {
+  const payloads = await page.evaluate(async () => {
+    const original = navigator.sendBeacon;
+    const payloads: Promise<number[]>[] = [];
+    navigator.sendBeacon = function (url, data) {
+      if (new URL(url, location.href).pathname.startsWith("/lantern/")) {
+        if (!(data instanceof Blob))
+          throw new Error("Expected a PostHog beacon Blob");
+        payloads.push(
+          data.arrayBuffer().then((buffer) => [...new Uint8Array(buffer)])
+        );
+      }
+      return true;
+    };
+    try {
+      window.dispatchEvent(new PageTransitionEvent("pagehide"));
+      return await Promise.all(payloads);
+    } finally {
+      navigator.sendBeacon = original;
+    }
+  });
+  return payloads.flatMap((bytes) => decodedEvents(Buffer.from(bytes)));
+}
+
 test("PostHog sends automatic owner pageviews and excludes protected interactions", async ({
-  page
+  page,
+  context
 }) => {
   const events: CapturedEvent[] = [];
   const requests: string[] = [];
-  await page.route("**/lantern/**", async (route) => {
-    requests.push(route.request().url());
-    const payload = route.request().postDataBuffer();
+  // Observe payloads independently of route fulfillment. The compiled fixture
+  // proxy also blocks beacons that escape browser interception during teardown.
+  context.on("request", (request) => {
+    if (!new URL(request.url()).pathname.startsWith("/lantern/")) return;
+    requests.push(request.url());
+    const payload = request.postDataBuffer();
     if (payload) events.push(...decodedEvents(payload));
+  });
+  await page.route("**/lantern/**", async (route) => {
     await route.fulfill({
       status: 200,
       body: "{}",
@@ -55,6 +88,16 @@ test("PostHog sends automatic owner pageviews and excludes protected interaction
   await expect(page).toHaveURL(
     /user_code=private-device-code&__posthog_test_capture=1#private-hash/
   );
+  events.push(...(await captureUnloadEvents(page)));
+  await expect
+    .poll(() =>
+      events.some(
+        (event) =>
+          event.event === "$pageleave" &&
+          new URL(String(event.properties.$current_url)).pathname === "/human"
+      )
+    )
+    .toBe(true);
   await page.goto("/privacy-policy?__posthog_test_capture=1");
   await expect
     .poll(() =>
@@ -70,6 +113,31 @@ test("PostHog sends automatic owner pageviews and excludes protected interaction
   await expect(page).toHaveURL(/\/terms-of-service$/);
   await expect.poll(() => pageviews().length).toBeGreaterThan(beforeNavigation);
   for (const event of pageviews()) expect(event.properties.is_owner).toBe(true);
+  events.push(...(await captureUnloadEvents(page)));
+  await expect
+    .poll(() =>
+      events.some(
+        (event) =>
+          event.event === "$pageleave" &&
+          new URL(String(event.properties.$current_url)).pathname ===
+            "/terms-of-service"
+      )
+    )
+    .toBe(true);
+  const leaves = events.filter((event) => event.event === "$pageleave");
+  expect(
+    leaves.some(
+      (event) =>
+        new URL(String(event.properties.$current_url)).pathname === "/human"
+    )
+  ).toBe(true);
+  for (const event of leaves) {
+    const url = new URL(String(event.properties.$current_url));
+    expect(url.search).toBe("");
+    expect(url.hash).toBe("");
+    expect(event.properties.is_owner).toBe(true);
+  }
+  await page.goto("about:blank");
   const sent = JSON.stringify(events);
   expect(sent).not.toContain("Reply to Meridian about the renewal delay");
   expect(sent).not.toContain("private-device-code");
@@ -97,4 +165,15 @@ test("PostHog captures masked public clicks", async ({ page }) => {
   expect(click.properties.$event_type).toBe("click");
   expect(JSON.stringify(click)).not.toContain("Explore the product");
   expect(JSON.stringify(click)).not.toContain("#product");
+});
+
+test("browser fixture proxy absorbs unmocked unload beacons locally", async ({
+  request
+}) => {
+  const response = await request.post("/lantern/e/", {
+    data: { event: "$pageleave", properties: { fixture: true } }
+  });
+  expect(response.status()).toBe(200);
+  expect(response.headers()["cache-control"]).toBe("no-store");
+  expect(await response.json()).toEqual({});
 });

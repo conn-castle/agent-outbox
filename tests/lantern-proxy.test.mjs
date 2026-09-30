@@ -41,6 +41,9 @@ test("lantern rejects proxy-shaped and traversal path variants", () => {
   for (const path of [
     "/lantern//evil.example/x",
     "/lantern/%2F%2Fevil.example/x",
+    "/lantern/static/..%2fsecret",
+    "/lantern/static/%2e%2e%5csecret",
+    "/lantern/static/%ZZ",
     "/lantern/\\evil.example/x"
   ]) {
     assert.equal(
@@ -50,18 +53,13 @@ test("lantern rejects proxy-shaped and traversal path variants", () => {
     );
   }
 
-  // WHATWG URL normalization resolves encoded dot segments before a route
-  // handler receives the Request. It can only produce the fixed ingest origin,
-  // never an attacker-controlled origin.
-  assert.deepEqual(
-    posthogProxyTarget(
-      new Request("https://app.agent-outbox.dev/lantern/%2e%2e/secret")
-    ),
-    {
-      assetRequest: false,
-      target: new URL("https://us.i.posthog.com/")
-    }
+  // These encoded separators survive WHATWG normalization and reach the
+  // handler's decoded-segment traversal checks under the actual route prefix.
+  const traversal = new Request(
+    "https://app.agent-outbox.dev/lantern/static/..%2fsecret"
   );
+  assert.equal(new URL(traversal.url).pathname, "/lantern/static/..%2fsecret");
+  assert.equal(posthogProxyTarget(traversal), null);
 });
 
 test("lantern forwards a binary request with only safe headers and trusted Cloudflare IP", async () => {
@@ -207,5 +205,94 @@ test("lantern propagates upstream errors and returns a safe 502 for network fail
   } finally {
     globalThis.fetch = previousFetch;
     console.error = previousError;
+  }
+});
+
+test("lantern forwards asset validators and preserves a bodyless 304", async () => {
+  const previousFetch = globalThis.fetch;
+  const validators = {
+    "if-none-match": '"asset-v1"',
+    "if-modified-since": "Tue, 29 Sep 2026 12:00:00 GMT"
+  };
+  globalThis.fetch = async (_input, init) => {
+    const headers = new Headers(init?.headers);
+    for (const [name, value] of Object.entries(validators)) {
+      assert.equal(headers.get(name), value);
+    }
+    return new Response(null, {
+      status: 304,
+      headers: {
+        etag: validators["if-none-match"],
+        "cache-control": "public, max-age=60"
+      }
+    });
+  };
+  try {
+    for (const path of ["static/array.js", "array/project/config.js"]) {
+      const response = await GET(
+        new Request(`https://agent-outbox.dev/lantern/${path}`, {
+          headers: validators
+        })
+      );
+      assert.equal(response.status, 304);
+      assert.equal(response.body, null);
+      assert.equal(response.headers.get("etag"), validators["if-none-match"]);
+      assert.equal(response.headers.get("cache-control"), "public, max-age=60");
+    }
+    globalThis.fetch = async (_input, init) => {
+      const headers = new Headers(init?.headers);
+      for (const name of Object.keys(validators))
+        assert.equal(headers.get(name), null);
+      return new Response("{}");
+    };
+    assert.equal(
+      (
+        await POST(
+          new Request("https://agent-outbox.dev/lantern/e/", {
+            method: "POST",
+            headers: validators,
+            body: "{}"
+          })
+        )
+      ).status,
+      200
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("compiled browser fixtures never forward analytics, including unload beacons", async () => {
+  const previousFlag = process.env.AGENT_OUTBOX_COMPILED_BROWSER_FIXTURE;
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  process.env.AGENT_OUTBOX_COMPILED_BROWSER_FIXTURE = "1";
+  globalThis.fetch = async () => {
+    calls++;
+    throw new Error("Fixture must not contact PostHog");
+  };
+  try {
+    for (const { handler, method, path } of [
+      { handler: GET, method: "GET", path: "static/array.js" },
+      { handler: POST, method: "POST", path: "e/" }
+    ]) {
+      const response = await handler(
+        new Request(`http://127.0.0.1/lantern/${path}`, {
+          method,
+          ...(method === "POST"
+            ? { body: JSON.stringify({ event: "$pageleave" }), keepalive: true }
+            : {})
+        })
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), {});
+    }
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousFlag === undefined)
+      delete process.env.AGENT_OUTBOX_COMPILED_BROWSER_FIXTURE;
+    else process.env.AGENT_OUTBOX_COMPILED_BROWSER_FIXTURE = previousFlag;
   }
 });

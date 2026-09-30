@@ -101,3 +101,87 @@ test("PostHog drops DOM attribution and redacts pathnames and embedded link URLs
     "[redacted]"
   );
 });
+
+test("PostHog preserves both hosted origins but strips API identifiers and URL credentials", () => {
+  for (const current of [
+    origin,
+    "https://app.agent-outbox.dev",
+    "http://127.0.0.1:39010"
+  ]) {
+    for (const hosted of [origin, "https://app.agent-outbox.dev"]) {
+      assert.equal(
+        sanitizedAnalyticsUrl(
+          `${hosted}/docs/api/row-anatomy?q=private#secret`,
+          current
+        ),
+        `${hosted}/docs/api/row-anatomy`
+      );
+      assert.equal(
+        sanitizedAnalyticsUrl(
+          `${hosted}/api/output/private-output/files/private-file`,
+          current
+        ),
+        `${hosted}/api`
+      );
+      assert.equal(
+        sanitizedAnalyticsUrl(`${hosted}/api`, current),
+        `${hosted}/api`
+      );
+      assert.equal(
+        sanitizedAnalyticsUrl(`${hosted}/api-reference`, current),
+        `${hosted}/api-reference`
+      );
+    }
+    assert.equal(
+      sanitizedAnalyticsUrl(
+        "https://user:password@agent-outbox.dev/docs?secret=1#secret",
+        current
+      ),
+      `${origin}/docs`
+    );
+    assert.equal(
+      sanitizedAnalyticsUrl(
+        "https://user:password@external.example/path",
+        current
+      ),
+      "https://external.example/"
+    );
+    assert.equal(
+      sanitizedAnalyticsUrl(
+        "https://agent-outbox.dev.evil.example/docs",
+        current
+      ),
+      "https://agent-outbox.dev.evil.example/"
+    );
+  }
+});
+
+test("sensitive content retains its ph-no-capture wrappers", async () => {
+  const { readFile } = await import("node:fs/promises");
+  for (const file of [
+    "app/caller/layout.tsx",
+    "app/sign-in/layout.tsx",
+    "app/sign-up/layout.tsx",
+    "app/upgrade/page.tsx",
+    "src/components/human/ReviewWorkspace.tsx"
+  ]) {
+    assert.match(
+      await readFile(new URL(`../${file}`, import.meta.url), "utf8"),
+      /className="[^"]*\bph-no-capture\b[^"]*"/,
+      file
+    );
+  }
+  for (const file of ["app/human/page.tsx", "app/sign-out/page.tsx"]) {
+    const source = await readFile(
+      new URL(`../${file}`, import.meta.url),
+      "utf8"
+    );
+    assert.match(
+      source,
+      /<div className="ph-no-capture">\s*<MissingConfigurationPanel[\s\S]*?\/>\s*<\/div>/,
+      file
+    );
+    if (file.includes("sign-out"))
+      assert.match(source, /<main className="main auth-main ph-no-capture">/);
+  }
+});
