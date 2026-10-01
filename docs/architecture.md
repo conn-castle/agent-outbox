@@ -34,7 +34,7 @@ Hosted Agent Outbox has one deployable app boundary:
 - **Human auth:** Clerk.
 - **Billing:** Stripe, scoped to Agent Outbox accounts.
 - **Observability:** Sentry, Cloudflare native logs, Supabase native logs, and
-  Cloudflare Web Analytics.
+  PostHog.
 - **Secret authority:** AWS Systems Manager Parameter Store. Service-native and
   GitHub stores hold downstream runtime and deployment copies.
 

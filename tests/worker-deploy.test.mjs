@@ -482,7 +482,7 @@ test("worker deploy wrapper requires production config and appends optional anal
     withAnalytics.includes(
       "NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:analytics-token"
     ),
-    true
+    false
   );
 });
 

@@ -49,7 +49,6 @@ import {
 import { absoluteHttpOrigin } from "../src/server/env.ts";
 import { readRawRequestBodyWithLimit } from "../src/server/request-body.ts";
 import {
-  cloudflareWebAnalyticsToken,
   runtimeRelease,
   sentryReleaseUploadConfig,
   sentryReleaseUploadEnabled
@@ -780,9 +779,6 @@ function rootLayoutTestRequire(specifier) {
   }
   if (specifier === "../src/server/human-review-fixture-gate") {
     return { humanBrowserFixtureEnabled: () => false };
-  }
-  if (specifier === "../src/server/observability") {
-    return { cloudflareWebAnalyticsToken };
   }
   if (specifier === "../src/server/app-version") {
     return { formatVersionLabel };
@@ -3373,61 +3369,12 @@ test("client event endpoint drops malformed batches with the matching drop reaso
   }
 });
 
-test("web analytics token renders only for production with a configured public token", () => {
-  withProcessEnv(
-    {
-      APP_ENV: "development",
-      NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "public_token"
-    },
-    () => assert.equal(cloudflareWebAnalyticsToken(), null)
-  );
-  withProcessEnv(
-    {
-      APP_ENV: "production",
-      NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: undefined
-    },
-    () => assert.equal(cloudflareWebAnalyticsToken(), null)
-  );
-  withProcessEnv(
-    {
-      APP_ENV: "production",
-      NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "unsafe token"
-    },
-    () => assert.equal(cloudflareWebAnalyticsToken(), null)
-  );
-  withProcessEnv(
-    {
-      APP_ENV: "production",
-      NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "public_token-123"
-    },
-    () => assert.equal(cloudflareWebAnalyticsToken(), "public_token-123")
-  );
-});
-
-test("RootLayout omits web analytics script outside production", () => {
-  withProcessEnv(
-    {
-      APP_ENV: "development",
-      CLERK_PUBLISHABLE_KEY: undefined,
-      NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "public_token-123"
-    },
-    () => {
-      const html = renderRootLayoutForTest();
-      assert.equal(
-        html.includes("static.cloudflareinsights.com/beacon.min.js"),
-        false
-      );
-      assert.equal(html.includes("data-cf-beacon"), false);
-    }
-  );
-});
-
-test("RootLayout omits web analytics script when production token is missing", () => {
+test("RootLayout omits the retired Cloudflare beacon even with a leftover production token", () => {
   withProcessEnv(
     {
       APP_ENV: "production",
       CLERK_PUBLISHABLE_KEY: undefined,
-      NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: undefined
+      NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "public_token-123"
     },
     () => {
       const html = renderRootLayoutForTest();

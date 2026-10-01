@@ -7,19 +7,19 @@ guidance.
 
 The launch observability stack is intentionally provider-native: Sentry,
 Cloudflare Workers structured logs and observability, Supabase native logs,
-Cloudflare Web Analytics, and the narrow same-origin frontend event endpoint.
-Axiom, custom observability dashboards, alert fan-out, and proactive monitoring
-are out of scope for the MVP launch.
+PostHog, and the narrow same-origin frontend event endpoint. Axiom, custom
+observability dashboards, alert fan-out, and proactive monitoring are out of
+scope for the MVP launch.
 
 ## Signals
 
-| Signal                   | Service                              | Purpose                                               |
-| ------------------------ | ------------------------------------ | ----------------------------------------------------- |
-| Application exceptions   | Sentry                               | Error grouping, release health, source maps           |
-| Server structured logs   | Cloudflare Workers logs              | Request and operational forensics                     |
-| Database platform logs   | Supabase logs                        | Database connectivity, query, and service diagnostics |
-| Public traffic analytics | Cloudflare Web Analytics and PostHog | Basic page, performance, and interaction analytics    |
-| Frontend app events      | Worker endpoint                      | Sanitized browser error and UI consistency events     |
+| Signal                   | Service                 | Purpose                                               |
+| ------------------------ | ----------------------- | ----------------------------------------------------- |
+| Application exceptions   | Sentry                  | Error grouping, release health, source maps           |
+| Server structured logs   | Cloudflare Workers logs | Request and operational forensics                     |
+| Database platform logs   | Supabase logs           | Database connectivity, query, and service diagnostics |
+| Public traffic analytics | PostHog                 | Basic page, performance, and interaction analytics    |
+| Frontend app events      | Worker endpoint         | Sanitized browser error and UI consistency events     |
 
 Production Sentry capture requires `SENTRY_DSN` and a deploy-injected
 `SENTRY_RELEASE` value. Use the immutable release identifier for the deployed

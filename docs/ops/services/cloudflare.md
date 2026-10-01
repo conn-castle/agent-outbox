@@ -44,7 +44,6 @@ operations.
 - Cloudflare Workers/OpenNext runtime.
 - Worker runtime secrets.
 - Workers logs and runtime observability.
-- Cloudflare Web Analytics.
 - Edge safety controls such as WAF, challenge, route block, or rate-limit rules.
 
 ## Configuration To Verify

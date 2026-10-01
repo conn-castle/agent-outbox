@@ -591,8 +591,6 @@ version through a pull request and dispatch a new numbered production release.
 Before a broader launch, the owner must accept:
 
 - unresolved hosted-health or billing-smoke `action_required` items;
-- any missing Cloudflare Web Analytics token caused by provider permission
-  limits;
 - Sentry release/source-map posture if source maps are not uploaded;
 - final branch-protection and production-environment rules;
 - the public legal gate and the exact legal/business commitments listed above.
