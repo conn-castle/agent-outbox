@@ -1,4 +1,5 @@
 import { createCorrelationId } from "./correlation.ts";
+import { accountWriteLockStatement } from "./caller-api-limits.ts";
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
   accountQuotaWindowMaintenanceStatement,
@@ -212,15 +213,19 @@ export async function runScheduledCleanup(
             authSurface: "cleanup",
             accountId: account.accountId
           },
-          (query) =>
-            runCleanupStatements(
+          async (query) => {
+            // Cleanup later changes billing state after deleting queue rows.
+            // Match caller/human account-before-input ordering from the start.
+            await query(accountWriteLockStatement(account));
+            return runCleanupStatements(
               query,
               scheduledCleanupStatementsForAccount({
                 tier: account.tier,
                 now,
                 requestId
               })
-            )
+            );
+          }
         );
 
         statementsRun += accountResult.statementsRun;

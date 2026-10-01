@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import {
   emitRuntimeLog,
+  safeErrorCode,
   safeErrorName,
   type RuntimeLogEvent
 } from "./logging.ts";
@@ -42,8 +43,12 @@ export function captureRuntimeException(
 
   const release = runtimeRelease();
   try {
+    const errorCode = safeErrorCode(error);
     Sentry.withScope((scope) => {
       scope.setTag("error_id", input.errorId);
+      if (errorCode) {
+        scope.setTag("error_code", errorCode);
+      }
       if (input.operation) {
         scope.setTag("operation", input.operation);
       }
@@ -55,6 +60,7 @@ export function captureRuntimeException(
       }
       scope.setContext("agent_outbox", {
         error_id: input.errorId,
+        ...(errorCode ? { error_code: errorCode } : {}),
         operation: input.operation ?? null,
         route: input.route ?? null,
         release
@@ -82,7 +88,7 @@ export function captureRuntimeException(
 
 export type RuntimeFailureReportInput = Omit<
   RuntimeLogEvent,
-  "level" | "error_id" | "error_name" | "sentry_captured"
+  "level" | "error_id" | "error_name" | "error_code" | "sentry_captured"
 > & {
   errorId: string;
   suppressCapture?: boolean;
@@ -104,6 +110,7 @@ export function reportRuntimeFailure(
     level: "error",
     error_id: errorId,
     error_name: safeErrorName(exception),
+    error_code: safeErrorCode(exception),
     sentry_captured: sentryCaptured
   });
 
