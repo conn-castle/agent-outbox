@@ -106,15 +106,12 @@ export async function enforceAccountRequestLimits(
   }
 
   const requestWindows = fixedWindowLimits(profile, operationKind, "requests");
-  const shouldLockAccount =
-    // Send/replace must lock the account before any existing input item, even
-    // when the profile has only one request window, matching human answers.
-    operationKind === "input_send_replace" ||
+  const shouldSerializeQuotaWindows =
     requestWindows.length > 1 ||
     requestWindows.some(
       (limit) => limit.limitName === MONTHLY_CALLER_API_LIMIT
     );
-  if (shouldLockAccount) {
+  if (shouldSerializeQuotaWindows) {
     await query(accountWriteLockStatement(identity));
   }
 

@@ -1488,6 +1488,178 @@ test(
 );
 
 test(
+  "send and replace waiting on a paid-account downgrade validate against the downgraded tier",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async (t) => {
+    assert.ok(databaseUrl);
+    for (const operation of /** @type {const} */ (["send", "replace"])) {
+      await t.test(operation, async () => {
+        const owner = await connectedDatabaseClient(databaseUrl);
+        const caller = await connectedDatabaseClient(databaseUrl);
+        const cleanupClient = await connectedDatabaseClient(databaseUrl);
+        const ids = {
+          accountId: crypto.randomUUID(),
+          userId: crypto.randomUUID(),
+          callerId: crypto.randomUUID(),
+          inputItemId: crypto.randomUUID(),
+          actionId: crypto.randomUUID()
+        };
+        /** @type {PromiseWithResolvers<void>} */
+        const accountDowngraded = Promise.withResolvers();
+        /** @type {PromiseWithResolvers<void>} */
+        const resumeCleanup = Promise.withResolvers();
+        /** @type {Promise<unknown>[]} */
+        const operations = [];
+        /** @type {unknown} */
+        let bodyError;
+        try {
+          await assertMigrationOwnerCanSetAppRole(owner);
+          await owner.query("begin");
+          await seedDatabaseRows(owner, ids);
+          await owner.query(
+            "update public.agent_outbox_accounts set tier = 'hosted_paid', billing_status = 'grace', billing_grace_ends_at = '2026-09-30T00:00:00Z' where account_id = $1",
+            [ids.accountId]
+          );
+          await owner.query("commit");
+          const callerPid = (
+            await caller.query("select pg_backend_pid() as pid")
+          ).rows[0].pid;
+          const cleanupPid = (
+            await cleanupClient.query("select pg_backend_pid() as pid")
+          ).rows[0].pid;
+          let downgraded = false;
+          const cleanup = runScheduledCleanup({
+            connectionString: databaseUrl,
+            now: new Date("2026-10-01T00:00:00.000Z"),
+            requestId: "req-downgrade-race",
+            runTransaction(_connectionString, context, callback) {
+              return runHumanAnswerDatabaseTransaction(
+                cleanupClient,
+                ids,
+                "cleanup",
+                (query) =>
+                  callback(
+                    /** @type {ProductTransactionQuery} */ (
+                      async (statement) => {
+                        const result = await query(statement);
+                        if (
+                          statement.sql.includes(
+                            "agent_outbox_cleanup_account_targets"
+                          )
+                        ) {
+                          // Keep this shared test database's other accounts out of the run.
+                          const rows = result.rows.filter(
+                            (row) => row.account_id === ids.accountId
+                          );
+                          return { ...result, rows, rowCount: rows.length };
+                        }
+                        if (
+                          context.accountId === ids.accountId &&
+                          statement.sql.includes(
+                            "agent_outbox_cleanup_downgrade_grace_expiry"
+                          )
+                        ) {
+                          downgraded = true;
+                          accountDowngraded.resolve();
+                          await resumeCleanup.promise;
+                        }
+                        return result;
+                      }
+                    )
+                  )
+              );
+            }
+          });
+          operations.push(cleanup);
+          await Promise.race([accountDowngraded.promise, cleanup]);
+          assert.equal(
+            downgraded,
+            true,
+            "cleanup must pause after downgrading"
+          );
+          const submitted = runHumanAnswerDatabaseTransaction(
+            caller,
+            ids,
+            "caller",
+            (query) =>
+              handleInputQueueRequestInTransaction(
+                query,
+                {
+                  requestId: "req-downgrade-race-caller",
+                  correlationId: "corr-downgrade-race-caller"
+                },
+                ids,
+                operation,
+                {
+                  caller_item_id:
+                    operation === "send" ? "caller-item-new" : "caller-item-db",
+                  row_type: { display: "Review", icon: "inbox" },
+                  title: "Upload request",
+                  subtitle: "Subtitle",
+                  summary: "Summary",
+                  link_buttons: [],
+                  actions: [
+                    {
+                      display: "Upload",
+                      icon: "upload",
+                      value: "upload",
+                      overflow: false,
+                      popup: { kind: "file_upload", label: "Upload answer" }
+                    }
+                  ]
+                }
+              )
+          );
+          operations.push(submitted);
+          const settled = Promise.allSettled([cleanup, submitted]);
+          await waitForDatabaseBlock(owner, callerPid, cleanupPid);
+          resumeCleanup.resolve();
+          for (const result of await settled) {
+            if (result.status === "rejected") throw result.reason;
+          }
+          assert.equal((await cleanup).accounts_cleaned, 1);
+          const result = await submitted;
+          assert.equal(result.ok, false, JSON.stringify(result));
+          if (result.ok) assert.fail("free accounts cannot add file uploads");
+          assert.equal(result.error.code, "upgrade_required");
+          const state = await owner.query(
+            `select tier,
+              (select array_agg(caller_item_id || ':' || current_revision order by caller_item_id)
+               from public.agent_outbox_input_items where account_id = $1) as inputs,
+              (select count(*)::int from public.agent_outbox_input_actions action
+               join public.agent_outbox_input_items item using (input_item_id)
+               where item.account_id = $1 and action.popup_kind = 'file_upload') as file_upload_actions
+             from public.agent_outbox_accounts where account_id = $1`,
+            [ids.accountId]
+          );
+          assert.deepEqual(state.rows, [
+            {
+              tier: "hosted_free",
+              inputs: ["caller-item-db:1"],
+              file_upload_actions: 0
+            }
+          ]);
+        } catch (error) {
+          bodyError = error;
+        } finally {
+          resumeCleanup.resolve();
+          await Promise.allSettled(operations);
+          await preserveBodyErrorDuringTeardown(
+            bodyError,
+            async () => {
+              await caller.end();
+              await cleanupClient.end();
+              await cleanupHumanAnswerDatabaseTest(owner, ids);
+            },
+            "Downgrade concurrency test and teardown both failed."
+          );
+        }
+      });
+    }
+  }
+);
+
+test(
   "phase 4 local database human review pagination and search run the production statement",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
   async () => {

@@ -639,6 +639,7 @@ function loadInputQueueModuleForTest(
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
+        accountWriteLockStatement() {},
         async enforceAcceptedInputSubmissionLimits() {},
         async enforceCallerRequestLimits() {}
       },

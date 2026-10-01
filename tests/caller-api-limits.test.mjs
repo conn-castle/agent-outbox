@@ -214,7 +214,7 @@ test("output file download request limits co-apply monthly and minute windows wi
 
 test("paid and self-hosted profiles enforce send/replace minute limits while monthly quota is disabled", async () => {
   for (const profile of ["hosted-paid", "self-hosted"]) {
-    const query = fakeQuery([[], [], [{ used_units: "601" }], []]);
+    const query = fakeQuery([[], [{ used_units: "601" }], []]);
 
     const result = await enforceCallerRequestLimits(
       query,
@@ -236,7 +236,7 @@ test("paid and self-hosted profiles enforce send/replace minute limits while mon
     );
     assert.equal(
       query.calls.some((call) => call.sql.includes("for update")),
-      true,
+      false,
       profile
     );
     assert.equal(

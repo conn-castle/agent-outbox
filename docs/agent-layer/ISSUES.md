@@ -28,6 +28,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-01 cleanup-tier-snapshot: Scheduled cleanup can use a tier from before an account upgrade
+    Priority: High. Area: Cleanup / Billing
+    Description: `runScheduledCleanup` selects per-account retention statements from the tier returned by the earlier global target query. A free-to-paid upgrade before that account's transaction begins can therefore leave cleanup applying free-tier retention to a paid account.
+    Next step: Reproduce the global-target/per-account-transaction interleaving with a concurrent account upgrade.
+    Notes: Pre-existing path identified during PR #120 review; not the send/replace downgrade race fixed in that PR.
+
 - Issue 2026-09-29 human-answer-payload-decoding: Answer validation reads persisted popup bounds loosely
     Priority: Medium. Area: Human answers / Data integrity
     Description: `numberField`, `stringField`, and `acceptedMimeTypes` in `src/server/human-answer.ts` treat a malformed persisted `popup_payload` field (for example `min_length: "5"` or `max_selected: "2"`) as absent, so answer-time bounds are silently not enforced. The review page now rejects such payloads strictly in `src/server/human-review.ts`, which makes this mostly unreachable through the UI.

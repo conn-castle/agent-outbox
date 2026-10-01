@@ -9,6 +9,7 @@ import {
 } from "./caller-api-auth.ts";
 import {
   accountLimitProfileForAccount,
+  accountWriteLockStatement,
   enforceAcceptedInputSubmissionLimits,
   enforceCallerRequestLimits,
   type CallerLimitGuardResult
@@ -138,6 +139,12 @@ export async function handleInputQueueRequestInTransaction(
   operation: InputQueueOperation,
   jsonBody: unknown
 ): Promise<InputQueueResult> {
+  if (operation !== "delete") {
+    // Lock the account before reading its tier so a concurrent downgrade
+    // cannot leave validation and limits on a stale profile. This also keeps
+    // send/replace in account-before-input lock order, matching human answers.
+    await query(accountWriteLockStatement(auth));
+  }
   const profile = await accountLimitProfile(query, auth.accountId);
   if (!profile) {
     return temporaryUnavailableError();
