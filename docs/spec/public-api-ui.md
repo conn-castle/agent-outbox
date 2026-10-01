@@ -44,6 +44,31 @@ Generate an API client or types from the OpenAPI document on the trusted side of
 that boundary. Keep generated files reproducible instead of editing them by
 hand.
 
+## Link directly to a review card
+
+Agents and integrations can construct a human review link from their `caller_id`
+(available from `caller/status`) and the same `caller_item_id` used to submit
+the card and copied by its **Copy identifier** button:
+
+```text
+https://app.agent-outbox.dev/human?caller_id=<caller_id>&caller_item_id=<URL-encoded caller_item_id>
+```
+
+Build the query with `URLSearchParams` or an equivalent URL encoder; IDs may
+contain spaces, punctuation, or Unicode. Humans can choose **Copy link** from
+the card's **More actions** menu to copy the complete URL.
+
+The link opens the details dialog and positions the queue at the card, including
+cards beyond the first page and answered cards. Closing the dialog leaves the
+card in view. Shared links use the normal unfiltered priority ordering; they do
+not carry the sender's search, filters, or page number.
+
+The recipient must sign in to the card's account. Missing cards and cards
+outside that account show **Review unavailable**. A link addresses the current
+live item for `(caller_id, caller_item_id)`: after deletion, acknowledgement, or
+expiry it becomes unavailable, and reusing that ID later makes the link address
+the new card. It is not a permanent historical reference.
+
 ## Model the asynchronous lifecycle
 
 Agent Outbox is not a synchronous modal API. Your interface should let the
@@ -116,11 +141,14 @@ exact UTC value is also available on hover and through a semantic time element
 with an accessible Card time prefix. See
 [timestamp field rules](public-api-reference.md#schema-inputsubmission).
 
-Details show exact UTC Card time when supplied, Added to Outbox (`created_at`),
-and Updated in Outbox (`updated_at`), without requiring hover, in both review
-and action-compose modes. Card time, Created, and Last updated are independent
-sort choices. Missing card times remain last in either direction; ties continue
-to later sort rules. Changing the sort does not add metadata to the cards.
+Details group Card time when supplied, Added to Outbox (`created_at`), and
+Updated in Outbox (`updated_at`) into a compact row of icons and readable
+relative timestamps, in both review and action-compose modes. Field names and
+exact UTC values are available on hover, on keyboard focus, and to assistive
+technology. The row wraps when needed. Card time, Created, and Last updated are
+independent sort choices. Missing card times remain last in either direction;
+ties continue to later sort rules. Changing the sort does not add metadata to
+the cards.
 
 Visual variants contain these fields:
 

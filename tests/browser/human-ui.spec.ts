@@ -14,7 +14,7 @@ test.beforeEach(({ page }) => {
   page.on("pageerror", rethrowPageError);
 });
 
-test("card time is separate from corner and lifecycle times, including compose mode", async ({
+test("detail timestamps are compact, readable, and retain exact UTC values, including compose mode", async ({
   page
 }) => {
   await page.goto("/human?search=Review+neighborhood+permit+brief");
@@ -32,27 +32,86 @@ test("card time is separate from corner and lifecycle times, including compose m
   ).toBe("TIME");
   await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
   const detail = page.getByRole("region", { name: "Review detail" });
-  await expect(detail.locator(".detail-timestamps")).toContainText(
-    "Card time2026-07-01 12:34:56.123 UTC"
-  );
-  await expect(detail.locator(".detail-timestamps")).toContainText(
-    "Added to Outbox2026-07-01 13:00:00.000 UTC"
-  );
-  await expect(detail.locator(".detail-timestamps")).toContainText(
-    "Updated in Outbox2026-07-01 13:20:00.000 UTC"
-  );
+  const timestamps = detail.locator(".detail-timestamps");
+  const times = timestamps.locator("time");
+  await expect(timestamps.locator("dt")).toHaveText([
+    "Card time",
+    "Added to Outbox",
+    "Updated in Outbox"
+  ]);
+  await expect(times).toHaveText(["6 wk. ago", "6 wk. ago", "6 wk. ago"]);
+  const expectedTimes = [
+    ["Card time", "2026-07-01T12:34:56.123Z", "2026-07-01 12:34:56.123 UTC"],
+    [
+      "Added to Outbox",
+      "2026-07-01T13:00:00.000Z",
+      "2026-07-01 13:00:00.000 UTC"
+    ],
+    [
+      "Updated in Outbox",
+      "2026-07-01T13:20:00.000Z",
+      "2026-07-01 13:20:00.000 UTC"
+    ]
+  ];
+  for (const [index, [label, iso, exact]] of expectedTimes.entries()) {
+    const time = times.nth(index);
+    await expect(time).toHaveAttribute("datetime", iso);
+    await expect(time).toHaveAttribute("tabindex", "0");
+    const tooltipId = await time.getAttribute("aria-describedby");
+    expect(tooltipId).toBeTruthy();
+    const tooltip = timestamps.locator(`[id="${tooltipId}"]`);
+    await expect(tooltip).toHaveAttribute("role", "tooltip");
+    await expect(tooltip).toHaveText(`${label}: ${exact}`);
+    await expect(tooltip).toBeHidden();
+    await expect(timestamps.locator("dd").nth(index)).toMatchAriaSnapshot(`
+      - definition:
+        - time: 6 wk. ago
+        - text: "; ${exact}"
+    `);
+    await expect(time.locator("svg")).toBeVisible();
+    await time.focus();
+    await expect(time).toBeFocused();
+    await expect(tooltip).toBeVisible();
+    await time.blur();
+    await expect(tooltip).toBeHidden();
+    await time.hover();
+    await expect(tooltip).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(tooltip).toBeHidden();
+  }
+  await expect
+    .poll(() =>
+      times.evaluateAll(
+        (elements) =>
+          new Set(
+            elements.map((element) =>
+              Math.round(element.getBoundingClientRect().top)
+            )
+          ).size
+      )
+    )
+    .toBe(1);
+  await timestamps.evaluate((element) => {
+    element.style.fontSize = "2rem";
+  });
+  await expect
+    .poll(() =>
+      timestamps.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth
+      )
+    )
+    .toBe(true);
   await page.getByRole("button", { name: "Close detail", exact: true }).click();
   await page.goto(
     "/human?item=00000000-0000-4000-8000-000000000512&compose=pick_date"
   );
   await expect(detail.getByLabel("Follow-up date")).toBeVisible();
-  await expect(detail.getByText("Card time", { exact: true })).toBeVisible();
-  await expect(
-    detail.getByText("Added to Outbox", { exact: true })
-  ).toBeVisible();
-  await expect(
-    detail.getByText("Updated in Outbox", { exact: true })
-  ).toBeVisible();
+  await expect(timestamps.locator("dt")).toHaveText([
+    "Card time",
+    "Added to Outbox",
+    "Updated in Outbox"
+  ]);
+  await expect(times).toHaveText(["6 wk. ago", "6 wk. ago", "6 wk. ago"]);
   await page.goto("/human?status=answered&search=electrician");
   const absent = reviewRowByTitle(
     page,
@@ -753,11 +812,12 @@ test("primary navigation and queue disclosures behave consistently", async ({
     /status=answered/
   );
 
-  const unavailableMore = page
-    .getByRole("button", { name: /^No more actions for / })
-    .first();
-  await expect(unavailableMore).toHaveAttribute("aria-disabled", "true");
-  await expect(unavailableMore).toHaveAttribute("title", "No more actions");
+  const more = page.locator("details.row-overflow").first();
+  await more.locator("summary").click();
+  await expect(
+    more.getByRole("button", { name: "Copy link", exact: true })
+  ).toBeVisible();
+  await more.locator("summary").click();
 
   const account = page.getByLabel("Account status");
   await account.locator("summary").click();
@@ -1282,11 +1342,39 @@ test("copy identifier copies the caller reference and reports clipboard failures
   await row
     .getByRole("button", { name: "Identifier copied", exact: true })
     .click();
-  await expect(row.getByRole("alert")).toContainText("Copy failed");
+  await expect(row.getByRole("alert")).toHaveText(
+    "Could not copy identifier. Try again."
+  );
+  await expect(row.getByRole("textbox")).toHaveCount(0);
   await expect(
-    row.getByRole("textbox", { name: "Review identifier" })
-  ).toHaveValue("steward-brief-101");
-  await row.getByRole("button", { name: "Dismiss", exact: true }).click();
+    row.getByRole("button", { name: "Dismiss", exact: true })
+  ).toHaveCount(0);
+  await page.evaluate(() => {
+    Reflect.deleteProperty(window, "copiedIdentifier");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as unknown as { copiedIdentifier: string }).copiedIdentifier =
+            text;
+        }
+      }
+    });
+  });
+  await row
+    .getByRole("button", {
+      name: "Could not copy identifier. Try again.",
+      exact: true
+    })
+    .click();
+  await expect(
+    row.getByRole("button", { name: "Identifier copied", exact: true })
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { copiedIdentifier: string }).copiedIdentifier
+    )
+  ).toBe("steward-brief-101");
   await expect(row.getByRole("alert")).toHaveCount(0);
 });
 
@@ -2969,13 +3057,13 @@ test("answered queue rows hide overflow decision actions", async ({ page }) => {
     page,
     "GitHub security digest for archived repositories"
   );
-  await expect(row.locator("details.row-overflow")).toHaveCount(0);
-  await expect(row.locator(".inline-actions")).toHaveCount(0);
+  const more = row.locator("details.row-overflow");
+  await more.locator("summary").click();
   await expect(
-    row.getByRole("button", {
-      name: "No more actions for GitHub security digest for archived repositories"
-    })
+    more.getByRole("button", { name: "Copy link", exact: true })
   ).toBeVisible();
+  await expect(more.locator(".row-overflow-item")).toHaveCount(1);
+  await expect(row.locator(".inline-actions")).toHaveCount(0);
   await expect(row).toContainText("Decision: Archive");
   await expect(row.locator("a.row-link a")).toHaveCount(0);
 });

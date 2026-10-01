@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type MouseEvent,
@@ -14,6 +15,9 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDot,
+  Clock,
+  Inbox,
+  RefreshCw,
   X
 } from "lucide-react";
 
@@ -26,6 +30,7 @@ import {
 } from "./ActionForms";
 import {
   formatReviewPriority,
+  formatQueueTimestamp,
   formatUtcTimestamp,
   formatExactUtcTimestamp
 } from "./review-format";
@@ -34,6 +39,7 @@ import { Feedback } from "./Feedback";
 
 export function ReviewDetail({
   detail,
+  renderedAt,
   positionLabel,
   previousItem,
   nextItem,
@@ -45,6 +51,7 @@ export function ReviewDetail({
   onMutation
 }: {
   detail: HumanReviewDetailDto | null;
+  renderedAt: string;
   positionLabel: string | null;
   previousItem: { href: string; label: string } | null;
   nextItem: { href: string; label: string } | null;
@@ -67,6 +74,7 @@ export function ReviewDetail({
     requestedCompose?.value ?? null
   );
   const [closing, setClosing] = useState(false);
+  const timestampTooltipId = useId();
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -112,7 +120,9 @@ export function ReviewDetail({
             <CircleDot aria-hidden="true" />
           </span>
           <h2>Review unavailable</h2>
-          <p>This review could not be loaded.</p>
+          <p>
+            This card is no longer available, or you do not have access to it.
+          </p>
           <button
             className="mobile-back"
             type="button"
@@ -132,6 +142,11 @@ export function ReviewDetail({
   const activeAction = detail.actions.find(
     (action) => action.value === activeActionValue
   );
+  const timestamps = [
+    { label: "Card time", value: detail.cardTime, Icon: Clock },
+    { label: "Added to Outbox", value: detail.createdAt, Icon: Inbox },
+    { label: "Updated in Outbox", value: detail.updatedAt, Icon: RefreshCw }
+  ];
 
   return (
     <dialog
@@ -223,35 +238,38 @@ export function ReviewDetail({
                   className="detail-subtitle"
                 />
               )}
-              <dl className="detail-timestamps">
-                {detail.cardTime ? (
-                  <div>
-                    <dt>Card time</dt>
+            </div>
+            <dl className="detail-timestamps">
+              {timestamps.map(({ label, value, Icon }) => {
+                if (!value) return null;
+                const readable = formatQueueTimestamp(value, renderedAt);
+                const exact = formatExactUtcTimestamp(value);
+                const tooltipId = `${timestampTooltipId}-${label.replaceAll(/\s+/g, "-").toLowerCase()}`;
+                return (
+                  <div key={label}>
+                    <dt className="sr-only">{label}</dt>
                     <dd>
-                      <time dateTime={detail.cardTime}>
-                        {formatExactUtcTimestamp(detail.cardTime)}
+                      <time
+                        dateTime={value}
+                        tabIndex={0}
+                        aria-describedby={tooltipId}
+                      >
+                        <Icon aria-hidden="true" />
+                        {readable}
                       </time>
+                      <span
+                        id={tooltipId}
+                        role="tooltip"
+                        className="timestamp-tooltip"
+                      >
+                        {label}: {exact}
+                      </span>
+                      <span className="sr-only">; {exact}</span>
                     </dd>
                   </div>
-                ) : null}
-                <div>
-                  <dt>Added to Outbox</dt>
-                  <dd>
-                    <time dateTime={detail.createdAt}>
-                      {formatExactUtcTimestamp(detail.createdAt)}
-                    </time>
-                  </dd>
-                </div>
-                <div>
-                  <dt>Updated in Outbox</dt>
-                  <dd>
-                    <time dateTime={detail.updatedAt}>
-                      {formatExactUtcTimestamp(detail.updatedAt)}
-                    </time>
-                  </dd>
-                </div>
-              </dl>
-            </div>
+                );
+              })}
+            </dl>
           </header>
 
           {requestedCompose ? (

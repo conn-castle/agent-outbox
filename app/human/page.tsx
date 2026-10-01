@@ -5,35 +5,24 @@ import {
   ReviewWorkspace
 } from "../../src/components/human/ReviewWorkspace";
 import { createCorrelationId } from "../../src/server/correlation";
-import type { ProductTransactionQuery } from "../../src/server/database";
 import {
   BROWSER_FIXTURE_REFERENCE_TIME,
   browserFixtureAccountBanner,
   browserFixtureAccountIdentity,
   browserFixtureHumanSession,
   browserFixtureReviewDetail,
+  browserFixtureReviewCard,
   browserFixtureReviewPage,
   browserFixtureReviewTypeOptions,
   humanBrowserFixtureEnabled
 } from "../../src/server/human-review-fixture";
 import { readFixtureResolvedItems } from "../../src/server/human-review-fixture-state";
-import {
-  humanReviewAccountBannerInTransaction,
-  humanReviewDetailInTransaction,
-  humanReviewPageInTransaction,
-  humanReviewTypeOptionsInTransaction,
-  REVIEW_PAGE_SIZE
-} from "../../src/server/human-review";
-import {
-  type HumanAccountSession,
-  requiredHumanSessionConfiguration,
-  runHumanAccountTransaction
-} from "../../src/server/human-session";
+import { loadHumanReviewPage } from "../../src/server/human-review-page";
+import { requiredHumanSessionConfiguration } from "../../src/server/human-session";
 import { MissingConfigurationPanel } from "../../src/server/ui";
 import {
   firstSearchParam,
-  humanReviewViewFromRecord,
-  type HumanReviewView
+  humanReviewViewFromRecord
 } from "../../src/shared/human-review-view";
 import {
   humanAccountIdentityOrFallback,
@@ -55,10 +44,17 @@ export default async function HumanReviewPage({
   const renderedAt = fixtureEnabled
     ? BROWSER_FIXTURE_REFERENCE_TIME
     : new Date().toISOString();
-  const selectedItem = firstSearchParam(params?.item);
+  let selectedItem = firstSearchParam(params?.item);
+  const cardLink =
+    params?.caller_id !== undefined || params?.caller_item_id !== undefined
+      ? {
+          callerId: firstSearchParam(params?.caller_id) ?? "",
+          callerItemId: firstSearchParam(params?.caller_item_id) ?? ""
+        }
+      : null;
   const composeAction = firstSearchParam(params?.compose);
   const notice = humanReviewNotice(params);
-  const view = humanReviewViewFromRecord(params);
+  let view = humanReviewViewFromRecord(params);
 
   if (fixtureEnabled) {
     const resolvedItems = await readFixtureResolvedItems();
@@ -72,6 +68,21 @@ export default async function HumanReviewPage({
       firstTimeSignup: firstSearchParam(params?.fixture_signup) === "1",
       providerSubject: firstSearchParam(params?.fixture_provider_subject)
     });
+    if (cardLink) {
+      const card = browserFixtureReviewCard(
+        cardLink.callerId,
+        cardLink.callerItemId,
+        fixtureOptions
+      );
+      view = {
+        ...humanReviewViewFromRecord(undefined),
+        status: card?.status ?? "pending",
+        page: card?.page ?? 1
+      };
+      selectedItem = card?.inputItemId;
+      if (card?.page && card.page > 1)
+        fixtureOptions.includePaginationRows = true;
+    }
     const fixturePage = browserFixtureReviewPage(view, fixtureOptions);
     return (
       <ReviewWorkspace
@@ -93,7 +104,7 @@ export default async function HumanReviewPage({
         view={view}
         hasNext={fixturePage.hasNext}
         totalCount={fixturePage.totalCount}
-        detailOpen={selectedItem !== undefined}
+        detailOpen={cardLink !== null || selectedItem !== undefined}
         composeAction={composeAction}
         renderedAt={renderedAt}
       />
@@ -112,22 +123,32 @@ export default async function HumanReviewPage({
     );
   }
 
-  const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
+  const returnParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    for (const entry of Array.isArray(value)
+      ? value
+      : value === undefined
+        ? []
+        : [value]) {
+      returnParams.append(key, entry);
+    }
+  }
+  const session = await auth.protect({
+    unauthenticatedUrl: `/sign-in?${new URLSearchParams({ redirect_url: `/human?${returnParams}` })}`
+  });
   const [transaction, clerkIdentity] = await Promise.all([
-    runHumanAccountTransaction(
+    loadHumanReviewPage(
       {
         clerkUserId: session.userId,
         requestId: createCorrelationId("human_req"),
         route: "/human",
         method: "GET"
       },
-      (query, humanSession) =>
-        loadHumanReviewPageDataInTransaction(
-          query,
-          humanSession,
-          selectedItem ?? null,
-          view
-        )
+      {
+        selectedItem: selectedItem ?? null,
+        view,
+        cardLink
+      }
     ),
     loadClerkAccountIdentity(session.userId)
   ]);
@@ -170,10 +191,10 @@ export default async function HumanReviewPage({
       detail={pageData.detail}
       banner={pageData.banner}
       notice={notice}
-      view={view}
+      view={pageData.view}
       hasNext={pageData.hasNext}
       totalCount={pageData.totalCount}
-      detailOpen={selectedItem !== undefined}
+      detailOpen={cardLink !== null || selectedItem !== undefined}
       composeAction={composeAction}
       renderedAt={renderedAt}
     />
@@ -248,40 +269,6 @@ function providerLabel(provider: string) {
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
       .join(" ")
   );
-}
-
-async function loadHumanReviewPageDataInTransaction(
-  query: ProductTransactionQuery,
-  session: HumanAccountSession,
-  selectedItem: string | null,
-  view: HumanReviewView
-) {
-  const page = await humanReviewPageInTransaction(query, session, {
-    status: view.status,
-    search: view.search,
-    priorities: view.priorities,
-    types: view.types,
-    sorts: view.sorts,
-    offset: (view.page - 1) * REVIEW_PAGE_SIZE
-  });
-  const rows = page.rows;
-  const detail = selectedItem
-    ? await humanReviewDetailInTransaction(query, session, selectedItem)
-    : null;
-  const banner = await humanReviewAccountBannerInTransaction(query, session);
-  const typeOptions = await humanReviewTypeOptionsInTransaction(
-    query,
-    session,
-    view.status
-  );
-  return {
-    rows,
-    detail,
-    banner,
-    typeOptions,
-    hasNext: page.hasNext,
-    totalCount: page.totalCount
-  };
 }
 
 function humanReviewNotice(

@@ -3,10 +3,22 @@ import { SignIn } from "@clerk/nextjs";
 import { LegalAcknowledgement } from "../../../src/components/legal/LegalDocument";
 import { GitHubSignInButton } from "../../../src/components/auth/GitHubSignInButton";
 import { MissingConfigurationPanel } from "../../../src/server/ui";
+import {
+  firstSearchParam,
+  humanReviewReturnHref
+} from "../../../src/shared/human-review-view";
 
 export const dynamic = "force-dynamic";
 
-export default function SignInPage() {
+export default async function SignInPage({
+  searchParams
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const returnHref = humanReviewReturnHref(
+    firstSearchParam(params?.redirect_url)
+  );
   if (!process.env.CLERK_PUBLISHABLE_KEY) {
     return (
       <MissingConfigurationPanel
@@ -19,11 +31,12 @@ export default function SignInPage() {
   return (
     <main className="main auth-main">
       <div className="auth-clerk-stack">
-        <GitHubSignInButton />
+        <GitHubSignInButton redirectUrl={returnHref} />
         <SignIn
           routing="path"
           path="/sign-in"
           fallbackRedirectUrl="/human"
+          forceRedirectUrl={returnHref}
           appearance={{
             elements: {
               socialButtonsBlockButton: { display: "none" },

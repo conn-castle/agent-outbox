@@ -103,6 +103,27 @@ export function humanReviewHref(
   return query ? `/human?${query}` : "/human";
 }
 
+export function humanReviewCardHref(callerId: string, callerItemId: string) {
+  const params = new URLSearchParams({
+    caller_id: callerId,
+    caller_item_id: callerItemId
+  });
+  return `/human?${params}`;
+}
+
+export function humanReviewReturnHref(value: string | undefined) {
+  if (!value?.startsWith("/")) return undefined;
+  try {
+    const origin = "https://return.invalid";
+    const url = new URL(value, origin);
+    return url.origin === origin && url.pathname === "/human"
+      ? `${url.pathname}${url.search}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function defaultHumanReviewSortDirection(
   sort: HumanReviewSort
 ): HumanReviewSortDirection {

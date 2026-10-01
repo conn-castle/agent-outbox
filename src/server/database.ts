@@ -46,10 +46,33 @@ export type ProductTransactionQuery = <
   statement: TransactionContextStatement
 ) => Promise<QueryResult<TResult>>;
 
+const PRODUCT_TRANSACTION_BEGIN_SQL = {
+  "read committed": "begin",
+  "repeatable read": "begin isolation level repeatable read"
+} as const;
+
+export type ProductTransactionIsolationLevel =
+  keyof typeof PRODUCT_TRANSACTION_BEGIN_SQL;
+
+export type ProductTransactionOptions = {
+  isolationLevel?: ProductTransactionIsolationLevel;
+};
+
+export function productTransactionBeginSql(
+  isolationLevel: ProductTransactionIsolationLevel = "read committed"
+) {
+  const sql = PRODUCT_TRANSACTION_BEGIN_SQL[isolationLevel];
+  if (!sql) {
+    throw new Error("Unsupported product transaction isolation level.");
+  }
+  return sql;
+}
+
 export async function runProductTransaction<TResult>(
   connectionString: string,
   context: ProductTransactionContext,
-  callback: (query: ProductTransactionQuery) => Promise<TResult>
+  callback: (query: ProductTransactionQuery) => Promise<TResult>,
+  options: ProductTransactionOptions = {}
 ) {
   const client = new Client({
     application_name: "agent-outbox-product-transaction",
@@ -62,7 +85,7 @@ export async function runProductTransaction<TResult>(
   await client.connect();
 
   try {
-    await client.query("begin");
+    await client.query(productTransactionBeginSql(options.isolationLevel));
     const contextEntries = [
       ["agent_outbox.request_id", context.requestId],
       ["agent_outbox.auth_surface", context.authSurface],

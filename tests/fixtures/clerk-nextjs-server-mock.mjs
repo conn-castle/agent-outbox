@@ -17,6 +17,8 @@ export function createRouteMatcher(patterns) {
   };
 }
 
+export const clerkMiddlewareMock = { signedOut: false };
+
 let clerkMiddlewareCalls = 0;
 
 export function resetClerkMiddlewareCalls() {
@@ -28,21 +30,29 @@ export function clerkMiddlewareCallCount() {
 }
 
 /**
- * @param {(auth: { protect: () => Promise<void> }, request: Request) => unknown} handler
+ * @param {(auth: { protect: (options: { unauthenticatedUrl: string }) => Promise<void> }, request: Request) => unknown} handler
  * @returns {(request: Request) => unknown}
  */
 export function clerkMiddleware(handler) {
-  return (request) => {
+  return async (request) => {
     clerkMiddlewareCalls += 1;
-    return handler(
-      {
-        protect: async () => {
-          throw new Error(
-            "Unexpected Clerk auth path in middleware missing-configuration test."
-          );
-        }
-      },
-      request
-    );
+    try {
+      return await handler(
+        {
+          protect: async ({ unauthenticatedUrl }) => {
+            if (clerkMiddlewareMock.signedOut) {
+              throw Response.redirect(unauthenticatedUrl, 307);
+            }
+            throw new Error(
+              "Unexpected Clerk auth path in middleware missing-configuration test."
+            );
+          }
+        },
+        request
+      );
+    } catch (error) {
+      if (error instanceof Response) return error;
+      throw error;
+    }
   };
 }
