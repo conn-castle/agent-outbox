@@ -149,6 +149,15 @@ Canonical data sources:
 Active limit blocks explain a denial; they do not replace live rows, quota
 windows, or audit events as sources of truth.
 
+Input send/replace, human answer, and per-account scheduled cleanup transactions
+acquire the account row lock before locking an input item, across all limit
+profiles. Send/replace takes it before reading the account tier, so validation
+and limits cannot use a profile from before a concurrent downgrade. This order
+prevents deadlocks between caller replacement, human file quotas, output
+foreign-key checks, and cleanup billing downgrades. Concurrent answers still
+check the input revision after acquiring locks so a replaced revision cannot be
+answered.
+
 Storage rules:
 
 - Preserve the typed product shape in relational tables instead of storing each

@@ -110,7 +110,15 @@ export async function runProductTransaction<TResult>(
     await client.query("commit");
     return result;
   } catch (error) {
-    await client.query("rollback");
+    try {
+      await client.query("rollback");
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Product transaction and rollback both failed.",
+        { cause: error }
+      );
+    }
     throw error;
   } finally {
     await client.end();

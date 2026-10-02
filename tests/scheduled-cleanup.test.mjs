@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { accountWriteLockStatement } from "../src/server/caller-api-limits.ts";
 
 import {
   accountQuotaWindowMaintenanceStatement,
@@ -262,22 +263,22 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     cleanupAccountTargetsStatement(),
     ...globalQuotaWindowMaintenanceStatements(now)
   ]);
-  assert.deepEqual(
-    statementsByContext[1],
-    scheduledCleanupStatementsForAccount({
+  assert.deepEqual(statementsByContext[1], [
+    accountWriteLockStatement({ accountId: "account-free" }),
+    ...scheduledCleanupStatementsForAccount({
       tier: "hosted_free",
       now,
       requestId: "cleanup-test-request"
     })
-  );
-  assert.deepEqual(
-    statementsByContext[2],
-    scheduledCleanupStatementsForAccount({
+  ]);
+  assert.deepEqual(statementsByContext[2], [
+    accountWriteLockStatement({ accountId: "account-paid" }),
+    ...scheduledCleanupStatementsForAccount({
       tier: "hosted_paid",
       now,
       requestId: "cleanup-test-request"
     })
-  );
+  ]);
   assert.deepEqual(result, {
     ok: true,
     code: "scheduled_cleanup_completed",
