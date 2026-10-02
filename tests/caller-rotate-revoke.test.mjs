@@ -17,6 +17,7 @@ import {
   handleRotateAbortRequest,
   handleRotateActivateRequest,
   handleRotateBrowserStartRequest,
+  handleRotateDevicePollRequest,
   handleRotateDeviceStartRequest,
   handleRotateExchangeRequest
 } from "../src/server/caller-credential-operations.ts";
@@ -127,7 +128,7 @@ function controlRequest(path, init = {}) {
   });
 }
 
-test("browser rotate start creates a rotate setup request after IP limiting", async () => {
+test("browser rotate start preserves Unicode text and creates a setup request after IP limiting", async () => {
   await withProcessEnv(
     {
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
@@ -152,8 +153,8 @@ test("browser rotate start creates a rotate setup request after IP limiting", as
         { requestId: "req-rotate-start", correlationId: "corr-rotate-start" },
         {
           caller_id: CALLER_ID,
-          local_caller_name: "steward-email",
-          callback_url: "http://127.0.0.1:49152/callback"
+          local_caller_name: "cafe\u0301-邮件-🚀",
+          callback_url: "http://127.0.0.1:49152/邮件/🚀"
         },
         {
           now: new Date("2026-07-02T00:00:00.000Z"),
@@ -179,8 +180,8 @@ test("browser rotate start creates a rotate setup request after IP limiting", as
       assert.deepEqual(query.calls[1].values, [
         "rotate",
         CALLER_ID,
-        "steward-email",
-        "http://127.0.0.1:49152/callback",
+        "cafe\u0301-邮件-🚀",
+        "http://127.0.0.1:49152/邮件/🚀",
         "2026-07-02T00:10:00.000Z",
         5
       ]);
@@ -263,80 +264,111 @@ test("malformed caller_id fails validation before rotate and revoke start transa
   }
 });
 
-test("rotate and revoke start reject local caller names Postgres cannot store before transactions", async () => {
+test("rotate and revoke reject text Postgres cannot store before transactions", async () => {
   await withProcessEnv(
     {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
       PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
     },
     async () => {
-      const starts = [
+      const routes = [
         {
           name: "rotate browser start",
           handler: handleRotateBrowserStartRequest,
           path: "/api/caller/rotate/browser/start",
-          body: { callback_url: "http://127.0.0.1:49152/callback" }
+          body: {
+            caller_id: CALLER_ID,
+            local_caller_name: "steward-email",
+            callback_url: "http://127.0.0.1:49152/callback"
+          }
         },
         {
           name: "rotate device start",
           handler: handleRotateDeviceStartRequest,
           path: "/api/caller/rotate/device/start",
-          body: {}
+          body: { caller_id: CALLER_ID, local_caller_name: "steward-email" }
         },
         {
           name: "revoke browser start",
           handler: handleRevokeBrowserStartRequest,
           path: "/api/caller/revoke/browser/start",
-          body: { callback_url: "http://127.0.0.1:49152/callback" }
+          body: {
+            caller_id: CALLER_ID,
+            local_caller_name: "steward-email",
+            callback_url: "http://127.0.0.1:49152/callback"
+          }
         },
         {
           name: "revoke device start",
           handler: handleRevokeDeviceStartRequest,
           path: "/api/caller/revoke/device/start",
-          body: {}
+          body: { caller_id: CALLER_ID, local_caller_name: "steward-email" }
+        },
+        {
+          name: "rotate device poll",
+          handler: handleRotateDevicePollRequest,
+          path: "/api/caller/rotate/device/poll",
+          body: { device_code: "dev_pending" }
+        },
+        {
+          name: "revoke device poll",
+          handler: handleRevokeDevicePollRequest,
+          path: "/api/caller/revoke/device/poll",
+          body: { device_code: "dev_pending" }
+        },
+        {
+          name: "rotate exchange",
+          handler: handleRotateExchangeRequest,
+          path: "/api/caller/rotate/exchange",
+          body: { setup_code: "setup_pending" }
+        },
+        {
+          name: "revoke confirm",
+          handler: handleRevokeConfirmRequest,
+          path: "/api/caller/revoke/confirm",
+          body: { setup_code: "setup_pending" }
         }
       ];
 
-      for (const start of starts) {
-        for (const localCallerName of [
-          "steward\u0000email",
-          "steward\udc00email"
-        ]) {
-          const label = `${start.name} ${JSON.stringify(localCallerName)}`;
-          const runner = fakeTransactionRunner([]);
-          const result = await start.handler(
-            controlRequest(start.path),
-            {
-              requestId: `req-${start.name}-unstorable`,
-              correlationId: `corr-${start.name}-unstorable`
-            },
-            {
-              caller_id: CALLER_ID,
-              local_caller_name: localCallerName,
-              ...start.body
-            },
-            { runProductTransaction: runner.runProductTransaction }
-          );
-
-          assert.equal(result.ok, false, label);
-          if (result.ok) {
-            assert.fail(`expected ${label} to fail validation`);
-          }
-          assert.equal(result.error.status, 422, label);
-          assert.equal(result.error.code, "validation_failed", label);
-          assert.deepEqual(
-            result.error.fields,
-            [
+      for (const route of routes) {
+        for (const [key, validValue] of Object.entries(route.body)) {
+          for (const invalid of ["\u0000", "\ud800", "\udc00"]) {
+            const value = `${validValue}${invalid}text`;
+            const label = `${route.name} ${key} ${JSON.stringify(value)}`;
+            const runner = fakeTransactionRunner([]);
+            const result = await route.handler(
+              controlRequest(route.path),
               {
-                path: "local_caller_name",
-                code: "invalid_string",
-                message:
-                  "local_caller_name must be well-formed Unicode without NUL characters."
-              }
-            ],
-            label
-          );
-          assert.equal(runner.contexts.length, 0, label);
+                requestId: `req-${route.name}-unstorable`,
+                correlationId: `corr-${route.name}-unstorable`
+              },
+              {
+                ...route.body,
+                [key]: value
+              },
+              { runProductTransaction: runner.runProductTransaction }
+            );
+
+            assert.equal(result.ok, false, label);
+            if (result.ok) {
+              assert.fail(`expected ${label} to fail validation`);
+            }
+            assert.equal(result.error.status, 422, label);
+            assert.equal(result.error.code, "validation_failed", label);
+            assert.deepEqual(
+              result.error.fields,
+              [
+                {
+                  path: key,
+                  code: "invalid_string",
+                  message: `${key} must be well-formed Unicode without NUL characters.`
+                }
+              ],
+              label
+            );
+            assert.equal(runner.contexts.length, 0, label);
+          }
         }
       }
     }
