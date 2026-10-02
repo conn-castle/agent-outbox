@@ -1,6 +1,11 @@
+import { apiRequestContext, type ApiRequestContext } from "./api-errors.ts";
+import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
+
 export const CONTACT_BODY_BYTE_LIMIT = 8_192;
 export const CONTACT_DESTINATION = "contact@agent-outbox.dev";
 export const CONTACT_SENDER = "contact-form@agent-outbox.dev";
+const CONTACT_ROUTE = "/api/contact";
 
 const CONTACT_TOPICS = [
   "Caller access",
@@ -38,8 +43,8 @@ export type ContactRateLimitBinding = {
 };
 
 type ContactDependencies = {
-  email: ContactEmailBinding;
-  rateLimit: ContactRateLimitBinding;
+  email?: ContactEmailBinding;
+  rateLimit?: ContactRateLimitBinding;
 };
 
 type ContactErrorCode = "invalid_request" | "rate_limited" | "send_failed";
@@ -54,6 +59,46 @@ function jsonResponse(
   return Response.json(body, {
     status,
     headers: { "Cache-Control": "no-store" }
+  });
+}
+
+function sendFailedResponse() {
+  return jsonResponse(
+    {
+      ok: false,
+      code: "send_failed",
+      message: "Your message was not sent. Please try again shortly."
+    },
+    503
+  );
+}
+
+function contactFailureLogFields(
+  context: ApiRequestContext,
+  operation: string,
+  message: string
+) {
+  return {
+    request_id: context.requestId,
+    surface: "api" as const,
+    route: CONTACT_ROUTE,
+    method: context.method,
+    status_code: 503,
+    duration_ms: durationSinceMs(context.startedAtMs),
+    operation,
+    message
+  };
+}
+
+function reportContactFailure(
+  error: unknown,
+  context: ApiRequestContext,
+  operation: string,
+  message: string
+) {
+  reportRuntimeFailure(error, {
+    errorId: context.correlationId,
+    ...contactFailureLogFields(context, operation, message)
   });
 }
 
@@ -129,18 +174,20 @@ async function readJsonBody(request: Request) {
   let bytes = 0;
   let text = "";
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    if (bytes > CONTACT_BODY_BYTE_LIMIT) return null;
-    text += decoder.decode(value, { stream: true });
-  }
-  text += decoder.decode();
-
   try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > CONTACT_BODY_BYTE_LIMIT) return null;
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+
     return JSON.parse(text) as unknown;
   } catch {
+    // An aborted or truncated upload is an unreadable client body, not a
+    // delivery failure.
     return null;
   }
 }
@@ -164,8 +211,36 @@ function contactEmailText(submission: ContactSubmission) {
 
 export async function handleContactRequest(
   request: Request,
-  dependencies: ContactDependencies
+  loadDependencies: () => Promise<ContactDependencies>
 ) {
+  const context = apiRequestContext(request, CONTACT_ROUTE);
+  let dependencies: ContactDependencies;
+  try {
+    dependencies = await loadDependencies();
+  } catch (error) {
+    reportContactFailure(
+      error,
+      context,
+      "contact_configuration",
+      "Contact bindings could not be loaded."
+    );
+    return sendFailedResponse();
+  }
+  const { email, rateLimit } = dependencies;
+  if (!email || !rateLimit) {
+    emitRuntimeLog({
+      level: "error",
+      error_id: context.correlationId,
+      sentry_captured: false,
+      ...contactFailureLogFields(
+        context,
+        "contact_configuration",
+        "Contact bindings are not configured."
+      )
+    });
+    return sendFailedResponse();
+  }
+
   if (!requestOriginIsValid(request)) {
     return jsonResponse(
       {
@@ -187,8 +262,19 @@ export async function handleContactRequest(
 
   const clientKey =
     request.headers.get("cf-connecting-ip")?.trim() || "unknown";
-  const rateLimit = await dependencies.rateLimit.limit({ key: clientKey });
-  if (!rateLimit.success) {
+  let rateLimitResult: { success: boolean };
+  try {
+    rateLimitResult = await rateLimit.limit({ key: clientKey });
+  } catch (error) {
+    reportContactFailure(
+      error,
+      context,
+      "contact_rate_limit",
+      "Contact rate limit check failed unexpectedly."
+    );
+    return sendFailedResponse();
+  }
+  if (!rateLimitResult.success) {
     return jsonResponse(
       {
         ok: false,
@@ -200,22 +286,21 @@ export async function handleContactRequest(
   }
 
   try {
-    await dependencies.email.send({
+    await email.send({
       to: CONTACT_DESTINATION,
       from: CONTACT_SENDER,
       replyTo: parsed.data.email,
       subject: `Agent Outbox contact — ${parsed.data.topic}`,
       text: contactEmailText(parsed.data)
     });
-  } catch {
-    return jsonResponse(
-      {
-        ok: false,
-        code: "send_failed",
-        message: "Your message was not sent. Please try again shortly."
-      },
-      503
+  } catch (error) {
+    reportContactFailure(
+      error,
+      context,
+      "contact_send",
+      "Contact email delivery failed unexpectedly."
     );
+    return sendFailedResponse();
   }
 
   return jsonResponse({ ok: true }, 200);

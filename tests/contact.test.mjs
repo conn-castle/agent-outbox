@@ -18,6 +18,7 @@ import {
 /**
  * @typedef {{
  *   rateLimitSuccess?: boolean,
+ *   rateLimitError?: Error,
  *   sendError?: Error,
  * }} ContactDependencyOptions
  */
@@ -51,26 +52,72 @@ function contactRequest(body = VALID_SUBMISSION, options = {}) {
 function contactDependencies(options = {}) {
   /** @type {Parameters<ContactEmailBinding["send"]>[0][]} */
   const sent = [];
-  return {
-    sent,
-    dependencies: {
-      rateLimit: {
-        async limit(/** @type {{ key: string }} */ { key }) {
-          assert.equal(key, "203.0.113.27");
-          return { success: options.rateLimitSuccess ?? true };
-        }
-      },
-      email: {
-        async send(
-          /** @type {Parameters<ContactEmailBinding["send"]>[0]} */ message
-        ) {
-          sent.push(message);
-          if (options.sendError) throw options.sendError;
-          return { messageId: "message_123" };
-        }
+  const dependencies = {
+    rateLimit: {
+      async limit(/** @type {{ key: string }} */ { key }) {
+        assert.equal(key, "203.0.113.27");
+        if (options.rateLimitError) throw options.rateLimitError;
+        return { success: options.rateLimitSuccess ?? true };
+      }
+    },
+    email: {
+      async send(
+        /** @type {Parameters<ContactEmailBinding["send"]>[0]} */ message
+      ) {
+        sent.push(message);
+        if (options.sendError) throw options.sendError;
+        return { messageId: "message_123" };
       }
     }
   };
+  return { sent, dependencies: async () => dependencies };
+}
+
+/**
+ * Captures structured runtime logs written while `run` executes.
+ *
+ * @template T
+ * @param {() => Promise<T>} run
+ */
+async function captureRuntimeLogs(run) {
+  /** @type {{ level: string, text: string, event: Record<string, unknown> }[]} */
+  const logs = [];
+  const original = {
+    error: console.error,
+    warn: console.warn,
+    log: console.log
+  };
+  for (const level of /** @type {const} */ (["error", "warn", "log"])) {
+    console[level] = (/** @type {unknown} */ line) => {
+      const text = String(line);
+      logs.push({ level, text, event: JSON.parse(text) });
+    };
+  }
+  try {
+    return { result: await run(), logs };
+  } finally {
+    Object.assign(console, original);
+  }
+}
+
+const SEND_FAILED_BODY = {
+  ok: false,
+  code: "send_failed",
+  message: "Your message was not sent. Please try again shortly."
+};
+
+/**
+ * @param {{ text: string }[]} logs
+ */
+function assertNoSubmissionContent(logs) {
+  const text = logs.map((log) => log.text).join("\n");
+  for (const value of [
+    VALID_SUBMISSION.name,
+    VALID_SUBMISSION.email.toLowerCase(),
+    VALID_SUBMISSION.message
+  ]) {
+    assert.equal(text.toLowerCase().includes(value.toLowerCase()), false);
+  }
 }
 
 test("contact submissions send a bounded message to the studio inbox", async () => {
@@ -125,7 +172,7 @@ test("contact submissions reject cross-origin and malformed input", async () => 
   }
 });
 
-test("contact submissions report rate limits and delivery failures", async () => {
+test("contact submissions report rate limits", async () => {
   const limited = contactDependencies({ rateLimitSuccess: false });
   const limitedResponse = await handleContactRequest(
     contactRequest(),
@@ -134,16 +181,123 @@ test("contact submissions report rate limits and delivery failures", async () =>
   assert.equal(limitedResponse.status, 429);
   assert.equal((await limitedResponse.json()).code, "rate_limited");
   assert.equal(limited.sent.length, 0);
+});
 
-  const failed = contactDependencies({ sendError: new Error("unavailable") });
-  const failedResponse = await handleContactRequest(
-    contactRequest(),
-    failed.dependencies
-  );
-  assert.equal(failedResponse.status, 503);
-  assert.deepEqual(await failedResponse.json(), {
-    ok: false,
-    code: "send_failed",
-    message: "Your message was not sent. Please try again shortly."
+test("contact delivery failures return send_failed and emit one safe error log", async () => {
+  // The provider error echoes submission content to prove it never reaches logs.
+  const failed = contactDependencies({
+    sendError: new Error(`rejected reply-to ${VALID_SUBMISSION.email}`)
   });
+  const { result: response, logs } = await captureRuntimeLogs(() =>
+    handleContactRequest(contactRequest(), failed.dependencies)
+  );
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), SEND_FAILED_BODY);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, "error");
+  assert.equal(logs[0].event.operation, "contact_send");
+  assert.equal(logs[0].event.route, "/api/contact");
+  assert.equal(logs[0].event.method, "POST");
+  assert.equal(logs[0].event.status_code, 503);
+  assert.equal(typeof logs[0].event.error_id, "string");
+  assertNoSubmissionContent(logs);
+});
+
+test("contact rate-limit binding failures return send_failed instead of rejecting", async () => {
+  const failed = contactDependencies({
+    rateLimitError: new Error("binding down")
+  });
+  const { result: response, logs } = await captureRuntimeLogs(() =>
+    handleContactRequest(contactRequest(), failed.dependencies)
+  );
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), SEND_FAILED_BODY);
+  assert.equal(failed.sent.length, 0);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, "error");
+  assert.equal(logs[0].event.operation, "contact_rate_limit");
+  assert.equal(logs[0].event.status_code, 503);
+  assertNoSubmissionContent(logs);
+});
+
+test("contact configuration failures return send_failed and emit an error log", async () => {
+  const unavailable = await captureRuntimeLogs(() =>
+    handleContactRequest(contactRequest(), async () => {
+      throw new Error("Cloudflare context unavailable");
+    })
+  );
+  assert.equal(unavailable.result.status, 503);
+  assert.deepEqual(await unavailable.result.json(), SEND_FAILED_BODY);
+  assert.equal(unavailable.logs.length, 1);
+  assert.equal(unavailable.logs[0].level, "error");
+  assert.equal(unavailable.logs[0].event.operation, "contact_configuration");
+
+  const { sent, dependencies } = contactDependencies();
+  const { email } = await dependencies();
+  const missing = await captureRuntimeLogs(() =>
+    handleContactRequest(contactRequest(), async () => ({ email }))
+  );
+  assert.equal(missing.result.status, 503);
+  assert.deepEqual(await missing.result.json(), SEND_FAILED_BODY);
+  assert.equal(sent.length, 0);
+  assert.equal(missing.logs.length, 1);
+  assert.equal(missing.logs[0].level, "error");
+  assert.equal(missing.logs[0].event.operation, "contact_configuration");
+  assert.equal(missing.logs[0].event.status_code, 503);
+  assert.equal(missing.logs[0].event.sentry_captured, false);
+});
+
+test("contact submissions treat an aborted request body as invalid input", async () => {
+  const abortedInit = {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "https://app.agent-outbox.dev"
+    },
+    body: new ReadableStream({
+      pull(controller) {
+        controller.error(new Error("client aborted upload"));
+      }
+    }),
+    duplex: "half"
+  };
+  const request = new Request(
+    "https://app.agent-outbox.dev/api/contact",
+    abortedInit
+  );
+  const { sent, dependencies } = contactDependencies();
+  const { result: response, logs } = await captureRuntimeLogs(() =>
+    handleContactRequest(request, dependencies)
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "invalid_request");
+  assert.equal(sent.length, 0);
+  assert.equal(logs.length, 0);
+});
+
+test("expected contact outcomes do not emit runtime logs", async () => {
+  for (const [request, options, status] of [
+    [contactRequest(), {}, 200],
+    [contactRequest({ ...VALID_SUBMISSION, name: "A" }), {}, 400],
+    [
+      contactRequest(VALID_SUBMISSION, {
+        headers: { origin: "https://malicious.example" }
+      }),
+      {},
+      403
+    ],
+    [contactRequest(), { rateLimitSuccess: false }, 429]
+  ]) {
+    const { dependencies } = contactDependencies(
+      /** @type {ContactDependencyOptions} */ (options)
+    );
+    const { result: response, logs } = await captureRuntimeLogs(() =>
+      handleContactRequest(/** @type {Request} */ (request), dependencies)
+    );
+    assert.equal(response.status, status);
+    assert.equal(logs.length, 0);
+  }
 });
