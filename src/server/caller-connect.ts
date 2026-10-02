@@ -747,6 +747,10 @@ export async function getConnectBrowserApprovalPreview(
   query: ProductTransactionQuery,
   input: { setupRequestId: string; now?: Date }
 ): Promise<ConnectResult<ConnectApprovalPreviewData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const targetResult = await query<SetupApprovalTargetRow>(
     browserApprovalTargetStatement(input.setupRequestId)
   );
@@ -792,6 +796,10 @@ export async function getConnectTerminalSetupState(
     statuses: readonly SetupTerminalStatus[];
   }
 ): Promise<ConnectResult<ConnectTerminalSetupData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<SetupTerminalStateRow>(
     terminalSetupStateStatement(input)
   );
@@ -830,6 +838,10 @@ export async function approveConnectBrowserSetupRequest(
     now?: Date;
   }
 ): Promise<ConnectResult<ConnectBrowserApprovalData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const targetResult = await query<SetupApprovalTargetRow>(
     browserApprovalTargetStatement(input.setupRequestId)
   );
@@ -1000,6 +1012,10 @@ export async function denyConnectSetupRequest(
     accountId: string;
   }
 ): Promise<ConnectResult<{ setup_request_id: string; denied: true }>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<SetupRequestIdRow>(
     denySetupRequestStatement(input)
   );
@@ -2290,6 +2306,12 @@ function fieldError(
   message: string
 ): ApiFieldError {
   return { path, code, message };
+}
+
+// Browser pages and form actions pass setup_request_id unvalidated; a
+// malformed id can never match a row and would otherwise fail the uuid cast.
+function invalidSetupRequestError(): ConnectResult<never> {
+  return invalidRequestError("Invalid setup request.");
 }
 
 function invalidRequestError(message: string): ConnectResult<never> {
