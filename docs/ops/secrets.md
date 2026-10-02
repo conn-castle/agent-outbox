@@ -79,22 +79,18 @@ PUBLIC_APP_BASE_URL
 CLERK_PUBLISHABLE_KEY
 SENTRY_BROWSER_DSN
 SENTRY_RELEASE
-NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN
 STRIPE_PAID_MONTHLY_PRICE_ID
 STRIPE_PAID_YEARLY_PRICE_ID
 STRIPE_BILLING_PORTAL_CONFIGURATION_ID
 ```
 
 The production deploy wrapper passes these as deploy-time Wrangler
-`--var NAME:value` bindings. `NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN` is
-optional until the Web Analytics provider permission blocker is resolved; when
-it is absent, the Worker deploy continues without that binding. The wrapper also
-derives `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` from `CLERK_PUBLISHABLE_KEY` for
-Clerk's Next.js middleware/runtime package; do not store or rotate it as a
-separate source value. The build subprocess receives these non-secret
-configuration values plus the minimal process environment needed to run the
-toolchain. When Sentry source-map upload is enabled
-(`AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD` and
+`--var NAME:value` bindings. The wrapper also derives
+`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` from `CLERK_PUBLISHABLE_KEY` for Clerk's
+Next.js middleware/runtime package; do not store or rotate it as a separate
+source value. The build subprocess receives these non-secret configuration
+values plus the minimal process environment needed to run the toolchain. When
+Sentry source-map upload is enabled (`AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD` and
 `AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH` set), the wrapper additionally threads
 `SENTRY_ORG`, `SENTRY_PROJECT`, and the `SENTRY_AUTH_TOKEN` secret into the
 build subprocess only — never into the Worker runtime `--var` bindings and never
@@ -134,10 +130,9 @@ This changes only where GitHub stores them. They remain non-secret Worker
 configuration and are still passed to Wrangler as deploy-time `--var` bindings,
 and Systems Manager Parameter Store remains their canonical source.
 
-`CLERK_PUBLISHABLE_KEY`, `SENTRY_BROWSER_DSN`, and
-`NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN` stay GitHub environment variables:
-all three are served to browsers, so masking them in logs would protect nothing.
-`SENTRY_ORG` and `SENTRY_PROJECT` also stay variables; their values are
+`CLERK_PUBLISHABLE_KEY` and `SENTRY_BROWSER_DSN` stay GitHub environment
+variables: both are served to browsers, so masking them in logs would protect
+nothing. `SENTRY_ORG` and `SENTRY_PROJECT` also stay variables; their values are
 `conn-castle` and `agent-outbox`, and registering strings that common as log
 masks would redact unrelated log output.
 

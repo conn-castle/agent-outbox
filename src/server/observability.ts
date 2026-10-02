@@ -1,4 +1,3 @@
-const SAFE_PUBLIC_TOKEN_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_RELEASE_PATTERN = /^[A-Za-z0-9._:/@+-]{1,200}$/;
 const SAFE_SENTRY_SLUG_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -28,19 +27,6 @@ export function sentryReleaseUploadConfig() {
   }
 
   return { org, project };
-}
-
-export function cloudflareWebAnalyticsToken() {
-  if (process.env.APP_ENV !== "production") {
-    return null;
-  }
-
-  const token = process.env.NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN?.trim();
-  if (!token || !SAFE_PUBLIC_TOKEN_PATTERN.test(token)) {
-    return null;
-  }
-
-  return token;
 }
 
 function firstSafeValue(...values: Array<string | undefined>) {

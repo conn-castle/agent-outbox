@@ -75,9 +75,6 @@ export const FIXED_PUBLIC_VAR_BINDINGS = [
   }
 ];
 
-const OPTIONAL_PUBLIC_VAR_NAMES = [
-  "NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN"
-];
 const COMMAND_ENV_PASSTHROUGH_NAMES = [
   "PATH",
   "HOME",
@@ -342,8 +339,7 @@ export function publicVarBindings(env) {
   const bindings = [...FIXED_PUBLIC_VAR_BINDINGS];
   for (const { name, sourceName } of [
     ...REQUIRED_PUBLIC_VAR_NAMES.map((name) => ({ name, sourceName: name })),
-    ...DERIVED_PUBLIC_VAR_BINDINGS,
-    ...OPTIONAL_PUBLIC_VAR_NAMES.map((name) => ({ name, sourceName: name }))
+    ...DERIVED_PUBLIC_VAR_BINDINGS
   ]) {
     const value = env[sourceName];
     if (typeof value === "string" && value.trim() !== "") {
