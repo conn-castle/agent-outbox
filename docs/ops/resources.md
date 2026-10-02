@@ -20,16 +20,16 @@ Record service ownership here. Verify exact provider identifiers through the
 provider console, official CLI, approved secret store, or agent-layer memory
 when temporary project state is needed.
 
-| Service                             | Owns                                                                                            | Provider facts to verify                                                 |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| GitHub                              | Source, Actions deploy workflows, environments, deploy secrets, branch protection               | repository, workflow, environment, and branch-protection posture         |
-| Cloudflare                          | DNS, Workers/OpenNext runtime, routes, logs, Email Service, Web Analytics, edge safety controls | account, Worker, route, zone, DNS, email-sending domain, and log posture |
-| Supabase                            | Postgres database, queue state, file bytes, service logs                                        | organization, project, database, app-role, and migration-role posture    |
-| Clerk                               | Human auth, signup protections, auth pages                                                      | application, instance, domain, sender, bot, and disposable-email posture |
-| Stripe                              | Account-scoped billing                                                                          | account mode, product, price, portal, and webhook posture                |
-| Sentry                              | Application exception grouping, releases, source maps                                           | organization, project, data source, and release posture                  |
-| Zoho Mail                           | Public support, privacy, legal, and abuse contact inbox                                         | domain, mailbox, and contact-form delivery posture                       |
-| AWS Systems Manager Parameter Store | Canonical managed-secret and environment-config inventory                                       | AWS account, region, profile, parameter prefix, and KMS posture          |
+| Service                             | Owns                                                                              | Provider facts to verify                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| GitHub                              | Source, Actions deploy workflows, environments, deploy secrets, branch protection | repository, workflow, environment, and branch-protection posture         |
+| Cloudflare                          | DNS, Workers/OpenNext runtime, routes, logs, Email Service, edge safety controls  | account, Worker, route, zone, DNS, email-sending domain, and log posture |
+| Supabase                            | Postgres database, queue state, file bytes, service logs                          | organization, project, database, app-role, and migration-role posture    |
+| Clerk                               | Human auth, signup protections, auth pages                                        | application, instance, domain, sender, bot, and disposable-email posture |
+| Stripe                              | Account-scoped billing                                                            | account mode, product, price, portal, and webhook posture                |
+| Sentry                              | Application exception grouping, releases, source maps                             | organization, project, data source, and release posture                  |
+| Zoho Mail                           | Public support, privacy, legal, and abuse contact inbox                           | domain, mailbox, and contact-form delivery posture                       |
+| AWS Systems Manager Parameter Store | Canonical managed-secret and environment-config inventory                         | AWS account, region, profile, parameter prefix, and KMS posture          |
 
 Use [services/cloudflare.md](services/cloudflare.md),
 [services/supabase.md](services/supabase.md),

@@ -92,7 +92,6 @@ Incomplete:
 - Added production resource, monitoring, debugging, incident, secret-recovery, deployment, rollback, hosted-health, runtime-smoke, and billing-smoke workflows and verified the controlled production evidence paths.
 - Established the protected `main` and `production` release policy with the settled local, CI, browser, migration, package, and hosted verification gates.
 - Published and accepted the Privacy Policy, Terms of Service, Zoho-backed contact path, retention and support disclosures, and PolyForm Perimeter license presentation for the production launch.
-- Deployed Cloudflare Web Analytics for `app.agent-outbox.dev`, closing the earlier provider-permission gap: the site was created in the Cloudflare dashboard (no Cloudflare API token can create Web Analytics sites) and its beacon token stored in Systems Manager Parameter Store and the GitHub production environment.
 - Enabled Sentry source-map upload on the numbered-release deploy path by threading the Sentry org/project/auth-token into the OpenNext build subprocess only (never the Worker runtime or deploy subprocess), so production stack traces de-minify.
 
 ## Phase 9 — Product Experience, Branding, And Public API Documentation

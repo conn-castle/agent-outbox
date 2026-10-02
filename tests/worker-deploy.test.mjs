@@ -435,7 +435,7 @@ test("worker build subprocess gets Sentry upload config, never the deploy subpro
   }
 });
 
-test("worker deploy wrapper requires production config and appends optional analytics only when set", () => {
+test("worker deploy wrapper requires production config and rejects a retired analytics token", () => {
   assert.deepEqual(
     validateWorkerDeployEnvironment(
       workerDeployEnv({
@@ -472,17 +472,17 @@ test("worker deploy wrapper requires production config and appends optional anal
     ),
     false
   );
-  const withAnalytics = buildWranglerVersionsUploadArgs(
+  const withRetiredAnalyticsToken = buildWranglerVersionsUploadArgs(
     workerDeployEnv({
       NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "analytics-token"
     }),
     "/tmp/worker-secrets.env"
   );
   assert.equal(
-    withAnalytics.includes(
+    withRetiredAnalyticsToken.includes(
       "NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN:analytics-token"
     ),
-    true
+    false
   );
 });
 
