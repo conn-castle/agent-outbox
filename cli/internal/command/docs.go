@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -136,11 +137,12 @@ func docsCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if flags.json {
 				return renderJSON(opts.Stdout, map[string]any{"topic": topic})
 			}
-			_, _ = fmt.Fprintf(opts.Stdout, "%s\n\n%s\n\nRelated docs:\n", topic.Title, topic.Body)
+			var out bytes.Buffer
+			fmt.Fprintf(&out, "%s\n\n%s\n\nRelated docs:\n", topic.Title, topic.Body)
 			for _, related := range topic.RelatedDocs {
-				_, _ = fmt.Fprintf(opts.Stdout, "- %s\n", related)
+				fmt.Fprintf(&out, "- %s\n", related)
 			}
-			return nil
+			return writeCommandOutput(opts.Stdout, out.Bytes())
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
@@ -149,7 +151,7 @@ func docsCommand(opts Options, flags *rootFlags) *cobra.Command {
 		Flags:       "--json prints topics[] with name and summary, or topic with name, title, body, and related_docs. Global selection flags are accepted but ignored.",
 		Environment: "No Agent Outbox environment variables are required. This command bypasses config, base URL, and caller preflight.",
 		Examples:    "agent-outbox docs\nagent-outbox docs cli\nagent-outbox docs errors --json",
-		ExitCodes:   "0 success. 64 unknown topic or invalid usage. 70 local rendering failure.",
+		ExitCodes:   "0 success. 64 unknown topic or invalid usage. 75 local output write failure.",
 		RelatedDocs: "docs/spec/README.md and the topic-specific related docs printed by this command.",
 	})
 	return bypassRootPreflight(cmd)
@@ -163,10 +165,11 @@ func renderDocsIndex(opts Options, flags *rootFlags) error {
 	if flags.json {
 		return renderJSON(opts.Stdout, map[string]any{"topics": topics})
 	}
+	var out bytes.Buffer
 	for _, topic := range topics {
-		_, _ = fmt.Fprintf(opts.Stdout, "%s\t%s\n", topic.Name, topic.Summary)
+		fmt.Fprintf(&out, "%s\t%s\n", topic.Name, topic.Summary)
 	}
-	return nil
+	return writeCommandOutput(opts.Stdout, out.Bytes())
 }
 
 func findDocsTopic(name string) (docsTopic, bool) {

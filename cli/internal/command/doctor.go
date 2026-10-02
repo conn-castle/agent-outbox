@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,8 +54,8 @@ func doctorCommand(opts Options, flags *rootFlags) *cobra.Command {
 				if err := renderJSON(opts.Stdout, payload); err != nil {
 					return err
 				}
-			} else {
-				renderDoctorHuman(opts.Stdout, checks)
+			} else if err := renderDoctorHuman(opts.Stdout, checks); err != nil {
+				return err
 			}
 			if failed := firstFailedDoctorCheck(checks); failed != nil {
 				return &foundation.AppError{
@@ -72,7 +73,7 @@ func doctorCommand(opts Options, flags *rootFlags) *cobra.Command {
 		Flags:       "--json prints ok and checks[]. Global --config, --base-url, --caller, and --no-color are honored by this diagnostic command.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox doctor\nagent-outbox doctor --caller steward-email\nagent-outbox doctor --json",
-		ExitCodes:   "0 when no checks fail, even with warnings. First failing check determines nonzero exit: 74 secret store, 75 temporary/API failure, 77 permission, 78 config, or the mapped API exit code.",
+		ExitCodes:   "0 when no checks fail, even with warnings. First failing check determines nonzero exit: 74 secret store, 75 temporary/API failure, 77 permission, 78 config, or the mapped API exit code. 75 local output write failure.",
 		RelatedDocs: "docs/spec/errors.md, docs/spec/http-api.md#caller-status, docs/spec/http-api.md#account-status, and agent-outbox docs status.",
 	})
 	return bypassRootPreflight(cmd)
@@ -309,14 +310,16 @@ func firstFailedDoctorCheck(checks []doctorCheck) *doctorCheck {
 	return nil
 }
 
-func renderDoctorHuman(w io.Writer, checks []doctorCheck) {
+func renderDoctorHuman(w io.Writer, checks []doctorCheck) error {
+	var out bytes.Buffer
 	for _, check := range checks {
-		_, _ = fmt.Fprintf(w, "%s %s: %s\n", strings.ToUpper(string(check.Status)), check.Name, check.Message)
+		fmt.Fprintf(&out, "%s %s: %s\n", strings.ToUpper(string(check.Status)), check.Name, check.Message)
 		if len(check.Details) == 0 {
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "  %s\n", formatDetails(check.Details))
+		fmt.Fprintf(&out, "  %s\n", formatDetails(check.Details))
 	}
+	return writeCommandOutput(w, out.Bytes())
 }
 
 func formatDetails(details map[string]any) string {

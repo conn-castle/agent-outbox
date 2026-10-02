@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -199,10 +200,11 @@ func callerListCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if flags.json {
 				return renderStructuredSuccess(opts.Stdout, true, nil, map[string]any{"callers": cfg.Callers})
 			}
+			var out bytes.Buffer
 			for _, caller := range cfg.Callers {
-				_, _ = fmt.Fprintln(opts.Stdout, formatLocalCaller(caller))
+				out.WriteString(formatLocalCaller(caller) + "\n")
 			}
-			return nil
+			return writeCommandOutput(opts.Stdout, out.Bytes())
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
@@ -211,7 +213,7 @@ func callerListCommand(opts Options, flags *rootFlags) *cobra.Command {
 		Flags:       "--json prints callers[]. Global --config, --base-url, --caller, and --no-color are accepted; --caller is not needed for local listing.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox caller list\nagent-outbox caller list --json",
-		ExitCodes:   "0 success. 64 usage. 78 missing, invalid, or incomplete local caller config.",
+		ExitCodes:   "0 success. 64 usage. 75 local output write failure. 78 missing, invalid, or incomplete local caller config.",
 		RelatedDocs: "docs/spec/README.md#cli-foundation-contract and agent-outbox docs caller.",
 	})
 	return bypassRootPreflight(cmd)
