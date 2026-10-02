@@ -9,6 +9,7 @@ import {
 import { runtimeRelease } from "./observability.ts";
 
 const RUNTIME_SMOKE_SENTRY_SUPPRESS_HEADER = "x-agent-outbox-runtime-smoke";
+const SCHEDULED_SENTRY_FLUSH_TIMEOUT_MS = 2000;
 
 export function sentryCaptureEnabled() {
   return (
@@ -37,7 +38,7 @@ export function captureRuntimeException(
     route?: string;
   }
 ) {
-  if (input.suppressCapture || !sentryCaptureEnabled()) {
+  if (input.suppressCapture || !sentryCaptureEnabled() || !Sentry.getClient()) {
     return false;
   }
 
@@ -130,6 +131,40 @@ export function sentryRuntimeInitOptions() {
     ...(release ? { release } : {}),
     tracesSampleRate: 0.05
   };
+}
+
+// Cron invocations bypass Next.js instrumentation `register()`, so a cron-only
+// isolate has no Sentry client, and nothing flushes queued events before the
+// invocation ends. Initialize on demand and flush once the scheduled work
+// settles.
+export async function withScheduledSentry<T>(run: () => Promise<T>) {
+  if (sentryCaptureEnabled() && !Sentry.getClient()) {
+    Sentry.init(sentryRuntimeInitOptions());
+  }
+
+  try {
+    return await run();
+  } finally {
+    if (Sentry.getClient()) {
+      let flushError: unknown;
+      const flushed = await Sentry.flush(
+        SCHEDULED_SENTRY_FLUSH_TIMEOUT_MS
+      ).catch((error: unknown) => {
+        flushError = error;
+        return false;
+      });
+      if (!flushed) {
+        // The cron invocation may end before queued events reach Sentry.
+        emitRuntimeLog({
+          level: "warn",
+          surface: "scheduled",
+          operation: "runtime.scheduled.sentry_flush",
+          ...(flushError ? { error_name: safeErrorName(flushError) } : {}),
+          message: "scheduled Sentry flush did not complete"
+        });
+      }
+    }
+  }
 }
 
 function runtimeExceptionFromUnknown(error: unknown) {

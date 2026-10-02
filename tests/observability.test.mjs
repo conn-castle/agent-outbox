@@ -73,6 +73,13 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  */
 
 /**
+ * @typedef {{
+ *   reportRuntimeFailure: RuntimeFailureReporterForTest,
+ *   withScheduledSentry: <T>(run: () => Promise<T>) => Promise<T>
+ * }} SentryModuleForTest
+ */
+
+/**
  * @param {() => Promise<void>} callback
  * @returns {Promise<Array<Record<string, unknown>>>}
  */
@@ -151,8 +158,10 @@ function renderRootLayoutForTest() {
 }
 
 /**
- * @param {{ withScope: Function, captureException: Function }} sentryStub
- * @returns {{ reportRuntimeFailure: RuntimeFailureReporterForTest }}
+ * Stubs without `getClient` behave as an initialized SDK.
+ *
+ * @param {{ withScope: Function, captureException: Function, getClient?: Function, init?: Function, flush?: Function }} sentryStub
+ * @returns {SentryModuleForTest}
  */
 function loadSentryModuleForTest(sentryStub) {
   const source = readFileSync(
@@ -184,7 +193,7 @@ function loadSentryModuleForTest(sentryStub) {
        */
       require(specifier) {
         if (specifier === "@sentry/nextjs") {
-          return sentryStub;
+          return { getClient: () => ({}), ...sentryStub };
         }
         if (specifier === "./logging.ts") {
           return { emitRuntimeLog, safeErrorCode, safeErrorName };
@@ -199,9 +208,7 @@ function loadSentryModuleForTest(sentryStub) {
     { filename: "src/server/sentry.ts" }
   );
 
-  return /** @type {{ reportRuntimeFailure: RuntimeFailureReporterForTest }} */ (
-    testModule.exports
-  );
+  return /** @type {SentryModuleForTest} */ (testModule.exports);
 }
 
 /**
@@ -4033,6 +4040,206 @@ test("reportRuntimeFailure shares one error id across structured log and Sentry"
   assert.equal(disabledLogs.length, 1);
   assert.equal(disabledLogs[0].sentry_captured, false);
   assert.equal(capturedExceptions.length, 1);
+});
+
+const PRODUCTION_SENTRY_ENV = {
+  APP_ENV: "production",
+  SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+  SENTRY_RELEASE: "agent-outbox@2026.07.07",
+  CI: undefined,
+  NODE_ENV: "production"
+};
+
+/**
+ * Sentry SDK stub whose client exists only after `init`, matching a Worker
+ * isolate where Next.js instrumentation has not run.
+ *
+ * @param {{ initialized?: boolean }} [options]
+ */
+function lazySentryStubForTest({ initialized = false } = {}) {
+  /** @type {string[]} */
+  const calls = [];
+  /** @type {unknown[]} */
+  const initOptions = [];
+  /** @type {Array<(flushed: boolean) => void>} */
+  const pendingFlushes = [];
+  let client = initialized ? {} : undefined;
+
+  return {
+    calls,
+    initOptions,
+    pendingFlushes,
+    stub: {
+      getClient() {
+        return client;
+      },
+      /** @param {unknown} options */
+      init(options) {
+        calls.push("init");
+        initOptions.push(options);
+        client = {};
+      },
+      /** @param {Function} callback */
+      withScope(callback) {
+        callback({
+          setTag() {},
+          setContext() {},
+          setFingerprint() {}
+        });
+      },
+      captureException() {
+        calls.push("capture");
+      },
+      /** @param {number} timeout */
+      flush(timeout) {
+        calls.push(`flush:${timeout}`);
+        return new Promise((resolve) => {
+          pendingFlushes.push(resolve);
+        });
+      }
+    }
+  };
+}
+
+test("reportRuntimeFailure reports sentry_captured false without an initialized Sentry client", async () => {
+  const sentry = lazySentryStubForTest();
+  const { reportRuntimeFailure } = loadSentryModuleForTest(sentry.stub);
+
+  const logs = await withProcessEnv(PRODUCTION_SENTRY_ENV, () =>
+    captureStructuredLogs(async () => {
+      const report = reportRuntimeFailure(new Error("raw detail"), {
+        errorId: "err_uninitialized_sentry",
+        surface: "scheduled",
+        operation: "runtime.failure.uninitialized",
+        message: "Runtime failure test."
+      });
+      assert.equal(report.sentry_captured, false);
+    })
+  );
+
+  assert.deepEqual(sentry.calls, []);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].sentry_captured, false);
+});
+
+test("scheduled Sentry wrapper initializes a missing client and flushes before settling", async () => {
+  const sentry = lazySentryStubForTest();
+  const { reportRuntimeFailure, withScheduledSentry } = loadSentryModuleForTest(
+    sentry.stub
+  );
+  const failure = new Error("cleanup failed");
+  /** @type {Array<Record<string, unknown>>} */
+  const reports = [];
+  let settled = false;
+
+  const logs = await withProcessEnv(PRODUCTION_SENTRY_ENV, () =>
+    captureStructuredLogs(async () => {
+      const scheduled = withScheduledSentry(async () => {
+        reports.push(
+          reportRuntimeFailure(failure, {
+            errorId: "err_scheduled_cleanup",
+            surface: "scheduled",
+            operation: "runtime.scheduled.cleanup",
+            message: "scheduled cleanup failed"
+          })
+        );
+        throw failure;
+      }).finally(() => {
+        settled = true;
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(settled, false);
+      assert.equal(sentry.pendingFlushes.length, 1);
+      sentry.pendingFlushes[0](true);
+      await assert.rejects(scheduled, (error) => error === failure);
+    })
+  );
+
+  assert.deepEqual(sentry.calls, ["init", "capture", "flush:2000"]);
+  // The options object is created inside the module's VM realm.
+  assert.deepEqual(JSON.parse(JSON.stringify(sentry.initOptions)), [
+    {
+      dsn: PRODUCTION_SENTRY_ENV.SENTRY_DSN,
+      environment: "production",
+      release: PRODUCTION_SENTRY_ENV.SENTRY_RELEASE,
+      tracesSampleRate: 0.05
+    }
+  ]);
+  assert.equal(reports[0].sentry_captured, true);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].sentry_captured, true);
+});
+
+test("scheduled Sentry wrapper reuses an existing client and skips Sentry when capture is disabled", async () => {
+  const initialized = lazySentryStubForTest({ initialized: true });
+  const { withScheduledSentry: withInitializedSentry } =
+    loadSentryModuleForTest(initialized.stub);
+  const result = withProcessEnv(PRODUCTION_SENTRY_ENV, () =>
+    withInitializedSentry(async () => "cleaned")
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  initialized.pendingFlushes[0](true);
+  assert.equal(await result, "cleaned");
+  assert.deepEqual(initialized.calls, ["flush:2000"]);
+
+  const disabled = lazySentryStubForTest();
+  const { withScheduledSentry: withDisabledSentry } = loadSentryModuleForTest(
+    disabled.stub
+  );
+  assert.equal(
+    await withProcessEnv(
+      { ...PRODUCTION_SENTRY_ENV, SENTRY_DSN: undefined },
+      () => withDisabledSentry(async () => "cleaned")
+    ),
+    "cleaned"
+  );
+  assert.deepEqual(disabled.calls, []);
+});
+
+test("scheduled Sentry wrapper warns when queued events may not have been flushed", async () => {
+  const timedOut = lazySentryStubForTest({ initialized: true });
+  const { withScheduledSentry: withTimedOutFlush } = loadSentryModuleForTest(
+    timedOut.stub
+  );
+  const timedOutLogs = await withProcessEnv(PRODUCTION_SENTRY_ENV, () =>
+    captureStructuredLogs(async () => {
+      const result = withTimedOutFlush(async () => "cleaned");
+      await new Promise((resolve) => setImmediate(resolve));
+      timedOut.pendingFlushes[0](false);
+      assert.equal(await result, "cleaned");
+    })
+  );
+  assert.equal(timedOutLogs.length, 1);
+  assert.equal(timedOutLogs[0].level, "warn");
+  assert.equal(timedOutLogs[0].operation, "runtime.scheduled.sentry_flush");
+  assert.equal("error_name" in timedOutLogs[0], false);
+
+  const failure = new Error("cleanup failed");
+  const { withScheduledSentry: withFailedFlush } = loadSentryModuleForTest({
+    ...lazySentryStubForTest({ initialized: true }).stub,
+    flush: async () => {
+      throw new TypeError("transport detail");
+    }
+  });
+  const failedLogs = await withProcessEnv(PRODUCTION_SENTRY_ENV, () =>
+    captureStructuredLogs(async () => {
+      await assert.rejects(
+        withFailedFlush(async () => {
+          throw failure;
+        }),
+        (error) => error === failure
+      );
+    })
+  );
+  assert.equal(failedLogs.length, 1);
+  assert.equal(failedLogs[0].level, "warn");
+  assert.equal(failedLogs[0].operation, "runtime.scheduled.sentry_flush");
+  assert.equal(failedLogs[0].error_name, "TypeError");
+  assert.equal(
+    JSON.stringify(failedLogs[0]).includes("transport detail"),
+    false
+  );
 });
 
 test("sentry release metadata and source-map upload gate require the release path", () => {

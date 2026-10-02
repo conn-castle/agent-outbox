@@ -286,6 +286,10 @@ test("worker cron schedule stays aligned with runtime scheduled canary", () => {
   assert.match(workerEntry, /runScheduledCanary/);
   assert.match(workerEntry, /runScheduledCleanup/);
   assert.match(workerEntry, /context\.waitUntil\(cleanup\)/);
+  assert.match(
+    workerEntry,
+    /const cleanup = withScheduledSentry\(\(\) =>\s+runScheduledCleanup\(/
+  );
   assert.deepEqual(
     validateWranglerCronSchedule(
       `{
