@@ -584,6 +584,77 @@ test("connect start per-IP limiting blocks before setup insert", async () => {
   );
 });
 
+test("connect start rejects names Postgres cannot store before transactions", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
+      PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+    },
+    async () => {
+      const starts = [
+        {
+          name: "browser",
+          handler: handleConnectBrowserStartRequest,
+          path: "/api/caller/connect/browser/start",
+          body: { callback_url: "http://127.0.0.1:49152/callback" }
+        },
+        {
+          name: "device",
+          handler: handleConnectDeviceStartRequest,
+          path: "/api/caller/connect/device/start",
+          body: {}
+        }
+      ];
+      const names = [
+        { key: "local_caller_name", value: "steward\u0000email" },
+        { key: "display_name", value: "Steward \u0000Email" },
+        { key: "display_name", value: "Steward \ud800Email" }
+      ];
+
+      for (const start of starts) {
+        for (const name of names) {
+          const label = `${start.name} ${name.key} ${JSON.stringify(name.value)}`;
+          const runner = fakeTransactionRunner([]);
+          const result = await start.handler(
+            connectRequest(start.path),
+            {
+              requestId: `req-${start.name}-unstorable`,
+              correlationId: `corr-${start.name}-unstorable`
+            },
+            {
+              local_caller_name: "steward-email",
+              display_name: "Steward Email",
+              ...start.body,
+              [name.key]: name.value
+            },
+            { runProductTransaction: runner.runProductTransaction }
+          );
+
+          assert.equal(result.ok, false, label);
+          if (result.ok) {
+            assert.fail(`expected ${label} to fail validation`);
+          }
+          assert.equal(result.error.status, 422, label);
+          assert.equal(result.error.code, "validation_failed", label);
+          assert.deepEqual(
+            result.error.fields,
+            [
+              {
+                path: name.key,
+                code: "invalid_string",
+                message: `${name.key} must be well-formed Unicode without NUL characters.`
+              }
+            ],
+            label
+          );
+          assert.equal(runner.contexts.length, 0, label);
+        }
+      }
+    }
+  );
+});
+
 test("connect start rejects X-Forwarded-For-only requests before transactions", async () => {
   await withProcessEnv(
     {

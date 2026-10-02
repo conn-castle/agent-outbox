@@ -263,6 +263,86 @@ test("malformed caller_id fails validation before rotate and revoke start transa
   }
 });
 
+test("rotate and revoke start reject local caller names Postgres cannot store before transactions", async () => {
+  await withProcessEnv(
+    {
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
+      PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+    },
+    async () => {
+      const starts = [
+        {
+          name: "rotate browser start",
+          handler: handleRotateBrowserStartRequest,
+          path: "/api/caller/rotate/browser/start",
+          body: { callback_url: "http://127.0.0.1:49152/callback" }
+        },
+        {
+          name: "rotate device start",
+          handler: handleRotateDeviceStartRequest,
+          path: "/api/caller/rotate/device/start",
+          body: {}
+        },
+        {
+          name: "revoke browser start",
+          handler: handleRevokeBrowserStartRequest,
+          path: "/api/caller/revoke/browser/start",
+          body: { callback_url: "http://127.0.0.1:49152/callback" }
+        },
+        {
+          name: "revoke device start",
+          handler: handleRevokeDeviceStartRequest,
+          path: "/api/caller/revoke/device/start",
+          body: {}
+        }
+      ];
+
+      for (const start of starts) {
+        for (const localCallerName of [
+          "steward\u0000email",
+          "steward\udc00email"
+        ]) {
+          const label = `${start.name} ${JSON.stringify(localCallerName)}`;
+          const runner = fakeTransactionRunner([]);
+          const result = await start.handler(
+            controlRequest(start.path),
+            {
+              requestId: `req-${start.name}-unstorable`,
+              correlationId: `corr-${start.name}-unstorable`
+            },
+            {
+              caller_id: CALLER_ID,
+              local_caller_name: localCallerName,
+              ...start.body
+            },
+            { runProductTransaction: runner.runProductTransaction }
+          );
+
+          assert.equal(result.ok, false, label);
+          if (result.ok) {
+            assert.fail(`expected ${label} to fail validation`);
+          }
+          assert.equal(result.error.status, 422, label);
+          assert.equal(result.error.code, "validation_failed", label);
+          assert.deepEqual(
+            result.error.fields,
+            [
+              {
+                path: "local_caller_name",
+                code: "invalid_string",
+                message:
+                  "local_caller_name must be well-formed Unicode without NUL characters."
+              }
+            ],
+            label
+          );
+          assert.equal(runner.contexts.length, 0, label);
+        }
+      }
+    }
+  );
+});
+
 test("credential operation start rejects X-Forwarded-For-only requests before transactions", async () => {
   await withProcessEnv(
     {

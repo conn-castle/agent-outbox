@@ -38,6 +38,7 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import { requireCallerKeyHashSecret } from "./env.ts";
+import { isStorableString, unstorableStringError } from "./input-schema.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
@@ -2212,6 +2213,10 @@ function requiredText(
         `${key} must be at most ${maxLength} characters.`
       )
     );
+    return "";
+  }
+  if (!isStorableString(trimmed)) {
+    fields.push(unstorableStringError(key));
     return "";
   }
 
