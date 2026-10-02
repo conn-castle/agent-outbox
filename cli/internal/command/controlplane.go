@@ -700,6 +700,9 @@ func restoreCallerSecret(runtime *controlPlaneRuntime, callerID string, oldKey s
 	_ = deleteCallerSecret(runtime, callerID)
 }
 
+// activateDefinitivelyDidNotCommit reports whether a validated API error proves the hosted
+// activation was not committed. The activation rate limit is enforced in the lookup transaction
+// before the commit transaction runs, so rate_limit_exceeded is uncommitted too.
 func activateDefinitivelyDidNotCommit(err error) bool {
 	var appErr *foundation.AppError
 	if !errors.As(err, &appErr) {
@@ -711,7 +714,8 @@ func activateDefinitivelyDidNotCommit(err error) bool {
 		foundation.CodeAuthenticationRequired,
 		foundation.CodeInvalidCallerCredentials,
 		foundation.CodeAuthorizationFailed,
-		foundation.CodeNotFound:
+		foundation.CodeNotFound,
+		foundation.CodeRateLimitExceeded:
 		return true
 	default:
 		return false
