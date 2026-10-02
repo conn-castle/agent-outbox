@@ -4,6 +4,7 @@ import {
   accountQuotaWindowMaintenanceStatement,
   activeLimitMaintenanceStatement,
   callerSetupCleanupCutoff,
+  expiredBillingGraceCleanupStatement,
   expiredBillingGraceDowngradeStatement,
   globalQuotaWindowMaintenanceStatements,
   neverActivatedCallerPruningStatement,
@@ -51,11 +52,13 @@ type ScheduledCleanupLockedAccountRow = {
 
 type CleanupStatementResultRow = {
   deleted_count?: unknown;
+  downgrade_deferred?: unknown;
 };
 
 type CleanupStatementTotals = {
   statementsRun: number;
   rowsAffected: number;
+  downgradeDeferred: boolean;
 };
 
 type ScheduledCleanupTransactionRunner = <TResult>(
@@ -159,6 +162,10 @@ export function scheduledCleanupStatementsForAccount(input: {
   }
   if (input.tier === "hosted_paid") {
     statements.push(
+      expiredBillingGraceCleanupStatement(
+        freeTierNonFilePayloadLimitBytes(),
+        input.now
+      ),
       expiredBillingGraceDowngradeStatement(
         freeTierNonFilePayloadLimitBytes(),
         input.now
@@ -245,6 +252,17 @@ export async function runScheduledCleanup(
         statementsRun += accountResult.statementsRun;
         rowsAffected += accountResult.rowsAffected;
         accountsCleaned += 1;
+        if (accountResult.downgradeDeferred) {
+          emitRuntimeLog({
+            level: "warn",
+            request_id: requestId,
+            account_id: account.accountId,
+            environment: process.env.APP_ENV ?? null,
+            surface: "scheduled",
+            operation: SCHEDULED_CLEANUP_OPERATION,
+            message: "grace downgrade deferred: free-tier cleanup incomplete"
+          });
+        }
       } catch (error) {
         emitScheduledCleanupFailure({
           requestId,
@@ -298,14 +316,16 @@ async function runCleanupStatements(
 ): Promise<CleanupStatementTotals> {
   let statementsRun = 0;
   let rowsAffected = 0;
+  let downgradeDeferred = false;
 
   for (const statement of statements) {
     const result = await query<CleanupStatementResultRow>(statement);
     statementsRun += 1;
     rowsAffected += deletedCountFromRow(result.rows[0]);
+    downgradeDeferred ||= result.rows[0]?.downgrade_deferred === true;
   }
 
-  return { statementsRun, rowsAffected };
+  return { statementsRun, rowsAffected, downgradeDeferred };
 }
 
 function pendingInputRetentionCutoff(

@@ -7,6 +7,7 @@ import {
   callerSetupCleanupCutoff,
   duplicateAcknowledgementLookupStatement,
   downgradeGraceExpiryStatement,
+  expiredBillingGraceCleanupStatement,
   expiredBillingGraceDowngradeStatement,
   globalQuotaWindowMaintenanceStatements,
   neverActivatedCallerPruningStatement,
@@ -86,28 +87,21 @@ test("cleanup statement builders target lifecycle database functions", () => {
       downgradeGraceExpiryStatement(-1, new Date("2026-06-30T00:00:00.000Z")),
     /nonFilePayloadLimitBytes must be a non-negative safe integer/
   );
-  const expiredGraceDowngrade = expiredBillingGraceDowngradeStatement(
-    32_000_000,
-    new Date("2026-06-30T00:00:00.000Z")
-  );
-  assert.match(
-    expiredGraceDowngrade.sql,
-    /agent_outbox_cleanup_downgrade_grace_expiry\(\$1, \$2\)/
-  );
-  assert.match(expiredGraceDowngrade.sql, /tier = 'hosted_free'/);
-  assert.match(expiredGraceDowngrade.sql, /billing_status = 'not_applicable'/);
-  assert.deepEqual(expiredGraceDowngrade.values, [
-    32_000_000,
-    "2026-06-30T00:00:00.000Z"
-  ]);
-  assert.throws(
-    () =>
-      expiredBillingGraceDowngradeStatement(
-        Number.MAX_SAFE_INTEGER + 1,
-        new Date("2026-06-30T00:00:00.000Z")
-      ),
-    /nonFilePayloadLimitBytes must be a non-negative safe integer/
-  );
+  for (const builder of [
+    expiredBillingGraceCleanupStatement,
+    expiredBillingGraceDowngradeStatement
+  ]) {
+    assert.deepEqual(
+      builder(32_000_000, new Date("2026-06-30T00:00:00.000Z")).values,
+      [32_000_000, "2026-06-30T00:00:00.000Z"]
+    );
+    for (const invalidLimit of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      assert.throws(
+        () => builder(invalidLimit, new Date("2026-06-30T00:00:00.000Z")),
+        /nonFilePayloadLimitBytes must be a non-negative safe integer/
+      );
+    }
+  }
   const quotaPruneBefore = new Date("2026-06-01T00:00:00.000Z");
   const accountQuotaPruning = {
     sql: "select public.agent_outbox_prune_quota_windows($1) as deleted_count",
@@ -296,8 +290,8 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     recorded_at: result.recorded_at,
     accounts_seen: 2,
     accounts_cleaned: 2,
-    statements_run: 13,
-    rows_affected: 13
+    statements_run: 14,
+    rows_affected: 14
   });
   assert.match(result.recorded_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(
@@ -323,12 +317,10 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     ),
     []
   );
-  assert.deepEqual(
-    statementsByContext[2].filter((statement) =>
-      statement.sql.includes("agent_outbox_cleanup_downgrade_grace_expiry")
-    ),
-    [expiredBillingGraceDowngradeStatement(32_000_000, now)]
-  );
+  assert.deepEqual(statementsByContext[2].slice(-2), [
+    expiredBillingGraceCleanupStatement(32_000_000, now),
+    expiredBillingGraceDowngradeStatement(32_000_000, now)
+  ]);
 });
 test("scheduled cleanup continues account maintenance after one account fails", async () => {
   /** @type {import("../src/server/database.ts").ProductTransactionContext[]} */
