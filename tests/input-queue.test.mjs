@@ -801,6 +801,80 @@ test("input request body parser stops reading unknown-length bodies past the byt
   assert.equal(canceled, true);
 });
 
+/**
+ * @param {Uint8Array[]} chunks
+ */
+function streamedJsonRequest(chunks) {
+  const body = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(chunk);
+      }
+      controller.close();
+    }
+  });
+  const requestInit = /** @type {RequestInit} */ (
+    /** @type {unknown} */ ({ method: "POST", body, duplex: "half" })
+  );
+  return new Request(
+    "https://app.agent-outbox.dev/api/input/send",
+    requestInit
+  );
+}
+
+test("input request body parser rejects invalid UTF-8 instead of replacing it", async () => {
+  const prefix = Buffer.from('{"caller_item_id":"a');
+  const suffix = Buffer.from('"}');
+  const invalidSequences = [
+    [0xff],
+    [0xfe],
+    [0xe2, 0x82],
+    [0xc0, 0xaf],
+    [0xed, 0xa0, 0x80]
+  ];
+
+  for (const sequence of invalidSequences) {
+    const response = await readJsonBodyWithLimit(
+      streamedJsonRequest([
+        new Uint8Array(Buffer.concat([prefix, Buffer.from(sequence), suffix]))
+      ])
+    );
+
+    assert.equal(response.ok, false, `bytes ${sequence.join(",")}`);
+    assert.equal(response.error.status, 400);
+    assert.equal(response.error.code, "invalid_json");
+  }
+});
+
+test("input request body parser preserves valid UTF-8 split across chunks", async () => {
+  const text = "café ✓ 😀";
+  const bytes = Buffer.from(JSON.stringify({ caller_item_id: text }));
+  const splitInsideEmoji = bytes.indexOf(Buffer.from("😀")) + 2;
+
+  const response = await readJsonBodyWithLimit(
+    streamedJsonRequest([
+      new Uint8Array(bytes.subarray(0, splitInsideEmoji)),
+      new Uint8Array(bytes.subarray(splitInsideEmoji))
+    ])
+  );
+
+  assert.equal(response.ok, true);
+  assert.deepEqual(response.value, { caller_item_id: text });
+});
+
+test("input request body parser rejects a leading byte order mark", async () => {
+  const response = await readJsonBodyWithLimit(
+    streamedJsonRequest([
+      new Uint8Array(
+        Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("{}")])
+      )
+    ])
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, "invalid_json");
+});
+
 test("send creates a pending item and stores normalized child rows", async () => {
   const submission = parseValidInput();
   const query = fakeQuery([
