@@ -10,6 +10,8 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 
+import { persistedPopup } from "../src/server/persisted-payload.ts";
+import { accountWriteLockStatement } from "../src/server/caller-api-limits.ts";
 import { formatVersionLabel } from "../src/server/app-version.ts";
 import { authenticateCallerApiRequest } from "../src/server/caller-api-auth.ts";
 import {
@@ -360,12 +362,13 @@ function loadBillingSessionModuleForTest(reportRuntimeFailure) {
 
 /**
  * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
+ * @param {import("../src/server/database.ts").ProductTransactionQuery} [transactionQuery]
  * @returns {{
  *   createHumanAnswer: typeof createHumanAnswer,
  *   humanAnswerUndoTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerUndoTransactionFailure
  * }}
  */
-function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
+function loadHumanAnswerModuleForTest(reportRuntimeFailure, transactionQuery) {
   const source = readFileSync(
     resolve(REPO_ROOT, "src/server/human-answer.ts"),
     "utf8"
@@ -386,6 +389,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
     compiled,
     {
       AggregateError,
+      Error,
       Buffer,
       console,
       exports: testModule.exports,
@@ -418,6 +422,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
         }
         if (specifier === "./caller-api-limits.ts") {
           return {
+            accountWriteLockStatement,
             async accountLimitProfileForAccount() {
               return null;
             },
@@ -431,10 +436,19 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
         }
         if (specifier === "./database.ts") {
           return {
-            async runProductTransaction() {
+            /**
+             * @param {string} _connectionString
+             * @param {unknown} _context
+             * @param {(query: import("../src/server/database.ts").ProductTransactionQuery) => Promise<unknown>} callback
+             */
+            async runProductTransaction(_connectionString, _context, callback) {
+              if (transactionQuery) return callback(transactionQuery);
               throw new Error("raw human answer database secret");
             }
           };
+        }
+        if (specifier === "./persisted-payload.ts") {
+          return { persistedPopup };
         }
         if (specifier === "./input-schema.ts") {
           return {
@@ -704,7 +718,7 @@ function loadOutputFilesModuleForTest(reportRuntimeFailure) {
 
 /**
  * @param {import("../src/server/database.ts").TransactionContextStatement[]} calls
- * @param {{ accountTierRows: Array<Record<string, unknown>> }} rowsByKind
+ * @param {{ accountTierRows: Array<Record<string, unknown>>, popupPayload?: unknown }} rowsByKind
  * @returns {import("../src/server/database.ts").ProductTransactionQuery}
  */
 function mockHumanAnswerQuery(calls, rowsByKind) {
@@ -734,7 +748,10 @@ function mockHumanAnswerQuery(calls, rowsByKind) {
         {
           input_action_id: "action-observability",
           popup_kind: "file_upload",
-          popup_payload: { accept_mime_types: ["text/plain"] }
+          popup_payload: rowsByKind.popupPayload ?? {
+            label: "Attach",
+            accept_mime_types: ["text/plain"]
+          }
         }
       ]);
     }
@@ -1087,6 +1104,71 @@ test("human file upload limit failures log safe operator metadata", async () => 
   const serializedLogs = JSON.stringify(logs);
   assert.equal(serializedLogs.includes("secret-upload.txt"), false);
   assert.equal(serializedLogs.includes("raw upload body"), false);
+});
+
+test("malformed stored MIME patterns reach human answer transaction failure reporting", async () => {
+  /** @type {import("../src/server/database.ts").TransactionContextStatement[]} */
+  const calls = [];
+  /** @type {Array<{error: unknown, context: Record<string, unknown>}>} */
+  const reports = [];
+  const { createHumanAnswer: createAnswer } = loadHumanAnswerModuleForTest(
+    (error, context) => {
+      reports.push({ error, context });
+      return {
+        error_id: String(context.errorId),
+        sentry_captured: true,
+        log: context
+      };
+    },
+    mockHumanAnswerQuery(calls, {
+      accountTierRows: [],
+      popupPayload: {
+        label: "private popup label",
+        accept_mime_types: ["private invalid MIME pattern"]
+      }
+    })
+  );
+  const result = await createAnswer("postgresql://human-answer-test", {
+    accountId: "account-test",
+    callerId: "caller-test",
+    humanUserId: "human-test",
+    requestId: "req-malformed-popup",
+    correlationId: "corr-malformed-popup",
+    inputItemId: "input-test",
+    expectedRevision: 3,
+    actionValue: "upload",
+    response: { kind: "none" }
+  });
+  assert.deepEqual(
+    { ...result },
+    {
+      ok: false,
+      code: "temporary_unavailable",
+      message: "Human answer is temporarily unavailable."
+    }
+  );
+  assert.equal(reports.length, 1);
+  assert.ok(reports[0].error instanceof Error);
+  assert.equal(
+    reports[0].error.message,
+    "Malformed persisted popup_payload for input action action-observability: accept_mime_types must contain at least one valid MIME type pattern."
+  );
+  assert.equal(reports[0].context.operation, "human_answer_transaction");
+  assert.equal(reports[0].context.errorId, "corr-malformed-popup");
+  assert.equal(reports[0].context.status_code, 503);
+  assert.doesNotMatch(
+    JSON.stringify(
+      reports.map((report) => ({
+        ...report,
+        error: String(/** @type {Error} */ (report.error).message)
+      }))
+    ),
+    /private popup label|private invalid MIME pattern/
+  );
+  assert.equal(
+    calls.some((call) => /^\s*(insert|update|delete)\b/i.test(call.sql)),
+    false
+  );
 });
 
 test("human answer transaction failures share error id across structured log and Sentry", async () => {

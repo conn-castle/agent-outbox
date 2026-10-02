@@ -38,11 +38,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: `scripts/policy-gates/migration-discipline-scan.mjs` matches regexes over comment-stripped text without a SQL tokenizer. These destructive statements pass without the label: `E'...\'...'` strings that hide a later `DROP x` or `SET NOT NULL` action, quoted identifiers with no surrounding whitespace (`DROP"x"`, `ALTER TABLE"t"`), `U&"..."` table names, and `ALTER FOREIGN TABLE`. Dollar-quoted text and string literals that contain `ALTER TABLE ... DROP` can falsely block additive statements.
     Next step: Add fixtures for any of these forms when a real migration uses them.
 
-- Issue 2026-09-29 human-answer-payload-decoding: Answer validation reads persisted popup bounds loosely
-    Priority: Medium. Area: Human answers / Data integrity
-    Description: `numberField`, `stringField`, and `acceptedMimeTypes` in `src/server/human-answer.ts` treat a malformed persisted `popup_payload` field (for example `min_length: "5"` or `max_selected: "2"`) as absent, so answer-time bounds are silently not enforced. The review page now rejects such payloads strictly in `src/server/human-review.ts`, which makes this mostly unreachable through the UI.
-    Next step: Make answer validation fail loudly on malformed persisted popup payload fields, consistent with the review-page decoder.
-
 - Issue 2026-09-29 docs-ui-topbar-contrast: API UI docs page renders the wordmark dark on the dark top bar
     Priority: Medium. Area: API documentation / Visual design
     Description: On `/docs/api/ui` the embedded row-anatomy preview carries `.human-workspace`, so the `.shell:has(.human-workspace)` topbar rules in `app/globals.css` apply; the "Agent" wordmark becomes near-invisible and the nav links and call-to-action are dimmed on the dark API-docs top bar. `/docs/api` is unaffected.

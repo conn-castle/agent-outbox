@@ -27,8 +27,12 @@ import {
 import {
   compareUtcDateTimeValues,
   isIanaTimeZone,
-  isValidUtcDateTime
+  isValidUtcDateTime,
+  type NormalizedFreeTextPopupPayload,
+  type NormalizedDatePickerPopupPayload,
+  type NormalizedFileUploadPopupPayload
 } from "./input-schema.ts";
+import { persistedPopup, type PersistedPopup } from "./persisted-payload.ts";
 import { durationSinceMs } from "./logging.ts";
 import { safeAttachmentFilename, safeContentType } from "./output-files.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
@@ -174,7 +178,7 @@ type TargetInputRow = {
 
 type InputActionRow = {
   input_action_id: string;
-  popup_kind: OutputResponseKind;
+  popup_kind: unknown;
   popup_payload: unknown;
 };
 
@@ -209,9 +213,7 @@ type StoredPayload = {
   file?: File;
 };
 
-type PopupActionForValidation = {
-  popupKind: OutputResponseKind;
-  popupPayload: unknown;
+type PopupActionForValidation = PersistedPopup & {
   optionValues?: readonly string[];
 };
 
@@ -285,13 +287,21 @@ export async function createHumanAnswerInTransaction(
     return invalidActionResponse("action_value", "Selected action is invalid.");
   }
 
+  const popup = answerablePopup(
+    action.input_action_id,
+    persistedPopup(
+      action.input_action_id,
+      action.popup_kind,
+      action.popup_payload
+    )
+  );
+
   const optionResult = await query<PopupOptionRow>(
     inputActionOptionsStatement(action.input_action_id)
   );
   const payloadResult = validatedResponsePayload(
     {
-      popupKind: action.popup_kind,
-      popupPayload: action.popup_payload,
+      ...popup,
       optionValues: optionResult.rows.map((row) => row.option_value)
     },
     input.response,
@@ -992,7 +1002,7 @@ function validateHumanAnswerContext(
 }
 
 function validateFreeTextResponse(
-  popupPayload: unknown,
+  popupPayload: NormalizedFreeTextPopupPayload,
   response: Record<string, unknown>
 ): StoredPayload | HumanAnswerFailure {
   if (typeof response.text !== "string") {
@@ -1002,8 +1012,8 @@ function validateFreeTextResponse(
     );
   }
 
-  const minLength = numberField(popupPayload, "min_length");
-  const maxLength = numberField(popupPayload, "max_length");
+  const minLength = popupPayload.min_length;
+  const maxLength = popupPayload.max_length;
   if (minLength != null && response.text.length < minLength) {
     return invalidActionResponse(
       "response.text",
@@ -1042,7 +1052,7 @@ function validateSingleSelectResponse(
 }
 
 function validateMultiSelectResponse(
-  action: PopupActionForValidation,
+  action: Extract<PopupActionForValidation, { popupKind: "multi_select" }>,
   response: Record<string, unknown>
 ): StoredPayload | HumanAnswerFailure {
   if (
@@ -1071,9 +1081,8 @@ function validateMultiSelectResponse(
     );
   }
 
-  const minSelected = numberField(action.popupPayload, "min_selected") ?? 0;
-  const maxSelected =
-    numberField(action.popupPayload, "max_selected") ?? optionValues.size;
+  const minSelected = action.popupPayload.min_selected;
+  const maxSelected = action.popupPayload.max_selected;
   if (
     response.values.length < minSelected ||
     response.values.length > maxSelected
@@ -1088,7 +1097,7 @@ function validateMultiSelectResponse(
 }
 
 function validateDatePickerResponse(
-  popupPayload: unknown,
+  popupPayload: NormalizedDatePickerPopupPayload,
   response: Record<string, unknown>
 ): StoredPayload | HumanAnswerFailure {
   if (response.mode !== "date" && response.mode !== "datetime") {
@@ -1098,7 +1107,7 @@ function validateDatePickerResponse(
     );
   }
 
-  const configuredMode = stringField(popupPayload, "mode");
+  const configuredMode = popupPayload.mode;
   if (configuredMode !== response.mode) {
     return invalidActionResponse(
       "response.mode",
@@ -1106,7 +1115,7 @@ function validateDatePickerResponse(
     );
   }
 
-  const configuredTimezone = stringField(popupPayload, "display_timezone");
+  const configuredTimezone = popupPayload.display_timezone;
 
   if (response.mode === "date") {
     // Civil dates show only the caller-configured timezone, so none is invented.
@@ -1129,8 +1138,8 @@ function validateDatePickerResponse(
 
     const rangeFailure = validateDateRange(
       response.value_date,
-      stringField(popupPayload, "min_value"),
-      stringField(popupPayload, "max_value")
+      popupPayload.min_value,
+      popupPayload.max_value
     );
     if (rangeFailure) {
       return rangeFailure;
@@ -1174,8 +1183,8 @@ function validateDatePickerResponse(
 
   const rangeFailure = validateDateTimeRange(
     response.value_utc,
-    stringField(popupPayload, "min_value"),
-    stringField(popupPayload, "max_value")
+    popupPayload.min_value,
+    popupPayload.max_value
   );
   if (rangeFailure) {
     return rangeFailure;
@@ -1189,7 +1198,7 @@ function validateDatePickerResponse(
 }
 
 function validateFileUploadResponse(
-  popupPayload: unknown,
+  popupPayload: NormalizedFileUploadPopupPayload,
   response: Record<string, unknown>
 ): StoredPayload | HumanAnswerFailure {
   if (!(response.file instanceof File)) {
@@ -1212,17 +1221,11 @@ function validateFileUploadResponse(
   }
 
   const mimeType = normalizeMimeType(response.file.type);
-  const accepted = acceptedMimeTypes(popupPayload);
-  if (!accepted.ok) {
-    return failure(
-      "temporary_unavailable",
-      "File-upload action configuration is temporarily unavailable."
-    );
-  }
+  const patterns = popupPayload.accept_mime_types;
   if (
-    accepted.patterns.length > 0 &&
+    patterns &&
     (!mimeType ||
-      !accepted.patterns.some((pattern) =>
+      !patterns.some((pattern) =>
         pattern.endsWith("/*")
           ? mimeType.startsWith(pattern.slice(0, -1))
           : mimeType === pattern
@@ -1242,13 +1245,13 @@ function validateDateRange(
   minValue: string | null,
   maxValue: string | null
 ): HumanAnswerFailure | null {
-  if (minValue && (!validDateOnly(minValue) || value < minValue)) {
+  if (minValue !== null && value < minValue) {
     return invalidActionResponse(
       "response.value_date",
       "Date-picker date response is before the selected action minimum."
     );
   }
-  if (maxValue && (!validDateOnly(maxValue) || value > maxValue)) {
+  if (maxValue !== null && value > maxValue) {
     return invalidActionResponse(
       "response.value_date",
       "Date-picker date response is after the selected action maximum."
@@ -1263,22 +1266,16 @@ function validateDateTimeRange(
   minValue: string | null,
   maxValue: string | null
 ): HumanAnswerFailure | null {
-  if (minValue) {
-    if (
-      !validUtcDateTime(minValue) ||
-      compareUtcDateTimeValues(value, minValue) < 0
-    ) {
+  if (minValue !== null) {
+    if (compareUtcDateTimeValues(value, minValue) < 0) {
       return invalidActionResponse(
         "response.value_utc",
         "Date-picker datetime response is before the selected action minimum."
       );
     }
   }
-  if (maxValue) {
-    if (
-      !validUtcDateTime(maxValue) ||
-      compareUtcDateTimeValues(value, maxValue) > 0
-    ) {
+  if (maxValue !== null) {
+    if (compareUtcDateTimeValues(value, maxValue) > 0) {
       return invalidActionResponse(
         "response.value_utc",
         "Date-picker datetime response is after the selected action maximum."
@@ -1333,50 +1330,45 @@ function byteCount(value: string | number) {
   return numeric;
 }
 
-function numberField(source: unknown, key: string): number | null {
-  if (!isRecord(source)) {
-    return null;
-  }
-
-  const value = source[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function stringField(source: unknown, key: string): string | null {
-  if (!isRecord(source)) {
-    return null;
-  }
-
-  const value = source[key];
-  return typeof value === "string" ? value : null;
-}
-
-function acceptedMimeTypes(
-  source: unknown
-): { ok: true; patterns: string[] } | { ok: false } {
-  if (!isRecord(source) || source.accept_mime_types == null) {
-    return { ok: true, patterns: [] };
+// Checks stored bound and MIME values before the response is inspected, so a
+// malformed configuration fails loudly instead of disabling a check.
+function answerablePopup(
+  inputActionId: string,
+  popup: PersistedPopup
+): PersistedPopup {
+  const source = `popup_payload for input action ${inputActionId}`;
+  if (popup.popupKind === "date_picker") {
+    const { mode, min_value, max_value } = popup.popupPayload;
+    const validBound = mode === "date" ? validDateOnly : validUtcDateTime;
+    for (const [key, value] of [
+      ["min_value", min_value],
+      ["max_value", max_value]
+    ] as const) {
+      if (value !== null && !validBound(value)) {
+        throw new Error(
+          `Malformed persisted ${source}: ${key} must be a valid ${mode} bound.`
+        );
+      }
+    }
   }
   if (
-    !Array.isArray(source.accept_mime_types) ||
-    source.accept_mime_types.length === 0
+    popup.popupKind !== "file_upload" ||
+    popup.popupPayload.accept_mime_types === null
   ) {
-    return { ok: false };
+    return popup;
   }
-
-  const patterns: string[] = [];
-  for (const value of source.accept_mime_types) {
-    if (typeof value !== "string") {
-      return { ok: false };
-    }
-    const normalized = normalizeMimeTypePattern(value);
-    if (!normalized) {
-      return { ok: false };
-    }
-    patterns.push(normalized);
+  const patterns = popup.popupPayload.accept_mime_types.map(
+    normalizeMimeTypePattern
+  );
+  if (patterns.length === 0 || !patterns.every((pattern) => pattern !== null)) {
+    throw new Error(
+      `Malformed persisted ${source}: accept_mime_types must contain at least one valid MIME type pattern.`
+    );
   }
-
-  return { ok: true, patterns };
+  return {
+    ...popup,
+    popupPayload: { ...popup.popupPayload, accept_mime_types: patterns }
+  };
 }
 
 function normalizeMimeType(value: string | undefined) {
