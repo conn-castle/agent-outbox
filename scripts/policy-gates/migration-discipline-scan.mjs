@@ -22,9 +22,49 @@ const OPERATIONS = [
   { name: "DROP INDEX", re: /\bDROP\s+INDEX\b/i }
 ];
 
+// Postgres makes the COLUMN keyword optional in ALTER TABLE actions, so these
+// patterns are anchored to the start of one top-level action to also cover
+// `DROP x`, `RENAME x TO y`, and `ALTER x ...`.
+const IDENTIFIER = String.raw`(?:"(?:[^"]|"")+"|[\p{L}_][\p{L}\p{N}_$]*)`;
+const ALTER_TABLE_HEADER = new RegExp(
+  String.raw`\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?` +
+    String.raw`${IDENTIFIER}(?:\s*\.\s*${IDENTIFIER})*(?:\s*\*)?`,
+  "iu"
+);
+const IMPLICIT_COLUMN_OPERATIONS = [
+  {
+    name: "DROP COLUMN",
+    re: /^\s*DROP\s+(?!(?:COLUMN|CONSTRAINT)\b)/i,
+    lineRe: /\bDROP\b/i
+  },
+  {
+    name: "RENAME COLUMN",
+    re: new RegExp(
+      String.raw`^\s*RENAME\s+(?!(?:TO|COLUMN|CONSTRAINT)\b)${IDENTIFIER}\s+TO\b`,
+      "iu"
+    ),
+    lineRe: /\bRENAME\b/i
+  },
+  {
+    name: "ALTER COLUMN TYPE",
+    re: new RegExp(
+      String.raw`^\s*ALTER\s+(?!(?:COLUMN|CONSTRAINT)\b)${IDENTIFIER}` +
+        String.raw`\s+(?:SET\s+DATA\s+)?TYPE\b`,
+      "iu"
+    ),
+    lineRe: /\bTYPE\b/i
+  }
+];
+const ALTER_COLUMN_ACTION = new RegExp(
+  String.raw`^\s*ALTER\s+(?:COLUMN\s+)?(?!(?:COLUMN|CONSTRAINT)\b)` +
+    String.raw`(${IDENTIFIER})\s+([\s\S]*)$`,
+  "iu"
+);
+
 const SET_NOT_NULL = {
   name: "ALTER COLUMN SET NOT NULL",
-  re: /\bALTER\s+COLUMN\b\s+(?:"[^"]+"|\S+)\s+\bSET\s+NOT\s+NULL\b/i
+  re: /\bALTER\s+COLUMN\b\s+(?:"[^"]+"|\S+)\s+\bSET\s+NOT\s+NULL\b/i,
+  lineRe: /\bSET\s+NOT\s+NULL\b/i
 };
 
 /**
@@ -112,34 +152,90 @@ function stripSqlComments(sql) {
 }
 
 /**
+ * Fold unquoted identifiers like Postgres; quoted identifiers stay exact.
+ *
  * @param {string} raw
  * @returns {string}
  */
 function columnNameKey(raw) {
-  return raw.replaceAll('"', "").toLowerCase();
+  return raw.startsWith('"')
+    ? raw.slice(1, -1).replaceAll('""', '"')
+    : raw.toLowerCase();
 }
 
 /**
- * True when at least one `ALTER COLUMN ... SET NOT NULL` lacks `SET DEFAULT`
- * on that same column in the same statement.
+ * Split text on commas outside parentheses and string/identifier literals.
  *
+ * @param {string} text
+ * @returns {string[]}
+ */
+function splitTopLevelActions(text) {
+  /** @type {string[]} */
+  const actions = [];
+  let current = "";
+  let depth = 0;
+  /** @type {string | null} */
+  let quote = null;
+  for (const c of text) {
+    if (quote) {
+      if (c === quote) quote = null;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    } else if (c === "(") {
+      depth += 1;
+    } else if (c === ")") {
+      depth = Math.max(0, depth - 1);
+    } else if (c === "," && depth === 0) {
+      actions.push(current);
+      current = "";
+      continue;
+    }
+    current += c;
+  }
+  actions.push(current);
+  return actions;
+}
+
+/**
+ * Top-level actions after the `ALTER TABLE` header, or the whole statement as
+ * one action list when no header is present.
+ *
+ * @param {string} statementText
+ * @returns {{ hasHeader: boolean, actions: string[] }}
+ */
+function statementActions(statementText) {
+  const header = ALTER_TABLE_HEADER.exec(statementText);
+  const actionText = header
+    ? statementText.slice(header.index + header[0].length)
+    : statementText;
+  return {
+    hasHeader: header !== null,
+    actions: splitTopLevelActions(actionText)
+  };
+}
+
+/**
+ * True when at least one `ALTER [COLUMN] ... SET NOT NULL` action lacks a
+ * `SET DEFAULT` action on that same column in the same statement.
+ *
+ * @param {string[]} actions
  * @param {string} statementText
  * @returns {boolean}
  */
-function hasSetNotNullWithoutSameColumnDefault(statementText) {
+function hasSetNotNullWithoutSameColumnDefault(actions, statementText) {
   /** @type {Set<string>} */
   const notNullColumns = new Set();
   /** @type {Set<string>} */
   const defaultColumns = new Set();
-  const clauseRe =
-    /\bALTER\s+COLUMN\s+("[^"]+"|\S+)([\s\S]*?)(?=\bALTER\s+COLUMN\b|$)/gi;
-  for (const match of statementText.matchAll(clauseRe)) {
+  for (const action of actions) {
+    const match = ALTER_COLUMN_ACTION.exec(action);
+    if (!match) continue;
     const column = columnNameKey(match[1] ?? "");
     const body = match[2] ?? "";
-    if (/\bSET\s+NOT\s+NULL\b/i.test(body)) {
+    if (/^SET\s+NOT\s+NULL\b/i.test(body)) {
       notNullColumns.add(column);
     }
-    if (/\bSET\s+DEFAULT\b/i.test(body)) {
+    if (/^SET\s+DEFAULT\b/i.test(body)) {
       defaultColumns.add(column);
     }
   }
@@ -186,8 +282,23 @@ function scanStatement(statementText, statementLines, filePath) {
     }
   }
 
-  if (hasSetNotNullWithoutSameColumnDefault(statementText)) {
-    const line = findLine(statementLines, SET_NOT_NULL.re);
+  const { hasHeader, actions } = statementActions(statementText);
+  if (hasHeader) {
+    for (const operation of IMPLICIT_COLUMN_OPERATIONS) {
+      if (actions.some((action) => operation.re.test(action))) {
+        const line = findLine(statementLines, operation.lineRe);
+        violations.push({
+          filePath,
+          lineNumber: line.lineNumber,
+          operation: operation.name,
+          text: line.text.trim()
+        });
+      }
+    }
+  }
+
+  if (hasSetNotNullWithoutSameColumnDefault(actions, statementText)) {
+    const line = findLine(statementLines, SET_NOT_NULL.lineRe);
     violations.push({
       filePath,
       lineNumber: line.lineNumber,
