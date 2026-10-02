@@ -35,6 +35,7 @@ import {
 import { absoluteHttpOrigin } from "./env.ts";
 import {
   runProductTransaction,
+  withSavepoint,
   type ProductTransactionContext,
   type ProductTransactionQuery,
   type TransactionContextStatement
@@ -933,11 +934,13 @@ async function handleOperationBrowserStartRequest(
 
       let result: { rows: SetupRequestIdRow[] };
       try {
-        result = await query<SetupRequestIdRow>(
-          createBrowserSetupRequestStatement(operation, {
-            ...parsed.data,
-            expiresAt
-          })
+        result = await withSavepoint(query, "caller_setup_request", () =>
+          query<SetupRequestIdRow>(
+            createBrowserSetupRequestStatement(operation, {
+              ...parsed.data,
+              expiresAt
+            })
+          )
         );
       } catch (error) {
         if (isForeignKeyViolation(error)) {
@@ -1017,13 +1020,15 @@ async function handleOperationDeviceStartRequest(
       }
 
       try {
-        await query<SetupRequestIdRow>(
-          createDeviceSetupRequestStatement(operation, {
-            ...parsed.data,
-            deviceCodeHash: setupCodeDigest(deviceCode),
-            userCodeHash: setupCodeDigest(normalizeUserCode(userCode)),
-            expiresAt
-          })
+        await withSavepoint(query, "caller_setup_request", () =>
+          query<SetupRequestIdRow>(
+            createDeviceSetupRequestStatement(operation, {
+              ...parsed.data,
+              deviceCodeHash: setupCodeDigest(deviceCode),
+              userCodeHash: setupCodeDigest(normalizeUserCode(userCode)),
+              expiresAt
+            })
+          )
         );
       } catch (error) {
         if (isForeignKeyViolation(error)) {

@@ -55,6 +55,15 @@ function fakeQuery(resolver) {
    * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
    */
   const query = async (statement) => {
+    // Savepoint control statements cannot be modeled by this fake, and no live
+    // test covers the connect caller-insert savepoint.
+    if (
+      /^\s*(savepoint|release savepoint|rollback to savepoint) /.test(
+        statement.sql
+      )
+    ) {
+      return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+    }
     calls.push(statement);
     const rows = resolver(statement, calls.length);
     return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };

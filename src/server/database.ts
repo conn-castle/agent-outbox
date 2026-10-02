@@ -125,6 +125,37 @@ export async function runProductTransaction<TResult>(
   }
 }
 
+/**
+ * Runs `callback` inside a savepoint. A statement error otherwise aborts the
+ * whole transaction, and the later `commit` silently rolls back earlier work
+ * (such as rate-limit increments) even when the caller catches the error.
+ * `name` must be a constant SQL identifier.
+ */
+export async function withSavepoint<TResult>(
+  query: ProductTransactionQuery,
+  name: string,
+  callback: () => Promise<TResult>
+): Promise<TResult> {
+  await query({ sql: `savepoint ${name}` });
+  try {
+    const result = await callback();
+    await query({ sql: `release savepoint ${name}` });
+    return result;
+  } catch (error) {
+    try {
+      await query({ sql: `rollback to savepoint ${name}` });
+      await query({ sql: `release savepoint ${name}` });
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Savepoint work and rollback both failed.",
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+}
+
 export async function setProductTransactionIdentityContext(
   query: ProductTransactionQuery,
   identity: ProductTransactionIdentityContext

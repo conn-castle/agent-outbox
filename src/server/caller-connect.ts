@@ -32,6 +32,7 @@ import {
 import { absoluteHttpOrigin } from "./env.ts";
 import {
   runProductTransaction,
+  withSavepoint,
   type ProductTransactionContext,
   type ProductTransactionQuery,
   type TransactionContextStatement
@@ -1575,12 +1576,14 @@ async function createConnectCaller(
   target: SetupApprovalTargetRow
 ): Promise<ConnectResult<CallerRow>> {
   try {
-    const result = await query<CallerRow>(
-      insertConnectCallerStatement({
-        accountId,
-        localCallerName: target.local_caller_name,
-        displayName: target.display_name
-      })
+    const result = await withSavepoint(query, "caller_connect_caller", () =>
+      query<CallerRow>(
+        insertConnectCallerStatement({
+          accountId,
+          localCallerName: target.local_caller_name,
+          displayName: target.display_name
+        })
+      )
     );
     return { ok: true, data: result.rows[0] };
   } catch (error) {
