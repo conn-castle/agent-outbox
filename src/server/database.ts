@@ -145,10 +145,10 @@ export async function withSavepoint<TResult>(
     try {
       await query({ sql: `rollback to savepoint ${name}` });
       await query({ sql: `release savepoint ${name}` });
-    } catch (rollbackError) {
+    } catch (cleanupError) {
       throw new AggregateError(
-        [error, rollbackError],
-        "Savepoint work and rollback both failed.",
+        [error, cleanupError],
+        "Savepoint work and cleanup both failed.",
         { cause: error }
       );
     }
