@@ -71,11 +71,11 @@
     "markdownlint-cli2": "0.23.3",
     "prettier": "3.9.9",
     "rclone.js": "0.6.6",
-    "sharp": "0.35.4",
+    "sharp": "0.35.5",
     "supabase": "2.118.0",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "wrangler": "4.141.0"
+    "wrangler": "4.143.0"
   },
   "dependencies": {
     "@clerk/nextjs": "7.9.7",
