@@ -602,6 +602,20 @@ test("input page parsing fails loudly on invalid limits and cursors", () => {
   });
 });
 
+test("input read body rejects caller_item_id values Postgres cannot match unchanged", () => {
+  for (const callerItemId of ["email:\ud83d", "email:\u0000thread"]) {
+    const result = parseInputReadBody({ caller_item_id: callerItemId });
+    assert.equal(result.ok, false);
+    assert.equal(result.ok ? null : result.error.status, 422);
+    assert.deepEqual(
+      result.ok
+        ? null
+        : result.error.fields?.map((field) => [field.path, field.code]),
+      [["caller_item_id", "invalid_string"]]
+    );
+  }
+});
+
 test("input read wrappers surface the caller-transaction config guard", async () => {
   const previous = process.env.DATABASE_APP_ROLE_URL;
   delete process.env.DATABASE_APP_ROLE_URL;

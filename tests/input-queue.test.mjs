@@ -622,6 +622,98 @@ test("input parser rejects safe-shaped but unsupported icon names", () => {
   assert.equal(result.error.code, "unsupported_icon");
 });
 
+test("input parser rejects strings Postgres cannot store unchanged", () => {
+  const result = parseInputSubmission(
+    baseInput({
+      caller_item_id: "email:\u0000thread",
+      row_type: { display: "Email \ud83d", icon: "mail" },
+      title: "<strong>Reply \ude00</strong>",
+      actions: [
+        {
+          display: "Reply",
+          icon: "send",
+          value: "reply",
+          overflow: false,
+          popup: {
+            kind: "free_text",
+            label: "Reply",
+            placeholder: "Type\u0000here",
+            multiline: true
+          }
+        }
+      ]
+    }),
+    { limitProfile: "hosted-paid" }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.status, 422);
+  assert.equal(result.error.code, "validation_failed");
+  assert.deepEqual(
+    result.error.fields?.map((field) => [field.path, field.code]).sort(),
+    [
+      ["actions[0].popup.placeholder", "invalid_string"],
+      ["caller_item_id", "invalid_string"],
+      ["row_type.display", "invalid_string"],
+      ["title", "invalid_string"]
+    ]
+  );
+});
+
+test("input parser keeps well-formed non-ASCII text unchanged", () => {
+  const text = "Reply 😀 to 東京 café";
+  const submission = parseValidInput(
+    baseInput({
+      caller_item_id: "email:😀",
+      row_type: { display: text, icon: "mail" },
+      title: `<strong>${text}</strong>`
+    })
+  );
+
+  assert.equal(submission.callerItemId, "email:😀");
+  assert.equal(submission.rowType.display, text);
+  assert.equal(submission.titleHtml, `<strong>${text}</strong>`);
+});
+
+test("send, replace, and delete reject unstorable strings before writing", async () => {
+  for (const operation of /** @type {const} */ ([
+    "send",
+    "replace",
+    "delete"
+  ])) {
+    const query = inputQueueThrottleQuery({ inputRows: [pendingInputRow()] });
+    const body =
+      operation === "delete"
+        ? { caller_item_id: "email:\ud83d" }
+        : baseInput({ caller_item_id: "email:\ud83d" });
+
+    const result = await handleInputQueueRequestInTransaction(
+      query,
+      context,
+      identity,
+      operation,
+      body
+    );
+
+    assert.equal(result.ok, false, operation);
+    assert.equal(result.ok ? null : result.error.status, 422, operation);
+    assert.deepEqual(
+      result.ok ? null : result.error.fields?.map((field) => field.path),
+      ["caller_item_id"],
+      operation
+    );
+    assert.equal(
+      query.calls.some((call) =>
+        /(insert into|update|delete from) public\.agent_outbox_input/.test(
+          call.sql
+        )
+      ),
+      false,
+      operation
+    );
+  }
+});
+
 test("file upload actions require paid tier and are accepted for paid callers", () => {
   const input = baseInput({
     actions: [
