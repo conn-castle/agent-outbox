@@ -33,6 +33,8 @@ const path = {
   fileId: "00000000-0000-4000-8000-000000000004"
 };
 
+const lockedOutputRow = { output_result_id: path.outputResultId };
+
 /**
  * @param {Partial<import("../src/server/output-files.ts").OutputFileDownloadAuditRow & { filename: string, mime_type: string | null, file_bytes: Buffer }>} overrides
  * @returns {import("../src/server/output-files.ts").OutputFileDownloadAuditRow & { filename: string, mime_type: string | null, file_bytes: Buffer }}
@@ -102,11 +104,11 @@ test("output file download lookup scopes by account caller output and file ids",
   // instead of a Postgres 22P02 uuid cast error swallowed into a 503.
   assert.match(statement.sql, /f\.output_result_id::text = \$3/);
   assert.match(statement.sql, /f\.output_file_id::text = \$4/);
-  assert.match(statement.sql, /for update of f, o/i);
+  assert.match(statement.sql, /for update of f\s*$/i);
 });
 
 test("output file download returns raw bytes and writes content-safe byte audit", async () => {
-  const query = fakeQuery([[fileRow()]]);
+  const query = fakeQuery([[lockedOutputRow], [fileRow()]]);
   const result = await outputFileDownloadInTransaction(
     query,
     context,
@@ -122,9 +124,9 @@ test("output file download returns raw bytes and writes content-safe byte audit"
   );
   assert.equal(result.ok ? result.headers.get("Content-Length") : "", "7");
 
-  assert.equal(query.calls.length, 2);
-  assert.match(query.calls[1].sql, /agent_outbox_audit_events/);
-  assert.deepEqual(query.calls[1].values, [
+  assert.equal(query.calls.length, 3);
+  assert.match(query.calls[2].sql, /agent_outbox_audit_events/);
+  assert.deepEqual(query.calls[2].values, [
     "file_downloaded",
     "00000000-0000-4000-8000-0000000000a1",
     "00000000-0000-4000-8000-0000000000c1",
@@ -139,11 +141,12 @@ test("output file download returns raw bytes and writes content-safe byte audit"
     "e".repeat(64),
     "{}"
   ]);
-  assert.doesNotMatch(JSON.stringify(query.calls[1]), /payload|receipt\.pdf/);
+  assert.doesNotMatch(JSON.stringify(query.calls[2]), /payload|receipt\.pdf/);
 });
 
 test("output file download fails loud when stored size metadata does not match bytes", async () => {
   const query = fakeQuery([
+    [lockedOutputRow],
     [fileRow({ size_bytes: 8, file_bytes: Buffer.from("payload") })]
   ]);
   const result = await outputFileDownloadInTransaction(
@@ -161,27 +164,29 @@ test("output file download fails loud when stored size metadata does not match b
       message: "Output file metadata is temporarily unavailable."
     }
   });
-  assert.equal(query.calls.length, 1);
+  assert.equal(query.calls.length, 2);
 });
 
 test("output file download reports not found without audit when ids do not match", async () => {
-  const query = fakeQuery([[]]);
-  const result = await outputFileDownloadInTransaction(
-    query,
-    context,
-    identity,
-    path
-  );
+  for (const rowsByCall of [[[]], [[lockedOutputRow], []]]) {
+    const query = fakeQuery(rowsByCall);
+    const result = await outputFileDownloadInTransaction(
+      query,
+      context,
+      identity,
+      path
+    );
 
-  assert.deepEqual(result, {
-    ok: false,
-    error: {
-      status: 404,
-      code: "not_found",
-      message: "Output file was not found."
-    }
-  });
-  assert.equal(query.calls.length, 1);
+    assert.deepEqual(result, {
+      ok: false,
+      error: {
+        status: 404,
+        code: "not_found",
+        message: "Output file was not found."
+      }
+    });
+    assert.equal(query.calls.length, rowsByCall.length);
+  }
 });
 
 test("file download headers force attachment nosniff and safe content metadata", () => {

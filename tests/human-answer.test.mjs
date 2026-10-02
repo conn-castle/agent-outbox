@@ -12,6 +12,8 @@ import {
 } from "../src/server/human-answer.ts";
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
+import { handleOutputFileDownloadAuthenticatedTransaction } from "../src/server/output-files.ts";
+import { acknowledgeOutputInTransaction } from "../src/server/output-queue.ts";
 import { runScheduledCleanup } from "../src/server/scheduled.ts";
 import { accountLimitStatusMetadata } from "../src/server/limits.ts";
 import {
@@ -1489,6 +1491,173 @@ test(
 );
 
 test(
+  "acknowledging an output while its file downloads finishes without deadlocking",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const human = await connectedDatabaseClient(databaseUrl);
+    const acker = await connectedDatabaseClient(databaseUrl);
+    const downloader = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    /** @type {PromiseWithResolvers<void>} */
+    const outputLocked = Promise.withResolvers();
+    /** @type {PromiseWithResolvers<void>} */
+    const resumeAck = Promise.withResolvers();
+    /** @type {Promise<unknown>[]} */
+    const operations = [];
+    /** @type {unknown} */
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await owner.query("begin");
+      await seedDatabaseRows(owner, ids);
+      await owner.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid' where account_id = $1",
+        [ids.accountId]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_actions set popup_kind = 'file_upload' where input_action_id = $1",
+        [ids.actionId]
+      );
+      await owner.query("commit");
+      const answered = await runHumanAnswerDatabaseTransaction(
+        human,
+        ids,
+        "human",
+        (query) =>
+          createHumanAnswerInTransaction(query, {
+            accountId: ids.accountId,
+            callerId: ids.callerId,
+            humanUserId: ids.userId,
+            inputItemId: ids.inputItemId,
+            requestId: "req-ack-download-answer",
+            correlationId: "corr-ack-download-answer",
+            expectedRevision: 1,
+            actionValue: "approve",
+            response: {
+              kind: "file_upload",
+              file: new File(["answer"], "answer.txt", { type: "text/plain" })
+            }
+          })
+      );
+      if (!answered.ok) assert.fail(JSON.stringify(answered));
+      const outputResultId = answered.outputResultId;
+      const fileId = (
+        await owner.query(
+          "select output_file_id::text as id from public.agent_outbox_output_files where output_result_id = $1",
+          [outputResultId]
+        )
+      ).rows[0].id;
+      const ackPid = (await acker.query("select pg_backend_pid() as pid"))
+        .rows[0].pid;
+      const downloadPid = (
+        await downloader.query("select pg_backend_pid() as pid")
+      ).rows[0].pid;
+      const identity = { accountId: ids.accountId, callerId: ids.callerId };
+      const ack = runHumanAnswerDatabaseTransaction(
+        acker,
+        ids,
+        "caller",
+        (query) =>
+          acknowledgeOutputInTransaction(
+            /** @type {ProductTransactionQuery} */ (
+              async (statement) => {
+                const result = await query(statement);
+                if (
+                  statement.sql.includes("for update") &&
+                  statement.sql.includes(
+                    "from public.agent_outbox_output_results"
+                  )
+                ) {
+                  outputLocked.resolve();
+                  await resumeAck.promise;
+                }
+                return result;
+              }
+            ),
+            identity,
+            { requestId: "req-ack-race", correlationId: "corr-ack-race" },
+            outputResultId
+          )
+      );
+      operations.push(ack);
+      await Promise.race([outputLocked.promise, ack]);
+      const download = runHumanAnswerDatabaseTransaction(
+        downloader,
+        ids,
+        "caller",
+        (query) =>
+          handleOutputFileDownloadAuthenticatedTransaction(
+            query,
+            {
+              requestId: "req-download-race",
+              correlationId: "corr-download-race"
+            },
+            identity,
+            { outputResultId, fileId }
+          )
+      );
+      operations.push(download);
+      const settled = Promise.allSettled([ack, download]);
+      await waitForDatabaseBlock(owner, downloadPid, ackPid);
+      resumeAck.resolve();
+      for (const result of await settled) {
+        if (result.status === "rejected") throw result.reason;
+      }
+      const acknowledged = await ack;
+      assert.deepEqual(acknowledged, {
+        ok: true,
+        data: {
+          output_result_id: outputResultId,
+          acknowledged: true,
+          already_acknowledged: false
+        }
+      });
+      const downloaded = await download;
+      if (downloaded.ok) assert.fail("acknowledged output file must be gone");
+      assert.equal(downloaded.error.status, 404);
+      assert.equal(downloaded.error.code, "not_found");
+      const audit = await owner.query(
+        "select event_type from public.agent_outbox_audit_events where output_result_id = $1 order by event_type",
+        [outputResultId]
+      );
+      assert.deepEqual(
+        audit.rows.map((row) => row.event_type),
+        [
+          "file_deleted",
+          "file_uploaded",
+          "input_answered",
+          "output_acknowledged",
+          "output_created"
+        ]
+      );
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      resumeAck.resolve();
+      await Promise.allSettled(operations);
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await human.end();
+          await acker.end();
+          await downloader.end();
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Ack and download concurrency test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
   "scheduled cleanup waiting on a free-to-paid upgrade keeps the paid account's pending inputs",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
   async () => {
@@ -2214,6 +2383,11 @@ async function cleanupDatabaseRows(client, ids) {
       `
         delete from public.agent_outbox_audit_events
         where input_item_id = $1
+          or output_result_id in (
+            select output_result_id
+            from public.agent_outbox_audit_events
+            where input_item_id = $1
+          )
       `,
       [ids.inputItemId]
     );
