@@ -29,8 +29,10 @@ type controlPlaneSecretStore struct {
 	// after an earlier store succeeded.
 	failStoreKey string
 	// onStore runs after each successful store, letting a test break later local writes.
-	onStore      func(callerAPIKey string)
-	deleteErr    error
+	onStore   func(callerAPIKey string)
+	deleteErr error
+	// onDelete runs before each delete, letting a test vary failures and commit side effects.
+	onDelete     func(callerID string)
 	preflightErr error
 }
 
@@ -63,6 +65,9 @@ func (s *controlPlaneSecretStore) StoreCallerKey(callerID string, callerAPIKey s
 }
 
 func (s *controlPlaneSecretStore) DeleteCallerKey(callerID string) error {
+	if s.onDelete != nil {
+		s.onDelete(callerID)
+	}
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
@@ -1023,53 +1028,108 @@ func TestCallerConnectAbortsWhenConfigSaveFailsAndLeavesNoActiveKey(t *testing.T
 	}
 }
 
-func TestCallerConnectReportsCredentialRollbackFailureWhenConfigSaveFails(t *testing.T) {
-	const pendingKey = "aob_live_pending_connectsecret"
-	configPath := filepath.Join(t.TempDir(), "config.json")
-	store := &controlPlaneSecretStore{deleteErr: foundation.NewSecretStoreError("fake credential delete failure")}
-	store.onStore = func(callerAPIKey string) {
-		if callerAPIKey == pendingKey {
-			blockConfigWrites(t, configPath)
-		}
-	}
-	var aborts int
+func TestCallerConnectReportsFinalCredentialRollbackOutcomeWhenConfigSaveFails(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		firstDeleteCommits bool
+		retryErr           error
+	}{
+		{name: "retry succeeds"},
+		{name: "first delete commits before reporting failure", firstDeleteCommits: true},
+		{name: "retry fails", retryErr: foundation.NewSecretStoreError("fake final credential delete failure")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const pendingKey = "aob_live_pending_connectsecret"
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			store := &controlPlaneSecretStore{}
+			var deletes int
+			store.onDelete = func(callerID string) {
+				deletes++
+				if deletes == 1 {
+					store.deleteErr = foundation.NewSecretStoreError("fake initial credential delete failure")
+					if tc.firstDeleteCommits {
+						delete(store.keys, callerID)
+					}
+					return
+				}
+				store.deleteErr = tc.retryErr
+			}
+			store.onStore = func(callerAPIKey string) {
+				if callerAPIKey == pendingKey {
+					blockConfigWrites(t, configPath)
+				}
+			}
+			var aborts int
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/caller/connect/device/start":
-			writeEnvelope(w, `{"device_code":"dev_connect","user_code":"CONNECT-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=CONNECT-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
-		case "/api/caller/connect/device/poll":
-			writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_connect","caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_pending","prefix":"aob_live","last_chars":"pend","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, pendingKey))
-		case "/api/caller/connect/abort":
-			aborts++
-			writeEnvelope(w, `{"caller_id":"caller_123","aborted_key_id":"key_pending","aborted_at":"2026-07-02T20:01:00Z"}`)
-		default:
-			t.Fatalf("unexpected request: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/caller/connect/device/start":
+					writeEnvelope(w, `{"device_code":"dev_connect","user_code":"CONNECT-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=CONNECT-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
+				case "/api/caller/connect/device/poll":
+					writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_connect","caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_pending","prefix":"aob_live","last_chars":"pend","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, pendingKey))
+				case "/api/caller/connect/abort":
+					aborts++
+					writeEnvelope(w, `{"caller_id":"caller_123","aborted_key_id":"key_pending","aborted_at":"2026-07-02T20:01:00Z"}`)
+				default:
+					t.Fatalf("unexpected request: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
 
-	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
-		configPath: configPath,
-		baseURL:    server.URL,
-		store:      store,
-		args:       []string{"--json", "caller", "connect", "steward-email", "--device-code"},
-	})
-	if code != foundation.ExitConfig {
-		t.Fatalf("exit code = %d, want config failure; stderr: %s", code, stderr)
-	}
-	if stdout != "" {
-		t.Fatalf("stdout should be empty for failed connect")
-	}
-	if !strings.Contains(stderr, "Could not write local Agent Outbox config.") ||
-		!strings.Contains(stderr, "Local credential rollback also failed (fake credential delete failure).") {
-		t.Fatalf("stderr did not report both the config save and the credential rollback failure: %s", stderr)
-	}
-	if aborts != 1 {
-		t.Fatalf("aborts = %d, want 1", aborts)
-	}
-	if strings.Contains(stdout+stderr, pendingKey) {
-		t.Fatalf("command output leaked the caller key")
+			stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+				configPath: configPath,
+				baseURL:    server.URL,
+				store:      store,
+				args:       []string{"--json", "caller", "connect", "steward-email", "--device-code"},
+			})
+			if code != foundation.ExitConfig {
+				t.Fatalf("exit code = %d, want config failure; stderr: %s", code, stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("stdout should be empty for failed connect")
+			}
+			var envelope struct {
+				OK    bool                 `json:"ok"`
+				Error *foundation.AppError `json:"error"`
+			}
+			stderrLines := strings.Split(strings.TrimSpace(stderr), "\n")
+			if err := json.Unmarshal([]byte(stderrLines[len(stderrLines)-1]), &envelope); err != nil {
+				t.Fatalf("decode error envelope: %v; stderr: %s", err, stderr)
+			}
+			if envelope.OK || envelope.Error == nil || envelope.Error.Code != foundation.CodeConfig {
+				t.Fatalf("error envelope did not preserve the config failure: %#v", envelope)
+			}
+			if !strings.Contains(envelope.Error.Message, "Could not write local Agent Outbox config.") {
+				t.Fatalf("stderr did not report the config save failure: %s", stderr)
+			}
+			if tc.retryErr != nil {
+				if !strings.Contains(envelope.Error.Message, "Local credential rollback also failed (fake final credential delete failure).") {
+					t.Fatalf("stderr did not report the final credential deletion failure: %s", stderr)
+				}
+				if store.keys["caller_123"] != pendingKey {
+					t.Fatalf("failed deletion unexpectedly removed the pending key")
+				}
+			} else {
+				if strings.Contains(envelope.Error.Message, "rollback also failed") || strings.Contains(envelope.Error.Message, "inconsistent") {
+					t.Fatalf("successful credential cleanup was reported as failed: %s", stderr)
+				}
+				if len(store.keys) != 0 {
+					t.Fatalf("successful cleanup left a pending key stored locally")
+				}
+			}
+			if strings.Contains(stderr, "fake initial credential delete failure") {
+				t.Fatalf("stderr reported the superseded initial deletion failure: %s", stderr)
+			}
+			if aborts != 1 {
+				t.Fatalf("aborts = %d, want 1", aborts)
+			}
+			if deletes != 2 {
+				t.Fatalf("deletes = %d, want the initial rollback and abort cleanup retry", deletes)
+			}
+			if strings.Contains(stdout+stderr, pendingKey) {
+				t.Fatalf("command output leaked the caller key")
+			}
+		})
 	}
 }
 

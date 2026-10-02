@@ -1007,6 +1007,7 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 
 	var activated connectActivateData
 	activateAttempted := false
+	var credentialRollbackErr error
 	if err := withRuntimeLocalStateLock(runtime, func() error {
 		if err := reloadRuntimeConfig(runtime); err != nil {
 			return err
@@ -1024,7 +1025,8 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 		updatedConfig.BaseURL = runtime.Client.BaseURL
 		upsertCallerConfig(&updatedConfig, localName, result.Caller, result.Account, result.Credential)
 		if err := saveRuntimeConfig(runtime, updatedConfig); err != nil {
-			return localRollbackFailureError(err, deleteCallerSecretIfPresent(runtime, result.Caller.CallerID), nil)
+			credentialRollbackErr = deleteCallerSecretIfPresent(runtime, result.Caller.CallerID)
+			return err
 		}
 
 		activateAttempted = true
@@ -1045,7 +1047,11 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 		return nil
 	}); err != nil {
 		if !activateAttempted {
-			abortConnectPendingCredential(ctx, runtime, pendingKey, result)
+			deleteErr := abortConnectPendingCredential(ctx, runtime, pendingKey, result)
+			if credentialRollbackErr != nil {
+				// Abort retries a failed local rollback; report only its final deletion outcome.
+				err = localRollbackFailureError(err, deleteErr, nil)
+			}
 		}
 		return connectActivateData{}, err
 	}
@@ -1054,10 +1060,11 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 
 // abortConnectPendingCredential is the best-effort cleanup for a local-persistence failure that
 // occurs before activation: expire the hosted pending key, then remove any partially stored secret.
+// It returns the local deletion result so a failed rollback can be reported after this retry.
 // No active hosted key must remain after this returns.
-func abortConnectPendingCredential(ctx context.Context, runtime *controlPlaneRuntime, pendingKey string, result connectExchangeData) {
+func abortConnectPendingCredential(ctx context.Context, runtime *controlPlaneRuntime, pendingKey string, result connectExchangeData) error {
 	_, _ = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/abort", pendingKey, map[string]string{"setup_request_id": result.SetupRequestID}, nil)
-	_ = runtime.Secrets.DeleteCallerKey(result.Caller.CallerID)
+	return deleteCallerSecretIfPresent(runtime, result.Caller.CallerID)
 }
 
 // activateMayBeActiveError annotates an ambiguous activate failure (transport/read/decode
