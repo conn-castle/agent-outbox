@@ -2422,6 +2422,7 @@ test("malformed setup_request_id fails validation before connect activate and ab
 });
 
 test("browser approval pages and actions reject a malformed setup_request_id before querying", async () => {
+  const uppercaseSetupRequestId = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
   /** @type {{ name: string, run: (query: MockProductTransactionQuery, setupRequestId: string) => Promise<{ ok: true } | { ok: false, error: { status: number, code: string, message: string } }> }[]} */
   const cases = [
     {
@@ -2486,7 +2487,7 @@ test("browser approval pages and actions reject a malformed setup_request_id bef
 
     // An uppercase UUID is valid uuid input and must still be looked up.
     const query = fakeQuery(() => []);
-    const result = await testCase.run(query, SETUP_REQUEST_ID.toUpperCase());
+    const result = await testCase.run(query, uppercaseSetupRequestId);
     assert.equal(result.ok, false, testCase.name);
     if (result.ok) {
       assert.fail(`expected unknown ${testCase.name} setup request to fail`);
@@ -2494,7 +2495,7 @@ test("browser approval pages and actions reject a malformed setup_request_id bef
     assert.equal(result.error.code, "not_found", testCase.name);
     assert.deepEqual(
       query.calls[0]?.values?.[0],
-      SETUP_REQUEST_ID.toUpperCase(),
+      uppercaseSetupRequestId,
       testCase.name
     );
   }

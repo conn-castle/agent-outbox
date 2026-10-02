@@ -485,6 +485,7 @@ test("malformed setup_request_id fails validation before rotate activate and abo
 });
 
 test("rotate and revoke browser pages and actions reject a malformed setup_request_id before querying", async () => {
+  const uppercaseSetupRequestId = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
   for (const operation of /** @type {const} */ (["rotate", "revoke"])) {
     /** @type {{ name: string, run: (query: MockProductTransactionQuery, setupRequestId: string) => Promise<{ ok: true } | { ok: false, error: { status: number, code: string, message: string } }> }[]} */
     const cases = [
@@ -557,14 +558,14 @@ test("rotate and revoke browser pages and actions reject a malformed setup_reque
 
       // An uppercase UUID is valid uuid input and must still be looked up.
       const query = fakeQuery(() => []);
-      const result = await testCase.run(query, SETUP_REQUEST_ID.toUpperCase());
+      const result = await testCase.run(query, uppercaseSetupRequestId);
       assert.equal(result.ok, false, testCase.name);
       if (result.ok) {
         assert.fail(`expected unknown ${testCase.name} setup request to fail`);
       }
       assert.equal(result.error.code, "not_found", testCase.name);
       assert.ok(
-        query.calls[0]?.values?.includes(SETUP_REQUEST_ID.toUpperCase()),
+        query.calls[0]?.values?.includes(uppercaseSetupRequestId),
         testCase.name
       );
     }
