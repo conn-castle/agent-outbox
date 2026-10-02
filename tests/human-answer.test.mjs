@@ -1762,6 +1762,232 @@ test(
   }
 );
 
+for (const scenario of /** @type {const} */ ([
+  "locked file output",
+  "locked pending file-upload input",
+  "locked over-cap non-file input"
+])) {
+  test(
+    `expired grace downgrade defers for ${scenario} and retries after unlock`,
+    { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+    async (t) => {
+      assert.ok(databaseUrl);
+      const owner = await connectedDatabaseClient(databaseUrl);
+      const locker = await connectedDatabaseClient(databaseUrl);
+      const cleanupClient = await connectedDatabaseClient(databaseUrl);
+      const ids = {
+        accountId: crypto.randomUUID(),
+        userId: crypto.randomUUID(),
+        callerId: crypto.randomUUID(),
+        inputItemId: crypto.randomUUID(),
+        actionId: crypto.randomUUID()
+      };
+      const now = new Date("2026-10-01T00:00:00.000Z");
+      const graceEndsAt = new Date("2026-09-30T00:00:00.000Z");
+      const freeByteLimit = accountLimitStatusMetadata(
+        "hosted-free"
+      ).limits.find(
+        (limit) => limit.limitName === "stored_non_file_queue_payload_bytes"
+      );
+      assert.equal(freeByteLimit?.setting.mode, "enabled");
+      if (freeByteLimit?.setting.mode !== "enabled")
+        assert.fail("missing free byte limit");
+      const warnings = t.mock.method(console, "warn", () => {});
+      /** @type {unknown} */
+      let bodyError;
+      try {
+        await assertMigrationOwnerCanSetAppRole(owner);
+        await owner.query("begin");
+        await seedDatabaseRows(owner, ids);
+        await owner.query(
+          "update public.agent_outbox_accounts set tier = 'hosted_paid' where account_id = $1",
+          [ids.accountId]
+        );
+        if (scenario !== "locked over-cap non-file input") {
+          await owner.query(
+            "update public.agent_outbox_input_actions set popup_kind = 'file_upload' where input_action_id = $1",
+            [ids.actionId]
+          );
+        } else {
+          await owner.query(
+            "update public.agent_outbox_input_items set non_file_payload_bytes = $2 where input_item_id = $1",
+            [ids.inputItemId, freeByteLimit.setting.value + 1]
+          );
+        }
+        await owner.query("commit");
+
+        if (scenario === "locked file output") {
+          const answered = await runHumanAnswerDatabaseTransaction(
+            cleanupClient,
+            ids,
+            "human",
+            (query) =>
+              createHumanAnswerInTransaction(query, {
+                accountId: ids.accountId,
+                callerId: ids.callerId,
+                humanUserId: ids.userId,
+                inputItemId: ids.inputItemId,
+                requestId: "req-grace-lock-answer",
+                correlationId: "corr-grace-lock-answer",
+                expectedRevision: 1,
+                actionValue: "approve",
+                answeredAt: now,
+                response: {
+                  kind: "file_upload",
+                  file: new File(["answer"], "answer.txt", {
+                    type: "text/plain"
+                  })
+                }
+              })
+          );
+          if (!answered.ok) assert.fail(JSON.stringify(answered));
+          // The output must survive timeout cleanup on both runs, and its
+          // non-file bytes stay below the cap so trimming cannot wait on it.
+          const output = await owner.query(
+            "select expires_at from public.agent_outbox_output_results where output_result_id = $1",
+            [answered.outputResultId]
+          );
+          assert.ok(output.rows[0].expires_at > now);
+          await locker.query("begin");
+          await locker.query(
+            "select output_result_id from public.agent_outbox_output_results where output_result_id = $1 for update",
+            [answered.outputResultId]
+          );
+        } else {
+          await locker.query("begin");
+          await locker.query(
+            "select input_item_id from public.agent_outbox_input_items where input_item_id = $1 for update",
+            [ids.inputItemId]
+          );
+        }
+        await owner.query(
+          "update public.agent_outbox_accounts set billing_status = 'grace', billing_grace_ends_at = $2 where account_id = $1",
+          [ids.accountId, new Date("2026-10-03T00:00:00.000Z")]
+        );
+
+        const cleanup = () =>
+          runScheduledCleanup({
+            connectionString: databaseUrl,
+            now,
+            requestId: "req-grace-lock-cleanup",
+            runTransaction(_connectionString, _context, callback) {
+              return runHumanAnswerDatabaseTransaction(
+                cleanupClient,
+                ids,
+                "cleanup",
+                (query) =>
+                  callback(
+                    /** @type {ProductTransactionQuery} */ (
+                      async (statement) => {
+                        const result = await query(statement);
+                        if (
+                          statement.sql.includes(
+                            "agent_outbox_cleanup_account_targets"
+                          )
+                        ) {
+                          const rows = result.rows.filter(
+                            (row) => row.account_id === ids.accountId
+                          );
+                          return { ...result, rows, rowCount: rows.length };
+                        }
+                        return result;
+                      }
+                    )
+                  )
+              );
+            }
+          });
+        const readState = () =>
+          owner.query(
+            `select tier, billing_status, billing_grace_ends_at,
+            (select count(*)::int from public.agent_outbox_input_items where account_id = $1) as inputs,
+            (select count(*)::int from public.agent_outbox_output_results where account_id = $1) as outputs,
+            (select count(*)::int from public.agent_outbox_output_files where account_id = $1) as files
+           from public.agent_outbox_accounts where account_id = $1`,
+            [ids.accountId]
+          );
+        // Both paid-account statements also run when grace has not expired.
+        const unexpired = await cleanup();
+        assert.equal(unexpired.accounts_cleaned, 1);
+        assert.equal(unexpired.rows_affected, 0);
+        assert.equal((await readState()).rows[0].tier, "hosted_paid");
+        assert.equal(warnings.mock.callCount(), 0);
+        await owner.query(
+          "update public.agent_outbox_accounts set billing_grace_ends_at = $2 where account_id = $1",
+          [ids.accountId, graceEndsAt]
+        );
+
+        const deferred = await cleanup();
+        assert.equal(deferred.accounts_cleaned, 1);
+        assert.deepEqual((await readState()).rows, [
+          {
+            tier: "hosted_paid",
+            billing_status: "grace",
+            billing_grace_ends_at: graceEndsAt,
+            inputs: 1,
+            outputs: scenario === "locked file output" ? 1 : 0,
+            files: scenario === "locked file output" ? 1 : 0
+          }
+        ]);
+        assert.equal(deferred.rows_affected, 0);
+        assert.equal(warnings.mock.callCount(), 1);
+        const warning = JSON.parse(String(warnings.mock.calls[0].arguments[0]));
+        assert.equal(warning.level, "warn");
+        assert.equal(warning.request_id, "req-grace-lock-cleanup");
+        assert.equal(warning.account_id, ids.accountId);
+        assert.equal(warning.surface, "scheduled");
+        assert.equal(warning.operation, "maintenance.scheduled_cleanup");
+        assert.equal(
+          warning.message,
+          "grace downgrade deferred: free-tier cleanup incomplete"
+        );
+        assert.doesNotMatch(
+          JSON.stringify(warning),
+          /answer\.txt|Title|Subtitle|Summary/
+        );
+
+        await locker.query("rollback");
+        const retried = await cleanup();
+        assert.equal(retried.accounts_cleaned, 1);
+        assert.equal(
+          retried.rows_affected,
+          2,
+          "one whole item deletion plus one tier flip"
+        );
+        assert.deepEqual((await readState()).rows, [
+          {
+            tier: "hosted_free",
+            billing_status: "not_applicable",
+            billing_grace_ends_at: null,
+            inputs: 0,
+            outputs: 0,
+            files: 0
+          }
+        ]);
+        assert.equal(
+          warnings.mock.callCount(),
+          1,
+          "successful retry must not warn"
+        );
+      } catch (error) {
+        bodyError = error;
+      } finally {
+        warnings.mock.restore();
+        await preserveBodyErrorDuringTeardown(
+          bodyError,
+          async () => {
+            await locker.query("rollback");
+            await locker.end();
+            await cleanupClient.end();
+            await cleanupHumanAnswerDatabaseTest(owner, ids);
+          },
+          "Grace deferral test and teardown both failed."
+        );
+      }
+    }
+  );
+}
+
 test(
   "send and replace waiting on a paid-account downgrade validate against the downgraded tier",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
@@ -1830,10 +2056,13 @@ test(
                         }
                         if (
                           context.accountId === ids.accountId &&
-                          statement.sql.includes(
-                            "agent_outbox_cleanup_downgrade_grace_expiry"
-                          )
+                          statement.sql.includes("downgrade_deferred")
                         ) {
+                          const account = await query({
+                            sql: "select tier from public.agent_outbox_accounts where account_id = $1",
+                            values: [ids.accountId]
+                          });
+                          assert.equal(account.rows[0].tier, "hosted_free");
                           downgraded = true;
                           accountDowngraded.resolve();
                           await resumeCleanup.promise;
