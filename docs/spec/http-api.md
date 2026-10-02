@@ -702,6 +702,11 @@ control-plane limits; if `CF-Connecting-IP` is missing or invalid, the route
 fails loudly with `temporary_unavailable` before rate-limit accounting or setup
 state changes.
 
+Text fields on connect routes, such as `local_caller_name` and `display_name`,
+must be well-formed Unicode without U+0000. Lone surrogates and NUL characters
+are rejected with 422 `validation_failed` (`invalid_string`) before rate-limit
+accounting or setup state changes.
+
 Connect uses standards-derived OAuth/device-flow timing:
 
 - Browser setup codes are single-use and expire after 10 minutes, matching RFC
@@ -958,7 +963,8 @@ membership before binding the requested operation to an account.
 
 For hosted control-plane IP limits, trusted client IP uses the same
 Cloudflare-only policy as connect: a valid `CF-Connecting-IP` header is
-required, and `X-Forwarded-For` is not accepted as a fallback.
+required, and `X-Forwarded-For` is not accepted as a fallback. Text fields
+follow the same well-formed Unicode rule as connect.
 
 The CLI identifies the selected existing caller from local non-secret config and
 sends its opaque `caller_id` to the start route. The approval page loads caller

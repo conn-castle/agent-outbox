@@ -353,7 +353,7 @@ function pendingConnectRunner(material, options = {}) {
   };
 }
 
-test("browser connect start returns approval metadata and inserts the setup request after the per-IP limit", async () => {
+test("browser connect start preserves Unicode text and returns approval metadata after the per-IP limit", async () => {
   await withProcessEnv(
     {
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
@@ -376,9 +376,9 @@ test("browser connect start returns approval metadata and inserts the setup requ
         connectRequest("/api/caller/connect/browser/start"),
         { requestId: "req-browser-start", correlationId: "corr-browser-start" },
         {
-          local_caller_name: "steward-email",
-          display_name: "Steward Email",
-          callback_url: "http://127.0.0.1:49152/callback"
+          local_caller_name: "café-邮件-🚀",
+          display_name: "Cafe\u0301 邮件 🚀",
+          callback_url: "http://127.0.0.1:49152/邮件/🚀"
         },
         {
           now: new Date("2026-07-02T00:00:00.000Z"),
@@ -409,9 +409,9 @@ test("browser connect start returns approval metadata and inserts the setup requ
       );
       assert.match(query.calls[1].sql, /values \('connect', 'browser'/);
       assert.deepEqual(query.calls[1].values, [
-        "steward-email",
-        "Steward Email",
-        "http://127.0.0.1:49152/callback",
+        "café-邮件-🚀",
+        "Cafe\u0301 邮件 🚀",
+        "http://127.0.0.1:49152/邮件/🚀",
         "2026-07-02T00:10:00.000Z",
         5
       ]);
@@ -419,7 +419,7 @@ test("browser connect start returns approval metadata and inserts the setup requ
   );
 });
 
-test("device connect start returns device metadata and stores only hashed device and user codes", async () => {
+test("device connect start preserves Unicode text and stores only hashed device and user codes", async () => {
   await withProcessEnv(
     {
       CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
@@ -439,8 +439,8 @@ test("device connect start returns device metadata and stores only hashed device
         connectRequest("/api/caller/connect/device/start"),
         { requestId: "req-device-start", correlationId: "corr-device-start" },
         {
-          local_caller_name: "steward-email",
-          display_name: "Steward Email"
+          local_caller_name: "café-邮件-🚀",
+          display_name: "Cafe\u0301 邮件 🚀"
         },
         {
           now: new Date("2026-07-02T00:00:00.000Z"),
@@ -485,8 +485,8 @@ test("device connect start returns device metadata and stores only hashed device
       );
       assert.match(query.calls[1].sql, /values \('connect', 'device'/);
       assert.deepEqual(query.calls[1].values?.slice(0, 2), [
-        "steward-email",
-        "Steward Email"
+        "café-邮件-🚀",
+        "Cafe\u0301 邮件 🚀"
       ]);
       assert.equal(
         query.calls[1].values?.[2],
@@ -579,6 +579,92 @@ test("connect start per-IP limiting blocks before setup insert", async () => {
           /agent_outbox_caller_setup_requests/,
           testCase.name
         );
+      }
+    }
+  );
+});
+
+test("connect rejects text Postgres cannot store before transactions", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
+      PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+    },
+    async () => {
+      const routes = [
+        {
+          name: "browser",
+          handler: handleConnectBrowserStartRequest,
+          path: "/api/caller/connect/browser/start",
+          body: {
+            local_caller_name: "steward-email",
+            display_name: "Steward Email",
+            callback_url: "http://127.0.0.1:49152/callback"
+          }
+        },
+        {
+          name: "device",
+          handler: handleConnectDeviceStartRequest,
+          path: "/api/caller/connect/device/start",
+          body: {
+            local_caller_name: "steward-email",
+            display_name: "Steward Email"
+          }
+        },
+        {
+          name: "device poll",
+          handler: handleConnectDevicePollRequest,
+          path: "/api/caller/connect/device/poll",
+          body: { device_code: "dev_pending" }
+        },
+        {
+          name: "exchange",
+          handler: handleConnectExchangeRequest,
+          path: "/api/caller/connect/exchange",
+          body: { setup_code: "setup_pending" }
+        }
+      ];
+
+      for (const route of routes) {
+        for (const [key, validValue] of Object.entries(route.body)) {
+          for (const invalid of ["\u0000", "\ud800", "\udc00"]) {
+            const value = `${validValue}${invalid}text`;
+            const label = `${route.name} ${key} ${JSON.stringify(value)}`;
+            const runner = fakeTransactionRunner([]);
+            const result = await route.handler(
+              connectRequest(route.path),
+              {
+                requestId: `req-${route.name}-unstorable`,
+                correlationId: `corr-${route.name}-unstorable`
+              },
+              {
+                ...route.body,
+                [key]: value
+              },
+              { runProductTransaction: runner.runProductTransaction }
+            );
+
+            assert.equal(result.ok, false, label);
+            if (result.ok) {
+              assert.fail(`expected ${label} to fail validation`);
+            }
+            assert.equal(result.error.status, 422, label);
+            assert.equal(result.error.code, "validation_failed", label);
+            assert.deepEqual(
+              result.error.fields,
+              [
+                {
+                  path: key,
+                  code: "invalid_string",
+                  message: `${key} must be well-formed Unicode without NUL characters.`
+                }
+              ],
+              label
+            );
+            assert.equal(runner.contexts.length, 0, label);
+          }
+        }
       }
     }
   );
