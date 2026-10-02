@@ -679,6 +679,10 @@ export async function getCredentialOperationBrowserApprovalPreview(
     now?: Date;
   }
 ): Promise<OperationResult<CredentialOperationApprovalPreviewData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<ApprovalTargetRow>(
     approvalTargetBySetupRequestIdStatement(input)
   );
@@ -714,6 +718,10 @@ export async function approveCredentialOperationBrowserSetupRequest(
     now?: Date;
   }
 ): Promise<OperationResult<CredentialOperationApprovalData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<ApprovalTargetRow>(
     approvalTargetBySetupRequestIdStatement(input)
   );
@@ -832,6 +840,10 @@ export async function denyCredentialOperationSetupRequest(
     accountId: string;
   }
 ): Promise<OperationResult<{ setup_request_id: string; denied: true }>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<SetupRequestIdRow>(
     denySetupRequestStatement(input)
   );
@@ -858,6 +870,10 @@ export async function getCredentialOperationTerminalSetupState(
     statuses: NonEmptyTerminalStatusList;
   }
 ): Promise<OperationResult<CredentialOperationTerminalSetupData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<TerminalSetupStateRow>(
     terminalSetupStateStatement(input)
   );
@@ -2746,6 +2762,12 @@ function fieldError(
   message: string
 ): ApiFieldError {
   return { path, code, message };
+}
+
+// Browser pages and form actions pass setup_request_id unvalidated; a
+// malformed id can never match a row and would otherwise fail the uuid cast.
+function invalidSetupRequestError(): OperationResult<never> {
+  return invalidRequestError("Invalid setup request.");
 }
 
 function invalidRequestError(message: string): OperationResult<never> {

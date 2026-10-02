@@ -10,6 +10,8 @@ import {
   approveCredentialOperationBrowserSetupRequest,
   approveCredentialOperationDeviceSetupRequest,
   denyCredentialOperationSetupRequest,
+  getCredentialOperationBrowserApprovalPreview,
+  getCredentialOperationTerminalSetupState,
   handleRevokeConfirmRequest,
   handleRevokeBrowserStartRequest,
   handleRevokeDeviceStartRequest,
@@ -479,6 +481,94 @@ test("malformed setup_request_id fails validation before rotate activate and abo
       0,
       `malformed setup_request_id ${testCase.name} must fail before the transaction runner`
     );
+  }
+});
+
+test("rotate and revoke browser pages and actions reject a malformed setup_request_id before querying", async () => {
+  const uppercaseSetupRequestId = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
+  for (const operation of /** @type {const} */ (["rotate", "revoke"])) {
+    /** @type {{ name: string, run: (query: MockProductTransactionQuery, setupRequestId: string) => Promise<{ ok: true } | { ok: false, error: { status: number, code: string, message: string } }> }[]} */
+    const cases = [
+      {
+        name: `${operation} approval preview`,
+        run: (query, setupRequestId) =>
+          getCredentialOperationBrowserApprovalPreview(query, {
+            operation,
+            setupRequestId,
+            accountId: ACCOUNT_ID
+          })
+      },
+      {
+        name: `${operation} terminal state`,
+        run: (query, setupRequestId) =>
+          getCredentialOperationTerminalSetupState(query, {
+            operation,
+            setupRequestId,
+            accountId: ACCOUNT_ID,
+            statuses: ["denied"]
+          })
+      },
+      {
+        name: `${operation} approve`,
+        run: (query, setupRequestId) =>
+          approveCredentialOperationBrowserSetupRequest(query, {
+            operation,
+            setupRequestId,
+            accountId: ACCOUNT_ID,
+            userId: USER_ID
+          })
+      },
+      {
+        name: `${operation} deny`,
+        run: (query, setupRequestId) =>
+          denyCredentialOperationSetupRequest(query, {
+            operation,
+            setupRequestId,
+            accountId: ACCOUNT_ID
+          })
+      }
+    ];
+
+    for (const testCase of cases) {
+      // Postgres rejects these as uuid input, so they must never reach SQL.
+      for (const setupRequestId of [
+        "not-a-uuid",
+        SETUP_REQUEST_ID.slice(0, -1),
+        `${SETUP_REQUEST_ID}'`
+      ]) {
+        const query = fakeQuery(() => {
+          throw new Error("malformed setup_request_id must not reach SQL");
+        });
+        const result = await testCase.run(query, setupRequestId);
+
+        assert.deepEqual(
+          result,
+          {
+            ok: false,
+            error: {
+              status: 400,
+              code: "invalid_request",
+              message: "Invalid setup request."
+            }
+          },
+          `${testCase.name}: ${setupRequestId}`
+        );
+        assert.equal(query.calls.length, 0, testCase.name);
+      }
+
+      // An uppercase UUID is valid uuid input and must still be looked up.
+      const query = fakeQuery(() => []);
+      const result = await testCase.run(query, uppercaseSetupRequestId);
+      assert.equal(result.ok, false, testCase.name);
+      if (result.ok) {
+        assert.fail(`expected unknown ${testCase.name} setup request to fail`);
+      }
+      assert.equal(result.error.code, "not_found", testCase.name);
+      assert.ok(
+        query.calls[0]?.values?.includes(uppercaseSetupRequestId),
+        testCase.name
+      );
+    }
   }
 });
 
