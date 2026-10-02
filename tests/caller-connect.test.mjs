@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import pg from "pg";
+
 import {
   enforceIpConnectDevicePollLimit,
   enforceIpConnectExchangeLimit,
@@ -27,6 +29,14 @@ import {
   handleConnectDevicePollRequest,
   handleConnectExchangeRequest
 } from "../src/server/caller-connect.ts";
+import { runProductTransaction } from "../src/server/database.ts";
+import {
+  assertMigrationOwnerCanSetAppRole,
+  DATABASE_POLICY_VERIFICATION_SKIP,
+  phase3DatabaseVerificationUrl,
+  preserveBodyErrorDuringTeardown,
+  teardownAttempt
+} from "./helpers/database.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
 
 const HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
@@ -36,6 +46,175 @@ const CALLER_ID = "00000000-0000-4000-8000-000000000003";
 const CONNECT_TEST_IP = "203.0.113.44";
 const SETUP_REQUEST_ID = "10000000-0000-4000-8000-000000000301";
 const PENDING_CREDENTIAL_ID = "20000000-0000-4000-8000-000000000402";
+
+test(
+  "connect approval insert-time duplicate preserves the 409 and commits account usage",
+  {
+    skip: phase3DatabaseVerificationUrl()
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const databaseUrl = phase3DatabaseVerificationUrl();
+    assert.ok(databaseUrl);
+    const accountId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    const setupRequestId = crypto.randomUUID();
+    const client = new pg.Client({
+      application_name: "agent-outbox-connect-duplicate-verification",
+      connectionString: databaseUrl
+    });
+    await client.connect();
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await assertMigrationOwnerCanSetAppRole(client);
+      await client.query(
+        `insert into public.agent_outbox_accounts(account_id, label) values ($1, $2)`,
+        [accountId, `connect-duplicate-${accountId}`]
+      );
+      await client.query(
+        `insert into public.agent_outbox_users(user_id, clerk_user_id) values ($1, $2)`,
+        [userId, `connect-duplicate-${userId}`]
+      );
+      await client.query(
+        `insert into public.agent_outbox_account_members(account_id, user_id, role) values ($1, $2, 'owner')`,
+        [accountId, userId]
+      );
+      await client.query(
+        `
+          insert into public.agent_outbox_caller_setup_requests(
+            setup_request_id, operation, flow, local_caller_name,
+            display_name, callback_url, expires_at
+          )
+          values ($1, 'connect', 'browser', 'steward-email', 'Steward Email',
+            'http://127.0.0.1:49152/callback', now() + interval '10 minutes')
+        `,
+        [setupRequestId]
+      );
+
+      let competingInsertCommitted = false;
+      const result = await runProductTransaction(
+        databaseUrl,
+        {
+          requestId: "req-connect-duplicate-db",
+          authSurface: "human",
+          accountId,
+          userId
+        },
+        async (query) => {
+          await query({ sql: "set local role agent_outbox_app" });
+          return approveConnectBrowserSetupRequest(
+            /**
+             * @template {import("pg").QueryResultRow} TResult
+             * @param {TransactionContextStatement} statement
+             * @returns {Promise<import("pg").QueryResult<TResult>>}
+             */
+            async (statement) => {
+              const queryResult = await query(statement);
+              if (
+                /from public\.agent_outbox_callers/.test(statement.sql) &&
+                /caller_slug = \$2/.test(statement.sql)
+              ) {
+                assert.deepEqual(queryResult.rows, []);
+                // Commit a competing insert after the real precheck, forcing
+                // the approval INSERT (not the precheck) to hit PostgreSQL 23505.
+                await client.query(
+                  `
+                    insert into public.agent_outbox_callers(
+                      account_id, display_name, caller_slug
+                    ) values ($1, 'Competing Caller', 'steward-email')
+                  `,
+                  [accountId]
+                );
+                competingInsertCommitted = true;
+              }
+              return /** @type {import("pg").QueryResult<TResult>} */ (
+                queryResult
+              );
+            },
+            { setupRequestId, accountId, userId }
+          );
+        }
+      );
+
+      assert.equal(competingInsertCommitted, true);
+      assert.deepEqual(result, {
+        ok: false,
+        error: {
+          status: 409,
+          code: "caller_already_exists",
+          message:
+            "A caller with this name already exists for this account. Use caller rotate or choose a different name.",
+          fields: [
+            {
+              path: "local_caller_name",
+              code: "duplicate",
+              message:
+                "A caller with this name already exists for this account."
+            }
+          ]
+        }
+      });
+      const usage = await client.query(
+        `
+          select sum(used_units)::int as used_units
+          from public.agent_outbox_account_quota_windows
+          where account_id = $1
+            and metric = 'caller_connect_approvals_per_account_per_minute'
+        `,
+        [accountId]
+      );
+      assert.deepEqual(usage.rows, [{ used_units: 1 }]);
+      const setup = await client.query(
+        `select status, caller_id from public.agent_outbox_caller_setup_requests where setup_request_id = $1`,
+        [setupRequestId]
+      );
+      assert.deepEqual(setup.rows, [{ status: "pending", caller_id: null }]);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          /** @type {Error[]} */
+          const errors = [];
+          const attempt = teardownAttempt(
+            errors,
+            "Connect duplicate teardown failed"
+          );
+          await attempt("setup request cleanup", () =>
+            client.query(
+              `delete from public.agent_outbox_caller_setup_requests where setup_request_id = $1`,
+              [setupRequestId]
+            )
+          );
+          await attempt("account cleanup", () =>
+            client.query(
+              `delete from public.agent_outbox_accounts where account_id = $1`,
+              [accountId]
+            )
+          );
+          await attempt("user cleanup", () =>
+            client.query(
+              `delete from public.agent_outbox_users where user_id = $1`,
+              [userId]
+            )
+          );
+          await attempt("client close", () => client.end());
+          if (errors.length > 0) {
+            throw new AggregateError(
+              errors,
+              "Connect duplicate teardown failed."
+            );
+          }
+        },
+        "Connect duplicate database test and teardown both failed."
+      );
+    }
+  }
+);
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -55,6 +234,15 @@ function fakeQuery(resolver) {
    * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
    */
   const query = async (statement) => {
+    // Savepoint control statements cannot be modeled by this fake. The live
+    // insert-time duplicate test proves transaction recovery.
+    if (
+      /^\s*(savepoint|release savepoint|rollback to savepoint) /.test(
+        statement.sql
+      )
+    ) {
+      return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+    }
     calls.push(statement);
     const rows = resolver(statement, calls.length);
     return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };

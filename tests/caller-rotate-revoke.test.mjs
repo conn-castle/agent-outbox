@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import test from "node:test";
+
+import pg from "pg";
 
 import { authenticateCallerApiRequest } from "../src/server/caller-api-auth.ts";
 import { generateCallerApiKeyMaterial } from "../src/server/caller-auth.ts";
@@ -17,6 +20,11 @@ import {
   handleRotateDeviceStartRequest,
   handleRotateExchangeRequest
 } from "../src/server/caller-credential-operations.ts";
+import {
+  DATABASE_POLICY_VERIFICATION_SKIP,
+  phase3DatabaseVerificationUrl,
+  preserveBodyErrorDuringTeardown
+} from "./helpers/database.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
 
 const HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
@@ -47,6 +55,15 @@ function fakeQuery(resolver) {
    * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
    */
   const query = async (statement) => {
+    // Savepoint control statements cannot be modeled by this fake. Only the
+    // live start-limit test below proves savepoint behavior.
+    if (
+      /^\s*(savepoint|release savepoint|rollback to savepoint) /.test(
+        statement.sql
+      )
+    ) {
+      return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+    }
     calls.push(statement);
     const rows = resolver(statement, calls.length);
     return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
@@ -1383,3 +1400,113 @@ function pendingRotateRunner(material, options = {}) {
     runner: fakeTransactionRunner([controlQuery, callerQuery])
   };
 }
+
+test(
+  "rotate and revoke starts for an unknown caller still count against the per-IP start limit",
+  {
+    skip: phase3DatabaseVerificationUrl()
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const databaseUrl = phase3DatabaseVerificationUrl();
+    assert.ok(databaseUrl);
+    const unknownCallerId = crypto.randomUUID();
+    const ipAddress = `2001:db8::${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}`;
+    const client = new pg.Client({
+      application_name: "agent-outbox-caller-start-limit-verification",
+      connectionString: databaseUrl
+    });
+    await client.connect();
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await withProcessEnv(
+        {
+          CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+          DATABASE_APP_ROLE_URL: databaseUrl,
+          PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+        },
+        async () => {
+          const rotate = await handleRotateBrowserStartRequest(
+            controlRequest("/api/caller/rotate/browser/start", {
+              headers: { "cf-connecting-ip": ipAddress }
+            }),
+            { requestId: "req-rotate-start-db", correlationId: "corr-db" },
+            {
+              caller_id: unknownCallerId,
+              local_caller_name: "steward-email",
+              callback_url: "http://127.0.0.1:49152/callback"
+            }
+          );
+          const revoke = await handleRevokeDeviceStartRequest(
+            controlRequest("/api/caller/revoke/device/start", {
+              headers: { "cf-connecting-ip": ipAddress }
+            }),
+            { requestId: "req-revoke-start-db", correlationId: "corr-db" },
+            {
+              caller_id: unknownCallerId,
+              local_caller_name: "steward-email"
+            }
+          );
+
+          assert.deepEqual(rotate, {
+            ok: false,
+            error: {
+              status: 400,
+              code: "invalid_request",
+              message: "Caller rotate target was not found."
+            }
+          });
+          assert.deepEqual(revoke, {
+            ok: false,
+            error: {
+              status: 400,
+              code: "invalid_request",
+              message: "Caller revoke target was not found."
+            }
+          });
+        }
+      );
+
+      const usage = await client.query(
+        `
+          select metric, sum(used_units)::int as used_units
+          from public.agent_outbox_ip_quota_windows
+          where ip_address = $1::inet
+          group by metric
+          order by metric
+        `,
+        [ipAddress]
+      );
+      assert.deepEqual(usage.rows, [
+        {
+          metric: "caller_revoke_start_requests_per_ip_per_minute",
+          used_units: 1
+        },
+        {
+          metric: "caller_rotate_start_requests_per_ip_per_minute",
+          used_units: 1
+        }
+      ]);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          try {
+            await client.query(
+              `delete from public.agent_outbox_ip_quota_windows where ip_address = $1::inet`,
+              [ipAddress]
+            );
+          } finally {
+            await client.end();
+          }
+        },
+        "Caller start limit database test and teardown both failed."
+      );
+    }
+  }
+);

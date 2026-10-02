@@ -8,6 +8,7 @@ import {
   generateCallerApiKeyMaterial,
   parseCallerApiKey
 } from "../src/server/caller-auth.ts";
+import { withSavepoint } from "../src/server/database.ts";
 import {
   assertMigrationOwnerCanSetAppRole,
   preserveBodyErrorDuringTeardown,
@@ -20,6 +21,71 @@ const accountId = "00000000-0000-4000-8000-000000000901";
 const userId = "00000000-0000-4000-8000-000000000902";
 const callerId = "00000000-0000-4000-8000-000000000903";
 const HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
+
+test("savepoint callback failure rolls back, releases, and rethrows the original error", async () => {
+  const workError = new Error("original constraint failure");
+  const runner = fakeTransactionRunner(() => []);
+  await assert.rejects(
+    runner.runTransaction(
+      "postgresql://savepoint-test",
+      { requestId: "req-savepoint-test", authSurface: "human" },
+      (query) =>
+        withSavepoint(query, "test_savepoint", async () => {
+          throw workError;
+        })
+    ),
+    (error) => error === workError
+  );
+  assert.deepEqual(
+    runner.statements.map((statement) => statement.sql),
+    [
+      "savepoint test_savepoint",
+      "rollback to savepoint test_savepoint",
+      "release savepoint test_savepoint"
+    ]
+  );
+});
+
+for (const failedCleanup of ["rollback to", "release"]) {
+  test(`savepoint ${failedCleanup} failure reports cleanup failure with the original error as cause`, async () => {
+    const workError = new Error("original constraint failure");
+    const cleanupError = new Error(`${failedCleanup} failed`);
+    const runner = fakeTransactionRunner((statement) => {
+      if (statement.sql === `${failedCleanup} savepoint test_savepoint`) {
+        throw cleanupError;
+      }
+      return [];
+    });
+
+    await assert.rejects(
+      runner.runTransaction(
+        "postgresql://savepoint-test",
+        { requestId: "req-savepoint-cleanup-test", authSurface: "human" },
+        (query) =>
+          withSavepoint(query, "test_savepoint", async () => {
+            throw workError;
+          })
+      ),
+      (error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.equal(error.message, "Savepoint work and cleanup both failed.");
+        assert.equal(error.cause, workError);
+        assert.deepEqual(error.errors, [workError, cleanupError]);
+        return true;
+      }
+    );
+    assert.deepEqual(
+      runner.statements.map((statement) => statement.sql),
+      failedCleanup === "rollback to"
+        ? ["savepoint test_savepoint", "rollback to savepoint test_savepoint"]
+        : [
+            "savepoint test_savepoint",
+            "rollback to savepoint test_savepoint",
+            "release savepoint test_savepoint"
+          ]
+    );
+  });
+}
 
 const databaseTestsEnabled =
   process.env.AGENT_OUTBOX_ENABLE_DATABASE_TESTS === "1";
