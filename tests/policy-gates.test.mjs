@@ -107,6 +107,79 @@ test("migration discipline fixtures pass and block unapproved DROP COLUMN", () =
   }
 });
 
+test("migration annotations identify the offending action and its source line", () => {
+  const scratchRoot = path.join(ROOT, ".agent-layer/tmp");
+  mkdirSync(scratchRoot, { recursive: true });
+  const tmpDir = mkdtempSync(path.join(scratchRoot, "migration-annotations-"));
+  const sqlPath = path.join(tmpDir, "migration.sql");
+  const pathsFile = path.join(tmpDir, "paths.txt");
+  writeFileSync(pathsFile, `${sqlPath}\n`, "utf8");
+
+  const cases = [
+    {
+      sql: "ALTER TABLE t DROP CONSTRAINT c,\n DROP x;",
+      operation: "DROP COLUMN",
+      line: 2
+    },
+    {
+      sql: "ALTER TABLE t ALTER note SET DEFAULT 'RENAME',\n RENAME x TO y;",
+      operation: "RENAME COLUMN",
+      line: 2
+    },
+    {
+      sql: "ALTER TABLE t ALTER note SET DEFAULT 'TYPE',\n ALTER x\n TYPE bigint;",
+      operation: "ALTER COLUMN TYPE",
+      line: 2
+    },
+    {
+      sql: "ALTER TABLE t ALTER note SET DEFAULT 'SET NOT NULL',\n ALTER x SET NOT NULL;",
+      operation: "ALTER COLUMN SET NOT NULL",
+      line: 2
+    },
+    {
+      sql: "ALTER TABLE t ALTER safe SET DEFAULT '',\n ALTER safe SET NOT NULL,\n ALTER x SET NOT NULL;",
+      operation: "ALTER COLUMN SET NOT NULL",
+      line: 3
+    },
+    {
+      sql: "ALTER TABLE t ALTER safe SET DEFAULT '',\n ALTER safe SET NOT NULL,\n ALTER COLUMN constraint$flag SET NOT NULL;",
+      operation: "ALTER COLUMN SET NOT NULL",
+      line: 3
+    },
+    {
+      sql: "ALTER TABLE café ALTER note SET DEFAULT '😀 SET NOT NULL',\n /* comment\n continues */ ALTER COLUMN café SET NOT NULL;",
+      operation: "ALTER COLUMN SET NOT NULL",
+      line: 3,
+      text: "ALTER COLUMN café SET NOT NULL;"
+    },
+    {
+      sql: "SELECT 1; ALTER TABLE t DROP CONSTRAINT c,\r\n DROP x;",
+      operation: "DROP COLUMN",
+      line: 2
+    }
+  ];
+
+  for (const { sql, operation, line, text } of cases) {
+    writeFileSync(sqlPath, sql, "utf8");
+    const result = runNode([
+      "scripts/policy-gates/migration-discipline-scan.mjs",
+      "--paths-file",
+      pathsFile
+    ]);
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    const annotations = result.stderr
+      .split("\n")
+      .filter((text) => text.startsWith("::error "));
+    assert.deepEqual(
+      annotations,
+      [
+        `::error file=${sqlPath},line=${line}::${operation} in ${sqlPath}:${line} (${text ?? sql.split(/\r?\n/)[line - 1].trim()})`
+      ],
+      sql
+    );
+  }
+});
+
 test("policy-gates workflow retriggers on labels and never applies them", () => {
   const workflow = readFileSync(
     path.join(ROOT, ".github/workflows/policy-gates.yml"),

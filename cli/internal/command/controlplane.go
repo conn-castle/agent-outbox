@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -199,10 +200,11 @@ func callerListCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if flags.json {
 				return renderStructuredSuccess(opts.Stdout, true, nil, map[string]any{"callers": cfg.Callers})
 			}
+			var out bytes.Buffer
 			for _, caller := range cfg.Callers {
-				_, _ = fmt.Fprintln(opts.Stdout, formatLocalCaller(caller))
+				out.WriteString(formatLocalCaller(caller) + "\n")
 			}
-			return nil
+			return writeCommandOutput(opts.Stdout, out.Bytes())
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
@@ -211,7 +213,7 @@ func callerListCommand(opts Options, flags *rootFlags) *cobra.Command {
 		Flags:       "--json prints callers[]. Global --config, --base-url, --caller, and --no-color are accepted; --caller is not needed for local listing.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox caller list\nagent-outbox caller list --json",
-		ExitCodes:   "0 success. 64 usage. 78 missing, invalid, or incomplete local caller config.",
+		ExitCodes:   "0 success. 64 usage. 75 local output write failure. 78 missing, invalid, or incomplete local caller config.",
 		RelatedDocs: "docs/spec/README.md#cli-foundation-contract and agent-outbox docs caller.",
 	})
 	return bypassRootPreflight(cmd)
@@ -698,6 +700,9 @@ func restoreCallerSecret(runtime *controlPlaneRuntime, callerID string, oldKey s
 	_ = deleteCallerSecret(runtime, callerID)
 }
 
+// activateDefinitivelyDidNotCommit reports whether a validated API error proves the hosted
+// activation was not committed. The activation rate limit is enforced in the lookup transaction
+// before the commit transaction runs, so rate_limit_exceeded is uncommitted too.
 func activateDefinitivelyDidNotCommit(err error) bool {
 	var appErr *foundation.AppError
 	if !errors.As(err, &appErr) {
@@ -709,7 +714,8 @@ func activateDefinitivelyDidNotCommit(err error) bool {
 		foundation.CodeAuthenticationRequired,
 		foundation.CodeInvalidCallerCredentials,
 		foundation.CodeAuthorizationFailed,
-		foundation.CodeNotFound:
+		foundation.CodeNotFound,
+		foundation.CodeRateLimitExceeded:
 		return true
 	default:
 		return false

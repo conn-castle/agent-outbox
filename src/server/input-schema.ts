@@ -1128,6 +1128,10 @@ function requiredString(
     );
     return "";
   }
+  if (!isStorableString(value)) {
+    fields.push(unstorableStringError(path));
+    return "";
+  }
   return value;
 }
 
@@ -1141,7 +1145,26 @@ function optionalString(value: unknown, fields: ApiFieldError[], path: string) {
     );
     return null;
   }
+  if (!isStorableString(value)) {
+    fields.push(unstorableStringError(path));
+    return null;
+  }
   return value;
+}
+
+// Postgres text cannot hold U+0000, and UTF-8 encoding replaces lone
+// surrogates with U+FFFD, so either would change the string after it was
+// fingerprinted or used as a lookup key.
+export function isStorableString(value: string) {
+  return value.isWellFormed() && !value.includes("\u0000");
+}
+
+export function unstorableStringError(path: string): ApiFieldError {
+  return fieldError(
+    path,
+    "invalid_string",
+    `${path} must be well-formed Unicode without NUL characters.`
+  );
 }
 
 function requiredBoolean(

@@ -6,6 +6,7 @@ export type RuntimeLogEvent = {
   level: LogLevel;
   error_id?: string;
   error_name?: string;
+  error_code?: string;
   sentry_captured?: boolean;
   sentry_scope_attached?: boolean;
   sentry_capture_rate_limited?: boolean;
@@ -41,6 +42,7 @@ const SAFE_LOG_KEYS = new Set([
   "level",
   "error_id",
   "error_name",
+  "error_code",
   "sentry_captured",
   "sentry_scope_attached",
   "sentry_capture_rate_limited",
@@ -72,11 +74,29 @@ const SAFE_LOG_KEYS = new Set([
   "message"
 ]);
 const SAFE_ERROR_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/;
+const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
+const SAFE_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EPIPE",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "QUERY_READ_TIMEOUT",
+  "CONNECTION_TIMEOUT",
+  "CONNECTION_TERMINATED"
+]);
 
 export function safeLogEvent(event: RuntimeLogEvent) {
   const safeEntries = Object.entries(event)
     .filter(([key, value]) => {
-      return SAFE_LOG_KEYS.has(key) && value !== undefined;
+      return (
+        SAFE_LOG_KEYS.has(key) &&
+        value !== undefined &&
+        (key !== "error_code" || safeErrorCodeValue(value) !== undefined)
+      );
     })
     .map(([key, value]) => {
       return [
@@ -94,6 +114,39 @@ export function safeErrorName(error: unknown) {
   }
 
   return "UnknownError";
+}
+
+export function safeErrorCode(error: unknown): string | undefined {
+  try {
+    // Transaction cleanup can fail after the original operation. Preserve the
+    // original diagnostic carried as the aggregate's cause, with bounded depth.
+    for (let depth = 0; depth < 5; depth++) {
+      if (!isErrorObject(error)) {
+        return undefined;
+      }
+      const code = safeErrorCodeValue(error.code);
+      if (code) {
+        return code;
+      }
+      // node-postgres emits these fixed messages without a machine-readable
+      // code. Classify only exact matches; never forward exception text.
+      switch (error.message) {
+        case "Query read timeout":
+          return "QUERY_READ_TIMEOUT";
+        case "timeout expired":
+          return "CONNECTION_TIMEOUT";
+        case "Connection terminated unexpectedly":
+          return "CONNECTION_TERMINATED";
+      }
+      if (!(error instanceof AggregateError)) {
+        return undefined;
+      }
+      error = error.cause;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function emitRuntimeLog(event: RuntimeLogEvent) {
@@ -138,7 +191,16 @@ function safeErrorNameValue(value: unknown, fallback: string) {
   return fallback;
 }
 
-function isErrorObject(error: unknown): error is { name?: unknown } {
+function safeErrorCodeValue(value: unknown) {
+  return typeof value === "string" &&
+    (SQLSTATE_PATTERN.test(value) || SAFE_ERROR_CODES.has(value))
+    ? value
+    : undefined;
+}
+
+function isErrorObject(
+  error: unknown
+): error is { name?: unknown; code?: unknown; message?: unknown } {
   return (
     error instanceof Error ||
     Object.prototype.toString.call(error) === "[object Error]"

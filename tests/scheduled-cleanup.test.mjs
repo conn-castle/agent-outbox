@@ -20,6 +20,7 @@ import {
 } from "../src/server/cleanup.ts";
 import {
   cleanupAccountTargetsStatement,
+  cleanupAccountTierLockStatement,
   runScheduledCanary,
   runScheduledCleanup,
   scheduledCleanupStatementsForAccount
@@ -229,8 +230,18 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
         statements.push(statement);
         if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
           return cleanupQueryResult([
-            { account_id: "account-free", tier: "hosted_free" },
-            { account_id: "account-paid", tier: "hosted_paid" }
+            { account_id: "account-free" },
+            { account_id: "account-paid" }
+          ]);
+        }
+        if (statement.sql === cleanupAccountTierLockStatement("").sql) {
+          return cleanupQueryResult([
+            {
+              tier:
+                context.accountId === "account-paid"
+                  ? "hosted_paid"
+                  : "hosted_free"
+            }
           ]);
         }
 
@@ -262,22 +273,22 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     cleanupAccountTargetsStatement(),
     ...globalQuotaWindowMaintenanceStatements(now)
   ]);
-  assert.deepEqual(
-    statementsByContext[1],
-    scheduledCleanupStatementsForAccount({
+  assert.deepEqual(statementsByContext[1], [
+    cleanupAccountTierLockStatement("account-free"),
+    ...scheduledCleanupStatementsForAccount({
       tier: "hosted_free",
       now,
       requestId: "cleanup-test-request"
     })
-  );
-  assert.deepEqual(
-    statementsByContext[2],
-    scheduledCleanupStatementsForAccount({
+  ]);
+  assert.deepEqual(statementsByContext[2], [
+    cleanupAccountTierLockStatement("account-paid"),
+    ...scheduledCleanupStatementsForAccount({
       tier: "hosted_paid",
       now,
       requestId: "cleanup-test-request"
     })
-  );
+  ]);
   assert.deepEqual(result, {
     ok: true,
     code: "scheduled_cleanup_completed",
@@ -360,9 +371,12 @@ test("scheduled cleanup continues account maintenance after one account fails", 
         const query = async (statement) => {
           if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
             return cleanupQueryResult([
-              { account_id: "account-free", tier: "hosted_free" },
-              { account_id: "account-paid", tier: "hosted_paid" }
+              { account_id: "account-free" },
+              { account_id: "account-paid" }
             ]);
+          }
+          if (statement.sql === cleanupAccountTierLockStatement("").sql) {
+            return cleanupQueryResult([{ tier: "hosted_paid" }]);
           }
 
           return cleanupQueryResult([{ deleted_count: 1 }]);
@@ -399,6 +413,82 @@ test("scheduled cleanup continues account maintenance after one account fails", 
     }
   ]);
 });
+
+test("scheduled cleanup reports an account whose locked row cannot be read", async () => {
+  const now = new Date("2026-07-15T12:34:56.000Z");
+  /** @type {string[]} */
+  const cleanedAccounts = [];
+  /**
+   * @param {import("pg").QueryResultRow[]} rows
+   * @returns {import("pg").QueryResult<import("pg").QueryResultRow>}
+   */
+  function cleanupQueryResult(rows) {
+    return {
+      command: "SELECT",
+      rowCount: rows.length,
+      oid: 0,
+      fields: [],
+      rows
+    };
+  }
+
+  /** @type {unknown} */
+  let thrown;
+  try {
+    await runScheduledCleanup({
+      connectionString: "postgresql://cleanup-test",
+      now,
+      requestId: "cleanup-test-request",
+      async runTransaction(_connectionString, context, callback) {
+        /**
+         * @param {import("../src/server/database.ts").TransactionContextStatement} statement
+         * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
+         */
+        const query = async (statement) => {
+          if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
+            return cleanupQueryResult([
+              { account_id: "account-missing" },
+              { account_id: "account-paid" }
+            ]);
+          }
+          if (statement.sql === cleanupAccountTierLockStatement("").sql) {
+            return cleanupQueryResult(
+              context.accountId === "account-missing"
+                ? []
+                : [{ tier: "hosted_paid" }]
+            );
+          }
+          if (context.accountId) {
+            cleanedAccounts.push(context.accountId);
+          }
+
+          return cleanupQueryResult([{ deleted_count: 0 }]);
+        };
+
+        return await callback(
+          /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
+            query
+          )
+        );
+      }
+    });
+  } catch (error) {
+    thrown = error;
+  }
+
+  assert(thrown instanceof AggregateError);
+  assert.match(
+    thrown.message,
+    /^Scheduled cleanup failed for 1 account\(s\): account-missing$/
+  );
+  assert.match(
+    String(thrown.errors[0]?.message),
+    /locked account row is invalid/
+  );
+  assert.equal(new Set(cleanedAccounts).size, 1);
+  assert.ok(cleanedAccounts.includes("account-paid"));
+});
+
 test("scheduled canary ignores invalid scheduled timestamps", () => {
   const originalLog = console.log;
   console.log = () => {};

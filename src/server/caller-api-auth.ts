@@ -56,8 +56,7 @@ export type CallerApiAuthFailureReason =
   | "secret_mismatch"
   | "credential_revoked"
   | "credential_expired"
-  | "credential_not_active"
-  | "credential_lookup_failed";
+  | "credential_not_active";
 
 export type CallerApiAuthFailure = {
   ok: false;
@@ -117,12 +116,6 @@ const AUTHENTICATION_REQUIRED_CLIENT_ERROR: ApiErrorInput = {
   message: "Caller bearer credentials are required."
 };
 
-const TEMPORARY_UNAVAILABLE_CLIENT_ERROR: ApiErrorInput = {
-  status: 503,
-  code: "temporary_unavailable",
-  message: "Caller authentication is temporarily unavailable."
-};
-
 const UNKNOWN_CALLER_SECRET_SENTINEL_DIGEST =
   "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -163,18 +156,7 @@ export async function authenticateCallerApiRequest(
     });
   }
 
-  let credential: StoredCallerCredentialDigest | null | undefined;
-  try {
-    credential = await lookupCredential(parsed.keyId);
-  } catch {
-    return failAndLog({
-      clientError: TEMPORARY_UNAVAILABLE_CLIENT_ERROR,
-      keyId: parsed.keyId,
-      reason: "credential_lookup_failed",
-      secretDigestCompared: false,
-      secretMatched: null
-    });
-  }
+  const credential = await lookupCredential(parsed.keyId);
 
   const secretDigest = callerApiKeySecretDigest(parsed.secret);
 

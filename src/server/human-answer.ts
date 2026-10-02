@@ -9,6 +9,7 @@ import {
 } from "./accounting.ts";
 import {
   accountLimitProfileForAccount,
+  accountWriteLockStatement,
   enforceHumanFileUploadLimits
 } from "./caller-api-limits.ts";
 import { preReadUndoStatement } from "./cleanup.ts";
@@ -249,6 +250,9 @@ export async function createHumanAnswerInTransaction(
   }
 
   const answeredAt = input.answeredAt ?? new Date();
+  // Caller replacement takes the account quota lock before the input lock.
+  // Use the same order here, including the account lock needed by output FKs.
+  await query(accountWriteLockStatement(input));
   const targetInputResult = await query<TargetInputRow>(
     targetInputForAnswerStatement(input)
   );

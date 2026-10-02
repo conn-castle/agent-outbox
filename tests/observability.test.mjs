@@ -43,6 +43,7 @@ import {
 import {
   durationSinceMs,
   emitRuntimeLog,
+  safeErrorCode,
   safeErrorName,
   safeLogEvent
 } from "../src/server/logging.ts";
@@ -173,6 +174,7 @@ function loadSentryModuleForTest(sentryStub) {
   vm.runInNewContext(
     compiled,
     {
+      Error,
       console,
       exports: testModule.exports,
       module: testModule,
@@ -185,7 +187,7 @@ function loadSentryModuleForTest(sentryStub) {
           return sentryStub;
         }
         if (specifier === "./logging.ts") {
-          return { emitRuntimeLog, safeErrorName };
+          return { emitRuntimeLog, safeErrorCode, safeErrorName };
         }
         if (specifier === "./observability.ts") {
           return { runtimeRelease };
@@ -383,6 +385,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
   vm.runInNewContext(
     compiled,
     {
+      AggregateError,
       Buffer,
       console,
       exports: testModule.exports,
@@ -517,6 +520,8 @@ function loadCommonJsModuleForTest(relativePath, stubs) {
   vm.runInNewContext(
     compiled,
     {
+      AggregateError,
+      Error,
       Buffer,
       console,
       exports: testModule.exports,
@@ -592,6 +597,7 @@ function loadCallerRouteModuleForTest(
 
 /**
  * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
+ * @param {Error} [transactionError]
  * @returns {{
  *   handleInputQueueRequest(
  *     request: Request,
@@ -601,7 +607,10 @@ function loadCallerRouteModuleForTest(
  *   ): Promise<{ ok: boolean, error?: import("../src/server/api-errors.ts").ApiErrorInput }>
  * }}
  */
-function loadInputQueueModuleForTest(reportRuntimeFailure) {
+function loadInputQueueModuleForTest(
+  reportRuntimeFailure,
+  transactionError = new Error("raw input transaction secret")
+) {
   /**
    * @param {Request} _request
    * @param {import("../src/server/api-errors.ts").ApiRequestContext} context
@@ -620,7 +629,7 @@ function loadInputQueueModuleForTest(reportRuntimeFailure) {
       accountId: "00000000-0000-4000-8000-000000000201",
       callerId: "00000000-0000-4000-8000-000000000202"
     });
-    throw new Error("raw input transaction secret");
+    throw transactionError;
   };
 
   return /** @type {ReturnType<typeof loadInputQueueModuleForTest>} */ (
@@ -629,6 +638,7 @@ function loadInputQueueModuleForTest(reportRuntimeFailure) {
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
+        accountWriteLockStatement() {},
         async enforceAcceptedInputSubmissionLimits() {},
         async enforceCallerRequestLimits() {}
       },
@@ -3743,6 +3753,176 @@ test("runtime sentry canary reports configured capture while smoke suppresses em
   assert.equal(reports[0].route, "/api/runtime/sentry");
 });
 
+test("product transactions retain connection diagnostics when rollback also fails", async () => {
+  for (const rollbackFails of [false, true]) {
+    const original = Object.assign(new Error("private connection detail"), {
+      code: "ECONNRESET"
+    });
+    const rollbackError = new Error(
+      "Client has encountered a connection error and is not queryable"
+    );
+    let closed = false;
+    class FailingClient {
+      async connect() {}
+      /** @param {string} sql */
+      async query(sql) {
+        if (sql === "select private") throw original;
+        if (sql === "rollback" && rollbackFails) throw rollbackError;
+        return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+      }
+      async end() {
+        closed = true;
+      }
+    }
+    const { runProductTransaction } =
+      /** @type {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction }} */ (
+        loadCommonJsModuleForTest("src/server/database.ts", {
+          pg: { Client: FailingClient }
+        })
+      );
+    await assert.rejects(
+      runProductTransaction(
+        "postgresql://transaction-test",
+        { requestId: "req-connection-failure", authSurface: "caller" },
+        (query) => query({ sql: "select private" })
+      ),
+      (error) => {
+        assert.equal(safeErrorCode(error), "ECONNRESET");
+        if (rollbackFails) {
+          assert.ok(error instanceof AggregateError);
+          assert.equal(error.cause, original);
+          assert.deepEqual(error.errors, [original, rollbackError]);
+        } else {
+          assert.equal(error, original);
+        }
+        return true;
+      }
+    );
+    assert.equal(closed, true);
+  }
+});
+
+test("input replacement failures expose safe diagnostic codes only in logs and Sentry", async () => {
+  /** @type {Array<Record<string, unknown>>} */
+  const scopes = [];
+  /** @type {Array<Record<string, unknown>>} */
+  const contexts = [];
+  /** @type {unknown[]} */
+  const exceptions = [];
+  const { reportRuntimeFailure } = loadSentryModuleForTest({
+    /** @param {Function} callback */
+    withScope(callback) {
+      /** @type {Record<string, unknown>} */
+      const tags = {};
+      callback({
+        /** @param {string} name @param {unknown} value */
+        setTag(name, value) {
+          tags[name] = value;
+        },
+        /** @param {string} _name @param {Record<string, unknown>} value */
+        setContext(_name, value) {
+          contexts.push(value);
+        },
+        setFingerprint() {}
+      });
+      scopes.push(tags);
+    },
+    /** @param {unknown} error */
+    captureException(error) {
+      exceptions.push(error);
+    }
+  });
+  const cases = [
+    { code: "23503", message: "private row content", expected: "23503" },
+    { message: "Query read timeout", expected: "QUERY_READ_TIMEOUT" },
+    {
+      code: "ECONNRESET",
+      message: "private connection detail",
+      expected: "ECONNRESET",
+      rollbackFailure: true
+    },
+    {
+      code: "private-token",
+      message: "private row content",
+      expected: undefined
+    }
+  ];
+  await withProcessEnv(
+    {
+      APP_ENV: "production",
+      DATABASE_APP_ROLE_URL: "postgresql://observability-test",
+      SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+      SENTRY_RELEASE: "test-release",
+      CI: undefined,
+      NODE_ENV: "production"
+    },
+    async () => {
+      for (const [
+        index,
+        { code, message, expected, rollbackFailure }
+      ] of cases.entries()) {
+        const original = Object.assign(new Error(message), {
+          code,
+          detail: "private database detail",
+          query: "private SQL"
+        });
+        const failure = rollbackFailure
+          ? new AggregateError(
+              [original, new Error("private rollback detail")],
+              "private",
+              {
+                cause: original
+              }
+            )
+          : original;
+        const { handleInputQueueRequest } = loadInputQueueModuleForTest(
+          reportRuntimeFailure,
+          failure
+        );
+        const request = new Request(
+          "https://app.agent-outbox.dev/api/input/replace",
+          {
+            method: "POST"
+          }
+        );
+        const context = apiRequestContext(request, "/api/input/replace");
+        context.requestId = "req-input-queue-observability";
+        const logs = await captureStructuredLogs(async () => {
+          const result = await handleInputQueueRequest(
+            request,
+            context,
+            "replace",
+            {}
+          );
+          assert.equal(result.ok, false);
+          assert.ok(result.error);
+          const response = apiErrorResponse(context, result.error);
+          assert.equal(response.status, 503);
+          const body = await response.json();
+          assert.equal(body.error.code, "temporary_unavailable");
+          assert.equal(body.error.error_id, context.correlationId);
+          assert.equal(JSON.stringify(body).includes("private"), false);
+          assert.equal(JSON.stringify(body).includes("error_code"), false);
+        });
+        assert.equal(logs.length, 1);
+        assert.equal(logs[0].operation, "input_replace");
+        assert.equal(logs[0].error_code, expected);
+        assert.equal(scopes[index].error_code, expected);
+        assert.equal(contexts[index].error_code, expected);
+        assert.equal(scopes[index].error_id, context.correlationId);
+        assert.equal(logs[0].error_id, context.correlationId);
+        const evidence = JSON.stringify([
+          logs,
+          scopes[index],
+          contexts[index],
+          exceptions[index]
+        ]);
+        assert.equal(evidence.includes("private"), false);
+      }
+    }
+  );
+});
+
 test("reportRuntimeFailure shares one error id across structured log and Sentry", async () => {
   /** @type {Map<string, unknown>} */
   const tags = new Map();
@@ -3826,7 +4006,7 @@ test("reportRuntimeFailure shares one error id across structured log and Sentry"
   assert.equal(sentryContext.name, "agent_outbox");
   assert.equal(sentryContext.value.error_id, "err_shared_observability");
   assert.equal(sentryContext.value.operation, "runtime.failure.test");
-  assert.equal(capturedException.name, "Error");
+  assert.equal(capturedException.name, "TypeError");
   assert.equal(capturedException.message, "Agent Outbox runtime failure");
   assert.equal(String(capturedException.stack).includes("raw detail"), false);
 

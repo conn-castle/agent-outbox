@@ -150,6 +150,13 @@ from canonical SSM using AWS profile `conn` without caching or printing them.
 
 ## Operations
 
+Before searching historical Worker logs, compare the incident's UTC timestamp
+with the
+[Workers Logs retention limits](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#limits).
+Expired logs cannot be recovered by restoring authentication. When the matching
+log is outside retention and Sentry lacks the original failure diagnostics,
+investigate a safe reproduction or a new occurrence instead.
+
 - Verify the configured account, Worker name, routes, and zone before inspecting
   or changing anything.
 - Use Wrangler for Worker deployment inspection, log checks, and runtime secret

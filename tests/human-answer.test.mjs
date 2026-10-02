@@ -11,6 +11,11 @@ import {
   validatedResponsePayload
 } from "../src/server/human-answer.ts";
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
+import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
+import { handleOutputFileDownloadAuthenticatedTransaction } from "../src/server/output-files.ts";
+import { acknowledgeOutputInTransaction } from "../src/server/output-queue.ts";
+import { runScheduledCleanup } from "../src/server/scheduled.ts";
+import { accountLimitStatusMetadata } from "../src/server/limits.ts";
 import {
   assertMigrationOwnerCanSetAppRole,
   connectedDatabaseClient,
@@ -1079,6 +1084,857 @@ test(
 );
 
 test(
+  "concurrent replacement and human answers finish without deadlocking or answering a stale revision",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async (t) => {
+    assert.ok(databaseUrl);
+    const scenarios = [
+      {
+        tier: "hosted_free",
+        kind: "none",
+        pauseAt: "account",
+        answerWins: false
+      },
+      {
+        tier: "hosted_paid",
+        kind: "none",
+        pauseAt: "input",
+        answerWins: false
+      },
+      {
+        tier: "hosted_paid",
+        kind: "file_upload",
+        pauseAt: "upload",
+        answerWins: true
+      }
+    ];
+    for (const { tier, kind, pauseAt, answerWins } of scenarios) {
+      await t.test(`${tier}: pause after ${pauseAt}`, async () => {
+        const owner = await connectedDatabaseClient(databaseUrl);
+        const human = await connectedDatabaseClient(databaseUrl);
+        const caller = await connectedDatabaseClient(databaseUrl);
+        const ids = {
+          accountId: crypto.randomUUID(),
+          userId: crypto.randomUUID(),
+          callerId: crypto.randomUUID(),
+          inputItemId: crypto.randomUUID(),
+          actionId: crypto.randomUUID()
+        };
+        /** @type {PromiseWithResolvers<void>} */
+        const accountLocked = Promise.withResolvers();
+        /** @type {PromiseWithResolvers<void>} */
+        const resumeReplacement = Promise.withResolvers();
+        /** @type {Promise<unknown>[]} */
+        const operations = [];
+        /** @type {unknown} */
+        let bodyError;
+        try {
+          await assertMigrationOwnerCanSetAppRole(owner);
+          await owner.query("begin");
+          await seedDatabaseRows(owner, ids);
+          await owner.query(
+            "update public.agent_outbox_accounts set tier = $2 where account_id = $1",
+            [ids.accountId, tier]
+          );
+          await owner.query(
+            "update public.agent_outbox_input_actions set popup_kind = $2 where input_action_id = $1",
+            [ids.actionId, kind]
+          );
+          await owner.query("commit");
+          const humanPid = (await human.query("select pg_backend_pid() as pid"))
+            .rows[0].pid;
+          const callerPid = (
+            await caller.query("select pg_backend_pid() as pid")
+          ).rows[0].pid;
+          /**
+           * @template TResult
+           * @param {import("pg").Client} client
+           * @param {string} surface
+           * @param {(query: ProductTransactionQuery) => Promise<TResult>} callback
+           */
+          async function transaction(client, surface, callback) {
+            return runHumanAnswerDatabaseTransaction(
+              client,
+              ids,
+              surface,
+              callback
+            );
+          }
+          const submission = {
+            caller_item_id: "caller-item-db",
+            row_type: { display: "Review", icon: "inbox" },
+            title: "Replaced title",
+            subtitle: "Subtitle",
+            summary: "Summary",
+            link_buttons: [],
+            actions: [
+              {
+                display: "Approve",
+                icon: "check",
+                value: "approve",
+                overflow: false,
+                popup:
+                  kind === "file_upload"
+                    ? { kind, label: "Upload answer" }
+                    : { kind }
+              }
+            ]
+          };
+          if (pauseAt === "input") {
+            // Seed the minute quota through the real API path. A later quota
+            // upsert need not acquire a foreign-key lock on the account.
+            const warmup = await transaction(caller, "caller", (query) =>
+              handleInputQueueRequestInTransaction(
+                query,
+                { requestId: "req-warmup", correlationId: "corr-warmup" },
+                ids,
+                "replace",
+                { ...submission, caller_item_id: "missing-warmup" }
+              )
+            );
+            assert.equal(warmup.ok, false);
+            if (warmup.ok) assert.fail("warmup input must be missing");
+            assert.equal(warmup.error.code, "not_found");
+          }
+          let paused = false;
+          /** @param {ProductTransactionQuery} query @param {(statement: TransactionContextStatement) => boolean} matches */
+          function pauseAfter(query, matches) {
+            return /** @type {ProductTransactionQuery} */ (
+              async (statement) => {
+                const result = await query(statement);
+                if (!paused && matches(statement)) {
+                  paused = true;
+                  accountLocked.resolve();
+                  await resumeReplacement.promise;
+                }
+                return result;
+              }
+            );
+          }
+          const startReplacement = () =>
+            transaction(caller, "caller", (query) =>
+              handleInputQueueRequestInTransaction(
+                answerWins
+                  ? query
+                  : pauseAfter(
+                      query,
+                      (statement) =>
+                        statement.sql.includes("for update") &&
+                        statement.sql.includes(
+                          pauseAt === "account"
+                            ? "from public.agent_outbox_accounts"
+                            : "from public.agent_outbox_input_items"
+                        )
+                    ),
+                {
+                  requestId: "req-concurrent-caller",
+                  correlationId: "corr-concurrent-caller"
+                },
+                ids,
+                "replace",
+                submission
+              )
+            );
+          const startAnswer = () =>
+            transaction(human, "human", (query) =>
+              createHumanAnswerInTransaction(
+                answerWins
+                  ? pauseAfter(query, (statement) =>
+                      statement.sql.includes(
+                        "insert into public.agent_outbox_output_files"
+                      )
+                    )
+                  : query,
+                {
+                  accountId: ids.accountId,
+                  callerId: ids.callerId,
+                  humanUserId: ids.userId,
+                  inputItemId: ids.inputItemId,
+                  requestId: "req-concurrent-human",
+                  correlationId: "corr-concurrent-human",
+                  expectedRevision: 1,
+                  actionValue: "approve",
+                  response:
+                    kind === "file_upload"
+                      ? {
+                          kind: "file_upload",
+                          file: new File(["answer"], "answer.txt", {
+                            type: "text/plain"
+                          })
+                        }
+                      : { kind: "none" }
+                }
+              )
+            );
+          const first = answerWins ? startAnswer() : startReplacement();
+          operations.push(first);
+          await Promise.race([accountLocked.promise, first]);
+          assert.equal(
+            paused,
+            true,
+            "first operation must reach the pause point"
+          );
+          const second = answerWins ? startReplacement() : startAnswer();
+          operations.push(second);
+          const settledOperations = Promise.allSettled([first, second]);
+          await waitForDatabaseBlock(
+            owner,
+            answerWins ? callerPid : humanPid,
+            answerWins ? humanPid : callerPid
+          );
+          resumeReplacement.resolve();
+          const results = await settledOperations;
+          for (const result of results) {
+            if (result.status === "rejected") throw result.reason;
+          }
+          const replaced =
+            /** @type {Awaited<ReturnType<typeof handleInputQueueRequestInTransaction>>} */ (
+              await (answerWins ? second : first)
+            );
+          const answered =
+            /** @type {Awaited<ReturnType<typeof createHumanAnswerInTransaction>>} */ (
+              await (answerWins ? first : second)
+            );
+          assert.equal(replaced.ok, !answerWins, JSON.stringify(replaced));
+          assert.equal(answered.ok, answerWins, JSON.stringify(answered));
+          if (answerWins) {
+            if (replaced.ok || !answered.ok) assert.fail("answer must win");
+            assert.equal(replaced.error.code, "answered_unacknowledged");
+            const uploaded = await owner.query(
+              "select file_bytes from public.agent_outbox_output_files where output_result_id = $1",
+              [answered.outputResultId]
+            );
+            assert.equal(uploaded.rowCount, 1);
+            assert.equal(uploaded.rows[0].file_bytes.toString(), "answer");
+          } else {
+            if (answered.ok) assert.fail("the old revision cannot be answered");
+            assert.equal(answered.code, "stale_input_revision");
+          }
+          const state = await owner.query(
+            `select status, current_revision,
+              (select count(*)::int from public.agent_outbox_output_results where input_item_id = $1) as outputs
+             from public.agent_outbox_input_items where input_item_id = $1`,
+            [ids.inputItemId]
+          );
+          assert.deepEqual(state.rows, [
+            answerWins
+              ? { status: "answered", current_revision: 1, outputs: 1 }
+              : { status: "pending", current_revision: 2, outputs: 0 }
+          ]);
+        } catch (error) {
+          bodyError = error;
+        } finally {
+          resumeReplacement.resolve();
+          await Promise.allSettled(operations);
+          await preserveBodyErrorDuringTeardown(
+            bodyError,
+            async () => {
+              await human.end();
+              await caller.end();
+              await cleanupHumanAnswerDatabaseTest(owner, ids);
+            },
+            "Concurrent replacement test and teardown both failed."
+          );
+        }
+      });
+    }
+  }
+);
+
+test(
+  "expired paid-account cleanup and a stale human answer complete without deadlocking",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const human = await connectedDatabaseClient(databaseUrl);
+    const cleanupClient = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    /** @type {PromiseWithResolvers<void>} */
+    const itemDeleted = Promise.withResolvers();
+    /** @type {PromiseWithResolvers<void>} */
+    const resumeCleanup = Promise.withResolvers();
+    /** @type {Promise<unknown>[]} */
+    const operations = [];
+    /** @type {unknown} */
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await owner.query("begin");
+      await seedDatabaseRows(owner, ids);
+      await owner.query("commit");
+      const input = {
+        accountId: ids.accountId,
+        callerId: ids.callerId,
+        humanUserId: ids.userId,
+        inputItemId: ids.inputItemId,
+        requestId: "req-cleanup-race-human",
+        correlationId: "corr-cleanup-race-human",
+        expectedRevision: 1,
+        actionValue: "approve",
+        response: /** @type {const} */ ({ kind: "none" })
+      };
+      const seededAnswer = await runHumanAnswerDatabaseTransaction(
+        human,
+        ids,
+        "human",
+        (query) =>
+          createHumanAnswerInTransaction(query, {
+            ...input,
+            answeredAt: new Date("2026-09-01T00:00:00.000Z")
+          })
+      );
+      assert.equal(seededAnswer.ok, true, JSON.stringify(seededAnswer));
+      await owner.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid', billing_status = 'grace', billing_grace_ends_at = '2026-09-30T00:00:00Z' where account_id = $1",
+        [ids.accountId]
+      );
+      const humanPid = (await human.query("select pg_backend_pid() as pid"))
+        .rows[0].pid;
+      const cleanupPid = (
+        await cleanupClient.query("select pg_backend_pid() as pid")
+      ).rows[0].pid;
+      const cleanup = runScheduledCleanup({
+        connectionString: databaseUrl,
+        now: new Date("2026-10-01T00:00:00.000Z"),
+        requestId: "req-cleanup-race",
+        runTransaction(_connectionString, context, callback) {
+          return runHumanAnswerDatabaseTransaction(
+            cleanupClient,
+            ids,
+            "cleanup",
+            (query) =>
+              callback(
+                /** @type {ProductTransactionQuery} */ (
+                  async (statement) => {
+                    const result = await query(statement);
+                    if (
+                      statement.sql.includes(
+                        "agent_outbox_cleanup_account_targets"
+                      )
+                    ) {
+                      // Keep this shared test database's other accounts out of the run.
+                      const rows = result.rows.filter(
+                        (row) => row.account_id === ids.accountId
+                      );
+                      return { ...result, rows, rowCount: rows.length };
+                    }
+                    if (
+                      context.accountId === ids.accountId &&
+                      statement.sql.includes(
+                        "agent_outbox_delete_expired_outputs"
+                      )
+                    ) {
+                      assert.equal(Number(result.rows[0].deleted_count), 1);
+                      itemDeleted.resolve();
+                      await resumeCleanup.promise;
+                    }
+                    return result;
+                  }
+                )
+              )
+          );
+        }
+      });
+      operations.push(cleanup);
+      await Promise.race([itemDeleted.promise, cleanup]);
+      const answer = runHumanAnswerDatabaseTransaction(
+        human,
+        ids,
+        "human",
+        (query) => createHumanAnswerInTransaction(query, input)
+      );
+      operations.push(answer);
+      const settled = Promise.allSettled([cleanup, answer]);
+      await waitForDatabaseBlock(owner, humanPid, cleanupPid);
+      resumeCleanup.resolve();
+      for (const result of await settled) {
+        if (result.status === "rejected") throw result.reason;
+      }
+      assert.equal((await cleanup).accounts_cleaned, 1);
+      const answered = await answer;
+      assert.equal(answered.ok, false, JSON.stringify(answered));
+      if (answered.ok) assert.fail("deleted input cannot be answered");
+      assert.equal(answered.code, "not_found");
+      const state = await owner.query(
+        `select tier,
+          (select count(*)::int from public.agent_outbox_input_items where account_id = $1) as inputs,
+          (select count(*)::int from public.agent_outbox_output_results where account_id = $1) as outputs
+         from public.agent_outbox_accounts where account_id = $1`,
+        [ids.accountId]
+      );
+      assert.deepEqual(state.rows, [
+        { tier: "hosted_free", inputs: 0, outputs: 0 }
+      ]);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      resumeCleanup.resolve();
+      await Promise.allSettled(operations);
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await human.end();
+          await cleanupClient.end();
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Cleanup concurrency test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "acknowledging an output while its file downloads finishes without deadlocking",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const human = await connectedDatabaseClient(databaseUrl);
+    const acker = await connectedDatabaseClient(databaseUrl);
+    const downloader = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    /** @type {PromiseWithResolvers<void>} */
+    const outputLocked = Promise.withResolvers();
+    /** @type {PromiseWithResolvers<void>} */
+    const resumeAck = Promise.withResolvers();
+    /** @type {Promise<unknown>[]} */
+    const operations = [];
+    /** @type {unknown} */
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await owner.query("begin");
+      await seedDatabaseRows(owner, ids);
+      await owner.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid' where account_id = $1",
+        [ids.accountId]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_actions set popup_kind = 'file_upload' where input_action_id = $1",
+        [ids.actionId]
+      );
+      await owner.query("commit");
+      const answered = await runHumanAnswerDatabaseTransaction(
+        human,
+        ids,
+        "human",
+        (query) =>
+          createHumanAnswerInTransaction(query, {
+            accountId: ids.accountId,
+            callerId: ids.callerId,
+            humanUserId: ids.userId,
+            inputItemId: ids.inputItemId,
+            requestId: "req-ack-download-answer",
+            correlationId: "corr-ack-download-answer",
+            expectedRevision: 1,
+            actionValue: "approve",
+            response: {
+              kind: "file_upload",
+              file: new File(["answer"], "answer.txt", { type: "text/plain" })
+            }
+          })
+      );
+      if (!answered.ok) assert.fail(JSON.stringify(answered));
+      const outputResultId = answered.outputResultId;
+      const fileId = (
+        await owner.query(
+          "select output_file_id::text as id from public.agent_outbox_output_files where output_result_id = $1",
+          [outputResultId]
+        )
+      ).rows[0].id;
+      const ackPid = (await acker.query("select pg_backend_pid() as pid"))
+        .rows[0].pid;
+      const downloadPid = (
+        await downloader.query("select pg_backend_pid() as pid")
+      ).rows[0].pid;
+      const identity = { accountId: ids.accountId, callerId: ids.callerId };
+      const ack = runHumanAnswerDatabaseTransaction(
+        acker,
+        ids,
+        "caller",
+        (query) =>
+          acknowledgeOutputInTransaction(
+            /** @type {ProductTransactionQuery} */ (
+              async (statement) => {
+                const result = await query(statement);
+                if (
+                  statement.sql.includes("for update") &&
+                  statement.sql.includes(
+                    "from public.agent_outbox_output_results"
+                  )
+                ) {
+                  outputLocked.resolve();
+                  await resumeAck.promise;
+                }
+                return result;
+              }
+            ),
+            identity,
+            { requestId: "req-ack-race", correlationId: "corr-ack-race" },
+            outputResultId
+          )
+      );
+      operations.push(ack);
+      await Promise.race([outputLocked.promise, ack]);
+      const download = runHumanAnswerDatabaseTransaction(
+        downloader,
+        ids,
+        "caller",
+        (query) =>
+          handleOutputFileDownloadAuthenticatedTransaction(
+            query,
+            {
+              requestId: "req-download-race",
+              correlationId: "corr-download-race"
+            },
+            identity,
+            { outputResultId, fileId }
+          )
+      );
+      operations.push(download);
+      const settled = Promise.allSettled([ack, download]);
+      await waitForDatabaseBlock(owner, downloadPid, ackPid);
+      resumeAck.resolve();
+      for (const result of await settled) {
+        if (result.status === "rejected") throw result.reason;
+      }
+      const acknowledged = await ack;
+      assert.deepEqual(acknowledged, {
+        ok: true,
+        data: {
+          output_result_id: outputResultId,
+          acknowledged: true,
+          already_acknowledged: false
+        }
+      });
+      const downloaded = await download;
+      if (downloaded.ok) assert.fail("acknowledged output file must be gone");
+      assert.equal(downloaded.error.status, 404);
+      assert.equal(downloaded.error.code, "not_found");
+      const audit = await owner.query(
+        "select event_type from public.agent_outbox_audit_events where output_result_id = $1 order by event_type",
+        [outputResultId]
+      );
+      assert.deepEqual(
+        audit.rows.map((row) => row.event_type),
+        [
+          "file_deleted",
+          "file_uploaded",
+          "input_answered",
+          "output_acknowledged",
+          "output_created"
+        ]
+      );
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      resumeAck.resolve();
+      await Promise.allSettled(operations);
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await human.end();
+          await acker.end();
+          await downloader.end();
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Ack and download concurrency test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "scheduled cleanup waiting on a free-to-paid upgrade keeps the paid account's pending inputs",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const upgrader = await connectedDatabaseClient(databaseUrl);
+    const cleanupClient = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const freeRetention = accountLimitStatusMetadata("hosted-free").limits.find(
+      (limit) => limit.limitName === "input_retention_days"
+    )?.setting;
+    assert.equal(freeRetention?.mode, "enabled");
+    /** @type {Promise<unknown>[]} */
+    const operations = [];
+    /** @type {unknown} */
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await owner.query("begin");
+      await seedDatabaseRows(owner, ids);
+      await owner.query(
+        "update public.agent_outbox_input_items set updated_at = now() - make_interval(days => $2) where input_item_id = $1",
+        [ids.inputItemId, freeRetention.value + 1]
+      );
+      await owner.query("commit");
+      await upgrader.query("begin");
+      await upgrader.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid', billing_status = 'active' where account_id = $1",
+        [ids.accountId]
+      );
+      const upgraderPid = (
+        await upgrader.query("select pg_backend_pid() as pid")
+      ).rows[0].pid;
+      const cleanupPid = (
+        await cleanupClient.query("select pg_backend_pid() as pid")
+      ).rows[0].pid;
+      const cleanup = runScheduledCleanup({
+        connectionString: databaseUrl,
+        requestId: "req-cleanup-upgrade",
+        runTransaction(_connectionString, _context, callback) {
+          return runHumanAnswerDatabaseTransaction(
+            cleanupClient,
+            ids,
+            "cleanup",
+            (query) =>
+              callback(
+                /** @type {ProductTransactionQuery} */ (
+                  async (statement) => {
+                    const result = await query(statement);
+                    if (
+                      statement.sql.includes(
+                        "agent_outbox_cleanup_account_targets"
+                      )
+                    ) {
+                      // Keep this shared test database's other accounts out of the run.
+                      const rows = result.rows.filter(
+                        (row) => row.account_id === ids.accountId
+                      );
+                      return { ...result, rows, rowCount: rows.length };
+                    }
+                    return result;
+                  }
+                )
+              )
+          );
+        }
+      });
+      operations.push(cleanup);
+      await waitForDatabaseBlock(owner, cleanupPid, upgraderPid);
+      await upgrader.query("commit");
+      assert.equal((await cleanup).accounts_cleaned, 1);
+      const state = await owner.query(
+        `select tier,
+          (select count(*)::int from public.agent_outbox_input_items where account_id = $1 and status = 'pending') as pending_inputs
+         from public.agent_outbox_accounts where account_id = $1`,
+        [ids.accountId]
+      );
+      assert.deepEqual(state.rows, [
+        { tier: "hosted_paid", pending_inputs: 1 }
+      ]);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await upgrader.query("rollback");
+          await Promise.allSettled(operations);
+          await upgrader.end();
+          await cleanupClient.end();
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Cleanup tier upgrade test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "send and replace waiting on a paid-account downgrade validate against the downgraded tier",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async (t) => {
+    assert.ok(databaseUrl);
+    for (const operation of /** @type {const} */ (["send", "replace"])) {
+      await t.test(operation, async () => {
+        const owner = await connectedDatabaseClient(databaseUrl);
+        const caller = await connectedDatabaseClient(databaseUrl);
+        const cleanupClient = await connectedDatabaseClient(databaseUrl);
+        const ids = {
+          accountId: crypto.randomUUID(),
+          userId: crypto.randomUUID(),
+          callerId: crypto.randomUUID(),
+          inputItemId: crypto.randomUUID(),
+          actionId: crypto.randomUUID()
+        };
+        /** @type {PromiseWithResolvers<void>} */
+        const accountDowngraded = Promise.withResolvers();
+        /** @type {PromiseWithResolvers<void>} */
+        const resumeCleanup = Promise.withResolvers();
+        /** @type {Promise<unknown>[]} */
+        const operations = [];
+        /** @type {unknown} */
+        let bodyError;
+        try {
+          await assertMigrationOwnerCanSetAppRole(owner);
+          await owner.query("begin");
+          await seedDatabaseRows(owner, ids);
+          await owner.query(
+            "update public.agent_outbox_accounts set tier = 'hosted_paid', billing_status = 'grace', billing_grace_ends_at = '2026-09-30T00:00:00Z' where account_id = $1",
+            [ids.accountId]
+          );
+          await owner.query("commit");
+          const callerPid = (
+            await caller.query("select pg_backend_pid() as pid")
+          ).rows[0].pid;
+          const cleanupPid = (
+            await cleanupClient.query("select pg_backend_pid() as pid")
+          ).rows[0].pid;
+          let downgraded = false;
+          const cleanup = runScheduledCleanup({
+            connectionString: databaseUrl,
+            now: new Date("2026-10-01T00:00:00.000Z"),
+            requestId: "req-downgrade-race",
+            runTransaction(_connectionString, context, callback) {
+              return runHumanAnswerDatabaseTransaction(
+                cleanupClient,
+                ids,
+                "cleanup",
+                (query) =>
+                  callback(
+                    /** @type {ProductTransactionQuery} */ (
+                      async (statement) => {
+                        const result = await query(statement);
+                        if (
+                          statement.sql.includes(
+                            "agent_outbox_cleanup_account_targets"
+                          )
+                        ) {
+                          // Keep this shared test database's other accounts out of the run.
+                          const rows = result.rows.filter(
+                            (row) => row.account_id === ids.accountId
+                          );
+                          return { ...result, rows, rowCount: rows.length };
+                        }
+                        if (
+                          context.accountId === ids.accountId &&
+                          statement.sql.includes(
+                            "agent_outbox_cleanup_downgrade_grace_expiry"
+                          )
+                        ) {
+                          downgraded = true;
+                          accountDowngraded.resolve();
+                          await resumeCleanup.promise;
+                        }
+                        return result;
+                      }
+                    )
+                  )
+              );
+            }
+          });
+          operations.push(cleanup);
+          await Promise.race([accountDowngraded.promise, cleanup]);
+          assert.equal(
+            downgraded,
+            true,
+            "cleanup must pause after downgrading"
+          );
+          const submitted = runHumanAnswerDatabaseTransaction(
+            caller,
+            ids,
+            "caller",
+            (query) =>
+              handleInputQueueRequestInTransaction(
+                query,
+                {
+                  requestId: "req-downgrade-race-caller",
+                  correlationId: "corr-downgrade-race-caller"
+                },
+                ids,
+                operation,
+                {
+                  caller_item_id:
+                    operation === "send" ? "caller-item-new" : "caller-item-db",
+                  row_type: { display: "Review", icon: "inbox" },
+                  title: "Upload request",
+                  subtitle: "Subtitle",
+                  summary: "Summary",
+                  link_buttons: [],
+                  actions: [
+                    {
+                      display: "Upload",
+                      icon: "upload",
+                      value: "upload",
+                      overflow: false,
+                      popup: { kind: "file_upload", label: "Upload answer" }
+                    }
+                  ]
+                }
+              )
+          );
+          operations.push(submitted);
+          const settled = Promise.allSettled([cleanup, submitted]);
+          await waitForDatabaseBlock(owner, callerPid, cleanupPid);
+          resumeCleanup.resolve();
+          for (const result of await settled) {
+            if (result.status === "rejected") throw result.reason;
+          }
+          assert.equal((await cleanup).accounts_cleaned, 1);
+          const result = await submitted;
+          assert.equal(result.ok, false, JSON.stringify(result));
+          if (result.ok) assert.fail("free accounts cannot add file uploads");
+          assert.equal(result.error.code, "upgrade_required");
+          const state = await owner.query(
+            `select tier,
+              (select array_agg(caller_item_id || ':' || current_revision order by caller_item_id)
+               from public.agent_outbox_input_items where account_id = $1) as inputs,
+              (select count(*)::int from public.agent_outbox_input_actions action
+               join public.agent_outbox_input_items item using (input_item_id)
+               where item.account_id = $1 and action.popup_kind = 'file_upload') as file_upload_actions
+             from public.agent_outbox_accounts where account_id = $1`,
+            [ids.accountId]
+          );
+          assert.deepEqual(state.rows, [
+            {
+              tier: "hosted_free",
+              inputs: ["caller-item-db:1"],
+              file_upload_actions: 0
+            }
+          ]);
+        } catch (error) {
+          bodyError = error;
+        } finally {
+          resumeCleanup.resolve();
+          await Promise.allSettled(operations);
+          await preserveBodyErrorDuringTeardown(
+            bodyError,
+            async () => {
+              await caller.end();
+              await cleanupClient.end();
+              await cleanupHumanAnswerDatabaseTest(owner, ids);
+            },
+            "Downgrade concurrency test and teardown both failed."
+          );
+        }
+      });
+    }
+  }
+);
+
+test(
   "phase 4 local database human review pagination and search run the production statement",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
   async () => {
@@ -1371,6 +2227,60 @@ function queryResult(rows) {
 }
 
 /**
+ * @template TResult
+ * @param {import("pg").Client} client
+ * @param {HumanAnswerDatabaseIds} ids
+ * @param {string} surface
+ * @param {(query: ProductTransactionQuery) => Promise<TResult>} callback
+ */
+async function runHumanAnswerDatabaseTransaction(
+  client,
+  ids,
+  surface,
+  callback
+) {
+  await client.query("begin");
+  try {
+    await client.query("set local statement_timeout = '5s'");
+    await client.query("set local role agent_outbox_app");
+    for (const [key, value] of Object.entries({
+      auth_surface: surface,
+      account_id: ids.accountId,
+      caller_id: ids.callerId,
+      user_id: ids.userId,
+      request_id: `req-concurrent-${surface}`
+    })) {
+      await client.query("select set_config($1, $2, true)", [
+        `agent_outbox.${key}`,
+        value
+      ]);
+    }
+    const result = await callback((statement) =>
+      client.query(statement.sql, statement.values)
+    );
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
+}
+
+/** @param {import("pg").Client} owner @param {number} waitingPid @param {number} blockingPid */
+async function waitForDatabaseBlock(owner, waitingPid, blockingPid) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const wait = await owner.query(
+      "select $2::int = any(pg_blocking_pids($1::int)) as blocked",
+      [waitingPid, blockingPid]
+    );
+    if (wait.rows[0].blocked) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail("concurrent operation did not enter the expected database wait");
+}
+
+/**
  * @param {import("pg").Client} client
  * @param {HumanAnswerDatabaseIds} ids
  */
@@ -1473,6 +2383,11 @@ async function cleanupDatabaseRows(client, ids) {
       `
         delete from public.agent_outbox_audit_events
         where input_item_id = $1
+          or output_result_id in (
+            select output_result_id
+            from public.agent_outbox_audit_events
+            where input_item_id = $1
+          )
       `,
       [ids.inputItemId]
     );

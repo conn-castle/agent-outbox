@@ -28,19 +28,15 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-02 migration-gate-lexing-gaps: Destructive-migration gate misreads some SQL lexical forms
+    Priority: Low. Area: Policy gates / Migrations
+    Description: `scripts/policy-gates/migration-discipline-scan.mjs` matches regexes over comment-stripped text without a SQL tokenizer. These destructive statements pass without the label: `E'...\'...'` strings that hide a later `DROP x` or `SET NOT NULL` action, quoted identifiers with no surrounding whitespace (`DROP"x"`, `ALTER TABLE"t"`), `U&"..."` table names, and `ALTER FOREIGN TABLE`. Dollar-quoted text and string literals that contain `ALTER TABLE ... DROP` can falsely block additive statements.
+    Next step: Add fixtures for any of these forms when a real migration uses them.
+
 - Issue 2026-09-29 human-answer-payload-decoding: Answer validation reads persisted popup bounds loosely
     Priority: Medium. Area: Human answers / Data integrity
     Description: `numberField`, `stringField`, and `acceptedMimeTypes` in `src/server/human-answer.ts` treat a malformed persisted `popup_payload` field (for example `min_length: "5"` or `max_selected: "2"`) as absent, so answer-time bounds are silently not enforced. The review page now rejects such payloads strictly in `src/server/human-review.ts`, which makes this mostly unreachable through the UI.
     Next step: Make answer validation fail loudly on malformed persisted popup payload fields, consistent with the review-page decoder.
-` (most recent first).
-- Keep each entry **3–5 lines**.
-- Line 1 starts with `- Issue YYYY-MM-DD <id>:` and a short title.
-- Lines 2–5 are indented by **4 spaces** and use `Key: Value`.
-- Keep **exactly one blank line** between entries.
-- Prevent duplicates: search the file and merge/rewrite instead of adding near-duplicates.
-- When fixed, remove the entry from this file.
-- Describe the problem without choosing a solution or listing options.
-- Use `Next step` only when the action is useful regardless of the eventual solution. Otherwise, use `Open question: <decision needed>`.
 
 - Issue 2026-09-29 docs-ui-topbar-contrast: API UI docs page renders the wordmark dark on the dark top bar
     Priority: Medium. Area: API documentation / Visual design

@@ -62,6 +62,15 @@ Server-only paths emit structured JSON logs for unexpected or
 operator-actionable handled failures. Useful fields include:
 
 - `error_id`
+- `error_code` on runtime failure reports when a safe code is available:
+  PostgreSQL SQLSTATE codes, allowlisted network codes such as `ECONNRESET`, or
+  `QUERY_READ_TIMEOUT`, `CONNECTION_TIMEOUT`, and `CONNECTION_TERMINATED` for
+  exact node-postgres messages that lack a code. This field is also attached to
+  the Sentry event tag and `agent_outbox` context. Unknown codes and raw
+  exception messages, SQL, and database detail are excluded. Use it with the
+  operation and correlation id to distinguish database/query failures from
+  connection failures. When transaction rollback also fails, the original
+  failure remains the cause of the aggregate error and supplies the safe code.
 - `request_id`
 - `environment`
 - `release`

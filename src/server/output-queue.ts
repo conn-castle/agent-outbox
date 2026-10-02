@@ -22,7 +22,7 @@ import {
   runGuardedCallerTransaction,
   type CallerIdentity
 } from "./caller-api-auth.ts";
-import { safeContentType } from "./output-files.ts";
+import { callerOutputLockStatement, safeContentType } from "./output-files.ts";
 import {
   CanonicalInputIntegrityError,
   materializeCanonicalInputsByItemId
@@ -390,7 +390,7 @@ export async function acknowledgeOutputInTransaction(
   outputResultId: string
 ): Promise<OutputQueueResult> {
   const liveResult = await query<{ output_result_id: string }>(
-    outputIdForAcknowledgementStatement(identity, outputResultId)
+    callerOutputLockStatement(identity, outputResultId)
   );
   const liveOutputResultId = liveResult.rows[0]?.output_result_id;
 
@@ -645,23 +645,6 @@ export function markOutputResultsReadStatement(
         and output_result_id in (${placeholders.join(", ")})
     `,
     values: [identity.accountId, identity.callerId, ...outputResultIds]
-  };
-}
-
-export function outputIdForAcknowledgementStatement(
-  identity: CallerIdentity,
-  outputResultId: string
-): TransactionContextStatement {
-  return {
-    sql: `
-      select output_result_id::text as output_result_id
-      from public.agent_outbox_output_results
-      where account_id = $1
-        and caller_id = $2
-        and output_result_id::text = $3
-      for update
-    `,
-    values: [identity.accountId, identity.callerId, outputResultId]
   };
 }
 

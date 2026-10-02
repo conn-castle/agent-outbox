@@ -968,10 +968,14 @@ test("subscription webhooks can update an account from Stripe metadata before ch
         id: "sub_before_checkout",
         customer: "cus_before_checkout",
         status: "active",
-        current_period_end: 1783555200,
         metadata: { account_id: accountId },
         items: {
-          data: [{ price: { id: "price_test_paid_monthly" } }]
+          data: [
+            {
+              current_period_end: 1783555200,
+              price: { id: "price_test_paid_monthly" }
+            }
+          ]
         }
       }
     }
@@ -1039,9 +1043,17 @@ test("subscription and failed-payment events update grace state without raw payl
         customer: "cus_test",
         status: "active",
         cancel_at_period_end: true,
-        current_period_end: 1783555200,
         items: {
-          data: [{ price: { id: "price_test_paid_monthly" } }]
+          data: [
+            {
+              current_period_end: 1783900800,
+              price: { id: "price_test_paid_monthly" }
+            },
+            {
+              current_period_end: 1783555200,
+              price: { id: "price_test_paid_yearly" }
+            }
+          ]
         }
       }
     }
@@ -1052,8 +1064,11 @@ test("subscription and failed-payment events update grace state without raw payl
     type: "invoice.payment_failed",
     data: {
       object: {
-        subscription: "sub_test",
-        customer: "cus_test"
+        customer: "cus_test",
+        parent: {
+          type: "subscription_details",
+          subscription_details: { subscription: "sub_test" }
+        }
       }
     }
   };
@@ -1099,6 +1114,96 @@ test("subscription and failed-payment events update grace state without raw payl
   assert.doesNotMatch(
     JSON.stringify(statements),
     /request_body|raw|card|email|cus_test@example/i
+  );
+});
+
+test("pre-basil subscription and invoice payloads still update grace state", async () => {
+  const statements = /** @type {any[]} */ ([]);
+  const now = new Date("2026-07-05T00:00:00.000Z");
+
+  await processStripeEventInTransaction(
+    fakeTransitionQuery(statements),
+    /** @type {any} */ ({
+      id: "evt_legacy_subscription_updated",
+      created: 1783209600,
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_test",
+          customer: "cus_test",
+          status: "active",
+          cancel_at_period_end: true,
+          current_period_end: 1783555200,
+          items: {
+            data: [{ price: { id: "price_test_paid_monthly" } }]
+          }
+        }
+      }
+    }),
+    now
+  );
+  await processStripeEventInTransaction(
+    fakeTransitionQuery(statements),
+    /** @type {any} */ ({
+      id: "evt_legacy_invoice_failed",
+      created: 1783296000,
+      type: "invoice.payment_failed",
+      data: { object: { subscription: "sub_test", customer: "cus_test" } }
+    }),
+    now
+  );
+
+  const updateStatements = statements.filter((statement) =>
+    /update public\.agent_outbox_accounts/.test(statement.sql)
+  );
+  assert.equal(updateStatements.length, 2);
+  assert.deepEqual(updateStatements[0].values.slice(4, 7), [
+    "grace",
+    "2026-07-09T00:00:00.000Z",
+    "2026-07-09T00:00:00.000Z"
+  ]);
+  assert.deepEqual(updateStatements[1].values.slice(0, 6), [
+    "sub_test",
+    "cus_test",
+    null,
+    "payment_failed",
+    "past_due",
+    "2026-07-12T00:00:00.000Z"
+  ]);
+});
+
+test("cancel-at-period-end subscriptions without a period end fail instead of guessing grace", async () => {
+  const statements = /** @type {any[]} */ ([]);
+
+  await assert.rejects(
+    () =>
+      processStripeEventInTransaction(
+        fakeTransitionQuery(statements),
+        /** @type {any} */ ({
+          id: "evt_subscription_without_period",
+          created: 1783209600,
+          type: "customer.subscription.updated",
+          data: {
+            object: {
+              id: "sub_test",
+              customer: "cus_test",
+              status: "active",
+              cancel_at_period_end: true,
+              items: {
+                data: [{ price: { id: "price_test_paid_monthly" } }]
+              }
+            }
+          }
+        }),
+        new Date("2026-07-05T00:00:00.000Z")
+      ),
+    /no current period end/
+  );
+  assert.equal(
+    statements.some((statement) =>
+      /update public\.agent_outbox_accounts/.test(statement.sql)
+    ),
+    false
   );
 });
 

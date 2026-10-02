@@ -26,6 +26,7 @@ import type {
   ProductTransactionQuery,
   TransactionContextStatement
 } from "./database.ts";
+import { isStorableString, unstorableStringError } from "./input-schema.ts";
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
   InputReadRequestSchema,
@@ -229,6 +230,10 @@ export function parseInputReadBody(
         message: "caller_item_id must be a non-empty string."
       }
     ]);
+  }
+
+  if (!isStorableString(body.caller_item_id)) {
+    return validationFailed([unstorableStringError("caller_item_id")]);
   }
 
   if (publicInputReadShapeMatches(body)) {

@@ -1063,7 +1063,38 @@ func TestCallerConnectPreservesCredentialAfterAmbiguousActivateFailure(t *testin
 	assertNoSecretLeak(t, pendingKey, stdout, stderr, configPath)
 }
 
+// definitiveActivateFailures are validated activate error responses that prove the hosted
+// activation did not commit, so the CLI must roll back its local key and config.
+var definitiveActivateFailures = []struct {
+	name     string
+	status   int
+	body     string
+	wantExit int
+}{
+	{
+		name:     "validation failed",
+		status:   http.StatusUnprocessableEntity,
+		body:     `{"ok":false,"request_id":"req_bad_activate","correlation_id":"corr_bad_activate","error":{"code":"validation_failed","message":"Activation request was invalid."}}`,
+		wantExit: foundation.ExitData,
+	},
+	{
+		name:     "rate limited",
+		status:   http.StatusTooManyRequests,
+		body:     `{"ok":false,"request_id":"req_limited_activate","correlation_id":"corr_limited_activate","error":{"code":"rate_limit_exceeded","message":"Too many activation requests.","retry_after_seconds":30}}`,
+		wantExit: foundation.ExitTemporary,
+	},
+}
+
 func TestCallerConnectRollsBackLocalStateWhenActivateDefinitivelyDidNotCommit(t *testing.T) {
+	for _, tc := range definitiveActivateFailures {
+		t.Run(tc.name, func(t *testing.T) {
+			assertCallerConnectRollsBackAfterActivateFailure(t, tc.status, tc.body, tc.wantExit)
+		})
+	}
+}
+
+func assertCallerConnectRollsBackAfterActivateFailure(t *testing.T, status int, body string, wantExit int) {
+	t.Helper()
 	const pendingKey = "aob_live_pending_connectsecret"
 	store := &controlPlaneSecretStore{}
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -1075,8 +1106,8 @@ func TestCallerConnectRollsBackLocalStateWhenActivateDefinitivelyDidNotCommit(t 
 		case "/api/caller/connect/device/poll":
 			writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_connect","caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_pending","prefix":"aob_live","last_chars":"pend","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, pendingKey))
 		case "/api/caller/connect/activate":
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_bad_activate","correlation_id":"corr_bad_activate","error":{"code":"validation_failed","message":"Activation request was invalid."}}`)
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, body)
 		default:
 			t.Fatalf("unexpected request: %s", r.URL.Path)
 		}
@@ -1089,11 +1120,14 @@ func TestCallerConnectRollsBackLocalStateWhenActivateDefinitivelyDidNotCommit(t 
 		store:      store,
 		args:       []string{"--json", "caller", "connect", "steward-email", "--device-code"},
 	})
-	if code != foundation.ExitData {
-		t.Fatalf("exit code = %d, want validation failure; stderr: %s", code, stderr)
+	if code != wantExit {
+		t.Fatalf("exit code = %d, want %d; stderr: %s", code, wantExit, stderr)
 	}
 	if stdout != "" {
 		t.Fatalf("stdout should be empty for failed connect")
+	}
+	if strings.Contains(stderr, "may already be active") {
+		t.Fatalf("definitive activate failure warned that the credential may be active: %s", stderr)
 	}
 	if len(store.keys) != 0 {
 		t.Fatalf("definitive activate failure left a hosted key stored locally: %#v", store.keys)
@@ -1286,6 +1320,15 @@ func TestCallerRotatePreservesReplacementAfterAmbiguousActivateFailure(t *testin
 }
 
 func TestCallerRotateRestoresOldStateWhenActivateDefinitivelyDidNotCommit(t *testing.T) {
+	for _, tc := range definitiveActivateFailures {
+		t.Run(tc.name, func(t *testing.T) {
+			assertCallerRotateRestoresOldStateAfterActivateFailure(t, tc.status, tc.body, tc.wantExit)
+		})
+	}
+}
+
+func assertCallerRotateRestoresOldStateAfterActivateFailure(t *testing.T, status int, body string, wantExit int) {
+	t.Helper()
 	const oldKey = "aob_live_oldkey_oldsecret"
 	const newKey = "aob_live_newkey_newsecret"
 	store := &controlPlaneSecretStore{keys: map[string]string{"caller_123": oldKey}}
@@ -1300,8 +1343,8 @@ func TestCallerRotateRestoresOldStateWhenActivateDefinitivelyDidNotCommit(t *tes
 		case "/api/caller/rotate/exchange":
 			writeEnvelope(w, fmt.Sprintf(`{"caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"replacement_credential":{"api_key":%q,"key_id":"key_new","prefix":"aob_live","last_chars":"newx","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"},"replaces_credential":{"key_id":"key_old","last_chars":"oldx"}}`, newKey))
 		case "/api/caller/rotate/activate":
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			_, _ = io.WriteString(w, `{"ok":false,"request_id":"req_bad_activate","correlation_id":"corr_bad_activate","error":{"code":"validation_failed","message":"Activation request was invalid."}}`)
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, body)
 		default:
 			t.Fatalf("unexpected request: %s", r.URL.Path)
 		}
@@ -1314,11 +1357,14 @@ func TestCallerRotateRestoresOldStateWhenActivateDefinitivelyDidNotCommit(t *tes
 		store:      store,
 		args:       []string{"--json", "caller", "rotate", "--device-code"},
 	})
-	if code != foundation.ExitData {
-		t.Fatalf("exit code = %d, want validation failure; stderr: %s", code, stderr)
+	if code != wantExit {
+		t.Fatalf("exit code = %d, want %d; stderr: %s", code, wantExit, stderr)
 	}
 	if stdout != "" {
 		t.Fatalf("stdout should be empty for failed rotate")
+	}
+	if strings.Contains(stderr, "may already have committed") {
+		t.Fatalf("definitive activate failure warned that activation may have committed: %s", stderr)
 	}
 	if store.keys["caller_123"] != oldKey {
 		t.Fatalf("definitive activate failure did not restore old key; key=%q", store.keys["caller_123"])

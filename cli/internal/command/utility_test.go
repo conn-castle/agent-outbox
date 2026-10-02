@@ -425,3 +425,102 @@ func assertDoctorCheckOrder(t *testing.T, payload map[string]any) {
 		t.Fatalf("doctor check order = %s, want %v", encoded, want)
 	}
 }
+
+func TestLocalCommandStdoutWriteFailureReportsLocalIOError(t *testing.T) {
+	configPath := writeDataPlaneCommandConfig(t, "http://localhost:38000")
+	for _, args := range [][]string{
+		{"version"},
+		{"version", "--json"},
+		{"docs"},
+		{"docs", "--json"},
+		{"docs", "cli"},
+		{"docs", "cli", "--json"},
+		{"caller", "list"},
+		{"caller", "list", "--json"},
+		{"upgrade"},
+		{"upgrade", "--json"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stderr bytes.Buffer
+			code := Execute(context.Background(), Options{
+				Args:        append([]string{"--config", configPath}, args...),
+				Stdout:      failingWriter{},
+				Stderr:      &stderr,
+				Env:         foundation.Env{},
+				OpenBrowser: func(string) error { return nil },
+			})
+			if code != foundation.ExitTemporary {
+				t.Fatalf("exit code = %d, want %d; stderr: %s", code, foundation.ExitTemporary, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), string(foundation.CodeLocalIO)) {
+				t.Fatalf("stderr missing %s: %s", foundation.CodeLocalIO, stderr.String())
+			}
+			if strings.Contains(stderr.String(), "http_status") || strings.Contains(stderr.String(), "write_outcome") {
+				t.Fatalf("local command error contains response metadata: %s", stderr.String())
+			}
+		})
+	}
+}
+
+type shortWriter struct {
+	n int
+}
+
+func (w shortWriter) Write([]byte) (int, error) {
+	return w.n, nil
+}
+
+func TestWriteCommandOutputChecksByteCount(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		output string
+		n      int
+		fails  bool
+	}{
+		{name: "short", output: "result", n: 3, fails: true},
+		{name: "zero", output: "result", n: 0, fails: true},
+		{name: "full", output: "result", n: 6},
+		{name: "empty", n: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := writeCommandOutput(shortWriter{n: tc.n}, []byte(tc.output))
+			if !tc.fails {
+				if err != nil {
+					t.Fatalf("write failed: %v", err)
+				}
+				return
+			}
+			var appErr *foundation.AppError
+			if !errors.As(err, &appErr) || appErr.Code != foundation.CodeLocalIO || appErr.Message != "Could not write command output." || foundation.ExitCodeFor(err) != foundation.ExitTemporary {
+				t.Fatalf("expected local I/O error with exit 75, got %v", err)
+			}
+		})
+	}
+}
+
+func TestDoctorStdoutFailureWinsOverSecretStoreFailure(t *testing.T) {
+	configPath := writeDataPlaneCommandConfig(t, "https://app.example")
+	for _, jsonMode := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%t", jsonMode), func(t *testing.T) {
+			args := []string{"--config", configPath, "doctor"}
+			if jsonMode {
+				args = append(args, "--json")
+			}
+			store := &dataPlaneSecretStore{err: foundation.NewSecretStoreError("fake secure storage failure")}
+			_, stderr, code := executeUtilityCommand(t, args, utilityCommandOptions{secretStore: store})
+			if code != foundation.ExitSecretStore {
+				t.Fatalf("diagnostic exit = %d, want 74; stderr: %s", code, stderr)
+			}
+			var output bytes.Buffer
+			code = Execute(context.Background(), Options{
+				Args: args, Stdout: failingWriter{}, Stderr: &output, Env: foundation.Env{}, SecretStore: store,
+			})
+			if code != foundation.ExitTemporary || !strings.Contains(output.String(), string(foundation.CodeLocalIO)) || strings.Contains(output.String(), string(foundation.CodeSecretStore)) {
+				t.Fatalf("stdout failure should win with local_io_error/75: exit=%d stderr=%s", code, output.String())
+			}
+			if strings.Contains(output.String(), "http_status") || strings.Contains(output.String(), "write_outcome") {
+				t.Fatalf("local doctor error contains response metadata: %s", output.String())
+			}
+		})
+	}
+}

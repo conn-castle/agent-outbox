@@ -25,3 +25,74 @@
 {"name":"drop-index concurrently still blocked","sql":"DROP INDEX CONCURRENTLY IF EXISTS users_email_idx;","label_present":false,"expected":"fail"}
 {"name":"create-index concurrently additive","sql":"CREATE INDEX CONCURRENTLY IF NOT EXISTS users_email_idx ON users (email);","label_present":false,"expected":"pass"}
 {"name":"destructive label override","sql":"ALTER TABLE \"users\" DROP COLUMN \"legacy_id\";","label_present":true,"expected":"pass"}
+{"name":"drop without column keyword blocked","sql":"ALTER TABLE users DROP legacy_id;","label_present":false,"expected":"fail"}
+{"name":"drop if exists without column keyword blocked","sql":"ALTER TABLE users DROP IF EXISTS legacy_id;","label_present":false,"expected":"fail"}
+{"name":"drop without column keyword after additive action blocked","sql":"ALTER TABLE public.users ADD COLUMN nickname text,\n  DROP \"legacy_id\";","label_present":false,"expected":"fail"}
+{"name":"drop without column keyword on if-exists only table blocked","sql":"ALTER TABLE IF EXISTS ONLY \"public\".\"users\" DROP legacy_id CASCADE;","label_present":false,"expected":"fail"}
+{"name":"rename without column keyword blocked","sql":"ALTER TABLE users RENAME handle TO username;","label_present":false,"expected":"fail"}
+{"name":"alter type without column keyword blocked","sql":"ALTER TABLE users ALTER age TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"alter set data type without column keyword blocked","sql":"ALTER TABLE users ADD COLUMN nickname text, ALTER \"age\" SET DATA TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"set-not-null without column keyword blocked","sql":"ALTER TABLE users ALTER email SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"set-not-null without column keyword allowed with same-column default","sql":"ALTER TABLE users ALTER email SET DEFAULT 'unknown', ALTER COLUMN email SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"drop constraint additive","sql":"ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_check;","label_present":false,"expected":"pass"}
+{"name":"rename constraint additive","sql":"ALTER TABLE users RENAME CONSTRAINT users_email_check TO users_email_format_check;","label_present":false,"expected":"pass"}
+{"name":"column drop default and drop not null additive","sql":"ALTER TABLE users ALTER email DROP DEFAULT, ALTER COLUMN nickname DROP NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"set-not-null without column keyword default on other column blocked","sql":"ALTER TABLE users ALTER nickname SET DEFAULT '', ALTER email SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"set-not-null without column keyword after explicit same-column default allowed","sql":"ALTER TABLE users ALTER COLUMN email SET DEFAULT 'unknown',\n  ALTER email SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"set-not-null foreign key set default action is not a column default","sql":"ALTER TABLE users ALTER email SET NOT NULL,\n  ADD COLUMN org_id int REFERENCES orgs ON DELETE SET DEFAULT;","label_present":false,"expected":"fail"}
+{"name":"set-not-null quoted default column differs by case blocked","sql":"ALTER TABLE users ALTER \"Email\" SET DEFAULT 'x', ALTER email SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"alter domain set-not-null outside alter table","sql":"ALTER DOMAIN email_t SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"comment text naming an alter is not an action","sql":"COMMENT ON TABLE users IS 'ALTER email SET NOT NULL later';","label_present":false,"expected":"pass"}
+{"name":"column drop identity and drop expression additive","sql":"ALTER TABLE users ALTER id DROP IDENTITY IF EXISTS, ALTER total DROP EXPRESSION;","label_present":false,"expected":"pass"}
+{"name":"comma inside column type is not an action boundary","sql":"ALTER TABLE invoices ADD COLUMN amount numeric(10,\n  2) DEFAULT 0;","label_present":false,"expected":"pass"}
+{"name":"set-not-null without column keyword on both same-column actions allowed","sql":"ALTER TABLE users ALTER email SET DEFAULT 'x', ALTER email SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"drop without column keyword on descendant-inclusive table blocked","sql":"ALTER TABLE users * DROP legacy_id;","label_present":false,"expected":"fail"}
+{"name":"drop without column keyword on non-ascii table name blocked","sql":"ALTER TABLE café DROP legacy_id;","label_present":false,"expected":"fail"}
+{"name":"alter type without column keyword with using clause blocked","sql":"ALTER TABLE invoices ALTER amt TYPE numeric(10,2) USING round(amt, 2);","label_present":false,"expected":"fail"}
+{"name":"combining-mark table name drop blocked","sql":"ALTER TABLE café DROP legacy_id;","label_present":false,"expected":"fail"}
+{"name":"combining-mark schema and table type blocked","sql":"ALTER TABLE IF EXISTS ONLY café.userś * ALTER age TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"non-ascii column café set-not-null blocked","sql":"ALTER TABLE users ALTER café SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"non-ascii column ́column set-not-null blocked","sql":"ALTER TABLE users ALTER ́column SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"non-ascii column column set-not-null blocked","sql":"ALTER TABLE users ALTER column SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"non-ascii column 😀column set-not-null blocked","sql":"ALTER TABLE users ALTER 😀column SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"explicit combining-mark not-null not masked by exempt column","sql":"ALTER TABLE users ALTER nickname SET DEFAULT '', ALTER nickname SET NOT NULL, ALTER COLUMN café SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"combining-mark same-column default allowed","sql":"ALTER TABLE users ALTER café SET DEFAULT '', ALTER café SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"drop keyword-prefixed identifier constraint$flag blocked","sql":"ALTER TABLE users DROP constraint$flag;","label_present":false,"expected":"fail"}
+{"name":"rename keyword-prefixed identifier constraint$flag blocked","sql":"ALTER TABLE users RENAME constraint$flag TO renamed;","label_present":false,"expected":"fail"}
+{"name":"type keyword-prefixed identifier constraint$flag blocked","sql":"ALTER TABLE users ALTER constraint$flag TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"not-null keyword-prefixed identifier constraint$flag blocked","sql":"ALTER TABLE users ALTER constraint$flag SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"explicit not-null constraint$flag not masked by exempt column","sql":"ALTER TABLE users ALTER nickname SET DEFAULT '', ALTER nickname SET NOT NULL, ALTER COLUMN constraint$flag SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"drop keyword-prefixed identifier constraint́ blocked","sql":"ALTER TABLE users DROP constraint́;","label_present":false,"expected":"fail"}
+{"name":"rename keyword-prefixed identifier constraint́ blocked","sql":"ALTER TABLE users RENAME constraint́ TO renamed;","label_present":false,"expected":"fail"}
+{"name":"type keyword-prefixed identifier constraint́ blocked","sql":"ALTER TABLE users ALTER constraint́ TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"not-null keyword-prefixed identifier constraint́ blocked","sql":"ALTER TABLE users ALTER constraint́ SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"explicit not-null constraint́ not masked by exempt column","sql":"ALTER TABLE users ALTER nickname SET DEFAULT '', ALTER nickname SET NOT NULL, ALTER COLUMN constraint́ SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"drop keyword-prefixed identifier constraint😀 blocked","sql":"ALTER TABLE users DROP constraint😀;","label_present":false,"expected":"fail"}
+{"name":"rename keyword-prefixed identifier constraint😀 blocked","sql":"ALTER TABLE users RENAME constraint😀 TO renamed;","label_present":false,"expected":"fail"}
+{"name":"type keyword-prefixed identifier constraint😀 blocked","sql":"ALTER TABLE users ALTER constraint😀 TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"not-null keyword-prefixed identifier constraint😀 blocked","sql":"ALTER TABLE users ALTER constraint😀 SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"explicit not-null constraint😀 not masked by exempt column","sql":"ALTER TABLE users ALTER nickname SET DEFAULT '', ALTER nickname SET NOT NULL, ALTER COLUMN constraint😀 SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"drop keyword-prefixed identifier column$flag blocked","sql":"ALTER TABLE users DROP column$flag;","label_present":false,"expected":"fail"}
+{"name":"rename keyword-prefixed identifier column$flag blocked","sql":"ALTER TABLE users RENAME column$flag TO renamed;","label_present":false,"expected":"fail"}
+{"name":"type keyword-prefixed identifier column$flag blocked","sql":"ALTER TABLE users ALTER column$flag TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"not-null keyword-prefixed identifier column$flag blocked","sql":"ALTER TABLE users ALTER column$flag SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"explicit not-null column$flag not masked by exempt column","sql":"ALTER TABLE users ALTER nickname SET DEFAULT '', ALTER nickname SET NOT NULL, ALTER COLUMN column$flag SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"drop keyword-prefixed identifier columń blocked","sql":"ALTER TABLE users DROP columń;","label_present":false,"expected":"fail"}
+{"name":"rename keyword-prefixed identifier columń blocked","sql":"ALTER TABLE users RENAME columń TO renamed;","label_present":false,"expected":"fail"}
+{"name":"type keyword-prefixed identifier columń blocked","sql":"ALTER TABLE users ALTER columń TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"not-null keyword-prefixed identifier columń blocked","sql":"ALTER TABLE users ALTER columń SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"explicit not-null columń not masked by exempt column","sql":"ALTER TABLE users ALTER nickname SET DEFAULT '', ALTER nickname SET NOT NULL, ALTER COLUMN columń SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"drop keyword-prefixed identifier constraint_suffix blocked","sql":"ALTER TABLE users DROP constraint_suffix;","label_present":false,"expected":"fail"}
+{"name":"rename keyword-prefixed identifier constraint_suffix blocked","sql":"ALTER TABLE users RENAME constraint_suffix TO renamed;","label_present":false,"expected":"fail"}
+{"name":"type keyword-prefixed identifier constraint_suffix blocked","sql":"ALTER TABLE users ALTER constraint_suffix TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"not-null keyword-prefixed identifier constraint_suffix blocked","sql":"ALTER TABLE users ALTER constraint_suffix SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"explicit not-null constraint_suffix not masked by exempt column","sql":"ALTER TABLE users ALTER nickname SET DEFAULT '', ALTER nickname SET NOT NULL, ALTER COLUMN constraint_suffix SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"rename to-prefixed identifier blocked","sql":"ALTER TABLE users RENAME to$flag TO renamed;","label_present":false,"expected":"fail"}
+{"name":"keyword-prefixed same-column default allowed","sql":"ALTER TABLE users ALTER COLUMN constraint$flag SET DEFAULT '', ALTER constraint$flag SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"unquoted same-column default ignores case","sql":"ALTER TABLE users ALTER Email SET DEFAULT '', ALTER EMAIL SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"quoted same-column default preserves case","sql":"ALTER TABLE users ALTER \"Email\" SET DEFAULT '', ALTER \"EMAIL\" SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"not-null default literal does not exempt another column","sql":"ALTER TABLE users ALTER nickname SET DEFAULT 'SET NOT NULL', ALTER email SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"exempt not-null column does not mask later offending column","sql":"ALTER TABLE users ALTER nickname SET DEFAULT '', ALTER nickname SET NOT NULL, ALTER email SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"drop after drop constraint blocked","sql":"ALTER TABLE users DROP CONSTRAINT c,\n DROP x;","label_present":false,"expected":"fail"}
+{"name":"rename after keyword literal blocked","sql":"ALTER TABLE users ALTER note SET DEFAULT 'RENAME',\n RENAME x TO y;","label_present":false,"expected":"fail"}
+{"name":"type after keyword literal blocked","sql":"ALTER TABLE users ALTER note SET DEFAULT 'TYPE',\n ALTER x TYPE bigint;","label_present":false,"expected":"fail"}

@@ -1,7 +1,77 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { safeErrorName, safeLogEvent } from "../src/server/logging.ts";
+import {
+  safeErrorCode,
+  safeErrorName,
+  safeLogEvent
+} from "../src/server/logging.ts";
+
+test("runtime error diagnostics keep database and connection codes without private error details", () => {
+  const cases = [
+    { code: "23503", message: "private foreign key detail", expected: "23503" },
+    { code: "40P01", message: "private deadlock detail", expected: "40P01" },
+    { code: "57014", message: "private query", expected: "57014" },
+    { code: "ECONNRESET", message: "private host", expected: "ECONNRESET" },
+    { message: "Query read timeout", expected: "QUERY_READ_TIMEOUT" },
+    { message: "timeout expired", expected: "CONNECTION_TIMEOUT" },
+    {
+      message: "Connection terminated unexpectedly",
+      expected: "CONNECTION_TERMINATED"
+    },
+    { code: "private-token", message: "private content", expected: undefined },
+    { code: 57014, message: "private content", expected: undefined },
+    { message: "Query read timeout: private content", expected: undefined }
+  ];
+  for (const { code, message, expected } of cases) {
+    const error = Object.assign(new Error(message), {
+      code,
+      detail: "private row data",
+      query: "private query"
+    });
+    assert.equal(safeErrorCode(error), expected);
+  }
+  assert.equal(safeErrorCode({ code: "23503" }), undefined);
+  const unreadable = Object.defineProperty(
+    new Error("private detail"),
+    "code",
+    {
+      get() {
+        throw new Error("private getter failure");
+      }
+    }
+  );
+  assert.equal(safeErrorCode(unreadable), undefined);
+  const original = Object.assign(new Error("private connection detail"), {
+    code: "ECONNRESET"
+  });
+  const rollback = Object.assign(new Error("private rollback detail"), {
+    code: "23503"
+  });
+  const combined = new AggregateError([original, rollback], "private", {
+    cause: original
+  });
+  assert.equal(safeErrorCode(combined), "ECONNRESET");
+  combined.cause = combined;
+  assert.equal(safeErrorCode(combined), undefined);
+
+  for (const code of [
+    "23503",
+    "ECONNRESET",
+    "QUERY_READ_TIMEOUT",
+    "private-token"
+  ]) {
+    const log = safeLogEvent({
+      level: "error",
+      surface: "api",
+      operation: "input_replace",
+      message: "Input queue operation failed unexpectedly.",
+      error_code: code
+    });
+    assert.equal(log.error_code, code === "private-token" ? undefined : code);
+    assert.equal(JSON.stringify(log).includes("private-token"), false);
+  }
+});
 
 test("safeLogEvent strips request bodies and arbitrary caller-controlled fields", () => {
   /** @type {import("../src/server/logging.ts").RuntimeLogEvent & { request_body: string, caller_display_name: string }} */
