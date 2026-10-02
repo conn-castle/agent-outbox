@@ -84,6 +84,17 @@ events whose required `created` ordering metadata violates the Stripe event
 contract fail before ledger insertion and return a retry-visible `503`; they are
 not recorded as successfully processed or silently discarded.
 
+The webhook parser accepts both the pre-basil and the
+`2025-03-31.basil`-and-later shapes of two moved fields: billing periods read
+from `items.data[].current_period_end` or the earlier subscription-level
+`current_period_end`, and failed-payment subscriptions read from
+`parent.subscription_details.subscription` or the earlier
+`invoice.subscription`. A subscription scheduled to cancel at period end grants
+grace until the subscription period end (the earliest item period end on basil
+and later). If no period end is present, the event fails with a reported,
+retry-visible `503` instead of guessing a grace deadline; retries of the same
+payload keep failing, so review that delivery in Stripe's webhook log.
+
 Creating or rotating production billing resources requires a setup-only live
 Stripe key with write permission for products, prices, Customer Portal
 Configurations, and webhook endpoints. A read-only or otherwise restricted live

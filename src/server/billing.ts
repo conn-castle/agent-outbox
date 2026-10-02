@@ -677,7 +677,12 @@ async function applySubscriptionEvent(
     return null;
   }
   const status = stringValue(object.status) ?? "unknown";
-  const transition = billingTransitionForSubscription(object, now);
+  const currentPeriodEnd = subscriptionCurrentPeriodEnd(object);
+  const transition = billingTransitionForSubscription(
+    object,
+    currentPeriodEnd,
+    now
+  );
   const result = await query<AccountIdRow>(
     subscriptionBillingUpdateStatement({
       subscriptionId,
@@ -687,9 +692,7 @@ async function applySubscriptionEvent(
       subscriptionStatus: status,
       billingStatus: transition.billingStatus,
       graceEndsAt: transition.graceEndsAt,
-      currentPeriodEnd: stripeTimestamp(
-        recordValue(object, "current_period_end")
-      ),
+      currentPeriodEnd,
       eventCreatedAt,
       eventReceiptOrder
     })
@@ -708,7 +711,7 @@ async function applyInvoicePaymentFailed(
   if (!isStripeRecord(object)) {
     return null;
   }
-  const subscriptionId = stripeId(recordValue(object, "subscription"));
+  const subscriptionId = invoiceSubscriptionId(object);
   if (!subscriptionId) {
     return null;
   }
@@ -733,22 +736,22 @@ async function applyInvoicePaymentFailed(
 
 function billingTransitionForSubscription(
   subscription: Record<string, unknown>,
+  currentPeriodEnd: Date | null,
   now: Date
 ): { billingStatus: BillingStatus; graceEndsAt: Date | null } {
   const status = stringValue(subscription.status);
-  const currentPeriodEnd = stripeTimestamp(
-    recordValue(subscription, "current_period_end")
-  );
   const cancelAtPeriodEnd = subscription.cancel_at_period_end === true;
 
   if ((status === "active" || status === "trialing") && !cancelAtPeriodEnd) {
     return { billingStatus: "active", graceEndsAt: null };
   }
   if ((status === "active" || status === "trialing") && cancelAtPeriodEnd) {
-    return {
-      billingStatus: "grace",
-      graceEndsAt: currentPeriodEnd ?? graceEndsAt(now)
-    };
+    if (!currentPeriodEnd) {
+      throw new Error(
+        "Stripe subscription scheduled to cancel at period end has no current period end."
+      );
+    }
+    return { billingStatus: "grace", graceEndsAt: currentPeriodEnd };
   }
   if (status === "canceled" || status === "incomplete_expired") {
     return { billingStatus: "canceled", graceEndsAt: graceEndsAt(now) };
@@ -874,6 +877,47 @@ function subscriptionPriceId(subscription: Record<string, unknown>) {
     return null;
   }
   return stringValue(price.id);
+}
+
+// API versions from 2025-03-31.basil report billing periods per subscription
+// item; earlier versions report one subscription-level period. Mixed-interval
+// subscriptions cancel at period end on the earliest item period end.
+function subscriptionCurrentPeriodEnd(
+  subscription: Record<string, unknown>
+): Date | null {
+  const subscriptionPeriodEnd = stripeTimestamp(
+    subscription.current_period_end
+  );
+  if (subscriptionPeriodEnd) {
+    return subscriptionPeriodEnd;
+  }
+  const items = recordValue(subscription, "items");
+  if (!isStripeRecord(items) || !Array.isArray(items.data)) {
+    return null;
+  }
+  let earliest: Date | null = null;
+  for (const item of items.data) {
+    const itemPeriodEnd = stripeTimestamp(
+      recordValue(item, "current_period_end")
+    );
+    if (itemPeriodEnd && (!earliest || itemPeriodEnd < earliest)) {
+      earliest = itemPeriodEnd;
+    }
+  }
+  return earliest;
+}
+
+// API versions from 2025-03-31.basil move an invoice's subscription under
+// `parent.subscription_details`; earlier versions use `subscription`.
+function invoiceSubscriptionId(invoice: Record<string, unknown>) {
+  const subscriptionDetails = recordValue(
+    recordValue(invoice, "parent"),
+    "subscription_details"
+  );
+  return (
+    stripeId(recordValue(subscriptionDetails, "subscription")) ??
+    stripeId(invoice.subscription)
+  );
 }
 
 function recordValue(record: unknown, key: string): unknown {
