@@ -1147,44 +1147,132 @@ func (failingWriter) Write([]byte) (int, error) {
 }
 
 func TestDataPlaneStdoutWriteFailureReportsLocalIOError(t *testing.T) {
+	inputPath := filepath.Join(t.TempDir(), "input.json")
+	if err := os.WriteFile(inputPath, []byte(`{"caller_item_id":"item_1","row_type":{},"title":"Title","subtitle":"Subtitle","summary":"Summary","link_buttons":[],"actions":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/input/list" {
-			_, _ = io.WriteString(w, `{"ok":true,"data":{"items":[{"caller_item_id":"item_1","status":"pending","revision":1,"updated_at":"2026-07-02T20:00:00Z"}],"has_more":false,"next_cursor":null,"returned_count":1,"page_limit":100}}`)
-			return
+		w.Header().Set("X-Request-ID", "req_result")
+		w.Header().Set("X-Correlation-ID", "corr_result")
+		switch r.URL.Path {
+		case "/api/input/list", "/api/output/check", "/api/output/read-all":
+			cursor := r.URL.Query().Get("cursor")
+			if r.URL.Path == "/api/output/read-all" {
+				var body struct {
+					Cursor *string `json:"cursor"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if body.Cursor != nil {
+					cursor = *body.Cursor
+				}
+			}
+			w.Header().Set("X-Request-ID", "req_page1")
+			w.Header().Set("X-Correlation-ID", "corr_page1")
+			hasMore, nextCursor := true, any("page2")
+			if cursor == "page2" {
+				w.Header().Set("X-Request-ID", "req_page2")
+				w.Header().Set("X-Correlation-ID", "corr_page2")
+				hasMore, nextCursor = false, nil
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "data": map[string]any{
+				"items":    []any{map[string]any{"output_result_id": "out_1", "caller_item_id": "item_1", "status": "pending", "revision": 1}},
+				"has_more": hasMore, "next_cursor": nextCursor, "returned_count": 1, "page_limit": 100,
+			}})
+		case "/api/output/out_1/files/file_1":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = io.WriteString(w, "file bytes")
+		case "/api/input/send", "/api/input/replace", "/api/input/delete", "/api/input/read", "/api/caller/status", "/api/account/status", "/api/output/out_1/read", "/api/output/out_1/ack":
+			_, _ = io.WriteString(w, `{"ok":true,"data":{"output_result_id":"out_1","caller_item_id":"item_1"}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
-		if r.URL.Path == "/api/output/check" {
-			_, _ = io.WriteString(w, `{"ok":true,"data":{"items":[{"output_result_id":"out_1","caller_item_id":"item_1","answered_at":"2026-07-02T20:00:00Z"}],"ready_count":1,"has_more":false,"next_cursor":null,"returned_count":1,"page_limit":100}}`)
-			return
-		}
-		_, _ = io.WriteString(w, `{"ok":true,"data":{"output_result_id":"out_1","caller_item_id":"item_1"}}`)
 	}))
 	defer server.Close()
 
-	for _, args := range [][]string{
-		{"output", "read", "out_1"},
-		{"--json", "output", "read", "out_1"},
-		{"output", "check"},
-		{"--json", "output", "check"},
-		{"input", "list"},
+	for _, tc := range []struct {
+		args      []string
+		mutates   bool
+		paginated bool
+	}{
+		{args: []string{"input", "send", "--file", inputPath}, mutates: true},
+		{args: []string{"input", "replace", "--file", inputPath}, mutates: true},
+		{args: []string{"input", "delete", "item_1"}, mutates: true},
+		{args: []string{"output", "read", "out_1"}, mutates: true},
+		{args: []string{"output", "ack", "out_1"}, mutates: true},
+		{args: []string{"output", "read", "--all"}, mutates: true, paginated: true},
+		{args: []string{"output", "check"}, paginated: true},
+		{args: []string{"input", "list"}, paginated: true},
+		{args: []string{"input", "read", "item_1"}},
+		{args: []string{"caller", "status"}},
+		{args: []string{"account", "status"}},
+		{args: []string{"output", "file", "get", "out_1", "file_1", "--output", filepath.Join(t.TempDir(), "download.bin"), "--force"}},
 	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			configPath := writeDataPlaneCommandConfig(t, server.URL)
-			var stderr bytes.Buffer
-			code := Execute(context.Background(), Options{
-				Args:         append([]string{"--config", configPath}, args...),
-				Stdout:       failingWriter{},
-				Stderr:       &stderr,
-				Env:          foundation.Env{},
-				SecretStore:  &dataPlaneSecretStore{keys: map[string]string{"caller_123": "caller-secret"}},
-				NewRequestID: func() string { return "req_cli" },
+		for _, jsonMode := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", strings.Join(tc.args, " "), jsonMode), func(t *testing.T) {
+				configPath := writeDataPlaneCommandConfig(t, server.URL)
+				args := append([]string{"--config", configPath}, tc.args...)
+				if jsonMode {
+					args = append(args, "--json")
+				}
+				var stderr bytes.Buffer
+				opts := Options{
+					Args: args, Stdout: failingWriter{}, Stderr: &stderr, Env: foundation.Env{},
+					SecretStore:  &dataPlaneSecretStore{keys: map[string]string{"caller_123": "caller-secret"}},
+					NewRequestID: func() string { return "req_cli" },
+				}
+				code := Execute(context.Background(), opts)
+				if code != foundation.ExitTemporary {
+					t.Fatalf("exit code = %d, want %d; stderr: %s", code, foundation.ExitTemporary, stderr.String())
+				}
+				var appErr foundation.AppError
+				if jsonMode {
+					var envelope struct {
+						Error foundation.AppError `json:"error"`
+					}
+					if err := json.Unmarshal(stderr.Bytes(), &envelope); err != nil {
+						t.Fatal(err)
+					}
+					appErr = envelope.Error
+					var raw struct {
+						Error map[string]any `json:"error"`
+					}
+					if err := json.Unmarshal(stderr.Bytes(), &raw); err != nil {
+						t.Fatal(err)
+					}
+					if _, present := raw.Error["write_outcome"]; present != tc.mutates {
+						t.Fatalf("write_outcome presence = %t, want %t: %s", present, tc.mutates, stderr.String())
+					}
+				} else {
+					if !strings.Contains(stderr.String(), string(foundation.CodeLocalIO)) {
+						t.Fatalf("stderr: %s", stderr.String())
+					}
+					root := NewRootCommand(opts, &rootFlags{})
+					root.SetArgs(args)
+					err := root.ExecuteContext(context.Background())
+					var result *foundation.AppError
+					if !errors.As(err, &result) {
+						t.Fatalf("expected AppError, got %v", err)
+					}
+					appErr = *result
+				}
+				requestID, correlationID := "req_result", "corr_result"
+				if tc.paginated {
+					requestID, correlationID = "req_page2", "corr_page2"
+				}
+				outcome := ""
+				if tc.mutates {
+					outcome = "accepted"
+				}
+				if appErr.Code != foundation.CodeLocalIO || appErr.Message != "Could not write command output." || appErr.HTTPStatus != http.StatusOK || appErr.RequestID != requestID || appErr.CorrelationID != correlationID || appErr.WriteOutcome != outcome {
+					t.Fatalf("unexpected stdout error: %+v", appErr)
+				}
 			})
-			if code != foundation.ExitTemporary {
-				t.Fatalf("exit code = %d, want %d; stderr: %s", code, foundation.ExitTemporary, stderr.String())
-			}
-			if !strings.Contains(stderr.String(), string(foundation.CodeLocalIO)) {
-				t.Fatalf("stderr missing %s: %s", foundation.CodeLocalIO, stderr.String())
-			}
-		})
+		}
 	}
 }

@@ -77,6 +77,7 @@ type paginatedData struct {
 type paginatedResult struct {
 	Data       paginatedData
 	Pagination paginationMetadata
+	Response   *foundation.APIResponse
 }
 
 type fileGetFlags struct {
@@ -130,7 +131,7 @@ func apiGetCommand(use string, short string, apiPath string, opts Options, flags
 			if err != nil {
 				return err
 			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data)
+			return renderRawSuccess(opts.Stdout, flags.json, meta, data, false)
 		},
 	}
 	related := "docs/spec/http-api.md and docs/spec/errors.md."
@@ -176,7 +177,7 @@ func inputJSONFileCommand(use string, short string, apiPath string, opts Options
 			if err != nil {
 				return err
 			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data)
+			return renderRawSuccess(opts.Stdout, flags.json, meta, data, true)
 		},
 	}
 	cmd.Flags().StringVar(&filePath, "file", "", "input submission JSON file")
@@ -220,7 +221,7 @@ func inputDeleteCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data)
+			return renderRawSuccess(opts.Stdout, flags.json, meta, data, true)
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
@@ -297,7 +298,7 @@ func inputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data)
+			return renderRawSuccess(opts.Stdout, flags.json, meta, data, false)
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
@@ -330,7 +331,7 @@ func outputCheckCommand(opts Options, flags *rootFlags) *cobra.Command {
 				return err
 			}
 			warnUnreadPagesLeft(opts.Stderr, result.Pagination)
-			return renderPaginatedSuccess(opts.Stdout, flags.json, result)
+			return renderPaginatedSuccess(opts.Stdout, flags.json, result, false)
 		},
 	}
 	addPageFlags(cmd, &page)
@@ -380,7 +381,7 @@ func outputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 				if !flags.json && unavailableCount(result.Data) > 0 {
 					_, _ = fmt.Fprintf(opts.Stderr, "%d output result(s) were temporarily unavailable because file metadata could not be read; retry later or read by output_result_id\n", unavailableCount(result.Data))
 				}
-				return renderPaginatedSuccess(opts.Stdout, flags.json, result)
+				return renderPaginatedSuccess(opts.Stdout, flags.json, result, true)
 			}
 
 			var data json.RawMessage
@@ -389,7 +390,7 @@ func outputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data)
+			return renderRawSuccess(opts.Stdout, flags.json, meta, data, true)
 		},
 	}
 	cmd.Flags().BoolVar(&readAll, "all", false, "read all ready output pages")
@@ -478,7 +479,7 @@ func outputAckCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data)
+			return renderRawSuccess(opts.Stdout, flags.json, meta, data, true)
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
@@ -695,6 +696,7 @@ func fetchPages(ctx context.Context, runtime *apiRuntime, kind string, page page
 		if err := validatePage(nextPage); err != nil {
 			return nil, invalidPageResponseError(kind, err.Error(), meta)
 		}
+		result.Response = meta
 		if result.Data.ReadyCount == nil && nextPage.ReadyCount != nil {
 			result.Data.ReadyCount = nextPage.ReadyCount
 		}
@@ -873,53 +875,53 @@ func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string
 	return meta, nil
 }
 
-func renderRawSuccess(w io.Writer, jsonMode bool, meta *foundation.APIResponse, data json.RawMessage) error {
+func renderRawSuccess(w io.Writer, jsonMode bool, meta *foundation.APIResponse, data json.RawMessage, mutates bool) error {
 	if len(bytes.TrimSpace(data)) == 0 {
 		data = json.RawMessage(`{}`)
 	}
 	if jsonMode {
-		return renderStructuredSuccess(w, true, meta, data)
+		return commandOutputResponseError(renderStructuredSuccess(w, true, meta, data), meta, mutates)
 	}
 	var out bytes.Buffer
 	out.Write(prettyJSON(data))
 	out.WriteByte('\n')
-	return writeCommandOutput(w, out.Bytes())
+	return commandOutputResponseError(writeCommandOutput(w, out.Bytes()), meta, mutates)
 }
 
-func renderPaginatedSuccess(w io.Writer, jsonMode bool, result *paginatedResult) error {
+func renderPaginatedSuccess(w io.Writer, jsonMode bool, result *paginatedResult, mutates bool) error {
 	if jsonMode {
-		return renderJSON(w, successEnvelope{
+		return commandOutputResponseError(renderJSON(w, successEnvelope{
 			OK:         true,
 			Data:       result.Data,
 			Pagination: &result.Pagination,
-		})
+		}), result.Response, mutates)
 	}
 	if len(result.Data.Items) == 0 {
-		return writeCommandOutput(w, []byte("no output ready\n"))
+		return commandOutputResponseError(writeCommandOutput(w, []byte("no output ready\n")), result.Response, mutates)
 	}
 	var out bytes.Buffer
 	for _, item := range result.Data.Items {
 		out.WriteString(compactOutputItem(item) + "\n")
 	}
-	return writeCommandOutput(w, out.Bytes())
+	return commandOutputResponseError(writeCommandOutput(w, out.Bytes()), result.Response, mutates)
 }
 
 func renderInputListSuccess(w io.Writer, jsonMode bool, result *paginatedResult) error {
 	if jsonMode {
-		return renderJSON(w, successEnvelope{
+		return commandOutputResponseError(renderJSON(w, successEnvelope{
 			OK:         true,
 			Data:       result.Data,
 			Pagination: &result.Pagination,
-		})
+		}), result.Response, false)
 	}
 	if len(result.Data.Items) == 0 {
-		return writeCommandOutput(w, []byte("no live input\n"))
+		return commandOutputResponseError(writeCommandOutput(w, []byte("no live input\n")), result.Response, false)
 	}
 	var out bytes.Buffer
 	for _, item := range result.Data.Items {
 		out.WriteString(compactInputItem(item) + "\n")
 	}
-	return writeCommandOutput(w, out.Bytes())
+	return commandOutputResponseError(writeCommandOutput(w, out.Bytes()), result.Response, false)
 }
 
 func renderStructuredSuccess(w io.Writer, jsonMode bool, meta *foundation.APIResponse, data any) error {
@@ -929,13 +931,27 @@ func renderStructuredSuccess(w io.Writer, jsonMode bool, meta *foundation.APIRes
 			envelope.RequestID = meta.RequestID
 			envelope.CorrelationID = meta.CorrelationID
 		}
-		return renderJSON(w, envelope)
+		return commandOutputResponseError(renderJSON(w, envelope), meta, false)
 	}
 	encoded, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeCommandOutput(w, append(encoded, '\n'))
+	return commandOutputResponseError(writeCommandOutput(w, append(encoded, '\n')), meta, false)
+}
+
+func commandOutputResponseError(err error, meta *foundation.APIResponse, mutates bool) error {
+	var appErr *foundation.AppError
+	if meta == nil || !errors.As(err, &appErr) || appErr.Code != foundation.CodeLocalIO {
+		return err
+	}
+	appErr.HTTPStatus = meta.HTTPStatus
+	appErr.RequestID = meta.RequestID
+	appErr.CorrelationID = meta.CorrelationID
+	if mutates {
+		appErr.WriteOutcome = "accepted"
+	}
+	return err
 }
 
 func prettyJSON(data json.RawMessage) []byte {

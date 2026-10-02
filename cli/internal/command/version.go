@@ -77,7 +77,7 @@ func renderJSON(w io.Writer, payload any) error {
 // writeCommandOutput writes a command's primary result to stdout and reports a
 // failed write as local stream I/O failure instead of success.
 func writeCommandOutput(w io.Writer, output []byte) error {
-	if _, err := w.Write(output); err != nil {
+	if n, err := w.Write(output); err != nil || n < len(output) {
 		return foundation.NewAppError(foundation.CodeLocalIO, "Could not write command output.")
 	}
 	return nil
