@@ -302,7 +302,9 @@ Limit enforcement:
 Billing grace, downgrade cleanup, retention cleanup, output-timeout cleanup, and
 acknowledgement cleanup use the same queue/file deletion path. Cleanup deletes
 whole queue items, output results, and files; it does not partially trim
-content.
+content. Grace-expiry cleanup changes the tier only after removing paid-only
+rows and bringing stored non-file bytes within the free limit; rows locked by
+concurrent requests defer the downgrade to a later cleanup run.
 
 Stripe checkout and Billing Portal sessions are created only for Clerk-backed
 humans with Agent Outbox account membership. Stripe webhooks use raw-body

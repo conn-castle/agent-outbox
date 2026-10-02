@@ -88,17 +88,50 @@ export function downgradeGraceExpiryStatement(
   nonFilePayloadLimitBytes: number,
   now: Date
 ): TransactionContextStatement {
-  if (
-    !Number.isSafeInteger(nonFilePayloadLimitBytes) ||
-    nonFilePayloadLimitBytes < 0
-  ) {
-    throw new RangeError(
-      "nonFilePayloadLimitBytes must be a non-negative safe integer"
-    );
-  }
+  assertNonFilePayloadLimitBytes(nonFilePayloadLimitBytes);
 
   return {
     sql: "select * from public.agent_outbox_cleanup_downgrade_grace_expiry($1, $2)",
+    values: [nonFilePayloadLimitBytes, timestampValue(now)]
+  };
+}
+
+// Shared by the grace cleanup and downgrade statements; $2 is the cleanup time.
+const EXPIRED_GRACE_ACCOUNT_CTE = `with expired_account as (
+        select account_id
+        from public.agent_outbox_accounts
+        where account_id = public.agent_outbox_context_account_id()
+          and tier = 'hosted_paid'
+          and billing_status in ('grace', 'past_due', 'canceled')
+          and billing_grace_ends_at is not null
+          and billing_grace_ends_at <= $2::timestamptz
+        for update
+      )`;
+
+export function expiredBillingGraceCleanupStatement(
+  nonFilePayloadLimitBytes: number,
+  now: Date
+): TransactionContextStatement {
+  assertNonFilePayloadLimitBytes(nonFilePayloadLimitBytes);
+
+  return {
+    sql: `
+      ${EXPIRED_GRACE_ACCOUNT_CTE},
+      cleanup as (
+        select cleanup_result.*
+        from expired_account
+        cross join public.agent_outbox_cleanup_downgrade_grace_expiry($1::bigint, $2::timestamptz) cleanup_result
+      )
+      select coalesce((
+        select sum(
+          expired_outputs_deleted
+          + file_outputs_deleted
+          + file_inputs_deleted
+          + oldest_inputs_deleted
+        )
+        from cleanup
+      ), 0)::bigint as deleted_count
+    `,
     values: [nonFilePayloadLimitBytes, timestampValue(now)]
   };
 }
@@ -107,31 +140,48 @@ export function expiredBillingGraceDowngradeStatement(
   nonFilePayloadLimitBytes: number,
   now: Date
 ): TransactionContextStatement {
-  if (
-    !Number.isSafeInteger(nonFilePayloadLimitBytes) ||
-    nonFilePayloadLimitBytes < 0
-  ) {
-    throw new RangeError(
-      "nonFilePayloadLimitBytes must be a non-negative safe integer"
-    );
-  }
+  assertNonFilePayloadLimitBytes(nonFilePayloadLimitBytes);
 
   return {
+    // Run after cleanup in the same transaction so these guards see its
+    // deletions. The guards must match what
+    // agent_outbox_cleanup_downgrade_grace_expiry deletes.
     sql: `
-      with expired_account as (
+      ${EXPIRED_GRACE_ACCOUNT_CTE},
+      eligible_account as (
         select account_id
-        from public.agent_outbox_accounts
-        where account_id = public.agent_outbox_context_account_id()
-          and tier = 'hosted_paid'
-          and billing_status in ('grace', 'past_due', 'canceled')
-          and billing_grace_ends_at is not null
-          and billing_grace_ends_at <= $2
-        for update
-      ),
-      cleanup as (
-        select cleanup_result.*
-        from expired_account
-        cross join public.agent_outbox_cleanup_downgrade_grace_expiry($1, $2) cleanup_result
+        from expired_account account
+        where not exists (
+          select 1
+          from public.agent_outbox_output_results output
+          where output.account_id = account.account_id
+            and exists (
+              select 1
+              from public.agent_outbox_output_files file
+              where file.output_result_id = output.output_result_id
+            )
+        )
+        and not exists (
+          select 1
+          from public.agent_outbox_input_items input
+          where input.account_id = account.account_id
+            and input.status = 'pending'
+            and exists (
+              select 1
+              from public.agent_outbox_input_actions action
+              where action.input_item_id = input.input_item_id
+                and action.popup_kind = 'file_upload'
+            )
+        )
+        and coalesce((
+          select sum(non_file_payload_bytes)
+          from public.agent_outbox_input_items
+          where account_id = account.account_id
+        ), 0) + coalesce((
+          select sum(response_payload_bytes)
+          from public.agent_outbox_output_results
+          where account_id = account.account_id
+        ), 0) <= $1::bigint
       ),
       downgraded as (
         update public.agent_outbox_accounts account
@@ -143,21 +193,13 @@ export function expiredBillingGraceDowngradeStatement(
           stripe_price_id = null,
           stripe_current_period_end = null,
           updated_at = now()
-        where account.account_id in (select account_id from expired_account)
+        where account.account_id in (select account_id from eligible_account)
         returning 1
       )
       select
-        coalesce((
-          select
-            sum(
-              expired_outputs_deleted
-              + file_outputs_deleted
-              + file_inputs_deleted
-              + oldest_inputs_deleted
-            )
-          from cleanup
-        ), 0)::bigint
-        + coalesce((select count(*) from downgraded), 0)::bigint as deleted_count
+        coalesce((select count(*) from downgraded), 0)::bigint as deleted_count,
+        (exists(select 1 from expired_account)
+          and not exists(select 1 from eligible_account)) as downgrade_deferred
     `,
     values: [nonFilePayloadLimitBytes, timestampValue(now)]
   };
@@ -274,6 +316,17 @@ export function activeLimitMaintenanceStatement(
     sql: "select public.agent_outbox_prune_expired_limit_blocks($1) as deleted_count",
     values: [timestampValue(now)]
   };
+}
+
+function assertNonFilePayloadLimitBytes(nonFilePayloadLimitBytes: number) {
+  if (
+    !Number.isSafeInteger(nonFilePayloadLimitBytes) ||
+    nonFilePayloadLimitBytes < 0
+  ) {
+    throw new RangeError(
+      "nonFilePayloadLimitBytes must be a non-negative safe integer"
+    );
+  }
 }
 
 function timestampValue(value: Date) {
