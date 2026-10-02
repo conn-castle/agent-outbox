@@ -662,19 +662,18 @@ func exchangeStoreAndActivateRotate(ctx context.Context, runtime *controlPlaneRu
 		updatedConfig := cloneConfig(runtime.Config)
 		upsertCallerConfig(&updatedConfig, current.Name, exchanged.Caller, exchanged.Account, exchanged.ReplacementCredential)
 		if err := saveRuntimeConfig(runtime, updatedConfig); err != nil {
-			restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr)
-			return err
+			return localRollbackFailureError(err, restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr), nil)
 		}
 
 		activateAttempted = true
 		if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/activate", replacementKey, map[string]string{"setup_request_id": setup.SetupRequestID}, &activated); err != nil {
 			if activateDefinitivelyDidNotCommit(err) {
-				restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr)
-				if saveErr := saveRuntimeConfig(runtime, previousConfig); saveErr != nil {
-					return rollbackSaveFailureError(err, saveErr)
+				restoreErr := restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr)
+				saveErr := saveRuntimeConfig(runtime, previousConfig)
+				if saveErr == nil {
+					runtime.Config = previousConfig
 				}
-				runtime.Config = previousConfig
-				return err
+				return localRollbackFailureError(err, restoreErr, saveErr)
 			}
 
 			runtime.Config = updatedConfig
@@ -692,12 +691,11 @@ func exchangeStoreAndActivateRotate(ctx context.Context, runtime *controlPlaneRu
 	return exchanged, activated, nil
 }
 
-func restoreCallerSecret(runtime *controlPlaneRuntime, callerID string, oldKey string, oldKeyErr error) {
+func restoreCallerSecret(runtime *controlPlaneRuntime, callerID string, oldKey string, oldKeyErr error) error {
 	if oldKeyErr == nil && oldKey != "" {
-		_ = storeCallerSecret(runtime, callerID, oldKey)
-		return
+		return storeCallerSecret(runtime, callerID, oldKey)
 	}
-	_ = deleteCallerSecret(runtime, callerID)
+	return deleteCallerSecretIfPresent(runtime, callerID)
 }
 
 // activateDefinitivelyDidNotCommit reports whether a validated API error proves the hosted
@@ -1009,6 +1007,7 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 
 	var activated connectActivateData
 	activateAttempted := false
+	var credentialRollbackErr error
 	if err := withRuntimeLocalStateLock(runtime, func() error {
 		if err := reloadRuntimeConfig(runtime); err != nil {
 			return err
@@ -1026,19 +1025,19 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 		updatedConfig.BaseURL = runtime.Client.BaseURL
 		upsertCallerConfig(&updatedConfig, localName, result.Caller, result.Account, result.Credential)
 		if err := saveRuntimeConfig(runtime, updatedConfig); err != nil {
-			_ = deleteCallerSecret(runtime, result.Caller.CallerID)
+			credentialRollbackErr = deleteCallerSecretIfPresent(runtime, result.Caller.CallerID)
 			return err
 		}
 
 		activateAttempted = true
 		if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/activate", pendingKey, map[string]string{"setup_request_id": result.SetupRequestID}, &activated); err != nil {
 			if activateDefinitivelyDidNotCommit(err) {
-				_ = deleteCallerSecret(runtime, result.Caller.CallerID)
-				if saveErr := saveRuntimeConfig(runtime, previousConfig); saveErr != nil {
-					return rollbackSaveFailureError(err, saveErr)
+				deleteErr := deleteCallerSecretIfPresent(runtime, result.Caller.CallerID)
+				saveErr := saveRuntimeConfig(runtime, previousConfig)
+				if saveErr == nil {
+					runtime.Config = previousConfig
 				}
-				runtime.Config = previousConfig
-				return err
+				return localRollbackFailureError(err, deleteErr, saveErr)
 			}
 			runtime.Config = updatedConfig
 			return activateMayBeActiveError(err, "The hosted connect credential may already be active; the local caller was kept so the connection can be verified or reconciled.")
@@ -1048,7 +1047,11 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 		return nil
 	}); err != nil {
 		if !activateAttempted {
-			abortConnectPendingCredential(ctx, runtime, pendingKey, result)
+			deleteErr := abortConnectPendingCredential(ctx, runtime, pendingKey, result)
+			if credentialRollbackErr != nil {
+				// Abort retries a failed local rollback; report only its final deletion outcome.
+				err = localRollbackFailureError(err, deleteErr, nil)
+			}
 		}
 		return connectActivateData{}, err
 	}
@@ -1057,10 +1060,11 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 
 // abortConnectPendingCredential is the best-effort cleanup for a local-persistence failure that
 // occurs before activation: expire the hosted pending key, then remove any partially stored secret.
+// It returns the local deletion result so a failed rollback can be reported after this retry.
 // No active hosted key must remain after this returns.
-func abortConnectPendingCredential(ctx context.Context, runtime *controlPlaneRuntime, pendingKey string, result connectExchangeData) {
+func abortConnectPendingCredential(ctx context.Context, runtime *controlPlaneRuntime, pendingKey string, result connectExchangeData) error {
 	_, _ = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/abort", pendingKey, map[string]string{"setup_request_id": result.SetupRequestID}, nil)
-	_ = runtime.Secrets.DeleteCallerKey(result.Caller.CallerID)
+	return deleteCallerSecretIfPresent(runtime, result.Caller.CallerID)
 }
 
 // activateMayBeActiveError annotates an ambiguous activate failure (transport/read/decode
@@ -1080,22 +1084,29 @@ func activateMayBeActiveError(err error, guidance string) error {
 	return &wrapped
 }
 
-// rollbackSaveFailureError annotates a definitively-uncommitted activation error when the
-// follow-up local config rollback save also failed, so the operator is warned that local
-// caller state may be inconsistent instead of seeing only the activation error. The original
-// error code and exit code are preserved.
-func rollbackSaveFailureError(activateErr error, saveErr error) error {
+// localRollbackFailureError annotates a connect or rotate failure when restoring the local
+// credential or config afterwards also failed, so the operator is warned that local caller
+// state may be inconsistent instead of seeing only the original error. It returns err
+// unchanged when both rollbacks succeeded. The original error code and exit code are preserved.
+func localRollbackFailureError(err error, credentialErr error, configErr error) error {
+	var failures []string
+	if credentialErr != nil {
+		failures = append(failures, fmt.Sprintf("Local credential rollback also failed (%v).", credentialErr))
+	}
+	if configErr != nil {
+		failures = append(failures, fmt.Sprintf("Local config rollback also failed (%v).", configErr))
+	}
+	if len(failures) == 0 {
+		return err
+	}
+	detail := strings.Join(failures, " ") + " The local caller may be inconsistent and should be checked."
 	var appErr *foundation.AppError
-	if !errors.As(activateErr, &appErr) {
-		return activateErr
+	if !errors.As(err, &appErr) {
+		return fmt.Errorf("%w %s", err, detail)
 	}
 	wrapped := *appErr
-	wrapped.Message = fmt.Sprintf(
-		"%s Local config rollback also failed (%v); the local caller may be inconsistent and should be checked.",
-		appErr.Message,
-		saveErr,
-	)
-	wrapped.ExitCode = foundation.ExitCodeFor(activateErr)
+	wrapped.Message = appErr.Message + " " + detail
+	wrapped.ExitCode = foundation.ExitCodeFor(err)
 	return &wrapped
 }
 
@@ -1274,7 +1285,7 @@ func removeLocalCaller(runtime *controlPlaneRuntime, selected foundation.CallerC
 			next = append(next, caller)
 		}
 		updated.Callers = next
-		if err := deleteCallerSecret(runtime, current.CallerID); err != nil && !errors.Is(err, foundation.ErrSecretNotFound) {
+		if err := deleteCallerSecretIfPresent(runtime, current.CallerID); err != nil {
 			return err
 		}
 		if err := saveRuntimeConfig(runtime, updated); err != nil {
@@ -1314,6 +1325,14 @@ func deleteCallerSecret(runtime *controlPlaneRuntime, callerID string) error {
 		}
 	}
 	return runtime.Secrets.DeleteCallerKey(callerID)
+}
+
+// deleteCallerSecretIfPresent removes the stored caller key, treating an already-absent key as success.
+func deleteCallerSecretIfPresent(runtime *controlPlaneRuntime, callerID string) error {
+	if err := deleteCallerSecret(runtime, callerID); err != nil && !errors.Is(err, foundation.ErrSecretNotFound) {
+		return err
+	}
+	return nil
 }
 
 func sanitizedConnectResult(localName string, result connectExchangeData, activated connectActivateData) map[string]any {

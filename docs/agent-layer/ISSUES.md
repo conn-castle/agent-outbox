@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-02 cli-device-expiry-test-race: CLI device-expiry test races under `go test -race`
+    Priority: Low. Area: CLI tests
+    Description: `TestCallerConnectDevicePollRequestStopsAtDeviceExpiry` (`cli/internal/command/controlplane_test.go`) increments `polls` in the HTTP handler goroutine and reads it from the test goroutine after the client cancels the in-flight poll, so `-race` reports a data race. CI runs Go tests without `-race`, so it does not fail there.
+    Next step: Synchronize the handler counter (for example, with `sync/atomic`) before adding `-race` to any Go gate.
+
 - Issue 2026-10-02 migration-gate-lexing-gaps: Destructive-migration gate misreads some SQL lexical forms
     Priority: Low. Area: Policy gates / Migrations
     Description: `scripts/policy-gates/migration-discipline-scan.mjs` matches regexes over comment-stripped text without a SQL tokenizer. These destructive statements pass without the label: `E'...\'...'` strings that hide a later `DROP x` or `SET NOT NULL` action, quoted identifiers with no surrounding whitespace (`DROP"x"`, `ALTER TABLE"t"`), `U&"..."` table names, and `ALTER FOREIGN TABLE`. Dollar-quoted text and string literals that contain `ALTER TABLE ... DROP` can falsely block additive statements.
