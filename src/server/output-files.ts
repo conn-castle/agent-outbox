@@ -168,19 +168,29 @@ export async function outputFileDownloadInTransaction(
     return { ok: false, error: pathError };
   }
 
+  const notFound: OutputFileDownloadResult = {
+    ok: false,
+    error: {
+      status: 404,
+      code: "not_found",
+      message: "Output file was not found."
+    }
+  };
+  // Lock the output row before its file row, matching acknowledgement,
+  // pre-read undo, and cleanup, whose output deletion cascades to file rows.
+  const output = await query(
+    callerOutputLockStatement(identity, path.outputResultId)
+  );
+  if (output.rows.length === 0) {
+    return notFound;
+  }
+
   const result = await query<OutputFileDownloadRow>(
     outputFileDownloadStatement(identity, path)
   );
   const row = result.rows[0];
   if (!row) {
-    return {
-      ok: false,
-      error: {
-        status: 404,
-        code: "not_found",
-        message: "Output file was not found."
-      }
-    };
+    return notFound;
   }
 
   const bytes = normalizeFileBytes(row.file_bytes);
@@ -206,6 +216,23 @@ export async function outputFileDownloadInTransaction(
       mimeType: row.mime_type,
       sizeBytes
     })
+  };
+}
+
+export function callerOutputLockStatement(
+  identity: CallerIdentity,
+  outputResultId: string
+): TransactionContextStatement {
+  return {
+    sql: `
+      select output_result_id::text as output_result_id
+      from public.agent_outbox_output_results
+      where account_id = $1
+        and caller_id = $2
+        and output_result_id::text = $3
+      for update
+    `,
+    values: [identity.accountId, identity.callerId, outputResultId]
   };
 }
 
@@ -246,7 +273,7 @@ export function outputFileDownloadStatement(
         and f.output_result_id::text = $3
         and f.output_file_id::text = $4
       limit 1
-      for update of f, o
+      for update of f
     `,
     values: [
       identity.accountId,

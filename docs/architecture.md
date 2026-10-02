@@ -156,7 +156,9 @@ the account tier, so validation, limits, and retention cannot use a profile from
 before a concurrent tier change. This order prevents deadlocks between caller
 replacement, human file quotas, output foreign-key checks, and cleanup billing
 downgrades. Concurrent answers still check the input revision after acquiring
-locks so a replaced revision cannot be answered.
+locks so a replaced revision cannot be answered. Output file downloads lock the
+output row before its file row, the same order as acknowledgement, pre-read
+undo, and cleanup deletions that cascade from the output to its files.
 
 Storage rules:
 
