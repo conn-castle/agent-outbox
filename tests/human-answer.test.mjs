@@ -13,6 +13,7 @@ import {
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
 import { runScheduledCleanup } from "../src/server/scheduled.ts";
+import { accountLimitStatusMetadata } from "../src/server/limits.ts";
 import {
   assertMigrationOwnerCanSetAppRole,
   connectedDatabaseClient,
@@ -1482,6 +1483,111 @@ test(
           await cleanupHumanAnswerDatabaseTest(owner, ids);
         },
         "Cleanup concurrency test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "scheduled cleanup waiting on a free-to-paid upgrade keeps the paid account's pending inputs",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const upgrader = await connectedDatabaseClient(databaseUrl);
+    const cleanupClient = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const freeRetention = accountLimitStatusMetadata("hosted-free").limits.find(
+      (limit) => limit.limitName === "input_retention_days"
+    )?.setting;
+    assert.equal(freeRetention?.mode, "enabled");
+    /** @type {Promise<unknown>[]} */
+    const operations = [];
+    /** @type {unknown} */
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await owner.query("begin");
+      await seedDatabaseRows(owner, ids);
+      await owner.query(
+        "update public.agent_outbox_input_items set updated_at = now() - make_interval(days => $2) where input_item_id = $1",
+        [ids.inputItemId, freeRetention.value + 1]
+      );
+      await owner.query("commit");
+      await upgrader.query("begin");
+      await upgrader.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid', billing_status = 'active' where account_id = $1",
+        [ids.accountId]
+      );
+      const upgraderPid = (
+        await upgrader.query("select pg_backend_pid() as pid")
+      ).rows[0].pid;
+      const cleanupPid = (
+        await cleanupClient.query("select pg_backend_pid() as pid")
+      ).rows[0].pid;
+      const cleanup = runScheduledCleanup({
+        connectionString: databaseUrl,
+        requestId: "req-cleanup-upgrade",
+        runTransaction(_connectionString, _context, callback) {
+          return runHumanAnswerDatabaseTransaction(
+            cleanupClient,
+            ids,
+            "cleanup",
+            (query) =>
+              callback(
+                /** @type {ProductTransactionQuery} */ (
+                  async (statement) => {
+                    const result = await query(statement);
+                    if (
+                      statement.sql.includes(
+                        "agent_outbox_cleanup_account_targets"
+                      )
+                    ) {
+                      // Keep this shared test database's other accounts out of the run.
+                      const rows = result.rows.filter(
+                        (row) => row.account_id === ids.accountId
+                      );
+                      return { ...result, rows, rowCount: rows.length };
+                    }
+                    return result;
+                  }
+                )
+              )
+          );
+        }
+      });
+      operations.push(cleanup);
+      await waitForDatabaseBlock(owner, cleanupPid, upgraderPid);
+      await upgrader.query("commit");
+      assert.equal((await cleanup).accounts_cleaned, 1);
+      const state = await owner.query(
+        `select tier,
+          (select count(*)::int from public.agent_outbox_input_items where account_id = $1 and status = 'pending') as pending_inputs
+         from public.agent_outbox_accounts where account_id = $1`,
+        [ids.accountId]
+      );
+      assert.deepEqual(state.rows, [
+        { tier: "hosted_paid", pending_inputs: 1 }
+      ]);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await upgrader.query("rollback");
+          await Promise.allSettled(operations);
+          await upgrader.end();
+          await cleanupClient.end();
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Cleanup tier upgrade test and teardown both failed."
       );
     }
   }
