@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -45,6 +46,21 @@ var defaultHTTPClient = &http.Client{
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 	},
+	CheckRedirect: checkRedirect,
+}
+
+// checkRedirect keeps net/http's default 10-hop limit and applies the base-URL
+// transport rule to every hop. net/http resends Authorization on same-host
+// redirects regardless of scheme, so without this check an https-to-http
+// redirect would send the caller API key in cleartext.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if !keyTransportAllowed(req.URL) {
+		return fmt.Errorf("refused redirect to %s: non-loopback hosts require https", req.URL.Redacted())
+	}
+	return nil
 }
 
 type APIClient struct {

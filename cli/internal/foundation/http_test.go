@@ -795,3 +795,81 @@ func renderedObject(t *testing.T, parent map[string]any, key string) map[string]
 	}
 	return object
 }
+
+// redirectingClient copies the production client policy and replaces only the
+// transport: the first request gets a 307 to location, and later hops succeed.
+func redirectingClient(location string, seen *[]*http.Request) *http.Client {
+	client := *defaultHTTPClient
+	client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		*seen = append(*seen, request)
+		if len(*seen) == 1 {
+			header := make(http.Header)
+			header.Set("Location", location)
+			return &http.Response{StatusCode: http.StatusTemporaryRedirect, Header: header, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true,"request_id":"req_redirect","data":{"value":"ok"}}`)),
+		}, nil
+	})
+	return &client
+}
+
+func TestAPIClientRefusesRedirectsToCleartextNonLoopbackHosts(t *testing.T) {
+	for _, location := range []string{
+		"http://app.example/api/callers/me",
+		"http://other.example/api/callers/me",
+	} {
+		for name, call := range map[string]func(APIClient) error{
+			"read": func(c APIClient) error {
+				_, err := c.Do(context.Background(), http.MethodGet, "/api/callers/me", "bearer-secret", nil, nil)
+				return err
+			},
+			"write": func(c APIClient) error {
+				_, err := c.DoWrite(context.Background(), http.MethodPost, "/api/callers/me", "bearer-secret", map[string]string{"k": "v"}, nil)
+				return err
+			},
+			"download": func(c APIClient) error {
+				_, err := c.Download(context.Background(), "/api/output/out_1/files/file_1", "bearer-secret", &countingWriter{})
+				return err
+			},
+		} {
+			t.Run(name+" to "+location, func(t *testing.T) {
+				var seen []*http.Request
+				client := APIClient{
+					BaseURL:      "https://app.example",
+					HTTPClient:   redirectingClient(location, &seen),
+					NewRequestID: func() string { return "req_redirect" },
+				}
+				err := call(client)
+				assertAPIUnavailable(t, err, "req_redirect")
+				if len(seen) != 1 {
+					t.Fatalf("round trips = %d, want 1 (redirect must not be followed)", len(seen))
+				}
+				if name == "write" && err.(*AppError).WriteOutcome != "unknown" {
+					t.Fatalf("write outcome = %q, want unknown", err.(*AppError).WriteOutcome)
+				}
+			})
+		}
+	}
+}
+
+func TestAPIClientFollowsRedirectsThatKeepTheTransportRule(t *testing.T) {
+	for _, tc := range []struct{ base, location string }{
+		{"https://app.example", "https://app.example/api/v2/callers/me"},
+		{"http://localhost:3000", "http://localhost:3000/api/v2/callers/me"},
+		{"http://127.0.0.1:3000", "http://[::1]:3000/api/v2/callers/me"},
+	} {
+		t.Run(tc.location, func(t *testing.T) {
+			var seen []*http.Request
+			client := APIClient{BaseURL: tc.base, HTTPClient: redirectingClient(tc.location, &seen)}
+			if _, err := client.Do(context.Background(), http.MethodGet, "/api/callers/me", "bearer-fixture", nil, nil); err != nil {
+				t.Fatalf("Do failed: %v", err)
+			}
+			if len(seen) != 2 || seen[1].URL.String() != tc.location {
+				t.Fatalf("round trips = %d, want the redirect to %s followed", len(seen), tc.location)
+			}
+		})
+	}
+}
