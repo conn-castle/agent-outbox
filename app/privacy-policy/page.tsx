@@ -123,12 +123,6 @@ export default function PrivacyPolicyPage() {
               are replaced with a fixed sanitized message.
             </li>
             <li>
-              Cloudflare Web Analytics performance and page-view measurements.
-              Its browser beacon does not use cookies, local storage, session
-              storage, or fingerprinting and does not retain the visitor IP in
-              its analytics data.
-            </li>
-            <li>
               Cookie-based analytics records IP address, approximate location,
               device and browser information, referrers, and interactions with
               the website.
@@ -209,10 +203,6 @@ export default function PrivacyPolicyPage() {
               sign-up, sign-in, and authenticated browser sessions.
             </li>
             <li>
-              Cloudflare Web Analytics is configured as cookie-free performance
-              and page-view analytics and does not access browser storage.
-            </li>
-            <li>
               A product analytics provider uses analytics cookies and browser
               storage to understand website traffic.
             </li>
@@ -250,8 +240,8 @@ export default function PrivacyPolicyPage() {
             </li>
             <li>
               <strong>Cloudflare:</strong> DNS, hosted application and API
-              execution, contact-form email delivery, request security,
-              structured runtime logs, and privacy-oriented Web Analytics.
+              execution, contact-form email delivery, request security, and
+              structured runtime logs.
             </li>
             <li>
               <strong>Supabase:</strong> managed Postgres storage for accounts,
