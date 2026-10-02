@@ -1,5 +1,4 @@
 import { createCorrelationId } from "./correlation.ts";
-import { accountWriteLockStatement } from "./caller-api-limits.ts";
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
   accountQuotaWindowMaintenanceStatement,
@@ -40,11 +39,13 @@ type ScheduledCanaryInput = {
 
 type ScheduledCleanupAccountTarget = {
   accountId: string;
-  tier: AccountTier;
 };
 
 type ScheduledCleanupAccountTargetRow = {
   account_id: unknown;
+};
+
+type ScheduledCleanupLockedAccountRow = {
   tier: unknown;
 };
 
@@ -115,7 +116,16 @@ export function runScheduledCanary(input: ScheduledCanaryInput) {
 
 export function cleanupAccountTargetsStatement(): TransactionContextStatement {
   return {
-    sql: "select account_id::text as account_id, tier from public.agent_outbox_cleanup_account_targets()"
+    sql: "select account_id::text as account_id from public.agent_outbox_cleanup_account_targets()"
+  };
+}
+
+export function cleanupAccountTierLockStatement(
+  accountId: string
+): TransactionContextStatement {
+  return {
+    sql: "select tier from public.agent_outbox_accounts where account_id = $1 for update",
+    values: [accountId]
   };
 }
 
@@ -215,12 +225,16 @@ export async function runScheduledCleanup(
           },
           async (query) => {
             // Cleanup later changes billing state after deleting queue rows.
-            // Match caller/human account-before-input ordering from the start.
-            await query(accountWriteLockStatement(account));
+            // Match caller/human account-before-input ordering from the start,
+            // and read the tier under that lock so a concurrent upgrade cannot
+            // leave free-tier retention running against a paid account.
+            const lockedAccount = await query<ScheduledCleanupLockedAccountRow>(
+              cleanupAccountTierLockStatement(account.accountId)
+            );
             return runCleanupStatements(
               query,
               scheduledCleanupStatementsForAccount({
-                tier: account.tier,
+                tier: lockedAccountTier(lockedAccount.rows),
                 now,
                 requestId
               })
@@ -330,14 +344,22 @@ function freeTierNonFilePayloadLimitBytes(): number {
 function cleanupAccountTargetFromRow(
   row: ScheduledCleanupAccountTargetRow
 ): ScheduledCleanupAccountTarget {
-  if (typeof row.account_id !== "string" || !isAccountTier(row.tier)) {
+  if (typeof row.account_id !== "string") {
     throw new Error("Scheduled cleanup account target row is invalid.");
   }
 
-  return {
-    accountId: row.account_id,
-    tier: row.tier
-  };
+  return { accountId: row.account_id };
+}
+
+function lockedAccountTier(
+  rows: readonly ScheduledCleanupLockedAccountRow[]
+): AccountTier {
+  const tier = rows[0]?.tier;
+  if (rows.length !== 1 || !isAccountTier(tier)) {
+    throw new Error("Scheduled cleanup locked account row is invalid.");
+  }
+
+  return tier;
 }
 
 function isAccountTier(value: unknown): value is AccountTier {
