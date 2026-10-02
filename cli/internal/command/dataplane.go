@@ -880,45 +880,46 @@ func renderRawSuccess(w io.Writer, jsonMode bool, meta *foundation.APIResponse, 
 	if jsonMode {
 		return renderStructuredSuccess(w, true, meta, data)
 	}
-	_, _ = w.Write(prettyJSON(data))
-	_, _ = w.Write([]byte("\n"))
-	return nil
+	var out bytes.Buffer
+	out.Write(prettyJSON(data))
+	out.WriteByte('\n')
+	return writeCommandOutput(w, out.Bytes())
 }
 
 func renderPaginatedSuccess(w io.Writer, jsonMode bool, result *paginatedResult) error {
 	if jsonMode {
-		return renderStructuredEnvelope(w, successEnvelope{
+		return renderJSON(w, successEnvelope{
 			OK:         true,
 			Data:       result.Data,
 			Pagination: &result.Pagination,
 		})
 	}
 	if len(result.Data.Items) == 0 {
-		_, _ = fmt.Fprintln(w, "no output ready")
-		return nil
+		return writeCommandOutput(w, []byte("no output ready\n"))
 	}
+	var out bytes.Buffer
 	for _, item := range result.Data.Items {
-		_, _ = fmt.Fprintln(w, compactOutputItem(item))
+		out.WriteString(compactOutputItem(item) + "\n")
 	}
-	return nil
+	return writeCommandOutput(w, out.Bytes())
 }
 
 func renderInputListSuccess(w io.Writer, jsonMode bool, result *paginatedResult) error {
 	if jsonMode {
-		return renderStructuredEnvelope(w, successEnvelope{
+		return renderJSON(w, successEnvelope{
 			OK:         true,
 			Data:       result.Data,
 			Pagination: &result.Pagination,
 		})
 	}
 	if len(result.Data.Items) == 0 {
-		_, _ = fmt.Fprintln(w, "no live input")
-		return nil
+		return writeCommandOutput(w, []byte("no live input\n"))
 	}
+	var out bytes.Buffer
 	for _, item := range result.Data.Items {
-		_, _ = fmt.Fprintln(w, compactInputItem(item))
+		out.WriteString(compactInputItem(item) + "\n")
 	}
-	return nil
+	return writeCommandOutput(w, out.Bytes())
 }
 
 func renderStructuredSuccess(w io.Writer, jsonMode bool, meta *foundation.APIResponse, data any) error {
@@ -928,21 +929,13 @@ func renderStructuredSuccess(w io.Writer, jsonMode bool, meta *foundation.APIRes
 			envelope.RequestID = meta.RequestID
 			envelope.CorrelationID = meta.CorrelationID
 		}
-		return renderStructuredEnvelope(w, envelope)
+		return renderJSON(w, envelope)
 	}
 	encoded, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return err
 	}
-	_, _ = w.Write(encoded)
-	_, _ = w.Write([]byte("\n"))
-	return nil
-}
-
-func renderStructuredEnvelope(w io.Writer, envelope successEnvelope) error {
-	encoder := json.NewEncoder(w)
-	encoder.SetEscapeHTML(false)
-	return encoder.Encode(envelope)
+	return writeCommandOutput(w, append(encoded, '\n'))
 }
 
 func prettyJSON(data json.RawMessage) []byte {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1137,4 +1138,53 @@ func decodeCommandJSON(t *testing.T, stdout string) map[string]any {
 		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout)
 	}
 	return payload
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("no space left on device")
+}
+
+func TestDataPlaneStdoutWriteFailureReportsLocalIOError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/input/list" {
+			_, _ = io.WriteString(w, `{"ok":true,"data":{"items":[{"caller_item_id":"item_1","status":"pending","revision":1,"updated_at":"2026-07-02T20:00:00Z"}],"has_more":false,"next_cursor":null,"returned_count":1,"page_limit":100}}`)
+			return
+		}
+		if r.URL.Path == "/api/output/check" {
+			_, _ = io.WriteString(w, `{"ok":true,"data":{"items":[{"output_result_id":"out_1","caller_item_id":"item_1","answered_at":"2026-07-02T20:00:00Z"}],"ready_count":1,"has_more":false,"next_cursor":null,"returned_count":1,"page_limit":100}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"ok":true,"data":{"output_result_id":"out_1","caller_item_id":"item_1"}}`)
+	}))
+	defer server.Close()
+
+	for _, args := range [][]string{
+		{"output", "read", "out_1"},
+		{"--json", "output", "read", "out_1"},
+		{"output", "check"},
+		{"--json", "output", "check"},
+		{"input", "list"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			configPath := writeDataPlaneCommandConfig(t, server.URL)
+			var stderr bytes.Buffer
+			code := Execute(context.Background(), Options{
+				Args:         append([]string{"--config", configPath}, args...),
+				Stdout:       failingWriter{},
+				Stderr:       &stderr,
+				Env:          foundation.Env{},
+				SecretStore:  &dataPlaneSecretStore{keys: map[string]string{"caller_123": "caller-secret"}},
+				NewRequestID: func() string { return "req_cli" },
+			})
+			if code != foundation.ExitTemporary {
+				t.Fatalf("exit code = %d, want %d; stderr: %s", code, foundation.ExitTemporary, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), string(foundation.CodeLocalIO)) {
+				t.Fatalf("stderr missing %s: %s", foundation.CodeLocalIO, stderr.String())
+			}
+		})
+	}
 }

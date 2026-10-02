@@ -33,7 +33,9 @@ func upgradeCommand(opts Options, flags *rootFlags) *cobra.Command {
 				return renderJSON(opts.Stdout, upgradePayload{URL: upgradeURL, OpenAttempted: false, Opened: false})
 			}
 
-			_, _ = fmt.Fprintln(opts.Stdout, upgradeURL)
+			if err := writeCommandOutput(opts.Stdout, []byte(upgradeURL+"\n")); err != nil {
+				return err
+			}
 			openBrowser := opts.OpenBrowser
 			if openBrowser == nil {
 				openBrowser = openBrowserURL
@@ -54,7 +56,7 @@ func upgradeCommand(opts Options, flags *rootFlags) *cobra.Command {
 			"AGENT_OUTBOX_CALLER is ignored; upgrade does not require a local caller.",
 		}, "\n"),
 		Examples:    "agent-outbox upgrade\nagent-outbox --base-url http://localhost:38000 upgrade\nagent-outbox upgrade --json",
-		ExitCodes:   "0 success, including browser-open warning after the URL is printed. 64 usage. 78 invalid base URL or explicit/existing config.",
+		ExitCodes:   "0 success, including browser-open warning after the URL is printed. 64 usage. 75 local output write failure. 78 invalid base URL or explicit/existing config.",
 		RelatedDocs: "docs/spec/README.md, docs/spec/errors.md, and agent-outbox docs upgrade.",
 	})
 	return bypassRootPreflight(cmd)

@@ -425,3 +425,33 @@ func assertDoctorCheckOrder(t *testing.T, payload map[string]any) {
 		t.Fatalf("doctor check order = %s, want %v", encoded, want)
 	}
 }
+
+func TestLocalCommandStdoutWriteFailureReportsLocalIOError(t *testing.T) {
+	configPath := writeDataPlaneCommandConfig(t, "http://localhost:38000")
+	for _, args := range [][]string{
+		{"version"},
+		{"version", "--json"},
+		{"docs"},
+		{"docs", "cli"},
+		{"docs", "cli", "--json"},
+		{"caller", "list"},
+		{"upgrade"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stderr bytes.Buffer
+			code := Execute(context.Background(), Options{
+				Args:        append([]string{"--config", configPath}, args...),
+				Stdout:      failingWriter{},
+				Stderr:      &stderr,
+				Env:         foundation.Env{},
+				OpenBrowser: func(string) error { return nil },
+			})
+			if code != foundation.ExitTemporary {
+				t.Fatalf("exit code = %d, want %d; stderr: %s", code, foundation.ExitTemporary, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), string(foundation.CodeLocalIO)) {
+				t.Fatalf("stderr missing %s: %s", foundation.CodeLocalIO, stderr.String())
+			}
+		})
+	}
+}
