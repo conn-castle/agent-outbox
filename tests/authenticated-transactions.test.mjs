@@ -308,6 +308,57 @@ test("caller authentication failure never installs scoped identity or runs work"
   }
 });
 
+test("caller credential lookup errors propagate instead of becoming auth failures", async () => {
+  const { runAuthenticatedCallerTransaction } =
+    await import("../src/server/caller-api-auth.ts");
+  const previousHashSecret = process.env.CALLER_KEY_HASH_SECRET;
+  process.env.CALLER_KEY_HASH_SECRET = HASH_SECRET_FIXTURE;
+  const material = generateCallerApiKeyMaterial();
+  const lookupError = new Error("canceling statement due to statement timeout");
+  let operationCalls = 0;
+  const runner = fakeTransactionRunner((statement) => {
+    if (/agent_outbox_lookup_caller_credential/.test(statement.sql)) {
+      throw lookupError;
+    }
+    return [];
+  });
+
+  try {
+    await assert.rejects(
+      runAuthenticatedCallerTransaction(
+        new Request("https://app.agent-outbox.dev/api/output/check", {
+          headers: { authorization: `Bearer ${material.plaintextApiKey}` }
+        }),
+        {
+          requestId: "req-caller-lookup-error",
+          correlationId: "corr-caller-lookup-error",
+          route: "/api/output/check",
+          method: "POST",
+          startedAtMs: Date.now()
+        },
+        "postgresql://caller-transaction-test",
+        async () => {
+          operationCalls += 1;
+        },
+        { runTransaction: runner.runTransaction }
+      ),
+      (error) => error === lookupError
+    );
+
+    assert.equal(operationCalls, 0);
+    assert.equal(
+      runner.statements.some((statement) => /set_config/.test(statement.sql)),
+      false
+    );
+  } finally {
+    if (previousHashSecret === undefined) {
+      delete process.env.CALLER_KEY_HASH_SECRET;
+    } else {
+      process.env.CALLER_KEY_HASH_SECRET = previousHashSecret;
+    }
+  }
+});
+
 test("caller last-used failure rolls back its savepoint and still runs work", async () => {
   const { runAuthenticatedCallerTransaction } =
     await import("../src/server/caller-api-auth.ts");
