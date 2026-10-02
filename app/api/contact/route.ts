@@ -14,25 +14,12 @@ type ContactCloudflareEnv = CloudflareEnv & {
 };
 
 export async function POST(request: Request) {
-  try {
+  return handleContactRequest(request, async () => {
     const { env } = await getCloudflareContext({ async: true });
     const contactEnv = env as ContactCloudflareEnv;
-    if (!contactEnv.CONTACT_EMAIL || !contactEnv.CONTACT_RATE_LIMIT) {
-      throw new Error("Contact bindings are not configured");
-    }
-
-    return handleContactRequest(request, {
+    return {
       email: contactEnv.CONTACT_EMAIL,
       rateLimit: contactEnv.CONTACT_RATE_LIMIT
-    });
-  } catch {
-    return Response.json(
-      {
-        ok: false,
-        code: "send_failed",
-        message: "Your message was not sent. Please try again shortly."
-      },
-      { status: 503, headers: { "Cache-Control": "no-store" } }
-    );
-  }
+    };
+  });
 }
