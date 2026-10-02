@@ -28,8 +28,9 @@ The canonical migration source is `db/migrations/`.
     representative RLS, app-role, and cleanup behavior.
 11. Destructive SQL (`DROP TABLE`, `DROP COLUMN`, `DROP INDEX` including
     `CONCURRENTLY`, column/table renames, type changes, and `SET NOT NULL`
-    without a same-column `DEFAULT`) requires the human-only
-    `migration-destructive-approved` label. CI: Enforced by Policy gates.
+    without a same-column `DEFAULT`, with or without the optional `COLUMN`
+    keyword) requires the human-only `migration-destructive-approved` label. CI:
+    Enforced by Policy gates.
 12. Every production migration must be compatible with both the outgoing and
     incoming application release. Schema is forward-only infrastructure state,
     applied before candidate traffic and never rolled back automatically. Use
