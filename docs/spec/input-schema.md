@@ -74,7 +74,9 @@ The request must not include `caller_id`.
 - Caller-supplied free-text strings, including `caller_item_id` on send,
   replace, delete, and read, must be well-formed Unicode without U+0000. Lone
   surrogates and NUL characters are rejected with 422 `validation_failed`
-  (`invalid_string`) instead of being replaced.
+  (`invalid_string`) instead of being replaced. Request bodies must be UTF-8; a
+  body containing invalid UTF-8 byte sequences is rejected with 400
+  `invalid_json`.
 - `priority` is one of `low`, `normal`, `high`, or `urgent`.
 - `row_type.display` and `row_type.icon` are display metadata. Row type has no
   stable product key in the MVP.

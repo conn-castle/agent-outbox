@@ -38,7 +38,11 @@ export async function readJsonBodyWithLimit(
     return {
       ok: true,
       bytes: body.bytes,
-      value: JSON.parse(body.buffer.toString("utf8"))
+      value: JSON.parse(
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+          body.buffer
+        )
+      )
     };
   } catch {
     return {
