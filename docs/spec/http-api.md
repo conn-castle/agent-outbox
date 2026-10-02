@@ -97,6 +97,8 @@ Behavior:
   human-action and file-upload submissions directly as trusted `server_action`
   events.
 - Requires a same-origin `Origin` header and `Content-Type: application/json`.
+- Is served on both the website and app origins without a host redirect, so
+  website pages report to their own origin.
 - Allows only client errors, hydration failures, GitHub sign-in launch failures,
   failed human-action submissions, upload failures, and major UI state
   inconsistencies.

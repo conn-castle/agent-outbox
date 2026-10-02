@@ -50,6 +50,27 @@ test("hosted origins send marketing-root app paths to the app origin", () => {
     null
   );
   assert.equal(
+    hostedHostRedirect(
+      "https://agent-outbox.dev/api/client-events",
+      "agent-outbox.dev"
+    ),
+    null
+  );
+  assert.equal(
+    hostedHostRedirect(
+      "https://app.agent-outbox.dev/api/client-events",
+      "app.agent-outbox.dev"
+    ),
+    null
+  );
+  assert.equal(
+    hostedHostRedirect(
+      "https://agent-outbox.dev/api/client-eventsx",
+      "agent-outbox.dev"
+    )?.href,
+    "https://app.agent-outbox.dev/api/client-eventsx"
+  );
+  assert.equal(
     hrefOnOrigin("app", "/sign-up", "agent-outbox.dev"),
     "https://app.agent-outbox.dev/sign-up"
   );
