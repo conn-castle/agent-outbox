@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
+import type { Breadcrumb, Event } from "@sentry/nextjs";
 
 import {
   emitRuntimeLog,
@@ -9,6 +10,7 @@ import {
 import { runtimeRelease } from "./observability.ts";
 
 const RUNTIME_SMOKE_SENTRY_SUPPRESS_HEADER = "x-agent-outbox-runtime-smoke";
+const SANITIZED_EXCEPTION_MESSAGE = "Agent Outbox runtime failure";
 
 export function sentryCaptureEnabled() {
   return (
@@ -128,8 +130,83 @@ export function sentryRuntimeInitOptions() {
     dsn: process.env.SENTRY_DSN,
     environment: process.env.APP_ENV,
     ...(release ? { release } : {}),
-    tracesSampleRate: 0.05
+    tracesSampleRate: 0.05,
+    beforeSend: scrubSentryEvent,
+    beforeSendTransaction: scrubSentryEvent
   };
+}
+
+// SDK integrations (Next.js onRequestError and spans, request data, console,
+// fetch) attach raw headers, cookies, queries, thrown values, and exception
+// text. Strip them from every outgoing event so only the safe tags and context
+// set here are sent.
+function scrubSentryEvent<T extends Event>(event: T): T {
+  if (event.request) {
+    delete event.request.headers;
+    delete event.request.cookies;
+    delete event.request.query_string;
+    delete event.request.data;
+    // Raw pathnames can contain caller identifiers. Keep the Next.js route
+    // template in contexts.nextjs.router_path instead, when available.
+    delete event.request.url;
+  }
+  // Thrown non-Error values are serialized here in full.
+  delete event.extra;
+  if (event.contexts?.nextjs) {
+    delete event.contexts.nextjs.request_path;
+  }
+  if (event.contexts?.trace?.data) {
+    scrubAttributes(event.contexts.trace.data);
+  }
+  if (event.message !== undefined) {
+    event.message = SANITIZED_EXCEPTION_MESSAGE;
+  }
+  for (const exception of event.exception?.values ?? []) {
+    if (exception.value !== undefined) {
+      exception.value = SANITIZED_EXCEPTION_MESSAGE;
+    }
+  }
+  for (const span of event.spans ?? []) {
+    scrubAttributes(span.data);
+  }
+  if (event.breadcrumbs) {
+    event.breadcrumbs = event.breadcrumbs
+      .filter((breadcrumb) => breadcrumb.category !== "console")
+      .map(scrubBreadcrumb);
+  }
+  return event;
+}
+
+function scrubBreadcrumb(breadcrumb: Breadcrumb) {
+  if (breadcrumb.data) {
+    scrubAttributes(breadcrumb.data);
+  }
+  return breadcrumb;
+}
+
+function scrubAttributes(data: Record<string, unknown>) {
+  for (const key of Object.keys(data)) {
+    if (
+      key === "http.query" ||
+      key === "http.fragment" ||
+      key === "url.query" ||
+      key === "url.fragment" ||
+      key.startsWith("http.request.header.") ||
+      key.startsWith("http.response.header.")
+    ) {
+      delete data[key];
+    }
+  }
+  for (const key of ["url", "http.url", "url.full", "http.target"]) {
+    const value = data[key];
+    if (typeof value === "string") {
+      data[key] = withoutQuery(value);
+    }
+  }
+}
+
+function withoutQuery(url: string) {
+  return url.replace(/[?#].*$/s, "");
 }
 
 function runtimeExceptionFromUnknown(error: unknown) {
@@ -141,7 +218,7 @@ function runtimeExceptionFromUnknown(error: unknown) {
 }
 
 function sanitizedSentryException(error: Error) {
-  const sanitized = new Error("Agent Outbox runtime failure");
+  const sanitized = new Error(SANITIZED_EXCEPTION_MESSAGE);
   sanitized.name = safeErrorName(error);
   return sanitized;
 }
