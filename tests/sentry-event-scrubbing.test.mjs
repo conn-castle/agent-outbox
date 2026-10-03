@@ -67,6 +67,30 @@ const attributes = {
   "http.response.status_code": 200,
   "server.address": "127.0.0.1"
 };
+/** @type {Parameters<typeof Sentry.startSpan>[0][]} */
+const databaseSpans = [
+  {
+    name: "SELECT 'PRIVATE-DB-DESCRIPTION-ONLY'",
+    op: "db"
+  },
+  {
+    name: "SELECT 'PRIVATE-DB-DESCRIPTION'",
+    op: "db.sql.query",
+    attributes: {
+      "db.system": "postgresql",
+      "db.statement": "SELECT 'PRIVATE-DB-STATEMENT'",
+      "db.connection_string": "postgresql://example.test/PRIVATE-DB-CONNECTION"
+    }
+  },
+  {
+    name: "SELECT 'PRIVATE-DB-SYSTEM-DESCRIPTION'",
+    attributes: { "db.system.name": "postgresql" }
+  },
+  {
+    name: "SELECT 'PRIVATE-DB-QUERY-DESCRIPTION'",
+    attributes: { "db.query.text": "SELECT 'PRIVATE-DB-QUERY-TEXT'" }
+  }
+];
 
 test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
   await withProcessEnv(
@@ -188,6 +212,9 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
                 },
                 () => {}
               );
+              for (const databaseSpan of databaseSpans) {
+                await Sentry.startSpan(databaseSpan, () => {});
+              }
               Sentry.captureRequestError(
                 new Error("PRIVATE-ERROR-MESSAGE"),
                 { path: "/human?PRIVATE-REQUEST-PATH", method: "GET", headers },
@@ -242,7 +269,10 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
             trace: {
               trace_id: "1".repeat(32),
               span_id: "2".repeat(16),
-              data: attributes
+              data: {
+                ...attributes,
+                "db.statement": "SELECT 'PRIVATE-DB-EVENT-STATEMENT'"
+              }
             }
           },
           exception: {
@@ -271,6 +301,35 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
         const oddContainersId = Sentry.captureEvent({
           tags: { case: "odd-containers" }
         });
+        Sentry.withScope((scope) => {
+          scope.setTransactionName(
+            "GET /human?PRIVATE-SDK-INHERITED-TRANSACTION"
+          );
+          scope.setSDKProcessingMetadata({
+            dynamicSamplingContext: {
+              transaction: "GET /human?PRIVATE-SDK-SAMPLING-TRANSACTION"
+            }
+          });
+          scope.setExtra("detail", "PRIVATE-SDK-INHERITED-EXTRA");
+          scope.setContext("nextjs", {
+            request_path: "/human?PRIVATE-SDK-INHERITED-PATH"
+          });
+          scope.addEventProcessor(() => {
+            throw new Error("PRIVATE-SDK-PROCESSING-MESSAGE");
+          });
+          Sentry.captureException(new Error("PRIVATE-SDK-ORIGINAL-MESSAGE"));
+        });
+        await Sentry.startSpan(
+          {
+            name: "SELECT 'PRIVATE-DB-ROOT-DESCRIPTION'",
+            op: "db.query",
+            attributes: {
+              "db.statement": "SELECT 'PRIVATE-DB-ROOT-STATEMENT'",
+              "db.query.text": "SELECT 'PRIVATE-DB-ROOT-QUERY-TEXT'"
+            }
+          },
+          () => {}
+        );
         await Sentry.startSpan(
           {
             name: "GET /human/[id]",
@@ -356,6 +415,19 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
             "PRIVATE-DIRECT-BREADCRUMB"
           ],
           "span attributes": Object.values(sensitiveAttributes),
+          "database statements and descriptions": [
+            "PRIVATE-DB-DESCRIPTION-ONLY",
+            "PRIVATE-DB-DESCRIPTION",
+            "PRIVATE-DB-STATEMENT",
+            "PRIVATE-DB-CONNECTION",
+            "PRIVATE-DB-SYSTEM-DESCRIPTION",
+            "PRIVATE-DB-QUERY-DESCRIPTION",
+            "PRIVATE-DB-QUERY-TEXT",
+            "PRIVATE-DB-EVENT-STATEMENT",
+            "PRIVATE-DB-ROOT-DESCRIPTION",
+            "PRIVATE-DB-ROOT-STATEMENT",
+            "PRIVATE-DB-ROOT-QUERY-TEXT"
+          ],
           "transaction and span names including sampling headers": [
             "PRIVATE-TRANSACTION",
             "PRIVATE-TRANSACTION-FRAGMENT",
@@ -383,7 +455,13 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
             "PRIVATE-INSTRUMENTATION-MESSAGE",
             "PRIVATE-INSTRUMENTATION-PATH"
           ],
-          "odd fields": ["PRIVATE-ODD-EXCEPTION", "PRIVATE-ODD-VARS"]
+          "odd fields": ["PRIVATE-ODD-EXCEPTION", "PRIVATE-ODD-VARS"],
+          "internal SDK processing failures": [
+            "PRIVATE-SDK-PROCESSING-MESSAGE",
+            "PRIVATE-SDK-INHERITED-EXTRA",
+            "PRIVATE-SDK-INHERITED-PATH",
+            "PRIVATE-SDK-INHERITED-TRANSACTION"
+          ]
         };
         for (const [name, sentinels] of Object.entries(sentinelGroups)) {
           await t.test(name, async (group) => {
@@ -404,6 +482,96 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
         }
         await t.test("complete envelopes contain no private sentinels", () => {
           assert.doesNotMatch(serialized, /PRIVATE-/);
+        });
+        await t.test(
+          "internal SDK failures are sent with sanitized content",
+          () => {
+            const internal = events.find(
+              (event) =>
+                Array.isArray(event.exception?.values) &&
+                event.exception.values.some(
+                  (exception) => exception?.mechanism?.type === "internal"
+                )
+            );
+            assert.ok(internal);
+            assert.equal(internal.exception?.values?.[0]?.value, MESSAGE);
+            assert.equal(internal.exception?.values?.[0]?.type, "Error");
+            assert.equal(
+              internal.exception?.values?.[0]?.mechanism?.handled,
+              false
+            );
+            assert.equal("extra" in internal, false);
+            assert.equal(internal.contexts?.nextjs?.request_path, undefined);
+            assert.equal(internal.transaction, "GET /human");
+            assert.ok(
+              beforeSamplingTransactions.some((name) =>
+                name.includes("PRIVATE-SDK-SAMPLING-TRANSACTION")
+              )
+            );
+            const envelopeIndex = envelopes.findIndex(
+              ([header]) => header.event_id === internal.event_id
+            );
+            assert.notEqual(envelopeIndex, -1);
+            assert.equal(
+              samplingHeaders[envelopeIndex]?.transaction,
+              "GET /human"
+            );
+          }
+        );
+        await t.test("database spans keep timing and use fixed names", () => {
+          for (const databaseSpan of databaseSpans) {
+            // The SDK uses db.statement as the description when it is present.
+            const description =
+              databaseSpan.attributes?.["db.statement"] ?? databaseSpan.name;
+            /** @type {NonNullable<import("@sentry/nextjs").Event["spans"]>[number] | undefined} */
+            const originalSpan = originalTransaction?.spans?.find(
+              (span) => span.description === description
+            );
+            assert.ok(originalSpan);
+            /** @type {NonNullable<import("@sentry/nextjs").Event["spans"]>[number] | undefined} */
+            const scrubbed = transaction.spans?.find(
+              (span) => span.span_id === originalSpan.span_id
+            );
+            assert.ok(scrubbed);
+            assert.equal(scrubbed.description, "db.query");
+            assert.equal(scrubbed.op, originalSpan.op);
+            assert.equal(
+              scrubbed.start_timestamp,
+              originalSpan.start_timestamp
+            );
+            assert.equal(scrubbed.timestamp, originalSpan.timestamp);
+            assert.equal(scrubbed.data?.["db.statement"], undefined);
+            assert.equal(scrubbed.data?.["db.query.text"], undefined);
+            assert.equal(scrubbed.data?.["db.connection_string"], undefined);
+          }
+          const databaseRoot = events.find(
+            (event) =>
+              event.type === "transaction" &&
+              event.contexts?.trace?.op === "db.query"
+          );
+          assert.ok(databaseRoot);
+          assert.equal(databaseRoot.transaction, "db.query");
+          assert.equal(
+            databaseRoot.contexts?.trace?.data?.["db.statement"],
+            undefined
+          );
+          assert.equal(
+            databaseRoot.contexts?.trace?.data?.["db.query.text"],
+            undefined
+          );
+          assert.equal(explicit.transaction, "db.query");
+          assert.equal(
+            explicit.contexts?.trace?.data?.["db.statement"],
+            undefined
+          );
+          assert.ok(
+            beforeSamplingTransactions.some((name) =>
+              name.includes("PRIVATE-DB-ROOT-DESCRIPTION")
+            )
+          );
+          assert.ok(
+            samplingHeaders.some((header) => header?.transaction === "db.query")
+          );
         });
         for (const sentinel of [
           "PRIVATE-TRANSACTION",
