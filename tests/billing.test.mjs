@@ -835,72 +835,89 @@ test("webhook verifies the raw Stripe signature and records idempotent processin
 });
 
 test("webhook rejects declared and streamed bodies over the raw-byte cap", async () => {
-  let constructCalls = 0;
-  const stripe = /** @type {any} */ ({
-    checkout: { sessions: { async create() {} } },
-    billingPortal: { sessions: { async create() {} } },
-    webhooks: {
-      constructEvent() {
-        constructCalls += 1;
+  const logs = await captureBillingLogs(async () => {
+    let constructCalls = 0;
+    const stripe = /** @type {any} */ ({
+      checkout: { sessions: { async create() {} } },
+      billingPortal: { sessions: { async create() {} } },
+      webhooks: {
+        constructEvent() {
+          constructCalls += 1;
+        }
       }
-    }
-  });
-  const context = {
-    requestId: "req-webhook-large",
-    correlationId: "corr-webhook-large"
-  };
-  const expected = {
-    ok: false,
-    error: {
-      status: 413,
-      code: "request_too_large",
-      message: "Stripe webhook request body exceeds the 1048576-byte cap."
-    }
-  };
-
-  const declared = new Request("https://app.example.test/api/billing/webhook", {
-    method: "POST",
-    headers: {
-      "stripe-signature": "signed",
-      "content-length": String(STRIPE_WEBHOOK_BODY_BYTE_LIMIT + 1)
-    },
-    body: "{}"
-  });
-  assert.deepEqual(
-    await handleStripeWebhookRequest(declared, context, {
-      connectionString: "postgresql://billing-test",
-      config,
-      stripe
-    }),
-    expected
-  );
-
-  const chunk = new Uint8Array(STRIPE_WEBHOOK_BODY_BYTE_LIMIT / 2 + 1);
-  const streamedInit = {
-    method: "POST",
-    headers: { "stripe-signature": "signed" },
-    body: new ReadableStream({
-      start(controller) {
-        controller.enqueue(chunk);
-        controller.enqueue(chunk);
-        controller.close();
+    });
+    const context = {
+      requestId: "req-webhook-large",
+      correlationId: "corr-webhook-large"
+    };
+    const expected = {
+      ok: false,
+      error: {
+        status: 413,
+        code: "request_too_large",
+        message: "Stripe webhook request body exceeds the 1048576-byte cap."
       }
-    }),
-    duplex: "half"
-  };
-  const streamed = new Request(
-    "https://app.example.test/api/billing/webhook",
-    streamedInit
-  );
-  assert.deepEqual(
-    await handleStripeWebhookRequest(streamed, context, {
-      connectionString: "postgresql://billing-test",
-      config,
-      stripe
-    }),
-    expected
-  );
-  assert.equal(constructCalls, 0);
+    };
+
+    const declared = new Request(
+      "https://app.example.test/api/billing/webhook",
+      {
+        method: "POST",
+        headers: {
+          "stripe-signature": "signed",
+          "content-length": String(STRIPE_WEBHOOK_BODY_BYTE_LIMIT + 1)
+        },
+        body: "{}"
+      }
+    );
+    assert.deepEqual(
+      await handleStripeWebhookRequest(declared, context, {
+        connectionString: "postgresql://billing-test",
+        config,
+        stripe
+      }),
+      expected
+    );
+
+    const chunk = new Uint8Array(STRIPE_WEBHOOK_BODY_BYTE_LIMIT / 2 + 1);
+    const streamedInit = {
+      method: "POST",
+      headers: { "stripe-signature": "signed" },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.enqueue(chunk);
+          controller.close();
+        }
+      }),
+      duplex: "half"
+    };
+    const streamed = new Request(
+      "https://app.example.test/api/billing/webhook",
+      streamedInit
+    );
+    assert.deepEqual(
+      await handleStripeWebhookRequest(streamed, context, {
+        connectionString: "postgresql://billing-test",
+        config,
+        stripe
+      }),
+      expected
+    );
+    assert.equal(constructCalls, 0);
+  });
+  assert.equal(logs.length, 2);
+  for (const log of logs) {
+    assert.equal(log.level, "warn");
+    assert.equal(log.operation, "stripe_webhook_request_too_large");
+    assert.equal(log.status_code, 413);
+    assert.equal(log.error_id, "corr-webhook-large");
+    assert.equal(log.request_id, "req-webhook-large");
+    assert.equal(
+      log.message,
+      "Stripe webhook request body exceeds the size limit."
+    );
+  }
 });
 
 test("webhook replay stops before applying the event a second time", async () => {
@@ -920,41 +937,33 @@ test("webhook replay stops before applying the event a second time", async () =>
     })
   );
 
-  assert.equal(processed, false);
+  assert.deepEqual(processed, { status: "duplicate" });
   assert.equal(statements.length, 1);
 });
 
-test("webhook processing rejects array-shaped Stripe event objects", async () => {
-  const statements = /** @type {any[]} */ ([]);
+test("webhook warns for array-shaped Stripe event objects without updating accounts", async () => {
   const arrayLikeSubscription = Object.assign([], {
     id: "sub_array",
     customer: "cus_array",
     status: "active",
     items: { data: [{ price: { id: "price_test_paid_monthly" } }] }
   });
-  const processed = await processStripeEventInTransaction(
-    fakeTransitionQuery(statements),
-    /** @type {any} */ ({
-      id: "evt_array_subscription",
-      created: 1783209600,
-      type: "customer.subscription.updated",
-      data: { object: arrayLikeSubscription }
-    }),
-    new Date("2026-07-05T00:00:00.000Z")
-  );
-
-  assert.equal(processed, true);
-  assert.equal(
-    statements.some((statement) =>
-      /update public\.agent_outbox_accounts/.test(statement.sql)
-    ),
-    false
+  const { result, logs, statements } = await webhookOutcome({
+    type: "customer.subscription.updated",
+    object: arrayLikeSubscription
+  });
+  assert.deepEqual(result, { ok: true, data: { processed: true } });
+  assertUnappliedWarning(
+    logs,
+    "customer.subscription.updated",
+    "invalid_object",
+    null
   );
   assert.equal(statements.length, 1);
-  assert.deepEqual(statements[0].values, [
-    "evt_array_subscription",
-    "customer.subscription.updated"
-  ]);
+  assert.match(
+    statements[0].sql,
+    /insert into public\.agent_outbox_stripe_webhook_events/
+  );
 });
 
 test("subscription webhooks can update an account from Stripe metadata before checkout completion", async () => {
@@ -1420,7 +1429,7 @@ test("webhook writer remains compatible until the ordering expand migration is a
     })
   );
 
-  assert.equal(processed, true);
+  assert.deepEqual(processed, { status: "applied", accountId });
   const update = statements.find((statement) =>
     /update public\.agent_outbox_accounts/.test(statement.sql)
   );
@@ -1461,3 +1470,313 @@ function fakeTransitionQuery(statements) {
     return queryResult([]);
   };
 }
+
+const webhookContext = {
+  requestId: "req-webhook-outcome",
+  correlationId: "corr-webhook-outcome",
+  route: "/api/billing/webhook",
+  method: "POST",
+  startedAtMs: Date.now()
+};
+
+/**
+ * @param {(logs: any[]) => Promise<void>} callback
+ * @returns {Promise<any[]>}
+ */
+async function captureBillingLogs(callback) {
+  const logs = /** @type {any[]} */ ([]);
+  const originals = {
+    warn: console.warn,
+    error: console.error,
+    log: console.log
+  };
+  const capture = (/** @type {string} */ line) => logs.push(JSON.parse(line));
+  console.warn = capture;
+  console.error = capture;
+  console.log = capture;
+  try {
+    await callback(logs);
+  } finally {
+    Object.assign(console, originals);
+  }
+  return logs;
+}
+
+/**
+ * @param {{ type: string, object?: any, updated?: boolean, matched?: boolean, duplicate?: boolean, failCommit?: boolean }} input
+ * @returns {Promise<{ result: Awaited<ReturnType<typeof handleStripeWebhookRequest>> | undefined, logs: any[], statements: any[] }>}
+ */
+async function webhookOutcome(input) {
+  const statements = /** @type {any[]} */ ([]);
+  let result;
+  const logs = await captureBillingLogs(async (logsDuringTransaction) => {
+    result = await handleStripeWebhookRequest(
+      new Request("https://app.example.test/api/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": "signed" },
+        body: "{}"
+      }),
+      webhookContext,
+      {
+        connectionString: "postgresql://billing-test",
+        config,
+        stripe: /** @type {any} */ ({
+          webhooks: {
+            constructEvent() {
+              return {
+                id: "evt_private_payload",
+                created: 1783209600,
+                type: input.type,
+                data: { object: input.object }
+              };
+            }
+          }
+        }),
+        async runTransaction(_connectionString, context, callback) {
+          assert.equal(context.authSurface, "control_plane");
+          const outcome = await callback(
+            /** @type {any} */ (
+              async (/** @type {any} */ statement) => {
+                statements.push(statement);
+                if (
+                  /insert into public\.agent_outbox_stripe_webhook_events/.test(
+                    statement.sql
+                  )
+                ) {
+                  return queryResult(
+                    input.duplicate
+                      ? []
+                      : [
+                          {
+                            stripe_event_id: "evt_private_payload",
+                            stripe_receipt_order: "1"
+                          }
+                        ]
+                  );
+                }
+                if (
+                  /update public\.agent_outbox_accounts/.test(statement.sql)
+                ) {
+                  return queryResult(
+                    input.updated
+                      ? [{ account_id: accountId }]
+                      : input.matched
+                        ? [{ account_id: null }]
+                        : []
+                  );
+                }
+                assert.match(
+                  statement.sql,
+                  /update public\.agent_outbox_stripe_webhook_events/
+                );
+                return queryResult([]);
+              }
+            )
+          );
+          // An outcome must never emit a warning before the transaction commits.
+          assert.equal(logsDuringTransaction.length, 0);
+          if (input.failCommit) throw new Error("forced commit failure");
+          return outcome;
+        }
+      }
+    );
+  });
+  return { result, logs, statements };
+}
+
+/**
+ * @param {any[]} logs
+ * @param {string} type
+ * @param {string} reason
+ * @param {string | null} reference
+ */
+function assertUnappliedWarning(logs, type, reason, reference) {
+  assert.equal(logs.length, 1);
+  const [log] = logs;
+  assert.equal(log.level, "warn");
+  assert.equal(log.operation, "stripe_webhook_unapplied");
+  assert.equal(log.drop_reason, reason);
+  assert.equal(log.stripe_event_type, type);
+  assert.equal(log.account_id, reference ?? undefined);
+  assert.equal(log.error_id, webhookContext.correlationId);
+  assert.equal(log.request_id, webhookContext.requestId);
+  assert.equal(log.surface, "api");
+  assert.equal(log.route, webhookContext.route);
+  assert.equal(log.method, "POST");
+  assert.equal(log.status_code, 200);
+  assert.equal(typeof log.duration_ms, "number");
+  assert.equal(
+    log.message,
+    "Stripe webhook event was acknowledged without changing billing state."
+  );
+  assert.doesNotMatch(
+    JSON.stringify(log),
+    /evt_private_payload|cs_private_payload|cus_private_payload|sub_private_payload|price_private_payload|in_private_payload|sub_array|cus_array|price_test_paid_monthly|private_free_text/
+  );
+}
+
+const handledWebhookTypes = [
+  "checkout.session.completed",
+  "customer.subscription.created",
+  "customer.subscription.updated",
+  "customer.subscription.deleted",
+  "invoice.payment_failed"
+];
+
+function referencedWebhookObject(/** @type {string} */ type) {
+  return type === "checkout.session.completed"
+    ? {
+        id: "cs_private_payload",
+        client_reference_id: accountId,
+        customer: "cus_private_payload",
+        subscription: "sub_private_payload",
+        description: "private_free_text"
+      }
+    : type === "invoice.payment_failed"
+      ? {
+          id: "in_private_payload",
+          subscription: "sub_private_payload",
+          customer: "cus_private_payload",
+          description: "private_free_text"
+        }
+      : {
+          id: "sub_private_payload",
+          customer: "cus_private_payload",
+          status: "active",
+          metadata: { account_id: accountId },
+          items: { data: [{ price: { id: "price_private_payload" } }] },
+          description: "private_free_text"
+        };
+}
+
+for (const type of handledWebhookTypes) {
+  for (const reason of [
+    "invalid_object",
+    "missing_reference",
+    "no_matching_account"
+  ]) {
+    test(`webhook warns for ${type}: ${reason}`, async () => {
+      const object =
+        reason === "invalid_object"
+          ? null
+          : reason === "missing_reference"
+            ? {}
+            : referencedWebhookObject(type);
+      const { result, logs, statements } = await webhookOutcome({
+        type,
+        object
+      });
+      assert.deepEqual(result, { ok: true, data: { processed: true } });
+      const reference =
+        reason === "no_matching_account" && type !== "invoice.payment_failed"
+          ? accountId
+          : null;
+      assertUnappliedWarning(logs, type, reason, reference);
+      const accountUpdates = statements.filter((statement) =>
+        /update public\.agent_outbox_accounts/.test(statement.sql)
+      );
+      assert.equal(
+        accountUpdates.length,
+        reason === "no_matching_account" ? 1 : 0
+      );
+      assert.equal(
+        statements.some((statement) =>
+          /update public\.agent_outbox_stripe_webhook_events/.test(
+            statement.sql
+          )
+        ),
+        false
+      );
+    });
+  }
+  for (const state of ["applied", "stale", "duplicate"]) {
+    test(`webhook emits no log for ${type}: ${state}`, async () => {
+      const { result, logs, statements } = await webhookOutcome({
+        type,
+        object: referencedWebhookObject(type),
+        updated: state === "applied",
+        matched: state === "stale",
+        duplicate: state === "duplicate"
+      });
+      assert.deepEqual(result, {
+        ok: true,
+        data: { processed: state !== "duplicate" }
+      });
+      assert.deepEqual(logs, []);
+      const associations = statements.filter((statement) =>
+        /update public\.agent_outbox_stripe_webhook_events/.test(statement.sql)
+      );
+      assert.equal(associations.length, state === "applied" ? 1 : 0);
+      assert.equal(
+        statements.length,
+        state === "duplicate" ? 1 : state === "applied" ? 3 : 2
+      );
+    });
+  }
+}
+
+test("webhook emits no log for an unhandled event type", async () => {
+  const { result, logs, statements } = await webhookOutcome({
+    type: "private_free_text"
+  });
+  assert.deepEqual(result, { ok: true, data: { processed: true } });
+  assert.deepEqual(logs, []);
+  assert.equal(statements.length, 1);
+});
+
+test("webhook emits no unapplied warning when commit fails", async () => {
+  const { result, logs } = await webhookOutcome({
+    type: "checkout.session.completed",
+    object: {},
+    failCommit: true
+  });
+  assert.equal(result?.ok, false);
+  if (result?.ok === false) assert.equal(result.error.status, 503);
+  assert.equal(
+    logs.some((log) => log.operation === "stripe_webhook_unapplied"),
+    false
+  );
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].operation, "stripe_webhook_processing");
+});
+
+test("webhook warns for a missing signature with the unchanged 400 response", async () => {
+  const logs = await captureBillingLogs(async () => {
+    const result = await handleStripeWebhookRequest(
+      new Request("https://app.example.test/api/billing/webhook", {
+        method: "POST",
+        body: "{}"
+      }),
+      webhookContext,
+      {
+        connectionString: "postgresql://billing-test",
+        config,
+        stripe: /** @type {any} */ ({
+          webhooks: {
+            constructEvent() {
+              assert.fail("unsigned request must not be verified");
+            }
+          }
+        }),
+        async runTransaction() {
+          assert.fail("unsigned request must not reach the database");
+        }
+      }
+    );
+    assert.deepEqual(result, {
+      ok: false,
+      error: {
+        status: 400,
+        code: "invalid_request",
+        message: "Stripe signature is required."
+      }
+    });
+  });
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, "warn");
+  assert.equal(logs[0].operation, "stripe_webhook_signature");
+  assert.equal(logs[0].status_code, 400);
+  assert.equal(logs[0].error_id, webhookContext.correlationId);
+  assert.equal(logs[0].request_id, webhookContext.requestId);
+  assert.equal(logs[0].message, "Stripe webhook signature header is missing.");
+});

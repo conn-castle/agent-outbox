@@ -150,7 +150,7 @@ test(
       duplicate.connect(),
       observer.connect()
     ]);
-    /** @type {Promise<boolean> | null} */
+    /** @type {Promise<import("../src/server/billing.ts").StripeEventOutcome> | null} */
     let duplicateTransaction = null;
     let bodyError;
     try {
@@ -166,7 +166,7 @@ test(
         ),
         event
       );
-      assert.equal(firstProcessed, true);
+      assert.deepEqual(firstProcessed, { status: "unhandled_type" });
 
       const duplicatePid = await duplicate.query(
         "select pg_catalog.pg_backend_pid() as pid"
@@ -190,7 +190,7 @@ test(
 
       await waitForDatabaseLock(observer, duplicatePid.rows[0].pid);
       await first.query("commit");
-      assert.equal(await duplicateTransaction, false);
+      assert.deepEqual(await duplicateTransaction, { status: "duplicate" });
       const committed = await observer.query(
         `
           select
@@ -274,7 +274,7 @@ test(
             })
           )
       );
-      assert.equal(retried, true);
+      assert.deepEqual(retried, { status: "unhandled_type" });
     } catch (error) {
       bodyError = error;
     } finally {
@@ -420,7 +420,7 @@ test(
           type: "test.ignored"
         })
       );
-      assert.equal(processed, true);
+      assert.deepEqual(processed, { status: "unhandled_type" });
       const recorded = await client.query(
         `
           select processed_at is not null as has_completion_time
@@ -519,7 +519,10 @@ test(
           }
         })
       );
-      assert.equal(preMigrationProcessed, true);
+      assert.deepEqual(preMigrationProcessed, {
+        status: "applied",
+        accountId: preMigrationWriterAccountId
+      });
 
       await executeTransactionalMigrationFile(
         client,
@@ -593,7 +596,7 @@ test(
     const now = new Date("2026-07-05T00:00:00.000Z");
     /** @type {() => void} */
     let releaseConcurrentEarlier = () => {};
-    /** @type {Promise<boolean> | null} */
+    /** @type {Promise<import("../src/server/billing.ts").StripeEventOutcome> | null} */
     let concurrentEarlierProcessing = null;
     let bodyError;
 
@@ -633,13 +636,13 @@ test(
           (query) => processStripeEventInTransaction(query, stripeEvent, now)
         );
 
-      assert.equal(
+      assert.deepEqual(
         await process(event(newerEventId, newerCreated, "active")),
-        true
+        { status: "applied", accountId }
       );
-      assert.equal(
+      assert.deepEqual(
         await process(event(staleEventId, newerCreated - 3600, "canceled")),
-        true
+        { status: "stale_ordering" }
       );
 
       const afterStale = await client.query(
@@ -668,9 +671,9 @@ test(
       );
       assert.deepEqual(staleLedger.rows, [{ account_id: null }]);
 
-      assert.equal(
+      assert.deepEqual(
         await process(event(equalEventId, newerCreated, "past_due")),
-        true
+        { status: "applied", accountId }
       );
       const afterEqual = await client.query(
         `
@@ -725,9 +728,10 @@ test(
             now
           )
       );
-      const earlierProcessing = /** @type {Promise<boolean>} */ (
-        concurrentEarlierProcessing
-      );
+      const earlierProcessing =
+        /** @type {Promise<import("../src/server/billing.ts").StripeEventOutcome>} */ (
+          concurrentEarlierProcessing
+        );
       await Promise.race([
         concurrentEarlierInserted,
         earlierProcessing.then(
@@ -742,12 +746,14 @@ test(
         )
       ]);
 
-      assert.equal(
+      assert.deepEqual(
         await process(event(concurrentLaterEventId, newerCreated, "active")),
-        true
+        { status: "applied", accountId }
       );
       releaseConcurrentEarlier();
-      assert.equal(await concurrentEarlierProcessing, true);
+      assert.deepEqual(await concurrentEarlierProcessing, {
+        status: "stale_ordering"
+      });
 
       const afterConcurrentEqual = await client.query(
         `
@@ -825,3 +831,308 @@ test(
     }
   }
 );
+
+test(
+  "Stripe webhook match reads distinguish missing accounts from stale events under the restricted app role",
+  {
+    skip: phase3DatabaseVerificationUrl
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const client = new Client({
+      connectionString: phase3DatabaseVerificationUrl
+    });
+    await client.connect();
+    try {
+      await client.query("begin");
+      for (const type of [
+        "checkout.session.completed",
+        "customer.subscription.updated",
+        "invoice.payment_failed"
+      ]) {
+        await client.query("reset role");
+        const accountId = crypto.randomUUID();
+        const missingAccountId = crypto.randomUUID();
+        const subscriptionId = `sub_match_${crypto.randomUUID()}`;
+        const customerId = `cus_match_${crypto.randomUUID()}`;
+        await client.query(
+          `insert into public.agent_outbox_accounts(account_id, label, stripe_customer_id, stripe_subscription_id)
+           values ($1, $2, $3, $4)`,
+          [accountId, `stripe-match-${accountId}`, customerId, subscriptionId]
+        );
+        await client.query("set local role agent_outbox_app");
+        await client.query(
+          "select set_config('agent_outbox.auth_surface', 'control_plane', true)"
+        );
+        const role = await client.query("select current_user as role");
+        assert.equal(role.rows[0].role, "agent_outbox_app");
+
+        const process = (
+          /** @type {number} */ created,
+          /** @type {boolean} */ missing
+        ) =>
+          processStripeEventInTransaction(
+            /** @type {any} */ (
+              (/** @type {any} */ statement) =>
+                client.query(statement.sql, statement.values)
+            ),
+            /** @type {any} */ ({
+              id: `evt_match_${crypto.randomUUID()}`,
+              created,
+              type,
+              data: {
+                object:
+                  type === "checkout.session.completed"
+                    ? {
+                        client_reference_id: missing
+                          ? missingAccountId
+                          : accountId
+                      }
+                    : type === "invoice.payment_failed"
+                      ? {
+                          subscription: missing
+                            ? "sub_nonexistent"
+                            : subscriptionId
+                        }
+                      : {
+                          id: missing ? "sub_nonexistent" : subscriptionId,
+                          status: "active",
+                          metadata: {
+                            account_id: missing ? missingAccountId : accountId
+                          }
+                        }
+              }
+            })
+          );
+        assert.deepEqual(await process(1783296000, true), {
+          status: "unapplied",
+          reason: "no_matching_account",
+          accountId: type === "invoice.payment_failed" ? null : missingAccountId
+        });
+        assert.deepEqual(await process(1783296000, false), {
+          status: "applied",
+          accountId
+        });
+        assert.deepEqual(await process(1783292400, false), {
+          status: "stale_ordering"
+        });
+      }
+
+      // Stale events that match only by customer id or only by metadata
+      // account id must also be recognized as stale, not missing.
+      for (const matchBy of ["customer", "metadata"]) {
+        await client.query("reset role");
+        const accountId = crypto.randomUUID();
+        const customerId = `cus_match_${crypto.randomUUID()}`;
+        await client.query(
+          `insert into public.agent_outbox_accounts(account_id, label, stripe_customer_id)
+           values ($1, $2, $3)`,
+          [
+            accountId,
+            `stripe-match-${accountId}`,
+            matchBy === "customer" ? customerId : null
+          ]
+        );
+        await client.query("set local role agent_outbox_app");
+        await client.query(
+          "select set_config('agent_outbox.auth_surface', 'control_plane', true)"
+        );
+        const process = (/** @type {number} */ created) =>
+          processStripeEventInTransaction(
+            /** @type {any} */ (
+              (/** @type {any} */ statement) =>
+                client.query(statement.sql, statement.values)
+            ),
+            /** @type {any} */ ({
+              id: `evt_match_${crypto.randomUUID()}`,
+              created,
+              type: "customer.subscription.updated",
+              data: {
+                object: {
+                  // A fresh subscription id per event, so only the customer
+                  // or metadata reference can match the account.
+                  id: `sub_match_${crypto.randomUUID()}`,
+                  status: "active",
+                  ...(matchBy === "customer"
+                    ? { customer: customerId }
+                    : { metadata: { account_id: accountId } })
+                }
+              }
+            })
+          );
+        assert.deepEqual(await process(1783296000), {
+          status: "applied",
+          accountId
+        });
+        assert.deepEqual(await process(1783292400), {
+          status: "stale_ordering"
+        });
+      }
+    } finally {
+      try {
+        await client.query("rollback");
+      } finally {
+        await client.end();
+      }
+    }
+  }
+);
+
+for (const type of [
+  "customer.subscription.updated",
+  "invoice.payment_failed"
+]) {
+  for (const matchBy of ["customer", "subscription"]) {
+    test(
+      `Stripe ${type} keeps a no-match outcome when concurrent checkout attaches the ${matchBy} after its account update`,
+      {
+        skip: phase3DatabaseVerificationUrl
+          ? false
+          : DATABASE_POLICY_VERIFICATION_SKIP
+      },
+      async () => {
+        const connectionString = phase3DatabaseVerificationUrl;
+        assert.ok(connectionString);
+        const client = new Client({ connectionString });
+        const accountId = crypto.randomUUID();
+        const customerId = `cus_concurrent_${crypto.randomUUID()}`;
+        const subscriptionId = `sub_concurrent_${crypto.randomUUID()}`;
+        const eventId = `evt_no_match_${crypto.randomUUID()}`;
+        const checkoutId = `evt_attach_${crypto.randomUUID()}`;
+        const staleId = `evt_stale_${crypto.randomUUID()}`;
+        const appliedId = `evt_applied_${crypto.randomUUID()}`;
+        const event = /** @type {any} */ ({
+          id: eventId,
+          created: 1783209600,
+          type,
+          data: {
+            object: {
+              ...(type === "invoice.payment_failed"
+                ? { subscription: subscriptionId }
+                : { id: subscriptionId, status: "active" }),
+              ...(matchBy === "customer" ? { customer: customerId } : {})
+            }
+          }
+        });
+        const process = (/** @type {any} */ stripeEvent) =>
+          runProductTransaction(
+            connectionString,
+            { requestId: stripeEvent.id, authSurface: "control_plane" },
+            async (query) => {
+              await query({ sql: "set local role agent_outbox_app" });
+              return processStripeEventInTransaction(query, stripeEvent);
+            }
+          );
+        let attached = false;
+        let bodyError;
+        await client.connect();
+        try {
+          await client.query(
+            "insert into public.agent_outbox_accounts(account_id, label) values ($1, $2)",
+            [accountId, `stripe-concurrent-${accountId}`]
+          );
+          const outcome = await runProductTransaction(
+            connectionString,
+            { requestId: eventId, authSurface: "control_plane" },
+            async (query) => {
+              await query({ sql: "set local role agent_outbox_app" });
+              const role = await query({
+                sql: "select current_user as role, current_setting('transaction_isolation') as isolation"
+              });
+              assert.deepEqual(role.rows, [
+                { role: "agent_outbox_app", isolation: "read committed" }
+              ]);
+              return processStripeEventInTransaction(
+                /** @type {any} */ (
+                  async (/** @type {any} */ statement) => {
+                    const result = await query(statement);
+                    if (
+                      /update public\.agent_outbox_accounts/.test(statement.sql)
+                    ) {
+                      assert.equal(attached, false);
+                      assert.equal(result.rows.length, 0);
+                      // Commit the attachment at the original race boundary:
+                      // after the UPDATE, before consuming its classification.
+                      assert.deepEqual(
+                        await process({
+                          id: checkoutId,
+                          created: 1783296000,
+                          type: "checkout.session.completed",
+                          data: {
+                            object: {
+                              client_reference_id: accountId,
+                              ...(matchBy === "customer"
+                                ? { customer: customerId }
+                                : { subscription: subscriptionId })
+                            }
+                          }
+                        }),
+                        { status: "applied", accountId }
+                      );
+                      attached = true;
+                    }
+                    return result;
+                  }
+                ),
+                event
+              );
+            }
+          );
+          assert.equal(attached, true);
+          assert.deepEqual(outcome, {
+            status: "unapplied",
+            reason: "no_matching_account",
+            accountId: null
+          });
+          const ledger = await client.query(
+            "select account_id::text as account_id from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+            [eventId]
+          );
+          assert.deepEqual(ledger.rows, [{ account_id: null }]);
+          assert.deepEqual(await process(event), { status: "duplicate" });
+          assert.deepEqual(await process({ ...event, id: staleId }), {
+            status: "stale_ordering"
+          });
+          assert.deepEqual(
+            await process({ ...event, id: appliedId, created: 1783382400 }),
+            { status: "applied", accountId }
+          );
+        } catch (error) {
+          bodyError = error;
+        } finally {
+          await preserveBodyErrorDuringTeardown(
+            bodyError,
+            async () => {
+              const teardownErrors = /** @type {Error[]} */ ([]);
+              const attempt = teardownAttempt(
+                teardownErrors,
+                "Stripe attachment teardown failed"
+              );
+              await attempt("ledger cleanup", () =>
+                client.query(
+                  "delete from public.agent_outbox_stripe_webhook_events where stripe_event_id = any($1::text[])",
+                  [[eventId, checkoutId, staleId, appliedId]]
+                )
+              );
+              await attempt("account cleanup", () =>
+                client.query(
+                  "delete from public.agent_outbox_accounts where account_id = $1",
+                  [accountId]
+                )
+              );
+              await attempt("client close", () => client.end());
+              if (teardownErrors.length) {
+                throw new AggregateError(
+                  teardownErrors,
+                  "Stripe attachment teardown failed."
+                );
+              }
+            },
+            "Stripe attachment test and teardown both failed."
+          );
+        }
+      }
+    );
+  }
+}
