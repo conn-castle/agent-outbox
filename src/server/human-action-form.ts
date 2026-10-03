@@ -1,5 +1,5 @@
 import type { HumanActionResponse } from "./human-answer.ts";
-import type { PopupKind } from "./input-schema.ts";
+import { isStorableString, type PopupKind } from "./input-schema.ts";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -135,16 +135,31 @@ function responseFromForm(
       const value = stringField(formData, "response.value");
       return value ? { kind: "single_select", value } : null;
     }
-    case "multi_select":
+    case "multi_select": {
+      const values = formData.getAll("response.values");
+      if (
+        values.some(
+          (value) => typeof value === "string" && !isStorableString(value)
+        )
+      ) {
+        return null;
+      }
       return {
         kind: "multi_select",
-        values: formData
-          .getAll("response.values")
+        values: values
           .map((value) => (typeof value === "string" ? value : ""))
           .filter(Boolean)
       };
+    }
     case "date_picker": {
       const mode = stringField(formData, "response.mode");
+      const rawDisplayTimezone = formData.get("response.display_timezone");
+      if (
+        typeof rawDisplayTimezone === "string" &&
+        !isStorableString(rawDisplayTimezone)
+      ) {
+        return null;
+      }
       const displayTimezone = stringField(
         formData,
         "response.display_timezone"
@@ -205,19 +220,25 @@ function popupKindField(formData: FormData): PopupKind | null {
 }
 
 function stringField(formData: FormData, key: string) {
-  const value = formData.get(key);
-  return typeof value === "string" && value.trim() !== "" ? value : null;
+  const value = rawStringField(formData, key);
+  return value !== null && value.trim() !== "" ? value : null;
 }
 
 function rawStringField(formData: FormData, key: string) {
   const value = formData.get(key);
-  return typeof value === "string" ? value : null;
+  return typeof value === "string" && isStorableString(value) ? value : null;
 }
 
 function feedbackField(formData: FormData, key: string) {
   const values = formData.getAll(key);
   if (values.length === 0) return undefined;
-  if (values.length !== 1 || typeof values[0] !== "string") return null;
+  if (
+    values.length !== 1 ||
+    typeof values[0] !== "string" ||
+    !isStorableString(values[0])
+  ) {
+    return null;
+  }
   return values[0].trim() ? values[0] : undefined;
 }
 

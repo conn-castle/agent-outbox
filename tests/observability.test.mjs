@@ -15,10 +15,15 @@ import { accountWriteLockStatement } from "../src/server/caller-api-limits.ts";
 import { formatVersionLabel } from "../src/server/app-version.ts";
 import { authenticateCallerApiRequest } from "../src/server/caller-api-auth.ts";
 import {
+  isStorableString,
+  unstorableStringError
+} from "../src/server/input-schema.ts";
+import {
   apiErrorResponse,
   apiRequestContext,
   apiResponseHeaders,
-  apiSuccessResponse
+  apiSuccessResponse,
+  apiValidationFailed
 } from "../src/server/api-errors.ts";
 import {
   createBillingPortalSessionForAccount,
@@ -703,13 +708,14 @@ function loadOutputFilesModuleForTest(reportRuntimeFailure) {
   return /** @type {ReturnType<typeof loadOutputFilesModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/output-files.ts", {
       "./accounting.ts": { async auditSafeLifecycleEvent() {} },
-      "./api-errors.ts": { apiResponseHeaders },
+      "./api-errors.ts": { apiResponseHeaders, apiValidationFailed },
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
         async enforceCallerRequestLimits() {}
       },
       "./database.ts": {},
+      "./input-schema.ts": { isStorableString, unstorableStringError },
       "./logging.ts": { durationSinceMs },
       "./sentry.ts": { reportRuntimeFailure }
     })

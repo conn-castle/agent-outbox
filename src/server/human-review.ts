@@ -307,6 +307,8 @@ export async function humanReviewDetailInTransaction(
   context: AuthorizedHumanAccountContext,
   inputItemId: string
 ): Promise<HumanReviewDetail | null> {
+  // PostgreSQL text cannot contain a null byte, so this ID cannot exist.
+  if (inputItemId.includes("\0")) return null;
   const input = await query<HumanReviewRow>(
     humanReviewDetailStatement(context, inputItemId)
   );
@@ -561,6 +563,15 @@ function humanReviewFilters(
 ) {
   const values: (string | number)[] = [context.accountId];
   const filters = ["i.account_id = $1"];
+  // PostgreSQL text cannot contain a null byte, so these filters match nothing
+  // and must not be bound as parameters.
+  if (
+    options.search?.includes("\0") ||
+    options.types?.some((type) => type.includes("\0"))
+  ) {
+    filters.push("false");
+    return { values, filters };
+  }
   const status =
     options.status && options.status !== "all" ? options.status : null;
   if (status) {

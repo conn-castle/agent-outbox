@@ -191,6 +191,16 @@ test(
           null
         );
       }
+      assert.equal(
+        await humanReviewDetailInTransaction(query, context, "invalid\0id"),
+        null
+      );
+      for (const filter of [{ search: "Review\0" }, { types: ["Link\0"] }]) {
+        assert.deepEqual(
+          await humanReviewPageInTransaction(query, context, filter),
+          { totalCount: 0, rows: [], hasNext: false }
+        );
+      }
       await client.query("reset role");
       await client.query(
         "update public.agent_outbox_input_items set status = 'answered' where input_item_id = $1",

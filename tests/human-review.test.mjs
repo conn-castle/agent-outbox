@@ -1935,6 +1935,78 @@ test("human action form parser rejects malformed hidden fields before database w
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
 });
 
+test("human answer forms accept unstorable strings in non-persisted view fields", () => {
+  const expectedAnswer = {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "approve",
+    response: { kind: "free_text", text: "Approved with one edit." }
+  };
+  const expectedBulk = {
+    ok: true,
+    actionValue: "approve",
+    items: [{ inputItemId, callerId, expectedRevision: 2 }]
+  };
+  for (const invalid of ["\0", "\ud800", "\udc00"]) {
+    for (const key of ["view.status", "view.search", "noticeAction"]) {
+      assert.deepEqual(
+        parseHumanAnswerForm(formWithRawString(answerForm(), key, invalid)),
+        expectedAnswer,
+        key
+      );
+
+      assert.deepEqual(
+        parseBulkHumanAnswersForm(formWithRawString(bulkForm(), key, invalid)),
+        expectedBulk,
+        key
+      );
+    }
+  }
+});
+
+test("human answer forms reject unstorable persisted strings", () => {
+  const nonAscii = answerForm();
+  nonAscii.set("response.text", "Approuvé — ✓");
+  nonAscii.set("feedback", "Merci 🙏");
+  assert.equal(parseHumanAnswerForm(nonAscii).ok, true);
+
+  for (const invalid of ["\0", "\ud800", "\udc00"]) {
+    for (const [key, popupKind] of [
+      ["inputItemId", "none"],
+      ["callerId", "none"],
+      ["actionValue", "none"],
+      ["response.text", "free_text"],
+      ["response.value", "single_select"],
+      ["response.values", "multi_select"],
+      ["response.value_date", "date_picker"],
+      ["response.display_timezone", "date_picker"],
+      ["feedback", "none"]
+    ]) {
+      const form = answerForm();
+      form.set("popupKind", popupKind);
+      form.set("response.mode", "date");
+      form.set("response.value_date", "2026-07-15");
+      assert.deepEqual(
+        parseHumanAnswerForm(formWithRawString(form, key, `value${invalid}`)),
+        { ok: false },
+        key
+      );
+    }
+
+    for (const key of ["bulkActionValue", `feedback.${inputItemId}`]) {
+      assert.deepEqual(
+        parseBulkHumanAnswersForm(
+          formWithRawString(bulkForm(), key, `value${invalid}`)
+        ),
+        { ok: false },
+        key
+      );
+    }
+  }
+});
+
 test("human forms accept independent feedback and reject non-text or duplicate feedback", () => {
   const form = answerForm();
   form.set("feedback", "Keep this qualification.");
@@ -1986,6 +2058,28 @@ test("visual unit suffixes do not duplicate formatted display units", () => {
   assert.equal(visualUnitSuffix("42", ""), null);
   assert.equal(visualUnitSuffix("42", null), null);
 });
+
+/**
+ * Native FormData replaces lone surrogates with U+FFFD. Preserve raw strings
+ * here to exercise the parser's Unicode validation at its public boundary.
+ * @param {FormData} formData
+ * @param {string} key
+ * @param {string} value
+ */
+function formWithRawString(formData, key, value) {
+  formData.set(key, value);
+  if (value.isWellFormed()) return formData;
+  const entries = [...formData.entries()].filter(([name]) => name !== key);
+  entries.push([key, value]);
+  formData.get = (name) => entries.find(([key]) => key === name)?.[1] ?? null;
+  formData.getAll = (name) =>
+    entries.filter(([key]) => key === name).map(([, value]) => value);
+  formData.values = function* () {
+    for (const [, value] of entries) yield value;
+    return undefined;
+  };
+  return formData;
+}
 
 function answerForm() {
   const formData = new FormData();
