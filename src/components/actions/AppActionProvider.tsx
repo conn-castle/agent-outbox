@@ -43,6 +43,8 @@ type EnqueueMutation<TResult> = {
 
 type AppActionContextValue = {
   mutations: AppMutationRecord[];
+  // Includes records enqueued since the last render commit.
+  currentMutations: () => AppMutationRecord[];
   enqueue: <TResult>(mutation: EnqueueMutation<TResult>) => string;
   dismiss: (mutationId: string) => void;
 };
@@ -71,6 +73,8 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, []);
+
+  const currentMutations = useCallback(() => mutationsRef.current, []);
 
   const dismiss = useCallback((mutationId: string) => {
     const next = mutationsRef.current.filter(
@@ -164,8 +168,8 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ mutations, enqueue, dismiss }),
-    [dismiss, enqueue, mutations]
+    () => ({ mutations, currentMutations, enqueue, dismiss }),
+    [currentMutations, dismiss, enqueue, mutations]
   );
 
   return (

@@ -33,8 +33,6 @@ export type HumanMutationSubmission = {
 
 export type OnHumanMutation = (submission: HumanMutationSubmission) => void;
 
-const submittedHumanMutationForms = new WeakSet<HTMLFormElement>();
-
 // Per JS session, not per mount. useState(false)+useEffect would re-attach the
 // server action on remount until the next paint, and React 19 still starts a
 // form action when that prop is a function. The action remains for no-JS and
@@ -105,10 +103,6 @@ function submitHumanMutationForm(
   }
   event.preventDefault();
   event.stopPropagation?.();
-  if (submittedHumanMutationForms.has(form)) {
-    return;
-  }
-  submittedHumanMutationForms.add(form);
   onMutation({
     operation,
     inputItemIds,

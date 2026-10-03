@@ -166,7 +166,7 @@ export function ReviewWorkspace({
 }) {
   const router = useRouter();
   const feedback = useFeedbackDrafts(session.accountId, session.userId);
-  const { mutations, enqueue, dismiss } = useAppActions();
+  const { mutations, currentMutations, enqueue, dismiss } = useAppActions();
   const [search, setSearch] = useState(view.search);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
@@ -691,6 +691,31 @@ export function ReviewWorkspace({
             }
           }
         }
+        if (
+          mutation.operation !== "undo" &&
+          record.status === "indeterminate"
+        ) {
+          const answeredIds = new Set(
+            mutation.inputItemIds.filter((id, index) => {
+              const row = canonicalRows[index];
+              if (row) return row.status !== "pending";
+              // Absence proves an answer only when this is the entire
+              // pending view and the submitted row belongs in that view.
+              // A filter or page can otherwise hide a still-pending item.
+              const snapshot = mutation.rowSnapshots.find(
+                (candidate) => candidate.inputItemId === id
+              );
+              return (
+                view.page === 1 &&
+                !hasNext &&
+                rows.length === totalCount &&
+                snapshot !== undefined &&
+                humanReviewRowMatchesView(snapshot, view)
+              );
+            })
+          );
+          setSelectedIds((current) => removeIds(current, answeredIds));
+        }
         successGenerations.current.delete(record.id);
         retriedCanonicalRefreshes.current.delete(record.id);
         dismiss(record.id);
@@ -699,7 +724,7 @@ export function ReviewWorkspace({
         router.refresh();
       }
     }
-  }, [dismiss, humanMutations, router, rows, view]);
+  }, [dismiss, hasNext, humanMutations, router, rows, totalCount, view]);
 
   const visibleRows = useMemo(() => {
     return [...projectedRows].sort((left, right) => {
@@ -787,6 +812,20 @@ export function ReviewWorkspace({
     requiresCanonicalPendingRow = submission.operation === "undo" &&
       rowSnapshots.some((row) => row.status === "pending")
   ) {
+    // Repeated activation before the optimistic projection renders would send
+    // the same items again; once settled, they are submittable again.
+    const unsettledIds = new Set(
+      currentMutations().flatMap((record) =>
+        record.scope === HUMAN_MUTATION_SCOPE &&
+        (record.status === "queued" || record.status === "syncing") &&
+        isHumanOptimisticMutation(record.optimistic)
+          ? record.optimistic.inputItemIds
+          : []
+      )
+    );
+    if (submission.inputItemIds.every((id) => unsettledIds.has(id))) {
+      return;
+    }
     if (
       submission.operation === "answer" ||
       submission.operation === "bulk-answer"
@@ -863,6 +902,9 @@ export function ReviewWorkspace({
             result.operation === "answer" ? "feedback" : `feedback.${id}`
           );
           if (typeof sent === "string") feedback.clearSubmitted(id, sent);
+        }
+        if (answeredIds.length > 0) {
+          setSelectedIds((current) => removeIds(current, new Set(answeredIds)));
         }
         if (result.operation === "bulk-answer" && result.answered === 0) {
           successGenerations.current.delete(mutationId);
