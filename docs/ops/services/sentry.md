@@ -66,6 +66,20 @@ are not already proven in this repository.
 - Source maps.
 - Issue triage and status.
 
+## Event Content
+
+Runtime Sentry init (`src/server/sentry.ts`) disables SDK breadcrumbs and scrubs
+every event and transaction before sending:
+
+- Exception messages become `Agent Outbox runtime failure`; exception types,
+  stack frames (without local variables), and mechanisms remain.
+- Request data keeps only the HTTP method.
+- `nextjs.request_path`, breadcrumbs, extras, and free-text message fields are
+  removed.
+- Span data loses request/response header, request body, and raw URL attributes.
+- Transaction names, span descriptions, and the transaction name in the envelope
+  sampling header lose any query or fragment suffix.
+
 ## Safe Checks
 
 - Verify the configured organization and project before inspecting production.

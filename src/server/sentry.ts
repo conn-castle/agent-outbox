@@ -11,6 +11,7 @@ import { runtimeRelease } from "./observability.ts";
 
 const RUNTIME_SMOKE_SENTRY_SUPPRESS_HEADER = "x-agent-outbox-runtime-smoke";
 const SCHEDULED_SENTRY_FLUSH_TIMEOUT_MS = 2_000;
+const SANITIZED_RUNTIME_FAILURE_MESSAGE = "Agent Outbox runtime failure";
 
 export function sentryCaptureEnabled() {
   return (
@@ -130,8 +131,96 @@ export function sentryRuntimeInitOptions() {
     dsn: process.env.SENTRY_DSN,
     environment: process.env.APP_ENV,
     ...(release ? { release } : {}),
-    tracesSampleRate: 0.05
+    tracesSampleRate: 0.05,
+    // Stop SDK breadcrumbs at the source: internal SDK error events skip
+    // beforeSend. The scrubber still drops breadcrumbs added to a scope directly.
+    maxBreadcrumbs: 0,
+    beforeSend: scrubSentryEvent,
+    beforeSendTransaction: scrubSentryEvent
   };
+}
+
+function scrubSentryEvent<TEvent extends Sentry.Event>(event: TEvent): TEvent {
+  if (Array.isArray(event.exception?.values)) {
+    for (const exception of event.exception.values) {
+      if (!exception || typeof exception !== "object") {
+        continue;
+      }
+      exception.value = SANITIZED_RUNTIME_FAILURE_MESSAGE;
+      if (Array.isArray(exception.stacktrace?.frames)) {
+        for (const frame of exception.stacktrace.frames) {
+          if (frame && typeof frame === "object") {
+            delete frame.vars;
+          }
+        }
+      }
+    }
+  }
+  delete event.message;
+  delete event.logentry;
+  delete event.extra;
+  delete event.breadcrumbs;
+  if (typeof event.request?.method === "string") {
+    event.request = { method: event.request.method };
+  } else {
+    delete event.request;
+  }
+  const nextjs = event.contexts?.nextjs;
+  if (nextjs && typeof nextjs === "object") {
+    delete nextjs.request_path;
+  }
+  scrubSpanData(event.contexts?.trace?.data);
+  if (Array.isArray(event.spans)) {
+    for (const span of event.spans) {
+      if (span && typeof span === "object") {
+        scrubSpanData(span.data);
+        if (typeof span.description === "string") {
+          span.description = withoutUrlSuffix(span.description);
+        }
+      }
+    }
+  }
+  if (typeof event.transaction === "string") {
+    event.transaction = withoutUrlSuffix(event.transaction);
+  }
+  // The sampling context becomes the envelope trace header.
+  const samplingContext = event.sdkProcessingMetadata?.dynamicSamplingContext;
+  if (typeof samplingContext?.transaction === "string") {
+    samplingContext.transaction = withoutUrlSuffix(samplingContext.transaction);
+  }
+  return event;
+}
+
+function withoutUrlSuffix(value: string) {
+  return value.split(/[?#]/, 1)[0];
+}
+
+const RAW_URL_SPAN_DATA_KEYS = new Set([
+  "http.request.body.data",
+  "url.full",
+  "url.path",
+  "url.query",
+  "url.fragment",
+  "http.url",
+  "http.target",
+  "http.query",
+  "http.fragment",
+  "url"
+]);
+
+function scrubSpanData(data: unknown) {
+  if (!data || typeof data !== "object") {
+    return;
+  }
+  for (const key of Object.keys(data)) {
+    if (
+      key.startsWith("http.request.header.") ||
+      key.startsWith("http.response.header.") ||
+      RAW_URL_SPAN_DATA_KEYS.has(key)
+    ) {
+      delete (data as Record<string, unknown>)[key];
+    }
+  }
 }
 
 // Cron invocations bypass OpenNext, so Next.js instrumentation never
@@ -185,7 +274,7 @@ function runtimeExceptionFromUnknown(error: unknown) {
 }
 
 function sanitizedSentryException(error: Error) {
-  const sanitized = new Error("Agent Outbox runtime failure");
+  const sanitized = new Error(SANITIZED_RUNTIME_FAILURE_MESSAGE);
   sanitized.name = safeErrorName(error);
   return sanitized;
 }
