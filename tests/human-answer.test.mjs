@@ -1423,8 +1423,12 @@ test(
             [ids.accountId, tier]
           );
           await owner.query(
-            "update public.agent_outbox_input_actions set popup_kind = $2 where input_action_id = $1",
-            [ids.actionId, kind]
+            "update public.agent_outbox_input_actions set popup_kind = $2, popup_payload = $3::jsonb where input_action_id = $1",
+            [
+              ids.actionId,
+              kind,
+              JSON.stringify(kind === "file_upload" ? fileUploadPayload : {})
+            ]
           );
           await owner.query("commit");
           const humanPid = (await human.query("select pg_backend_pid() as pid"))
@@ -1809,8 +1813,8 @@ test(
         [ids.accountId]
       );
       await owner.query(
-        "update public.agent_outbox_input_actions set popup_kind = 'file_upload' where input_action_id = $1",
-        [ids.actionId]
+        "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+        [ids.actionId, JSON.stringify(fileUploadPayload)]
       );
       await owner.query("commit");
       const answered = await runHumanAnswerDatabaseTransaction(
@@ -2091,8 +2095,8 @@ for (const scenario of /** @type {const} */ ([
         );
         if (scenario !== "locked over-cap non-file input") {
           await owner.query(
-            "update public.agent_outbox_input_actions set popup_kind = 'file_upload' where input_action_id = $1",
-            [ids.actionId]
+            "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+            [ids.actionId, JSON.stringify(fileUploadPayload)]
           );
         } else {
           await owner.query(

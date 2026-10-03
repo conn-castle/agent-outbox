@@ -736,11 +736,15 @@ test(
             display,
             icon,
             action_value,
-            popup_kind
+            popup_kind,
+            popup_payload
           )
-          values ($1, 0, 'Upload', 'upload', 'upload', 'file_upload')
+          values ($1, 0, 'Upload', 'upload', 'upload', 'file_upload', $2::jsonb)
         `,
-        [ids.fileUploadInput]
+        [
+          ids.fileUploadInput,
+          JSON.stringify({ label: "Upload", accept_mime_types: null })
+        ]
       );
 
       /**
