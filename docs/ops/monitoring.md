@@ -29,6 +29,14 @@ pipeline. Sentry release/source-map upload is disabled unless `SENTRY_ORG`,
 and `AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH=1` are set. Ordinary production
 builds must not set the deploy/release-path flag.
 
+Every outgoing Sentry error and transaction event is scrubbed before send
+(`src/server/sentry.ts`): request headers, cookies, query strings, bodies, the
+Next.js `request_path`, serialized thrown values (`extra`), header attributes
+and URL queries or fragments in span and breadcrumb data, and console
+breadcrumbs are removed, and every exception message is replaced by the fixed
+runtime-failure message. Exception types, stack traces, tags, and the
+`agent_outbox` context are kept.
+
 PostHog data flow, sensitive-content exclusions, and retention are canonical in
 [privacy-data-inventory.md](privacy-data-inventory.md); this runbook does not
 duplicate that policy.
