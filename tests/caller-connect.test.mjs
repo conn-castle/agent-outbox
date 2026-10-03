@@ -244,6 +244,8 @@ test(
     const activationUpdated = Promise.withResolvers();
     /** @type {PromiseWithResolvers<void>} */
     const resumeActivation = Promise.withResolvers();
+    /** @type {Promise<unknown>[]} */
+    const operations = [];
     /** @type {unknown} */
     let bodyError;
 
@@ -380,6 +382,7 @@ test(
             { setup_request_id: connectSetupRequestId },
             { runProductTransaction: appRoleTransaction }
           );
+          operations.push(activation);
           const activationPid = await Promise.race([
             activationUpdated.promise,
             activation.then((result) =>
@@ -401,6 +404,7 @@ test(
             { setup_code: revokeSetupCode },
             { runProductTransaction: appRoleTransaction }
           );
+          operations.push(revoke);
           let revokeBlocked = false;
           for (let attempt = 0; attempt < 60 && !revokeBlocked; attempt += 1) {
             const waiting = await client.query(
@@ -442,6 +446,7 @@ test(
       bodyError = error;
     } finally {
       resumeActivation.resolve();
+      await Promise.allSettled(operations);
       await preserveBodyErrorDuringTeardown(
         bodyError,
         async () => {
