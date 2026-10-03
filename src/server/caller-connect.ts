@@ -29,6 +29,7 @@ import {
   type CallerCredentialLookupRow,
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
+import { callerCredentialLifecycleLockStatement } from "./caller-credential-operations.ts";
 import { absoluteHttpOrigin } from "./env.ts";
 import {
   runProductTransaction,
@@ -659,6 +660,7 @@ export async function handleConnectActivateRequest(
       activateConnectPendingCredential(
         query,
         {
+          ...lookupResult.data,
           setupRequestId: parsed.data.setupRequestId,
           pendingCredential: pendingCredential.data
         },
@@ -732,6 +734,7 @@ export async function handleConnectAbortRequest(
       abortConnectPendingCredential(
         query,
         {
+          ...lookupResult.data,
           setupRequestId: parsed.data.setupRequestId,
           pendingCredential: pendingCredential.data
         },
@@ -1273,11 +1276,16 @@ export async function exchangeApprovedConnectSetupRequest(
 async function activateConnectPendingCredential(
   query: ProductTransactionQuery,
   input: {
+    accountId: string;
+    callerId: string;
     setupRequestId: string;
     pendingCredential: PendingConnectCredentialBearer;
   },
   options: { requestId: string; now?: Date }
 ): Promise<ConnectResult<ConnectActivateResponseData>> {
+  // Serialize with revoke and rotate before locking the credential row, in the
+  // same advisory-lock-then-row-lock order they use.
+  await query(callerCredentialLifecycleLockStatement(input));
   const credentialResult = await query<PendingConnectCredentialRow>(
     connectPendingCredentialStatement(input)
   );
@@ -1317,11 +1325,14 @@ async function activateConnectPendingCredential(
 async function abortConnectPendingCredential(
   query: ProductTransactionQuery,
   input: {
+    accountId: string;
+    callerId: string;
     setupRequestId: string;
     pendingCredential: PendingConnectCredentialBearer;
   },
   options: { now?: Date }
 ): Promise<ConnectResult<ConnectAbortResponseData>> {
+  await query(callerCredentialLifecycleLockStatement(input));
   const credentialResult = await query<PendingConnectCredentialRow>(
     connectPendingCredentialStatement(input)
   );

@@ -1878,7 +1878,7 @@ function devicePollTargetStatement(
   };
 }
 
-function callerCredentialLifecycleLockStatement(input: {
+export function callerCredentialLifecycleLockStatement(input: {
   accountId: string;
   callerId: string;
 }): TransactionContextStatement {
