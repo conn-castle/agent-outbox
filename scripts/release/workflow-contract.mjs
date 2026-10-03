@@ -3,6 +3,7 @@ import { escapeRegExp } from "../regex.mjs";
 import {
   workflowHasLine,
   workflowJobContent,
+  workflowMappingBlockContent,
   workflowNamedStepContent,
   workflowRunStepIncludes
 } from "../workflow-yaml.mjs";
@@ -577,28 +578,59 @@ export function validateAbandonedReleaseDetectionWorkflow(
     detectJob,
     "Detect abandoned release drafts"
   );
+  // A job-level permissions declaration replaces the workflow permissions;
+  // omitted scopes become none rather than inheriting individual entries.
+  const hasJobPermissions = workflowHasLine(detectJob, /^    permissions:/);
+  const permissionsIndentation = hasJobPermissions ? 4 : 0;
+  const effectivePermissions = workflowMappingBlockContent(
+    hasJobPermissions ? detectJob : detectWorkflowContent,
+    "permissions",
+    permissionsIndentation
+  );
+  const permissionPrefix = " ".repeat(permissionsIndentation + 2);
   if (
     !workflowHasLine(detectWorkflowContent, /^\s*schedule:\s*$/) ||
     !workflowHasLine(detectWorkflowContent, /^\s*workflow_dispatch:\s*$/) ||
-    !detectStep.includes("production-release.mjs detect-abandoned") ||
+    !workflowRunStepIncludes(
+      detectStep,
+      "node scripts/production-release.mjs detect-abandoned"
+    ) ||
     !detectStep.includes("GH_TOKEN: ${{ github.token }}") ||
     !workflowHasLine(
       detectJob,
       new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`)
     ) ||
-    !workflowHasLine(detectWorkflowContent, /^\s*actions:\s*read\s*$/) ||
-    !workflowHasLine(detectWorkflowContent, /^\s*contents:\s*write\s*$/) ||
+    !workflowHasLine(
+      effectivePermissions,
+      new RegExp(`^${permissionPrefix}actions:\\s*read\\s*(?:#.*)?$`)
+    ) ||
+    !workflowHasLine(
+      effectivePermissions,
+      new RegExp(`^${permissionPrefix}contents:\\s*write\\s*(?:#.*)?$`)
+    ) ||
     !detectJob.includes("persist-credentials: false")
   ) {
     failures.push(
       ".github/workflows/detect-abandoned-production-release.yml must detect abandoned drafts on a schedule without mutating production"
     );
   }
+  // Check every run declaration, including unnamed steps and other jobs.
+  // Only these exact single-line commands are allowed; shell suffixes and
+  // multiline scripts must not bypass the non-mutation contract.
+  const runLines = detectWorkflowContent
+    .split(/\r?\n/)
+    .filter((line) => /^\s*(?:-\s*)?run:/.test(line));
   if (
     detectWorkflowContent.includes("production-deploy") ||
     detectWorkflowContent.includes("environment: production") ||
     detectWorkflowContent.includes("wrangler") ||
-    detectWorkflowContent.includes("migration:migrate")
+    detectWorkflowContent.includes("migration:migrate") ||
+    runLines.some(
+      (line) =>
+        !/^\s*(?:-\s*)?run:\s*(?:make setup|node scripts\/production-release\.mjs detect-abandoned)\s*$/.test(
+          line
+        )
+    )
   ) {
     failures.push(
       ".github/workflows/detect-abandoned-production-release.yml must not mutate production or join production-deploy concurrency"

@@ -331,7 +331,10 @@ release is not treated as abandoned. It must not join `production-deploy`
 concurrency or mutate, because GitHub concurrency keeps only one pending run and
 can cancel a queued human release. Its token still holds `contents: write`
 because GitHub lists draft releases only to tokens with push access; with
-read-only scope the detector sees no drafts and falsely passes.
+read-only scope the detector sees no drafts and falsely passes. The workflow
+contract validates the detector's effective permissions, including job-level
+overrides, and limits `run` commands to `make setup` and
+`node scripts/production-release.mjs detect-abandoned`.
 
 The Worker upload and traffic commands fail outside the sanctioned GitHub
 Actions workflows. Do not load production credentials locally to bypass them and
