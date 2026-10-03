@@ -86,6 +86,41 @@ func TestInputSendPostsFileAndRendersStableJSON(t *testing.T) {
 	}
 }
 
+func TestInputSendPostsHTMLHeavyFileWithinServerByteLimit(t *testing.T) {
+	prefix := `{"caller_item_id":"item_html","row_type":{"display":"Email","icon":"mail"},"title":"<strong>Q&amp;A</strong>","subtitle":"Subtitle","summary":"Summary","link_buttons":[],"actions":[{"display":"Approve","icon":"check","value":"approve","overflow":false,"popup":{"kind":"none"}}],"details":"`
+	suffix := `"}`
+	cell := "<tr><td>a&amp;b</td></tr>"
+	details := strings.Repeat(cell, (foundation.SystemContractInputSubmissionBodyBytes-len(prefix)-len(suffix))/len(cell))
+	input := prefix + details + suffix
+	inputPath := filepath.Join(t.TempDir(), "input.json")
+	if err := os.WriteFile(inputPath, []byte(input), 0o600); err != nil {
+		t.Fatalf("write input fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if len(raw) > foundation.SystemContractInputSubmissionBodyBytes {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = fmt.Fprint(w, `{"ok":false,"request_id":"req_server","correlation_id":"corr_server","error":{"code":"request_too_large","message":"Request body is too large."}}`)
+			return
+		}
+		if string(raw) != input {
+			t.Errorf("request body differs from the input file: sent %d bytes, file has %d bytes", len(raw), len(input))
+		}
+		_, _ = fmt.Fprint(w, `{"ok":true,"request_id":"req_server","correlation_id":"corr_server","data":{"caller_item_id":"item_html","status":"pending","revision":1,"created":true,"duplicate":false}}`)
+	}))
+	defer server.Close()
+
+	_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "send", "--file", inputPath})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+}
+
 func TestInputSendMalformedResponseReportsUnknownWriteOutcome(t *testing.T) {
 	inputPath := filepath.Join(t.TempDir(), "input.json")
 	if err := os.WriteFile(inputPath, []byte(`{
