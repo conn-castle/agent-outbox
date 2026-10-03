@@ -2288,6 +2288,7 @@ func TestCallerRotateRejectsInvalidExchangeAndPreservesLocalState(t *testing.T) 
 		{"mismatched caller id", `"caller_id":"caller_123"`, `"caller_id":"caller_other"`, 1},
 		{"missing caller id", `"caller_id":"caller_123"`, `"caller_id":""`, 1},
 		{"missing account id", `"account_id":"acct_123"`, `"account_id":""`, 1},
+		{"mismatched account id", `"account_id":"acct_123"`, `"account_id":"acct_other"`, 1},
 		{"missing key id", `"key_id":"key_new"`, `"key_id":" "`, 1},
 		{"missing prefix", `"prefix":"aob_live"`, `"prefix":""`, 1},
 		{"missing suffix", `"last_chars":"newx"`, `"last_chars":""`, 1},

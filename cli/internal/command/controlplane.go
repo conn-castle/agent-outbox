@@ -676,12 +676,15 @@ func validateConnectExchange(result connectExchangeData) string {
 	return ""
 }
 
-func validateRotateExchange(result rotateExchangeData, callerID string) string {
-	if result.Caller.CallerID != callerID {
+func validateRotateExchange(result rotateExchangeData, selected foundation.CallerConfig) string {
+	if result.Caller.CallerID != selected.CallerID {
 		return "Agent Outbox API returned a caller id that does not match the selected caller."
 	}
 	if strings.TrimSpace(result.Account.AccountID) == "" {
 		return "Agent Outbox API did not return an account id."
+	}
+	if result.Account.AccountID != selected.AccountID {
+		return "Agent Outbox API returned an account id that does not match the selected caller."
 	}
 	if strings.TrimSpace(result.ReplacementCredential.KeyID) == "" {
 		return "Agent Outbox API did not return a replacement credential key id."
@@ -706,7 +709,7 @@ func exchangeStoreAndActivateRotate(ctx context.Context, runtime *controlPlaneRu
 		return rotateExchangeData{}, rotateActivateData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a replacement credential.", meta)
 	}
 
-	if message := validateRotateExchange(exchanged, selected.CallerID); message != "" {
+	if message := validateRotateExchange(exchanged, selected); message != "" {
 		_, _ = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/abort", replacementKey, map[string]string{"setup_request_id": setup.SetupRequestID}, nil)
 		return rotateExchangeData{}, rotateActivateData{}, foundation.NewAPIResponseInvalidError(message, meta)
 	}
