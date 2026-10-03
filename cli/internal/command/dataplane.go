@@ -187,7 +187,7 @@ func inputJSONFileCommand(use string, short string, apiPath string, opts Options
 		Flags:       "--file <input.json> is required. --json prints the API response in the shared success envelope. Global --caller, --config, --base-url, and --no-color are available.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox input " + use + " --file input.json\nagent-outbox input " + use + " --file input.json --json",
-		ExitCodes:   "0 success. 64 usage. 65 invalid JSON/schema/safety errors. 73 live item conflict. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
+		ExitCodes:   "0 success. 64 usage. 65 invalid JSON/schema/safety errors. 73 live item conflict. 74 secret store. 75 rate/quota/temporary failure or unreadable input file. 77 permission. 78 config or caller selection.",
 		RelatedDocs: "docs/spec/input-schema.md, docs/spec/http-api.md#input-queue, docs/spec/errors.md, and agent-outbox docs input.",
 	})
 	return cmd
@@ -585,7 +585,7 @@ func readInputSubmissionFile(path string) (json.RawMessage, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, foundation.NewAppError(foundation.CodeConfig, "Could not read input submission file.")
+		return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not read input submission file.")
 	}
 	if len(data) > inputPayloadLimitBytes {
 		return nil, foundation.NewAppError(foundation.CodeRequestTooLarge, fmt.Sprintf("Input submission JSON exceeds the %d byte limit.", foundation.SystemContractInputSubmissionBodyBytes))

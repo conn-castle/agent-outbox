@@ -169,7 +169,7 @@ func NewRootCommand(opts Options, flags *rootFlags) *cobra.Command {
 			"agent-outbox input replace --file input.json --json",
 			"agent-outbox input delete email:thread_123",
 		}, "\n"),
-		ExitCodes:   "0 success. 64 usage. 65 input JSON/schema/safety errors. 66 missing input. 73 live item conflict. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
+		ExitCodes:   "0 success. 64 usage. 65 input JSON/schema/safety errors. 66 missing input. 73 live item conflict. 74 secret store. 75 rate/quota/temporary failure or unreadable input file. 77 permission. 78 config or caller selection.",
 		RelatedDocs: "docs/spec/input-schema.md, docs/spec/http-api.md#input-queue, and agent-outbox docs input.",
 	})
 	documentCommand(output, commandHelpSpec{
