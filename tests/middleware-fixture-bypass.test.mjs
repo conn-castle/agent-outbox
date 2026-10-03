@@ -83,6 +83,7 @@ test("middleware fixture bypass keeps browser fixture off caller approval pages 
     delete process.env[CALLER_CONNECT_CLERK_FIXTURE_FLAG];
 
     assert.equal(middlewareFixtureBypassEnabled("/human"), true);
+    assert.equal(middlewareFixtureBypassEnabled("/upgrade"), true);
     assert.equal(
       middlewareFixtureBypassEnabled("/caller/connect/approve"),
       false
@@ -370,7 +371,7 @@ test("signed-out card visits preserve arbitrary IDs through the sign-in redirect
   }
 });
 
-test("signed-out caller approval visits return to the same request after sign-in", async () => {
+test("signed-out caller approval and upgrade visits return to the same page after sign-in", async () => {
   const previous = captureMiddlewareEnv();
   try {
     setEnv("APP_ENV", "production");
@@ -382,7 +383,9 @@ test("signed-out caller approval visits return to the same request after sign-in
       `/caller/connect/approve?setup_request_id=${crypto.randomUUID()}`,
       `/caller/rotate/approve?setup_request_id=${crypto.randomUUID()}`,
       `/caller/revoke/approve?setup_request_id=${crypto.randomUUID()}`,
-      "/caller/connect/device?user_code=ABCD-EFGH"
+      "/caller/connect/device?user_code=ABCD-EFGH",
+      "/upgrade",
+      "/upgrade?checkout=success"
     ]) {
       const response = await middlewareResponse(
         `https://app.example.test${destination}`

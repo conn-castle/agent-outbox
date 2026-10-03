@@ -36,7 +36,12 @@ export default async function UpgradePage({
     );
   }
 
-  const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
+  const returnHref = checkout
+    ? `/upgrade?${new URLSearchParams({ checkout })}`
+    : "/upgrade";
+  const session = await auth.protect({
+    unauthenticatedUrl: `/sign-in?${new URLSearchParams({ redirect_url: returnHref })}`
+  });
   const humanSession = await resolveHumanAccountSession({
     clerkUserId: session.userId,
     requestId: createCorrelationId("upgrade_req"),

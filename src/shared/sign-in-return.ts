@@ -3,6 +3,7 @@
 // user started.
 export const SIGNED_IN_PAGE_PATHS = [
   "/human",
+  "/upgrade",
   "/caller/connect/approve",
   "/caller/connect/device",
   "/caller/connect/success",
