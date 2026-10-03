@@ -13,9 +13,9 @@ import {
 import { loadHumanReviewPage } from "../src/server/human-review-page.ts";
 import {
   humanReviewCardHref,
-  humanReviewReturnHref,
   humanReviewViewFromRecord
 } from "../src/shared/human-review-view.ts";
+import { signInReturnHref } from "../src/shared/sign-in-return.ts";
 import {
   DATABASE_POLICY_VERIFICATION_SKIP,
   assertMigrationOwnerCanSetAppRole,
@@ -31,16 +31,17 @@ test("card links encode arbitrary caller IDs and survive the sign-in return URL"
   const url = new URL(href, "https://app.agent-outbox.dev");
   assert.equal(url.searchParams.get("caller_id"), "caller-one");
   assert.equal(url.searchParams.get("caller_item_id"), id);
-  assert.equal(humanReviewReturnHref(href), href);
+  assert.equal(signInReturnHref(href), href);
   for (const invalid of [
     undefined,
     "//evil.example/human",
     "https://evil.example/human",
     "/\\evil.example/human",
     "/human/other",
-    "/caller/connect/approve"
+    "/caller/connect/storyboard",
+    "/caller/connect/approve/other"
   ]) {
-    assert.equal(humanReviewReturnHref(invalid), undefined);
+    assert.equal(signInReturnHref(invalid), undefined);
   }
 });
 
@@ -189,6 +190,16 @@ test(
         assert.equal(
           await humanReviewCardInTransaction(query, context, caller, id),
           null
+        );
+      }
+      assert.equal(
+        await humanReviewDetailInTransaction(query, context, "invalid\0id"),
+        null
+      );
+      for (const filter of [{ search: "Review\0" }, { types: ["Link\0"] }]) {
+        assert.deepEqual(
+          await humanReviewPageInTransaction(query, context, filter),
+          { totalCount: 0, rows: [], hasNext: false }
         );
       }
       await client.query("reset role");

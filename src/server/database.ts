@@ -107,7 +107,15 @@ export async function runProductTransaction<TResult>(
       return client.query(statement.sql, statement.values);
     });
 
-    await client.query("commit");
+    // Postgres answers `commit` on an aborted transaction with a ROLLBACK tag
+    // instead of an error, so a callback that caught a statement error would
+    // otherwise report success for writes that were discarded.
+    const commitResult = await client.query("commit");
+    if (commitResult.command === "ROLLBACK") {
+      throw new Error(
+        "Product transaction was aborted by a caught statement error; commit rolled back."
+      );
+    }
     return result;
   } catch (error) {
     try {

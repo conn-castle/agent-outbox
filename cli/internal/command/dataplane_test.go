@@ -163,6 +163,30 @@ func TestInputSendAcceptedResponseWithUnusableDataReportsAccepted(t *testing.T) 
 	}
 }
 
+func TestInputFileReadFailureStopsBeforeHTTP(t *testing.T) {
+	for _, operation := range []string{"send", "replace"} {
+		t.Run(operation, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+			inputPath := filepath.Join(t.TempDir(), "missing.json")
+			stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", operation, "--file", inputPath})
+			if code != foundation.ExitTemporary || stdout != "" {
+				t.Fatalf("exit=%d, want 75 with empty stdout; stdout=%s stderr=%s", code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, `"code":"local_io_error"`) || !strings.Contains(stderr, "Could not read input submission file.") {
+				t.Fatalf("stderr missing local input-file I/O error: %s", stderr)
+			}
+			if requests != 0 || strings.Contains(stderr, `"http_status"`) {
+				t.Fatalf("input-file read failure reached HTTP: requests=%d stderr=%s", requests, stderr)
+			}
+		})
+	}
+}
+
 func TestInputSendRejectsInvalidSchemaBeforeHTTP(t *testing.T) {
 	inputPath := filepath.Join(t.TempDir(), "input.json")
 	if err := os.WriteFile(inputPath, []byte(`{"caller_item_id":"item_1"}`), 0o600); err != nil {

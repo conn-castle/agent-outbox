@@ -89,6 +89,9 @@ the typed response before acting.
 { "kind": "free_text", "text": "Final human-entered text" }
 ```
 
+Line breaks in `text` and `feedback` are always `\n`, matching the browser's
+length count for `min_length` and `max_length`.
+
 `single_select`:
 
 ```json

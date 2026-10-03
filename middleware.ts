@@ -8,24 +8,13 @@ import {
 } from "./src/server/middleware-clerk-readiness";
 import { middlewareFixtureBypassEnabled } from "./src/server/middleware-fixture-bypass";
 import { hostedHostRedirect } from "./src/shared/hosted-origins";
+import { SIGNED_IN_PAGE_PATHS } from "./src/shared/sign-in-return";
 
 // OpenNext Cloudflare 1.20.4 has experimental proxy.ts support. Keep
 // middleware.ts until the platform verification gate proves proxy.ts parity.
-const isProtectedRoute = createRouteMatcher([
-  "/human(.*)",
-  "/caller/connect/approve(.*)",
-  "/caller/connect/device(.*)",
-  "/caller/connect/success(.*)",
-  "/caller/connect/error(.*)",
-  "/caller/rotate/approve(.*)",
-  "/caller/rotate/device(.*)",
-  "/caller/rotate/success(.*)",
-  "/caller/rotate/error(.*)",
-  "/caller/revoke/approve(.*)",
-  "/caller/revoke/device(.*)",
-  "/caller/revoke/success(.*)",
-  "/caller/revoke/error(.*)"
-]);
+const isProtectedRoute = createRouteMatcher(
+  SIGNED_IN_PAGE_PATHS.map((path) => `${path}(.*)`)
+);
 
 const protectedMiddleware = clerkMiddleware(async (auth, request) => {
   if (isProtectedRoute(request)) {

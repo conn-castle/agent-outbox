@@ -6,6 +6,7 @@ import {
 } from "./accounting.ts";
 import {
   apiResponseHeaders,
+  apiValidationFailed,
   type ApiErrorInput,
   type ApiRequestContext
 } from "./api-errors.ts";
@@ -21,6 +22,7 @@ import {
   runAuthenticatedCallerTransaction,
   type CallerIdentity
 } from "./caller-api-auth.ts";
+import { isStorableString, unstorableStringError } from "./input-schema.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
@@ -412,6 +414,19 @@ function validateOutputFileDownloadPath(path: OutputFileDownloadPath) {
       code: "invalid_request",
       message: "output_result_id and file_id are required."
     } satisfies ApiErrorInput;
+  }
+
+  const fields = [
+    ...(isStorableString(path.outputResultId)
+      ? []
+      : [unstorableStringError("output_result_id")]),
+    ...(isStorableString(path.fileId) ? [] : [unstorableStringError("file_id")])
+  ];
+  if (fields.length > 0) {
+    return apiValidationFailed(
+      "Output file download request failed validation.",
+      fields
+    ).error;
   }
 
   return null;

@@ -97,6 +97,8 @@ Behavior:
   human-action and file-upload submissions directly as trusted `server_action`
   events.
 - Requires a same-origin `Origin` header and `Content-Type: application/json`.
+- Is served on both the website and app origins without a host redirect, so
+  website pages report to their own origin.
 - Allows only client errors, hydration failures, GitHub sign-in launch failures,
   failed human-action submissions, upload failures, and major UI state
   inconsistencies.
@@ -485,6 +487,11 @@ membership, never caller API keys.
 Successful output route responses include `Cache-Control: no-store`. Read
 responses can contain human-provided answers, file metadata, or raw file bytes
 and must not be cached.
+
+Path ids (`output_result_id`, `file_id`) containing U+0000 or lone surrogates
+are rejected with 422 `validation_failed` (`invalid_string`) before rate-limit
+accounting. A cursor that cannot be decoded to a valid position is rejected with
+422 `validation_failed` (`invalid_cursor`).
 
 ### Check Output
 

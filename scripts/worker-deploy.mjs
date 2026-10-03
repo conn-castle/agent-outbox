@@ -733,8 +733,14 @@ function runCommand(command, args, options, spawnSyncImpl) {
     throw result.error;
   }
   if (result.status !== 0) {
+    // Piped commands would otherwise lose the tool's own failure reason.
+    const capturedOutput = [result.stdout, result.stderr]
+      .filter((stream) => typeof stream === "string" && stream.trim() !== "")
+      .map((stream) => /** @type {string} */ (stream).trim())
+      .join("\n");
     throw new Error(
-      `${command} ${args.join(" ")} failed with status ${result.status}`
+      `${command} ${args.join(" ")} failed with status ${result.status}` +
+        (capturedOutput === "" ? "" : `:\n${capturedOutput}`)
     );
   }
   return result;

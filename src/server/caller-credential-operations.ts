@@ -1241,15 +1241,18 @@ async function exchangeRotateSetupRequest(
 
   let credential: InsertPendingReplacementCredentialRow;
   try {
-    const credentialResult = await query<InsertPendingReplacementCredentialRow>(
-      insertPendingReplacementCredentialStatement({
-        accountId: lockedTarget.account_id,
-        callerId: lockedTarget.caller_id,
-        oldCredentialId: lockedTarget.active_credential_id,
-        setupRequestId: lockedTarget.setup_request_id,
-        expiresAt: new Date(lockedTarget.expires_at),
-        material
-      })
+    const insertStatement = insertPendingReplacementCredentialStatement({
+      accountId: lockedTarget.account_id,
+      callerId: lockedTarget.caller_id,
+      oldCredentialId: lockedTarget.active_credential_id,
+      setupRequestId: lockedTarget.setup_request_id,
+      expiresAt: new Date(lockedTarget.expires_at),
+      material
+    });
+    const credentialResult = await withSavepoint(
+      query,
+      "caller_pending_replacement",
+      () => query<InsertPendingReplacementCredentialRow>(insertStatement)
     );
     credential = credentialResult.rows[0];
   } catch (error) {

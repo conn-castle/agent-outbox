@@ -23,9 +23,16 @@ import (
 var testControlNow = time.Date(2026, 7, 2, 20, 0, 0, 0, time.UTC)
 
 type controlPlaneSecretStore struct {
-	keys         map[string]string
-	storeErr     error
-	deleteErr    error
+	keys     map[string]string
+	storeErr error
+	// failStoreKey makes only stores of this key value fail, so a later rollback store can fail
+	// after an earlier store succeeded.
+	failStoreKey string
+	// onStore runs after each successful store, letting a test break later local writes.
+	onStore   func(callerAPIKey string)
+	deleteErr error
+	// onDelete runs before each delete, letting a test vary failures and commit side effects.
+	onDelete     func(callerID string)
 	preflightErr error
 }
 
@@ -44,14 +51,23 @@ func (s *controlPlaneSecretStore) StoreCallerKey(callerID string, callerAPIKey s
 	if s.storeErr != nil {
 		return s.storeErr
 	}
+	if s.failStoreKey != "" && callerAPIKey == s.failStoreKey {
+		return foundation.NewSecretStoreError("fake credential write failure")
+	}
 	if s.keys == nil {
 		s.keys = map[string]string{}
 	}
 	s.keys[callerID] = callerAPIKey
+	if s.onStore != nil {
+		s.onStore(callerAPIKey)
+	}
 	return nil
 }
 
 func (s *controlPlaneSecretStore) DeleteCallerKey(callerID string) error {
+	if s.onDelete != nil {
+		s.onDelete(callerID)
+	}
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
@@ -247,7 +263,7 @@ func TestStoreAndActivateConnectPreservesConcurrentConfigUpdates(t *testing.T) {
 				LastChars: "tail",
 				CreatedAt: "2026-07-02T20:00:00Z",
 			},
-		})
+		}, nil)
 		return err
 	}
 
@@ -414,12 +430,12 @@ func TestBrowserFlowExpiresAtStopsWaiting(t *testing.T) {
 			opened = true
 			return nil
 		},
-	}, "connect", func(string) (browserStartData, error) {
+	}, "connect", func(string) (browserStartData, *foundation.APIResponse, error) {
 		return browserStartData{
 			ApprovalURL:    "https://app.example/caller/connect/approve?setup=setup_expired",
 			SetupRequestID: "setup_expired",
 			ExpiresAt:      time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
-		}, nil
+		}, nil, nil
 	})
 	if err == nil {
 		t.Fatalf("runBrowserFlow succeeded after expiry")
@@ -641,6 +657,7 @@ func TestCallerConnectDeviceStartRequiresValidExpiry(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/caller/connect/device/start":
+					w.Header().Set("X-Correlation-ID", "corr_contract")
 					writeEnvelope(w, tt.startData)
 				case "/api/caller/connect/device/poll":
 					polls++
@@ -658,9 +675,10 @@ func TestCallerConnectDeviceStartRequiresValidExpiry(t *testing.T) {
 				store:      store,
 				args:       []string{"--json", "caller", "connect", "steward-email", "--device-code"},
 			})
-			if code != foundation.ExitData {
-				t.Fatalf("exit code = %d, want data error; stdout: %s stderr: %s", code, stdout, stderr)
+			if code != foundation.ExitTemporary {
+				t.Fatalf("exit code = %d, want temporary error; stdout: %s stderr: %s", code, stdout, stderr)
 			}
+			assertAPIResponseInvalid(t, stdout, stderr, code)
 			if polls != 0 {
 				t.Fatalf("poll count = %d, want no poll after %s expiry", polls, tt.name)
 			}
@@ -1001,7 +1019,7 @@ func TestCallerConnectAbortsWhenConfigSaveFailsAndLeavesNoActiveKey(t *testing.T
 		Credential:     credentialData{APIKey: pendingKey, KeyID: "key_pending", Prefix: "aob_live", LastChars: "pend", CreatedAt: "2026-07-02T20:00:00Z", ExpiresAt: "2026-07-02T20:10:00Z"},
 	}
 
-	if _, err := storeAndActivateConnect(context.Background(), runtime, "steward-email", result); err == nil {
+	if _, err := storeAndActivateConnect(context.Background(), runtime, "steward-email", result, nil); err == nil {
 		t.Fatalf("storeAndActivateConnect succeeded despite config save failure")
 	}
 	if aborts != 1 || activates != 0 {
@@ -1010,6 +1028,160 @@ func TestCallerConnectAbortsWhenConfigSaveFailsAndLeavesNoActiveKey(t *testing.T
 	if len(store.keys) != 0 {
 		t.Fatalf("config save failure left a hosted key stored locally: %#v", store.keys)
 	}
+}
+
+func TestCallerConnectReportsFinalCredentialRollbackOutcomeWhenConfigSaveFails(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		firstDeleteCommits bool
+		retryErr           error
+	}{
+		{name: "retry succeeds"},
+		{name: "first delete commits before reporting failure", firstDeleteCommits: true},
+		{name: "retry fails", retryErr: foundation.NewSecretStoreError("fake final credential delete failure")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const pendingKey = "aob_live_pending_connectsecret"
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			store := &controlPlaneSecretStore{}
+			var deletes int
+			store.onDelete = func(callerID string) {
+				deletes++
+				if deletes == 1 {
+					store.deleteErr = foundation.NewSecretStoreError("fake initial credential delete failure")
+					if tc.firstDeleteCommits {
+						delete(store.keys, callerID)
+					}
+					return
+				}
+				store.deleteErr = tc.retryErr
+			}
+			store.onStore = func(callerAPIKey string) {
+				if callerAPIKey == pendingKey {
+					blockConfigWrites(t, configPath)
+				}
+			}
+			var aborts int
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/caller/connect/device/start":
+					writeEnvelope(w, `{"device_code":"dev_connect","user_code":"CONNECT-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=CONNECT-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
+				case "/api/caller/connect/device/poll":
+					writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_connect","caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_pending","prefix":"aob_live","last_chars":"pend","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, pendingKey))
+				case "/api/caller/connect/abort":
+					aborts++
+					writeEnvelope(w, `{"caller_id":"caller_123","aborted_key_id":"key_pending","aborted_at":"2026-07-02T20:01:00Z"}`)
+				default:
+					t.Fatalf("unexpected request: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+
+			stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+				configPath: configPath,
+				baseURL:    server.URL,
+				store:      store,
+				args:       []string{"--json", "caller", "connect", "steward-email", "--device-code"},
+			})
+			if code != foundation.ExitConfig {
+				t.Fatalf("exit code = %d, want config failure; stderr: %s", code, stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("stdout should be empty for failed connect")
+			}
+			var envelope struct {
+				OK    bool                 `json:"ok"`
+				Error *foundation.AppError `json:"error"`
+			}
+			stderrLines := strings.Split(strings.TrimSpace(stderr), "\n")
+			if err := json.Unmarshal([]byte(stderrLines[len(stderrLines)-1]), &envelope); err != nil {
+				t.Fatalf("decode error envelope: %v; stderr: %s", err, stderr)
+			}
+			if envelope.OK || envelope.Error == nil || envelope.Error.Code != foundation.CodeConfig {
+				t.Fatalf("error envelope did not preserve the config failure: %#v", envelope)
+			}
+			if !strings.Contains(envelope.Error.Message, "Could not write local Agent Outbox config.") {
+				t.Fatalf("stderr did not report the config save failure: %s", stderr)
+			}
+			if tc.retryErr != nil {
+				if !strings.Contains(envelope.Error.Message, "Local credential rollback also failed (fake final credential delete failure).") {
+					t.Fatalf("stderr did not report the final credential deletion failure: %s", stderr)
+				}
+				if store.keys["caller_123"] != pendingKey {
+					t.Fatalf("failed deletion unexpectedly removed the pending key")
+				}
+			} else {
+				if strings.Contains(envelope.Error.Message, "rollback also failed") || strings.Contains(envelope.Error.Message, "inconsistent") {
+					t.Fatalf("successful credential cleanup was reported as failed: %s", stderr)
+				}
+				if len(store.keys) != 0 {
+					t.Fatalf("successful cleanup left a pending key stored locally")
+				}
+			}
+			if strings.Contains(stderr, "fake initial credential delete failure") {
+				t.Fatalf("stderr reported the superseded initial deletion failure: %s", stderr)
+			}
+			if aborts != 1 {
+				t.Fatalf("aborts = %d, want 1", aborts)
+			}
+			if deletes != 2 {
+				t.Fatalf("deletes = %d, want the initial rollback and abort cleanup retry", deletes)
+			}
+			if strings.Contains(stdout+stderr, pendingKey) {
+				t.Fatalf("command output leaked the caller key")
+			}
+		})
+	}
+}
+
+func TestCallerConnectReportsCredentialRollbackFailureWhenActivateDefinitivelyDidNotCommit(t *testing.T) {
+	const pendingKey = "aob_live_pending_connectsecret"
+	store := &controlPlaneSecretStore{deleteErr: foundation.NewSecretStoreError("fake credential delete failure")}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/caller/connect/device/start":
+			writeEnvelope(w, `{"device_code":"dev_connect","user_code":"CONNECT-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=CONNECT-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
+		case "/api/caller/connect/device/poll":
+			writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_connect","caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_pending","prefix":"aob_live","last_chars":"pend","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, pendingKey))
+		case "/api/caller/connect/activate":
+			w.WriteHeader(definitiveActivateFailures[0].status)
+			_, _ = io.WriteString(w, definitiveActivateFailures[0].body)
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		baseURL:    server.URL,
+		store:      store,
+		args:       []string{"--json", "caller", "connect", "steward-email", "--device-code"},
+	})
+	if code != definitiveActivateFailures[0].wantExit {
+		t.Fatalf("exit code = %d, want %d; stderr: %s", code, definitiveActivateFailures[0].wantExit, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for failed connect")
+	}
+	if !strings.Contains(stderr, "Activation request was invalid.") ||
+		!strings.Contains(stderr, "Local credential rollback also failed (fake credential delete failure).") {
+		t.Fatalf("stderr did not report both the activate and the credential rollback failure: %s", stderr)
+	}
+	if strings.Contains(stderr, "Local config rollback also failed") {
+		t.Fatalf("successful config rollback was reported as failed: %s", stderr)
+	}
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if len(cfg.Callers) != 0 {
+		t.Fatalf("definitive activate failure did not roll back local config: %#v", cfg.Callers)
+	}
+	assertNoSecretLeak(t, pendingKey, stdout, stderr, configPath)
 }
 
 func TestCallerConnectPreservesCredentialAfterAmbiguousActivateFailure(t *testing.T) {
@@ -1128,6 +1300,9 @@ func assertCallerConnectRollsBackAfterActivateFailure(t *testing.T, status int, 
 	}
 	if strings.Contains(stderr, "may already be active") {
 		t.Fatalf("definitive activate failure warned that the credential may be active: %s", stderr)
+	}
+	if strings.Contains(stderr, "rollback also failed") {
+		t.Fatalf("successful local rollback reported a rollback failure: %s", stderr)
 	}
 	if len(store.keys) != 0 {
 		t.Fatalf("definitive activate failure left a hosted key stored locally: %#v", store.keys)
@@ -1366,6 +1541,9 @@ func assertCallerRotateRestoresOldStateAfterActivateFailure(t *testing.T, status
 	if strings.Contains(stderr, "may already have committed") {
 		t.Fatalf("definitive activate failure warned that activation may have committed: %s", stderr)
 	}
+	if strings.Contains(stderr, "rollback also failed") {
+		t.Fatalf("successful local rollback reported a rollback failure: %s", stderr)
+	}
 	if store.keys["caller_123"] != oldKey {
 		t.Fatalf("definitive activate failure did not restore old key; key=%q", store.keys["caller_123"])
 	}
@@ -1377,6 +1555,137 @@ func assertCallerRotateRestoresOldStateAfterActivateFailure(t *testing.T, status
 		t.Fatalf("definitive activate failure did not restore old config: %#v", cfg.Callers[0])
 	}
 	assertNoSecretLeak(t, newKey, stdout, stderr, configPath)
+}
+
+func TestCallerRotateReportsCredentialRollbackFailureWhenConfigSaveFails(t *testing.T) {
+	const oldKey = "aob_live_oldkey_oldsecret"
+	const newKey = "aob_live_newkey_newsecret"
+	configPath := writeControlConfig(t, "http://placeholder.invalid")
+	store := &controlPlaneSecretStore{keys: map[string]string{"caller_123": oldKey}, failStoreKey: oldKey}
+	store.onStore = func(callerAPIKey string) {
+		if callerAPIKey == newKey {
+			blockConfigWrites(t, configPath)
+		}
+	}
+	var aborts int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/caller/rotate/device/start":
+			writeEnvelope(w, `{"device_code":"dev_rotate","user_code":"ROTATE-1","verification_uri":"https://app.example/caller/rotate/device","verification_uri_complete":"https://app.example/caller/rotate/device?user_code=ROTATE-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
+		case "/api/caller/rotate/device/poll":
+			writeEnvelope(w, `{"setup_request_id":"setup_rotate","setup_code":"setup_rotate_code","expires_at":"2026-07-02T20:10:00Z"}`)
+		case "/api/caller/rotate/exchange":
+			writeEnvelope(w, fmt.Sprintf(`{"caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"replacement_credential":{"api_key":%q,"key_id":"key_new","prefix":"aob_live","last_chars":"newx","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"},"replaces_credential":{"key_id":"key_old","last_chars":"oldx"}}`, newKey))
+		case "/api/caller/rotate/abort":
+			aborts++
+			writeEnvelope(w, `{"caller_id":"caller_123","aborted_key_id":"key_new","aborted_at":"2026-07-02T20:01:00Z"}`)
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		baseURL:    server.URL,
+		store:      store,
+		args:       []string{"--json", "caller", "rotate", "--device-code"},
+	})
+	if code != foundation.ExitConfig {
+		t.Fatalf("exit code = %d, want config failure; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for failed rotate")
+	}
+	if !strings.Contains(stderr, "Could not write local Agent Outbox config.") ||
+		!strings.Contains(stderr, "Local credential rollback also failed (fake credential write failure).") {
+		t.Fatalf("stderr did not report both the config save and the credential rollback failure: %s", stderr)
+	}
+	if aborts != 1 {
+		t.Fatalf("aborts = %d, want 1", aborts)
+	}
+	if strings.Contains(stdout+stderr, newKey) {
+		t.Fatalf("command output leaked the caller key")
+	}
+}
+
+func TestCallerRotateReportsLocalRollbackFailuresWhenActivateDefinitivelyDidNotCommit(t *testing.T) {
+	t.Run("credential rollback fails", func(t *testing.T) {
+		assertCallerRotateReportsLocalRollbackFailures(t, true, false)
+	})
+	t.Run("config rollback fails", func(t *testing.T) {
+		assertCallerRotateReportsLocalRollbackFailures(t, false, true)
+	})
+	t.Run("credential and config rollback fail", func(t *testing.T) {
+		assertCallerRotateReportsLocalRollbackFailures(t, true, true)
+	})
+}
+
+func assertCallerRotateReportsLocalRollbackFailures(t *testing.T, credentialRollbackFails bool, configRollbackFails bool) {
+	t.Helper()
+	const oldKey = "aob_live_oldkey_oldsecret"
+	const newKey = "aob_live_newkey_newsecret"
+	store := &controlPlaneSecretStore{keys: map[string]string{"caller_123": oldKey}}
+	if credentialRollbackFails {
+		store.failStoreKey = oldKey
+	}
+	configPath := writeControlConfig(t, "http://placeholder.invalid")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/caller/rotate/device/start":
+			writeEnvelope(w, `{"device_code":"dev_rotate","user_code":"ROTATE-1","verification_uri":"https://app.example/caller/rotate/device","verification_uri_complete":"https://app.example/caller/rotate/device?user_code=ROTATE-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
+		case "/api/caller/rotate/device/poll":
+			writeEnvelope(w, `{"setup_request_id":"setup_rotate","setup_code":"setup_rotate_code","expires_at":"2026-07-02T20:10:00Z"}`)
+		case "/api/caller/rotate/exchange":
+			writeEnvelope(w, fmt.Sprintf(`{"caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"replacement_credential":{"api_key":%q,"key_id":"key_new","prefix":"aob_live","last_chars":"newx","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"},"replaces_credential":{"key_id":"key_old","last_chars":"oldx"}}`, newKey))
+		case "/api/caller/rotate/activate":
+			if configRollbackFails {
+				blockConfigWrites(t, configPath)
+			}
+			w.WriteHeader(definitiveActivateFailures[1].status)
+			_, _ = io.WriteString(w, definitiveActivateFailures[1].body)
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		baseURL:    server.URL,
+		store:      store,
+		args:       []string{"--json", "caller", "rotate", "--device-code"},
+	})
+	if code != definitiveActivateFailures[1].wantExit {
+		t.Fatalf("exit code = %d, want %d; stderr: %s", code, definitiveActivateFailures[1].wantExit, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for failed rotate")
+	}
+	if !strings.Contains(stderr, "Too many activation requests.") {
+		t.Fatalf("stderr did not report the activate failure: %s", stderr)
+	}
+	if got := strings.Contains(stderr, "Local credential rollback also failed (fake credential write failure)."); got != credentialRollbackFails {
+		t.Fatalf("credential rollback failure reported = %v, want %v; stderr: %s", got, credentialRollbackFails, stderr)
+	}
+	if got := strings.Contains(stderr, "Local config rollback also failed (Could not write local Agent Outbox config.)."); got != configRollbackFails {
+		t.Fatalf("config rollback failure reported = %v, want %v; stderr: %s", got, configRollbackFails, stderr)
+	}
+	if strings.Contains(stdout+stderr, newKey) {
+		t.Fatalf("command output leaked the caller key")
+	}
+	if configRollbackFails {
+		return
+	}
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Callers[0].KeyID != "key_old" {
+		t.Fatalf("definitive activate failure did not restore old config: %#v", cfg.Callers[0])
+	}
 }
 
 func TestCallerRevokeDeviceFlowConfirmsAndPreservesLocalState(t *testing.T) {
@@ -1755,6 +2064,308 @@ func TestDuplicateConnectSurfacesCallerAlreadyExistsWithoutLocalMutation(t *test
 	}
 }
 
+func TestCallerDeviceStartRejectsInvalidResponseBeforeInstructionsOrPoll(t *testing.T) {
+	const valid = `{"device_code":"dev_123","verification_uri":"https://app.example/approve","verification_uri_complete":"https://app.example/approve?code=123","expires_at":"2026-07-02T20:10:00Z"}`
+	for _, operation := range []string{"connect", "rotate", "revoke"} {
+		for _, tt := range []struct{ name, from, to string }{
+			{"missing device code", `"device_code":"dev_123"`, `"device_code":""`},
+			{"blank device code", `"device_code":"dev_123"`, `"device_code":" "`},
+			{"missing verification URIs", `"verification_uri":"https://app.example/approve","verification_uri_complete":"https://app.example/approve?code=123"`, `"verification_uri":"","verification_uri_complete":" "`},
+			{"missing expiry", `"expires_at":"2026-07-02T20:10:00Z"`, `"expires_at":""`},
+			{"invalid expiry", `"expires_at":"2026-07-02T20:10:00Z"`, `"expires_at":"invalid"`},
+		} {
+			t.Run(operation+"/"+tt.name, func(t *testing.T) {
+				requests := 0
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests++
+					if r.URL.Path != "/api/caller/"+operation+"/device/start" {
+						t.Errorf("unexpected request: %s", r.URL.Path)
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("X-Correlation-ID", "corr_contract")
+					writeEnvelope(w, strings.Replace(valid, tt.from, tt.to, 1))
+				}))
+				defer server.Close()
+				args := []string{"--json", "caller", operation}
+				configPath := writeControlConfig(t, server.URL)
+				if operation == "connect" {
+					configPath = filepath.Join(t.TempDir(), "config.json")
+				}
+				if operation != "rotate" {
+					args = append(args, "steward-email")
+				}
+				stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+					configPath: configPath, baseURL: server.URL, store: &controlPlaneSecretStore{},
+					args: append(args, "--device-code"),
+				})
+				assertAPIResponseInvalid(t, stdout, stderr, code)
+				if requests != 1 || strings.Contains(stderr, "approval:") {
+					t.Fatalf("invalid start printed instructions or continued: requests=%d stderr=%s", requests, stderr)
+				}
+			})
+		}
+	}
+}
+
+func TestCallerBrowserStartRejectsInvalidResponseBeforeOpeningBrowser(t *testing.T) {
+	const valid = `{"approval_url":"https://app.example/approve","setup_request_id":"setup_123","expires_at":"2099-07-02T20:10:00Z"}`
+	for _, operation := range []string{"connect", "rotate", "revoke"} {
+		for _, tt := range []struct{ name, from, to string }{
+			{"missing approval URL", `"approval_url":"https://app.example/approve"`, `"approval_url":""`},
+			{"missing setup request id", `"setup_request_id":"setup_123"`, `"setup_request_id":" "`},
+			{"missing expiry", `"expires_at":"2099-07-02T20:10:00Z"`, `"expires_at":""`},
+			{"invalid expiry", `"expires_at":"2099-07-02T20:10:00Z"`, `"expires_at":"invalid"`},
+		} {
+			t.Run(operation+"/"+tt.name, func(t *testing.T) {
+				requests, opens := 0, 0
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests++
+					if r.URL.Path != "/api/caller/"+operation+"/browser/start" {
+						t.Errorf("unexpected request: %s", r.URL.Path)
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("X-Correlation-ID", "corr_contract")
+					writeEnvelope(w, strings.Replace(valid, tt.from, tt.to, 1))
+				}))
+				defer server.Close()
+				args := []string{"--json", "caller", operation}
+				configPath := writeControlConfig(t, server.URL)
+				if operation == "connect" {
+					configPath = filepath.Join(t.TempDir(), "config.json")
+				}
+				if operation != "rotate" {
+					args = append(args, "steward-email")
+				}
+				stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+					configPath: configPath, baseURL: server.URL, store: &controlPlaneSecretStore{},
+					args:        append(args, "--browser"),
+					openBrowser: func(string) error { opens++; return nil },
+				})
+				assertAPIResponseInvalid(t, stdout, stderr, code)
+				if requests != 1 || opens != 0 {
+					t.Fatalf("invalid browser start continued: requests=%d opens=%d", requests, opens)
+				}
+			})
+		}
+	}
+}
+
+func TestCallerDevicePollRequiresSetupCodeAndRequestID(t *testing.T) {
+	for _, operation := range []string{"rotate", "revoke"} {
+		for _, data := range []string{`{"setup_request_id":"setup_123"}`, `{"setup_code":"setup_code_123","setup_request_id":" "}`} {
+			t.Run(operation+"/"+data, func(t *testing.T) {
+				requests := 0
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests++
+					switch r.URL.Path {
+					case "/api/caller/" + operation + "/device/start":
+						writeEnvelope(w, `{"device_code":"dev_123","verification_uri":"https://app.example/approve","expires_at":"2026-07-02T20:10:00Z"}`)
+					case "/api/caller/" + operation + "/device/poll":
+						w.Header().Set("X-Correlation-ID", "corr_contract")
+						writeEnvelope(w, data)
+					default:
+						t.Errorf("unexpected request: %s", r.URL.Path)
+						w.WriteHeader(http.StatusInternalServerError)
+					}
+				}))
+				defer server.Close()
+				configPath := writeControlConfig(t, server.URL)
+				args := []string{"--json", "caller", operation}
+				if operation == "revoke" {
+					args = append(args, "steward-email")
+				}
+				stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+					configPath: configPath, baseURL: server.URL, store: &controlPlaneSecretStore{},
+					args: append(args, "--device-code"),
+				})
+				assertAPIResponseInvalid(t, stdout, stderr, code)
+				if requests != 2 {
+					t.Fatalf("requests = %d, want start and poll only", requests)
+				}
+			})
+		}
+	}
+}
+
+func TestCallerConnectRejectsInvalidExchangeBeforeLocalPersistence(t *testing.T) {
+	const pendingKey = "aob_live_pending_contract_secret"
+	const valid = `{"setup_request_id":"setup_123","caller":{"caller_id":"caller_123"},"account":{"account_id":"acct_123"},"credential":{"api_key":"aob_live_pending_contract_secret","key_id":"key_pending","prefix":"aob_live","last_chars":"pend"}}`
+	for _, flow := range []string{"device", "browser"} {
+		for _, tt := range []struct {
+			name, from, to string
+			wantAborts     int
+		}{
+			{"missing api key", `"api_key":"aob_live_pending_contract_secret"`, `"api_key":""`, 0},
+			{"missing setup request id", `"setup_request_id":"setup_123"`, `"setup_request_id":""`, 0},
+			{"missing caller id", `"caller_id":"caller_123"`, `"caller_id":""`, 1},
+			{"missing account id", `"account_id":"acct_123"`, `"account_id":" "`, 1},
+			{"missing key id", `"key_id":"key_pending"`, `"key_id":""`, 1},
+			{"missing prefix", `"prefix":"aob_live"`, `"prefix":""`, 1},
+			{"missing suffix", `"last_chars":"pend"`, `"last_chars":" "`, 1},
+		} {
+			t.Run(flow+"/"+tt.name, func(t *testing.T) {
+				aborts, activates, stores, deletes := 0, 0, 0, 0
+				store := &controlPlaneSecretStore{
+					onStore: func(string) { stores++ }, onDelete: func(string) { deletes++ },
+				}
+				callbackURL := ""
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/caller/connect/device/start":
+						writeEnvelope(w, `{"device_code":"dev_123","verification_uri_complete":"https://app.example/approve?code=123","expires_at":"2026-07-02T20:10:00Z"}`)
+					case "/api/caller/connect/browser/start":
+						var body map[string]string
+						decodeJSONBody(t, r, &body)
+						callbackURL = body["callback_url"]
+						writeEnvelope(w, `{"approval_url":"https://app.example/approve","setup_request_id":"setup_123","expires_at":"2099-07-02T20:10:00Z"}`)
+					case "/api/caller/connect/device/poll", "/api/caller/connect/exchange":
+						w.Header().Set("X-Correlation-ID", "corr_contract")
+						writeEnvelope(w, strings.Replace(valid, tt.from, tt.to, 1))
+					case "/api/caller/connect/abort":
+						aborts++
+						if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+pendingKey {
+							t.Errorf("abort must POST with the pending key bearer")
+						}
+						var body map[string]string
+						decodeJSONBody(t, r, &body)
+						if body["setup_request_id"] != "setup_123" {
+							t.Errorf("abort setup request id = %q", body["setup_request_id"])
+						}
+						// A failed abort must preserve the original invalid-response error and metadata.
+						w.WriteHeader(http.StatusServiceUnavailable)
+					case "/api/caller/connect/activate":
+						activates++
+						w.WriteHeader(http.StatusInternalServerError)
+					default:
+						t.Errorf("unexpected request: %s", r.URL.Path)
+						w.WriteHeader(http.StatusInternalServerError)
+					}
+				}))
+				defer server.Close()
+				configPath := filepath.Join(t.TempDir(), "config.json")
+				flowFlag := "--device-code"
+				if flow == "browser" {
+					flowFlag = "--browser"
+				}
+				stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+					configPath: configPath, baseURL: server.URL, store: store,
+					args: []string{"--json", "caller", "connect", "steward-email", flowFlag},
+					openBrowser: func(string) error {
+						resp, err := http.Get(callbackURL + "?status=approved&setup_request_id=setup_123&setup_code=setup_code_123")
+						if err == nil {
+							_ = resp.Body.Close()
+						}
+						return err
+					},
+				})
+				assertAPIResponseInvalid(t, stdout, stderr, code)
+				if aborts != tt.wantAborts || activates != 0 || stores != 0 || deletes != 0 || len(store.keys) != 0 {
+					t.Fatalf("aborts=%d activates=%d stores=%d deletes=%d keys=%d", aborts, activates, stores, deletes, len(store.keys))
+				}
+				cfg, err := foundation.LoadConfig(configPath)
+				if err != nil || len(cfg.Callers) != 0 {
+					t.Fatalf("invalid response changed config: callers=%#v err=%v", cfg.Callers, err)
+				}
+				if strings.Contains(stdout+stderr, pendingKey) {
+					t.Fatal("command output leaked the pending key")
+				}
+			})
+		}
+	}
+}
+
+func TestCallerRotateRejectsInvalidExchangeAndPreservesLocalState(t *testing.T) {
+	const replacementKey = "aob_live_replacement_contract_secret"
+	const oldKey = "aob_live_old_contract_secret"
+	const valid = `{"caller":{"caller_id":"caller_123"},"account":{"account_id":"acct_123"},"replacement_credential":{"api_key":"aob_live_replacement_contract_secret","key_id":"key_new","prefix":"aob_live","last_chars":"newx"}}`
+	for _, tt := range []struct {
+		name, from, to string
+		wantAborts     int
+	}{
+		{"missing api key", `"api_key":"aob_live_replacement_contract_secret"`, `"api_key":""`, 0},
+		{"mismatched caller id", `"caller_id":"caller_123"`, `"caller_id":"caller_other"`, 1},
+		{"missing caller id", `"caller_id":"caller_123"`, `"caller_id":""`, 1},
+		{"missing account id", `"account_id":"acct_123"`, `"account_id":""`, 1},
+		{"mismatched account id", `"account_id":"acct_123"`, `"account_id":"acct_other"`, 1},
+		{"missing key id", `"key_id":"key_new"`, `"key_id":" "`, 1},
+		{"missing prefix", `"prefix":"aob_live"`, `"prefix":""`, 1},
+		{"missing suffix", `"last_chars":"newx"`, `"last_chars":""`, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			aborts, activates, stores, deletes := 0, 0, 0, 0
+			store := &controlPlaneSecretStore{
+				keys:    map[string]string{"caller_123": oldKey},
+				onStore: func(string) { stores++ }, onDelete: func(string) { deletes++ },
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/caller/rotate/device/start":
+					writeEnvelope(w, `{"device_code":"dev_123","verification_uri":"https://app.example/approve","expires_at":"2026-07-02T20:10:00Z"}`)
+				case "/api/caller/rotate/device/poll":
+					writeEnvelope(w, `{"setup_request_id":"setup_123","setup_code":"setup_code_123"}`)
+				case "/api/caller/rotate/exchange":
+					w.Header().Set("X-Correlation-ID", "corr_contract")
+					writeEnvelope(w, strings.Replace(valid, tt.from, tt.to, 1))
+				case "/api/caller/rotate/abort":
+					aborts++
+					if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+replacementKey {
+						t.Errorf("abort must POST with the replacement key bearer")
+					}
+					var body map[string]string
+					decodeJSONBody(t, r, &body)
+					if body["setup_request_id"] != "setup_123" {
+						t.Errorf("abort setup request id = %q", body["setup_request_id"])
+					}
+					w.WriteHeader(http.StatusServiceUnavailable)
+				case "/api/caller/rotate/activate":
+					activates++
+					w.WriteHeader(http.StatusInternalServerError)
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			}))
+			defer server.Close()
+			configPath := writeControlConfig(t, server.URL)
+			before, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+				configPath: configPath, baseURL: server.URL, store: store,
+				args: []string{"--json", "caller", "rotate", "--device-code"},
+			})
+			assertAPIResponseInvalid(t, stdout, stderr, code)
+			if aborts != tt.wantAborts || activates != 0 || stores != 0 || deletes != 0 || len(store.keys) != 1 || store.keys["caller_123"] != oldKey {
+				t.Fatalf("invalid rotation changed local state: aborts=%d activates=%d stores=%d deletes=%d", aborts, activates, stores, deletes)
+			}
+			after, err := os.ReadFile(configPath)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("invalid rotation changed config: err=%v", err)
+			}
+			cfg, err := foundation.LoadConfig(configPath)
+			if err != nil || len(cfg.Callers) != 1 || cfg.Callers[0].KeyID != "key_old" || cfg.Callers[0].KeySuffix != "oldx" {
+				t.Fatalf("invalid rotation changed caller record: callers=%#v err=%v", cfg.Callers, err)
+			}
+			assertNoSecretLeak(t, replacementKey, stdout, stderr, configPath)
+		})
+	}
+}
+
+func assertAPIResponseInvalid(t *testing.T, stdout, stderr string, code int) {
+	t.Helper()
+	if code != foundation.ExitTemporary || stdout != "" {
+		t.Fatalf("exit=%d, want 75 with empty stdout; stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	for _, fragment := range []string{`"code":"api_response_invalid"`, `"http_status":200`, `"request_id":"req_server"`, `"correlation_id":"corr_contract"`} {
+		if !strings.Contains(stderr, fragment) {
+			t.Fatalf("stderr missing %s: %s", fragment, stderr)
+		}
+	}
+}
+
 type controlCommandOptions struct {
 	configPath  string
 	baseURL     string
@@ -1814,6 +2425,18 @@ func clientForOnlyOrigin(t *testing.T, rawURL string) *http.Client {
 			}
 			return http.DefaultTransport.RoundTrip(r)
 		}),
+	}
+}
+
+// blockConfigWrites replaces the config file with a non-empty directory so the next atomic config
+// rename fails while earlier config reads and the local state lock keep working.
+func blockConfigWrites(t *testing.T, configPath string) {
+	t.Helper()
+	if err := os.RemoveAll(configPath); err != nil {
+		t.Fatalf("remove config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(configPath, "blocker"), 0o700); err != nil {
+		t.Fatalf("block config writes: %v", err)
 	}
 }
 

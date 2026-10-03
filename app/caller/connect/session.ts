@@ -9,7 +9,10 @@ import {
   callerConnectFixtureClerkUserId
 } from "../../../src/server/caller-connect-clerk-fixture";
 import { createCorrelationId } from "../../../src/server/correlation";
-import type { ProductTransactionQuery } from "../../../src/server/database";
+import {
+  type ProductTransactionQuery,
+  withSavepoint
+} from "../../../src/server/database";
 import {
   type HumanAccountSession,
   type HumanAccountSessionResult,
@@ -130,11 +133,13 @@ export async function connectTerminalSetupState(
 ) {
   const startedAtMs = Date.now();
   try {
-    return await getConnectTerminalSetupState(query, {
-      setupRequestId: input.setupRequestId,
-      accountId: input.session.accountId,
-      statuses: input.statuses
-    });
+    return await withSavepoint(query, "caller_connect_terminal_state", () =>
+      getConnectTerminalSetupState(query, {
+        setupRequestId: input.setupRequestId,
+        accountId: input.session.accountId,
+        statuses: input.statuses
+      })
+    );
   } catch (error) {
     reportCallerApprovalFailure(error, {
       requestId: input.requestId,

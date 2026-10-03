@@ -28,15 +28,21 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-03 persisted-popup-semantic-validation: Stored popup decoding omits semantic invariants
+    Priority: Medium. Area: Human answers / Human review
+    Description: Stored popup decoding checks field types but accepts negative or fractional free-text bounds, invalid civil-date timezones, and multi-select maxima exceeding the stored option count. These configurations also pass answer validation on main before PR #143, although the input normalizer rejects them.
+    Next step: Validate persisted integer/range/timezone and option-count invariants before inspecting responses, with content-free failures and coverage through the answer transaction boundary.
+    Notes: Deferred from PR #143 review comment 4170808270 because its scope preserves existing review-page decoding behavior and fixes wrong-typed stored fields plus date-bound/MIME-pattern validity.
+
+- Issue 2026-10-02 cli-device-expiry-test-race: CLI device-expiry test races under `go test -race`
+    Priority: Low. Area: CLI tests
+    Description: `TestCallerConnectDevicePollRequestStopsAtDeviceExpiry` (`cli/internal/command/controlplane_test.go`) increments `polls` in the HTTP handler goroutine and reads it from the test goroutine after the client cancels the in-flight poll, so `-race` reports a data race. CI runs Go tests without `-race`, so it does not fail there.
+    Next step: Synchronize the handler counter (for example, with `sync/atomic`) before adding `-race` to any Go gate.
+
 - Issue 2026-10-02 migration-gate-lexing-gaps: Destructive-migration gate misreads some SQL lexical forms
     Priority: Low. Area: Policy gates / Migrations
     Description: `scripts/policy-gates/migration-discipline-scan.mjs` matches regexes over comment-stripped text without a SQL tokenizer. These destructive statements pass without the label: `E'...\'...'` strings that hide a later `DROP x` or `SET NOT NULL` action, quoted identifiers with no surrounding whitespace (`DROP"x"`, `ALTER TABLE"t"`), `U&"..."` table names, and `ALTER FOREIGN TABLE`. Dollar-quoted text and string literals that contain `ALTER TABLE ... DROP` can falsely block additive statements.
     Next step: Add fixtures for any of these forms when a real migration uses them.
-
-- Issue 2026-09-29 human-answer-payload-decoding: Answer validation reads persisted popup bounds loosely
-    Priority: Medium. Area: Human answers / Data integrity
-    Description: `numberField`, `stringField`, and `acceptedMimeTypes` in `src/server/human-answer.ts` treat a malformed persisted `popup_payload` field (for example `min_length: "5"` or `max_selected: "2"`) as absent, so answer-time bounds are silently not enforced. The review page now rejects such payloads strictly in `src/server/human-review.ts`, which makes this mostly unreachable through the UI.
-    Next step: Make answer validation fail loudly on malformed persisted popup payload fields, consistent with the review-page decoder.
 
 - Issue 2026-09-29 docs-ui-topbar-contrast: API UI docs page renders the wordmark dark on the dark top bar
     Priority: Medium. Area: API documentation / Visual design

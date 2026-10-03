@@ -19,7 +19,9 @@ const CALLER_CONNECT_FIXTURE_ROUTES = [
 export function middlewareFixtureBypassEnabled(pathname: string) {
   if (
     humanBrowserFixtureEnabled() &&
-    (pathname === "/human" || pathname.startsWith("/human/"))
+    (pathname === "/human" ||
+      pathname.startsWith("/human/") ||
+      pathname === "/upgrade")
   ) {
     return true;
   }
