@@ -587,6 +587,7 @@ export function validateAbandonedReleaseDetectionWorkflow(
       new RegExp(`^\\s*node-version:\\s*${escapeRegExp(nodeVersion)}\\s*$`)
     ) ||
     !workflowHasLine(detectWorkflowContent, /^\s*actions:\s*read\s*$/) ||
+    !workflowHasLine(detectWorkflowContent, /^\s*contents:\s*write\s*$/) ||
     !detectJob.includes("persist-credentials: false")
   ) {
     failures.push(
@@ -600,7 +601,7 @@ export function validateAbandonedReleaseDetectionWorkflow(
     detectWorkflowContent.includes("migration:migrate")
   ) {
     failures.push(
-      ".github/workflows/detect-abandoned-production-release.yml must stay read-only and outside production-deploy concurrency"
+      ".github/workflows/detect-abandoned-production-release.yml must not mutate production or join production-deploy concurrency"
     );
   }
   return failures;

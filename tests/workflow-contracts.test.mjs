@@ -129,9 +129,10 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     );
   }
   const detectorInProductionConcurrency = detectWorkflow.replace(
-    "permissions:\n  contents: read\n",
-    "concurrency:\n  group: production-deploy\npermissions:\n  contents: read\n"
+    "permissions:\n",
+    "concurrency:\n  group: production-deploy\npermissions:\n"
   );
+  assert.notEqual(detectorInProductionConcurrency, detectWorkflow);
   assert.notDeepEqual(
     validateAbandonedReleaseDetectionWorkflow(
       detectorInProductionConcurrency,
@@ -159,6 +160,18 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   assert.notDeepEqual(
     validateAbandonedReleaseDetectionWorkflow(
       detectorWithoutActionsRead,
+      "24.18.0"
+    ),
+    []
+  );
+  const detectorWithoutDraftVisibility = detectWorkflow.replace(
+    "  contents: write\n",
+    "  contents: read\n"
+  );
+  assert.notEqual(detectorWithoutDraftVisibility, detectWorkflow);
+  assert.notDeepEqual(
+    validateAbandonedReleaseDetectionWorkflow(
+      detectorWithoutDraftVisibility,
       "24.18.0"
     ),
     []
