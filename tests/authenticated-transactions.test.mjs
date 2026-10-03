@@ -8,7 +8,10 @@ import {
   generateCallerApiKeyMaterial,
   parseCallerApiKey
 } from "../src/server/caller-auth.ts";
-import { withSavepoint } from "../src/server/database.ts";
+import {
+  runProductTransaction,
+  withSavepoint
+} from "../src/server/database.ts";
 import {
   assertMigrationOwnerCanSetAppRole,
   preserveBodyErrorDuringTeardown,
@@ -806,4 +809,83 @@ function identityContextValues(statements) {
 /** @param {QueryResultRow[]} rows */
 function queryResult(rows) {
   return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
+}
+
+for (const savepoint of [false, true]) {
+  test(
+    savepoint
+      ? "product transaction commits earlier writes when the caught statement error ran in a savepoint"
+      : "product transaction rejects instead of reporting success when a caught statement error aborted it",
+    {
+      skip: callerDatabaseVerificationUrl
+        ? false
+        : "set AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 and DATABASE_MIGRATION_URL to run the product transaction commit database test"
+    },
+    async () => {
+      const databaseUrl = callerDatabaseVerificationUrl;
+      assert.ok(databaseUrl);
+      const table = `agent_outbox_test_commit_${crypto.randomUUID().replace(/-/g, "")}`;
+      const client = new Client({
+        application_name:
+          "agent-outbox-product-transaction-commit-verification",
+        connectionString: databaseUrl
+      });
+      await client.connect();
+      /** @type {unknown} */
+      let bodyError;
+
+      try {
+        await client.query(`create table public.${table} (note text not null)`);
+
+        /** @param {import("../src/server/database.ts").ProductTransactionQuery} query */
+        const failingStatement = (query) => query({ sql: "select 1 / 0" });
+        const transaction = runProductTransaction(
+          databaseUrl,
+          { requestId: "req-product-commit-db", authSurface: "cleanup" },
+          async (query) => {
+            await query({
+              sql: `insert into public.${table}(note) values ('kept')`
+            });
+            try {
+              if (savepoint) {
+                await withSavepoint(query, "test_commit", () =>
+                  failingStatement(query)
+                );
+              } else {
+                await failingStatement(query);
+              }
+            } catch {
+              // The callback deliberately continues after the statement error.
+            }
+            return "callback result";
+          }
+        );
+
+        if (savepoint) {
+          assert.equal(await transaction, "callback result");
+        } else {
+          await assert.rejects(transaction, {
+            message:
+              "Product transaction was aborted by a caught statement error; commit rolled back."
+          });
+        }
+        const rows = await client.query(`select note from public.${table}`);
+        assert.deepEqual(rows.rows, savepoint ? [{ note: "kept" }] : []);
+      } catch (error) {
+        bodyError = error;
+      } finally {
+        await preserveBodyErrorDuringTeardown(
+          bodyError,
+          async () => {
+            try {
+              await client.query(`drop table if exists public.${table}`);
+            } finally {
+              await client.end();
+            }
+          },
+          "Product transaction commit database test and teardown both failed."
+        );
+      }
+    }
+  );
 }

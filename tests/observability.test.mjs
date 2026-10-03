@@ -66,6 +66,15 @@ import {
   sentryCaptureEnabled,
   sentryRuntimeInitOptions
 } from "../src/server/sentry.ts";
+import {
+  runProductTransaction,
+  withSavepoint
+} from "../src/server/database.ts";
+import { getConnectTerminalSetupState } from "../src/server/caller-connect.ts";
+import {
+  DATABASE_POLICY_VERIFICATION_SKIP,
+  phase3DatabaseVerificationUrl
+} from "./helpers/database.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
 
 const require = createRequire(import.meta.url);
@@ -2061,7 +2070,7 @@ test("connect terminal setup state reports transaction exceptions", async () => 
         "../../../src/server/correlation": {
           createCorrelationId: () => "caller_terminal_report"
         },
-        "../../../src/server/database": {},
+        "../../../src/server/database": { withSavepoint },
         "../../../src/server/human-session": {
           requiredHumanSessionConfiguration: () => [],
           async resolveHumanAccountSession() {
@@ -2138,6 +2147,78 @@ test("connect terminal setup state reports transaction exceptions", async () => 
     false
   );
 });
+
+test(
+  "caller connect terminal state failure still returns its 503 from a live transaction",
+  {
+    skip: phase3DatabaseVerificationUrl()
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const databaseUrl = phase3DatabaseVerificationUrl();
+    assert.ok(databaseUrl);
+    /** @type {unknown[]} */
+    const reportedErrors = [];
+    const sessionModule =
+      /** @type {{ connectTerminalSetupState(query: import("../src/server/database.ts").ProductTransactionQuery, input: Record<string, unknown>): Promise<{ ok: boolean, error?: { status: number, code: string, message: string } }> }} */ (
+        loadCommonJsModuleForTest("app/caller/connect/session.ts", {
+          "@clerk/nextjs/server": { auth: {} },
+          "next/headers": { headers: async () => new Headers() },
+          "../../../src/server/caller-connect": {
+            getConnectTerminalSetupState
+          },
+          "../../../src/server/caller-connect-clerk-fixture": {
+            CALLER_CONNECT_FIXTURE_USER_ID_HEADER: "x-fixture-user",
+            CALLER_CONNECT_FIXTURE_USER_ID_PARAM: "fixture_clerk_user_id",
+            callerConnectClerkFixtureEnabled: () => false,
+            callerConnectFixtureClerkUserId: () => null
+          },
+          "../../../src/server/correlation": {
+            createCorrelationId: () => "caller_terminal_live"
+          },
+          "../../../src/server/database": { withSavepoint },
+          "../../../src/server/human-session": {},
+          "../../../src/server/logging": { durationSinceMs },
+          "../../../src/server/sentry": {
+            /** @param {unknown} error */
+            reportRuntimeFailure(error) {
+              reportedErrors.push(error);
+            }
+          }
+        })
+      );
+
+    // A non-UUID account id makes the terminal-state select itself fail.
+    const result = await runProductTransaction(
+      databaseUrl,
+      { requestId: "req-connect-terminal-live", authSurface: "human" },
+      (query) =>
+        sessionModule.connectTerminalSetupState(query, {
+          session: { accountId: "not-a-uuid", userId: "user_terminal_live" },
+          requestId: "req-connect-terminal-live",
+          setupRequestId: crypto.randomUUID(),
+          statuses: ["approved", "exchanged"],
+          route: "/caller/connect/success",
+          method: "GET",
+          operation: "caller_connect_terminal_success",
+          unavailableMessage:
+            "Caller connect success is temporarily unavailable."
+        })
+    );
+
+    // The module runs in its own VM context, so compare plain JSON values.
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+      ok: false,
+      error: {
+        status: 503,
+        code: "temporary_unavailable",
+        message: "Caller connect success is temporarily unavailable."
+      }
+    });
+    assert.equal(reportedErrors.length, 1);
+  }
+);
 
 test("caller approval action wrappers report transaction exceptions before redirect", async () => {
   const session = {
