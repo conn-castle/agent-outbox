@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import test from "node:test";
 
 import pg from "pg";
@@ -1708,6 +1708,193 @@ test(
           }
         },
         "Caller start limit database test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "rotate exchange against a live pending replacement still returns the 400 without a new key",
+  {
+    skip: phase3DatabaseVerificationUrl()
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const databaseUrl = phase3DatabaseVerificationUrl();
+    assert.ok(databaseUrl);
+    const accountId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    const callerId = crypto.randomUUID();
+    const runId = randomBytes(6).toString("hex");
+    const setupCode = `setup_${runId}`;
+    const ipAddress = `2001:db8::${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}`;
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const client = new pg.Client({
+      application_name: "agent-outbox-rotate-exchange-pending-verification",
+      connectionString: databaseUrl
+    });
+    await client.connect();
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await client.query("begin");
+      await client.query(
+        "insert into public.agent_outbox_accounts(account_id) values ($1)",
+        [accountId]
+      );
+      await client.query(
+        "insert into public.agent_outbox_users(user_id, clerk_user_id) values ($1, $2)",
+        [userId, `clerk-${userId}`]
+      );
+      await client.query(
+        "insert into public.agent_outbox_account_members(account_id, user_id, role) values ($1, $2, 'owner')",
+        [accountId, userId]
+      );
+      await client.query(
+        "insert into public.agent_outbox_callers(caller_id, account_id, display_name, caller_slug) values ($1, $2, 'Rotate exchange caller', $3)",
+        [callerId, accountId, `rotate-exchange-${runId}`]
+      );
+      const activeRows = await client.query(
+        `
+          insert into public.agent_outbox_caller_credentials(
+            account_id, caller_id, key_id, key_prefix, key_last_four,
+            secret_hmac_sha256, status, activated_at
+          )
+          values ($1, $2, $3, 'aob_live_rotate_active', 'actv', $4, 'active', now())
+          returning caller_credential_id
+        `,
+        [accountId, callerId, `active-${runId}`, "a".repeat(64)]
+      );
+      const setupRows = await client.query(
+        `
+          insert into public.agent_outbox_caller_setup_requests(
+            operation, flow, local_caller_name, display_name, callback_url,
+            account_id, caller_id, approved_by_user_id, status, expires_at,
+            approved_at, exchanged_at, setup_code_hash
+          )
+          values
+            ('rotate', 'browser', 'rotate-exchange', 'Rotate exchange caller', 'http://127.0.0.1/callback', $1, $2, $3, 'exchanged', $4, now(), now(), null),
+            ('rotate', 'browser', 'rotate-exchange', 'Rotate exchange caller', 'http://127.0.0.1/callback', $1, $2, $3, 'approved', $4, now(), null, $5)
+          returning setup_request_id, status
+        `,
+        [
+          accountId,
+          callerId,
+          userId,
+          expiresAt,
+          createHmac("sha256", HASH_SECRET_FIXTURE)
+            .update(setupCode)
+            .digest("hex")
+        ]
+      );
+      const exchangedSetupRequestId = setupRows.rows.find(
+        (row) => row.status === "exchanged"
+      )?.setup_request_id;
+      assert.ok(exchangedSetupRequestId);
+      await client.query(
+        `
+          insert into public.agent_outbox_caller_credentials(
+            account_id, caller_id, key_id, key_prefix, key_last_four,
+            secret_hmac_sha256, status, expires_at,
+            pending_replacement_for_credential_id,
+            pending_replacement_setup_request_id
+          )
+          values ($1, $2, $3, 'aob_live_rotate_pending', 'pend', $4, 'pending_activation', $5, $6, $7)
+        `,
+        [
+          accountId,
+          callerId,
+          `pending-${runId}`,
+          "b".repeat(64),
+          expiresAt,
+          activeRows.rows[0].caller_credential_id,
+          exchangedSetupRequestId
+        ]
+      );
+      await client.query("commit");
+
+      await withProcessEnv(
+        {
+          CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+          DATABASE_APP_ROLE_URL: databaseUrl,
+          PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+        },
+        async () => {
+          const result = await handleRotateExchangeRequest(
+            controlRequest("/api/caller/rotate/exchange", {
+              headers: { "cf-connecting-ip": ipAddress }
+            }),
+            {
+              requestId: "req-rotate-exchange-pending-db",
+              correlationId: "corr-rotate-exchange-pending-db"
+            },
+            { setup_code: setupCode }
+          );
+
+          assert.deepEqual(result, {
+            ok: false,
+            error: {
+              status: 400,
+              code: "invalid_request",
+              message: "Caller already has a pending replacement key."
+            }
+          });
+        }
+      );
+
+      const credentials = await client.query(
+        `
+          select key_id, status
+          from public.agent_outbox_caller_credentials
+          where caller_id = $1
+          order by key_id
+        `,
+        [callerId]
+      );
+      assert.deepEqual(credentials.rows, [
+        { key_id: `active-${runId}`, status: "active" },
+        { key_id: `pending-${runId}`, status: "pending_activation" }
+      ]);
+      const setupStatuses = await client.query(
+        `
+          select status
+          from public.agent_outbox_caller_setup_requests
+          where caller_id = $1
+          order by status
+        `,
+        [callerId]
+      );
+      assert.deepEqual(setupStatuses.rows, [
+        { status: "approved" },
+        { status: "exchanged" }
+      ]);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          try {
+            await client.query("rollback");
+            await client.query(
+              "delete from public.agent_outbox_ip_quota_windows where ip_address = $1::inet",
+              [ipAddress]
+            );
+            await client.query(
+              "delete from public.agent_outbox_accounts where account_id = $1",
+              [accountId]
+            );
+            await client.query(
+              "delete from public.agent_outbox_users where user_id = $1",
+              [userId]
+            );
+          } finally {
+            await client.end();
+          }
+        },
+        "Rotate exchange pending replacement database test and teardown both failed."
       );
     }
   }
