@@ -51,24 +51,62 @@ const baseAnswerInput = {
   answeredAt: new Date("2026-06-30T12:00:00.000Z")
 };
 
+/** @type {import("../src/server/input-schema.ts").NormalizedFreeTextPopupPayload} */
+const freeTextPayload = {
+  label: "Reply",
+  placeholder: null,
+  default_value: null,
+  multiline: false,
+  min_length: null,
+  max_length: null
+};
+/** @type {import("../src/server/input-schema.ts").NormalizedMultiSelectPopupPayload} */
+const multiSelectPayload = {
+  label: "Choose",
+  min_selected: 0,
+  max_selected: 1
+};
+/** @type {import("../src/server/input-schema.ts").NormalizedDatePickerPopupPayload} */
+const datePickerPayload = {
+  label: "When",
+  mode: "date",
+  placeholder: null,
+  display_timezone: null,
+  min_value: null,
+  max_value: null
+};
+/** @type {import("../src/server/input-schema.ts").NormalizedFileUploadPopupPayload} */
+const fileUploadPayload = { label: "Attach", accept_mime_types: null };
+
 test("feedback accompanies every response kind without replacing or bypassing the answer", () => {
   /** @type {Array<[Parameters<typeof validatedResponsePayload>[0], import("../src/server/human-answer.ts").HumanActionResponse]>} */
   const cases = [
     [{ popupKind: "none", popupPayload: {} }, { kind: "none" }],
     [
-      { popupKind: "free_text", popupPayload: {} },
+      { popupKind: "free_text", popupPayload: freeTextPayload },
       { kind: "free_text", text: "Answer" }
     ],
     [
-      { popupKind: "single_select", popupPayload: {}, optionValues: ["yes"] },
+      {
+        popupKind: "single_select",
+        popupPayload: { label: "Choose" },
+        optionValues: ["yes"]
+      },
       { kind: "single_select", value: "yes" }
     ],
     [
-      { popupKind: "multi_select", popupPayload: {}, optionValues: ["yes"] },
+      {
+        popupKind: "multi_select",
+        popupPayload: multiSelectPayload,
+        optionValues: ["yes"]
+      },
       { kind: "multi_select", values: ["yes"] }
     ],
     [
-      { popupKind: "date_picker", popupPayload: { mode: "date" } },
+      {
+        popupKind: "date_picker",
+        popupPayload: { ...datePickerPayload, mode: "date" }
+      },
       {
         kind: "date_picker",
         mode: "date",
@@ -77,7 +115,10 @@ test("feedback accompanies every response kind without replacing or bypassing th
       }
     ],
     [
-      { popupKind: "date_picker", popupPayload: { mode: "datetime" } },
+      {
+        popupKind: "date_picker",
+        popupPayload: { ...datePickerPayload, mode: "datetime" }
+      },
       {
         kind: "date_picker",
         mode: "datetime",
@@ -86,7 +127,7 @@ test("feedback accompanies every response kind without replacing or bypassing th
       }
     ],
     [
-      { popupKind: "file_upload", popupPayload: {} },
+      { popupKind: "file_upload", popupPayload: fileUploadPayload },
       {
         kind: "file_upload",
         file: new File(["file"], "note.txt", { type: "text/plain" })
@@ -183,7 +224,7 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "single_select",
-        popupPayload: {},
+        popupPayload: { label: "Choose" },
         optionValues: ["approve", "reject"]
       },
       { kind: "single_select", value: "archive" }
@@ -207,7 +248,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "multi_select",
-        popupPayload: { min_selected: 1, max_selected: 2 },
+        popupPayload: {
+          ...multiSelectPayload,
+          min_selected: 1,
+          max_selected: 2
+        },
         optionValues: ["a", "b", "c"]
       },
       { kind: "multi_select", values: ["a", "c"] }
@@ -223,7 +268,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "date_picker",
-        popupPayload: { mode: "date", display_timezone: null },
+        popupPayload: {
+          ...datePickerPayload,
+          mode: "date",
+          display_timezone: null
+        },
         optionValues: []
       },
       {
@@ -250,7 +299,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "date_picker",
-        popupPayload: { mode: "date", display_timezone: "America/New_York" },
+        popupPayload: {
+          ...datePickerPayload,
+          mode: "date",
+          display_timezone: "America/New_York"
+        },
         optionValues: []
       },
       {
@@ -275,7 +328,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "date_picker",
-        popupPayload: { mode: "datetime", display_timezone: null },
+        popupPayload: {
+          ...datePickerPayload,
+          mode: "datetime",
+          display_timezone: null
+        },
         optionValues: []
       },
       {
@@ -303,7 +360,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "date_picker",
-        popupPayload: { mode: "date", display_timezone: null },
+        popupPayload: {
+          ...datePickerPayload,
+          mode: "date",
+          display_timezone: null
+        },
         optionValues: []
       },
       {
@@ -324,10 +385,14 @@ test("human answer response validation enforces selected popup options and bound
       responsePayloadBytes: 65
     }
   );
-  /** @type {Array<[Record<string, unknown>, import("../src/server/human-answer.ts").HumanActionResponse, string]>} */
+  /** @type {Array<[import("../src/server/input-schema.ts").NormalizedDatePickerPopupPayload, import("../src/server/human-answer.ts").HumanActionResponse, string]>} */
   const timezoneMismatches = [
     [
-      { mode: "date", display_timezone: "America/New_York" },
+      {
+        ...datePickerPayload,
+        mode: "date",
+        display_timezone: "America/New_York"
+      },
       {
         kind: "date_picker",
         mode: "date",
@@ -337,7 +402,7 @@ test("human answer response validation enforces selected popup options and bound
       "Date-picker timezone must match the selected action."
     ],
     [
-      { mode: "datetime", display_timezone: null },
+      { ...datePickerPayload, mode: "datetime", display_timezone: null },
       {
         kind: "date_picker",
         mode: "datetime",
@@ -347,7 +412,11 @@ test("human answer response validation enforces selected popup options and bound
       "Date-picker responses require an IANA timezone name."
     ],
     [
-      { mode: "datetime", display_timezone: "America/New_York" },
+      {
+        ...datePickerPayload,
+        mode: "datetime",
+        display_timezone: "America/New_York"
+      },
       {
         kind: "date_picker",
         mode: "datetime",
@@ -377,7 +446,11 @@ test("human answer response validation enforces selected popup options and bound
 
   assert.deepEqual(
     validatedResponsePayload(
-      { popupKind: "free_text", popupPayload: {}, optionValues: [] },
+      {
+        popupKind: "free_text",
+        popupPayload: freeTextPayload,
+        optionValues: []
+      },
       { kind: "free_text", text: "   " }
     ),
     {
@@ -389,7 +462,7 @@ test("human answer response validation enforces selected popup options and bound
   );
 
   const oversizedText = validatedResponsePayload(
-    { popupKind: "free_text", popupPayload: {}, optionValues: [] },
+    { popupKind: "free_text", popupPayload: freeTextPayload, optionValues: [] },
     { kind: "free_text", text: "x".repeat(HUMAN_ANSWER_RESPONSE_BYTE_LIMIT) }
   );
   assert.equal(oversizedText.ok, false);
@@ -404,6 +477,7 @@ test("human answer response validation accepts one matching uploaded file", () =
     {
       popupKind: "file_upload",
       popupPayload: {
+        ...fileUploadPayload,
         accept_mime_types: ["application/*"]
       },
       optionValues: []
@@ -418,9 +492,7 @@ test("human answer response validation accepts one matching uploaded file", () =
   const rejected = validatedResponsePayload(
     {
       popupKind: "file_upload",
-      popupPayload: {
-        accept_mime_types: ["image/png"]
-      },
+      popupPayload: { ...fileUploadPayload, accept_mime_types: ["image/png"] },
       optionValues: []
     },
     { kind: "file_upload", file }
@@ -432,29 +504,12 @@ test("human answer response validation accepts one matching uploaded file", () =
   );
 });
 
-test("human answer response validation fails closed for malformed file upload MIME policy", () => {
-  const file = new File(["file bytes"], "receipt.pdf", {
-    type: "application/pdf"
-  });
-  const result = validatedResponsePayload(
-    {
-      popupKind: "file_upload",
-      popupPayload: {
-        accept_mime_types: ["not-a-mime-pattern"]
-      },
-      optionValues: []
-    },
-    { kind: "file_upload", file }
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.ok ? null : result.code, "temporary_unavailable");
-});
-
 test("human answer response validation rejects impossible and sub-millisecond datetime responses", () => {
+  /** @type {Parameters<typeof validatedResponsePayload>[0]} */
   const action = {
-    popupKind: /** @type {"date_picker"} */ ("date_picker"),
+    popupKind: "date_picker",
     popupPayload: {
+      ...datePickerPayload,
       mode: "datetime",
       min_value: "2026-01-01T00:00:00.000000001Z",
       max_value: "2026-01-01T00:00:00.000000010Z"
@@ -497,6 +552,234 @@ test("human answer response validation rejects impossible and sub-millisecond da
     "response.value_utc"
   );
 });
+
+const pendingInputRow = {
+  input_item_id: baseAnswerInput.inputItemId,
+  caller_item_id: "caller-item-1",
+  caller_item_id_hash: "hash-1",
+  status: "pending",
+  current_revision: 3,
+  non_file_payload_bytes: "100",
+  updated_at: new Date("2026-06-29T09:00:00.000Z"),
+  account_audit_id: "audit-account-1",
+  caller_audit_id: "audit-caller-1"
+};
+
+/** @type {Array<{name: string, kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse, message: string}>} */
+const malformedPopupCases = [
+  {
+    name: "free-text minimum with a string type",
+    kind: "free_text",
+    payload: {
+      ...freeTextPayload,
+      label: "private stored label",
+      min_length: "5"
+    },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must be a finite number or null, got string."
+  },
+  {
+    name: "multi-select maximum with a string type",
+    kind: "multi_select",
+    payload: {
+      ...multiSelectPayload,
+      label: "private stored label",
+      max_selected: "2"
+    },
+    response: { kind: "multi_select", values: ["a", "b", "c"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_selected must be a finite number, got string."
+  },
+  {
+    name: "date-picker minimum with a number type",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      label: "private stored label",
+      min_value: 5
+    },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: null
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_value must be a string or null, got number."
+  },
+  {
+    name: "date-picker empty minimum",
+    kind: "date_picker",
+    payload: { ...datePickerPayload, min_value: "" },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: null
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_value must be a valid date bound."
+  },
+  {
+    name: "datetime-picker date-only maximum",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      mode: "datetime",
+      max_value: "2026-06-30"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-06-29T12:00:00.000Z",
+      display_timezone: "UTC"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_value must be a valid datetime bound."
+  },
+  {
+    name: "file-upload MIME list with a non-string entry",
+    kind: "file_upload",
+    payload: {
+      ...fileUploadPayload,
+      label: "private stored label",
+      accept_mime_types: ["text/plain", 1]
+    },
+    response: {
+      kind: "file_upload",
+      file: new File(["x"], "note.txt", { type: "text/plain" })
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: accept_mime_types must be an array of strings or null, got array."
+  },
+  {
+    name: "file-upload invalid MIME pattern",
+    kind: "file_upload",
+    payload: {
+      ...fileUploadPayload,
+      label: "private stored label",
+      accept_mime_types: ["not a mime"]
+    },
+    response: {
+      kind: "file_upload",
+      file: new File(["x"], "note.txt", { type: "text/plain" })
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: accept_mime_types must contain at least one valid MIME type pattern."
+  },
+  {
+    name: "file-upload empty MIME list before response validation",
+    kind: "file_upload",
+    payload: { ...fileUploadPayload, accept_mime_types: [] },
+    response: { kind: "none" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: accept_mime_types must contain at least one valid MIME type pattern."
+  },
+  {
+    name: "string payload",
+    kind: "free_text",
+    payload: "private stored payload",
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: expected a JSON object."
+  },
+  {
+    name: "array payload",
+    kind: "none",
+    payload: ["private stored payload"],
+    response: { kind: "none" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: expected a JSON object."
+  },
+  {
+    name: "unknown kind",
+    kind: "mystery",
+    payload: { label: "private stored label" },
+    response: { kind: "none" },
+    message:
+      'Unsupported persisted popup_kind for input action action-1: "mystery"'
+  }
+];
+
+for (const scenario of malformedPopupCases) {
+  test(`human answer service rejects malformed persisted popup: ${scenario.name}`, async () => {
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    await assert.rejects(
+      createHumanAnswerInTransaction(
+        mockQuery(calls, {
+          inputRows: [pendingInputRow],
+          actionRows: [
+            {
+              input_action_id: "action-1",
+              popup_kind: scenario.kind,
+              popup_payload: scenario.payload
+            }
+          ],
+          optionRows: ["a", "b", "c"].map((option_value) => ({ option_value }))
+        }),
+        { ...baseAnswerInput, response: scenario.response }
+      ),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, scenario.message);
+        assert.doesNotMatch(
+          error.message,
+          /private stored|not a mime|text\/plain|"5"|"2"|2026-06-30/
+        );
+        return true;
+      }
+    );
+    assert.equal(
+      calls.some((call) => /^\s*(insert|update|delete)\b/i.test(call.sql)),
+      false
+    );
+  });
+}
+
+/** @type {Array<{kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse, field: string}>} */
+const boundedPopupCases = [
+  {
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 5 },
+    response: { kind: "free_text", text: "x" },
+    field: "response.text"
+  },
+  {
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, max_selected: 2 },
+    response: { kind: "multi_select", values: ["a", "b", "c"] },
+    field: "response.values"
+  }
+];
+for (const scenario of boundedPopupCases) {
+  test(`human answer service enforces well-formed ${scenario.kind} bounds`, async () => {
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    const result = await createHumanAnswerInTransaction(
+      mockQuery(calls, {
+        inputRows: [pendingInputRow],
+        actionRows: [
+          {
+            input_action_id: "action-1",
+            popup_kind: scenario.kind,
+            popup_payload: scenario.payload
+          }
+        ],
+        optionRows: ["a", "b", "c"].map((option_value) => ({ option_value }))
+      }),
+      { ...baseAnswerInput, response: scenario.response }
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.ok ? null : result.code, "invalid_action_response");
+    assert.equal(result.ok ? null : result.fields?.[0]?.path, scenario.field);
+    assert.equal(
+      calls.some((call) => /^\s*(insert|update|delete)\b/i.test(call.sql)),
+      false
+    );
+  });
+}
 
 test("human answer service rejects stale revisions before creating output", async () => {
   /** @type {TransactionContextStatement[]} */
@@ -555,7 +838,7 @@ test("human answer service creates one output with feedback and content-safe aud
         {
           input_action_id: "action-1",
           popup_kind: "free_text",
-          popup_payload: { min_length: 1, max_length: 200 }
+          popup_payload: { ...freeTextPayload, min_length: 1, max_length: 200 }
         }
       ],
       outputRows: [{ output_result_id: "output-1" }]
@@ -646,7 +929,7 @@ test("human answer service stores uploaded bytes in one output file row and cont
         {
           input_action_id: "action-1",
           popup_kind: "file_upload",
-          popup_payload: { accept_mime_types: ["text/*"] }
+          popup_payload: { ...fileUploadPayload, accept_mime_types: ["text/*"] }
         }
       ],
       accountTierRows: [{ tier: "hosted_paid" }],
@@ -738,7 +1021,10 @@ test("human answer service rejects oversized uploaded files before reading bytes
         {
           input_action_id: "action-1",
           popup_kind: "file_upload",
-          popup_payload: { accept_mime_types: ["text/plain"] }
+          popup_payload: {
+            ...fileUploadPayload,
+            accept_mime_types: ["text/plain"]
+          }
         }
       ],
       accountTierRows: [{ tier: "hosted_paid" }]
@@ -1137,8 +1423,12 @@ test(
             [ids.accountId, tier]
           );
           await owner.query(
-            "update public.agent_outbox_input_actions set popup_kind = $2 where input_action_id = $1",
-            [ids.actionId, kind]
+            "update public.agent_outbox_input_actions set popup_kind = $2, popup_payload = $3::jsonb where input_action_id = $1",
+            [
+              ids.actionId,
+              kind,
+              JSON.stringify(kind === "file_upload" ? fileUploadPayload : {})
+            ]
           );
           await owner.query("commit");
           const humanPid = (await human.query("select pg_backend_pid() as pid"))
@@ -1523,8 +1813,8 @@ test(
         [ids.accountId]
       );
       await owner.query(
-        "update public.agent_outbox_input_actions set popup_kind = 'file_upload' where input_action_id = $1",
-        [ids.actionId]
+        "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+        [ids.actionId, JSON.stringify(fileUploadPayload)]
       );
       await owner.query("commit");
       const answered = await runHumanAnswerDatabaseTransaction(
@@ -1805,8 +2095,8 @@ for (const scenario of /** @type {const} */ ([
         );
         if (scenario !== "locked over-cap non-file input") {
           await owner.query(
-            "update public.agent_outbox_input_actions set popup_kind = 'file_upload' where input_action_id = $1",
-            [ids.actionId]
+            "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+            [ids.actionId, JSON.stringify(fileUploadPayload)]
           );
         } else {
           await owner.query(
