@@ -82,6 +82,7 @@ operator-actionable handled failures. Useful fields include:
 - `account_id` or an opaque audit-safe account id when useful
 - `caller_id` or an opaque audit-safe caller id when useful
 - `operation`
+- `stripe_event_type` for handled Stripe webhook events
 - `path_shape` on Next.js `onRequestError` logs: `contains_dot`,
   `extensionless`, or `unknown` for the original request path. The raw path is
   never logged; `contains_dot` means the request would also miss the middleware
@@ -100,6 +101,16 @@ operator-actionable handled failures. Useful fields include:
 - `sentry_capture_rate_limited` when a low-trust browser operation was kept as a
   warning log but not sent to Sentry because that Worker isolate had attempted
   another browser capture within the preceding minute
+
+Signed Stripe webhook events acknowledged without changing billing state emit a
+warn log with `operation=stripe_webhook_unapplied`, `drop_reason`
+(`invalid_object`, `missing_reference`, or `no_matching_account`), and
+`stripe_event_type`. The log includes `account_id` when an account reference is
+present. Missing references mean a missing account or subscription reference.
+Expected stale out-of-order events are not logged. Missing-signature 400
+rejections warn with `operation=stripe_webhook_signature`; oversized-body 413
+rejections warn with `operation=stripe_webhook_request_too_large`. No Stripe ids
+or payload values are logged.
 
 Use stable low-cardinality fields. Do not use high-cardinality caller display
 strings as log dimensions.

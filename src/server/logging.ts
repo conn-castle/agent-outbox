@@ -34,6 +34,7 @@ export type RuntimeLogEvent = {
   client_event_name?: string;
   client_event_category?: string;
   drop_reason?: string;
+  stripe_event_type?: string;
   event_count?: number;
   message: string;
 };
@@ -70,6 +71,7 @@ const SAFE_LOG_KEYS = new Set([
   "client_event_name",
   "client_event_category",
   "drop_reason",
+  "stripe_event_type",
   "event_count",
   "message"
 ]);
