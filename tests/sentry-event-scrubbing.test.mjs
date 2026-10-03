@@ -39,6 +39,8 @@ const SECRETS = [
   "eyJhbGciOiJSUzI1NiJ9.session.sig",
   "user@example.com",
   "SECRET",
+  "out_caller_specific",
+  "file_caller_specific",
   "raw console text"
 ];
 
@@ -110,8 +112,11 @@ before(() => {
 
 beforeEach(() => {
   sent.length = 0;
-  Sentry.getIsolationScope().clearBreadcrumbs();
-  Sentry.getCurrentScope().clearBreadcrumbs();
+  for (const scope of [Sentry.getIsolationScope(), Sentry.getCurrentScope()]) {
+    scope.clear();
+    // Scope.clear() does not clear SDK request metadata.
+    scope.setSDKProcessingMetadata({ normalizedRequest: null });
+  }
 });
 
 after(async () => {
@@ -126,7 +131,7 @@ function assertNoSecrets(event) {
   }
 }
 
-test("request errors reach Sentry without headers, cookies, queries, or raw messages", async () => {
+test("request errors keep route templates without caller paths, headers, cookies, queries, or raw messages", async () => {
   console.error("raw console text");
   Sentry.addBreadcrumb({
     category: "fetch",
@@ -135,17 +140,23 @@ test("request errors reach Sentry without headers, cookies, queries, or raw mess
       method: "GET",
       url: "https://api.example.test/users?email=user@example.com#SECRET",
       "http.query": "email=user@example.com",
-      "http.fragment": "SECRET"
+      "http.fragment": "SECRET",
+      "url.fragment": "SECRET"
     }
   });
   Sentry.withScope((/** @type {any} */ scope) => {
     scope.setTag("error_id", "err_scrub_test");
+    scope.setSDKProcessingMetadata({
+      normalizedRequest: {
+        url: "https://app.example.test/api/output/out_caller_specific/files/file_caller_specific?code=SECRET"
+      }
+    });
     Sentry.captureRequestError(
       new Error('invalid input syntax for uuid: "user@example.com"', {
         cause: new Error("code=SECRET")
       }),
       {
-        path: "/api/v1/items?email=user@example.com&code=SECRET",
+        path: "/api/output/out_caller_specific/files/file_caller_specific?email=user@example.com&code=SECRET",
         method: "POST",
         headers: {
           authorization: "Bearer sk_live_caller_key",
@@ -155,7 +166,7 @@ test("request errors reach Sentry without headers, cookies, queries, or raw mess
       },
       {
         routerKind: "App Router",
-        routePath: "/api/v1/items",
+        routePath: "/api/output/[output_result_id]/files/[file_id]",
         routeType: "route"
       }
     );
@@ -166,7 +177,12 @@ test("request errors reach Sentry without headers, cookies, queries, or raw mess
   const [event] = sent;
   assertNoSecrets(event);
   assert.equal(event.tags.error_id, "err_scrub_test");
-  assert.equal(event.contexts.nextjs.router_path, "/api/v1/items");
+  assert.deepEqual(event.contexts.nextjs, {
+    router_path: "/api/output/[output_result_id]/files/[file_id]",
+    router_kind: "App Router",
+    route_type: "route"
+  });
+  assert.equal(Object.hasOwn(event.request, "url"), false);
   assert.equal(event.request.method, "POST");
   assert.ok(event.exception.values.length >= 2);
   for (const exception of event.exception.values) {
@@ -181,6 +197,53 @@ test("request errors reach Sentry without headers, cookies, queries, or raw mess
     { method: "GET", url: "https://api.example.test/users" }
   );
 });
+
+for (const type of [undefined, "transaction"]) {
+  test(`${type ?? "error"} events omit request URLs when no route template is available`, async () => {
+    Sentry.captureEvent({
+      ...(type === "transaction"
+        ? {
+            type: /** @type {const} */ ("transaction"),
+            transaction: "safe operation",
+            start_timestamp: Date.now() / 1000 - 1,
+            timestamp: Date.now() / 1000,
+            spans: [
+              {
+                trace_id: "0123456789abcdef0123456789abcdef",
+                span_id: "0123456789abcdef",
+                start_timestamp: Date.now() / 1000 - 1,
+                timestamp: Date.now() / 1000,
+                op: "http.client",
+                data: {
+                  "url.fragment": "SECRET",
+                  "url.full": "https://api.example.test/users#SECRET"
+                }
+              }
+            ]
+          }
+        : { message: "Runtime failure" }),
+      request: {
+        method: "GET",
+        url: "https://app.example.test/api/output/out_caller_specific/files/file_caller_specific?code=SECRET#SECRET"
+      }
+    });
+    await Sentry.flush(2000);
+
+    assert.equal(sent.length, 1);
+    const [event] = sent;
+    assertNoSecrets(event);
+    assert.deepEqual(event.request, { method: "GET" });
+    assert.equal(event.contexts?.nextjs?.router_path, undefined);
+    if (type === "transaction") {
+      assert.equal(event.spans.length, 1);
+      assert.equal(Object.hasOwn(event.spans[0].data, "url.fragment"), false);
+      assert.equal(
+        event.spans[0].data["url.full"],
+        "https://api.example.test/users"
+      );
+    }
+  });
+}
 
 test("thrown non-Error values reach Sentry without their serialized fields", async () => {
   Sentry.captureRequestError(
@@ -225,7 +288,8 @@ test("transactions reach Sentry without span URL queries or fragments", async ()
         "http.target": "/users?email=user@example.com#SECRET",
         "http.query": "email=user@example.com",
         "http.fragment": "SECRET",
-        "url.query": "?email=user@example.com"
+        "url.query": "?email=user@example.com",
+        "url.fragment": "SECRET"
       }
     },
     () => {}
@@ -241,6 +305,10 @@ test("transactions reach Sentry without span URL queries or fragments", async ()
     "https://api.example.test/users"
   );
   assert.equal(transaction.contexts.trace.data["http.target"], "/users");
+  assert.equal(
+    Object.hasOwn(transaction.contexts.trace.data, "url.fragment"),
+    false
+  );
 });
 
 test("middleware transactions reach Sentry without request header attributes", async () => {

@@ -146,9 +146,9 @@ function scrubSentryEvent<T extends Event>(event: T): T {
     delete event.request.cookies;
     delete event.request.query_string;
     delete event.request.data;
-    if (event.request.url) {
-      event.request.url = withoutQuery(event.request.url);
-    }
+    // Raw pathnames can contain caller identifiers. Keep the Next.js route
+    // template in contexts.nextjs.router_path instead, when available.
+    delete event.request.url;
   }
   // Thrown non-Error values are serialized here in full.
   delete event.extra;
@@ -187,6 +187,7 @@ function scrubAttributes(data: Record<string, unknown>) {
       key === "http.query" ||
       key === "http.fragment" ||
       key === "url.query" ||
+      key === "url.fragment" ||
       key.startsWith("http.request.header.") ||
       key.startsWith("http.response.header.")
     ) {
