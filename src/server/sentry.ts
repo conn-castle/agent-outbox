@@ -6,9 +6,11 @@ import {
   safeErrorName,
   type RuntimeLogEvent
 } from "./logging.ts";
+import { createCorrelationId } from "./correlation.ts";
 import { runtimeRelease } from "./observability.ts";
 
 const RUNTIME_SMOKE_SENTRY_SUPPRESS_HEADER = "x-agent-outbox-runtime-smoke";
+const SCHEDULED_SENTRY_FLUSH_TIMEOUT_MS = 2_000;
 
 export function sentryCaptureEnabled() {
   return (
@@ -37,7 +39,7 @@ export function captureRuntimeException(
     route?: string;
   }
 ) {
-  if (input.suppressCapture || !sentryCaptureEnabled()) {
+  if (input.suppressCapture || !sentryCaptureEnabled() || !Sentry.getClient()) {
     return false;
   }
 
@@ -130,6 +132,48 @@ export function sentryRuntimeInitOptions() {
     ...(release ? { release } : {}),
     tracesSampleRate: 0.05
   };
+}
+
+// Cron invocations bypass OpenNext, so Next.js instrumentation never
+// initializes Sentry and the SDK's end-of-request flush never runs. Initialize
+// the client when this isolate has none, and flush before the task settles so
+// Cloudflare keeps the isolate alive until captured events are sent.
+export async function runWithScheduledSentry<TResult>(
+  task: () => Promise<TResult>
+): Promise<TResult> {
+  if (sentryCaptureEnabled() && !Sentry.getClient()) {
+    try {
+      Sentry.init(sentryRuntimeInitOptions());
+    } catch (error) {
+      reportRuntimeFailure(error, {
+        errorId: createCorrelationId("sentry"),
+        environment: process.env.APP_ENV ?? null,
+        surface: "scheduled",
+        operation: "runtime.scheduled.sentry_init",
+        message: "scheduled Sentry initialization failed"
+      });
+    }
+  }
+
+  try {
+    return await task();
+  } finally {
+    if (Sentry.getClient()) {
+      // Flush failures must not replace the task's own outcome.
+      const flushed = await Sentry.flush(
+        SCHEDULED_SENTRY_FLUSH_TIMEOUT_MS
+      ).catch(() => false);
+      if (!flushed) {
+        emitRuntimeLog({
+          level: "warn",
+          environment: process.env.APP_ENV ?? null,
+          surface: "scheduled",
+          operation: "runtime.scheduled.sentry_flush",
+          message: "scheduled Sentry flush did not complete"
+        });
+      }
+    }
+  }
 }
 
 function runtimeExceptionFromUnknown(error: unknown) {

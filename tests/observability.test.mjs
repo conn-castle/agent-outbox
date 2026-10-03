@@ -89,6 +89,13 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  */
 
 /**
+ * @typedef {{
+ *   reportRuntimeFailure: RuntimeFailureReporterForTest,
+ *   runWithScheduledSentry: <T>(task: () => Promise<T>) => Promise<T>
+ * }} SentryModuleForTest
+ */
+
+/**
  * @param {() => Promise<void>} callback
  * @returns {Promise<Array<Record<string, unknown>>>}
  */
@@ -167,10 +174,13 @@ function renderRootLayoutForTest() {
 }
 
 /**
- * @param {{ withScope: Function, captureException: Function }} sentryStub
- * @returns {{ reportRuntimeFailure: RuntimeFailureReporterForTest }}
+ * Stubs without `getClient` model an isolate where Sentry is initialized.
+ *
+ * @param {{ withScope: Function, captureException: Function, getClient?: Function, init?: Function, flush?: Function }} sentryStub
+ * @returns {SentryModuleForTest}
  */
 function loadSentryModuleForTest(sentryStub) {
+  const sentry = { getClient: () => ({}), ...sentryStub };
   const source = readFileSync(
     resolve(REPO_ROOT, "src/server/sentry.ts"),
     "utf8"
@@ -200,7 +210,13 @@ function loadSentryModuleForTest(sentryStub) {
        */
       require(specifier) {
         if (specifier === "@sentry/nextjs") {
-          return sentryStub;
+          return sentry;
+        }
+        if (specifier === "./correlation.ts") {
+          return {
+            createCorrelationId: (/** @type {string} */ prefix) =>
+              `${prefix}_test`
+          };
         }
         if (specifier === "./logging.ts") {
           return { emitRuntimeLog, safeErrorCode, safeErrorName };
@@ -215,9 +231,7 @@ function loadSentryModuleForTest(sentryStub) {
     { filename: "src/server/sentry.ts" }
   );
 
-  return /** @type {{ reportRuntimeFailure: RuntimeFailureReporterForTest }} */ (
-    testModule.exports
-  );
+  return /** @type {SentryModuleForTest} */ (testModule.exports);
 }
 
 /**
@@ -3231,6 +3245,183 @@ test("scheduled cleanup failures log request account and duration without error 
     JSON.stringify(logs).includes("raw cleanup failure detail"),
     false
   );
+});
+
+const SCHEDULED_SENTRY_PRODUCTION_ENV = {
+  APP_ENV: "production",
+  SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+  SENTRY_RELEASE: "agent-outbox@2026.07.07",
+  CI: undefined,
+  NODE_ENV: "production"
+};
+
+/**
+ * Records Sentry SDK calls in order. `init` installs a client unless
+ * `initThrows` is set, matching the SDK's per-isolate global client.
+ *
+ * @param {{ client?: object, initThrows?: boolean, flushResult?: boolean }} [options]
+ */
+function scheduledSentryStub(options = {}) {
+  /** @type {string[]} */
+  const calls = [];
+  /** @type {unknown[]} */
+  const initOptions = [];
+  /** @type {object | undefined} */
+  let client = options.client;
+  const stub = {
+    getClient() {
+      return client;
+    },
+    /** @param {unknown} value */
+    init(value) {
+      calls.push("init");
+      initOptions.push(value);
+      if (options.initThrows) {
+        throw new Error("raw sentry init detail");
+      }
+      client = {};
+    },
+    /** @param {(scope: Record<string, Function>) => void} callback */
+    withScope(callback) {
+      callback({
+        setTag() {},
+        setContext() {},
+        setFingerprint() {}
+      });
+    },
+    captureException() {
+      calls.push("capture");
+    },
+    /** @param {number} timeoutMs */
+    async flush(timeoutMs) {
+      calls.push(`flush:${timeoutMs}`);
+      // A macrotask delay proves the wrapper awaits flush before settling.
+      await new Promise((resolveFlush) => setTimeout(resolveFlush, 0));
+      calls.push("flushed");
+      return options.flushResult ?? true;
+    }
+  };
+
+  return { stub, calls, initOptions };
+}
+
+test("scheduled Sentry initializes a missing client and flushes a reported failure before rejecting", async () => {
+  const { stub, calls, initOptions } = scheduledSentryStub();
+  const { reportRuntimeFailure, runWithScheduledSentry } =
+    loadSentryModuleForTest(stub);
+  const cleanupFailure = new Error("raw cleanup failure detail");
+
+  const logs = await withProcessEnv(SCHEDULED_SENTRY_PRODUCTION_ENV, () =>
+    captureStructuredLogs(async () => {
+      await assert.rejects(
+        runWithScheduledSentry(async () => {
+          reportRuntimeFailure(cleanupFailure, {
+            errorId: "cleanup_test",
+            surface: "scheduled",
+            operation: "maintenance.scheduled_cleanup",
+            message: "scheduled cleanup failed"
+          });
+          throw cleanupFailure;
+        }).finally(() => calls.push("settled")),
+        (error) => error === cleanupFailure
+      );
+    })
+  );
+
+  assert.deepEqual(calls, [
+    "init",
+    "capture",
+    "flush:2000",
+    "flushed",
+    "settled"
+  ]);
+  // The options object comes from the vm realm, so compare its JSON shape.
+  assert.deepEqual(JSON.parse(JSON.stringify(initOptions)), [
+    {
+      dsn: SCHEDULED_SENTRY_PRODUCTION_ENV.SENTRY_DSN,
+      environment: "production",
+      release: SCHEDULED_SENTRY_PRODUCTION_ENV.SENTRY_RELEASE,
+      tracesSampleRate: 0.05
+    }
+  ]);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].sentry_captured, true);
+});
+
+test("scheduled Sentry reuses an existing isolate client and returns the task result", async () => {
+  const { stub, calls } = scheduledSentryStub({ client: {} });
+  const { runWithScheduledSentry } = loadSentryModuleForTest(stub);
+
+  const result = await withProcessEnv(SCHEDULED_SENTRY_PRODUCTION_ENV, () =>
+    runWithScheduledSentry(async () => "cleanup-result")
+  );
+
+  assert.equal(result, "cleanup-result");
+  assert.deepEqual(calls, ["flush:2000", "flushed"]);
+});
+
+test("scheduled Sentry warns when the flush does not complete", async () => {
+  const { stub } = scheduledSentryStub({ client: {}, flushResult: false });
+  const { runWithScheduledSentry } = loadSentryModuleForTest(stub);
+
+  const logs = await withProcessEnv(SCHEDULED_SENTRY_PRODUCTION_ENV, () =>
+    captureStructuredLogs(async () => {
+      assert.equal(
+        await runWithScheduledSentry(async () => "cleanup-result"),
+        "cleanup-result"
+      );
+    })
+  );
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, "warn");
+  assert.equal(logs[0].operation, "runtime.scheduled.sentry_flush");
+});
+
+test("scheduled Sentry stays inactive when capture is not enabled", async () => {
+  const { stub, calls } = scheduledSentryStub();
+  const { runWithScheduledSentry } = loadSentryModuleForTest(stub);
+
+  const result = await withProcessEnv(
+    { ...SCHEDULED_SENTRY_PRODUCTION_ENV, APP_ENV: "development" },
+    () => runWithScheduledSentry(async () => "cleanup-result")
+  );
+
+  assert.equal(result, "cleanup-result");
+  assert.deepEqual(calls, []);
+});
+
+test("scheduled Sentry init failures are logged and later failures report sentry_captured false", async () => {
+  const { stub, calls } = scheduledSentryStub({ initThrows: true });
+  const { reportRuntimeFailure, runWithScheduledSentry } =
+    loadSentryModuleForTest(stub);
+  const cleanupFailure = new Error("raw cleanup failure detail");
+
+  const logs = await withProcessEnv(SCHEDULED_SENTRY_PRODUCTION_ENV, () =>
+    captureStructuredLogs(async () => {
+      await assert.rejects(
+        runWithScheduledSentry(async () => {
+          reportRuntimeFailure(cleanupFailure, {
+            errorId: "cleanup_test",
+            surface: "scheduled",
+            operation: "maintenance.scheduled_cleanup",
+            message: "scheduled cleanup failed"
+          });
+          throw cleanupFailure;
+        }),
+        (error) => error === cleanupFailure
+      );
+    })
+  );
+
+  assert.deepEqual(calls, ["init"]);
+  assert.equal(logs.length, 2);
+  assert.equal(logs[0].level, "error");
+  assert.equal(logs[0].operation, "runtime.scheduled.sentry_init");
+  assert.equal(logs[0].sentry_captured, false);
+  assert.equal(logs[1].operation, "maintenance.scheduled_cleanup");
+  assert.equal(logs[1].sentry_captured, false);
+  assert.equal(JSON.stringify(logs).includes("raw sentry init detail"), false);
 });
 
 test("client event endpoint logs only allowlisted content-safe fields", async () => {

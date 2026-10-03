@@ -116,6 +116,13 @@ explicit `sentry_captured: false`. Alert on error-level logs, not on
 was attempted but disabled or failed (for example a missing production DSN or
 release).
 
+Cron-triggered cleanup runs outside Next.js, so the Worker's scheduled handler
+initializes Sentry itself when the isolate has no client and flushes captured
+events before the invocation ends. An initialization failure emits an error log
+with `operation=runtime.scheduled.sentry_init`; a flush that times out or fails
+emits a warning log with `operation=runtime.scheduled.sentry_flush`, meaning
+captured events from that invocation may not have reached Sentry.
+
 Next.js `onRequestError` failures use `operation=next_request_error` and keep
 the SDK's unhandled `auto.function.nextjs.on_request_error` capture. Each hook
 invocation generates one `error_id` shared by the Sentry event tags/context and
