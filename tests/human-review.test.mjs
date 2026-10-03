@@ -7,6 +7,7 @@ import {
   parseHumanAnswerForm,
   parseUndoHumanAnswerForm
 } from "../src/server/human-action-form.ts";
+import { validatedResponsePayload } from "../src/server/human-answer.ts";
 import {
   humanReviewAccountBannerInTransaction,
   humanReviewDetailInTransaction,
@@ -2032,6 +2033,44 @@ test("human forms accept independent feedback and reject non-text or duplicate f
   );
 });
 
+test("multiline answers keep the browser's line breaks after multipart submission", async () => {
+  const text = "line one\nline two\nline three";
+  const feedback = "First note.\nSecond note.";
+  const form = answerForm();
+  form.set("response.text", text);
+  form.set("feedback", feedback);
+  const submitted = await multipartRoundTrip(form);
+  assert.equal(submitted.get("response.text"), text.replaceAll("\n", "\r\n"));
+
+  const parsed = parseHumanAnswerForm(submitted);
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.response, { kind: "free_text", text });
+  assert.equal(parsed.feedback, feedback);
+  const stored = validatedResponsePayload(
+    {
+      popupKind: "free_text",
+      popupPayload: {
+        label: "Reply",
+        placeholder: null,
+        default_value: null,
+        multiline: true,
+        min_length: null,
+        max_length: text.length
+      }
+    },
+    parsed.response,
+    parsed.feedback
+  );
+  assert.equal(stored.ok, true);
+  assert.deepEqual(stored.responsePayload, { text, feedback });
+
+  const bulk = bulkForm();
+  bulk.set(`feedback.${inputItemId}`, "Old line\rClassic Mac line");
+  const parsedBulk = parseBulkHumanAnswersForm(await multipartRoundTrip(bulk));
+  assert.equal(parsedBulk.ok, true);
+  assert.equal(parsedBulk.items[0]?.feedback, "Old line\nClassic Mac line");
+});
+
 test("browser fixture renders queue timestamps against a frozen reference", () => {
   // Marketing screenshots are hash-attested per release and re-captured by
   // make release-check, so fixture renders must not read the wall clock.
@@ -2079,6 +2118,14 @@ function formWithRawString(formData, key, value) {
     return undefined;
   };
   return formData;
+}
+
+/** @param {FormData} formData */
+function multipartRoundTrip(formData) {
+  return new Request("https://agent-outbox.test/human/mutations", {
+    method: "POST",
+    body: formData
+  }).formData();
 }
 
 function answerForm() {

@@ -129,7 +129,9 @@ function responseFromForm(
       return { kind: "none" };
     case "free_text": {
       const text = rawStringField(formData, "response.text");
-      return text === null ? null : { kind: "free_text", text };
+      return text === null
+        ? null
+        : { kind: "free_text", text: normalizeLineBreaks(text) };
     }
     case "single_select": {
       const value = stringField(formData, "response.value");
@@ -239,7 +241,13 @@ function feedbackField(formData: FormData, key: string) {
   ) {
     return null;
   }
-  return values[0].trim() ? values[0] : undefined;
+  return values[0].trim() ? normalizeLineBreaks(values[0]) : undefined;
+}
+
+// Multipart form encoding turns every textarea line break into CRLF, while the
+// browser measures and displays the text with LF line breaks.
+function normalizeLineBreaks(value: string) {
+  return value.replace(/\r\n?/g, "\n");
 }
 
 function uuidField(formData: FormData, key: string) {
