@@ -696,9 +696,23 @@ export function ReviewWorkspace({
           record.status === "indeterminate"
         ) {
           const answeredIds = new Set(
-            mutation.inputItemIds.filter(
-              (_id, index) => canonicalRows[index]?.status !== "pending"
-            )
+            mutation.inputItemIds.filter((id, index) => {
+              const row = canonicalRows[index];
+              if (row) return row.status !== "pending";
+              // Absence proves an answer only when this is the entire
+              // pending view and the submitted row belongs in that view.
+              // A filter or page can otherwise hide a still-pending item.
+              const snapshot = mutation.rowSnapshots.find(
+                (candidate) => candidate.inputItemId === id
+              );
+              return (
+                view.page === 1 &&
+                !hasNext &&
+                rows.length === totalCount &&
+                snapshot !== undefined &&
+                humanReviewRowMatchesView(snapshot, view)
+              );
+            })
           );
           setSelectedIds((current) => removeIds(current, answeredIds));
         }
@@ -710,7 +724,7 @@ export function ReviewWorkspace({
         router.refresh();
       }
     }
-  }, [dismiss, humanMutations, router, rows, view]);
+  }, [dismiss, hasNext, humanMutations, router, rows, totalCount, view]);
 
   const visibleRows = useMemo(() => {
     return [...projectedRows].sort((left, right) => {

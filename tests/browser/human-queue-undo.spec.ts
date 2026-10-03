@@ -248,6 +248,105 @@ test("a timed-out bulk answer that committed leaves the selection", async ({
   await expect(page.locator(".bulk-actions")).toHaveCount(0);
 });
 
+for (const offView of ["filter", "page"] as const) {
+  test(`a timed-out bulk answer that did not commit keeps selections off-${offView} for retry`, async ({
+    page
+  }) => {
+    // Settle the first write only after the changed view reaches the browser.
+    // Later writes use the normal timeout so the retry exercises the endpoint.
+    await page.addInitScript(() => {
+      const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+      let intercepted = false;
+      AbortSignal.timeout = (ms: number) => {
+        if (ms !== 20_000 || intercepted) return originalTimeout(ms);
+        intercepted = true;
+        const controller = new AbortController();
+        window.addEventListener(
+          "test-mutation-timeout",
+          () => controller.abort(new DOMException("Timed out", "TimeoutError")),
+          { once: true }
+        );
+        return controller.signal;
+      };
+    });
+    const initial = await openQueue(
+      page,
+      offView === "page" ? "/human?fixture_dataset=pagination" : "/human"
+    );
+    await selectRows(page, [permit, followUp]);
+    const started = page.waitForRequest((request) =>
+      request.url().endsWith("/human/mutations")
+    );
+    // Leave the request unsent: the fixture's pending rows do not change.
+    await page.route("**/human/mutations", () => {});
+    await applyBulk(page);
+    await started;
+    if (offView === "filter") {
+      await showTools(page);
+      await page
+        .getByRole("textbox", { name: "Search", exact: true })
+        .fill("Meridian");
+      await expect(page).toHaveURL(/search=Meridian/);
+      await expect(page.locator(".row-title")).toHaveText([email]);
+    } else {
+      await page.getByRole("button", { name: "Next 100", exact: true }).click();
+      await expect(page).toHaveURL(/page=2/);
+      await expect(row(page, permit)).toHaveCount(0);
+      await expect(row(page, followUp)).toHaveCount(0);
+    }
+
+    const aborted = page.waitForEvent("requestfailed", (request) =>
+      request.url().endsWith("/human/mutations")
+    );
+    const refreshed = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.request().headers()["rsc"] === "1"
+    );
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("test-mutation-timeout"))
+    );
+    await aborted;
+    await refreshed;
+    await expect(page.locator(".bulk-actions")).toContainText(
+      "2 selected on other pages"
+    );
+
+    if (offView === "filter") {
+      await page.getByRole("textbox", { name: "Search", exact: true }).fill("");
+      await expect(page).not.toHaveURL(/search=/);
+    } else {
+      await page
+        .getByRole("button", { name: "Previous 100", exact: true })
+        .click();
+      await expect(page).not.toHaveURL(/page=2/);
+    }
+    await expect(page.locator(".row-title")).toHaveText(initial);
+    for (const title of [permit, followUp])
+      await expect(
+        row(page, title).getByRole("checkbox", { name: "Select review" })
+      ).toBeChecked();
+    await expect(page.locator(".bulk-actions")).toContainText(
+      "2 selected pending rows"
+    );
+    await page.unroute("**/human/mutations");
+    const retried = mutationResponse(page);
+    await applyBulk(page);
+    expect((await retried).ok()).toBe(true);
+    const pending = initial.filter(
+      (title) => title !== permit && title !== followUp
+    );
+    if (offView === "filter") await expectQueueMembership(page, pending);
+    else {
+      // The next page fills the two vacated positions on the first page.
+      await expect(row(page, permit)).toHaveCount(0);
+      await expect(row(page, followUp)).toHaveCount(0);
+    }
+    await expect(page.locator(".bulk-actions")).toHaveCount(0);
+    await expectHistory(page, [permit, followUp], []);
+  });
+}
+
 test("repeated bulk apply before the queue updates sends one request", async ({
   page
 }) => {
@@ -363,11 +462,11 @@ test("rejected undo keeps every answered item in History and restores no queue r
   );
 });
 
-async function openQueue(page: Page) {
+async function openQueue(page: Page, href = "/human") {
   page.on("pageerror", (error) => {
     throw error;
   });
-  await page.goto("/human");
+  await page.goto(href);
   await expectHydrated(page);
   return page.locator(".row-title").allTextContents();
 }

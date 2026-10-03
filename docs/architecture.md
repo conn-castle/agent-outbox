@@ -238,7 +238,10 @@ pending queue is the success signal. After an answer is accepted, a single
 last-action Undo control appears in that same bar and is replaced by the next
 successful answer. Older eligible reversals stay in History. A client fetch
 timeout is indeterminate: the journal keeps the projection and refreshes
-canonical state instead of rolling back a write that may still commit. A bulk
+canonical state instead of rolling back a write that may still commit. Timed-out
+answers clear selected IDs only when canonical rows are non-pending or a
+complete pending view excludes a submitted row that matches its filters; absence
+from a filtered-out view or an incomplete page preserves selection. A bulk
 result with zero successes is a failure from the mutation endpoint, not a
 successful projection. Undo becomes available only after the original answer is
 accepted; its cached restored row remains non-interactive until the undo commit
