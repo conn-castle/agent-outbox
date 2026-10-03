@@ -123,6 +123,14 @@ with `operation=runtime.scheduled.sentry_init`; a flush that times out or fails
 emits a warning log with `operation=runtime.scheduled.sentry_flush`, meaning
 captured events from that invocation may not have reached Sentry.
 
+Scheduled cleanup runs each global prune and each account's maintenance in its
+own transaction, so one failing step does not block the others. Each failed step
+emits an error log with `operation=maintenance.scheduled_cleanup`: global prunes
+use the message `scheduled cleanup global maintenance failed`, and account steps
+carry `account_id`. After all steps run, the invocation fails with one summary
+error log. If the account list cannot be read, the run fails before any account
+maintenance.
+
 Next.js `onRequestError` failures use `operation=next_request_error` and keep
 the SDK's unhandled `auto.function.nextjs.on_request_error` capture. Each hook
 invocation generates one `error_id` shared by the Sentry event tags/context and

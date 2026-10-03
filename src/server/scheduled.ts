@@ -196,7 +196,34 @@ export async function runScheduledCleanup(
   }
 
   try {
-    const globalResult = await runTransaction(
+    let statementsRun = 0;
+    let rowsAffected = 0;
+    const globalFailures: unknown[] = [];
+
+    // Each global prune is independent of every other cleanup step, so it runs
+    // in its own transaction: one failing prune must not roll back the others
+    // or block per-account retention.
+    for (const statement of globalQuotaWindowMaintenanceStatements(now)) {
+      try {
+        const totals = await runTransaction(
+          connectionString,
+          { requestId, authSurface: "cleanup" },
+          (query) => runCleanupStatements(query, [statement])
+        );
+        statementsRun += totals.statementsRun;
+        rowsAffected += totals.rowsAffected;
+      } catch (error) {
+        emitScheduledCleanupFailure({
+          requestId,
+          error,
+          startedAtMs,
+          message: "scheduled cleanup global maintenance failed"
+        });
+        globalFailures.push(error);
+      }
+    }
+
+    const accounts = await runTransaction(
       connectionString,
       { requestId, authSurface: "cleanup" },
       async (query) => {
@@ -204,24 +231,14 @@ export async function runScheduledCleanup(
           await query<ScheduledCleanupAccountTargetRow>(
             cleanupAccountTargetsStatement()
           );
-        const totals = await runCleanupStatements(
-          query,
-          globalQuotaWindowMaintenanceStatements(now)
-        );
-
-        return {
-          accounts: accountTargetsResult.rows.map(cleanupAccountTargetFromRow),
-          ...totals
-        };
+        return accountTargetsResult.rows.map(cleanupAccountTargetFromRow);
       }
     );
 
-    let statementsRun = globalResult.statementsRun;
-    let rowsAffected = globalResult.rowsAffected;
     let accountsCleaned = 0;
     const accountFailures: { accountId: string; error: unknown }[] = [];
 
-    for (const account of globalResult.accounts) {
+    for (const account of accounts) {
       try {
         const accountResult = await runTransaction(
           connectionString,
@@ -274,13 +291,24 @@ export async function runScheduledCleanup(
       }
     }
 
-    if (accountFailures.length > 0) {
-      const failedAccountIds = accountFailures
-        .map((failure) => failure.accountId)
-        .join(", ");
+    if (globalFailures.length > 0 || accountFailures.length > 0) {
+      const failedScopes: string[] = [];
+      if (globalFailures.length > 0) {
+        failedScopes.push(
+          `${globalFailures.length} global maintenance statement(s)`
+        );
+      }
+      if (accountFailures.length > 0) {
+        const failedAccountIds = accountFailures
+          .map((failure) => failure.accountId)
+          .join(", ");
+        failedScopes.push(
+          `${accountFailures.length} account(s): ${failedAccountIds}`
+        );
+      }
       throw new AggregateError(
-        accountFailures.map((failure) => failure.error),
-        `Scheduled cleanup failed for ${accountFailures.length} account(s): ${failedAccountIds}`
+        [...globalFailures, ...accountFailures.map((failure) => failure.error)],
+        `Scheduled cleanup failed for ${failedScopes.join(" and ")}`
       );
     }
 
@@ -299,7 +327,7 @@ export async function runScheduledCleanup(
       code: "scheduled_cleanup_completed",
       request_id: requestId,
       recorded_at: recordedAt,
-      accounts_seen: globalResult.accounts.length,
+      accounts_seen: accounts.length,
       accounts_cleaned: accountsCleaned,
       statements_run: statementsRun,
       rows_affected: rowsAffected
@@ -410,6 +438,7 @@ function emitScheduledCleanupFailure(input: {
   error?: unknown;
   accountId?: string;
   startedAtMs?: number;
+  message?: string;
 }) {
   reportRuntimeFailure(input.error, {
     errorId: createCorrelationId("cleanup"),
@@ -419,6 +448,6 @@ function emitScheduledCleanupFailure(input: {
     duration_ms: durationSinceMs(input.startedAtMs),
     operation: SCHEDULED_CLEANUP_OPERATION,
     account_id: input.accountId,
-    message: "scheduled cleanup failed"
+    message: input.message ?? "scheduled cleanup failed"
   });
 }
