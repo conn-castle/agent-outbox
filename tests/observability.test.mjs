@@ -3405,7 +3405,9 @@ test("scheduled Sentry initializes a missing client and flushes a reported failu
       dsn: SCHEDULED_SENTRY_PRODUCTION_ENV.SENTRY_DSN,
       environment: "production",
       release: SCHEDULED_SENTRY_PRODUCTION_ENV.SENTRY_RELEASE,
-      tracesSampleRate: 0.05
+      tracesSampleRate: 0.05,
+      maxBreadcrumbs: 0,
+      integrations: [{ name: "AgentOutboxRuntimeContentSafety" }]
     }
   ]);
   assert.equal(logs.length, 1);
