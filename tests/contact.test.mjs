@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CONTACT_BODY_BYTE_LIMIT,
   CONTACT_DESTINATION,
   CONTACT_SENDER,
   handleContactRequest
@@ -142,6 +143,70 @@ test("contact submissions send a bounded message to the studio inbox", async () 
       "I would like caller access for my first agent."
     ].join("\n")
   });
+});
+
+test("contact submissions accept every field at its maximum length in any script", async () => {
+  // "あ" is three UTF-8 bytes; "\u0001" is six bytes once JSON-escaped.
+  for (const character of ["あ", "\u0001"]) {
+    const submission = {
+      name: character.repeat(80),
+      email: `${character.repeat(250)}@${character}.${character}`,
+      topic: "Product question",
+      message: character.repeat(4_000),
+      company: ""
+    };
+    const { dependencies, sent } = contactDependencies();
+    const response = await handleContactRequest(
+      contactRequest(submission),
+      dependencies
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].replyTo, submission.email);
+    assert.equal(sent[0].text.endsWith(`\n\n${submission.message}`), true);
+  }
+});
+
+test("contact submissions reject bodies over the byte limit", async () => {
+  const body = JSON.stringify(VALID_SUBMISSION);
+  const oversized =
+    body + " ".repeat(CONTACT_BODY_BYTE_LIMIT + 1 - body.length);
+  const declared = new Request("https://app.agent-outbox.dev/api/contact", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "content-length": String(CONTACT_BODY_BYTE_LIMIT + 1),
+      origin: "https://app.agent-outbox.dev"
+    },
+    body
+  });
+  const streamedInit = {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "https://app.agent-outbox.dev"
+    },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(oversized));
+        controller.close();
+      }
+    }),
+    duplex: "half"
+  };
+  const streamed = new Request(
+    "https://app.agent-outbox.dev/api/contact",
+    streamedInit
+  );
+
+  for (const request of [declared, streamed]) {
+    const { dependencies, sent } = contactDependencies();
+    const response = await handleContactRequest(request, dependencies);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, "invalid_request");
+    assert.equal(sent.length, 0);
+  }
 });
 
 test("contact submissions reject cross-origin and malformed input", async () => {

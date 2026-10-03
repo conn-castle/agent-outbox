@@ -2,7 +2,6 @@ import { apiRequestContext, type ApiRequestContext } from "./api-errors.ts";
 import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
-export const CONTACT_BODY_BYTE_LIMIT = 8_192;
 export const CONTACT_DESTINATION = "contact@agent-outbox.dev";
 export const CONTACT_SENDER = "contact-form@agent-outbox.dev";
 const CONTACT_ROUTE = "/api/contact";
@@ -18,6 +17,21 @@ const CONTACT_TOPICS = [
 ] as const;
 
 type ContactTopic = (typeof CONTACT_TOPICS)[number];
+
+const CONTACT_NAME_MAX_LENGTH = 80;
+const CONTACT_EMAIL_MAX_LENGTH = 254;
+const CONTACT_MESSAGE_MAX_LENGTH = 4_000;
+
+// JSON can spend up to six bytes on one UTF-16 code unit ("\u0001"), so the
+// cap admits every submission whose fields pass validation. The extra
+// kilobyte covers field names, punctuation, and the empty company field.
+export const CONTACT_BODY_BYTE_LIMIT =
+  6 *
+    (CONTACT_NAME_MAX_LENGTH +
+      CONTACT_EMAIL_MAX_LENGTH +
+      Math.max(...CONTACT_TOPICS.map((topic) => topic.length)) +
+      CONTACT_MESSAGE_MAX_LENGTH) +
+  1_024;
 
 export type ContactSubmission = {
   name: string;
@@ -108,7 +122,7 @@ function normalizedString(value: unknown) {
 
 function validEmailAddress(value: string) {
   return (
-    value.length <= 254 &&
+    value.length <= CONTACT_EMAIL_MAX_LENGTH &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) &&
     !/[\r\n]/.test(value)
   );
@@ -129,7 +143,11 @@ function parseContactSubmission(value: unknown): ContactParseResult {
   if (company) {
     return { ok: false, message: "We could not accept that message." };
   }
-  if (name.length < 2 || name.length > 80 || /[\r\n]/.test(name)) {
+  if (
+    name.length < 2 ||
+    name.length > CONTACT_NAME_MAX_LENGTH ||
+    /[\r\n]/.test(name)
+  ) {
     return { ok: false, message: "Enter your name." };
   }
   if (!validEmailAddress(email)) {
@@ -138,7 +156,7 @@ function parseContactSubmission(value: unknown): ContactParseResult {
   if (!CONTACT_TOPICS.includes(topic as ContactTopic)) {
     return { ok: false, message: "Choose what you would like to discuss." };
   }
-  if (message.length < 20 || message.length > 4_000) {
+  if (message.length < 20 || message.length > CONTACT_MESSAGE_MAX_LENGTH) {
     return {
       ok: false,
       message: "Write a message between 20 and 4,000 characters."
