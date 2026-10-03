@@ -34,11 +34,11 @@ Every outgoing Sentry error and transaction event is scrubbed before send
 headers, cookies, query strings, bodies, the Next.js `request_path`, serialized
 thrown values (`extra`), header attributes and URL queries or fragments
 (including `url.fragment`) in trace-context, span, and breadcrumb data, and
-console breadcrumbs are removed, and every exception message is replaced by the
-fixed runtime-failure message. Exception types, stack traces, tags, the
-`agent_outbox` context, and Next.js route metadata (`router_path`,
-`router_kind`, `route_type`) are kept; `router_path` retains the route template
-when available.
+console breadcrumbs are removed, and top-level event messages and every
+exception message are replaced by the fixed runtime-failure message. Exception
+types, stack traces, tags, the `agent_outbox` context, and Next.js route
+metadata (`router_path`, `router_kind`, `route_type`) are kept; `router_path`
+retains the route template when available.
 
 PostHog data flow, sensitive-content exclusions, and retention are canonical in
 [privacy-data-inventory.md](privacy-data-inventory.md); this runbook does not

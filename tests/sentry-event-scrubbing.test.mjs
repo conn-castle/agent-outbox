@@ -176,6 +176,7 @@ test("request errors keep route templates without caller paths, headers, cookies
   assert.equal(sent.length, 1);
   const [event] = sent;
   assertNoSecrets(event);
+  assert.equal(event.message, undefined);
   assert.equal(event.tags.error_id, "err_scrub_test");
   assert.deepEqual(event.contexts.nextjs, {
     router_path: "/api/output/[output_result_id]/files/[file_id]",
@@ -198,8 +199,17 @@ test("request errors keep route templates without caller paths, headers, cookies
   );
 });
 
+test("message captures reach Sentry with a fixed top-level message", async () => {
+  Sentry.captureMessage("user@example.com used Bearer sk_live_caller_key");
+  await Sentry.flush(2000);
+
+  assert.equal(sent.length, 1);
+  assertNoSecrets(sent[0]);
+  assert.equal(sent[0].message, "Agent Outbox runtime failure");
+});
+
 for (const type of [undefined, "transaction"]) {
-  test(`${type ?? "error"} events omit request URLs when no route template is available`, async () => {
+  test(`${type ?? "error"} events scrub messages and omit request URLs when no route template is available`, async () => {
     Sentry.captureEvent({
       ...(type === "transaction"
         ? {
@@ -221,7 +231,8 @@ for (const type of [undefined, "transaction"]) {
               }
             ]
           }
-        : { message: "Runtime failure" }),
+        : {}),
+      message: "user@example.com requested /api/output/out_caller_specific",
       request: {
         method: "GET",
         url: "https://app.example.test/api/output/out_caller_specific/files/file_caller_specific?code=SECRET#SECRET"
@@ -232,6 +243,7 @@ for (const type of [undefined, "transaction"]) {
     assert.equal(sent.length, 1);
     const [event] = sent;
     assertNoSecrets(event);
+    assert.equal(event.message, "Agent Outbox runtime failure");
     assert.deepEqual(event.request, { method: "GET" });
     assert.equal(event.contexts?.nextjs?.router_path, undefined);
     if (type === "transaction") {
@@ -273,10 +285,19 @@ test("runtime failure reports keep their safe tags after scrubbing", async () =>
   assert.equal(sent.length, 1);
   const [event] = sent;
   assertNoSecrets(event);
+  assert.equal(event.message, undefined);
   assert.equal(event.tags.error_id, "err_runtime_scrub");
   assert.equal(event.tags.operation, "scrub_test");
+  assert.equal(event.contexts.agent_outbox.error_id, "err_runtime_scrub");
+  assert.deepEqual(event.fingerprint, [
+    "agent-outbox-runtime-failure",
+    "TypeError",
+    "scrub_test",
+    "/api/v1/items"
+  ]);
   assert.equal(event.exception.values[0].type, "TypeError");
   assert.equal(event.exception.values[0].value, "Agent Outbox runtime failure");
+  assert.ok(event.exception.values[0].stacktrace.frames.length > 0);
 });
 
 test("transactions reach Sentry without span URL queries or fragments", async () => {

@@ -158,6 +158,9 @@ function scrubSentryEvent<T extends Event>(event: T): T {
   if (event.contexts?.trace?.data) {
     scrubAttributes(event.contexts.trace.data);
   }
+  if (event.message !== undefined) {
+    event.message = SANITIZED_EXCEPTION_MESSAGE;
+  }
   for (const exception of event.exception?.values ?? []) {
     if (exception.value !== undefined) {
       exception.value = SANITIZED_EXCEPTION_MESSAGE;
