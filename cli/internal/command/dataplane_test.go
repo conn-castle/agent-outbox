@@ -86,6 +86,46 @@ func TestInputSendPostsFileAndRendersStableJSON(t *testing.T) {
 	}
 }
 
+func TestInputSendKeepsMarkupHeavyFileWithinValidatedSize(t *testing.T) {
+	const fragment = "<p>a &amp; b</p>"
+	prefix := `{"caller_item_id":"item_1","row_type":{"display":"Email","icon":"mail"},"title":"Title","subtitle":"Subtitle","summary":"`
+	suffix := `","link_buttons":[],"actions":[{"display":"Approve","icon":"check","value":"approve","overflow":false,"popup":{"kind":"none"}}]}`
+	summary := strings.Repeat(fragment, (inputPayloadLimitBytes-len(prefix)-len(suffix))/len(fragment))
+	file := []byte(prefix + summary + suffix)
+	inputPath := filepath.Join(t.TempDir(), "input.json")
+	if err := os.WriteFile(inputPath, file, 0o600); err != nil {
+		t.Fatalf("write input fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		if len(data) > inputPayloadLimitBytes {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = fmt.Fprint(w, `{"ok":false,"request_id":"req_server","correlation_id":"corr_server","error":{"code":"request_too_large","message":"Request body is too large."}}`)
+			return
+		}
+		var body map[string]any
+		if err := json.Unmarshal(data, &body); err != nil {
+			t.Errorf("request body was not JSON: %v", err)
+		}
+		if body["summary"] != summary {
+			t.Errorf("summary body changed in transit")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true,"request_id":"req_server","correlation_id":"corr_server","data":{"caller_item_id":"item_1","status":"pending","revision":1,"created":true,"duplicate":false}}`)
+	}))
+	defer server.Close()
+
+	_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "send", "--file", inputPath})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+}
+
 func TestInputSendMalformedResponseReportsUnknownWriteOutcome(t *testing.T) {
 	inputPath := filepath.Join(t.TempDir(), "input.json")
 	if err := os.WriteFile(inputPath, []byte(`{
@@ -323,6 +363,35 @@ func TestInputReadPreservesCallerItemIDWhitespace(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"caller_item_id":" item "`) {
 		t.Fatalf("stdout missing preserved caller_item_id: %s", stdout)
+	}
+}
+
+func TestInputDeletePreservesCallerItemIDWhitespace(t *testing.T) {
+	const callerItemID = " item "
+	var gotID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/input/delete" {
+			t.Errorf("request = %s %s, want POST /api/input/delete", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("request body was not JSON: %v", err)
+			return
+		}
+		gotID, _ = body["caller_item_id"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"ok":true,"request_id":"req_input_delete","correlation_id":"corr_input_delete","data":{"caller_item_id":%q,"deleted":true}}`, callerItemID)
+	}))
+	defer server.Close()
+
+	_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "delete", callerItemID})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if gotID != callerItemID {
+		t.Fatalf("caller_item_id body = %q, want %q", gotID, callerItemID)
 	}
 }
 

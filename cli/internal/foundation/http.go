@@ -114,11 +114,15 @@ func (c APIClient) do(ctx context.Context, method string, apiPath string, bearer
 
 	var reader io.Reader
 	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
+		// Request JSON must not grow beyond what callers validated against
+		// byte limits, so HTML characters stay unescaped.
+		var data bytes.Buffer
+		encoder := json.NewEncoder(&data)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(body); err != nil {
 			return nil, WrapConfigError("Could not encode API request JSON.", err)
 		}
-		reader = bytes.NewReader(data)
+		reader = bytes.NewReader(bytes.TrimSuffix(data.Bytes(), []byte("\n")))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
