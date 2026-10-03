@@ -145,16 +145,17 @@ Behavior:
 - Accepts the public `/contact` form without caller credentials or a Clerk
   session.
 - Requires a same-origin `Origin` header and `Content-Type: application/json`.
-- Accepts only name, email, topic, message, and the optional hidden company
-  field. Raw strings, before trimming, are limited to 80 UTF-16 code units for
-  name, 254 for email, 16 for topic, 4,000 for message, and 128 for company.
-  Company must be a string that trims to empty; the other strings are trimmed
-  and validated, and email is lowercased. Name requires at least two code units
-  and message at least 20 after trimming; topic must match the allowlist.
+- Accepts name, email, topic, message, and the optional hidden company field;
+  unknown JSON properties are ignored. Strings are trimmed before validation,
+  and email is lowercased. Normalized name is limited to 2–80 UTF-16 code units,
+  email to 254, and message to 20–4,000; trimmed topic must match the allowlist.
+  Company is rejected only when its trimmed string value is nonempty; omitted,
+  nonstring, and whitespace-only company values are ignored.
 - Caps the JSON body at `6 × (80 + 254 + 16 + 4,000) + 1,024` bytes, allowing
-  the bounded fields even when every code unit and property name is escaped as
-  `\uXXXX`. The remaining overhead covers company and JSON syntax. Extra JSON
-  formatting and duplicate property representations remain subject to the same
+  maximum-length normalized fields even when every code unit and property name
+  is escaped as `\uXXXX`. The extra allowance covers JSON syntax, field names,
+  and other body overhead. Raw whitespace, company, ignored properties, JSON
+  formatting, and duplicate property representations remain subject to the same
   cap. Oversized declared or streamed bodies return `400` with `invalid_request`
   without sending email.
 - Applies the `CONTACT_RATE_LIMIT` Cloudflare binding by trusted source IP at

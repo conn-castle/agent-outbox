@@ -22,14 +22,12 @@ const CONTACT_FIELD_MAX_LENGTHS = {
   name: 80,
   email: 254,
   topic: Math.max(...CONTACT_TOPICS.map((topic) => topic.length)),
-  message: 4_000,
-  company: 128
+  message: 4_000
 } as const;
 
-// JSON can spend up to six bytes per UTF-16 code unit, including escaped
-// whitespace. Raw field limits keep trimming from hiding unbounded input.
-// The extra kilobyte covers company (768 bytes), escaped keys and punctuation
-// (189 bytes), and formatting. Arbitrary JSON padding still hits the body cap.
+// JSON can spend up to six bytes per UTF-16 code unit. The extra kilobyte
+// allows for field names, syntax and other overhead. The whole-body cap also
+// bounds raw whitespace, company and ignored properties before normalization.
 export const CONTACT_BODY_BYTE_LIMIT =
   6 *
     (CONTACT_FIELD_MAX_LENGTHS.name +
@@ -121,10 +119,8 @@ function reportContactFailure(
   });
 }
 
-function normalizedString(value: unknown, maxLength: number) {
-  return typeof value === "string" && value.length <= maxLength
-    ? value.trim()
-    : null;
+function normalizedString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function validEmailAddress(value: string) {
@@ -136,35 +132,18 @@ function validEmailAddress(value: string) {
 }
 
 function parseContactSubmission(value: unknown): ContactParseResult {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object") {
     return { ok: false, message: "Complete every field and try again." };
   }
 
   const record = value as Record<string, unknown>;
-  if (
-    Object.keys(record).some(
-      (key) => !Object.hasOwn(CONTACT_FIELD_MAX_LENGTHS, key)
-    )
-  ) {
-    return { ok: false, message: "Complete every field and try again." };
-  }
-  const name =
-    normalizedString(record.name, CONTACT_FIELD_MAX_LENGTHS.name) ?? "";
-  const email =
-    normalizedString(
-      record.email,
-      CONTACT_FIELD_MAX_LENGTHS.email
-    )?.toLowerCase() ?? "";
-  const topic =
-    normalizedString(record.topic, CONTACT_FIELD_MAX_LENGTHS.topic) ?? "";
-  const message =
-    normalizedString(record.message, CONTACT_FIELD_MAX_LENGTHS.message) ?? "";
-  const company =
-    record.company === undefined
-      ? ""
-      : normalizedString(record.company, CONTACT_FIELD_MAX_LENGTHS.company);
+  const name = normalizedString(record.name);
+  const email = normalizedString(record.email).toLowerCase();
+  const topic = normalizedString(record.topic);
+  const message = normalizedString(record.message);
+  const company = normalizedString(record.company);
 
-  if (company !== "") {
+  if (company) {
     return { ok: false, message: "We could not accept that message." };
   }
   if (

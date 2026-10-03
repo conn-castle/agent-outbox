@@ -75,6 +75,62 @@ function contactDependencies(options = {}) {
 }
 
 /**
+ * @param {string} body
+ * @param {"declared" | "streamed"} transport
+ */
+function contactBodyRequest(body, transport) {
+  const template = contactRequest();
+  const headers = new Headers(template.headers);
+  const bytes = new TextEncoder().encode(body);
+  if (transport === "declared") {
+    headers.set("content-length", String(bytes.byteLength));
+  }
+  const init = {
+    method: "POST",
+    headers,
+    body:
+      transport === "declared"
+        ? body
+        : new ReadableStream({
+            start(controller) {
+              controller.enqueue(bytes.slice(0, 17));
+              controller.enqueue(bytes.slice(17));
+              controller.close();
+            }
+          }),
+    duplex: "half"
+  };
+  return new Request(template.url, init);
+}
+
+/**
+ * @param {Request} request
+ * @param {{ name: string, email: string, topic: string, message: string }} expected
+ */
+async function assertContactAcceptance(request, expected) {
+  const { dependencies, sent } = contactDependencies();
+  const response = await handleContactRequest(request, dependencies);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0], {
+    to: CONTACT_DESTINATION,
+    from: CONTACT_SENDER,
+    replyTo: expected.email,
+    subject: `Agent Outbox contact — ${expected.topic}`,
+    text: [
+      "New Agent Outbox website message",
+      "",
+      `Name: ${expected.name}`,
+      `Email: ${expected.email}`,
+      `Topic: ${expected.topic}`,
+      "",
+      expected.message
+    ].join("\n")
+  });
+}
+
+/**
  * Captures structured runtime logs written while `run` executes.
  *
  * @template T
@@ -168,12 +224,12 @@ test("contact submissions accept every field at its maximum length in any script
   }
 });
 
-test("contact submissions accept bounded whitespace even when every string is JSON-escaped", async () => {
+test("contact submissions accept maximum normalized fields even when every string is JSON-escaped", async () => {
   const submission = {
-    name: ` ${"あ".repeat(78)} `,
-    email: ` ${"a".repeat(248)}@a.b `,
-    topic: `${" ".repeat(4)}Billing${" ".repeat(5)}`,
-    message: ` ${"あ".repeat(3_998)} `,
+    name: ` ${"あ".repeat(80)} `,
+    email: ` ${"a".repeat(250)}@a.b `,
+    topic: " Product question ",
+    message: ` ${"あ".repeat(4_000)} `,
     company: "\u3000".repeat(128)
   };
   // Escape every UTF-16 code unit, including whitespace and property names.
@@ -204,7 +260,7 @@ test("contact submissions accept bounded whitespace even when every string is JS
   assert.deepEqual(await response.json(), { ok: true });
   assert.equal(sent.length, 1);
   assert.equal(sent[0].replyTo, submission.email.trim());
-  assert.equal(sent[0].subject, "Agent Outbox contact — Billing");
+  assert.equal(sent[0].subject, "Agent Outbox contact — Product question");
   assert.equal(
     sent[0].text.includes(`Name: ${submission.name.trim()}\n`),
     true
@@ -212,58 +268,126 @@ test("contact submissions accept bounded whitespace even when every string is JS
   assert.equal(sent[0].text.endsWith(`\n\n${submission.message.trim()}`), true);
 });
 
-test("contact submissions reject raw fields that trimming would hide", async () => {
-  for (const [field, value, message] of [
-    ["name", ` ${"a".repeat(80)}`, "Enter your name."],
-    ["email", ` ${"a".repeat(250)}@a.b`, "Enter a valid email address."],
-    ["topic", " Product question", "Choose what you would like to discuss."],
-    [
-      "message",
-      ` ${"a".repeat(4_000)}`,
-      "Write a message between 20 and 4,000 characters."
-    ],
-    ["company", " ".repeat(129), "We could not accept that message."]
-  ]) {
-    const { dependencies, sent } = contactDependencies();
-    const response = await handleContactRequest(
-      contactRequest({ ...VALID_SUBMISSION, [field]: value }),
-      dependencies
-    );
+test("contact submissions preserve trimming before normalized field limits", async (t) => {
+  const maximumFields = {
+    name: "a".repeat(80),
+    email: `${"A".repeat(250)}@A.B`,
+    topic: "Product question",
+    message: "a".repeat(4_000)
+  };
+  for (const [field, value] of Object.entries(maximumFields)) {
+    for (const [padding, rawValue] of [
+      ["leading", ` ${value}`],
+      ["trailing", `${value} `],
+      ["both", ` \t${value}\t `]
+    ]) {
+      const submission = { ...VALID_SUBMISSION, [field]: rawValue };
+      const expected = {
+        ...VALID_SUBMISSION,
+        email: "ada@example.com",
+        [field]: field === "email" ? value.toLowerCase() : value
+      };
+      for (const transport of /** @type {const} */ (["declared", "streamed"])) {
+        await t.test(
+          `${field}, ${padding} whitespace, ${transport}`,
+          async () => {
+            await assertContactAcceptance(
+              contactBodyRequest(JSON.stringify(submission), transport),
+              expected
+            );
+          }
+        );
+      }
+    }
+  }
 
-    assert.equal(response.status, 400);
-    assert.deepEqual(await response.json(), {
-      ok: false,
-      code: "invalid_request",
-      message
+  for (const transport of /** @type {const} */ (["declared", "streamed"])) {
+    await t.test(`combined maximum fields, ${transport}`, async () => {
+      await assertContactAcceptance(
+        contactBodyRequest(
+          JSON.stringify({
+            ...VALID_SUBMISSION,
+            ...Object.fromEntries(
+              Object.entries(maximumFields).map(([field, value]) => [
+                field,
+                ` ${value} `
+              ])
+            )
+          }),
+          transport
+        ),
+        { ...maximumFields, email: maximumFields.email.toLowerCase() }
+      );
     });
-    assert.equal(sent.length, 0);
   }
 });
 
-test("contact submissions reject unbounded representations outside the accepted string fields", async () => {
-  for (const submission of [
-    { ...VALID_SUBMISSION, company: { padding: " ".repeat(128) } },
-    { ...VALID_SUBMISSION, company: null },
-    { ...VALID_SUBMISSION, extra: " ".repeat(128) }
-  ]) {
-    const { dependencies, sent } = contactDependencies();
-    const response = await handleContactRequest(
-      contactRequest(submission),
-      dependencies
-    );
-    assert.equal(response.status, 400);
-    assert.equal((await response.json()).code, "invalid_request");
-    assert.equal(sent.length, 0);
+test("contact submissions preserve empty company normalization and ignored properties", async (t) => {
+  const { company: _company, ...withoutCompany } = VALID_SUBMISSION;
+  const cases = [
+    {
+      label: "129 company spaces",
+      submission: { ...VALID_SUBMISSION, company: " ".repeat(129) }
+    },
+    {
+      label: "1000 company spaces",
+      submission: { ...VALID_SUBMISSION, company: " ".repeat(1_000) }
+    },
+    {
+      label: "null company",
+      submission: { ...VALID_SUBMISSION, company: null }
+    },
+    {
+      label: "object company",
+      submission: { ...VALID_SUBMISSION, company: { padding: " ".repeat(128) } }
+    },
+    {
+      label: "boolean company",
+      submission: { ...VALID_SUBMISSION, company: true }
+    },
+    {
+      label: "number company",
+      submission: { ...VALID_SUBMISSION, company: 42 }
+    },
+    {
+      label: "array company",
+      submission: { ...VALID_SUBMISSION, company: ["ignored"] }
+    },
+    { label: "omitted company", submission: withoutCompany },
+    {
+      label: "extra string",
+      submission: { ...VALID_SUBMISSION, extra: "ignored" }
+    },
+    {
+      label: "extra object",
+      submission: { ...VALID_SUBMISSION, extra: { padding: " ".repeat(128) } }
+    }
+  ];
+  for (const { label, submission } of cases) {
+    for (const transport of /** @type {const} */ (["declared", "streamed"])) {
+      await t.test(`${label}, ${transport}`, async () => {
+        await assertContactAcceptance(
+          contactBodyRequest(JSON.stringify(submission), transport),
+          { ...VALID_SUBMISSION, email: "ada@example.com" }
+        );
+      });
+    }
   }
+});
 
-  const { company: _company, ...submission } = VALID_SUBMISSION;
-  const { dependencies, sent } = contactDependencies();
-  const response = await handleContactRequest(
-    contactRequest(submission),
-    dependencies
-  );
-  assert.equal(response.status, 200);
-  assert.equal(sent.length, 1);
+test("contact submissions accept JSON formatting and ignored properties at the byte limit", async () => {
+  assert.equal(CONTACT_BODY_BYTE_LIMIT, 27_124);
+  const body = JSON.stringify({
+    ...VALID_SUBMISSION,
+    extra: { ignored: true }
+  });
+  const padded = body + " ".repeat(CONTACT_BODY_BYTE_LIMIT - body.length);
+  for (const transport of /** @type {const} */ (["declared", "streamed"])) {
+    await assertContactAcceptance(contactBodyRequest(padded, transport), {
+      ...VALID_SUBMISSION,
+      email: "ada@example.com"
+    });
+  }
 });
 
 test("contact submissions reject bodies over the byte limit", async () => {
@@ -327,9 +451,13 @@ test("contact submissions reject cross-origin and malformed input", async () => 
 
   for (const body of [
     { ...VALID_SUBMISSION, name: "A" },
+    { ...VALID_SUBMISSION, name: ` ${"a".repeat(81)} ` },
+    { ...VALID_SUBMISSION, name: "Ada\nLovelace" },
     { ...VALID_SUBMISSION, email: "not-an-email" },
+    { ...VALID_SUBMISSION, email: ` ${"a".repeat(251)}@a.b ` },
     { ...VALID_SUBMISSION, topic: "Injected subject" },
     { ...VALID_SUBMISSION, message: "Too short" },
+    { ...VALID_SUBMISSION, message: ` ${"a".repeat(4_001)} ` },
     { ...VALID_SUBMISSION, company: "spam" }
   ]) {
     const { dependencies, sent } = contactDependencies();
