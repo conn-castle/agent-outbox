@@ -223,7 +223,9 @@ Human-review decisions are projected into the visible queue immediately and then
 synchronized in FIFO order through the authenticated mutation endpoint; the
 database remains canonical, and the journal is not offline storage. This
 ordering preserves every rapid intent and avoids conflicting concurrent writes
-to fixture or server state.
+to fixture or server state. A submission whose items all have writes still
+queued or syncing is ignored as a repeat; once those writes settle, the items
+can be submitted again.
 
 The queue projects the latest journal action for each item. Confirmed writes
 supersede earlier actions only for the items they changed; earlier state remains

@@ -150,6 +150,172 @@ for (const outcome of ["all", "partial", "none"] as const) {
   });
 }
 
+for (const outcome of ["partial", "none"] as const) {
+  test(`bulk apply can be resubmitted after a ${outcome === "partial" ? "partially" : "fully"} failed bulk answer`, async ({
+    page
+  }) => {
+    const initial = await openQueue(page);
+    await selectRows(page, [permit, followUp]);
+    await page.route("**/human/mutations", (route) =>
+      bulkFailure(route, outcome)
+    );
+    const failed = mutationResponse(page);
+    await applyBulk(page);
+    await failed;
+    await expect(page.locator(".last-action-error")).toContainText(
+      outcome === "partial" ? "1 failed" : "2 not answered"
+    );
+    await page.unroute("**/human/mutations");
+    await expectQueueMembership(
+      page,
+      outcome === "partial"
+        ? initial.filter((title) => title !== permit)
+        : initial
+    );
+    // Only the failed rows stay selected; none are reported as off-page.
+    await expect(page.locator(".bulk-actions")).toContainText(
+      outcome === "partial"
+        ? "1 selected pending row"
+        : "2 selected pending rows"
+    );
+    await expect(page.locator(".bulk-actions")).not.toContainText(
+      "other pages"
+    );
+
+    const retried = mutationResponse(page);
+    await page
+      .getByRole("button", {
+        name:
+          outcome === "partial"
+            ? "Apply Approve follow-up"
+            : "Apply Approve permit brief",
+        exact: true
+      })
+      .click();
+    expect((await retried).ok()).toBe(true);
+    const pending = initial.filter(
+      (title) => title !== permit && title !== followUp
+    );
+    await expectQueueMembership(page, pending);
+    await page.reload();
+    await expectHydrated(page);
+    await expectQueueMembership(page, pending);
+  });
+}
+
+test("a timed-out bulk answer that committed leaves the selection", async ({
+  page
+}) => {
+  await page.addInitScript(() => {
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    AbortSignal.timeout = (ms: number) =>
+      originalTimeout(ms === 20_000 ? 50 : ms);
+  });
+  const initial = await openQueue(page);
+  await selectRows(page, [permit]);
+  await expect(page.locator(".bulk-actions")).toContainText(
+    "1 selected pending row"
+  );
+  let markCommitted!: () => void;
+  const committed = new Promise<void>((resolve) => {
+    markCommitted = resolve;
+  });
+  await page.route("**/human**", async (route) => {
+    const request = route.request();
+    if (
+      request.method() === "POST" &&
+      request.url().endsWith("/human/mutations")
+    ) {
+      // The write commits, but its response never reaches the timed-out client.
+      await route.fetch();
+      markCommitted();
+      return;
+    }
+    if (request.method() === "GET" && request.headers()["rsc"] === "1")
+      await committed;
+    await route.continue();
+  });
+  const aborted = page.waitForEvent("requestfailed", (request) =>
+    request.url().endsWith("/human/mutations")
+  );
+  await applyBulk(page);
+  await aborted;
+  await committed;
+  await expectQueueMembership(
+    page,
+    initial.filter((title) => title !== permit)
+  );
+  await expect(page.locator(".bulk-actions")).toHaveCount(0);
+});
+
+test("repeated bulk apply before the queue updates sends one request", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  await selectRows(page, [permit, followUp]);
+  let requests = 0;
+  page.on("request", (request) => {
+    if (
+      request.url().endsWith("/human/mutations") &&
+      request.method() === "POST"
+    )
+      requests += 1;
+  });
+  const response = mutationResponse(page);
+  // Both clicks run in one task, before any optimistic render can disable it.
+  await page
+    .getByRole("button", { name: "Apply Approve permit brief", exact: true })
+    .evaluate((button: HTMLButtonElement) => {
+      button.click();
+      button.click();
+    });
+  expect((await response).ok()).toBe(true);
+  const pending = initial.filter(
+    (title) => title !== permit && title !== followUp
+  );
+  await expectQueueMembership(page, pending);
+  await page.reload();
+  await expectHydrated(page);
+  await expectQueueMembership(page, pending);
+  expect(requests).toBe(1);
+});
+
+test("bulk apply answers a new selection after a successful bulk answer", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  await selectRows(page, [permit]);
+  const first = mutationResponse(page);
+  await applyBulk(page);
+  expect((await first).ok()).toBe(true);
+  await expectQueueMembership(
+    page,
+    initial.filter((title) => title !== permit)
+  );
+  // Answered rows leave the selection, so none are reported as off-page.
+  await expect(page.locator(".bulk-actions")).toHaveCount(0);
+
+  await row(page, followUp)
+    .getByRole("checkbox", { name: "Select review" })
+    .check();
+  await expect(page.locator(".bulk-actions")).toContainText(
+    "1 selected pending row"
+  );
+  await expect(page.locator(".bulk-actions")).not.toContainText("other pages");
+  const second = mutationResponse(page);
+  await page
+    .getByRole("button", { name: "Apply Approve follow-up", exact: true })
+    .click();
+  expect((await second).ok()).toBe(true);
+  const pending = initial.filter(
+    (title) => title !== permit && title !== followUp
+  );
+  await expectQueueMembership(page, pending);
+  await page.reload();
+  await expectHydrated(page);
+  await expectQueueMembership(page, pending);
+});
+
 test("rejected undo keeps every answered item in History and restores no queue rows", async ({
   page
 }) => {
@@ -292,6 +458,21 @@ async function showTools(page: Page) {
     (await tools.getAttribute("aria-expanded")) !== "true"
   )
     await tools.click();
+}
+
+async function selectRows(page: Page, titles: string[]) {
+  await showTools(page);
+  await page.getByRole("button", { name: "Select items", exact: true }).click();
+  for (const title of titles)
+    await row(page, title)
+      .getByRole("checkbox", { name: "Select review" })
+      .check();
+}
+
+async function applyBulk(page: Page) {
+  await page
+    .getByRole("button", { name: "Apply Approve permit brief", exact: true })
+    .click();
 }
 
 async function sortByTitle(page: Page) {
