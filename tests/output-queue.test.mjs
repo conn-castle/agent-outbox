@@ -903,6 +903,94 @@ test("output request wrappers reject malformed requests before the transaction",
   }
 });
 
+test("output requests reject values Postgres cannot store before the transaction", async () => {
+  // Postgres rejects NUL in text and year 0000 in timestamptz. Reaching SQL
+  // with them would surface as a reported 503, so they must fail validation
+  // even with no database configured.
+  const previous = process.env.DATABASE_APP_ROLE_URL;
+  delete process.env.DATABASE_APP_ROLE_URL;
+  try {
+    const nulIdError = {
+      ok: false,
+      error: {
+        status: 422,
+        code: "validation_failed",
+        message: "Output queue request failed validation.",
+        fields: [
+          {
+            path: "output_result_id",
+            code: "invalid_string",
+            message:
+              "output_result_id must be well-formed Unicode without NUL characters."
+          }
+        ]
+      }
+    };
+    assert.deepEqual(
+      await handleOutputReadRequest(
+        new Request("https://api.test/api/output/read", { method: "POST" }),
+        context,
+        `${outputOneId}\u0000`
+      ),
+      nulIdError
+    );
+    assert.deepEqual(
+      await handleOutputAckRequest(
+        new Request("https://api.test/api/output/ack", { method: "POST" }),
+        context,
+        "a\u0000b"
+      ),
+      nulIdError
+    );
+
+    const yearZeroCursor = Buffer.from(
+      JSON.stringify({
+        answered_at: "0000-01-01T00:00:00Z",
+        output_result_id: outputOneId
+      }),
+      "utf8"
+    ).toString("base64url");
+    const invalidCursorError = {
+      ok: false,
+      error: {
+        status: 422,
+        code: "validation_failed",
+        message: "Output queue request failed validation.",
+        fields: [
+          {
+            path: "cursor",
+            code: "invalid_cursor",
+            message: "cursor is invalid or expired."
+          }
+        ]
+      }
+    };
+    assert.deepEqual(
+      await handleOutputCheckRequest(
+        new Request(
+          `https://api.test/api/output/check?cursor=${yearZeroCursor}`
+        ),
+        context
+      ),
+      invalidCursorError
+    );
+    assert.deepEqual(
+      await handleOutputReadAllRequest(
+        new Request("https://api.test/api/output/read-all", { method: "POST" }),
+        context,
+        { cursor: yearZeroCursor }
+      ),
+      invalidCursorError
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previous;
+    }
+  }
+});
+
 /**
  * @param {string | null} cursor
  */

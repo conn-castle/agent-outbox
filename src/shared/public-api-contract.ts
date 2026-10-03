@@ -1042,7 +1042,7 @@ export const PUBLIC_API_OPERATIONS = [
       "Use output_result_id as the idempotency key for downstream work."
     ],
     responseSchema: "OutputResultResponse",
-    errorStatuses: [400, 401, 404, 429, 503],
+    errorStatuses: [400, 401, 404, 422, 429, 503],
     responseExampleKey: "readSuccess",
     pathParameters: [
       {
@@ -1084,7 +1084,7 @@ export const PUBLIC_API_OPERATIONS = [
       "Duplicate acknowledgement is a successful no-op when retained audit data proves the prior acknowledgement."
     ],
     responseSchema: "OutputAckResponse",
-    errorStatuses: [400, 401, 404, 429, 503],
+    errorStatuses: [400, 401, 404, 422, 429, 503],
     pathParameters: [
       {
         name: "output_result_id",
@@ -1104,7 +1104,7 @@ export const PUBLIC_API_OPERATIONS = [
       "Treat the stored MIME type as advisory.",
       "Downloads are unavailable after acknowledgement or retention cleanup."
     ],
-    errorStatuses: [401, 404, 429, 503],
+    errorStatuses: [400, 401, 404, 422, 429, 503],
     pathParameters: [
       {
         name: "output_result_id",

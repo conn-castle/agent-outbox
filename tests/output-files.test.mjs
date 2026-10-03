@@ -4,6 +4,7 @@ import test from "node:test";
 import { consumesMonthlyCallerApiRequestQuota } from "../src/server/accounting.ts";
 import {
   handleOutputFileDownloadAuthenticatedTransaction,
+  handleOutputFileDownloadRequest,
   outputFileDownloadAuditStatement,
   outputFileDownloadHeaders,
   outputFileDownloadInTransaction,
@@ -186,6 +187,49 @@ test("output file download reports not found without audit when ids do not match
       }
     });
     assert.equal(query.calls.length, rowsByCall.length);
+  }
+});
+
+test("output file download rejects ids Postgres cannot store before the transaction", async () => {
+  // A NUL in either id would fail in SQL and surface as a reported 503, so it
+  // must fail validation even with no database configured.
+  const previous = process.env.DATABASE_APP_ROLE_URL;
+  delete process.env.DATABASE_APP_ROLE_URL;
+  try {
+    const result = await handleOutputFileDownloadRequest(
+      new Request("https://api.test/api/output/x/files/y"),
+      context,
+      { outputResultId: "a\u0000b", fileId: `${path.fileId}\u0000` }
+    );
+
+    assert.deepEqual(result, {
+      ok: false,
+      error: {
+        status: 422,
+        code: "validation_failed",
+        message: "Output file download request failed validation.",
+        fields: [
+          {
+            path: "output_result_id",
+            code: "invalid_string",
+            message:
+              "output_result_id must be well-formed Unicode without NUL characters."
+          },
+          {
+            path: "file_id",
+            code: "invalid_string",
+            message:
+              "file_id must be well-formed Unicode without NUL characters."
+          }
+        ]
+      }
+    });
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previous;
+    }
   }
 });
 

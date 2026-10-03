@@ -1935,6 +1935,32 @@ test("human action form parser rejects malformed hidden fields before database w
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
 });
 
+test("human answer forms reject NUL values that Postgres cannot store", () => {
+  const nonAscii = answerForm();
+  nonAscii.set("response.text", "Approuvé — ✓");
+  nonAscii.set("feedback", "Merci 🙏");
+  assert.equal(parseHumanAnswerForm(nonAscii).ok, true);
+
+  for (const [key, value] of [
+    ["actionValue", "approve\0"],
+    ["response.text", "Approved\0"],
+    ["feedback", "Keep\0this"]
+  ]) {
+    const form = answerForm();
+    form.set(key, value);
+    assert.deepEqual(parseHumanAnswerForm(form), { ok: false }, key);
+  }
+
+  for (const [key, value] of [
+    ["bulkActionValue", "approve\0"],
+    [`feedback.${inputItemId}`, "Bulk\0qualification."]
+  ]) {
+    const form = bulkForm();
+    form.set(key, value);
+    assert.deepEqual(parseBulkHumanAnswersForm(form), { ok: false }, key);
+  }
+});
+
 test("human forms accept independent feedback and reject non-text or duplicate feedback", () => {
   const form = answerForm();
   form.set("feedback", "Keep this qualification.");

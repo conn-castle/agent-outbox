@@ -488,6 +488,11 @@ Successful output route responses include `Cache-Control: no-store`. Read
 responses can contain human-provided answers, file metadata, or raw file bytes
 and must not be cached.
 
+Path ids (`output_result_id`, `file_id`) containing U+0000 or lone surrogates
+are rejected with 422 `validation_failed` (`invalid_string`) before rate-limit
+accounting. A cursor that cannot be decoded to a valid position is rejected with
+422 `validation_failed` (`invalid_cursor`).
+
 ### Check Output
 
 ```http

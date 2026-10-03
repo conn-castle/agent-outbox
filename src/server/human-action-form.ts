@@ -1,5 +1,5 @@
 import type { HumanActionResponse } from "./human-answer.ts";
-import type { PopupKind } from "./input-schema.ts";
+import { isStorableString, type PopupKind } from "./input-schema.ts";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -45,6 +45,9 @@ export type BulkAnswerItem = {
 export function parseHumanAnswerForm(
   formData: FormData
 ): ParsedHumanAnswerForm {
+  if (hasUnstorableString(formData)) {
+    return { ok: false };
+  }
   const inputItemId = uuidField(formData, "inputItemId");
   const callerId = uuidField(formData, "callerId");
   const expectedRevision = integerField(formData, "expectedRevision");
@@ -81,6 +84,9 @@ export function parseHumanAnswerForm(
 export function parseBulkHumanAnswersForm(
   formData: FormData
 ): ParsedBulkHumanAnswersForm {
+  if (hasUnstorableString(formData)) {
+    return { ok: false };
+  }
   const actionValue = stringField(formData, "bulkActionValue");
   if (!actionValue) {
     return { ok: false };
@@ -202,6 +208,16 @@ function popupKindField(formData: FormData): PopupKind | null {
     return value;
   }
   return null;
+}
+
+// Answer values reach Postgres text and jsonb, which cannot hold NUL.
+function hasUnstorableString(formData: FormData) {
+  for (const value of formData.values()) {
+    if (typeof value === "string" && !isStorableString(value)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function stringField(formData: FormData, key: string) {

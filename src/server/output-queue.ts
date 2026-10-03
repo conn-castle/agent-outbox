@@ -17,7 +17,11 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import type { JsonValue, OutputResponseKind } from "./human-answer.ts";
-import { isValidUtcDateTime } from "./input-schema.ts";
+import {
+  isStorableString,
+  isValidUtcDateTime,
+  unstorableStringError
+} from "./input-schema.ts";
 import {
   runGuardedCallerTransaction,
   type CallerIdentity
@@ -192,6 +196,9 @@ export async function handleOutputReadRequest(
   if (!outputResultId) {
     return outputResultIdRequiredError();
   }
+  if (!isStorableString(outputResultId)) {
+    return validationFailed([unstorableStringError("output_result_id")]);
+  }
 
   return runGuardedCallerTransaction(
     request,
@@ -233,6 +240,9 @@ export async function handleOutputAckRequest(
 ): Promise<OutputQueueResult> {
   if (!outputResultId) {
     return outputResultIdRequiredError();
+  }
+  if (!isStorableString(outputResultId)) {
+    return validationFailed([unstorableStringError("output_result_id")]);
   }
 
   return runGuardedCallerTransaction(
@@ -851,6 +861,8 @@ function parseCursor(value: unknown) {
       typeof parsed.answered_at === "string" &&
       typeof parsed.output_result_id === "string" &&
       isValidUtcDateTime(parsed.answered_at) &&
+      // Postgres timestamptz has no year 0000.
+      !parsed.answered_at.startsWith("0000-") &&
       UUID_PATTERN.test(parsed.output_result_id)
     ) {
       return {
