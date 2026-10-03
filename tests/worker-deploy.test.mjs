@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync
 } from "node:fs";
@@ -339,6 +340,50 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
     rmSync(tempBase, { force: true, recursive: true });
   }
 });
+
+for (const failingStep of ["dry-run", "upload"]) {
+  test(`worker deploy wrapper reports wrangler output when the ${failingStep} fails and removes temp files`, () => {
+    const tempBase = mkdtempSync(
+      path.join(os.tmpdir(), "agent-outbox-worker-deploy-test-")
+    );
+    try {
+      assert.throws(
+        () =>
+          runWorkerVersionUpload({
+            env: workerDeployEnv(),
+            tempBase,
+            spawnSyncImpl(_command, args) {
+              const step = args.includes("--dry-run") ? "dry-run" : "upload";
+              const fails = args.includes("versions") && step === failingStep;
+              return {
+                status: fails ? 1 : 0,
+                signal: null,
+                error: undefined,
+                stdout: fails ? `wrangler ${step} progress\n` : "",
+                stderr: fails ? `X [ERROR] ${step} binding rejected\n` : ""
+              };
+            }
+          }),
+        (error) => {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, /failed with status 1:\n/);
+          assert.match(
+            error.message,
+            new RegExp(`wrangler ${failingStep} progress`)
+          );
+          assert.match(
+            error.message,
+            new RegExp(`X \\[ERROR\\] ${failingStep} binding rejected`)
+          );
+          return true;
+        }
+      );
+      assert.deepEqual(readdirSync(tempBase), []);
+    } finally {
+      rmSync(tempBase, { force: true, recursive: true });
+    }
+  });
+}
 
 test("worker deploy secrets file writes raw dotenv values and rejects ambiguous characters", () => {
   const content = secretsDotenvContent(workerDeployEnv());
