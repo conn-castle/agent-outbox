@@ -18,19 +18,24 @@ const CONTACT_TOPICS = [
 
 type ContactTopic = (typeof CONTACT_TOPICS)[number];
 
-const CONTACT_NAME_MAX_LENGTH = 80;
-const CONTACT_EMAIL_MAX_LENGTH = 254;
-const CONTACT_MESSAGE_MAX_LENGTH = 4_000;
+const CONTACT_FIELD_MAX_LENGTHS = {
+  name: 80,
+  email: 254,
+  topic: Math.max(...CONTACT_TOPICS.map((topic) => topic.length)),
+  message: 4_000,
+  company: 128
+} as const;
 
-// JSON can spend up to six bytes on one UTF-16 code unit ("\u0001"), so the
-// cap admits every submission whose fields pass validation. The extra
-// kilobyte covers field names, punctuation, and the empty company field.
+// JSON can spend up to six bytes per UTF-16 code unit, including escaped
+// whitespace. Raw field limits keep trimming from hiding unbounded input.
+// The extra kilobyte covers company (768 bytes), escaped keys and punctuation
+// (189 bytes), and formatting. Arbitrary JSON padding still hits the body cap.
 export const CONTACT_BODY_BYTE_LIMIT =
   6 *
-    (CONTACT_NAME_MAX_LENGTH +
-      CONTACT_EMAIL_MAX_LENGTH +
-      Math.max(...CONTACT_TOPICS.map((topic) => topic.length)) +
-      CONTACT_MESSAGE_MAX_LENGTH) +
+    (CONTACT_FIELD_MAX_LENGTHS.name +
+      CONTACT_FIELD_MAX_LENGTHS.email +
+      CONTACT_FIELD_MAX_LENGTHS.topic +
+      CONTACT_FIELD_MAX_LENGTHS.message) +
   1_024;
 
 export type ContactSubmission = {
@@ -116,36 +121,55 @@ function reportContactFailure(
   });
 }
 
-function normalizedString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
+function normalizedString(value: unknown, maxLength: number) {
+  return typeof value === "string" && value.length <= maxLength
+    ? value.trim()
+    : null;
 }
 
 function validEmailAddress(value: string) {
   return (
-    value.length <= CONTACT_EMAIL_MAX_LENGTH &&
+    value.length <= CONTACT_FIELD_MAX_LENGTHS.email &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) &&
     !/[\r\n]/.test(value)
   );
 }
 
 function parseContactSubmission(value: unknown): ContactParseResult {
-  if (!value || typeof value !== "object") {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ok: false, message: "Complete every field and try again." };
   }
 
   const record = value as Record<string, unknown>;
-  const name = normalizedString(record.name);
-  const email = normalizedString(record.email).toLowerCase();
-  const topic = normalizedString(record.topic);
-  const message = normalizedString(record.message);
-  const company = normalizedString(record.company);
+  if (
+    Object.keys(record).some(
+      (key) => !Object.hasOwn(CONTACT_FIELD_MAX_LENGTHS, key)
+    )
+  ) {
+    return { ok: false, message: "Complete every field and try again." };
+  }
+  const name =
+    normalizedString(record.name, CONTACT_FIELD_MAX_LENGTHS.name) ?? "";
+  const email =
+    normalizedString(
+      record.email,
+      CONTACT_FIELD_MAX_LENGTHS.email
+    )?.toLowerCase() ?? "";
+  const topic =
+    normalizedString(record.topic, CONTACT_FIELD_MAX_LENGTHS.topic) ?? "";
+  const message =
+    normalizedString(record.message, CONTACT_FIELD_MAX_LENGTHS.message) ?? "";
+  const company =
+    record.company === undefined
+      ? ""
+      : normalizedString(record.company, CONTACT_FIELD_MAX_LENGTHS.company);
 
-  if (company) {
+  if (company !== "") {
     return { ok: false, message: "We could not accept that message." };
   }
   if (
     name.length < 2 ||
-    name.length > CONTACT_NAME_MAX_LENGTH ||
+    name.length > CONTACT_FIELD_MAX_LENGTHS.name ||
     /[\r\n]/.test(name)
   ) {
     return { ok: false, message: "Enter your name." };
@@ -156,7 +180,10 @@ function parseContactSubmission(value: unknown): ContactParseResult {
   if (!CONTACT_TOPICS.includes(topic as ContactTopic)) {
     return { ok: false, message: "Choose what you would like to discuss." };
   }
-  if (message.length < 20 || message.length > CONTACT_MESSAGE_MAX_LENGTH) {
+  if (
+    message.length < 20 ||
+    message.length > CONTACT_FIELD_MAX_LENGTHS.message
+  ) {
     return {
       ok: false,
       message: "Write a message between 20 and 4,000 characters."

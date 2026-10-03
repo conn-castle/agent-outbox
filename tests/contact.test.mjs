@@ -33,7 +33,7 @@ const VALID_SUBMISSION = {
 };
 
 /**
- * @param {Record<string, string>} [body]
+ * @param {Record<string, unknown>} [body]
  * @param {ContactRequestOptions} [options]
  */
 function contactRequest(body = VALID_SUBMISSION, options = {}) {
@@ -147,12 +147,12 @@ test("contact submissions send a bounded message to the studio inbox", async () 
 
 test("contact submissions accept every field at its maximum length in any script", async () => {
   // "あ" is three UTF-8 bytes; "\u0001" is six bytes once JSON-escaped.
-  for (const character of ["あ", "\u0001"]) {
+  for (const character of ["あ", "\u0001", "😀"]) {
     const submission = {
-      name: character.repeat(80),
-      email: `${character.repeat(250)}@${character}.${character}`,
+      name: character.repeat(80 / character.length),
+      email: `${character.repeat((252 - 2 * character.length) / character.length)}@${character}.${character}`,
       topic: "Product question",
-      message: character.repeat(4_000),
+      message: character.repeat(4_000 / character.length),
       company: ""
     };
     const { dependencies, sent } = contactDependencies();
@@ -166,6 +166,104 @@ test("contact submissions accept every field at its maximum length in any script
     assert.equal(sent[0].replyTo, submission.email);
     assert.equal(sent[0].text.endsWith(`\n\n${submission.message}`), true);
   }
+});
+
+test("contact submissions accept bounded whitespace even when every string is JSON-escaped", async () => {
+  const submission = {
+    name: ` ${"あ".repeat(78)} `,
+    email: ` ${"a".repeat(248)}@a.b `,
+    topic: `${" ".repeat(4)}Billing${" ".repeat(5)}`,
+    message: ` ${"あ".repeat(3_998)} `,
+    company: "\u3000".repeat(128)
+  };
+  // Escape every UTF-16 code unit, including whitespace and property names.
+  const escapedString = (/** @type {string} */ value) =>
+    `"${value
+      .split("")
+      .map(
+        (character) =>
+          `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`
+      )
+      .join("")}"`;
+  const body = `{${Object.entries(submission)
+    .map(([key, value]) => `${escapedString(key)}:${escapedString(value)}`)
+    .join(",")}}`;
+  const request = new Request(contactRequest(), {
+    headers: {
+      "content-type": "application/json",
+      "content-length": String(new TextEncoder().encode(body).byteLength),
+      origin: "https://app.agent-outbox.dev",
+      "cf-connecting-ip": "203.0.113.27"
+    },
+    body
+  });
+  const { dependencies, sent } = contactDependencies();
+  const response = await handleContactRequest(request, dependencies);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].replyTo, submission.email.trim());
+  assert.equal(sent[0].subject, "Agent Outbox contact — Billing");
+  assert.equal(
+    sent[0].text.includes(`Name: ${submission.name.trim()}\n`),
+    true
+  );
+  assert.equal(sent[0].text.endsWith(`\n\n${submission.message.trim()}`), true);
+});
+
+test("contact submissions reject raw fields that trimming would hide", async () => {
+  for (const [field, value, message] of [
+    ["name", ` ${"a".repeat(80)}`, "Enter your name."],
+    ["email", ` ${"a".repeat(250)}@a.b`, "Enter a valid email address."],
+    ["topic", " Product question", "Choose what you would like to discuss."],
+    [
+      "message",
+      ` ${"a".repeat(4_000)}`,
+      "Write a message between 20 and 4,000 characters."
+    ],
+    ["company", " ".repeat(129), "We could not accept that message."]
+  ]) {
+    const { dependencies, sent } = contactDependencies();
+    const response = await handleContactRequest(
+      contactRequest({ ...VALID_SUBMISSION, [field]: value }),
+      dependencies
+    );
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      code: "invalid_request",
+      message
+    });
+    assert.equal(sent.length, 0);
+  }
+});
+
+test("contact submissions reject unbounded representations outside the accepted string fields", async () => {
+  for (const submission of [
+    { ...VALID_SUBMISSION, company: { padding: " ".repeat(128) } },
+    { ...VALID_SUBMISSION, company: null },
+    { ...VALID_SUBMISSION, extra: " ".repeat(128) }
+  ]) {
+    const { dependencies, sent } = contactDependencies();
+    const response = await handleContactRequest(
+      contactRequest(submission),
+      dependencies
+    );
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, "invalid_request");
+    assert.equal(sent.length, 0);
+  }
+
+  const { company: _company, ...submission } = VALID_SUBMISSION;
+  const { dependencies, sent } = contactDependencies();
+  const response = await handleContactRequest(
+    contactRequest(submission),
+    dependencies
+  );
+  assert.equal(response.status, 200);
+  assert.equal(sent.length, 1);
 });
 
 test("contact submissions reject bodies over the byte limit", async () => {
@@ -189,7 +287,10 @@ test("contact submissions reject bodies over the byte limit", async () => {
     },
     body: new ReadableStream({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode(oversized));
+        controller.enqueue(new TextEncoder().encode(body));
+        controller.enqueue(
+          new TextEncoder().encode(oversized.slice(body.length))
+        );
         controller.close();
       }
     }),
@@ -204,7 +305,11 @@ test("contact submissions reject bodies over the byte limit", async () => {
     const { dependencies, sent } = contactDependencies();
     const response = await handleContactRequest(request, dependencies);
     assert.equal(response.status, 400);
-    assert.equal((await response.json()).code, "invalid_request");
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      code: "invalid_request",
+      message: "Complete every field and try again."
+    });
     assert.equal(sent.length, 0);
   }
 });
