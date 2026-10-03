@@ -29,6 +29,7 @@ import {
   handleConnectDevicePollRequest,
   handleConnectExchangeRequest
 } from "../src/server/caller-connect.ts";
+import { handleRevokeConfirmRequest } from "../src/server/caller-credential-operations.ts";
 import { runProductTransaction } from "../src/server/database.ts";
 import {
   assertMigrationOwnerCanSetAppRole,
@@ -216,6 +217,295 @@ test(
   }
 );
 
+test(
+  "revoke confirmed during connect activation waits for it and revokes the activated key",
+  {
+    skip: phase3DatabaseVerificationUrl()
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const databaseUrl = phase3DatabaseVerificationUrl();
+    assert.ok(databaseUrl);
+    const accountId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    const callerId = crypto.randomUUID();
+    const connectSetupRequestId = crypto.randomUUID();
+    const revokeSetupCode = `revoke-race-${crypto.randomUUID()}`;
+    const clientIp = "198.51.100.73";
+    const client = new pg.Client({
+      application_name: "agent-outbox-connect-revoke-race-verification",
+      connectionString: databaseUrl
+    });
+    await client.connect();
+    const activateRequestId = `req-connect-revoke-race-activate-${accountId}`;
+    const revokeRequestId = `req-connect-revoke-race-revoke-${accountId}`;
+    /** @type {PromiseWithResolvers<number>} */
+    const activationUpdated = Promise.withResolvers();
+    /** @type {PromiseWithResolvers<void>} */
+    const resumeActivation = Promise.withResolvers();
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await assertMigrationOwnerCanSetAppRole(client);
+      await withProcessEnv(
+        {
+          CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+          DATABASE_APP_ROLE_URL: databaseUrl
+        },
+        async () => {
+          const material = generateCallerApiKeyMaterial();
+          await client.query(
+            `insert into public.agent_outbox_accounts(account_id, label) values ($1, $2)`,
+            [accountId, `connect-revoke-race-${accountId}`]
+          );
+          await client.query(
+            `insert into public.agent_outbox_users(user_id, clerk_user_id) values ($1, $2)`,
+            [userId, `connect-revoke-race-${userId}`]
+          );
+          await client.query(
+            `insert into public.agent_outbox_account_members(account_id, user_id, role) values ($1, $2, 'owner')`,
+            [accountId, userId]
+          );
+          await client.query(
+            `
+              insert into public.agent_outbox_callers(
+                caller_id, account_id, display_name, caller_slug
+              )
+              values ($1, $2, 'Race Caller', 'race-caller')
+            `,
+            [callerId, accountId]
+          );
+          await client.query(
+            `
+              insert into public.agent_outbox_caller_setup_requests(
+                setup_request_id, operation, flow, local_caller_name,
+                display_name, callback_url, account_id, caller_id,
+                approved_by_user_id, status, expires_at
+              )
+              values ($1, 'connect', 'browser', 'race-caller', 'Race Caller',
+                'http://127.0.0.1:49152/callback', $2, $3, $4, 'exchanged',
+                now() + interval '10 minutes')
+            `,
+            [connectSetupRequestId, accountId, callerId, userId]
+          );
+          await client.query(
+            `
+              insert into public.agent_outbox_caller_credentials(
+                account_id, caller_id, key_id, key_prefix, key_last_four,
+                secret_hmac_sha256, status, expires_at,
+                pending_replacement_setup_request_id
+              )
+              values ($1, $2, $3, $4, $5, $6, 'pending_activation',
+                now() + interval '10 minutes', $7)
+            `,
+            [
+              accountId,
+              callerId,
+              material.keyId,
+              material.keyPrefix,
+              material.keyLastCharacters,
+              material.secretDigest,
+              connectSetupRequestId
+            ]
+          );
+          await client.query(
+            `
+              insert into public.agent_outbox_caller_setup_requests(
+                operation, flow, local_caller_name, display_name,
+                callback_url, setup_code_hash, account_id, caller_id,
+                approved_by_user_id, status, expires_at
+              )
+              values ('revoke', 'browser', 'race-caller', 'Race Caller',
+                'http://127.0.0.1:49152/callback', $1, $2, $3, $4,
+                'approved', now() + interval '10 minutes')
+            `,
+            [
+              callerSetupCodeDigest(revokeSetupCode),
+              accountId,
+              callerId,
+              userId
+            ]
+          );
+
+          /** @type {typeof runProductTransaction} */
+          const appRoleTransaction = (
+            _connectionString,
+            context,
+            callback,
+            options
+          ) =>
+            runProductTransaction(
+              databaseUrl,
+              context,
+              async (query) => {
+                await query({ sql: "set local role agent_outbox_app" });
+                return callback(async (statement) => {
+                  const result = await query(statement);
+                  // Hold the activation transaction open after its UPDATE so
+                  // revoke confirmation runs while activation is uncommitted.
+                  if (
+                    context.authSurface === "caller" &&
+                    /status = 'active',\s+activated_at = now\(\)/.test(
+                      statement.sql
+                    )
+                  ) {
+                    const backend = await query({
+                      sql: "select pg_backend_pid() as pid"
+                    });
+                    activationUpdated.resolve(backend.rows[0].pid);
+                    await resumeActivation.promise;
+                  }
+                  return /** @type {any} */ (result);
+                });
+              },
+              options
+            );
+
+          const activation = handleConnectActivateRequest(
+            new Request(
+              "https://app.agent-outbox.dev/api/caller/connect/activate",
+              {
+                headers: {
+                  "cf-connecting-ip": clientIp,
+                  authorization: `Bearer ${material.plaintextApiKey}`
+                }
+              }
+            ),
+            {
+              requestId: activateRequestId,
+              correlationId: "corr-connect-revoke-race-activate"
+            },
+            { setup_request_id: connectSetupRequestId },
+            { runProductTransaction: appRoleTransaction }
+          );
+          const activationPid = await Promise.race([
+            activationUpdated.promise,
+            activation.then((result) =>
+              assert.fail(
+                `activation finished before its UPDATE paused: ${JSON.stringify(result)}`
+              )
+            )
+          ]);
+
+          const revoke = handleRevokeConfirmRequest(
+            new Request(
+              "https://app.agent-outbox.dev/api/caller/revoke/confirm",
+              { headers: { "cf-connecting-ip": clientIp } }
+            ),
+            {
+              requestId: revokeRequestId,
+              correlationId: "corr-connect-revoke-race-revoke"
+            },
+            { setup_code: revokeSetupCode },
+            { runProductTransaction: appRoleTransaction }
+          );
+          let revokeBlocked = false;
+          for (let attempt = 0; attempt < 60 && !revokeBlocked; attempt += 1) {
+            const waiting = await client.query(
+              `
+                select exists (
+                  select 1
+                  from pg_stat_activity
+                  where $1::int = any(pg_blocking_pids(pid))
+                ) as blocked
+              `,
+              [activationPid]
+            );
+            revokeBlocked = waiting.rows[0].blocked;
+            if (!revokeBlocked) {
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+          }
+          resumeActivation.resolve();
+          assert.equal(
+            revokeBlocked,
+            true,
+            "revoke confirmation must wait on the uncommitted activation"
+          );
+
+          const [activated, revoked] = await Promise.all([activation, revoke]);
+          assert.equal(activated.ok, true, JSON.stringify(activated));
+          assert.equal(revoked.ok, true, JSON.stringify(revoked));
+          assert.deepEqual(revoked.ok && revoked.data.revoked_key_ids, [
+            material.keyId
+          ]);
+          const credential = await client.query(
+            `select status from public.agent_outbox_caller_credentials where key_id = $1`,
+            [material.keyId]
+          );
+          assert.deepEqual(credential.rows, [{ status: "revoked" }]);
+        }
+      );
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      resumeActivation.resolve();
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          /** @type {Error[]} */
+          const errors = [];
+          const attempt = teardownAttempt(
+            errors,
+            "Connect revoke race teardown failed"
+          );
+          await attempt("audit event cleanup", async () => {
+            // Audit events are append-only outside break-glass cleanup.
+            await client.query("begin");
+            try {
+              await client.query(
+                "select set_config($1, $2, true), set_config($3, $4, true)",
+                [
+                  "agent_outbox.audit_break_glass",
+                  "on",
+                  "agent_outbox.auth_surface",
+                  "cleanup"
+                ]
+              );
+              await client.query(
+                `delete from public.agent_outbox_audit_events where request_id = any($1::text[])`,
+                [[activateRequestId, revokeRequestId]]
+              );
+              await client.query("commit");
+            } catch (error) {
+              await client.query("rollback");
+              throw error;
+            }
+          });
+          await attempt("IP quota cleanup", () =>
+            client.query(
+              `delete from public.agent_outbox_ip_quota_windows where ip_address = $1::inet`,
+              [clientIp]
+            )
+          );
+          await attempt("account cleanup", () =>
+            client.query(
+              `delete from public.agent_outbox_accounts where account_id = $1`,
+              [accountId]
+            )
+          );
+          await attempt("user cleanup", () =>
+            client.query(
+              `delete from public.agent_outbox_users where user_id = $1`,
+              [userId]
+            )
+          );
+          await attempt("client close", () => client.end());
+          if (errors.length > 0) {
+            throw new AggregateError(
+              errors,
+              "Connect revoke race teardown failed."
+            );
+          }
+        },
+        "Connect revoke race database test and teardown both failed."
+      );
+    }
+  }
+);
+
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
  * @typedef {import("../src/server/database.ts").ProductTransactionContext} ProductTransactionContext
@@ -329,7 +619,8 @@ function pendingConnectRunner(material, options = {}) {
     ];
   });
   const callerQuery = fakeQuery((_statement, callNumber) => {
-    if (callNumber === 1) {
+    // Call 1 is the caller credential lifecycle lock.
+    if (callNumber === 2) {
       return [
         {
           caller_credential_id: PENDING_CREDENTIAL_ID,
@@ -2126,25 +2417,29 @@ test("connect activate is the only step that activates the pending credential an
       ]);
       assert.equal(runner.contexts[1]?.authSurface, "caller");
       assert.equal(runner.contexts[1]?.callerId, CALLER_ID);
+      // Activation serializes with revoke and rotate on the caller's lifecycle
+      // lock before it locks the pending credential row.
+      assert.match(callerQuery.calls[0].sql, /caller_credential_lifecycle/);
+      assert.deepEqual(callerQuery.calls[0].values, [ACCOUNT_ID, CALLER_ID]);
       // The pending credential is resolved by the bearer key AND its setup
       // request, never by setup request alone.
       assert.match(
-        callerQuery.calls[0].sql,
+        callerQuery.calls[1].sql,
         /pending_replacement_setup_request_id = \$2/
       );
-      assert.deepEqual(callerQuery.calls[0].values, [
+      assert.deepEqual(callerQuery.calls[1].values, [
         material.keyId,
         SETUP_REQUEST_ID
       ]);
-      assert.match(callerQuery.calls[1].sql, /status = 'active'/);
+      assert.match(callerQuery.calls[2].sql, /status = 'active'/);
       // The activation UPDATE is guarded to the pending_activation state, so a
       // regression dropping the guard (allowing an already-active or otherwise
       // non-pending row to be re-activated) fails here.
-      assert.match(callerQuery.calls[1].sql, /status = 'pending_activation'/);
-      assert.match(callerQuery.calls[2].sql, /'caller_registered'/);
+      assert.match(callerQuery.calls[2].sql, /status = 'pending_activation'/);
+      assert.match(callerQuery.calls[3].sql, /'caller_registered'/);
       // Connect has no prior credential, so activation revokes nothing.
       const mutationSql = callerQuery.calls
-        .slice(1)
+        .slice(2)
         .map((call) => call.sql)
         .join("\n");
       assert.doesNotMatch(mutationSql, /status = 'revoked'/);
@@ -2190,17 +2485,21 @@ test("connect abort expires the pending credential and leaves no active or revok
         CONNECT_TEST_IP,
         "caller_connect_activation_requests_per_ip_per_minute"
       ]);
-      assert.match(callerQuery.calls[1].sql, /status = 'expired'/);
+      // Abort serializes with revoke and rotate on the caller's lifecycle
+      // lock before it locks the pending credential row.
+      assert.match(callerQuery.calls[0].sql, /caller_credential_lifecycle/);
+      assert.deepEqual(callerQuery.calls[0].values, [ACCOUNT_ID, CALLER_ID]);
+      assert.match(callerQuery.calls[2].sql, /status = 'expired'/);
       // The expire UPDATE is guarded to the pending_activation state so abort
       // can never expire an already-active credential; dropping the guard fails
       // this assertion.
-      assert.match(callerQuery.calls[1].sql, /status = 'pending_activation'/);
+      assert.match(callerQuery.calls[2].sql, /status = 'pending_activation'/);
       assert.match(
-        callerQuery.calls[1].sql,
+        callerQuery.calls[2].sql,
         /pending_replacement_setup_request_id = null/
       );
       const mutationSql = callerQuery.calls
-        .slice(1)
+        .slice(2)
         .map((call) => call.sql)
         .join("\n");
       // Abort must not activate, revoke, or emit a registration audit; there is
@@ -2252,13 +2551,13 @@ test("expired pending connect activate and abort requests fail and expire the pe
         assert.equal(result.error.code, "invalid_caller_credentials", action);
         assert.equal(runner.contexts[1]?.authSurface, "caller", action);
         // Verification self-expires the stale pending key before rejecting.
-        assert.match(callerQuery.calls[1].sql, /status = 'expired'/);
+        assert.match(callerQuery.calls[2].sql, /status = 'expired'/);
         assert.match(
-          callerQuery.calls[1].sql,
+          callerQuery.calls[2].sql,
           /pending_replacement_setup_request_id = null/
         );
         const mutationSql = callerQuery.calls
-          .slice(1)
+          .slice(2)
           .map((call) => call.sql)
           .join("\n");
         assert.doesNotMatch(mutationSql, /status = 'active'/);
@@ -2313,8 +2612,9 @@ test("connect activate and abort reject a pending credential that is no longer p
         assert.equal(result.error.code, "invalid_caller_credentials", action);
         assert.equal(runner.contexts[1]?.authSurface, "caller", action);
         // The guard rejects the locked row before any activate/expire mutation
-        // runs, so only the SELECT executed inside the caller transaction.
-        assert.equal(callerQuery.calls.length, 1, action);
+        // runs, so only the lifecycle lock and SELECT executed inside the
+        // caller transaction.
+        assert.equal(callerQuery.calls.length, 2, action);
       }
     }
   );
@@ -2366,7 +2666,7 @@ test("connect activate and abort reject a bearer whose secret does not match the
         // The failure happens inside the caller transaction (past the matching
         // control-plane lookup), and before the SELECT-only transaction mutates.
         assert.equal(runner.contexts[1]?.authSurface, "caller", action);
-        assert.equal(callerQuery.calls.length, 1, action);
+        assert.equal(callerQuery.calls.length, 2, action);
       }
     }
   );
