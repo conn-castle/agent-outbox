@@ -113,7 +113,11 @@ func (c APIClient) do(ctx context.Context, method string, apiPath string, bearer
 	}
 
 	var reader io.Reader
-	if body != nil {
+	if raw, ok := body.(json.RawMessage); ok {
+		// Pre-encoded bodies are sent byte-for-byte; json.Marshal would compact
+		// and HTML-escape them, changing the size the caller already checked.
+		reader = bytes.NewReader(raw)
+	} else if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return nil, WrapConfigError("Could not encode API request JSON.", err)

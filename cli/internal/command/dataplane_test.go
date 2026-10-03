@@ -34,6 +34,55 @@ func (s *dataPlaneSecretStore) LoadCallerKey(callerID string) (string, error) {
 	return value, nil
 }
 
+func TestInputFileCommandsSendFileBytesUnchangedAtSizeLimit(t *testing.T) {
+	// HTML-heavy content at exactly the documented limit: re-encoding would
+	// escape each <, >, and & into six bytes and push the body over the limit.
+	prefix := `{
+  "caller_item_id": "item_1",
+  "row_type": {"display": "Email", "icon": "mail"},
+  "title": "<strong>Title</strong>",
+  "subtitle": "Subtitle",
+  "link_buttons": [],
+  "actions": [{"display": "Approve", "icon": "check", "value": "approve", "overflow": false, "popup": {"kind": "none"}}],
+  "summary": "`
+	suffix := "\"\n}\n"
+	var summary strings.Builder
+	for summary.Len()+len(prefix)+len(suffix)+len("<p>a &amp; b</p>") <= inputPayloadLimitBytes {
+		summary.WriteString("<p>a &amp; b</p>")
+	}
+	summary.WriteString(strings.Repeat("x", inputPayloadLimitBytes-summary.Len()-len(prefix)-len(suffix)))
+	fileBytes := []byte(prefix + summary.String() + suffix)
+	if len(fileBytes) != inputPayloadLimitBytes {
+		t.Fatalf("fixture size = %d, want %d", len(fileBytes), inputPayloadLimitBytes)
+	}
+	inputPath := filepath.Join(t.TempDir(), "input.json")
+	if err := os.WriteFile(inputPath, fileBytes, 0o600); err != nil {
+		t.Fatalf("write input fixture: %v", err)
+	}
+
+	for _, command := range []string{"send", "replace"} {
+		t.Run(command, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("read request body: %v", err)
+				}
+				if !bytes.Equal(body, fileBytes) {
+					t.Errorf("request body (%d bytes) differs from input file (%d bytes)", len(body), len(fileBytes))
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"ok":true,"request_id":"req_server","correlation_id":"corr_server","data":{"caller_item_id":"item_1","status":"pending","revision":1,"created":true,"duplicate":false}}`)
+			}))
+			defer server.Close()
+
+			_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", command, "--file", inputPath})
+			if code != foundation.ExitSuccess {
+				t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+			}
+		})
+	}
+}
+
 func TestInputSendPostsFileAndRendersStableJSON(t *testing.T) {
 	inputPath := filepath.Join(t.TempDir(), "input.json")
 	if err := os.WriteFile(inputPath, []byte(`{
