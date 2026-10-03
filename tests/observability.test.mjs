@@ -3247,6 +3247,70 @@ test("scheduled cleanup failures log request account and duration without error 
   );
 });
 
+test("scheduled cleanup logs a global prune failure without account or error text", async () => {
+  const logs = await captureStructuredLogs(async () => {
+    await assert.rejects(
+      runScheduledCleanup({
+        connectionString: "postgresql://cleanup-test",
+        requestId: "req-cleanup-global-observability",
+        now: new Date("2026-07-07T12:00:00.000Z"),
+        async runTransaction(_connectionString, _context, callback) {
+          return await callback(
+            /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
+              async (statement) => {
+                if (
+                  statement.sql.includes(
+                    "agent_outbox_prune_stripe_webhook_events"
+                  )
+                ) {
+                  throw new Error("raw global prune failure detail");
+                }
+                const rows = statement.sql.includes(
+                  "agent_outbox_cleanup_account_targets"
+                )
+                  ? []
+                  : [{ deleted_count: 0 }];
+
+                return {
+                  rows,
+                  rowCount: rows.length,
+                  command: "SELECT",
+                  oid: 0,
+                  fields: []
+                };
+              }
+            )
+          );
+        }
+      }),
+      AggregateError
+    );
+  });
+
+  assert.deepEqual(
+    logs.map((log) => [log.level, log.operation, log.message, log.account_id]),
+    [
+      [
+        "error",
+        "maintenance.scheduled_cleanup",
+        "scheduled cleanup global maintenance failed",
+        undefined
+      ],
+      [
+        "error",
+        "maintenance.scheduled_cleanup",
+        "scheduled cleanup failed",
+        undefined
+      ]
+    ]
+  );
+  assert.equal(logs[0].request_id, "req-cleanup-global-observability");
+  assert.equal(
+    JSON.stringify(logs).includes("raw global prune failure detail"),
+    false
+  );
+});
+
 const SCHEDULED_SENTRY_PRODUCTION_ENV = {
   APP_ENV: "production",
   SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",

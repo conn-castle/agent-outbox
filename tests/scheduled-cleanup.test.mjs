@@ -250,8 +250,15 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     }
   });
 
+  const globalContext = {
+    requestId: "cleanup-test-request",
+    authSurface: "cleanup"
+  };
   assert.deepEqual(contexts, [
-    { requestId: "cleanup-test-request", authSurface: "cleanup" },
+    globalContext,
+    globalContext,
+    globalContext,
+    globalContext,
     {
       requestId: "cleanup-test-request",
       authSurface: "cleanup",
@@ -263,11 +270,14 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
       accountId: "account-paid"
     }
   ]);
-  assert.deepEqual(statementsByContext[0], [
-    cleanupAccountTargetsStatement(),
-    ...globalQuotaWindowMaintenanceStatements(now)
-  ]);
-  assert.deepEqual(statementsByContext[1], [
+  assert.deepEqual(
+    statementsByContext.slice(0, 3),
+    globalQuotaWindowMaintenanceStatements(now).map((statement) => [statement])
+  );
+  assert.deepEqual(statementsByContext[3], [cleanupAccountTargetsStatement()]);
+  const [, , , , freeAccountStatements, paidAccountStatements] =
+    statementsByContext;
+  assert.deepEqual(freeAccountStatements, [
     cleanupAccountTierLockStatement("account-free"),
     ...scheduledCleanupStatementsForAccount({
       tier: "hosted_free",
@@ -275,7 +285,7 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
       requestId: "cleanup-test-request"
     })
   ]);
-  assert.deepEqual(statementsByContext[2], [
+  assert.deepEqual(paidAccountStatements, [
     cleanupAccountTierLockStatement("account-paid"),
     ...scheduledCleanupStatementsForAccount({
       tier: "hosted_paid",
@@ -295,7 +305,7 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
   });
   assert.match(result.recorded_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(
-    statementsByContext[1].filter((statement) =>
+    freeAccountStatements.filter((statement) =>
       statement.sql.includes("agent_outbox_delete_retained_pending_inputs")
     ),
     [
@@ -306,18 +316,18 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     ]
   );
   assert.deepEqual(
-    statementsByContext[1].filter((statement) =>
+    freeAccountStatements.filter((statement) =>
       statement.sql.includes("agent_outbox_delete_expired_outputs")
     ),
     [outputTimeoutCleanupStatement(now)]
   );
   assert.deepEqual(
-    statementsByContext[2].filter((statement) =>
+    paidAccountStatements.filter((statement) =>
       statement.sql.includes("agent_outbox_delete_retained_pending_inputs")
     ),
     []
   );
-  assert.deepEqual(statementsByContext[2].slice(-2), [
+  assert.deepEqual(paidAccountStatements.slice(-2), [
     expiredBillingGraceCleanupStatement(32_000_000, now),
     expiredBillingGraceDowngradeStatement(32_000_000, now)
   ]);
@@ -391,19 +401,142 @@ test("scheduled cleanup continues account maintenance after one account fails", 
     /^Scheduled cleanup failed for 1 account\(s\): account-free$/
   );
   assert.deepEqual(thrown.errors, [accountFailure]);
-  assert.deepEqual(contexts, [
-    { requestId: "cleanup-test-request", authSurface: "cleanup" },
-    {
+  assert.deepEqual(
+    contexts.filter((context) => context.accountId),
+    [
+      {
+        requestId: "cleanup-test-request",
+        authSurface: "cleanup",
+        accountId: "account-free"
+      },
+      {
+        requestId: "cleanup-test-request",
+        authSurface: "cleanup",
+        accountId: "account-paid"
+      }
+    ]
+  );
+});
+
+/**
+ * Runs scheduled cleanup against a fake database that lists two accounts and
+ * fails a statement when `failureFor` returns an error for it.
+ *
+ * @param {(sql: string, context: import("../src/server/database.ts").ProductTransactionContext) => Error | undefined} failureFor
+ */
+async function runCleanupWithFailures(failureFor) {
+  /** @type {string[]} */
+  const executedSql = [];
+  /** @type {string[]} */
+  const cleanedAccounts = [];
+  /** @type {unknown} */
+  let thrown;
+  try {
+    await runScheduledCleanup({
+      connectionString: "postgresql://cleanup-test",
+      now: new Date("2026-07-15T12:34:56.000Z"),
       requestId: "cleanup-test-request",
-      authSurface: "cleanup",
-      accountId: "account-free"
-    },
-    {
-      requestId: "cleanup-test-request",
-      authSurface: "cleanup",
-      accountId: "account-paid"
+      async runTransaction(_connectionString, context, callback) {
+        const result = await callback(
+          /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
+            /** @param {import("../src/server/database.ts").TransactionContextStatement} statement */
+            async (statement) => {
+              const failure = failureFor(statement.sql, context);
+              if (failure) {
+                throw failure;
+              }
+              executedSql.push(statement.sql);
+              const rows = statement.sql.includes(
+                "agent_outbox_cleanup_account_targets"
+              )
+                ? [{ account_id: "account-a" }, { account_id: "account-b" }]
+                : statement.sql === cleanupAccountTierLockStatement("").sql
+                  ? [{ tier: "hosted_free" }]
+                  : [{ deleted_count: 1 }];
+              return {
+                command: "SELECT",
+                rowCount: rows.length,
+                oid: 0,
+                fields: [],
+                rows
+              };
+            }
+          )
+        );
+        if (context.accountId) {
+          cleanedAccounts.push(context.accountId);
+        }
+        return result;
+      }
+    });
+  } catch (error) {
+    thrown = error;
+  }
+
+  return { executedSql, cleanedAccounts, thrown };
+}
+
+test("scheduled cleanup still runs other prunes and account maintenance after a global prune fails", async () => {
+  const pruneFailure = new Error('column "processing_status" does not exist');
+  const { executedSql, cleanedAccounts, thrown } = await runCleanupWithFailures(
+    (sql) =>
+      sql.includes("agent_outbox_prune_ip_quota_windows")
+        ? pruneFailure
+        : undefined
+  );
+
+  assert(thrown instanceof AggregateError);
+  assert.equal(
+    thrown.message,
+    "Scheduled cleanup failed for 1 global maintenance statement(s)"
+  );
+  assert.deepEqual(thrown.errors, [pruneFailure]);
+  assert(
+    executedSql.some((sql) =>
+      sql.includes("agent_outbox_prune_caller_setup_requests")
+    )
+  );
+  assert(
+    executedSql.some((sql) =>
+      sql.includes("agent_outbox_prune_stripe_webhook_events")
+    )
+  );
+  assert.deepEqual(cleanedAccounts, ["account-a", "account-b"]);
+});
+
+test("scheduled cleanup reports global and account failures together", async () => {
+  const pruneFailure = new Error("function does not exist");
+  const accountFailure = new Error("lock timeout");
+  const { cleanedAccounts, thrown } = await runCleanupWithFailures(
+    (sql, context) => {
+      if (sql.includes("agent_outbox_prune_stripe_webhook_events")) {
+        return pruneFailure;
+      }
+      return context.accountId === "account-a" ? accountFailure : undefined;
     }
-  ]);
+  );
+
+  assert(thrown instanceof AggregateError);
+  assert.equal(
+    thrown.message,
+    "Scheduled cleanup failed for 1 global maintenance statement(s) and 1 account(s): account-a"
+  );
+  assert.deepEqual(thrown.errors, [pruneFailure, accountFailure]);
+  assert.deepEqual(cleanedAccounts, ["account-b"]);
+});
+
+test("scheduled cleanup fails without account maintenance when accounts cannot be listed", async () => {
+  const listingFailure = new Error("connection reset");
+  const { executedSql, cleanedAccounts, thrown } = await runCleanupWithFailures(
+    (sql) =>
+      sql.includes("agent_outbox_cleanup_account_targets")
+        ? listingFailure
+        : undefined
+  );
+
+  assert.equal(thrown, listingFailure);
+  assert.equal(executedSql.length, 3);
+  assert.deepEqual(cleanedAccounts, []);
 });
 
 test("scheduled cleanup reports an account whose locked row cannot be read", async () => {
