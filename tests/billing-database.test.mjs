@@ -1019,7 +1019,10 @@ for (const type of [
           runProductTransaction(
             connectionString,
             { requestId: stripeEvent.id, authSurface: "control_plane" },
-            (query) => processStripeEventInTransaction(query, stripeEvent)
+            async (query) => {
+              await query({ sql: "set local role agent_outbox_app" });
+              return processStripeEventInTransaction(query, stripeEvent);
+            }
           );
         let attached = false;
         let bodyError;
@@ -1033,6 +1036,7 @@ for (const type of [
             connectionString,
             { requestId: eventId, authSurface: "control_plane" },
             async (query) => {
+              await query({ sql: "set local role agent_outbox_app" });
               const role = await query({
                 sql: "select current_user as role, current_setting('transaction_isolation') as isolation"
               });
