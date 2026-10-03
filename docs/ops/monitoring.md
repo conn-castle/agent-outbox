@@ -109,8 +109,9 @@ warn log with `operation=stripe_webhook_unapplied`, `drop_reason`
 present. Missing references mean a missing account or subscription reference.
 Expected stale out-of-order events are not logged. Missing-signature 400
 rejections warn with `operation=stripe_webhook_signature`; oversized-body 413
-rejections warn with `operation=stripe_webhook_request_too_large`. No Stripe ids
-or payload values are logged.
+rejections warn with `operation=stripe_webhook_request_too_large`. The logged
+payload-derived fields are `stripe_event_type` and, when present, `account_id`;
+Stripe object IDs and other raw payload values are not logged.
 
 Use stable low-cardinality fields. Do not use high-cardinality caller display
 strings as log dimensions.

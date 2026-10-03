@@ -54,8 +54,8 @@ type InsertWebhookEventRow = {
   stripe_receipt_order: string | null;
 };
 
-type AccountIdRow = {
-  account_id: string;
+type AccountUpdateRow = {
+  account_id: string | null;
 };
 
 export type BillingResult<TData> =
@@ -518,33 +518,27 @@ function subscriptionAccountMatchPredicate(accountParameter: number) {
         )`;
 }
 
-export function checkoutAccountMatchStatement(
-  accountId: string
+function accountUpdateWithMatchStatement(
+  update: TransactionContextStatement,
+  matchPredicate: string
 ): TransactionContextStatement {
   return {
+    // Both reads share the UPDATE's statement snapshot. A later concurrent
+    // identifier attachment cannot turn a no-match into a stale outcome.
     sql: `
-      select account_id::text as account_id
-      from public.agent_outbox_accounts
-      where ${CHECKOUT_ACCOUNT_MATCH_PREDICATE}
-      limit 1
+      with updated_account as (
+        ${update.sql}
+      )
+      select account_id from updated_account
+      union all
+      select null::text as account_id
+      where not exists (select 1 from updated_account)
+        and exists (
+          select 1 from public.agent_outbox_accounts
+          where ${matchPredicate}
+        )
     `,
-    values: [accountId]
-  };
-}
-
-export function subscriptionAccountMatchStatement(input: {
-  subscriptionId: string;
-  customerId: string | null;
-  accountId: string | null;
-}): TransactionContextStatement {
-  return {
-    sql: `
-      select account_id::text as account_id
-      from public.agent_outbox_accounts
-      where ${subscriptionAccountMatchPredicate(3)}
-      limit 1
-    `,
-    values: [input.subscriptionId, input.customerId, input.accountId]
+    values: update.values
   };
 }
 
@@ -580,8 +574,9 @@ export function checkoutCompletedAccountUpdateStatement(input: {
           )
         )`
     : "";
-  return {
-    sql: `
+  return accountUpdateWithMatchStatement(
+    {
+      sql: `
       update public.agent_outbox_accounts
       set
         tier = 'hosted_paid',
@@ -598,16 +593,18 @@ export function checkoutCompletedAccountUpdateStatement(input: {
         ${orderingPredicate}
       returning account_id::text as account_id
     `,
-    values: [
-      input.accountId,
-      input.customerId,
-      input.subscriptionId,
-      input.priceId,
-      input.subscriptionStatus,
-      nullableTimestampValue(input.currentPeriodEnd),
-      ...orderingValues
-    ]
-  };
+      values: [
+        input.accountId,
+        input.customerId,
+        input.subscriptionId,
+        input.priceId,
+        input.subscriptionStatus,
+        nullableTimestampValue(input.currentPeriodEnd),
+        ...orderingValues
+      ]
+    },
+    CHECKOUT_ACCOUNT_MATCH_PREDICATE
+  );
 }
 
 export function subscriptionBillingUpdateStatement(input: {
@@ -644,8 +641,9 @@ export function subscriptionBillingUpdateStatement(input: {
           )
         )`
     : "";
-  return {
-    sql: `
+  return accountUpdateWithMatchStatement(
+    {
+      sql: `
       update public.agent_outbox_accounts
       set
         tier = case
@@ -665,18 +663,20 @@ export function subscriptionBillingUpdateStatement(input: {
         ${orderingPredicate}
       returning account_id::text as account_id
     `,
-    values: [
-      input.subscriptionId,
-      input.customerId,
-      input.priceId,
-      input.subscriptionStatus,
-      input.billingStatus,
-      nullableTimestampValue(input.graceEndsAt),
-      nullableTimestampValue(input.currentPeriodEnd),
-      input.accountId,
-      ...orderingValues
-    ]
-  };
+      values: [
+        input.subscriptionId,
+        input.customerId,
+        input.priceId,
+        input.subscriptionStatus,
+        input.billingStatus,
+        nullableTimestampValue(input.graceEndsAt),
+        nullableTimestampValue(input.currentPeriodEnd),
+        input.accountId,
+        ...orderingValues
+      ]
+    },
+    subscriptionAccountMatchPredicate(8)
+  );
 }
 
 async function applyStripeEventInTransaction(
@@ -737,7 +737,7 @@ async function applyCheckoutCompleted(
     };
   }
 
-  const result = await query<AccountIdRow>(
+  const result = await query<AccountUpdateRow>(
     checkoutCompletedAccountUpdateStatement({
       accountId,
       customerId: stripeId(session.customer),
@@ -750,12 +750,7 @@ async function applyCheckoutCompleted(
     })
   );
 
-  return accountUpdateOutcome(
-    query,
-    result.rows,
-    checkoutAccountMatchStatement(accountId),
-    accountId
-  );
+  return accountUpdateOutcome(result.rows, accountId);
 }
 
 async function applySubscriptionEvent(
@@ -788,7 +783,7 @@ async function applySubscriptionEvent(
     currentPeriodEnd,
     now
   );
-  const result = await query<AccountIdRow>(
+  const result = await query<AccountUpdateRow>(
     subscriptionBillingUpdateStatement({
       ...match,
       priceId: subscriptionPriceId(object),
@@ -801,12 +796,7 @@ async function applySubscriptionEvent(
     })
   );
 
-  return accountUpdateOutcome(
-    query,
-    result.rows,
-    subscriptionAccountMatchStatement(match),
-    match.accountId
-  );
+  return accountUpdateOutcome(result.rows, match.accountId);
 }
 
 async function applyInvoicePaymentFailed(
@@ -833,7 +823,7 @@ async function applyInvoicePaymentFailed(
     customerId: stripeId(recordValue(object, "customer")),
     accountId: null
   };
-  const result = await query<AccountIdRow>(
+  const result = await query<AccountUpdateRow>(
     subscriptionBillingUpdateStatement({
       ...match,
       priceId: null,
@@ -846,27 +836,19 @@ async function applyInvoicePaymentFailed(
     })
   );
 
-  return accountUpdateOutcome(
-    query,
-    result.rows,
-    subscriptionAccountMatchStatement(match),
-    match.accountId
-  );
+  return accountUpdateOutcome(result.rows, match.accountId);
 }
 
-async function accountUpdateOutcome(
-  query: ProductTransactionQuery,
-  updatedRows: AccountIdRow[],
-  matchStatement: TransactionContextStatement,
+function accountUpdateOutcome(
+  updatedRows: AccountUpdateRow[],
   accountId: string | null
-): Promise<StripeEventOutcome> {
-  if (updatedRows[0]) {
+): StripeEventOutcome {
+  if (updatedRows[0]?.account_id) {
     return { status: "applied", accountId: updatedRows[0].account_id };
   }
-  // The update matched nothing: either no account matches, or the ordering
-  // predicate rejected an older event for an account that does.
-  const match = await query<AccountIdRow>(matchStatement);
-  return match.rows[0]
+  // A null account id represents a match rejected by the ordering predicate;
+  // no rows means no account matched in the update's statement snapshot.
+  return updatedRows[0]
     ? { status: "stale_ordering" }
     : { status: "unapplied", reason: "no_matching_account", accountId };
 }

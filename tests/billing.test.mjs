@@ -1558,13 +1558,11 @@ async function webhookOutcome(input) {
                   /update public\.agent_outbox_accounts/.test(statement.sql)
                 ) {
                   return queryResult(
-                    input.updated ? [{ account_id: accountId }] : []
-                  );
-                }
-                if (/select account_id::text/.test(statement.sql)) {
-                  assert.doesNotMatch(statement.sql, /stripe_last_event/);
-                  return queryResult(
-                    input.matched ? [{ account_id: accountId }] : []
+                    input.updated
+                      ? [{ account_id: accountId }]
+                      : input.matched
+                        ? [{ account_id: null }]
+                        : []
                   );
                 }
                 assert.match(
@@ -1677,14 +1675,10 @@ for (const type of handledWebhookTypes) {
       const accountUpdates = statements.filter((statement) =>
         /update public\.agent_outbox_accounts/.test(statement.sql)
       );
-      const matches = statements.filter((statement) =>
-        /select account_id::text/.test(statement.sql)
-      );
       assert.equal(
         accountUpdates.length,
         reason === "no_matching_account" ? 1 : 0
       );
-      assert.equal(matches.length, reason === "no_matching_account" ? 1 : 0);
       assert.equal(
         statements.some((statement) =>
           /update public\.agent_outbox_stripe_webhook_events/.test(
@@ -1714,10 +1708,8 @@ for (const type of handledWebhookTypes) {
       );
       assert.equal(associations.length, state === "applied" ? 1 : 0);
       assert.equal(
-        statements.filter((statement) =>
-          /select account_id::text/.test(statement.sql)
-        ).length,
-        state === "stale" ? 1 : 0
+        statements.length,
+        state === "duplicate" ? 1 : state === "applied" ? 3 : 2
       );
     });
   }
