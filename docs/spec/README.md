@@ -77,9 +77,11 @@ Global flags:
   The value must be an `https` origin — or an `http` origin whose host is
   loopback (`localhost`, `127.0.0.1`, or `::1`) — with no path, query, userinfo,
   or fragment. Cleartext `http` to non-loopback hosts is rejected so caller API
-  keys never travel unencrypted off the local machine. This loopback allowance
-  is a transport rule only. Caller connect, rotate, and revoke control-plane
-  routes still require the server's trusted-client-IP policy from
+  keys never travel unencrypted off the local machine. The CLI applies the same
+  rule to every redirect it follows and fails with `api_unavailable` instead of
+  following a redirect that breaks it. This loopback allowance is a transport
+  rule only. Caller connect, rotate, and revoke control-plane routes still
+  require the server's trusted-client-IP policy from
   [http-api.md](http-api.md#caller-connect-control-plane); direct localhost
   control-plane requests fail unless the local ingress or test fixture supplies
   that trusted IP signal.

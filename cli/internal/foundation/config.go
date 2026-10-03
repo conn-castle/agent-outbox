@@ -195,7 +195,7 @@ func normalizeBaseURL(raw string) (string, error) {
 	if parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", NewAppError(CodeConfig, "Agent Outbox base URL must be an app origin.")
 	}
-	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+	if !keyTransportAllowed(parsed) {
 		return "", NewAppError(
 			CodeConfig,
 			"Agent Outbox base URL must use https for non-loopback hosts; http is allowed only for localhost, 127.0.0.1, or ::1.",
@@ -205,6 +205,12 @@ func normalizeBaseURL(raw string) (string, error) {
 		return "", NewAppError(CodeConfig, "Agent Outbox base URL must not include a path.")
 	}
 	return parsed.Scheme + "://" + parsed.Host, nil
+}
+
+// keyTransportAllowed reports whether a request to target may carry a caller
+// API key: https anywhere, or cleartext http only to a loopback host.
+func keyTransportAllowed(target *url.URL) bool {
+	return target.Scheme == "https" || (target.Scheme == "http" && isLoopbackHost(target.Hostname()))
 }
 
 func isLoopbackHost(hostname string) bool {
