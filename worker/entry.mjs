@@ -8,7 +8,7 @@ import {
   runScheduledCanary,
   runScheduledCleanup
 } from "../src/server/scheduled.ts";
-import { withScheduledSentry } from "../src/server/sentry.ts";
+import { runWithScheduledSentry } from "../src/server/sentry.ts";
 
 export {
   BucketCachePurge,
@@ -27,7 +27,7 @@ export default {
       cron: controller.cron || RUNTIME_CRON_SCHEDULE,
       scheduledTime: controller.scheduledTime
     });
-    const cleanup = withScheduledSentry(() =>
+    const cleanup = runWithScheduledSentry(() =>
       runScheduledCleanup({
         connectionString: runtimeDatabaseConnectionString(env),
         now:
