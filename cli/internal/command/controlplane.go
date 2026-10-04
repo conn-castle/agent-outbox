@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os/exec"
 	"runtime"
@@ -1213,23 +1214,34 @@ func ensureConnectServerMatchesConfig(cfg foundation.Config, connectBaseURL stri
 	if err != nil {
 		return foundation.WrapConfigError("Local config base_url is not a valid Agent Outbox base URL.", err)
 	}
-	origin := func(baseURL string) (scheme, hostname, zone, port string) {
-		// ResolveBaseURL has validated and returned scheme://host with a decoded Host.
-		// Use URL components directly so an IPv6 zone's percent sign is not parsed again.
-		scheme, authority, _ := strings.Cut(baseURL, "://")
-		parsed := url.URL{Scheme: scheme, Host: authority}
+	configURL, err := url.Parse(configBaseURL)
+	if err != nil {
+		return foundation.WrapConfigError("Local config base_url could not be parsed.", err)
+	}
+	connectURL, err := url.Parse(connectBaseURL)
+	if err != nil {
+		return foundation.WrapConfigError("Connect base URL could not be parsed.", err)
+	}
+	origin := func(parsed *url.URL) (scheme, hostname, zone, port string) {
+		// Compare decoded components; resolved URLs retain escapes for the client and config.
+		scheme = parsed.Scheme
 		hostname = parsed.Hostname()
 		if zoneIndex := strings.IndexByte(hostname, '%'); zoneIndex >= 0 {
 			hostname, zone = hostname[:zoneIndex], hostname[zoneIndex:]
 		}
-		// Fold only ASCII host letters; Unicode folding can equate distinct IDNA names.
-		hostBytes := []byte(hostname)
-		for i, b := range hostBytes {
-			if 'A' <= b && b <= 'Z' {
-				hostBytes[i] = b + ('a' - 'A')
+		if address, err := netip.ParseAddr(hostname); err == nil {
+			// Normalize IP spelling only for comparison; keep IPv4-mapped IPv6 distinct from IPv4.
+			hostname = address.String()
+		} else {
+			// Fold only ASCII host letters; Unicode folding can equate distinct IDNA names.
+			hostBytes := []byte(hostname)
+			for i, b := range hostBytes {
+				if 'A' <= b && b <= 'Z' {
+					hostBytes[i] = b + ('a' - 'A')
+				}
 			}
+			hostname = string(hostBytes)
 		}
-		hostname = string(hostBytes)
 		port = parsed.Port()
 		if port == "" {
 			if scheme == "https" {
@@ -1241,8 +1253,8 @@ func ensureConnectServerMatchesConfig(cfg foundation.Config, connectBaseURL stri
 		// Compare port numbers without changing the resolved URL's spelling.
 		return scheme, hostname, zone, strings.TrimLeft(port, "0")
 	}
-	configScheme, configHost, configZone, configPort := origin(configBaseURL)
-	connectScheme, connectHost, connectZone, connectPort := origin(connectBaseURL)
+	configScheme, configHost, configZone, configPort := origin(configURL)
+	connectScheme, connectHost, connectZone, connectPort := origin(connectURL)
 	// IPv6 zone identifiers retain their exact identity.
 	if configScheme != connectScheme || configHost != connectHost || configZone != connectZone || configPort != connectPort {
 		return foundation.NewAppError(foundation.CodeConfig, fmt.Sprintf("Local config callers are connected to %s, not %s; use a separate --config to connect a caller to a different Agent Outbox server.", configBaseURL, connectBaseURL))

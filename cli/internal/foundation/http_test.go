@@ -51,6 +51,54 @@ func TestAPIClientAddsBearerAuthAndParsesSuccessEnvelope(t *testing.T) {
 	}
 }
 
+func TestAPIClientUsesResolvedIPv6ZoneOrigins(t *testing.T) {
+	for _, tc := range []struct {
+		origin string
+		host   string
+	}{
+		{origin: "https://[fe80::1%25Eth0]", host: "[fe80::1%Eth0]"},
+		{origin: "https://[fe80::1%25eth%2525]:0443", host: "[fe80::1%eth%25]:0443"},
+	} {
+		for _, operation := range []string{"do", "download"} {
+			t.Run(tc.origin+"/"+operation, func(t *testing.T) {
+				baseURL, err := ResolveBaseURL(tc.origin, nil, Config{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				requests := 0
+				client := APIClient{BaseURL: baseURL, HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					requests++
+					if r.Method != http.MethodGet || r.URL.Host != tc.host || r.URL.String() != tc.origin+"/api/example" || r.Header.Get("Authorization") != "Bearer zone-fixture" {
+						t.Fatalf("unexpected request: %s %s host=%q authorization=%q", r.Method, r.URL, r.URL.Host, r.Header.Get("Authorization"))
+					}
+					w := httptest.NewRecorder()
+					if operation == "do" {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, `{"ok":true,"data":{"value":"zone-response"}}`)
+					} else {
+						w.Header().Set("Content-Type", "application/octet-stream")
+						_, _ = io.WriteString(w, "zone-response")
+					}
+					return w.Result(), nil
+				})}}
+				var got string
+				if operation == "do" {
+					var out struct{ Value string }
+					_, err = client.Do(context.Background(), http.MethodGet, "/api/example", "zone-fixture", nil, &out)
+					got = out.Value
+				} else {
+					var dst bytes.Buffer
+					_, err = client.Download(context.Background(), "/api/example", "zone-fixture", &dst)
+					got = dst.String()
+				}
+				if err != nil || got != "zone-response" || requests != 1 {
+					t.Fatalf("response=%q requests=%d err=%v, want successful zoned-origin request", got, requests, err)
+				}
+			})
+		}
+	}
+}
+
 func TestAPIClientPreservesAPIPathQuery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/output/check" {

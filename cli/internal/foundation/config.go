@@ -204,6 +204,11 @@ func normalizeBaseURL(raw string) (string, error) {
 	if parsed.Path != "" && parsed.Path != "/" {
 		return "", NewAppError(CodeConfig, "Agent Outbox base URL must not include a path.")
 	}
+	if strings.Contains(parsed.Host, "%") {
+		// Serialize decoded IPv6 zones so config reloads and API requests can reparse them.
+		origin := url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
+		return origin.String(), nil
+	}
 	return parsed.Scheme + "://" + parsed.Host, nil
 }
 

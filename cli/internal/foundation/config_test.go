@@ -173,6 +173,30 @@ func TestResolveBaseURLUsesFlagEnvConfigDefaultOrder(t *testing.T) {
 	}
 }
 
+func TestResolveBaseURLPreservesReparseableOrigins(t *testing.T) {
+	for _, origin := range []string{
+		"https://[fe80::1%25Eth0]",
+		"https://[fe80:0:0:0:0:0:0:1%25Eth0]:0443",
+		"https://[fe80::1%25eth%20x]",
+		"https://[fe80::1%25eth%2525]",
+		"https://straße.EXAMPLE:0443",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			resolved, err := ResolveBaseURL(origin+"/", nil, Config{})
+			if err != nil || resolved != origin {
+				t.Fatalf("resolved origin = %q, err=%v; want %q", resolved, err, origin)
+			}
+			// Saved config and API requests must be able to resolve the result repeatedly.
+			for i := 0; i < 3; i++ {
+				resolved, err = ResolveBaseURL("", nil, Config{BaseURL: resolved})
+				if err != nil || resolved != origin {
+					t.Fatalf("reloaded origin = %q, err=%v; want %q", resolved, err, origin)
+				}
+			}
+		})
+	}
+}
+
 func TestResolveBaseURLRejectsNonOriginValues(t *testing.T) {
 	for _, raw := range []string{"ftp://example.com", "https://example.com/api", "https://example.com?x=1"} {
 		if _, err := ResolveBaseURL(raw, nil, Config{}); err == nil {
