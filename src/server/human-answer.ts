@@ -25,6 +25,7 @@ import {
   type ApiFieldError
 } from "./api-errors.ts";
 import {
+  compareDatePickerValues,
   compareUtcDateTimeValues,
   isIanaTimeZone,
   isValidUtcDateTime,
@@ -287,23 +288,21 @@ export async function createHumanAnswerInTransaction(
     return invalidActionResponse("action_value", "Selected action is invalid.");
   }
 
+  const optionResult = await query<PopupOptionRow>(
+    inputActionOptionsStatement(action.input_action_id)
+  );
+  const optionValues = optionResult.rows.map((row) => row.option_value);
   const popup = answerablePopup(
     action.input_action_id,
     persistedPopup(
       action.input_action_id,
       action.popup_kind,
       action.popup_payload
-    )
-  );
-
-  const optionResult = await query<PopupOptionRow>(
-    inputActionOptionsStatement(action.input_action_id)
+    ),
+    optionValues.length
   );
   const payloadResult = validatedResponsePayload(
-    {
-      ...popup,
-      optionValues: optionResult.rows.map((row) => row.option_value)
-    },
+    { ...popup, optionValues },
     input.response,
     input.feedback
   );
@@ -1330,25 +1329,71 @@ function byteCount(value: string | number) {
   return numeric;
 }
 
-// Checks stored bound and MIME values before the response is inspected, so a
-// malformed configuration fails loudly instead of disabling a check.
+// Checks stored popup invariants from the input schema before the response is
+// inspected, so a malformed configuration fails loudly instead of disabling or
+// distorting a check. Messages name only the field, never the stored value.
 function answerablePopup(
   inputActionId: string,
-  popup: PersistedPopup
+  popup: PersistedPopup,
+  optionCount: number
 ): PersistedPopup {
   const source = `popup_payload for input action ${inputActionId}`;
+  const malformed = (key: string, expected: string) =>
+    new Error(`Malformed persisted ${source}: ${key} must be ${expected}.`);
+  if (popup.popupKind === "free_text") {
+    const { min_length, max_length } = popup.popupPayload;
+    if (
+      min_length !== null &&
+      (!Number.isInteger(min_length) || min_length < 0)
+    ) {
+      throw malformed("min_length", "a non-negative integer or null");
+    }
+    if (
+      max_length !== null &&
+      (!Number.isInteger(max_length) || max_length <= 0)
+    ) {
+      throw malformed("max_length", "a positive integer or null");
+    }
+    if (min_length !== null && max_length !== null && min_length > max_length) {
+      throw malformed("min_length", "less than or equal to max_length");
+    }
+  }
+  if (popup.popupKind === "multi_select") {
+    const { min_selected, max_selected } = popup.popupPayload;
+    if (!Number.isInteger(min_selected) || min_selected < 0) {
+      throw malformed("min_selected", "a non-negative integer");
+    }
+    if (
+      !Number.isInteger(max_selected) ||
+      max_selected < min_selected ||
+      max_selected > optionCount
+    ) {
+      throw malformed(
+        "max_selected",
+        "an integer from min_selected to the option count"
+      );
+    }
+  }
   if (popup.popupKind === "date_picker") {
-    const { mode, min_value, max_value } = popup.popupPayload;
+    const { mode, display_timezone, min_value, max_value } = popup.popupPayload;
+    if (display_timezone !== null && !isIanaTimeZone(display_timezone)) {
+      throw malformed("display_timezone", "an IANA timezone name or null");
+    }
     const validBound = mode === "date" ? validDateOnly : validUtcDateTime;
     for (const [key, value] of [
       ["min_value", min_value],
       ["max_value", max_value]
     ] as const) {
       if (value !== null && !validBound(value)) {
-        throw new Error(
-          `Malformed persisted ${source}: ${key} must be a valid ${mode} bound.`
-        );
+        throw malformed(key, `a valid ${mode} bound`);
       }
+    }
+    if (
+      min_value !== null &&
+      max_value !== null &&
+      compareDatePickerValues(min_value, max_value, mode) > 0
+    ) {
+      throw malformed("min_value", "less than or equal to max_value");
     }
   }
   if (

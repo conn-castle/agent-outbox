@@ -639,6 +639,135 @@ const malformedPopupCases = [
       "Malformed persisted popup_payload for input action action-1: max_value must be a valid datetime bound."
   },
   {
+    name: "free-text negative minimum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: -1 },
+    response: { kind: "free_text", text: "within" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must be a non-negative integer or null."
+  },
+  {
+    name: "free-text fractional maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 10.5 },
+    response: { kind: "free_text", text: "within" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text zero maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 0 },
+    response: { kind: "free_text", text: "" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text minimum above maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 8, max_length: 4 },
+    response: { kind: "free_text", text: "within" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must be less than or equal to max_length."
+  },
+  {
+    name: "multi-select negative minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: -1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_selected must be a non-negative integer."
+  },
+  {
+    name: "multi-select fractional minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 0.5 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_selected must be a non-negative integer."
+  },
+  {
+    name: "multi-select minimum above maximum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 2, max_selected: 1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_selected must be an integer from min_selected to the option count."
+  },
+  {
+    name: "multi-select maximum above option count",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, max_selected: 4 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_selected must be an integer from min_selected to the option count."
+  },
+  {
+    name: "date-picker invalid timezone in date mode",
+    kind: "date_picker",
+    payload: { ...datePickerPayload, display_timezone: "Not/AZone" },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: "Not/AZone"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name or null."
+  },
+  {
+    name: "datetime-picker invalid timezone",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      mode: "datetime",
+      display_timezone: "Not/AZone"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-06-29T12:00:00.000Z",
+      display_timezone: "UTC"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name or null."
+  },
+  {
+    name: "date-picker minimum after maximum",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      min_value: "2026-07-01",
+      max_value: "2026-06-01"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: null
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_value must be less than or equal to max_value."
+  },
+  {
+    name: "datetime-picker minimum after maximum",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      mode: "datetime",
+      min_value: "2026-06-29T13:00:00Z",
+      max_value: "2026-06-29T11:00:00.000Z"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-06-29T12:00:00.000Z",
+      display_timezone: "UTC"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_value must be less than or equal to max_value."
+  },
+  {
     name: "file-upload MIME list with a non-string entry",
     kind: "file_upload",
     payload: {
@@ -726,7 +855,7 @@ for (const scenario of malformedPopupCases) {
         assert.equal(error.message, scenario.message);
         assert.doesNotMatch(
           error.message,
-          /private stored|not a mime|text\/plain|"5"|"2"|2026-06-30/
+          /private stored|not a mime|text\/plain|"5"|"2"|2026-06|Not\/AZone/
         );
         return true;
       }
@@ -738,23 +867,57 @@ for (const scenario of malformedPopupCases) {
   });
 }
 
-/** @type {Array<{kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse, field: string}>} */
+/** @type {Array<{name: string, kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse, field: string}>} */
 const boundedPopupCases = [
   {
+    name: "free-text minimum",
     kind: "free_text",
     payload: { ...freeTextPayload, min_length: 5 },
     response: { kind: "free_text", text: "x" },
     field: "response.text"
   },
   {
+    name: "multi-select maximum",
     kind: "multi_select",
     payload: { ...multiSelectPayload, max_selected: 2 },
     response: { kind: "multi_select", values: ["a", "b", "c"] },
     field: "response.values"
+  },
+  {
+    name: "free-text zero minimum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 0, max_length: 3 },
+    response: { kind: "free_text", text: "long" },
+    field: "response.text"
+  },
+  {
+    name: "multi-select maximum equal to option count",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 3, max_selected: 3 },
+    response: { kind: "multi_select", values: ["a", "b"] },
+    field: "response.values"
+  },
+  {
+    name: "datetime equal bounds and display timezone",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      mode: "datetime",
+      display_timezone: "America/New_York",
+      min_value: "2026-06-29T12:00:00Z",
+      max_value: "2026-06-29T12:00:00.000Z"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-06-29T13:00:00.000Z",
+      display_timezone: "America/New_York"
+    },
+    field: "response.value_utc"
   }
 ];
 for (const scenario of boundedPopupCases) {
-  test(`human answer service enforces well-formed ${scenario.kind} bounds`, async () => {
+  test(`human answer service enforces well-formed popup bounds: ${scenario.name}`, async () => {
     /** @type {TransactionContextStatement[]} */
     const calls = [];
     const result = await createHumanAnswerInTransaction(
