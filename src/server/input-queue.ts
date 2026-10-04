@@ -78,6 +78,13 @@ export async function handleInputQueueRequest(
   operation: InputQueueOperation,
   jsonBody: unknown
 ): Promise<InputQueueResult> {
+  if (operation === "delete") {
+    const parsed = parseInputDeleteBody(jsonBody);
+    if (!parsed.ok) {
+      return { ok: false, error: parsed.error };
+    }
+  }
+
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
     return {
