@@ -2104,6 +2104,41 @@ test("datetime picker bounds offer only minutes the server accepts", () => {
       max: "2026-03-10T18:29:30Z",
       renderedMin: "2026-03-10T15:46",
       renderedMax: "2026-03-10T23:59"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:59:30Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T02:00",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T06:30:00Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T02:00",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:59:00.000000001Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T02:00",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:30:00Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T01:30",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "Australia/Lord_Howe",
+      min: "2026-04-04T14:59:30Z",
+      max: "2026-04-04T16:30:00Z",
+      renderedMin: "2026-04-05T01:30",
+      renderedMax: "2026-04-05T03:00"
     }
   ];
 
