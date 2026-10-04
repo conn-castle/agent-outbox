@@ -16,6 +16,7 @@ const CLIENT_EVENT_QUEUE_LIMIT = CLIENT_EVENT_BATCH_LIMIT * 8;
 const queue: ClientEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
+const installedErrorTargets = new WeakSet<Window>();
 
 export function emitClientEvent(name: ClientEventName) {
   try {
@@ -47,6 +48,43 @@ export function registerClientEventFlushListeners(target: Window) {
     target.removeEventListener("pagehide", flush);
     target.document.removeEventListener("visibilitychange", flushWhenHidden);
   };
+}
+
+// Installed from instrumentation-client.ts, which runs before hydration: React
+// reports hydration mismatches as recoverable errors before any effect runs, so
+// a listener attached later never sees them.
+export function installClientErrorEvents(target: Window) {
+  if (installedErrorTargets.has(target)) {
+    return;
+  }
+  installedErrorTargets.add(target);
+
+  target.addEventListener(
+    "error",
+    (event) => {
+      // Resource load failures dispatch error events without an error object.
+      if (event.error != null) {
+        emitUncaughtErrorEvent(event.error);
+      }
+    },
+    { capture: true }
+  );
+  target.addEventListener(
+    "unhandledrejection",
+    (event) => {
+      emitUncaughtErrorEvent(event.reason);
+    },
+    { capture: true }
+  );
+  registerClientEventFlushListeners(target);
+}
+
+function emitUncaughtErrorEvent(error: unknown) {
+  emitClientEvent(
+    classifyReactError(error) === "hydration"
+      ? "hydration_error"
+      : "client_error"
+  );
 }
 
 export function classifyReactError(error: unknown): "hydration" | "other" {
