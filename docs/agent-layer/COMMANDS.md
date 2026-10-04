@@ -534,7 +534,9 @@ any optional inputs against that state, then proves committed, retries a
 restores prior@100 and deletes only an owned `prepared` draft after proving
 traffic, prior SHA, tag absence, and deletion, or holds without mutation.
 Artifact-less reconcile cannot publish GitHub draft bytes; retry the original
-deploy run with Re-run failed jobs. It never deletes published releases or
+deploy run with Re-run failed jobs, whose cleanup step retries publication with
+the certified artifact; once it publishes, re-run failed jobs again to finish
+CLI distribution. It never deletes published releases or
 orphan tags.
 
 - Dispatch a manual rollback to a previously tagged release

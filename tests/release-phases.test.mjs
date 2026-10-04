@@ -262,7 +262,10 @@ test("reconciliation restores prior@100 then deletes only the owned prepared dra
     repository: RELEASE.repository,
     releaseTag: RELEASE.releaseTag,
     requireExactRun: false,
-    liveSha: RELEASE.expectedSha
+    liveSha: RELEASE.expectedSha,
+    loadAssets: () => {
+      throw new Error("dist/ was never downloaded");
+    }
   });
   assert.equal(decision.action, "restore-then-delete-draft");
   assert.deepEqual(cloudflare.calls.deployVersions[0].placements, [
@@ -329,6 +332,71 @@ test("artifact-less reconciliation holds instead of retry-publishing unproved as
       error instanceof ReleaseHoldError &&
       /certified CLI asset/.test(error.message) &&
       !(error instanceof PublicationStateUnknownError)
+  );
+  assert.equal(github.calls.updateRelease, 0);
+  assert.equal(github.calls.deleteRelease, 0);
+});
+
+test("deploy-run reconciliation retry-publishes a publishing draft with its certified artifact", async () => {
+  const publishingDraft = draftRelease({
+    body: preparedMarker({ state: "publishing" }),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const github = scriptedGithub({
+    listReleases: [
+      [publishingDraft],
+      [publishingDraft],
+      [publishingDraft],
+      [publishedRelease()]
+    ],
+    remoteTagCommit: [null, null, null, null, null, RELEASE.expectedSha],
+    getRelease: [publishingDraft],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
+    updateRelease: [{ status: 1, stderr: "HTTP 502" }, { status: 0 }]
+  });
+  let loads = 0;
+  const decision = await runReconciliation(
+    orchestrator(github, scriptedCloudflare()),
+    {
+      ...RELEASE,
+      priorVersionId: PRIOR_VERSION,
+      loadAssets: () => {
+        loads += 1;
+        return [CERTIFIED_ASSET];
+      }
+    }
+  );
+  assert.equal(decision.action, "retry-published");
+  assert.equal(loads, 1);
+  assert.equal(github.calls.downloadAsset, 2);
+  assert.equal(github.calls.updateRelease, 2);
+  assert.equal(github.calls.deleteRelease, 0);
+});
+
+test("deploy-run reconciliation holds when its certified artifact cannot be loaded", async () => {
+  const publishingDraft = draftRelease({
+    body: preparedMarker({ state: "publishing" }),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const github = scriptedGithub({
+    listReleases: [[publishingDraft]],
+    remoteTagCommit: [null],
+    updateRelease: [{ status: 0 }]
+  });
+  const loadError = new Error("certified CLI asset set is incomplete");
+  await assert.rejects(
+    runReconciliation(orchestrator(github, scriptedCloudflare()), {
+      ...RELEASE,
+      priorVersionId: PRIOR_VERSION,
+      loadAssets: () => {
+        throw loadError;
+      }
+    }),
+    (error) =>
+      error instanceof ReleaseHoldError &&
+      !(error instanceof PublicationStateUnknownError) &&
+      /certified CLI artifact/.test(error.message) &&
+      error.cause === loadError
   );
   assert.equal(github.calls.updateRelease, 0);
   assert.equal(github.calls.deleteRelease, 0);

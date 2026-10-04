@@ -447,7 +447,10 @@ async function reconcileRelease() {
     candidateVersionId: context.claimed.candidateVersionId ?? null,
     priorSha: context.claimed.priorSha ?? null,
     liveSha,
-    releaseId: context.releaseId
+    releaseId: context.releaseId,
+    // The deploy job downloads its certified artifact into dist/, so its
+    // reconcile step can retry a publishing draft; manual reconcile cannot.
+    loadAssets: manualReconcile ? undefined : () => certifiedReleaseAssets()
   });
   if (process.env.GITHUB_OUTPUT) {
     writeGithubOutputs({

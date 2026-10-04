@@ -728,14 +728,18 @@ export async function proveCertifiedAssets(orchestrator, input) {
  *   expectedSha: string,
  *   runId: string,
  *   releaseId: number,
- *   assets?: { name: string, path: string, bytes: Buffer }[]
+ *   assets?: { name: string, path: string, bytes: Buffer }[],
+ *   loadAssets?: () => { name: string, path: string, bytes: Buffer }[]
  * }} input
  * Assets are required immediately before `{ draft: false }`. Early returns for
- * committed or pending-tag state do not publish.
+ * committed or pending-tag state do not publish. `loadAssets` is called only
+ * when publication needs the certified assets.
  */
 export async function runReleasePublication(orchestrator, input) {
   let publicationMutationAttempted = false;
   let markedPublishing = false;
+  /** @type {{ name: string, path: string, bytes: Buffer }[] | undefined} */
+  let assets;
   for (let attempt = 1; attempt <= FINALIZE_MAX_ATTEMPTS; attempt += 1) {
     let snapshot;
     try {
@@ -859,7 +863,7 @@ export async function runReleasePublication(orchestrator, input) {
       );
     }
 
-    const assets = requireCertifiedPublicationAssets(input.assets);
+    assets ??= requireCertifiedPublicationAssets(input);
     await proveCertifiedAssets(orchestrator, {
       repository: input.repository,
       releaseId: input.releaseId,
@@ -909,10 +913,24 @@ export async function runReleasePublication(orchestrator, input) {
  * reconciliation does not fetch it, so missing assets hold instead of
  * publishing GitHub draft bytes.
  *
- * @param {{ name: string, path: string, bytes: Buffer }[] | undefined} assets
+ * @param {{
+ *   assets?: { name: string, path: string, bytes: Buffer }[],
+ *   loadAssets?: () => { name: string, path: string, bytes: Buffer }[]
+ * }} input
  * @returns {{ name: string, path: string, bytes: Buffer }[]}
  */
-function requireCertifiedPublicationAssets(assets) {
+function requireCertifiedPublicationAssets(input) {
+  let assets = input.assets;
+  if (assets === undefined && input.loadAssets) {
+    try {
+      assets = input.loadAssets();
+    } catch (error) {
+      throw new ReleaseHoldError(
+        "unable to load the certified CLI artifact downloaded by this deploy run; re-run failed jobs on the original deploy run while its certified artifact is still retained",
+        { cause: error }
+      );
+    }
+  }
   if (Array.isArray(assets) && assets.length > 0) {
     return assets;
   }
@@ -937,7 +955,8 @@ function requireCertifiedPublicationAssets(assets) {
  *   cloudflareReadable?: boolean,
  *   requireExactRun?: boolean,
  *   releaseId?: number,
- *   assets?: { name: string, path: string, bytes: Buffer }[]
+ *   assets?: { name: string, path: string, bytes: Buffer }[],
+ *   loadAssets?: () => { name: string, path: string, bytes: Buffer }[]
  * }} input
  */
 export async function runReconciliation(orchestrator, input) {

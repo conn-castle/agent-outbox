@@ -316,25 +316,30 @@ exact certified CLI asset inventory and bytes can be re-proved immediately
 before `draft: false`; restore the previous Worker to 100%, prove that traffic
 and the prior runtime SHA, re-read the exact-owned `prepared` draft, confirm the
 tag is absent, delete it by ID, and prove it is gone; or hold without mutation.
-Publication never sets `draft: false` without that certified-asset proof. Manual
-reconciliation does not download the original workflow artifact; without those
-exact files it holds rather than publishing GitHub draft bytes. Recover by
-choosing **Re-run failed jobs** on the original deploy run so it reuses the
-certified artifact. Ambiguous or unprovable ownership, candidate-live or
-unreadable provider state, or a prior identity that cannot be proven, stops
-loudly. A scheduled detector fails nonzero only for abandoned exact system-owned
-markers whose owning GitHub Actions run is missing or terminal, including the
-documented orphan when it still carries this system's marker. It reports
-human-authored, unowned, or malformed drafts as warnings so unrelated drafts do
-not keep the schedule red. It excludes queued and in-progress runs so an active
-release is not treated as abandoned. It must not join `production-deploy`
-concurrency or mutate, because GitHub concurrency keeps only one pending run and
-can cancel a queued human release. Its token still holds `contents: write`
-because GitHub lists draft releases only to tokens with push access; with
-read-only scope the detector sees no drafts and falsely passes. The workflow
-contract validates the detector's effective permissions, including job-level
-overrides, and limits `run` commands to `make setup` and
-`node scripts/production-release.mjs detect-abandoned`.
+Publication never sets `draft: false` without that certified-asset proof. The
+deploy job's cleanup step reads the certified artifact that job downloaded, so
+it can retry a `publishing` draft; it holds if that artifact cannot be loaded.
+Manual reconciliation does not download the original workflow artifact; without
+those exact files it holds rather than publishing GitHub draft bytes. Recover by
+choosing **Re-run failed jobs** on the original deploy run: draft preparation
+holds on the `publishing` draft, then the cleanup step retries publication with
+the re-downloaded certified artifact. That attempt still fails the deploy job,
+so the Homebrew job stays skipped; choose **Re-run failed jobs** once more so
+draft preparation sees the committed release and CLI distribution completes.
+Ambiguous or unprovable ownership, candidate-live or unreadable provider state,
+or a prior identity that cannot be proven, stops loudly. A scheduled detector
+fails nonzero only for abandoned exact system-owned markers whose owning GitHub
+Actions run is missing or terminal, including the documented orphan when it
+still carries this system's marker. It reports human-authored, unowned, or
+malformed drafts as warnings so unrelated drafts do not keep the schedule red.
+It excludes queued and in-progress runs so an active release is not treated as
+abandoned. It must not join `production-deploy` concurrency or mutate, because
+GitHub concurrency keeps only one pending run and can cancel a queued human
+release. Its token still holds `contents: write` because GitHub lists draft
+releases only to tokens with push access; with read-only scope the detector sees
+no drafts and falsely passes. The workflow contract validates the detector's
+effective permissions, including job-level overrides, and limits `run` commands
+to `make setup` and `node scripts/production-release.mjs detect-abandoned`.
 
 The Worker upload and traffic commands fail outside the sanctioned GitHub
 Actions workflows. Do not load production credentials locally to bypass them and
