@@ -58,7 +58,7 @@ test(
     const secondCallerId = crypto.randomUUID();
     const foreignCallerId = crypto.randomUUID();
     const userId = crypto.randomUUID();
-    const targetId = crypto.randomUUID();
+    const targetId = `a${crypto.randomUUID().slice(1)}`;
     const foreignItemId = crypto.randomUUID();
     const copiedId = "email:thread /?#&+% café 東京";
     /** @type {import("../src/server/authorization.ts").AuthorizedHumanAccountContext} */
