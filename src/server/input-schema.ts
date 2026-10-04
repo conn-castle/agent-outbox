@@ -1612,7 +1612,7 @@ export function compareUtcDateTimeValues(left: string, right: string) {
   return leftKey.localeCompare(rightKey);
 }
 
-export function compareDatePickerValues(
+function compareDatePickerValues(
   left: string,
   right: string,
   mode: "date" | "datetime"

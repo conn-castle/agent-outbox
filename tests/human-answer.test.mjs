@@ -12,8 +12,14 @@ import {
 } from "../src/server/human-answer.ts";
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
-import { handleOutputFileDownloadAuthenticatedTransaction } from "../src/server/output-files.ts";
-import { acknowledgeOutputInTransaction } from "../src/server/output-queue.ts";
+import {
+  handleOutputFileDownloadAuthenticatedTransaction,
+  outputFileDownloadInTransaction
+} from "../src/server/output-files.ts";
+import {
+  acknowledgeOutputInTransaction,
+  readOutputResultInTransaction
+} from "../src/server/output-queue.ts";
 import { runScheduledCleanup } from "../src/server/scheduled.ts";
 import { accountLimitStatusMetadata } from "../src/server/limits.ts";
 import {
@@ -22,6 +28,7 @@ import {
   preserveBodyErrorDuringTeardown,
   teardownAttempt
 } from "./helpers/database.mjs";
+import { parseValidSubmission } from "./helpers/canonical-input.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -592,6 +599,108 @@ const malformedPopupCases = [
       "Malformed persisted popup_payload for input action action-1: max_selected must be a finite number, got string."
   },
   {
+    name: "free-text negative minimum",
+    kind: "free_text",
+    payload: {
+      ...freeTextPayload,
+      label: "private stored label",
+      min_length: -1
+    },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must be a non-negative integer or null."
+  },
+  {
+    name: "free-text fractional maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 2.5 },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text zero maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 0 },
+    response: { kind: "free_text", text: "" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text minimum above maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 5, max_length: 3 },
+    response: { kind: "free_text", text: "four" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must not exceed max_length."
+  },
+  {
+    name: "multi-select maximum above the stored option count",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, max_selected: 4 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select fractional minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 0.5 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select negative minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: -1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select minimum above maximum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 2, max_selected: 1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "date-picker invalid timezone with a matching date response",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      label: "private stored label",
+      display_timezone: "Not/AZone"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: "Not/AZone"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name."
+  },
+  {
+    name: "datetime-picker invalid timezone",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      mode: "datetime",
+      display_timezone: "Not/AZone"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-06-29T12:00:00.000Z",
+      display_timezone: "UTC"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name."
+  },
+  {
     name: "date-picker minimum with a number type",
     kind: "date_picker",
     payload: {
@@ -637,135 +746,6 @@ const malformedPopupCases = [
     },
     message:
       "Malformed persisted popup_payload for input action action-1: max_value must be a valid datetime bound."
-  },
-  {
-    name: "free-text negative minimum",
-    kind: "free_text",
-    payload: { ...freeTextPayload, min_length: -1 },
-    response: { kind: "free_text", text: "within" },
-    message:
-      "Malformed persisted popup_payload for input action action-1: min_length must be a non-negative integer or null."
-  },
-  {
-    name: "free-text fractional maximum",
-    kind: "free_text",
-    payload: { ...freeTextPayload, max_length: 10.5 },
-    response: { kind: "free_text", text: "within" },
-    message:
-      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
-  },
-  {
-    name: "free-text zero maximum",
-    kind: "free_text",
-    payload: { ...freeTextPayload, max_length: 0 },
-    response: { kind: "free_text", text: "" },
-    message:
-      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
-  },
-  {
-    name: "free-text minimum above maximum",
-    kind: "free_text",
-    payload: { ...freeTextPayload, min_length: 8, max_length: 4 },
-    response: { kind: "free_text", text: "within" },
-    message:
-      "Malformed persisted popup_payload for input action action-1: min_length must be less than or equal to max_length."
-  },
-  {
-    name: "multi-select negative minimum",
-    kind: "multi_select",
-    payload: { ...multiSelectPayload, min_selected: -1 },
-    response: { kind: "multi_select", values: ["a"] },
-    message:
-      "Malformed persisted popup_payload for input action action-1: min_selected must be a non-negative integer."
-  },
-  {
-    name: "multi-select fractional minimum",
-    kind: "multi_select",
-    payload: { ...multiSelectPayload, min_selected: 0.5 },
-    response: { kind: "multi_select", values: ["a"] },
-    message:
-      "Malformed persisted popup_payload for input action action-1: min_selected must be a non-negative integer."
-  },
-  {
-    name: "multi-select minimum above maximum",
-    kind: "multi_select",
-    payload: { ...multiSelectPayload, min_selected: 2, max_selected: 1 },
-    response: { kind: "multi_select", values: ["a"] },
-    message:
-      "Malformed persisted popup_payload for input action action-1: max_selected must be an integer from min_selected to the option count."
-  },
-  {
-    name: "multi-select maximum above option count",
-    kind: "multi_select",
-    payload: { ...multiSelectPayload, max_selected: 4 },
-    response: { kind: "multi_select", values: ["a"] },
-    message:
-      "Malformed persisted popup_payload for input action action-1: max_selected must be an integer from min_selected to the option count."
-  },
-  {
-    name: "date-picker invalid timezone in date mode",
-    kind: "date_picker",
-    payload: { ...datePickerPayload, display_timezone: "Not/AZone" },
-    response: {
-      kind: "date_picker",
-      mode: "date",
-      value_date: "2026-06-30",
-      display_timezone: "Not/AZone"
-    },
-    message:
-      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name or null."
-  },
-  {
-    name: "datetime-picker invalid timezone",
-    kind: "date_picker",
-    payload: {
-      ...datePickerPayload,
-      mode: "datetime",
-      display_timezone: "Not/AZone"
-    },
-    response: {
-      kind: "date_picker",
-      mode: "datetime",
-      value_utc: "2026-06-29T12:00:00.000Z",
-      display_timezone: "UTC"
-    },
-    message:
-      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name or null."
-  },
-  {
-    name: "date-picker minimum after maximum",
-    kind: "date_picker",
-    payload: {
-      ...datePickerPayload,
-      min_value: "2026-07-01",
-      max_value: "2026-06-01"
-    },
-    response: {
-      kind: "date_picker",
-      mode: "date",
-      value_date: "2026-06-30",
-      display_timezone: null
-    },
-    message:
-      "Malformed persisted popup_payload for input action action-1: min_value must be less than or equal to max_value."
-  },
-  {
-    name: "datetime-picker minimum after maximum",
-    kind: "date_picker",
-    payload: {
-      ...datePickerPayload,
-      mode: "datetime",
-      min_value: "2026-06-29T13:00:00Z",
-      max_value: "2026-06-29T11:00:00.000Z"
-    },
-    response: {
-      kind: "date_picker",
-      mode: "datetime",
-      value_utc: "2026-06-29T12:00:00.000Z",
-      display_timezone: "UTC"
-    },
-    message:
-      "Malformed persisted popup_payload for input action action-1: min_value must be less than or equal to max_value."
   },
   {
     name: "file-upload MIME list with a non-string entry",
@@ -855,7 +835,7 @@ for (const scenario of malformedPopupCases) {
         assert.equal(error.message, scenario.message);
         assert.doesNotMatch(
           error.message,
-          /private stored|not a mime|text\/plain|"5"|"2"|2026-06|Not\/AZone/
+          /private stored|not a mime|text\/plain|"5"|"2"|2026-06-30|AZone/
         );
         return true;
       }
@@ -867,57 +847,23 @@ for (const scenario of malformedPopupCases) {
   });
 }
 
-/** @type {Array<{name: string, kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse, field: string}>} */
+/** @type {Array<{kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse, field: string}>} */
 const boundedPopupCases = [
   {
-    name: "free-text minimum",
     kind: "free_text",
     payload: { ...freeTextPayload, min_length: 5 },
     response: { kind: "free_text", text: "x" },
     field: "response.text"
   },
   {
-    name: "multi-select maximum",
     kind: "multi_select",
     payload: { ...multiSelectPayload, max_selected: 2 },
     response: { kind: "multi_select", values: ["a", "b", "c"] },
     field: "response.values"
-  },
-  {
-    name: "free-text zero minimum",
-    kind: "free_text",
-    payload: { ...freeTextPayload, min_length: 0, max_length: 3 },
-    response: { kind: "free_text", text: "long" },
-    field: "response.text"
-  },
-  {
-    name: "multi-select maximum equal to option count",
-    kind: "multi_select",
-    payload: { ...multiSelectPayload, min_selected: 3, max_selected: 3 },
-    response: { kind: "multi_select", values: ["a", "b"] },
-    field: "response.values"
-  },
-  {
-    name: "datetime equal bounds and display timezone",
-    kind: "date_picker",
-    payload: {
-      ...datePickerPayload,
-      mode: "datetime",
-      display_timezone: "America/New_York",
-      min_value: "2026-06-29T12:00:00Z",
-      max_value: "2026-06-29T12:00:00.000Z"
-    },
-    response: {
-      kind: "date_picker",
-      mode: "datetime",
-      value_utc: "2026-06-29T13:00:00.000Z",
-      display_timezone: "America/New_York"
-    },
-    field: "response.value_utc"
   }
 ];
 for (const scenario of boundedPopupCases) {
-  test(`human answer service enforces well-formed popup bounds: ${scenario.name}`, async () => {
+  test(`human answer service enforces well-formed ${scenario.kind} bounds`, async () => {
     /** @type {TransactionContextStatement[]} */
     const calls = [];
     const result = await createHumanAnswerInTransaction(
@@ -941,6 +887,52 @@ for (const scenario of boundedPopupCases) {
       calls.some((call) => /^\s*(insert|update|delete)\b/i.test(call.sql)),
       false
     );
+  });
+}
+
+/** @type {Array<{kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse}>} */
+const boundaryPopupCases = [
+  {
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 0, max_length: 1 },
+    response: { kind: "free_text", text: "x" }
+  },
+  {
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 0, max_selected: 3 },
+    response: { kind: "multi_select", values: ["a", "b", "c"] }
+  },
+  {
+    kind: "date_picker",
+    payload: { ...datePickerPayload, display_timezone: "" },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: ""
+    }
+  }
+];
+for (const scenario of boundaryPopupCases) {
+  test(`human answer service accepts stored ${scenario.kind} settings at the input-rule limits`, async () => {
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    const result = await createHumanAnswerInTransaction(
+      mockQuery(calls, {
+        inputRows: [pendingInputRow],
+        actionRows: [
+          {
+            input_action_id: "action-1",
+            popup_kind: scenario.kind,
+            popup_payload: scenario.payload
+          }
+        ],
+        optionRows: ["a", "b", "c"].map((option_value) => ({ option_value })),
+        outputRows: [{ output_result_id: "output-1" }]
+      }),
+      { ...baseAnswerInput, response: scenario.response }
+    );
+    assert.equal(result.ok, true);
   });
 }
 
@@ -2105,6 +2097,295 @@ test(
           await cleanupHumanAnswerDatabaseTest(owner, ids);
         },
         "Ack and download concurrency test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "output lookups preserve canonical live ids and case-insensitive duplicate acks without aborting the transaction",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const caller = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const identity = { accountId: ids.accountId, callerId: ids.callerId };
+    const context = {
+      requestId: "req-canonical-output-ids",
+      correlationId: "corr-canonical-output-ids"
+    };
+    // Guarantee two alphabetic characters so uppercase and mixed-case forms
+    // are always distinct from each other and from the stored ids.
+    const outputResultId = crypto.randomUUID().replace(/^../, "ab");
+    const fileId = crypto.randomUUID().replace(/^../, "cd");
+    const submission = parseValidSubmission({
+      caller_item_id: "caller-item-db",
+      row_type: { display: "Review", icon: "inbox" },
+      title: "Title",
+      subtitle: "Subtitle",
+      summary: "Summary",
+      link_buttons: [],
+      actions: [
+        {
+          display: "Approve",
+          icon: "check",
+          value: "approve",
+          overflow: false,
+          popup: { kind: "file_upload", ...fileUploadPayload }
+        }
+      ]
+    });
+    /** @param {string} id */
+    const caseForms = (id) => [
+      id.toUpperCase(),
+      id.replace(/^[a-f]/, (c) => c.toUpperCase())
+    ];
+    /** @param {string} id */
+    const noncanonicalForms = (id) => [
+      id.replaceAll("-", ""),
+      `{${id}}`,
+      "not-a-uuid",
+      ` ${id}`,
+      ...[
+        " ",
+        "\t",
+        "\n",
+        "\r",
+        "\r\n",
+        "\u0001",
+        "\u00a0",
+        "\u2028",
+        "\u2029",
+        "\ufeff"
+      ].map((suffix) => `${id}${suffix}`)
+    ];
+    /** @type {unknown} */
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await owner.query("begin");
+      await seedDatabaseRows(owner, ids);
+      await owner.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid' where account_id = $1",
+        [ids.accountId]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+        [ids.actionId, JSON.stringify(fileUploadPayload)]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_items set normalized_content_fingerprint = $2 where input_item_id = $1",
+        [ids.inputItemId, submission.normalizedContentFingerprint]
+      );
+      await owner.query(
+        `
+          insert into public.agent_outbox_output_results(
+            output_result_id, account_id, caller_id, input_item_id,
+            caller_item_id, action_value, response_kind, response_payload,
+            response_payload_bytes, answered_by_user_id,
+            previous_input_updated_at, expires_at
+          )
+          select $1, account_id, caller_id, input_item_id,
+            caller_item_id, 'approve', 'file_upload', '{}'::jsonb,
+            2, $3, updated_at, now() + interval '14 days'
+          from public.agent_outbox_input_items where input_item_id = $2
+        `,
+        [outputResultId, ids.inputItemId, ids.userId]
+      );
+      const bytes = Buffer.from("answer");
+      const sha256 = Buffer.from(
+        await crypto.subtle.digest("SHA-256", bytes)
+      ).toString("hex");
+      await owner.query(
+        `
+          insert into public.agent_outbox_output_files(
+            output_file_id, output_result_id, account_id, caller_id,
+            filename, mime_type, size_bytes, sha256, file_bytes
+          )
+          values ($1, $2, $3, $4, 'answer.txt', 'text/plain', $5, $6, $7)
+        `,
+        [
+          fileId,
+          outputResultId,
+          ids.accountId,
+          ids.callerId,
+          bytes.length,
+          sha256,
+          bytes
+        ]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_items set status = 'answered' where input_item_id = $1",
+        [ids.inputItemId]
+      );
+      await owner.query("commit");
+
+      // As on main, a malformed file id still waits for the canonical
+      // output's lock. Rejecting it before the lock changes timeout behavior.
+      await owner.query("begin");
+      await owner.query(
+        "select output_result_id from public.agent_outbox_output_results where output_result_id = $1 for update",
+        [outputResultId]
+      );
+      try {
+        await assert.rejects(
+          runHumanAnswerDatabaseTransaction(
+            caller,
+            ids,
+            "caller",
+            async (query) => {
+              await query({ sql: "set local statement_timeout = '100ms'" });
+              // Exercise the lock directly so a timeout in earlier quota
+              // queries cannot falsely satisfy this assertion.
+              return outputFileDownloadInTransaction(query, context, identity, {
+                outputResultId,
+                fileId: "not-a-uuid"
+              });
+            }
+          ),
+          { code: "57014" }
+        );
+      } finally {
+        await owner.query("rollback");
+      }
+
+      // Every lookup shares one transaction, so a failed uuid cast would
+      // abort it and fail every later statement.
+      await runHumanAnswerDatabaseTransaction(
+        caller,
+        ids,
+        "caller",
+        async (query) => {
+          for (const id of [
+            ...caseForms(outputResultId),
+            ...noncanonicalForms(outputResultId)
+          ]) {
+            const read = await readOutputResultInTransaction(
+              query,
+              identity,
+              id
+            );
+            assert.equal(read.ok ? 200 : read.error.status, 404, id);
+            const download =
+              await handleOutputFileDownloadAuthenticatedTransaction(
+                query,
+                context,
+                identity,
+                { outputResultId: id, fileId }
+              );
+            assert.equal(download.ok ? 200 : download.error.status, 404, id);
+            const ack = await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              id
+            );
+            assert.equal(ack.ok ? 200 : ack.error.status, 404, id);
+          }
+          for (const id of [
+            ...caseForms(fileId),
+            ...noncanonicalForms(fileId)
+          ]) {
+            const download =
+              await handleOutputFileDownloadAuthenticatedTransaction(
+                query,
+                context,
+                identity,
+                { outputResultId, fileId: id }
+              );
+            assert.equal(download.ok ? 200 : download.error.status, 404, id);
+          }
+
+          const read = await readOutputResultInTransaction(
+            query,
+            identity,
+            outputResultId
+          );
+          assert.equal(read.ok, true);
+          const download =
+            await handleOutputFileDownloadAuthenticatedTransaction(
+              query,
+              context,
+              identity,
+              { outputResultId, fileId }
+            );
+          assert.equal(download.ok ? download.bytes.toString() : "", "answer");
+          assert.deepEqual(
+            await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              outputResultId
+            ),
+            {
+              ok: true,
+              data: {
+                output_result_id: outputResultId,
+                acknowledged: true,
+                already_acknowledged: false
+              }
+            }
+          );
+        }
+      );
+
+      // Main's retained-audit fallback accepts casing variants even though
+      // those forms cannot match the live output row.
+      await runHumanAnswerDatabaseTransaction(
+        caller,
+        ids,
+        "caller",
+        async (query) => {
+          for (const id of [...caseForms(outputResultId), outputResultId]) {
+            assert.deepEqual(
+              await acknowledgeOutputInTransaction(
+                query,
+                identity,
+                context,
+                id
+              ),
+              {
+                ok: true,
+                data: {
+                  output_result_id: id,
+                  acknowledged: true,
+                  already_acknowledged: true
+                }
+              }
+            );
+          }
+          for (const id of noncanonicalForms(outputResultId)) {
+            const ack = await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              id
+            );
+            assert.equal(ack.ok ? 200 : ack.error.status, 404, id);
+          }
+          assert.equal(
+            (await query({ sql: "select 1 as alive" })).rows[0].alive,
+            1
+          );
+        }
+      );
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await caller.end();
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Canonical output id test and teardown both failed."
       );
     }
   }
