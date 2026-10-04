@@ -84,9 +84,9 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           popupPayload: {
             label: "Requested change",
             placeholder: "Name the one change needed before handoff.",
-            default_value: null,
+            default_value: "Change: ",
             multiline: true,
-            min_length: 4,
+            min_length: 10,
             max_length: 240
           },
           answerable: true,
@@ -131,6 +131,25 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
               icon: "inbox"
             }
           ]
+        },
+        {
+          displayOrder: 4,
+          display: "Add handoff note",
+          icon: "message-square",
+          value: "add_handoff_note",
+          overflow: true,
+          popupKind: "free_text",
+          popupPayload: {
+            label: "Handoff note",
+            placeholder: "One line for the next steward.",
+            default_value:
+              "Confirm the July 8 notice end date with the resident before handoff.",
+            multiline: false,
+            min_length: null,
+            max_length: 40
+          },
+          answerable: true,
+          options: []
         }
       ]
     },

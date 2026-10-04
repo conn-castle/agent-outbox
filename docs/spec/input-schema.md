@@ -140,6 +140,9 @@ meaning.
 `min_length` must be non-negative, `max_length` must be positive when present,
 and `min_length <= max_length`.
 
+`default_value` is not checked against the length bounds. The review UI prefills
+it and blocks submission until the text is within the bounds.
+
 `single_select` and `multi_select` fields:
 
 - `label`
