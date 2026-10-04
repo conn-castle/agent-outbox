@@ -766,7 +766,6 @@ function mockHumanAnswerQuery(calls, rowsByKind) {
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-observability",
           caller_audit_id: "audit-caller-observability"
         }
