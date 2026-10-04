@@ -135,6 +135,47 @@ func TestInputSendPostsFileAndRendersStableJSON(t *testing.T) {
 	}
 }
 
+func TestInputSendReadsFilePathWithoutTrimming(t *testing.T) {
+	dir := t.TempDir()
+	inputJSON := func(callerItemID string) []byte {
+		return []byte(fmt.Sprintf(`{
+  "caller_item_id": %q,
+  "row_type": {"display": "Email", "icon": "mail"},
+  "title": "Title",
+  "subtitle": "Subtitle",
+  "summary": "Summary",
+  "link_buttons": [],
+  "actions": [{"display": "Approve", "icon": "check", "value": "approve", "overflow": false, "popup": {"kind": "none"}}]
+}`, callerItemID))
+	}
+	spacedPath := filepath.Join(dir, "input.json ")
+	if err := os.WriteFile(spacedPath, inputJSON("item_spaced"), 0o600); err != nil {
+		t.Fatalf("write spaced input fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "input.json"), inputJSON("item_trimmed"), 0o600); err != nil {
+		t.Fatalf("write trimmed-name input fixture: %v", err)
+	}
+	var gotID any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("request body was not JSON: %v", err)
+		}
+		gotID = body["caller_item_id"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true,"request_id":"req_server","correlation_id":"corr_server","data":{"caller_item_id":"item_spaced","status":"pending","revision":1,"created":true,"duplicate":false}}`)
+	}))
+	defer server.Close()
+
+	_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "send", "--file", spacedPath})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if gotID != "item_spaced" {
+		t.Fatalf("caller_item_id body = %v, want the item from the exact --file path", gotID)
+	}
+}
+
 func TestInputSendMalformedResponseReportsUnknownWriteOutcome(t *testing.T) {
 	inputPath := filepath.Join(t.TempDir(), "input.json")
 	if err := os.WriteFile(inputPath, []byte(`{
@@ -372,6 +413,38 @@ func TestInputReadPreservesCallerItemIDWhitespace(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"caller_item_id":" item "`) {
 		t.Fatalf("stdout missing preserved caller_item_id: %s", stdout)
+	}
+}
+
+func TestInputDeletePreservesCallerItemIDWhitespace(t *testing.T) {
+	for _, callerItemID := range []string{" item ", " "} {
+		t.Run(fmt.Sprintf("%q", callerItemID), func(t *testing.T) {
+			var gotID any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/input/delete" {
+					t.Errorf("request = %s %s, want POST /api/input/delete", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Errorf("request body was not JSON: %v", err)
+					return
+				}
+				gotID = body["caller_item_id"]
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"ok":true,"request_id":"req_delete","correlation_id":"corr_delete","data":{"caller_item_id":%q,"deleted":true}}`, callerItemID)
+			}))
+			defer server.Close()
+
+			_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "delete", callerItemID})
+			if code != foundation.ExitSuccess {
+				t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+			}
+			if gotID != callerItemID {
+				t.Fatalf("caller_item_id body = %q, want %q", gotID, callerItemID)
+			}
+		})
 	}
 }
 
@@ -690,6 +763,45 @@ func TestOutputFileGetKeepsBytesOutOfJSONAndDiagnostics(t *testing.T) {
 	data := payload["data"].(map[string]any)
 	if data["output"] != outputPath || data["content_length"] != float64(len(fileBytes)) {
 		t.Fatalf("file metadata JSON = %#v", data)
+	}
+}
+
+func TestOutputFileGetWritesExactOutputPath(t *testing.T) {
+	fileBytes := []byte("downloaded bytes")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(fileBytes)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	existingPath := filepath.Join(dir, "report.pdf")
+	original := []byte("original local bytes")
+	if err := os.WriteFile(existingPath, original, 0o600); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+	outputPath := existingPath + " "
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "output", "file", "get", "out_1", "file_1", "--output", outputPath, "--force"})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	written, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read exact output path: %v", err)
+	}
+	if !bytes.Equal(written, fileBytes) {
+		t.Fatalf("exact output path bytes = %q", string(written))
+	}
+	untouched, err := os.ReadFile(existingPath)
+	if err != nil {
+		t.Fatalf("read existing file: %v", err)
+	}
+	if !bytes.Equal(untouched, original) {
+		t.Fatalf("download overwrote the trimmed path: %q", string(untouched))
+	}
+	data := decodeCommandJSON(t, stdout)["data"].(map[string]any)
+	if data["output"] != outputPath {
+		t.Fatalf("reported output = %q, want %q", data["output"], outputPath)
 	}
 }
 

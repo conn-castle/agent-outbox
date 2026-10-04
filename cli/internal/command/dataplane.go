@@ -201,7 +201,7 @@ func inputDeleteCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			callerItemID := strings.TrimSpace(args[0])
+			callerItemID := args[0]
 			if callerItemID == "" {
 				return foundation.NewUsageError("caller_item_id is required.")
 			}
@@ -579,8 +579,7 @@ func secretStoreForCommand(opts Options, configPath string, configPathOwned bool
 }
 
 func readInputSubmissionFile(path string) (json.RawMessage, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return nil, foundation.NewUsageError("--file is required.")
 	}
 	data, err := os.ReadFile(path)
@@ -813,8 +812,7 @@ func validateFileGetFlags(fileFlags fileGetFlags, jsonMode bool) error {
 }
 
 func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string, outputPath string, force bool) (*foundation.DownloadResponse, error) {
-	outputPath = strings.TrimSpace(outputPath)
-	if outputPath == "" {
+	if strings.TrimSpace(outputPath) == "" {
 		return nil, foundation.NewUsageError("--output path is required.")
 	}
 	if stat, err := os.Stat(outputPath); err == nil {
