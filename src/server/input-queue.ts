@@ -105,11 +105,12 @@ function isCallerItemIdIndexWidthError(error: unknown): error is Error {
     );
   }
 
-  // PostgreSQL 17's larger tuple-width failure has no object metadata. This
+  // PostgreSQL's larger tuple-width failure has no object metadata. This
   // predicate is used only around the root input INSERT: its sole unbounded
   // indexed value is caller_item_id. Other program-limit errors must escape.
   return (
-    postgresError.routine === "index_form_tuple_context" &&
+    (postgresError.routine === "index_form_tuple_context" ||
+      postgresError.routine === "index_form_tuple") &&
     postgresError.schema == null &&
     postgresError.table == null &&
     postgresError.constraint == null &&

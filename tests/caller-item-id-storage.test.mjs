@@ -446,6 +446,36 @@ test(
       );
     }
 
+    await t.test(
+      "injected index_form_tuple root INSERT failure returns 422 after rollback and cleanup",
+      async (t) => {
+        await withFixture(
+          t,
+          async (fixture) => {
+            const before = await storedState(fixture);
+            const id = randomId(2400);
+            const result = await post(fixture, "send", submission(id));
+            assertWidthValidation(result, id);
+            assertCompletedRollback(fixture);
+            assert.deepEqual(fixture.inFlight, {
+              lastUsed: true,
+              quota: true
+            });
+            assert.deepEqual(
+              await storedState(fixture),
+              before,
+              "failed sends must leave no partial writes"
+            );
+            assert.deepEqual(fixture.logs, []);
+          },
+          {
+            statement: rootInsert,
+            error: databaseError({ code: "54000", routine: "index_form_tuple" })
+          }
+        );
+      }
+    );
+
     /** @type {[string, () => string][]} */
     const successCases = [
       ["random 2400-byte", () => randomId(2400)],
@@ -614,17 +644,19 @@ test(
           error: databaseError({ ...indexMetadata, [key]: value })
         }
       })),
-      ...["schema", "table", "constraint", "column"].map((key) => ({
-        name: `tuple width 54000 with unexpected ${key} metadata`,
-        fault: {
-          statement: rootInsert,
-          error: databaseError({
-            code: "54000",
-            routine: "index_form_tuple_context",
-            [key]: "another_object"
-          })
-        }
-      })),
+      ...["index_form_tuple_context", "index_form_tuple"].flatMap((routine) =>
+        ["schema", "table", "constraint", "column"].map((key) => ({
+          name: `${routine} 54000 with unexpected ${key} metadata`,
+          fault: {
+            statement: rootInsert,
+            error: databaseError({
+              code: "54000",
+              routine,
+              [key]: "another_object"
+            })
+          }
+        }))
+      ),
       {
         name: "known-looking root insert error with wrong SQLSTATE",
         fault: {
@@ -646,17 +678,17 @@ test(
           error: databaseError(indexMetadata)
         }
       },
-      {
-        name: "known-looking tuple width error from child insert",
+      ...["index_form_tuple_context", "index_form_tuple"].map((routine) => ({
+        name: `known-looking ${routine} error from child insert`,
         fault: {
           statement: childInsert,
           error: databaseError({
             code: "54000",
-            routine: "index_form_tuple_context"
+            routine
           })
         },
         partialChildren: true
-      },
+      })),
       {
         name: "known-looking attributed error from child insert",
         fault: { statement: childInsert, error: databaseError(indexMetadata) },
