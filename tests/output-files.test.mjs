@@ -101,6 +101,8 @@ test("output file download lookup scopes by account caller output and file ids",
   assert.match(statement.sql, /join public\.agent_outbox_output_results o/);
   assert.match(statement.sql, /f\.account_id = \$1/);
   assert.match(statement.sql, /f\.caller_id = \$2/);
+  assert.match(statement.sql, /f\.output_result_id = \$3::uuid/);
+  assert.match(statement.sql, /f\.output_file_id = \$4::uuid/);
   assert.match(statement.sql, /for update of f\s*$/i);
 });
 
@@ -122,6 +124,7 @@ test("output file download returns raw bytes and writes content-safe byte audit"
   assert.equal(result.ok ? result.headers.get("Content-Length") : "", "7");
 
   assert.equal(query.calls.length, 3);
+  assert.match(query.calls[0].sql, /output_result_id = \$3::uuid/);
   assert.match(query.calls[2].sql, /agent_outbox_audit_events/);
   assert.deepEqual(query.calls[2].values, [
     "file_downloaded",

@@ -825,7 +825,9 @@ test("output pagination parsing fails loudly on invalid limits and cursors", () 
 });
 
 test("output query builders scope by authenticated caller and metadata-only file reads", () => {
-  assert.deepEqual(outputResultByIdStatement(identity, outputOneId).values, [
+  const singleResult = outputResultByIdStatement(identity, outputOneId);
+  assert.match(singleResult.sql, /output_result_id = \$3::uuid/);
+  assert.deepEqual(singleResult.values, [
     identity.accountId,
     identity.callerId,
     outputOneId
