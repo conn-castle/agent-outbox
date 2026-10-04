@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -897,6 +898,432 @@ func TestCallerConnectPersistsResolvedBaseURLForLaterControlPlaneCommand(t *test
 	}
 	if !strings.Contains(stdout, `"revoked":true`) {
 		t.Fatalf("revoke stdout missing success payload: %s", stdout)
+	}
+}
+
+func TestCallerConnectRejectsServerThatDiffersFromExistingCallersBeforeApproval(t *testing.T) {
+	const existingServer = "https://app.example"
+	store := &controlPlaneSecretStore{keys: map[string]string{"caller_123": "existing-secret"}}
+	configPath := writeControlConfig(t, existingServer)
+	requests := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		baseURL:    server.URL,
+		store:      store,
+		args:       []string{"--json", "caller", "connect", "second-caller", "--device-code"},
+	})
+	if code != foundation.ExitConfig {
+		t.Fatalf("exit code = %d, want config failure; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for rejected connect")
+	}
+	if !strings.Contains(stderr, "--config") {
+		t.Fatalf("rejected connect did not point to a separate config: %s", stderr)
+	}
+	if requests != 0 {
+		t.Fatalf("rejected connect made %d server requests", requests)
+	}
+	if len(store.keys) != 1 || store.keys["caller_123"] != "existing-secret" {
+		t.Fatalf("rejected connect mutated secret store: %#v", store.keys)
+	}
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.BaseURL != existingServer || len(cfg.Callers) != 1 || cfg.Callers[0].CallerID != "caller_123" {
+		t.Fatalf("rejected connect changed config: base_url=%q callers=%#v", cfg.BaseURL, cfg.Callers)
+	}
+}
+
+func TestCallerConnectAddsCallerOnExistingCallersServer(t *testing.T) {
+	const pendingKey = "aob_live_keyid_secondcaller"
+	store := &controlPlaneSecretStore{keys: map[string]string{"caller_123": "existing-secret"}}
+	var configPath string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/caller/connect/device/start":
+			writeEnvelope(w, `{"device_code":"dev_connect","user_code":"CONNECT-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=CONNECT-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
+		case "/api/caller/connect/device/poll":
+			writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_second","caller":{"caller_id":"caller_456","caller_slug":"second-caller","display_name":"Second Caller"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_second","prefix":"aob_live","last_chars":"ller","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, pendingKey))
+		case "/api/caller/connect/activate":
+			writeEnvelope(w, `{"caller_id":"caller_456","activated_key_id":"key_second","activated_at":"2026-07-02T20:01:00Z"}`)
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	configPath = writeControlConfig(t, server.URL)
+
+	_, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		store:      store,
+		args:       []string{"--json", "caller", "connect", "second-caller", "--device-code"},
+		httpClient: clientForOnlyOrigin(t, server.URL),
+	})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("connect exit code = %d, stderr: %s", code, stderr)
+	}
+	if store.keys["caller_123"] != "existing-secret" || store.keys["caller_456"] != pendingKey {
+		t.Fatalf("secret store = %#v, want existing and new caller keys", store.keys)
+	}
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.BaseURL != server.URL || len(cfg.Callers) != 2 {
+		t.Fatalf("config after connect: base_url=%q callers=%#v", cfg.BaseURL, cfg.Callers)
+	}
+}
+
+func TestCallerConnectAbortsWhenConcurrentConnectBindsConfigToAnotherServer(t *testing.T) {
+	const pendingKey = "aob_live_pending_racesecret"
+	const otherServer = "https://other.example"
+	store := &controlPlaneSecretStore{}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	var aborts int
+	var activates int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/caller/connect/device/start":
+			writeEnvelope(w, `{"device_code":"dev_connect","user_code":"CONNECT-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=CONNECT-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
+		case "/api/caller/connect/device/poll":
+			// Another process connects a caller on a different server while approval is pending.
+			concurrent, err := os.ReadFile(writeControlConfig(t, otherServer))
+			if err != nil {
+				t.Fatalf("read concurrent config fixture: %v", err)
+			}
+			if err := os.WriteFile(configPath, concurrent, 0o600); err != nil {
+				t.Fatalf("write concurrent config: %v", err)
+			}
+			writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_race","caller":{"caller_id":"caller_456","caller_slug":"second-caller","display_name":"Second Caller"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_pending","prefix":"aob_live","last_chars":"cret","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, pendingKey))
+		case "/api/caller/connect/abort":
+			aborts++
+			if got := r.Header.Get("Authorization"); got != "Bearer "+pendingKey {
+				t.Fatalf("abort authorization = %q", got)
+			}
+			writeEnvelope(w, `{"caller_id":"caller_456","aborted_key_id":"key_pending","aborted_at":"2026-07-02T20:01:00Z"}`)
+		case "/api/caller/connect/activate":
+			activates++
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		baseURL:    server.URL,
+		store:      store,
+		args:       []string{"--json", "caller", "connect", "second-caller", "--device-code"},
+	})
+	if code != foundation.ExitConfig {
+		t.Fatalf("exit code = %d, want config failure; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for failed connect")
+	}
+	if aborts != 1 || activates != 0 {
+		t.Fatalf("aborts=%d activates=%d, want abort only", aborts, activates)
+	}
+	if len(store.keys) != 0 {
+		t.Fatalf("failed connect left a hosted key stored locally: %#v", store.keys)
+	}
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.BaseURL != otherServer || len(cfg.Callers) != 1 || cfg.Callers[0].CallerID != "caller_123" {
+		t.Fatalf("failed connect changed concurrent config: base_url=%q callers=%#v", cfg.BaseURL, cfg.Callers)
+	}
+}
+
+func TestCallerConnectAcceptsEquivalentOrigins(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		stored     string
+		requested  string
+		saved      string
+		initialize bool
+	}{
+		{name: "host_case", stored: "https://app.example", requested: "https://App.Example"},
+		{name: "host_case_reverse", stored: "https://App.Example", requested: "https://app.example"},
+		{name: "https_default_port", stored: "https://app.example", requested: "https://app.example:443"},
+		{name: "https_default_port_reverse", stored: "https://app.example:443", requested: "https://app.example"},
+		{name: "http_default_port", stored: "http://localhost", requested: "http://localhost:80"},
+		{name: "http_default_port_reverse", stored: "http://localhost:80", requested: "http://localhost"},
+		{name: "https_padded_default_port", stored: "https://app.example", requested: "https://app.example:0443"},
+		{name: "https_padded_default_port_reverse", stored: "https://app.example:0443", requested: "https://app.example"},
+		{name: "https_padded_explicit_default_port", stored: "https://app.example:443", requested: "https://app.example:0443"},
+		{name: "https_padded_explicit_default_port_reverse", stored: "https://app.example:0443", requested: "https://app.example:443"},
+		{name: "http_padded_default_port", stored: "http://localhost", requested: "http://localhost:080"},
+		{name: "http_padded_default_port_reverse", stored: "http://localhost:080", requested: "http://localhost"},
+		{name: "padded_nondefault_port", stored: "https://app.example:8443", requested: "https://app.example:08443"},
+		{name: "padded_nondefault_port_reverse", stored: "https://app.example:08443", requested: "https://app.example:8443"},
+		{name: "padded_zero_port", stored: "https://app.example:0", requested: "https://app.example:000"},
+		{name: "same_unicode_host_ascii_case", stored: "https://straße.example", requested: "https://straße.EXAMPLE"},
+		{name: "combined", stored: "https://App.Example:443", requested: "https://app.example"},
+		{name: "combined_reverse", stored: "https://app.example", requested: "https://App.Example:443"},
+		{name: "ipv6_host_case", stored: "https://[2001:db8::abcd]", requested: "https://[2001:DB8::ABCD]:443"},
+		{name: "ipv6_expanded", stored: "https://[2001:db8::1]", requested: "https://[2001:0db8:0:0:0:0:0:1]"},
+		{name: "ipv6_expanded_reverse", stored: "https://[2001:0db8:0:0:0:0:0:1]", requested: "https://[2001:db8::1]"},
+		{name: "ipv6_loopback_expanded", stored: "http://[::1]", requested: "http://[0:0:0:0:0:0:0:1]:080"},
+		{name: "ipv6_mapped_spelling", stored: "https://[::ffff:192.0.2.1]", requested: "https://[0:0:0:0:0:ffff:c000:201]"},
+		{name: "ipv6_same_zone", stored: "https://[fe80::1%25Eth0]", requested: "https://[fe80::1%25Eth0]"},
+		{name: "ipv6_zone_expanded", stored: "https://[fe80::1%25Eth0]", requested: "https://[fe80:0:0:0:0:0:0:1%25Eth0]:0443"},
+		{name: "ipv6_zone_expanded_reverse", stored: "https://[fe80:0:0:0:0:0:0:1%25Eth0]:0443", requested: "https://[fe80::1%25Eth0]"},
+		{name: "ipv6_zone_escape_spelling", stored: "https://[fe80::1%25Eth0]", requested: "https://[fe80::1%25Et%68%30]", saved: "https://[fe80::1%25Eth0]"},
+		{name: "initialize_ipv6_zone", requested: "https://[fe80::1%25Eth0]", initialize: true},
+		{name: "same_nondefault_port", stored: "https://App.Example:8443", requested: "https://app.example:8443"},
+		{name: "trailing_slash", stored: "https://app.example", requested: "https://app.example/", saved: "https://app.example"},
+		{name: "default_config_origin", requested: foundation.DefaultBaseURL},
+		{name: "default_config_origin_explicit_port", requested: foundation.DefaultBaseURL + ":443"},
+		{name: "initialize_empty_config", requested: "https://App.Example:443", initialize: true},
+		{name: "initialize_invalid_stored_url", stored: "invalid", requested: "https://App.Example:443", initialize: true},
+	} {
+		for _, selection := range []string{"flag", "env"} {
+			t.Run(tc.name+"/"+selection, func(t *testing.T) {
+				configPath := writeControlConfig(t, tc.stored)
+				existing, err := foundation.LoadConfig(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				store := &controlPlaneSecretStore{keys: map[string]string{"caller_123": "existing-secret"}}
+				if tc.initialize {
+					existing.Callers = nil
+					store.keys = map[string]string{}
+					if err := foundation.SaveConfig(configPath, existing); err != nil {
+						t.Fatal(err)
+					}
+				}
+				wantURL := tc.saved
+				if wantURL == "" {
+					wantURL = tc.requested
+				}
+				const pendingKey = "aob_live_pending_originsecret"
+				var requests []string
+				opts := controlCommandOptions{
+					configPath: configPath,
+					store:      store,
+					args:       []string{"--json", "caller", "connect", "second-caller", "--device-code"},
+					sleep:      func(context.Context, time.Duration) error { return nil },
+					httpClient: mockConnectOriginClient(t, wantURL, pendingKey, func(r *http.Request) {
+						requests = append(requests, r.URL.Path)
+						if r.URL.Path == "/api/caller/connect/activate" {
+							// Observe durable state at the external activation boundary.
+							assertConnectOriginState(t, configPath, wantURL, existing.Callers, store, pendingKey)
+						}
+					}),
+				}
+				if selection == "flag" {
+					opts.baseURL = tc.requested
+					// The flag must continue taking precedence over the environment.
+					opts.env = foundation.Env{foundation.EnvBaseURL: "https://other.example"}
+				} else {
+					opts.env = foundation.Env{foundation.EnvBaseURL: tc.requested}
+				}
+				stdout, stderr, code := executeControlCommand(t, opts)
+				if code != foundation.ExitSuccess || !strings.Contains(stdout, `"connected":true`) {
+					t.Fatalf("connect exit=%d requests=%v, want success; stdout=%s stderr=%s", code, requests, stdout, stderr)
+				}
+				wantRequests := []string{"/api/caller/connect/device/start", "/api/caller/connect/device/poll", "/api/caller/connect/activate"}
+				if !reflect.DeepEqual(requests, wantRequests) {
+					t.Fatalf("requests = %v, want %v", requests, wantRequests)
+				}
+				assertConnectOriginState(t, configPath, wantURL, existing.Callers, store, pendingKey)
+				assertNoSecretLeak(t, pendingKey, stdout, stderr, configPath)
+			})
+		}
+	}
+}
+
+func TestCallerConnectRejectsDistinctOrInvalidOriginsBeforeApproval(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		stored    string
+		requested string
+		message   string
+	}{
+		{name: "hostname", stored: "https://app.example", requested: "https://other.example"},
+		{name: "unicode_sharp_s", stored: "https://straße.example", requested: "https://STRAẞE.example"},
+		{name: "unicode_sharp_s_reverse", stored: "https://STRAẞE.example", requested: "https://straße.example"},
+		{name: "unicode_final_sigma", stored: "https://οδός.example", requested: "https://ΟΔΌΣ.example"},
+		{name: "unicode_final_sigma_reverse", stored: "https://ΟΔΌΣ.example", requested: "https://οδός.example"},
+		{name: "scheme", stored: "http://localhost", requested: "https://localhost"},
+		{name: "nondefault_port", stored: "https://app.example:8443", requested: "https://app.example:9443"},
+		{name: "default_vs_nondefault_port", stored: "https://app.example", requested: "https://app.example:8443"},
+		{name: "zero_vs_https_default_port", stored: "https://app.example:0", requested: "https://app.example"},
+		{name: "https_default_vs_zero_port", stored: "https://app.example", requested: "https://app.example:0"},
+		{name: "zero_vs_http_default_port", stored: "http://localhost:0", requested: "http://localhost"},
+		{name: "4430_vs_443_port", stored: "https://app.example:4430", requested: "https://app.example:443"},
+		{name: "844_vs_8440_port", stored: "https://app.example:844", requested: "https://app.example:8440"},
+		{name: "loopback_alias", stored: "https://localhost", requested: "https://127.0.0.1"},
+		{name: "ipv6_zone_case", stored: "https://[fe80::1%25Eth0]", requested: "https://[fe80::1%25eth0]"},
+		{name: "ipv6_address", stored: "https://[2001:db8::1]", requested: "https://[2001:0db8:0:0:0:0:0:2]"},
+		{name: "ipv6_expanded_different_port", stored: "https://[2001:db8::1]", requested: "https://[2001:0db8:0:0:0:0:0:1]:8443"},
+		{name: "ipv6_expanded_different_scheme", stored: "http://[::1]", requested: "https://[0:0:0:0:0:0:0:1]"},
+		{name: "ipv6_zone_case_expanded", stored: "https://[fe80::1%25Eth0]", requested: "https://[fe80:0:0:0:0:0:0:1%25eth0]"},
+		{name: "ipv6_zone_missing", stored: "https://[fe80::1%25Eth0]", requested: "https://[fe80:0:0:0:0:0:0:1]"},
+		{name: "ipv6_zone_missing_reverse", stored: "https://[fe80::1]", requested: "https://[fe80:0:0:0:0:0:0:1%25Eth0]"},
+		{name: "ipv6_zone_literal_escape", stored: "https://[fe80::1%25Eth0]", requested: "https://[fe80::1%25%2545th0]"},
+		{name: "ipv6_mapped_vs_ipv4", stored: "https://[::ffff:192.0.2.1]", requested: "https://192.0.2.1"},
+		{name: "default_config_origin", requested: "https://other.example"},
+		{name: "invalid_stored_url", stored: "invalid", requested: "https://app.example", message: "Local config base_url"},
+		{name: "stored_path_prefix", stored: "https://app.example/api", requested: "https://app.example", message: "Local config base_url"},
+		{name: "requested_path_prefix", stored: "https://app.example", requested: "https://app.example/api", message: "must not include a path"},
+	} {
+		for _, selection := range []string{"flag", "env"} {
+			t.Run(tc.name+"/"+selection, func(t *testing.T) {
+				configPath := writeControlConfig(t, tc.stored)
+				before, err := os.ReadFile(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				store := &controlPlaneSecretStore{keys: map[string]string{"caller_123": "existing-secret"}}
+				requests := 0
+				opts := controlCommandOptions{
+					configPath: configPath,
+					store:      store,
+					args:       []string{"--json", "caller", "connect", "second-caller", "--device-code"},
+					httpClient: mockConnectOriginClient(t, tc.requested, "aob_live_pending_rejectedsecret", func(*http.Request) {
+						requests++
+					}),
+				}
+				if selection == "flag" {
+					opts.baseURL = tc.requested
+				} else {
+					opts.env = foundation.Env{foundation.EnvBaseURL: tc.requested}
+				}
+				stdout, stderr, code := executeControlCommand(t, opts)
+				message := tc.message
+				if message == "" {
+					message = "separate --config"
+				}
+				if code != foundation.ExitConfig || stdout != "" || !strings.Contains(stderr, `"code":"config_error"`) || !strings.Contains(stderr, message) {
+					t.Errorf("exit=%d requests=%d stdout=%s stderr=%s, want config_error with %q", code, requests, stdout, stderr, message)
+				}
+				if requests != 0 {
+					t.Errorf("rejected connect made %d requests before approval", requests)
+				}
+				after, err := os.ReadFile(configPath)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("rejected connect changed config; read error: %v", err)
+				}
+				if len(store.keys) != 1 || store.keys["caller_123"] != "existing-secret" {
+					t.Fatalf("rejected connect changed credentials: %#v", store.keys)
+				}
+			})
+		}
+	}
+}
+
+func TestCallerConnectRechecksConfigOriginBeforeActivation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		requested  string
+		concurrent string
+		accept     bool
+	}{
+		{name: "same_spelling", requested: "https://app.example", concurrent: "https://app.example", accept: true},
+		{name: "host_case", requested: "https://app.example", concurrent: "https://App.Example", accept: true},
+		{name: "host_case_reverse", requested: "https://App.Example", concurrent: "https://app.example", accept: true},
+		{name: "default_port", requested: "https://app.example", concurrent: "https://app.example:443", accept: true},
+		{name: "default_port_reverse", requested: "https://app.example:443", concurrent: "https://app.example", accept: true},
+		{name: "http_default_port", requested: "http://localhost", concurrent: "http://localhost:80", accept: true},
+		{name: "padded_default_port", requested: "https://app.example:0443", concurrent: "https://app.example", accept: true},
+		{name: "padded_nondefault_port", requested: "https://app.example:8443", concurrent: "https://app.example:08443", accept: true},
+		{name: "ipv6_expanded", requested: "https://[2001:db8::1]", concurrent: "https://[2001:0db8:0:0:0:0:0:1]", accept: true},
+		{name: "ipv6_expanded_reverse", requested: "https://[2001:0db8:0:0:0:0:0:1]", concurrent: "https://[2001:db8::1]", accept: true},
+		{name: "ipv6_same_zone", requested: "https://[fe80::1%25Eth0]", concurrent: "https://[fe80::1%25Eth0]", accept: true},
+		{name: "ipv6_zone_expanded", requested: "https://[fe80::1%25Eth0]", concurrent: "https://[fe80:0:0:0:0:0:0:1%25Eth0]:0443", accept: true},
+		{name: "ipv6_zone_expanded_reverse", requested: "https://[fe80:0:0:0:0:0:0:1%25Eth0]:0443", concurrent: "https://[fe80::1%25Eth0]", accept: true},
+		{name: "ipv6_zone_escape_spelling", requested: "https://[fe80::1%25Eth0]", concurrent: "https://[fe80::1%25Et%68%30]", accept: true},
+		{name: "ipv6_zone_case", requested: "https://[fe80::1%25Eth0]", concurrent: "https://[fe80:0:0:0:0:0:0:1%25eth0]"},
+		{name: "ipv6_zone_literal_escape", requested: "https://[fe80::1%25Eth0]", concurrent: "https://[fe80::1%25%2545th0]"},
+		{name: "ipv6_zone_removed", requested: "https://[fe80::1%25Eth0]", concurrent: "https://[fe80:0:0:0:0:0:0:1]"},
+		{name: "ipv6_address", requested: "https://[2001:db8::1]", concurrent: "https://[2001:0db8:0:0:0:0:0:2]"},
+		{name: "ipv6_zone_missing", requested: "https://[fe80::1]", concurrent: "https://[fe80:0:0:0:0:0:0:1%25Eth0]"},
+		{name: "ipv6_mapped_vs_ipv4", requested: "https://[::ffff:192.0.2.1]", concurrent: "https://192.0.2.1"},
+		{name: "hostname", requested: "https://app.example", concurrent: "https://other.example"},
+		{name: "unicode_sharp_s", requested: "https://STRAẞE.example", concurrent: "https://straße.example"},
+		{name: "unicode_final_sigma", requested: "https://ΟΔΌΣ.example", concurrent: "https://οδός.example"},
+		{name: "scheme", requested: "https://localhost", concurrent: "http://localhost"},
+		{name: "port", requested: "https://app.example", concurrent: "https://app.example:8443"},
+		{name: "invalid_stored_url", requested: "https://app.example", concurrent: "invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			concurrentPath := writeControlConfig(t, tc.concurrent)
+			concurrentBytes, err := os.ReadFile(concurrentPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			concurrent, err := foundation.LoadConfig(concurrentPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := &controlPlaneSecretStore{}
+			const pendingKey = "aob_live_pending_rechecksecret"
+			var requests []string
+			client := mockConnectOriginClient(t, tc.requested, pendingKey, func(r *http.Request) {
+				requests = append(requests, r.URL.Path)
+				switch r.URL.Path {
+				case "/api/caller/connect/device/poll":
+					// Approval has begun; another process adds a caller before the locked reload.
+					if err := os.WriteFile(configPath, concurrentBytes, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					store.keys = map[string]string{"caller_123": "existing-secret"}
+				case "/api/caller/connect/activate":
+					if !tc.accept {
+						t.Fatal("distinct concurrent origin must never activate")
+					}
+					assertConnectOriginState(t, configPath, tc.requested, concurrent.Callers, store, pendingKey)
+				}
+			})
+			stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+				configPath: configPath,
+				baseURL:    tc.requested,
+				store:      store,
+				args:       []string{"--json", "caller", "connect", "second-caller", "--device-code"},
+				httpClient: client,
+				sleep:      func(context.Context, time.Duration) error { return nil },
+			})
+			lastRequest := "/api/caller/connect/abort"
+			if tc.accept {
+				if code != foundation.ExitSuccess || !strings.Contains(stdout, `"connected":true`) {
+					t.Fatalf("connect exit=%d requests=%v, want success; stdout=%s stderr=%s", code, requests, stdout, stderr)
+				}
+				lastRequest = "/api/caller/connect/activate"
+				assertConnectOriginState(t, configPath, tc.requested, concurrent.Callers, store, pendingKey)
+			} else {
+				if code != foundation.ExitConfig || stdout != "" || !strings.Contains(stderr, `"code":"config_error"`) {
+					t.Fatalf("exit=%d stdout=%s stderr=%s, want config_error", code, stdout, stderr)
+				}
+				after, err := os.ReadFile(configPath)
+				if err != nil || !bytes.Equal(concurrentBytes, after) {
+					t.Fatalf("refused connect changed concurrent config; read error: %v", err)
+				}
+				if len(store.keys) != 1 || store.keys["caller_123"] != "existing-secret" {
+					t.Fatalf("refused connect changed credentials or left pending secret: %#v", store.keys)
+				}
+			}
+			wantRequests := []string{"/api/caller/connect/device/start", "/api/caller/connect/device/poll", lastRequest}
+			if !reflect.DeepEqual(requests, wantRequests) {
+				t.Fatalf("requests = %v, want %v", requests, wantRequests)
+			}
+			assertNoSecretLeak(t, pendingKey, stdout, stderr, configPath)
+		})
 	}
 }
 
@@ -2369,6 +2796,7 @@ func assertAPIResponseInvalid(t *testing.T, stdout, stderr string, code int) {
 type controlCommandOptions struct {
 	configPath  string
 	baseURL     string
+	env         foundation.Env
 	store       foundation.CallerSecretLoader
 	args        []string
 	httpClient  *http.Client
@@ -2390,7 +2818,7 @@ func executeControlCommand(t *testing.T, opts controlCommandOptions) (string, st
 		Args:         fullArgs,
 		Stdout:       &stdout,
 		Stderr:       &stderr,
-		Env:          foundation.Env{},
+		Env:          opts.env,
 		SecretStore:  opts.store,
 		HTTPClient:   opts.httpClient,
 		NewRequestID: func() string { return "req_cli" },
@@ -2410,6 +2838,67 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
+}
+
+// mockConnectOriginClient supplies local HTTP responses without network or DNS access.
+func mockConnectOriginClient(t *testing.T, origin, pendingKey string, observe func(*http.Request)) *http.Client {
+	t.Helper()
+	allowed, err := url.Parse(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Scheme != allowed.Scheme || r.URL.Host != allowed.Host || r.Method != http.MethodPost {
+			t.Fatalf("unexpected connect request: %s %s", r.Method, r.URL)
+		}
+		wantAuth := ""
+		if r.URL.Path == "/api/caller/connect/activate" || r.URL.Path == "/api/caller/connect/abort" {
+			wantAuth = "Bearer " + pendingKey
+			var body map[string]string
+			decodeJSONBody(t, r, &body)
+			if body["setup_request_id"] != "setup_origin" {
+				t.Fatalf("connect confirmation body = %#v", body)
+			}
+		}
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Fatalf("connect authorization = %q, want %q", got, wantAuth)
+		}
+		observe(r)
+		w := httptest.NewRecorder()
+		switch r.URL.Path {
+		case "/api/caller/connect/device/start":
+			writeEnvelope(w, `{"device_code":"dev_origin","user_code":"CONNECT-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=CONNECT-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
+		case "/api/caller/connect/device/poll":
+			writeEnvelope(w, fmt.Sprintf(`{"setup_request_id":"setup_origin","caller":{"caller_id":"caller_456","caller_slug":"second-caller","display_name":"Second Caller"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"credential":{"api_key":%q,"key_id":"key_origin","prefix":"aob_live","last_chars":"cret","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"}}`, pendingKey))
+		case "/api/caller/connect/activate":
+			writeEnvelope(w, `{"caller_id":"caller_456","activated_key_id":"key_origin","activated_at":"2026-07-02T20:01:00Z"}`)
+		case "/api/caller/connect/abort":
+			writeEnvelope(w, `{"caller_id":"caller_456","aborted_key_id":"key_origin","aborted_at":"2026-07-02T20:01:00Z"}`)
+		default:
+			t.Fatalf("unexpected connect route: %s", r.URL.Path)
+		}
+		return w.Result(), nil
+	})}
+}
+
+func assertConnectOriginState(t *testing.T, configPath, baseURL string, existing []foundation.CallerConfig, store *controlPlaneSecretStore, pendingKey string) {
+	t.Helper()
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BaseURL != baseURL || len(cfg.Callers) != len(existing)+1 {
+		t.Fatalf("connect config = %#v, want URL %q and %d callers", cfg, baseURL, len(existing)+1)
+	}
+	for i, caller := range existing {
+		if cfg.Callers[i] != caller || store.keys[caller.CallerID] != "existing-secret" {
+			t.Fatalf("existing caller or credential changed: %#v keys=%#v", cfg.Callers, store.keys)
+		}
+	}
+	added := cfg.Callers[len(existing)]
+	if added.Name != "second-caller" || added.CallerID != "caller_456" || added.KeyID != "key_origin" || store.keys["caller_456"] != pendingKey || len(store.keys) != len(cfg.Callers) {
+		t.Fatalf("new caller/config not persisted before activation: %#v keys=%#v", cfg.Callers, store.keys)
+	}
 }
 
 func clientForOnlyOrigin(t *testing.T, rawURL string) *http.Client {

@@ -103,6 +103,17 @@ Precedence:
 - Base URL selection is `--base-url`, then `AGENT_OUTBOX_BASE_URL`, then local
   CLI config `base_url` from the selected config file, then
   `https://app.agent-outbox.dev`.
+- All callers in one config file share its `base_url`. `caller connect` saves
+  the resolved base URL to the config and fails with `config_error` when the
+  config already has callers on a different origin; use a separate `--config`
+  for each Agent Outbox server. ASCII hostname case, leading zeros in port
+  numbers, and an explicit or omitted scheme-default port (HTTPS 443 or HTTP 80)
+  identify the same origin, as do equivalent IPv6 address spellings. Non-ASCII
+  hostname bytes and IPv6 zone identifiers are compared exactly; IPv4-mapped
+  IPv6 literals remain distinct from IPv4 literals. No DNS-based equivalence is
+  used. Connect preserves the resolved URL's spelling when saving it, with IPv6
+  zone identifiers escaped so saved URLs remain valid for config reloads and API
+  requests.
 - Caller selection is `--caller`, then `AGENT_OUTBOX_CALLER`, then the single
   locally configured caller only when exactly one exists.
 - Caller credential selection is `AGENT_OUTBOX_API_KEY` when set, then the
