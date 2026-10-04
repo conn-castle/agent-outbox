@@ -179,7 +179,6 @@ export type LimitDefinition = {
   reason: string;
   errorCode: LimitErrorCode;
   statusLabel: string;
-  doctorCheckName: string;
 };
 
 export type LimitProfile = {
@@ -228,16 +227,6 @@ export type LimitErrorMetadata = {
   unit: LimitUnit;
 };
 
-export type DoctorLimitMetadata = {
-  checkName: string;
-  profileId: LimitProfileId;
-  limitName: LimitName;
-  operationKinds: readonly LimitOperationKind[];
-  mode: LimitSetting["mode"];
-  configured: true;
-  reasonCode: LimitReasonCode;
-};
-
 const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
   input_submissions_per_calendar_month: {
     name: "input_submissions_per_calendar_month",
@@ -250,8 +239,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason:
       "Monthly input submission limit reached; wait for the next UTC calendar month or upgrade.",
     errorCode: "quota_limit_exceeded",
-    statusLabel: "Monthly input submissions",
-    doctorCheckName: "limits.input_submissions.calendar_month"
+    statusLabel: "Monthly input submissions"
   },
   input_submissions_per_day: {
     name: "input_submissions_per_day",
@@ -264,8 +252,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
       "Daily input submission limit reached; wait for the next UTC day or upgrade.",
     reasonCode: "daily_input_submission_quota_exceeded",
     errorCode: "quota_limit_exceeded",
-    statusLabel: "Daily input submissions",
-    doctorCheckName: "limits.input_submissions.day"
+    statusLabel: "Daily input submissions"
   },
   authenticated_caller_api_requests_per_calendar_month: {
     name: "authenticated_caller_api_requests_per_calendar_month",
@@ -278,8 +265,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
       "Monthly caller API request limit reached; cleanup operations remain available.",
     reasonCode: "monthly_caller_api_quota_exceeded",
     errorCode: "quota_limit_exceeded",
-    statusLabel: "Monthly caller API requests",
-    doctorCheckName: "limits.caller_api.calendar_month"
+    statusLabel: "Monthly caller API requests"
   },
   queued_input_items: {
     name: "queued_input_items",
@@ -291,8 +277,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
       "Queued input item limit reached; delete pending items or acknowledge outputs to free queue space.",
     reasonCode: "queued_input_item_limit_exceeded",
     errorCode: "storage_limit_exceeded",
-    statusLabel: "Queued input items",
-    doctorCheckName: "limits.queued_input_items"
+    statusLabel: "Queued input items"
   },
   input_retention_days: {
     name: "input_retention_days",
@@ -304,8 +289,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
       "Pending input reached the hosted-free retention window and is eligible for cleanup.",
     reasonCode: "pending_input_retention_expired",
     errorCode: "retention_limit_exceeded",
-    statusLabel: "Pending input retention",
-    doctorCheckName: "limits.input_retention"
+    statusLabel: "Pending input retention"
   },
   unacknowledged_output_timeout_days: {
     name: "unacknowledged_output_timeout_days",
@@ -317,8 +301,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
       "Unacknowledged output reached the timeout window and is eligible for cleanup.",
     reasonCode: "unacknowledged_output_timeout_expired",
     errorCode: "retention_limit_exceeded",
-    statusLabel: "Unacknowledged output timeout",
-    doctorCheckName: "limits.output_timeout"
+    statusLabel: "Unacknowledged output timeout"
   },
   downgrade_grace_days: {
     name: "downgrade_grace_days",
@@ -330,8 +313,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
       "Billing or downgrade grace expired; current tier limits now apply.",
     reasonCode: "downgrade_grace_expired",
     errorCode: "billing_grace_expired",
-    statusLabel: "Downgrade grace",
-    doctorCheckName: "limits.billing_grace"
+    statusLabel: "Downgrade grace"
   },
   file_upload_enabled: {
     name: "file_upload_enabled",
@@ -342,8 +324,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "File uploads require a paid hosted account.",
     reasonCode: "file_upload_upgrade_required",
     errorCode: "upgrade_required",
-    statusLabel: "File uploads",
-    doctorCheckName: "limits.file_uploads"
+    statusLabel: "File uploads"
   },
   input_request_body_bytes_excluding_files: {
     name: "input_request_body_bytes_excluding_files",
@@ -354,8 +335,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Input request body exceeds the accepted byte ceiling.",
     reasonCode: "input_request_too_large",
     errorCode: "request_too_large",
-    statusLabel: "Input request body bytes",
-    doctorCheckName: "limits.input_request_bytes"
+    statusLabel: "Input request body bytes"
   },
   human_answer_request_body_bytes_excluding_files: {
     name: "human_answer_request_body_bytes_excluding_files",
@@ -366,8 +346,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Human answer request body exceeds the accepted byte ceiling.",
     reasonCode: "human_answer_request_too_large",
     errorCode: "request_too_large",
-    statusLabel: "Human answer request body bytes",
-    doctorCheckName: "limits.human_answer_request_bytes"
+    statusLabel: "Human answer request body bytes"
   },
   stored_non_file_queue_payload_bytes: {
     name: "stored_non_file_queue_payload_bytes",
@@ -383,8 +362,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
       "Stored non-file queue payload byte limit reached; delete or acknowledge queue data to free storage.",
     reasonCode: "stored_non_file_payload_limit_exceeded",
     errorCode: "storage_limit_exceeded",
-    statusLabel: "Stored non-file queue bytes",
-    doctorCheckName: "limits.stored_non_file_queue_bytes"
+    statusLabel: "Stored non-file queue bytes"
   },
   overall_stored_account_data_bytes: {
     name: "overall_stored_account_data_bytes",
@@ -401,8 +379,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
       "Stored account data byte limit reached; delete or acknowledge data to free storage.",
     reasonCode: "overall_stored_account_data_limit_exceeded",
     errorCode: "storage_limit_exceeded",
-    statusLabel: "Overall stored account bytes",
-    doctorCheckName: "limits.overall_stored_account_bytes"
+    statusLabel: "Overall stored account bytes"
   },
   uploaded_bytes_per_file: {
     name: "uploaded_bytes_per_file",
@@ -413,8 +390,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Uploaded file exceeds the raw byte ceiling.",
     reasonCode: "uploaded_file_too_large",
     errorCode: "request_too_large",
-    statusLabel: "Uploaded bytes per file",
-    doctorCheckName: "limits.uploaded_bytes_per_file"
+    statusLabel: "Uploaded bytes per file"
   },
   burst_input_submissions_per_account_per_minute: {
     name: "burst_input_submissions_per_account_per_minute",
@@ -426,8 +402,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Input submissions are temporarily rate limited.",
     reasonCode: "input_submission_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Input submission burst rate",
-    doctorCheckName: "limits.input_submission.minute"
+    statusLabel: "Input submission burst rate"
   },
   concurrent_write_requests_per_account: {
     name: "concurrent_write_requests_per_account",
@@ -438,8 +413,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Too many concurrent account write requests are in progress.",
     reasonCode: "concurrent_write_limit_exceeded",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Concurrent write requests",
-    doctorCheckName: "limits.concurrent_writes"
+    statusLabel: "Concurrent write requests"
   },
   concurrent_file_uploading_requests_per_account: {
     name: "concurrent_file_uploading_requests_per_account",
@@ -450,8 +424,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Too many concurrent file-upload requests are in progress.",
     reasonCode: "concurrent_file_upload_limit_exceeded",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Concurrent file uploads",
-    doctorCheckName: "limits.concurrent_file_uploads"
+    statusLabel: "Concurrent file uploads"
   },
   input_send_replace_requests_per_account_per_minute: {
     name: "input_send_replace_requests_per_account_per_minute",
@@ -463,8 +436,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Input send/replace requests are temporarily rate limited.",
     reasonCode: "input_send_replace_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Input send/replace request rate",
-    doctorCheckName: "limits.input_send_replace.minute"
+    statusLabel: "Input send/replace request rate"
   },
   input_delete_requests_per_account_per_minute: {
     name: "input_delete_requests_per_account_per_minute",
@@ -476,8 +448,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Input delete requests are temporarily rate limited.",
     reasonCode: "input_delete_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Input delete request rate",
-    doctorCheckName: "limits.input_delete.minute"
+    statusLabel: "Input delete request rate"
   },
   output_check_read_requests_per_account_per_minute: {
     name: "output_check_read_requests_per_account_per_minute",
@@ -489,8 +460,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Output check/read requests are temporarily rate limited.",
     reasonCode: "output_check_read_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Output check/read request rate",
-    doctorCheckName: "limits.output_check_read.minute"
+    statusLabel: "Output check/read request rate"
   },
   output_file_download_requests_per_account_per_minute: {
     name: "output_file_download_requests_per_account_per_minute",
@@ -502,8 +472,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Output file downloads are temporarily rate limited.",
     reasonCode: "output_file_download_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Output file download request rate",
-    doctorCheckName: "limits.output_file_download.minute"
+    statusLabel: "Output file download request rate"
   },
   output_ack_requests_per_account_per_minute: {
     name: "output_ack_requests_per_account_per_minute",
@@ -515,8 +484,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Output acknowledgements are temporarily rate limited.",
     reasonCode: "output_ack_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Output acknowledgement request rate",
-    doctorCheckName: "limits.output_ack.minute"
+    statusLabel: "Output acknowledgement request rate"
   },
   caller_connect_approvals_per_account_per_minute: {
     name: "caller_connect_approvals_per_account_per_minute",
@@ -528,8 +496,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller connect approvals are temporarily rate limited.",
     reasonCode: "caller_connect_approval_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller connect approval request rate",
-    doctorCheckName: "limits.caller_connect_approval.minute"
+    statusLabel: "Caller connect approval request rate"
   },
   caller_rotate_approvals_per_account_per_minute: {
     name: "caller_rotate_approvals_per_account_per_minute",
@@ -541,8 +508,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller rotate approvals are temporarily rate limited.",
     reasonCode: "caller_rotate_approval_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller rotate approval request rate",
-    doctorCheckName: "limits.caller_rotate_approval.minute"
+    statusLabel: "Caller rotate approval request rate"
   },
   caller_revoke_approvals_per_account_per_minute: {
     name: "caller_revoke_approvals_per_account_per_minute",
@@ -554,8 +520,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller revoke approvals are temporarily rate limited.",
     reasonCode: "caller_revoke_approval_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller revoke approval request rate",
-    doctorCheckName: "limits.caller_revoke_approval.minute"
+    statusLabel: "Caller revoke approval request rate"
   },
   caller_connect_start_requests_per_ip_per_minute: {
     name: "caller_connect_start_requests_per_ip_per_minute",
@@ -567,8 +532,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller connect start requests are temporarily rate limited.",
     reasonCode: "caller_connect_start_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller connect start request rate",
-    doctorCheckName: "limits.caller_connect_start.minute"
+    statusLabel: "Caller connect start request rate"
   },
   caller_connect_poll_requests_per_ip_per_minute: {
     name: "caller_connect_poll_requests_per_ip_per_minute",
@@ -580,8 +544,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller connect device polling is temporarily rate limited.",
     reasonCode: "caller_connect_poll_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller connect poll request rate",
-    doctorCheckName: "limits.caller_connect_poll.minute"
+    statusLabel: "Caller connect poll request rate"
   },
   caller_connect_exchange_requests_per_ip_per_minute: {
     name: "caller_connect_exchange_requests_per_ip_per_minute",
@@ -593,8 +556,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller connect exchange requests are temporarily rate limited.",
     reasonCode: "caller_connect_exchange_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller connect exchange request rate",
-    doctorCheckName: "limits.caller_connect_exchange.minute"
+    statusLabel: "Caller connect exchange request rate"
   },
   caller_connect_activation_requests_per_ip_per_minute: {
     name: "caller_connect_activation_requests_per_ip_per_minute",
@@ -606,8 +568,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller connect activation requests are temporarily rate limited.",
     reasonCode: "caller_connect_activation_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller connect activation request rate",
-    doctorCheckName: "limits.caller_connect_activation.minute"
+    statusLabel: "Caller connect activation request rate"
   },
   caller_rotate_start_requests_per_ip_per_minute: {
     name: "caller_rotate_start_requests_per_ip_per_minute",
@@ -619,8 +580,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller rotate start requests are temporarily rate limited.",
     reasonCode: "caller_rotate_start_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller rotate start request rate",
-    doctorCheckName: "limits.caller_rotate_start.minute"
+    statusLabel: "Caller rotate start request rate"
   },
   caller_rotate_poll_requests_per_ip_per_minute: {
     name: "caller_rotate_poll_requests_per_ip_per_minute",
@@ -632,8 +592,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller rotate device polling is temporarily rate limited.",
     reasonCode: "caller_rotate_poll_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller rotate poll request rate",
-    doctorCheckName: "limits.caller_rotate_poll.minute"
+    statusLabel: "Caller rotate poll request rate"
   },
   caller_rotate_exchange_requests_per_ip_per_minute: {
     name: "caller_rotate_exchange_requests_per_ip_per_minute",
@@ -645,8 +604,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller rotate exchange requests are temporarily rate limited.",
     reasonCode: "caller_rotate_exchange_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller rotate exchange request rate",
-    doctorCheckName: "limits.caller_rotate_exchange.minute"
+    statusLabel: "Caller rotate exchange request rate"
   },
   caller_rotate_activation_requests_per_ip_per_minute: {
     name: "caller_rotate_activation_requests_per_ip_per_minute",
@@ -658,8 +616,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller rotate activation requests are temporarily rate limited.",
     reasonCode: "caller_rotate_activation_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller rotate activation request rate",
-    doctorCheckName: "limits.caller_rotate_activation.minute"
+    statusLabel: "Caller rotate activation request rate"
   },
   caller_revoke_start_requests_per_ip_per_minute: {
     name: "caller_revoke_start_requests_per_ip_per_minute",
@@ -671,8 +628,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller revoke start requests are temporarily rate limited.",
     reasonCode: "caller_revoke_start_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller revoke start request rate",
-    doctorCheckName: "limits.caller_revoke_start.minute"
+    statusLabel: "Caller revoke start request rate"
   },
   caller_revoke_poll_requests_per_ip_per_minute: {
     name: "caller_revoke_poll_requests_per_ip_per_minute",
@@ -684,8 +640,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller revoke device polling is temporarily rate limited.",
     reasonCode: "caller_revoke_poll_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller revoke poll request rate",
-    doctorCheckName: "limits.caller_revoke_poll.minute"
+    statusLabel: "Caller revoke poll request rate"
   },
   caller_revoke_confirm_requests_per_ip_per_minute: {
     name: "caller_revoke_confirm_requests_per_ip_per_minute",
@@ -697,8 +652,7 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     reason: "Caller revoke confirmation requests are temporarily rate limited.",
     reasonCode: "caller_revoke_confirm_rate_limited",
     errorCode: "rate_limit_exceeded",
-    statusLabel: "Caller revoke confirmation request rate",
-    doctorCheckName: "limits.caller_revoke_confirm.minute"
+    statusLabel: "Caller revoke confirmation request rate"
   }
 };
 
@@ -921,27 +875,6 @@ export function limitErrorMetadata(
   };
 }
 
-export function doctorLimitMetadata(
-  selector: LimitProfileSelector
-): readonly DoctorLimitMetadata[] {
-  const profile = getLimitProfile(selector);
-
-  return LIMIT_NAMES.map((limitName) => {
-    const definition = LIMIT_DEFINITIONS[limitName];
-    const setting = profile.limits[limitName];
-
-    return {
-      checkName: definition.doctorCheckName,
-      profileId: profile.profileId,
-      limitName,
-      operationKinds: definition.operationKinds,
-      mode: setting.mode,
-      configured: true,
-      reasonCode: definition.reasonCode
-    };
-  });
-}
-
 export function fileUploadEnabled(selector: LimitProfileSelector) {
   const setting = getLimitProfile(selector).limits.file_upload_enabled;
 
@@ -952,6 +885,18 @@ export function fixedWindowLimitNames(): readonly LimitName[] {
   return LIMIT_NAMES.filter((limitName) => {
     return Boolean(LIMIT_DEFINITIONS[limitName].windowKind);
   });
+}
+
+export function quotaWindowStartUtc(windowKind: LimitWindowKind, at: Date) {
+  const start = new Date(at.getTime());
+  start.setUTCSeconds(0, 0);
+  if (windowKind === "day" || windowKind === "calendar_month") {
+    start.setUTCHours(0, 0, 0, 0);
+  }
+  if (windowKind === "calendar_month") {
+    start.setUTCDate(1);
+  }
+  return start;
 }
 
 function enabled(value: number): EnabledLimit {

@@ -4,8 +4,7 @@ import {
   MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS,
   type LimitName,
   type LimitOperationKind,
-  type LimitProfileSelector,
-  type LimitWindowKind
+  type LimitProfileSelector
 } from "./limits.ts";
 
 export type AuditEventType =
@@ -74,12 +73,6 @@ export type AuditSafeLifecycleEvent = {
   metadata: Record<string, string | number | boolean | null>;
 };
 
-export type QuotaWindowKey = {
-  metric: LimitName;
-  windowKind: LimitWindowKind;
-  windowStartUtc: string;
-};
-
 export type ActiveLimitBlockInput = {
   selector: LimitProfileSelector;
   accountId: string;
@@ -98,18 +91,6 @@ export type ActiveLimitBlockMetadata = {
   limit_resets_at: string | null;
   used_units: number | null;
   limit_units: number | null;
-};
-
-export type StoredByteAccountingInput = {
-  inputPayloadBytes?: number;
-  outputPayloadBytes?: number;
-  fileBytes?: number;
-};
-
-export type StoredByteAccounting = {
-  nonFileQueuePayloadBytes: number;
-  fileBytes: number;
-  overallStoredAccountDataBytes: number;
 };
 
 const MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KIND_SET =
@@ -207,22 +188,6 @@ function auditSafeMetadata(
   return safeMetadata;
 }
 
-export function quotaWindowKey(
-  limitName: LimitName,
-  at: Date
-): QuotaWindowKey | null {
-  const definition = getLimitDefinition(limitName);
-  if (!definition.windowKind) {
-    return null;
-  }
-
-  return {
-    metric: limitName,
-    windowKind: definition.windowKind,
-    windowStartUtc: quotaWindowStartUtc(at, definition.windowKind)
-  };
-}
-
 export function activeLimitBlockMetadata(
   input: ActiveLimitBlockInput
 ): ActiveLimitBlockMetadata {
@@ -250,50 +215,8 @@ export function activeLimitBlockMetadata(
   };
 }
 
-export function storedByteAccounting(
-  input: StoredByteAccountingInput
-): StoredByteAccounting {
-  const inputPayloadBytes = validByteCount(
-    input.inputPayloadBytes ?? 0,
-    "inputPayloadBytes"
-  );
-  const outputPayloadBytes = validByteCount(
-    input.outputPayloadBytes ?? 0,
-    "outputPayloadBytes"
-  );
-  const nonFileQueuePayloadBytes = validByteCount(
-    inputPayloadBytes + outputPayloadBytes,
-    "nonFileQueuePayloadBytes"
-  );
-  const fileBytes = validByteCount(input.fileBytes ?? 0, "fileBytes");
-
-  return {
-    nonFileQueuePayloadBytes,
-    fileBytes,
-    overallStoredAccountDataBytes: validByteCount(
-      nonFileQueuePayloadBytes + fileBytes,
-      "overallStoredAccountDataBytes"
-    )
-  };
-}
-
 export function consumesMonthlyCallerApiRequestQuota(
   operationKind: LimitOperationKind
 ) {
   return MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KIND_SET.has(operationKind);
-}
-
-function quotaWindowStartUtc(at: Date, windowKind: LimitWindowKind) {
-  const start = new Date(at.getTime());
-  start.setUTCSeconds(0, 0);
-
-  if (windowKind === "day" || windowKind === "calendar_month") {
-    start.setUTCHours(0, 0, 0, 0);
-  }
-
-  if (windowKind === "calendar_month") {
-    start.setUTCDate(1);
-  }
-
-  return start.toISOString();
 }
