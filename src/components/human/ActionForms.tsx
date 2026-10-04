@@ -24,6 +24,7 @@ import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../shared/human-review-view";
 import type { HumanMutationOperation } from "../../shared/human-mutation";
 import { HumanIcon } from "./TypedContent";
 import { actionAppearanceClass } from "./action-appearance";
+import { localDateTimeBound } from "./review-format";
 
 export type HumanMutationSubmission = {
   operation: HumanMutationOperation;
@@ -634,8 +635,8 @@ function DatePickerFields({
           <input
             type="datetime-local"
             name="response.value_local"
-            min={localDateTimeBound(payload.min_value, reviewTimezone)}
-            max={localDateTimeBound(payload.max_value, reviewTimezone)}
+            min={localDateTimeBound(payload.min_value, reviewTimezone, "up")}
+            max={localDateTimeBound(payload.max_value, reviewTimezone, "down")}
             aria-describedby={helper ? helperId : undefined}
             required
           />
@@ -813,22 +814,4 @@ function selectionGuidance(min: number, max: number) {
   if (min === max) return `Choose exactly ${min}.`;
   if (min === 0) return `Choose up to ${max}.`;
   return `Choose ${min} to ${max}.`;
-}
-
-function localDateTimeBound(value: string | null, timezone: string) {
-  if (!value) return undefined;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return undefined;
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((entry) => entry.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
 }
