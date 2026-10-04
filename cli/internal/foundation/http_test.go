@@ -992,9 +992,9 @@ func TestAPIClientHonorsInjectedRedirectPolicyAfterTransportCheck(t *testing.T) 
 			wantRequests: 2, wantCallbacks: 1,
 		},
 		{
-			name: "custom policy replaces default cap", target: "https://app.example.test/api/target", hops: 11,
+			name: "allowing custom policy keeps default cap", target: "https://app.example.test/api/target", hops: 11,
 			policy:       func(*http.Request, []*http.Request) error { return nil },
-			wantRequests: 12, wantCallbacks: 11,
+			wantRequests: 10, wantCallbacks: 9, wantCode: CodeAPIUnavailable,
 		},
 		{
 			name: "stricter custom hop limit", target: "https://app.example.test/api/target", hops: 11,
@@ -1070,8 +1070,8 @@ func TestAPIClientHonorsInjectedRedirectPolicyAfterTransportCheck(t *testing.T) 
 					return
 				}
 				var appErr *AppError
-				if !errors.As(err, &appErr) || appErr.Code != tc.wantCode {
-					t.Fatalf("error = %v, want %q", err, tc.wantCode)
+				if !errors.As(err, &appErr) || appErr.Code != tc.wantCode || ExitCodeFor(err) != ExitTemporary {
+					t.Fatalf("error = %v exit = %d, want %q exit %d", err, ExitCodeFor(err), tc.wantCode, ExitTemporary)
 				}
 				if operation == "DoWrite" && appErr.WriteOutcome != "unknown" {
 					t.Fatalf("write outcome = %q, want unknown", appErr.WriteOutcome)
