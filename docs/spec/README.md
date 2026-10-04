@@ -99,7 +99,9 @@ Environment variables:
 Precedence:
 
 - Config path selection is `--config`, then `AGENT_OUTBOX_CONFIG_PATH`, then the
-  platform-standard Agent Outbox config path.
+  platform-standard Agent Outbox config path. A selected config file named
+  `credentials.json` or `.agent-outbox.lock` (compared without case) fails with
+  `config_error` because those names are reserved beside the config.
 - Base URL selection is `--base-url`, then `AGENT_OUTBOX_BASE_URL`, then local
   CLI config `base_url` from the selected config file, then
   `https://app.agent-outbox.dev`.
