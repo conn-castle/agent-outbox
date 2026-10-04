@@ -714,6 +714,47 @@ test("send, replace, and delete reject unstorable strings before writing", async
   }
 });
 
+test("send, replace, and delete reject a body caller_id before writing", async () => {
+  for (const operation of /** @type {const} */ ([
+    "send",
+    "replace",
+    "delete"
+  ])) {
+    const query = inputQueueThrottleQuery({ inputRows: [pendingInputRow()] });
+    const otherCallerId = "00000000-0000-4000-8000-000000000999";
+    const body =
+      operation === "delete"
+        ? { caller_item_id: "email:thread_123", caller_id: otherCallerId }
+        : { ...baseInput(), caller_id: otherCallerId };
+
+    const result = await handleInputQueueRequestInTransaction(
+      query,
+      context,
+      identity,
+      operation,
+      body
+    );
+
+    assert.equal(result.ok ? null : result.error.status, 422, operation);
+    assert.deepEqual(
+      result.ok
+        ? null
+        : result.error.fields?.map((field) => [field.path, field.code]),
+      [["caller_id", "caller_id_not_allowed"]],
+      operation
+    );
+    assert.equal(
+      query.calls.some((call) =>
+        /(insert into|update|delete from) public\.agent_outbox_input/.test(
+          call.sql
+        )
+      ),
+      false,
+      operation
+    );
+  }
+});
+
 test("file upload actions require paid tier and are accepted for paid callers", () => {
   const input = baseInput({
     actions: [

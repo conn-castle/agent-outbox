@@ -18,6 +18,7 @@ import {
 } from "./database.ts";
 import type { JsonValue, OutputResponseKind } from "./human-answer.ts";
 import {
+  callerIdNotAllowedError,
   isStorableString,
   isValidUtcDateTime,
   unstorableStringError
@@ -461,6 +462,10 @@ export function parseOutputReadAllBody(body: unknown): ParsedPageRequest {
         message: "Request body must be an object."
       }
     ]);
+  }
+
+  if ("caller_id" in body) {
+    return validationFailed([callerIdNotAllowedError()]);
   }
 
   if (
