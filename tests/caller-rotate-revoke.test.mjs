@@ -1614,7 +1614,8 @@ test(
     const databaseUrl = phase3DatabaseVerificationUrl();
     assert.ok(databaseUrl);
     const unknownCallerId = crypto.randomUUID();
-    const ipAddress = `2001:db8::${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}`;
+    const ipPrefix = `2001:db8:${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}::/64`;
+    const ipAddress = ipPrefix.replace("::/64", "::1");
     const client = new pg.Client({
       application_name: "agent-outbox-caller-start-limit-verification",
       connectionString: databaseUrl
@@ -1676,11 +1677,11 @@ test(
         `
           select metric, sum(used_units)::int as used_units
           from public.agent_outbox_ip_quota_windows
-          where ip_address = $1::inet
+          where ip_address <<= $1::inet
           group by metric
           order by metric
         `,
-        [ipAddress]
+        [ipPrefix]
       );
       assert.deepEqual(usage.rows, [
         {
@@ -1700,14 +1701,126 @@ test(
         async () => {
           try {
             await client.query(
-              `delete from public.agent_outbox_ip_quota_windows where ip_address = $1::inet`,
-              [ipAddress]
+              `delete from public.agent_outbox_ip_quota_windows where ip_address <<= $1::inet`,
+              [ipPrefix]
             );
           } finally {
             await client.end();
           }
         },
         "Caller start limit database test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "per-IP start limit shares one allowance per IPv6 /64 but not across IPv4-mapped addresses",
+  {
+    skip: phase3DatabaseVerificationUrl()
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const databaseUrl = phase3DatabaseVerificationUrl();
+    assert.ok(databaseUrl);
+    const unknownCallerId = crypto.randomUUID();
+    const sharedPrefix = `2001:db8:${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}::/64`;
+    const otherPrefix = `2001:db8:${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}::/64`;
+    const client = new pg.Client({
+      application_name: "agent-outbox-ipv6-prefix-limit-verification",
+      connectionString: databaseUrl
+    });
+    await client.connect();
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      // Keep every request inside one fixed UTC minute window.
+      const msToNextMinute = 60_000 - (Date.now() % 60_000);
+      if (msToNextMinute < 10_000) {
+        await new Promise((resolve) => setTimeout(resolve, msToNextMinute));
+      }
+
+      await withProcessEnv(
+        {
+          CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+          DATABASE_APP_ROLE_URL: databaseUrl,
+          PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+        },
+        async () => {
+          /** @param {string} ipAddress */
+          const revokeStart = (ipAddress) =>
+            handleRevokeDeviceStartRequest(
+              controlRequest("/api/caller/revoke/device/start", {
+                headers: { "cf-connecting-ip": ipAddress }
+              }),
+              { requestId: "req-ipv6-prefix-limit", correlationId: "corr-db" },
+              {
+                caller_id: unknownCallerId,
+                local_caller_name: "steward-email"
+              }
+            );
+
+          /** @type {Awaited<ReturnType<typeof revokeStart>> | undefined} */
+          let limited;
+          for (let host = 1; host <= 100 && !limited; host += 1) {
+            const result = await revokeStart(
+              sharedPrefix.replace("::/64", `::${host.toString(16)}`)
+            );
+            if (!result.ok && result.error.status === 429) {
+              limited = result;
+            }
+          }
+          assert.ok(
+            limited && !limited.ok,
+            "distinct addresses in one IPv6 /64 must exhaust a shared limit"
+          );
+          assert.equal(limited.error.code, "rate_limit_exceeded");
+          assert.ok(limited.error.limit && "limitName" in limited.error.limit);
+          assert.equal(
+            limited.error.limit.limitName,
+            "caller_revoke_start_requests_per_ip_per_minute"
+          );
+
+          const notFound = {
+            ok: false,
+            error: {
+              status: 400,
+              code: "invalid_request",
+              message: "Caller revoke target was not found."
+            }
+          };
+          assert.deepEqual(
+            await revokeStart(otherPrefix.replace("::/64", "::1")),
+            notFound
+          );
+
+          // IPv4-mapped IPv6 addresses keep per-address allowances like IPv4.
+          for (let host = 1; host <= 40; host += 1) {
+            assert.deepEqual(
+              await revokeStart(`::ffff:192.0.2.${host}`),
+              notFound
+            );
+          }
+        }
+      );
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          try {
+            await client.query(
+              `delete from public.agent_outbox_ip_quota_windows where ip_address <<= any($1::inet[])`,
+              [[sharedPrefix, otherPrefix, "::ffff:192.0.2.0/120"]]
+            );
+          } finally {
+            await client.end();
+          }
+        },
+        "IPv6 prefix limit database test and teardown both failed."
       );
     }
   }
@@ -1728,7 +1841,8 @@ test(
     const callerId = crypto.randomUUID();
     const runId = randomBytes(6).toString("hex");
     const setupCode = `setup_${runId}`;
-    const ipAddress = `2001:db8::${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}`;
+    const ipPrefix = `2001:db8:${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}::/64`;
+    const ipAddress = ipPrefix.replace("::/64", "::1");
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const client = new pg.Client({
       application_name: "agent-outbox-rotate-exchange-pending-verification",
@@ -1879,8 +1993,8 @@ test(
           try {
             await client.query("rollback");
             await client.query(
-              "delete from public.agent_outbox_ip_quota_windows where ip_address = $1::inet",
-              [ipAddress]
+              "delete from public.agent_outbox_ip_quota_windows where ip_address <<= $1::inet",
+              [ipPrefix]
             );
             await client.query(
               "delete from public.agent_outbox_accounts where account_id = $1",

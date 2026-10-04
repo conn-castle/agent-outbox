@@ -240,6 +240,9 @@ async function enforceIpControlPlaneLimit(
     "requests"
   )) {
     const window = quotaWindow(limit, now);
+    // One IPv6 subscriber or LAN normally holds a whole /64, so keying on the
+    // full address would let a client rotate addresses for fresh allowances.
+    // IPv4-mapped IPv6 addresses stay per-address like IPv4.
     const result = await query<QuotaWindowRow>({
       sql: `
         insert into public.agent_outbox_ip_quota_windows (
@@ -249,7 +252,18 @@ async function enforceIpControlPlaneLimit(
           window_start_utc,
           used_units
         )
-        values ($1::inet, $2, $3, $4::timestamptz, 1)
+        values (
+          case
+            when family($1::inet) = 6
+              and not $1::inet <<= '::ffff:0:0/96'::inet
+              then network(set_masklen($1::inet, 64))::inet
+            else $1::inet
+          end,
+          $2,
+          $3,
+          $4::timestamptz,
+          1
+        )
         on conflict (ip_address, metric, window_kind, window_start_utc)
         do update set
           used_units = public.agent_outbox_ip_quota_windows.used_units + 1,

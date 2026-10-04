@@ -723,6 +723,11 @@ account-scoped `caller_connect_approvals_per_account_per_minute` fixed window,
 allowing 30 connect approvals per account per UTC minute through the shared
 account quota and active limit-block tables.
 
+Connect, rotate, and revoke per-IP limits count an IPv4 address individually and
+an IPv6 address by its `/64` prefix, so rotating addresses within one IPv6 `/64`
+shares one allowance. IPv4-mapped IPv6 addresses are counted individually like
+IPv4.
+
 For the hosted Cloudflare/OpenNext path, trusted client IP means a valid
 `CF-Connecting-IP` header. `X-Forwarded-For` is not trusted for hosted per-IP
 control-plane limits; if `CF-Connecting-IP` is missing or invalid, the route
