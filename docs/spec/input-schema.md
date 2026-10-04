@@ -140,6 +140,11 @@ meaning.
 `min_length` must be non-negative, `max_length` must be positive when present,
 and `min_length <= max_length`.
 
+`default_value` is not checked against the length bounds. The hydrated review UI
+prefills it and blocks submission until the text is within the bounds. In the
+no-JavaScript fallback, an untouched out-of-range default can still be
+submitted; server validation rejects it with HTTP 422 `invalid_action_response`.
+
 `single_select` and `multi_select` fields:
 
 - `label`

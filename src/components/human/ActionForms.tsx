@@ -505,7 +505,23 @@ function FreeTextFields({
 }) {
   const payload = action.popupPayload;
   const multiline = payload.multiline === true;
+  // Browsers enforce minlength/maxlength only after the user edits the field,
+  // so an untouched caller default outside the bounds would otherwise submit.
+  const checkLength = (
+    field: HTMLInputElement | HTMLTextAreaElement | null
+  ) => {
+    field?.setCustomValidity(
+      freeTextLengthError(
+        field.value.length,
+        payload.min_length,
+        payload.max_length
+      )
+    );
+  };
   const props = {
+    ref: checkLength,
+    onInput: (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      checkLength(event.currentTarget),
     name: "response.text",
     placeholder: payload.placeholder ?? undefined,
     defaultValue: payload.default_value ?? undefined,
@@ -520,6 +536,25 @@ function FreeTextFields({
       {multiline ? <textarea {...props} rows={4} /> : <input {...props} />}
     </label>
   );
+}
+
+function freeTextLengthError(
+  length: number,
+  min: number | null | undefined,
+  max: number | null | undefined
+) {
+  // An empty value is left to the required attribute.
+  if (min != null && length > 0 && length < min) {
+    return `Enter at least ${characterCount(min)}.`;
+  }
+  if (max != null && length > max) {
+    return `Enter no more than ${characterCount(max)}.`;
+  }
+  return "";
+}
+
+function characterCount(count: number) {
+  return `${count} character${count === 1 ? "" : "s"}`;
 }
 
 function SingleSelectFields({
