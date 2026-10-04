@@ -960,6 +960,132 @@ func TestAPIClientFollowsLoopbackHTTPRedirectWithCredentials(t *testing.T) {
 	}
 }
 
+func TestAPIClientHonorsInjectedRedirectPolicyAfterTransportCheck(t *testing.T) {
+	policyErr := errors.New("cross-host redirect refused")
+	for _, tc := range []struct {
+		name          string
+		target        string
+		hops          int
+		policy        func(*http.Request, []*http.Request) error
+		wantRequests  int
+		wantCallbacks int
+		wantCode      ErrorCode
+	}{
+		{
+			name: "reject cross-host", target: "https://app.example.test/api/target", hops: 1,
+			policy: func(req *http.Request, via []*http.Request) error {
+				if req.URL.Host != via[0].URL.Host {
+					return policyErr
+				}
+				return nil
+			},
+			wantRequests: 1, wantCallbacks: 1, wantCode: CodeAPIUnavailable,
+		},
+		{
+			name: "use last response", target: "https://app.example.test/api/target", hops: 1,
+			policy:       func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			wantRequests: 1, wantCallbacks: 1, wantCode: CodeAPIResponseInvalid,
+		},
+		{
+			name: "allow secure redirect", target: "https://app.example.test/api/target", hops: 1,
+			policy:       func(*http.Request, []*http.Request) error { return nil },
+			wantRequests: 2, wantCallbacks: 1,
+		},
+		{
+			name: "custom policy replaces default cap", target: "https://app.example.test/api/target", hops: 11,
+			policy:       func(*http.Request, []*http.Request) error { return nil },
+			wantRequests: 12, wantCallbacks: 11,
+		},
+		{
+			name: "stricter custom hop limit", target: "https://app.example.test/api/target", hops: 11,
+			policy: func(_ *http.Request, via []*http.Request) error {
+				if len(via) >= 2 {
+					return errors.New("stopped after 2 requests")
+				}
+				return nil
+			},
+			wantRequests: 2, wantCallbacks: 2, wantCode: CodeAPIUnavailable,
+		},
+		{
+			name: "nil policy keeps default cap", target: "https://app.example.test/api/target", hops: 11,
+			wantRequests: 10, wantCode: CodeAPIUnavailable,
+		},
+		{
+			name: "insecure target before allowing policy", target: "http://app.example.test/api/target", hops: 1,
+			policy:       func(*http.Request, []*http.Request) error { return nil },
+			wantRequests: 1, wantCode: CodeAPIResponseInvalid,
+		},
+		{
+			name: "insecure target before last response policy", target: "http://app.example.test/api/target", hops: 1,
+			policy:       func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			wantRequests: 1, wantCode: CodeAPIResponseInvalid,
+		},
+	} {
+		for _, operation := range []string{"Do", "DoWrite", "Download"} {
+			t.Run(tc.name+"/"+operation, func(t *testing.T) {
+				requests, callbacks := 0, 0
+				injected := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					requests++
+					if req.Header.Get("Authorization") != "Bearer redirect-policy-fixture" {
+						t.Fatal("request lost authorization")
+					}
+					w := httptest.NewRecorder()
+					if requests <= tc.hops {
+						w.Header().Set("Location", tc.target)
+						w.Header().Set("X-Request-ID", "req_redirect")
+						w.Header().Set("X-Correlation-ID", "corr_redirect")
+						w.WriteHeader(http.StatusTemporaryRedirect)
+						_, _ = io.WriteString(w, "redirect response")
+					} else {
+						_, _ = io.WriteString(w, `{"ok":true,"data":{"value":"ok"}}`)
+					}
+					return w.Result(), nil
+				})}
+				if tc.policy != nil {
+					injected.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+						callbacks++
+						if req.URL.String() != tc.target || len(via) != callbacks || via[0].URL.Host != "example.test" {
+							t.Fatal("callback received unexpected redirect request or history")
+						}
+						return tc.policy(req, via)
+					}
+				}
+				client := APIClient{BaseURL: "https://example.test", HTTPClient: injected}
+				var err error
+				switch operation {
+				case "Do":
+					_, err = client.Do(context.Background(), http.MethodGet, "/api/source", "redirect-policy-fixture", nil, nil)
+				case "DoWrite":
+					_, err = client.DoWrite(context.Background(), http.MethodPost, "/api/source", "redirect-policy-fixture", map[string]string{"content": "body"}, nil)
+				case "Download":
+					_, err = client.Download(context.Background(), "/api/source", "redirect-policy-fixture", &bytes.Buffer{})
+				}
+				if requests != tc.wantRequests || callbacks != tc.wantCallbacks {
+					t.Fatalf("requests=%d callbacks=%d, want requests=%d callbacks=%d", requests, callbacks, tc.wantRequests, tc.wantCallbacks)
+				}
+				if tc.wantCode == "" {
+					if err != nil {
+						t.Fatalf("request failed: %v", err)
+					}
+					return
+				}
+				var appErr *AppError
+				if !errors.As(err, &appErr) || appErr.Code != tc.wantCode {
+					t.Fatalf("error = %v, want %q", err, tc.wantCode)
+				}
+				if operation == "DoWrite" && appErr.WriteOutcome != "unknown" {
+					t.Fatalf("write outcome = %q, want unknown", appErr.WriteOutcome)
+				}
+				if tc.wantCode == CodeAPIResponseInvalid {
+					if appErr.HTTPStatus != http.StatusTemporaryRedirect || appErr.RequestID != "req_redirect" || appErr.CorrelationID != "corr_redirect" || ExitCodeFor(err) != ExitTemporary {
+						t.Fatalf("redirect failure lost response metadata or exit code: %+v", appErr)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestAPIClientStopsRedirectLoops(t *testing.T) {
 	hits := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

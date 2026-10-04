@@ -388,11 +388,15 @@ func (c APIClient) httpClient() *http.Client {
 		base = defaultHTTPClient
 	}
 	client := *base
+	checkRedirect := client.CheckRedirect
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if req.URL.Scheme != "https" && (req.URL.Scheme != "http" || !isLoopbackHost(req.URL.Hostname())) {
 			return errInsecureRedirect
 		}
-		// Keep net/http's default redirect cap, which a custom policy replaces.
+		if checkRedirect != nil {
+			return checkRedirect(req, via)
+		}
+		// Keep net/http's default redirect cap when no custom policy is set.
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
 		}
