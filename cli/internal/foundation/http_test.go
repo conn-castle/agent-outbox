@@ -3,11 +3,14 @@ package foundation
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -842,4 +845,184 @@ func renderedObject(t *testing.T, parent map[string]any, key string) map[string]
 		t.Fatalf("rendered %q type = %T, want object", key, value)
 	}
 	return object
+}
+
+func TestAPIClientRefusesRedirectsThatWouldSendCredentialsOverCleartext(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		redirect string
+		write    bool
+		download bool
+	}{
+		{name: "same host read", redirect: "http://app.example.test"},
+		{name: "subdomain write", redirect: "http://api.app.example.test", write: true},
+		{name: "same host download", redirect: "http://app.example.test", download: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cleartext := newCredentialRecordingServer(t, httptest.NewServer)
+			origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Request-ID", "req_redirect")
+				http.Redirect(w, r, tc.redirect+":"+cleartext.port+r.URL.Path, http.StatusTemporaryRedirect)
+			}))
+			defer origin.Close()
+
+			client := APIClient{BaseURL: "https://app.example.test:" + serverPort(t, origin), HTTPClient: hostMappingClient()}
+			var err error
+			switch {
+			case tc.download:
+				_, err = client.Download(context.Background(), "/api/output/out_1/files/file_1", "aob_live_fixture", &countingWriter{})
+			case tc.write:
+				_, err = client.DoWrite(context.Background(), http.MethodPost, "/api/input", "aob_live_fixture", map[string]string{"content": "secret body"}, nil)
+			default:
+				_, err = client.Do(context.Background(), http.MethodGet, "/api/caller/status", "aob_live_fixture", nil, nil)
+			}
+
+			if cleartext.hits != 0 {
+				t.Fatalf("cleartext server received %d request(s); Authorization=%q", cleartext.hits, cleartext.authorization)
+			}
+			var appErr *AppError
+			if !errors.As(err, &appErr) {
+				t.Fatalf("error = %v, want *AppError", err)
+			}
+			if appErr.Code != CodeAPIResponseInvalid || ExitCodeFor(err) != ExitTemporary {
+				t.Fatalf("error code = %q exit = %d, want %q exit %d", appErr.Code, ExitCodeFor(err), CodeAPIResponseInvalid, ExitTemporary)
+			}
+			if appErr.HTTPStatus != http.StatusTemporaryRedirect || appErr.RequestID != "req_redirect" {
+				t.Fatalf("http status = %d request id = %q, want redirect response metadata", appErr.HTTPStatus, appErr.RequestID)
+			}
+			wantOutcome := ""
+			if tc.write {
+				wantOutcome = "unknown"
+			}
+			if appErr.WriteOutcome != wantOutcome {
+				t.Fatalf("write outcome = %q, want %q", appErr.WriteOutcome, wantOutcome)
+			}
+			var rendered bytes.Buffer
+			RenderError(&rendered, true, err)
+			if strings.Contains(rendered.String(), "aob_live_fixture") || strings.Contains(rendered.String(), "http://") {
+				t.Fatalf("rendered error exposes the key or redirect target: %s", rendered.String())
+			}
+		})
+	}
+}
+
+func TestAPIClientRefusesRedirectFromLoopbackHTTPToNonLoopbackHTTP(t *testing.T) {
+	cleartext := newCredentialRecordingServer(t, httptest.NewServer)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://app.example.test:"+cleartext.port+r.URL.Path, http.StatusPermanentRedirect)
+	}))
+	defer origin.Close()
+
+	client := APIClient{BaseURL: "http://localhost:" + serverPort(t, origin), HTTPClient: hostMappingClient()}
+	_, err := client.Do(context.Background(), http.MethodGet, "/api/caller/status", "aob_live_fixture", nil, nil)
+
+	if cleartext.hits != 0 {
+		t.Fatalf("cleartext server received %d request(s)", cleartext.hits)
+	}
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Code != CodeAPIResponseInvalid {
+		t.Fatalf("error = %v, want %q", err, CodeAPIResponseInvalid)
+	}
+}
+
+func TestAPIClientFollowsHTTPSRedirectToAppSubdomainWithCredentials(t *testing.T) {
+	app := newCredentialRecordingServer(t, httptest.NewTLSServer)
+	website := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://app.example.test:"+app.port+r.URL.Path, http.StatusPermanentRedirect)
+	}))
+	defer website.Close()
+
+	client := APIClient{BaseURL: "https://example.test:" + serverPort(t, website), HTTPClient: hostMappingClient()}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if _, err := client.DoWrite(context.Background(), http.MethodPost, "/api/input", "aob_live_fixture", map[string]string{"content": "body"}, &out); err != nil {
+		t.Fatalf("DoWrite failed: %v", err)
+	}
+	if app.hits != 1 || app.authorization != "Bearer aob_live_fixture" || out.Value != "ok" {
+		t.Fatalf("app hits = %d authorization = %q value = %q", app.hits, app.authorization, out.Value)
+	}
+}
+
+func TestAPIClientFollowsLoopbackHTTPRedirectWithCredentials(t *testing.T) {
+	target := newCredentialRecordingServer(t, httptest.NewServer)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://localhost:"+target.port+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	client := APIClient{BaseURL: "http://localhost:" + serverPort(t, origin)}
+	if _, err := client.Do(context.Background(), http.MethodGet, "/api/caller/status", "aob_live_fixture", nil, nil); err != nil {
+		t.Fatalf("Do failed: %v", err)
+	}
+	if target.hits != 1 || target.authorization != "Bearer aob_live_fixture" {
+		t.Fatalf("target hits = %d authorization = %q", target.hits, target.authorization)
+	}
+}
+
+func TestAPIClientStopsRedirectLoops(t *testing.T) {
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		http.Redirect(w, r, r.URL.Path, http.StatusFound)
+	}))
+	defer server.Close()
+
+	_, err := (APIClient{BaseURL: server.URL}).Do(context.Background(), http.MethodGet, "/api/caller/status", "aob_live_fixture", nil, nil)
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Code != CodeAPIUnavailable {
+		t.Fatalf("error = %v, want %q", err, CodeAPIUnavailable)
+	}
+	if hits != 10 {
+		t.Fatalf("server hits = %d, want 10", hits)
+	}
+}
+
+type credentialRecordingServer struct {
+	port          string
+	hits          int
+	authorization string
+}
+
+func newCredentialRecordingServer(t *testing.T, start func(http.Handler) *httptest.Server) *credentialRecordingServer {
+	t.Helper()
+	recorder := &credentialRecordingServer{}
+	server := start(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.hits++
+		recorder.authorization = r.Header.Get("Authorization")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":             true,
+			"request_id":     "req_target",
+			"correlation_id": "corr_target",
+			"data":           map[string]string{"value": "ok"},
+		})
+	}))
+	t.Cleanup(server.Close)
+	recorder.port = serverPort(t, server)
+	return recorder
+}
+
+func serverPort(t *testing.T, server *httptest.Server) string {
+	t.Helper()
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+	return parsed.Port()
+}
+
+// hostMappingClient dials every host name to the loopback listener on the same
+// port, so tests can exercise non-loopback host names against local servers.
+func hostMappingClient() *http.Client {
+	dialer := &net.Dialer{}
+	return &http.Client{Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			_, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+		},
+	}}
 }

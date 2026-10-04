@@ -135,17 +135,17 @@ These codes are emitted by the local CLI rather than classified by the Agent
 Outbox API. They use the same envelope shape as API errors. API-boundary errors
 include `http_status` only when an HTTP response was received.
 
-| Code                        | Exit code | Meaning                                                                                                                                        |
-| --------------------------- | --------: | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `usage_error`               |        64 | The local command line is invalid, such as an unknown flag, unknown command, unsupported argument, or wrong argument count.                    |
-| `config_error`              |        78 | Local CLI config, base URL, config path, or non-secret config file contents are missing, unreadable, invalid, or unsupported.                  |
-| `caller_selection_conflict` |        78 | Both `--caller` and `AGENT_OUTBOX_CALLER` were set; the CLI refuses to choose one even when the values match.                                  |
-| `ambiguous_caller`          |        78 | More than one local caller is configured and no explicit caller selector was supplied.                                                         |
-| `unknown_caller`            |        78 | The selected local caller name is absent from the selected config file.                                                                        |
-| `secret_store_error`        |        74 | The owner-only local credentials file or selected caller credential is missing, malformed, insecurely permissioned, unreadable, or unwritable. |
-| `api_unavailable`           |        75 | The CLI could not obtain or finish reading an API response. This is not an Agent Outbox service error classification.                          |
-| `api_response_invalid`      |        75 | The CLI received a response that did not satisfy the public API envelope contract or could not decode its typed data.                          |
-| `local_io_error`            |        75 | Local non-secret file or stream I/O failed. This is not an Agent Outbox service error classification.                                          |
+| Code                        | Exit code | Meaning                                                                                                                                                                                   |
+| --------------------------- | --------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `usage_error`               |        64 | The local command line is invalid, such as an unknown flag, unknown command, unsupported argument, or wrong argument count.                                                               |
+| `config_error`              |        78 | Local CLI config, base URL, config path, or non-secret config file contents are missing, unreadable, invalid, or unsupported.                                                             |
+| `caller_selection_conflict` |        78 | Both `--caller` and `AGENT_OUTBOX_CALLER` were set; the CLI refuses to choose one even when the values match.                                                                             |
+| `ambiguous_caller`          |        78 | More than one local caller is configured and no explicit caller selector was supplied.                                                                                                    |
+| `unknown_caller`            |        78 | The selected local caller name is absent from the selected config file.                                                                                                                   |
+| `secret_store_error`        |        74 | The owner-only local credentials file or selected caller credential is missing, malformed, insecurely permissioned, unreadable, or unwritable.                                            |
+| `api_unavailable`           |        75 | The CLI could not obtain or finish reading an API response. This is not an Agent Outbox service error classification.                                                                     |
+| `api_response_invalid`      |        75 | The CLI received a response that did not satisfy the public API envelope contract or could not decode its typed data, or a redirect to a URL that is neither `https` nor loopback `http`. |
+| `local_io_error`            |        75 | Local non-secret file or stream I/O failed. This is not an Agent Outbox service error classification.                                                                                     |
 
 ## Error Catalog
 

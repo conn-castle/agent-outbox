@@ -139,13 +139,9 @@ func (c APIClient) do(ctx context.Context, method string, apiPath string, bearer
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 	}
 
-	client := c.HTTPClient
-	if client == nil {
-		client = defaultHTTPClient
-	}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, responseFailure(CodeAPIUnavailable, "Could not reach Agent Outbox API.", &APIResponse{RequestID: requestID}, kind, err)
+		return nil, transportFailure(resp, requestID, kind, err)
 	}
 	defer resp.Body.Close()
 
@@ -223,13 +219,9 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 	}
 
-	client := c.HTTPClient
-	if client == nil {
-		client = defaultHTTPClient
-	}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, responseFailure(CodeAPIUnavailable, "Could not reach Agent Outbox API.", &APIResponse{RequestID: requestID}, readRequest, err)
+		return nil, transportFailure(resp, requestID, readRequest, err)
 	}
 	defer resp.Body.Close()
 
@@ -379,6 +371,47 @@ func joinBaseAndPath(base string, apiPath string) (string, error) {
 	parsed.RawPath = rawPath
 	parsed.RawQuery = relative.RawQuery
 	return parsed.String(), nil
+}
+
+// errInsecureRedirect marks a redirect refused because its target is neither
+// https nor loopback http, so following it could send the caller API key and
+// body over cleartext off the local machine.
+var errInsecureRedirect = errors.New("redirect target must use https or loopback http")
+
+// httpClient returns the configured client with the base-URL transport rule
+// applied to every redirect hop. Go forwards Authorization to the same host or
+// its subdomains regardless of scheme, so an https origin that redirects to http
+// would otherwise resend the API key in cleartext.
+func (c APIClient) httpClient() *http.Client {
+	base := c.HTTPClient
+	if base == nil {
+		base = defaultHTTPClient
+	}
+	client := *base
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" && (req.URL.Scheme != "http" || !isLoopbackHost(req.URL.Hostname())) {
+			return errInsecureRedirect
+		}
+		// Keep net/http's default redirect cap, which a custom policy replaces.
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &client
+}
+
+func transportFailure(resp *http.Response, requestID string, kind requestKind, err error) *AppError {
+	if !errors.Is(err, errInsecureRedirect) {
+		return responseFailure(CodeAPIUnavailable, "Could not reach Agent Outbox API.", &APIResponse{RequestID: requestID}, kind, err)
+	}
+	meta := &APIResponse{RequestID: requestID}
+	if resp != nil {
+		meta.RequestID = firstSafeDiagnosticID(resp.Header.Get("X-Request-ID"), requestID)
+		meta.CorrelationID = firstSafeDiagnosticID(resp.Header.Get("X-Correlation-ID"))
+		meta.HTTPStatus = resp.StatusCode
+	}
+	return responseFailure(CodeAPIResponseInvalid, "Agent Outbox API redirected to a URL that is neither https nor loopback http; the request was not sent there.", meta, kind, err)
 }
 
 func (c APIClient) requestID() string {
