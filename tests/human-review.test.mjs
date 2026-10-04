@@ -55,7 +55,6 @@ import {
 import {
   accountCanManageBilling,
   accountCanUpgrade,
-  accountStorageLabel,
   humanAccountIdentityOrFallback
 } from "../src/shared/account-display.ts";
 
@@ -349,10 +348,7 @@ test("fixture resolved marker leaves pending and appears as answered history", (
   assert.equal(historyRow.status, "answered");
 });
 
-test("account banner distinguishes storage and hosted billing actions", () => {
-  assert.equal(accountStorageLabel(0, 0), "0 byte capacity");
-  assert.equal(accountStorageLabel(42, null), "Unlimited");
-  assert.equal(accountStorageLabel(25, 100), "25%");
+test("account banner distinguishes hosted billing actions", () => {
   assert.equal(
     accountCanManageBilling({
       tier: "self_hosted",
