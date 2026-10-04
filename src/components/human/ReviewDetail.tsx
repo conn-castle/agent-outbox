@@ -67,7 +67,9 @@ export function ReviewDetail({
   const requestedCompose = composeAction
     ? (detail?.actions.find(
         (action) =>
-          action.value === composeAction && action.popupKind !== "none"
+          action.value === composeAction &&
+          action.popupKind !== "none" &&
+          action.answerable
       ) ?? null)
     : null;
   const [activeActionValue, setActiveActionValue] = useState<string | null>(

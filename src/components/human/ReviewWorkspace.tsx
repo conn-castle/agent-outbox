@@ -859,6 +859,21 @@ export function ReviewWorkspace({
     ) {
       setLastError(null);
     }
+    function clearLastUndoFor(inputItemIds: string[]) {
+      const outputResultId = normalizedFormText(
+        submission.formData,
+        "outputResultId"
+      );
+      setLastUndo((current) => {
+        if (!current) {
+          return null;
+        }
+        const matchesAnswer =
+          inputItemIds.includes(current.inputItemId) &&
+          (!outputResultId || current.outputResultId === outputResultId);
+        return matchesAnswer ? null : current;
+      });
+    }
     enqueue({
       scope: HUMAN_MUTATION_SCOPE,
       optimistic,
@@ -930,20 +945,7 @@ export function ReviewWorkspace({
           return;
         }
         if (result.operation === "undo") {
-          const restoredOutputResultId = normalizedFormText(
-            submission.formData,
-            "outputResultId"
-          );
-          setLastUndo((current) => {
-            if (!current) {
-              return null;
-            }
-            const matchesAnswer =
-              result.inputItemIds.includes(current.inputItemId) &&
-              (!restoredOutputResultId ||
-                current.outputResultId === restoredOutputResultId);
-            return matchesAnswer ? null : current;
-          });
+          clearLastUndoFor(result.inputItemIds);
           setLastError(null);
           return;
         }
@@ -981,6 +983,15 @@ export function ReviewWorkspace({
             }
           }
           router.refresh();
+        }
+        if (
+          submission.operation === "undo" &&
+          error instanceof HumanMutationError &&
+          (error.result?.code === "output_already_read" ||
+            error.result?.code === "not_found")
+        ) {
+          // These undo rejections are permanent; retrying cannot succeed.
+          clearLastUndoFor(submission.inputItemIds);
         }
         const message =
           error instanceof HumanMutationError
