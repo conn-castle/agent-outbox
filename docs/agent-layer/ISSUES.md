@@ -33,12 +33,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Checkout (`src/server/billing.ts`) is refused only when the account is already live, so completing two Checkout sessions opened while free creates two subscriptions (and, with no stored customer, two Stripe customers). Subscription webhooks match by subscription id, customer id, or metadata account id and overwrite the stored subscription, so the account follows whichever subscription last emitted an event; cancelling one can start downgrade grace and paid-data cleanup while the other keeps charging, and the Billing Portal shows only the stored customer.
     Open question: Whether to prevent a second live subscription before Checkout, ignore and report events for non-stored subscriptions, or both.
 
-- Issue 2026-10-03 persisted-popup-semantic-validation: Stored popup decoding omits semantic invariants
-    Priority: Medium. Area: Human answers / Human review
-    Description: Stored popup decoding checks field types but accepts negative or fractional free-text bounds, invalid civil-date timezones, and multi-select maxima exceeding the stored option count. These configurations also pass answer validation on main before PR #143, although the input normalizer rejects them.
-    Next step: Validate persisted integer/range/timezone and option-count invariants before inspecting responses, with content-free failures and coverage through the answer transaction boundary.
-    Notes: Deferred from PR #143 review comment 4170808270 because its scope preserves existing review-page decoding behavior and fixes wrong-typed stored fields plus date-bound/MIME-pattern validity.
-
 - Issue 2026-10-02 cli-device-expiry-test-race: CLI device-expiry test races under `go test -race`
     Priority: Low. Area: CLI tests
     Description: `TestCallerConnectDevicePollRequestStopsAtDeviceExpiry` (`cli/internal/command/controlplane_test.go`) increments `polls` in the HTTP handler goroutine and reads it from the test goroutine after the client cancels the in-flight poll, so `-race` reports a data race. CI runs Go tests without `-race`, so it does not fail there.

@@ -599,6 +599,108 @@ const malformedPopupCases = [
       "Malformed persisted popup_payload for input action action-1: max_selected must be a finite number, got string."
   },
   {
+    name: "free-text negative minimum",
+    kind: "free_text",
+    payload: {
+      ...freeTextPayload,
+      label: "private stored label",
+      min_length: -1
+    },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must be a non-negative integer or null."
+  },
+  {
+    name: "free-text fractional maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 2.5 },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text zero maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 0 },
+    response: { kind: "free_text", text: "" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text minimum above maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 5, max_length: 3 },
+    response: { kind: "free_text", text: "four" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must not exceed max_length."
+  },
+  {
+    name: "multi-select maximum above the stored option count",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, max_selected: 4 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select fractional minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 0.5 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select negative minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: -1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select minimum above maximum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 2, max_selected: 1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "date-picker invalid timezone with a matching date response",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      label: "private stored label",
+      display_timezone: "Not/AZone"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: "Not/AZone"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name."
+  },
+  {
+    name: "datetime-picker invalid timezone",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      mode: "datetime",
+      display_timezone: "Not/AZone"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-06-29T12:00:00.000Z",
+      display_timezone: "UTC"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name."
+  },
+  {
     name: "date-picker minimum with a number type",
     kind: "date_picker",
     payload: {
@@ -733,7 +835,7 @@ for (const scenario of malformedPopupCases) {
         assert.equal(error.message, scenario.message);
         assert.doesNotMatch(
           error.message,
-          /private stored|not a mime|text\/plain|"5"|"2"|2026-06-30/
+          /private stored|not a mime|text\/plain|"5"|"2"|2026-06-30|AZone/
         );
         return true;
       }
@@ -785,6 +887,52 @@ for (const scenario of boundedPopupCases) {
       calls.some((call) => /^\s*(insert|update|delete)\b/i.test(call.sql)),
       false
     );
+  });
+}
+
+/** @type {Array<{kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse}>} */
+const boundaryPopupCases = [
+  {
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 0, max_length: 1 },
+    response: { kind: "free_text", text: "x" }
+  },
+  {
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 0, max_selected: 3 },
+    response: { kind: "multi_select", values: ["a", "b", "c"] }
+  },
+  {
+    kind: "date_picker",
+    payload: { ...datePickerPayload, display_timezone: "" },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: ""
+    }
+  }
+];
+for (const scenario of boundaryPopupCases) {
+  test(`human answer service accepts stored ${scenario.kind} settings at the input-rule limits`, async () => {
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    const result = await createHumanAnswerInTransaction(
+      mockQuery(calls, {
+        inputRows: [pendingInputRow],
+        actionRows: [
+          {
+            input_action_id: "action-1",
+            popup_kind: scenario.kind,
+            popup_payload: scenario.payload
+          }
+        ],
+        optionRows: ["a", "b", "c"].map((option_value) => ({ option_value })),
+        outputRows: [{ output_result_id: "output-1" }]
+      }),
+      { ...baseAnswerInput, response: scenario.response }
+    );
+    assert.equal(result.ok, true);
   });
 }
 
