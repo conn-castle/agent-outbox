@@ -6,6 +6,7 @@ import { tsImport } from "tsx/esm/api";
 import {
   accountLimitProfile,
   deleteInputItem,
+  handleInputQueueRequest,
   handleInputQueueRequestInTransaction,
   insertInputItemStatement,
   replaceInputItem,
@@ -711,6 +712,81 @@ test("send, replace, and delete reject unstorable strings before writing", async
       false,
       operation
     );
+  }
+});
+
+test("send, replace, and delete reject a body caller_id before writing", async () => {
+  for (const operation of /** @type {const} */ ([
+    "send",
+    "replace",
+    "delete"
+  ])) {
+    const query = inputQueueThrottleQuery({ inputRows: [pendingInputRow()] });
+    const otherCallerId = "00000000-0000-4000-8000-000000000999";
+    const body =
+      operation === "delete"
+        ? { caller_item_id: "email:thread_123", caller_id: otherCallerId }
+        : { ...baseInput(), caller_id: otherCallerId };
+
+    const result = await handleInputQueueRequestInTransaction(
+      query,
+      context,
+      identity,
+      operation,
+      body
+    );
+
+    assert.equal(result.ok ? null : result.error.status, 422, operation);
+    assert.deepEqual(
+      result.ok
+        ? null
+        : result.error.fields?.map((field) => [field.path, field.code]),
+      [["caller_id", "caller_id_not_allowed"]],
+      operation
+    );
+    assert.equal(
+      query.calls.some((call) =>
+        /(insert into|update|delete from) public\.agent_outbox_input/.test(
+          call.sql
+        )
+      ),
+      false,
+      operation
+    );
+  }
+});
+
+test("input delete rejects a body caller_id before the transaction", async () => {
+  const previous = process.env.DATABASE_APP_ROLE_URL;
+  delete process.env.DATABASE_APP_ROLE_URL;
+  try {
+    const result = await handleInputQueueRequest(
+      new Request("https://api.test/api/input/delete", { method: "POST" }),
+      context,
+      "delete",
+      {
+        caller_item_id: "email:thread_123",
+        caller_id: "00000000-0000-4000-8000-000000000999"
+      }
+    );
+    assert.equal(result.ok ? null : result.error.status, 422);
+    assert.equal(result.ok ? null : result.error.code, "validation_failed");
+    assert.deepEqual(
+      result.ok
+        ? null
+        : result.error.fields?.map((field) => [field.path, field.code]),
+      [["caller_id", "caller_id_not_allowed"]]
+    );
+    assert.equal(
+      result.ok ? null : result.error.fields?.[0]?.message,
+      "Caller identity is derived from bearer authentication."
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previous;
+    }
   }
 });
 

@@ -894,6 +894,26 @@ test("output request wrappers reject malformed requests before the transaction",
     );
     assert.equal(readAllBadBody.ok, false);
     assert.equal(readAllBadBody.ok ? null : readAllBadBody.error.status, 422);
+
+    const readAllCallerId = await handleOutputReadAllRequest(
+      new Request("https://api.test/api/output/read-all", { method: "POST" }),
+      context,
+      {
+        limit: 25,
+        cursor: null,
+        caller_id: "00000000-0000-4000-8000-000000000999"
+      }
+    );
+    assert.equal(readAllCallerId.ok ? null : readAllCallerId.error.status, 422);
+    assert.deepEqual(
+      readAllCallerId.ok
+        ? null
+        : readAllCallerId.error.fields?.map((field) => [
+            field.path,
+            field.code
+          ]),
+      [["caller_id", "caller_id_not_allowed"]]
+    );
   } finally {
     if (previous === undefined) {
       delete process.env.DATABASE_APP_ROLE_URL;
