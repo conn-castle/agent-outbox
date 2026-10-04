@@ -201,7 +201,7 @@ func inputDeleteCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			callerItemID := strings.TrimSpace(args[0])
+			callerItemID := args[0]
 			if callerItemID == "" {
 				return foundation.NewUsageError("caller_item_id is required.")
 			}
