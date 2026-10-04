@@ -271,7 +271,12 @@ async function prepareReleaseDraft() {
     const result = await runDraftPreparation(defaultOrchestrator(), input);
     writeGithubOutputs({
       github_release_id: String(result.releaseId),
-      draft_state: result.kind === "committed" ? "committed" : "prepared"
+      draft_state:
+        result.kind === "committed"
+          ? "committed"
+          : result.kind === "owned_publishing"
+            ? "publishing"
+            : "prepared"
     });
   });
 }

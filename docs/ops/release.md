@@ -282,11 +282,14 @@ deletes a committed release.
 
 Within the certified artifact's seven-day retention window, choose **Re-run
 failed jobs** on the original workflow run. This reuses the exact artifact and
-the same run ID so the owned draft can be adopted. Do not re-dispatch the
-workflow or choose **Re-run all jobs** for this recovery: a fresh build embeds a
-new build date and may not be byte-identical. After artifact expiry, stop and
-prepare an explicit new-version release rather than rebuilding under an existing
-tag.
+the same run ID so the owned draft can be adopted. If that run already marked
+its draft `publishing`, the re-run skips every deploy step from asset upload
+through promotion; it never redeploys, reapplies migrations, or rolls back. It
+reruns the post-promotion smoke and, only if it passes, re-proves the certified
+assets and publishes. Do not re-dispatch the workflow or choose **Re-run all
+jobs** for this recovery: a fresh build embeds a new build date and may not be
+byte-identical. After artifact expiry, stop and prepare an explicit new-version
+release rather than rebuilding under an existing tag.
 
 ### Reconcile an abandoned pre-commit release
 

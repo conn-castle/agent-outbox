@@ -596,25 +596,35 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     "deploy-job run commands must match the exported release phase contract"
   );
 
-  const promoteWithoutCandidateGuard = deployWorkflow.replace(
-    "      - name: Promote candidate to 100%\n        if: steps.prepare-draft.outputs.draft_state != 'committed'\n",
-    "      - name: Promote candidate to 100%\n"
-  );
-  assert.notEqual(
-    promoteWithoutCandidateGuard,
-    deployWorkflow,
-    "candidate-guard regression fixture must modify the workflow"
-  );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      promoteWithoutCandidateGuard,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must match the exported production release phase (step name, run command, condition) contract"
-    ),
-    true,
-    "candidate mutation steps must keep the uncommitted draft_state guard"
-  );
+  const promoteGuard =
+    "      - name: Promote candidate to 100%\n        if: steps.prepare-draft.outputs.draft_state == 'prepared'\n";
+  for (const [description, replacement] of [
+    ["without a guard", "      - name: Promote candidate to 100%\n"],
+    [
+      "on a publishing re-run",
+      "      - name: Promote candidate to 100%\n        if: steps.prepare-draft.outputs.draft_state != 'committed'\n"
+    ]
+  ]) {
+    const promoteWithWrongGuard = deployWorkflow.replace(
+      promoteGuard,
+      replacement
+    );
+    assert.notEqual(
+      promoteWithWrongGuard,
+      deployWorkflow,
+      `promote guard regression fixture ${description} must modify the workflow`
+    );
+    assert.equal(
+      validateProductionDeployWorkflow(
+        promoteWithWrongGuard,
+        "24.18.0"
+      ).includes(
+        ".github/workflows/deploy-production.yml must match the exported production release phase (step name, run command, condition) contract"
+      ),
+      true,
+      `promote must not run ${description}`
+    );
+  }
 });
 
 test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {

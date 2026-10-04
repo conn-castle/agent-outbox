@@ -530,9 +530,18 @@ export async function runDraftPreparation(orchestrator, input) {
       };
     }
     if (classification.kind === "owned_publishing") {
-      throw new ReleaseHoldError(
-        `draft ${classification.release?.id ?? "unknown"} is already publishing; refusing to recreate or clean it`
+      if (!classification.release) {
+        throw new Error(
+          "owned publishing classification is missing a release id"
+        );
+      }
+      console.log(
+        `${input.releaseTag} draft ${classification.release.id} is already publishing on ${input.expectedSha}; resuming publication only.`
       );
+      return {
+        kind: "owned_publishing",
+        releaseId: classification.release.id
+      };
     }
     if (classification.kind === "published_tag_pending") {
       throw new PublicationStateUnknownError(input.releaseTag);

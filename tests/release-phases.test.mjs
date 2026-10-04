@@ -97,6 +97,32 @@ test("draft preparation adopts this run's exact marker and refuses duplicates", 
   assert.equal(duplicates.calls.createDraft, 0);
 });
 
+test("draft preparation resumes only this run's publishing draft", async () => {
+  const github = scriptedGithub({
+    listReleases: [[draftRelease({ body: marker("publishing") })]],
+    remoteTagCommit: [null]
+  });
+  const resumed = await runDraftPreparation(orchestrator(github), RELEASE);
+  assert.deepEqual(resumed, { kind: "owned_publishing", releaseId: DRAFT_ID });
+  assert.equal(github.calls.createDraft, 0);
+  assert.equal(github.calls.updateRelease, 0);
+  assert.equal(github.calls.deleteRelease, 0);
+
+  const otherRun = scriptedGithub({
+    listReleases: [
+      [draftRelease({ body: marker("publishing", { runId: "33196586801" }) })]
+    ],
+    remoteTagCommit: [null]
+  });
+  await assert.rejects(
+    runDraftPreparation(orchestrator(otherRun), RELEASE),
+    ReleaseHoldError
+  );
+  assert.equal(otherRun.calls.createDraft, 0);
+  assert.equal(otherRun.calls.updateRelease, 0);
+  assert.equal(otherRun.calls.deleteRelease, 0);
+});
+
 test("asset reconciliation uploads missing bytes and refuses conflicting assets", async () => {
   const local = Buffer.from("certified-bytes");
   const assets = [

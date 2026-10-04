@@ -176,7 +176,7 @@ jobs:
         run: node scripts/production-release.mjs prepare-draft
 
       - name: Upload certified CLI assets to draft
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           GH_TOKEN: ${{ github.token }}
           AGENT_OUTBOX_GITHUB_RELEASE_ID:
@@ -185,7 +185,7 @@ jobs:
 
       - name: Capture healthy rollback target
         id: rollback-target
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           GH_TOKEN: ${{ github.token }}
           AGENT_OUTBOX_GITHUB_RELEASE_ID:
@@ -197,7 +197,7 @@ jobs:
         run: node scripts/production-release.mjs capture-rollback
 
       - name: Verify rollback target before deploy
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           AGENT_OUTBOX_EXPECTED_RELEASE:
             ${{ steps.rollback-target.outputs.rollback_release }}
@@ -207,7 +207,7 @@ jobs:
         run: corepack pnpm run smoke-runtime
 
       - name: Compare Worker routes and cron triggers
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           AGENT_OUTBOX_ROLLBACK_RELEASE:
             ${{ steps.rollback-target.outputs.rollback_release }}
@@ -215,7 +215,7 @@ jobs:
 
       - name: Upload inactive Worker version
         id: upload-worker
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           GH_TOKEN: ${{ github.token }}
           AGENT_OUTBOX_GITHUB_RELEASE_ID:
@@ -251,7 +251,7 @@ jobs:
         run: node scripts/production-release.mjs upload-worker
 
       - name: Require production migration credential
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
         run: |
@@ -272,25 +272,25 @@ jobs:
           echo "::add-mask::$host"
 
       - name: Validate production migration history before apply
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
         run: corepack pnpm run migration:validate-pre-migrate
 
       - name: Apply production database migrations
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
         run: corepack pnpm run migration:migrate
 
       - name: Validate production migration history after apply
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
         run: corepack pnpm run migration:validate
 
       - name: Deploy prior@100 and candidate@0
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           CLOUDFLARE_API_TOKEN:
             ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
@@ -301,7 +301,7 @@ jobs:
         run: node scripts/production-release.mjs deploy-staged
 
       - name: Verify candidate through version override
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           AGENT_OUTBOX_EXPECTED_RELEASE: ${{ github.sha }}
           AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1"
@@ -313,7 +313,7 @@ jobs:
         run: corepack pnpm run smoke-runtime
 
       - name: Promote candidate to 100%
-        if: steps.prepare-draft.outputs.draft_state != 'committed'
+        if: steps.prepare-draft.outputs.draft_state == 'prepared'
         env:
           CLOUDFLARE_API_TOKEN:
             ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_API_TOKEN }}
