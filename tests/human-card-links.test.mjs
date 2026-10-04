@@ -59,6 +59,7 @@ test(
     const foreignCallerId = crypto.randomUUID();
     const userId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
+    const foreignItemId = crypto.randomUUID();
     const copiedId = "email:thread /?#&+% café 東京";
     /** @type {import("../src/server/authorization.ts").AuthorizedHumanAccountContext} */
     const context = { surface: "human", accountId, userId, role: "owner" };
@@ -104,7 +105,7 @@ test(
         updated_at
       ) values ($1, $2, $3, $4, 'fixture-hash', $5, 'Link test', 'link', 'Review', 'Context', 'Summary', $6)`,
           [
-            isTarget ? targetId : crypto.randomUUID(),
+            isTarget ? targetId : foreign ? foreignItemId : crypto.randomUUID(),
             foreign ? otherAccountId : accountId,
             foreign
               ? foreignCallerId
@@ -192,10 +193,18 @@ test(
           null
         );
       }
-      assert.equal(
-        await humanReviewDetailInTransaction(query, context, "invalid\0id"),
-        null
-      );
+      for (const id of [
+        "invalid\0id",
+        "not-a-uuid",
+        targetId.toUpperCase(),
+        foreignItemId
+      ]) {
+        assert.equal(
+          await humanReviewDetailInTransaction(query, context, id),
+          null,
+          id
+        );
+      }
       for (const filter of [{ search: "Review\0" }, { types: ["Link\0"] }]) {
         assert.deepEqual(
           await humanReviewPageInTransaction(query, context, filter),
