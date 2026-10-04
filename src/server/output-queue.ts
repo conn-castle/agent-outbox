@@ -27,7 +27,11 @@ import {
   runGuardedCallerTransaction,
   type CallerIdentity
 } from "./caller-api-auth.ts";
-import { callerOutputLockStatement, safeContentType } from "./output-files.ts";
+import {
+  CANONICAL_UUID_PATTERN,
+  callerOutputLockStatement,
+  safeContentType
+} from "./output-files.ts";
 import {
   CanonicalInputIntegrityError,
   materializeCanonicalInputsByItemId
@@ -293,6 +297,9 @@ export async function readOutputResultInTransaction(
   identity: CallerIdentity,
   outputResultId: string
 ): Promise<OutputQueueResult> {
+  if (!CANONICAL_UUID_PATTERN.test(outputResultId)) {
+    return notFoundError();
+  }
   const result = await query<OutputRow>(
     outputResultByIdStatement(identity, outputResultId)
   );
@@ -400,10 +407,15 @@ export async function acknowledgeOutputInTransaction(
   context: ApiRequestContext,
   outputResultId: string
 ): Promise<OutputQueueResult> {
-  const liveResult = await query<{ output_result_id: string }>(
-    callerOutputLockStatement(identity, outputResultId)
-  );
-  const liveOutputResultId = liveResult.rows[0]?.output_result_id;
+  // Noncanonical ids cannot match a live row, but may match a retained
+  // acknowledgement through the separate case-insensitive lookup below.
+  const liveOutputResultId = CANONICAL_UUID_PATTERN.test(outputResultId)
+    ? (
+        await query<{ output_result_id: string }>(
+          callerOutputLockStatement(identity, outputResultId)
+        )
+      ).rows[0]?.output_result_id
+    : undefined;
 
   if (liveOutputResultId) {
     const deletion = await query<TerminalDeletionRow>(
@@ -611,7 +623,7 @@ export function outputResultByIdStatement(
       from public.agent_outbox_output_results
       where account_id = $1
         and caller_id = $2
-        and output_result_id::text = $3
+        and output_result_id = $3::uuid
       for update
     `,
     values: [identity.accountId, identity.callerId, outputResultId]

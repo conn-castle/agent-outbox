@@ -12,8 +12,14 @@ import {
 } from "../src/server/human-answer.ts";
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
-import { handleOutputFileDownloadAuthenticatedTransaction } from "../src/server/output-files.ts";
-import { acknowledgeOutputInTransaction } from "../src/server/output-queue.ts";
+import {
+  handleOutputFileDownloadAuthenticatedTransaction,
+  outputFileDownloadInTransaction
+} from "../src/server/output-files.ts";
+import {
+  acknowledgeOutputInTransaction,
+  readOutputResultInTransaction
+} from "../src/server/output-queue.ts";
 import { runScheduledCleanup } from "../src/server/scheduled.ts";
 import { accountLimitStatusMetadata } from "../src/server/limits.ts";
 import {
@@ -22,6 +28,7 @@ import {
   preserveBodyErrorDuringTeardown,
   teardownAttempt
 } from "./helpers/database.mjs";
+import { parseValidSubmission } from "./helpers/canonical-input.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -1942,6 +1949,295 @@ test(
           await cleanupHumanAnswerDatabaseTest(owner, ids);
         },
         "Ack and download concurrency test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "output lookups preserve canonical live ids and case-insensitive duplicate acks without aborting the transaction",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const caller = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const identity = { accountId: ids.accountId, callerId: ids.callerId };
+    const context = {
+      requestId: "req-canonical-output-ids",
+      correlationId: "corr-canonical-output-ids"
+    };
+    // Guarantee two alphabetic characters so uppercase and mixed-case forms
+    // are always distinct from each other and from the stored ids.
+    const outputResultId = crypto.randomUUID().replace(/^../, "ab");
+    const fileId = crypto.randomUUID().replace(/^../, "cd");
+    const submission = parseValidSubmission({
+      caller_item_id: "caller-item-db",
+      row_type: { display: "Review", icon: "inbox" },
+      title: "Title",
+      subtitle: "Subtitle",
+      summary: "Summary",
+      link_buttons: [],
+      actions: [
+        {
+          display: "Approve",
+          icon: "check",
+          value: "approve",
+          overflow: false,
+          popup: { kind: "file_upload", ...fileUploadPayload }
+        }
+      ]
+    });
+    /** @param {string} id */
+    const caseForms = (id) => [
+      id.toUpperCase(),
+      id.replace(/^[a-f]/, (c) => c.toUpperCase())
+    ];
+    /** @param {string} id */
+    const noncanonicalForms = (id) => [
+      id.replaceAll("-", ""),
+      `{${id}}`,
+      "not-a-uuid",
+      ` ${id}`,
+      ...[
+        " ",
+        "\t",
+        "\n",
+        "\r",
+        "\r\n",
+        "\u0001",
+        "\u00a0",
+        "\u2028",
+        "\u2029",
+        "\ufeff"
+      ].map((suffix) => `${id}${suffix}`)
+    ];
+    /** @type {unknown} */
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await owner.query("begin");
+      await seedDatabaseRows(owner, ids);
+      await owner.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid' where account_id = $1",
+        [ids.accountId]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+        [ids.actionId, JSON.stringify(fileUploadPayload)]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_items set normalized_content_fingerprint = $2 where input_item_id = $1",
+        [ids.inputItemId, submission.normalizedContentFingerprint]
+      );
+      await owner.query(
+        `
+          insert into public.agent_outbox_output_results(
+            output_result_id, account_id, caller_id, input_item_id,
+            caller_item_id, action_value, response_kind, response_payload,
+            response_payload_bytes, answered_by_user_id,
+            previous_input_updated_at, expires_at
+          )
+          select $1, account_id, caller_id, input_item_id,
+            caller_item_id, 'approve', 'file_upload', '{}'::jsonb,
+            2, $3, updated_at, now() + interval '14 days'
+          from public.agent_outbox_input_items where input_item_id = $2
+        `,
+        [outputResultId, ids.inputItemId, ids.userId]
+      );
+      const bytes = Buffer.from("answer");
+      const sha256 = Buffer.from(
+        await crypto.subtle.digest("SHA-256", bytes)
+      ).toString("hex");
+      await owner.query(
+        `
+          insert into public.agent_outbox_output_files(
+            output_file_id, output_result_id, account_id, caller_id,
+            filename, mime_type, size_bytes, sha256, file_bytes
+          )
+          values ($1, $2, $3, $4, 'answer.txt', 'text/plain', $5, $6, $7)
+        `,
+        [
+          fileId,
+          outputResultId,
+          ids.accountId,
+          ids.callerId,
+          bytes.length,
+          sha256,
+          bytes
+        ]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_items set status = 'answered' where input_item_id = $1",
+        [ids.inputItemId]
+      );
+      await owner.query("commit");
+
+      // As on main, a malformed file id still waits for the canonical
+      // output's lock. Rejecting it before the lock changes timeout behavior.
+      await owner.query("begin");
+      await owner.query(
+        "select output_result_id from public.agent_outbox_output_results where output_result_id = $1 for update",
+        [outputResultId]
+      );
+      try {
+        await assert.rejects(
+          runHumanAnswerDatabaseTransaction(
+            caller,
+            ids,
+            "caller",
+            async (query) => {
+              await query({ sql: "set local statement_timeout = '100ms'" });
+              // Exercise the lock directly so a timeout in earlier quota
+              // queries cannot falsely satisfy this assertion.
+              return outputFileDownloadInTransaction(query, context, identity, {
+                outputResultId,
+                fileId: "not-a-uuid"
+              });
+            }
+          ),
+          { code: "57014" }
+        );
+      } finally {
+        await owner.query("rollback");
+      }
+
+      // Every lookup shares one transaction, so a failed uuid cast would
+      // abort it and fail every later statement.
+      await runHumanAnswerDatabaseTransaction(
+        caller,
+        ids,
+        "caller",
+        async (query) => {
+          for (const id of [
+            ...caseForms(outputResultId),
+            ...noncanonicalForms(outputResultId)
+          ]) {
+            const read = await readOutputResultInTransaction(
+              query,
+              identity,
+              id
+            );
+            assert.equal(read.ok ? 200 : read.error.status, 404, id);
+            const download =
+              await handleOutputFileDownloadAuthenticatedTransaction(
+                query,
+                context,
+                identity,
+                { outputResultId: id, fileId }
+              );
+            assert.equal(download.ok ? 200 : download.error.status, 404, id);
+            const ack = await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              id
+            );
+            assert.equal(ack.ok ? 200 : ack.error.status, 404, id);
+          }
+          for (const id of [
+            ...caseForms(fileId),
+            ...noncanonicalForms(fileId)
+          ]) {
+            const download =
+              await handleOutputFileDownloadAuthenticatedTransaction(
+                query,
+                context,
+                identity,
+                { outputResultId, fileId: id }
+              );
+            assert.equal(download.ok ? 200 : download.error.status, 404, id);
+          }
+
+          const read = await readOutputResultInTransaction(
+            query,
+            identity,
+            outputResultId
+          );
+          assert.equal(read.ok, true);
+          const download =
+            await handleOutputFileDownloadAuthenticatedTransaction(
+              query,
+              context,
+              identity,
+              { outputResultId, fileId }
+            );
+          assert.equal(download.ok ? download.bytes.toString() : "", "answer");
+          assert.deepEqual(
+            await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              outputResultId
+            ),
+            {
+              ok: true,
+              data: {
+                output_result_id: outputResultId,
+                acknowledged: true,
+                already_acknowledged: false
+              }
+            }
+          );
+        }
+      );
+
+      // Main's retained-audit fallback accepts casing variants even though
+      // those forms cannot match the live output row.
+      await runHumanAnswerDatabaseTransaction(
+        caller,
+        ids,
+        "caller",
+        async (query) => {
+          for (const id of [...caseForms(outputResultId), outputResultId]) {
+            assert.deepEqual(
+              await acknowledgeOutputInTransaction(
+                query,
+                identity,
+                context,
+                id
+              ),
+              {
+                ok: true,
+                data: {
+                  output_result_id: id,
+                  acknowledged: true,
+                  already_acknowledged: true
+                }
+              }
+            );
+          }
+          for (const id of noncanonicalForms(outputResultId)) {
+            const ack = await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              id
+            );
+            assert.equal(ack.ok ? 200 : ack.error.status, 404, id);
+          }
+          assert.equal(
+            (await query({ sql: "select 1 as alive" })).rows[0].alive,
+            1
+          );
+        }
+      );
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await caller.end();
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Canonical output id test and teardown both failed."
       );
     }
   }
