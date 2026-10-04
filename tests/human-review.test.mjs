@@ -30,6 +30,7 @@ import {
 } from "../src/server/human-review-design-fixture.ts";
 import {
   formatQueueTimestamp,
+  localDateTimeBound,
   visualUnitSuffix
 } from "../src/components/human/review-format.ts";
 import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
@@ -2067,6 +2068,117 @@ test("multiline answers keep the browser's line breaks after multipart submissio
   assert.equal(parsedBulk.items[0]?.feedback, "Old line\nClassic Mac line");
 });
 
+test("datetime picker bounds offer only minutes the server accepts", () => {
+  const cases = [
+    {
+      timezone: "UTC",
+      min: "2026-07-01T00:00:30Z",
+      max: "2026-07-31T23:59:59.999Z",
+      renderedMin: "2026-07-01T00:01",
+      renderedMax: "2026-07-31T23:59"
+    },
+    {
+      timezone: "UTC",
+      min: "2026-07-01T00:00:00.000000001Z",
+      max: "2026-07-31T23:59:00Z",
+      renderedMin: "2026-07-01T00:01",
+      renderedMax: "2026-07-31T23:59"
+    },
+    {
+      timezone: "UTC",
+      min: "2026-07-01T00:00:00.000Z",
+      max: "2026-07-31T23:59:00.000Z",
+      renderedMin: "2026-07-01T00:00",
+      renderedMax: "2026-07-31T23:59"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-02-01T04:59:30Z",
+      max: "2026-02-02T04:59:59Z",
+      renderedMin: "2026-02-01T00:00",
+      renderedMax: "2026-02-01T23:59"
+    },
+    {
+      timezone: "Asia/Kolkata",
+      min: "2026-03-10T10:15:41.512345678Z",
+      max: "2026-03-10T18:29:30Z",
+      renderedMin: "2026-03-10T15:46",
+      renderedMax: "2026-03-10T23:59"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:59:30Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T02:00",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T06:30:00Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T02:00",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:59:00.000000001Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T02:00",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:30:00Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T01:30",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "Australia/Lord_Howe",
+      min: "2026-04-04T14:59:30Z",
+      max: "2026-04-04T16:30:00Z",
+      renderedMin: "2026-04-05T01:30",
+      renderedMax: "2026-04-05T03:00"
+    }
+  ];
+
+  for (const { timezone, min, max, renderedMin, renderedMax } of cases) {
+    const lower = localDateTimeBound(min, timezone, "up");
+    const upper = localDateTimeBound(max, timezone, "down");
+    assert.equal(lower, renderedMin, `${min} in ${timezone}`);
+    assert.equal(upper, renderedMax, `${max} in ${timezone}`);
+
+    const submit = (/** @type {string} */ valueLocal) => {
+      const form = answerForm();
+      form.set("actionValue", "pick_datetime");
+      form.set("popupKind", "date_picker");
+      form.set("response.mode", "datetime");
+      form.set("response.display_timezone", timezone);
+      form.set("response.value_local", valueLocal);
+      const parsed = parseHumanAnswerForm(form);
+      assert.equal(parsed.ok, true, valueLocal);
+      return validatedResponsePayload(
+        {
+          popupKind: "date_picker",
+          popupPayload: {
+            label: "Follow-up instant",
+            mode: "datetime",
+            placeholder: null,
+            display_timezone: timezone,
+            min_value: min,
+            max_value: max
+          }
+        },
+        parsed.response
+      ).ok;
+    };
+    assert.equal(submit(lower), true, `${lower} in ${timezone}`);
+    assert.equal(submit(shiftLocalMinute(lower, -1)), false);
+    assert.equal(submit(upper), true, `${upper} in ${timezone}`);
+    assert.equal(submit(shiftLocalMinute(upper, 1)), false);
+  }
+});
+
 test("browser fixture renders queue timestamps against a frozen reference", () => {
   // Marketing screenshots are hash-attested per release and re-captured by
   // make release-check, so fixture renders must not read the wall clock.
@@ -2122,6 +2234,16 @@ function multipartRoundTrip(formData) {
     method: "POST",
     body: formData
   }).formData();
+}
+
+/**
+ * @param {string} value
+ * @param {number} minutes
+ */
+function shiftLocalMinute(value, minutes) {
+  return new Date(Date.parse(`${value}Z`) + minutes * 60_000)
+    .toISOString()
+    .slice(0, 16);
 }
 
 function answerForm() {
