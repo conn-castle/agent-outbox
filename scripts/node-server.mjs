@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 
 const mode = process.argv[2];
 const port = Number(process.env.PORT);
-const hostname = mode === "dev" ? "0.0.0.0" : "127.0.0.1";
+const hostname = "127.0.0.1";
 if (mode !== "dev" && mode !== "start") {
   throw new Error("Node server mode must be dev or start.");
 }
@@ -54,15 +54,28 @@ const server = createServer(async (request, response) => {
     response.end(await unavailable.text());
   }
 });
-const app = next({ dev: mode === "dev", hostname, port, httpServer: server });
+const app = next({
+  dev: mode === "dev",
+  ...(mode === "start" ? { hostname } : {}),
+  port,
+  httpServer: server
+});
 await app.prepare();
 const handle = app.getRequestHandler();
 server.once("error", (error) => {
   throw error;
 });
-server.listen(port, hostname, () => {
-  console.log(`Agent Outbox Node server ready at http://${hostname}:${port}`);
-});
+function onListening() {
+  const readyHostname = mode === "dev" ? "localhost" : hostname;
+  console.log(
+    `Agent Outbox Node server ready at http://${readyHostname}:${port}`
+  );
+}
+if (mode === "dev") {
+  server.listen(port, onListening);
+} else {
+  server.listen(port, hostname, onListening);
+}
 
 for (const signal of /** @type {NodeJS.Signals[]} */ ([
   "SIGINT",

@@ -12,7 +12,7 @@ const ceiling = 10_485_760;
 async function boundary(context) {
   const state = { calls: 0 };
   // Real HTTP framing and IncomingMessage replay; the consumer stands in for
-  // Next. Installed Next clone behavior is separately exercised over loopback.
+  // Next.
   const server = createServer((request, response) => {
     void handleNodeIngress(request, response, async (forwarded, result) => {
       state.calls++;
