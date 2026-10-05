@@ -307,7 +307,9 @@ func (c APIClient) httpClient() *http.Client {
 			return err
 		}
 		if next != nil {
-			return next(req, via)
+			if err := next(req, via); err != nil {
+				return err
+			}
 		}
 		// Setting CheckRedirect replaces net/http's default ten-hop limit.
 		if len(via) >= 10 {
