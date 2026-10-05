@@ -282,13 +282,27 @@ committed unit. Anonymous-download verification and Homebrew tap automation run
 afterward as idempotent distribution checks; their failure never rolls back or
 deletes a committed release.
 
+If the publish step cannot prove its final GitHub state, it automatically opens
+one additional bounded publication recovery window. A release already proven
+committed needs no mutation. Before every recovery publication mutation, it
+reruns the full live runtime smoke for the exact candidate SHA (without a
+version override) and re-proves the certified CLI asset inventory and bytes. A
+successful recovery finishes the deploy job normally, so public CLI verification
+and Homebrew distribution continue in the same workflow run. Failed smoke,
+ownership or asset mismatches, permanent errors, and exhausted recovery fail the
+job; cleanup and signal compensation never gain publication assets or bypass
+smoke.
+
 Within the certified artifact's seven-day retention window, choose **Re-run
 failed jobs** on the original workflow run. This reuses the exact artifact and
-the same run ID so the owned draft can be adopted. Do not re-dispatch the
-workflow or choose **Re-run all jobs** for this recovery: a fresh build embeds a
-new build date and may not be byte-identical. After artifact expiry, stop and
-prepare an explicit new-version release rather than rebuilding under an existing
-tag.
+the same run ID so the owned draft can be adopted. If that run already marked
+its draft `publishing`, the re-run skips every deploy step from asset upload
+through promotion; it never redeploys, reapplies migrations, or rolls back. It
+reruns the post-promotion smoke and, only if it passes, re-proves the certified
+assets and publishes. Do not re-dispatch the workflow or choose **Re-run all
+jobs** for this recovery: a fresh build embeds a new build date and may not be
+byte-identical. After artifact expiry, stop and prepare an explicit new-version
+release rather than rebuilding under an existing tag.
 
 ### Reconcile an abandoned pre-commit release
 

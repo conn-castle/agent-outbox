@@ -596,25 +596,72 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     "deploy-job run commands must match the exported release phase contract"
   );
 
-  const promoteWithoutCandidateGuard = deployWorkflow.replace(
-    "      - name: Promote candidate to 100%\n        if: steps.prepare-draft.outputs.draft_state != 'committed'\n",
-    "      - name: Promote candidate to 100%\n"
+  const promoteGuard =
+    "      - name: Promote candidate to 100%\n        if: steps.prepare-draft.outputs.draft_state == 'prepared'\n";
+  for (const [description, replacement] of [
+    ["without a guard", "      - name: Promote candidate to 100%\n"],
+    [
+      "on a publishing re-run",
+      "      - name: Promote candidate to 100%\n        if: steps.prepare-draft.outputs.draft_state != 'committed'\n"
+    ]
+  ]) {
+    const promoteWithWrongGuard = deployWorkflow.replace(
+      promoteGuard,
+      replacement
+    );
+    assert.notEqual(
+      promoteWithWrongGuard,
+      deployWorkflow,
+      `promote guard regression fixture ${description} must modify the workflow`
+    );
+    assert.equal(
+      validateProductionDeployWorkflow(
+        promoteWithWrongGuard,
+        "24.18.0"
+      ).includes(
+        ".github/workflows/deploy-production.yml must match the exported production release phase (step name, run command, condition) contract"
+      ),
+      true,
+      `promote must not run ${description}`
+    );
+  }
+});
+
+test("publication recovery requires smoke credentials and cannot hide exhausted failures", () => {
+  const deployWorkflow = readFileSync(
+    new URL("../.github/workflows/deploy-production.yml", import.meta.url),
+    "utf8"
   );
-  assert.notEqual(
-    promoteWithoutCandidateGuard,
-    deployWorkflow,
-    "candidate-guard regression fixture must modify the workflow"
+  const marker = "      - name: Publish exact-candidate GitHub release\n";
+  const start = deployWorkflow.indexOf(marker);
+  const end = deployWorkflow.indexOf(
+    "      - name: Reconcile uncommitted release",
+    start
   );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      promoteWithoutCandidateGuard,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must match the exported production release phase (step name, run command, condition) contract"
+  const publish = deployWorkflow.slice(start, end);
+  for (const unsafePublish of [
+    publish.replace(
+      "          APP_BASE_URL: https://app.agent-outbox.dev\n",
+      ""
     ),
-    true,
-    "candidate mutation steps must keep the uncommitted draft_state guard"
-  );
+    publish.replace(
+      "          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}\n",
+      ""
+    ),
+    publish.replace(marker, `${marker}        continue-on-error: true\n`)
+  ]) {
+    assert.notEqual(unsafePublish, publish);
+    const unsafe =
+      deployWorkflow.slice(0, start) +
+      unsafePublish +
+      deployWorkflow.slice(end);
+    assert.equal(
+      validateProductionDeployWorkflow(unsafe, "24.18.0").includes(
+        ".github/workflows/deploy-production.yml must publish and prove the exact release only after live verification"
+      ),
+      true
+    );
+  }
 });
 
 test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {

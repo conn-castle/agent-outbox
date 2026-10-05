@@ -34,6 +34,7 @@ import {
 } from "../scripts/release/phases.mjs";
 import {
   installCompensationHandlers,
+  runDeployPublication,
   requireProductionWorkflowContext
 } from "../scripts/production-release.mjs";
 import {
@@ -95,6 +96,32 @@ test("draft preparation adopts this run's exact marker and refuses duplicates", 
     ReleaseHoldError
   );
   assert.equal(duplicates.calls.createDraft, 0);
+});
+
+test("draft preparation resumes only this run's publishing draft", async () => {
+  const github = scriptedGithub({
+    listReleases: [[draftRelease({ body: marker("publishing") })]],
+    remoteTagCommit: [null]
+  });
+  const resumed = await runDraftPreparation(orchestrator(github), RELEASE);
+  assert.deepEqual(resumed, { kind: "owned_publishing", releaseId: DRAFT_ID });
+  assert.equal(github.calls.createDraft, 0);
+  assert.equal(github.calls.updateRelease, 0);
+  assert.equal(github.calls.deleteRelease, 0);
+
+  const otherRun = scriptedGithub({
+    listReleases: [
+      [draftRelease({ body: marker("publishing", { runId: "33196586801" }) })]
+    ],
+    remoteTagCommit: [null]
+  });
+  await assert.rejects(
+    runDraftPreparation(orchestrator(otherRun), RELEASE),
+    ReleaseHoldError
+  );
+  assert.equal(otherRun.calls.createDraft, 0);
+  assert.equal(otherRun.calls.updateRelease, 0);
+  assert.equal(otherRun.calls.deleteRelease, 0);
 });
 
 test("asset reconciliation uploads missing bytes and refuses conflicting assets", async () => {
@@ -214,6 +241,251 @@ test("publication marks publishing by id before the publish mutation", async () 
   assert.equal(updateInputs[1].tag_name, RELEASE.releaseTag);
   assert.equal(updateInputs[1].target_commitish, RELEASE.expectedSha);
   assert.equal(updateInputs[1].draft, false);
+});
+
+test("deploy publication recovers uncertainty with fresh smoke then asset proof", async () => {
+  /** @type {string[]} */
+  const events = [];
+  const publishing = draftRelease({
+    body: marker("publishing"),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const github = scriptedGithub({
+    listReleases: [
+      [publishing],
+      [publishing],
+      [publishing],
+      [publishedRelease()]
+    ],
+    remoteTagCommit: [null, null, null, null, null, RELEASE.expectedSha],
+    getRelease: [publishing],
+    downloadAsset: [
+      () => {
+        events.push("asset-proof");
+        return CERTIFIED_ASSET.bytes;
+      }
+    ],
+    updateRelease: [
+      () => {
+        events.push("first-publish");
+        throw new Error("transport interrupted");
+      },
+      () => {
+        events.push("recovery-publish");
+        return { status: 0 };
+      }
+    ]
+  });
+  const cloudflare = scriptedCloudflare();
+  const result = await runDeployPublication(
+    orchestrator(github, cloudflare),
+    {
+      ...RELEASE,
+      releaseId: DRAFT_ID,
+      assets: [CERTIFIED_ASSET]
+    },
+    async () => {
+      events.push("fresh-live-smoke");
+    }
+  );
+  assert.equal(result.kind, "committed");
+  assert.deepEqual(events, [
+    "asset-proof",
+    "first-publish",
+    "fresh-live-smoke",
+    "asset-proof",
+    "recovery-publish"
+  ]);
+  assert.equal(cloudflare.calls.uploadVersion, 0);
+  assert.equal(cloudflare.calls.deployVersions.length, 0);
+  assert.equal(github.calls.deleteRelease, 0);
+});
+
+test("deploy recovery recognizes an already committed release without mutation or smoke", async () => {
+  const publishing = draftRelease({
+    body: marker("publishing"),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const github = scriptedGithub({
+    listReleases: [[publishing], [publishedRelease()]],
+    remoteTagCommit: [null, null, RELEASE.expectedSha],
+    getRelease: [publishing],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
+    updateRelease: [new Error("response lost after successful publication")]
+  });
+  const result = await runDeployPublication(
+    orchestrator(github),
+    {
+      ...RELEASE,
+      releaseId: DRAFT_ID,
+      assets: [CERTIFIED_ASSET]
+    },
+    () => {
+      throw new Error("committed release must not need recovery smoke");
+    }
+  );
+  assert.equal(result.kind, "committed");
+  assert.equal(github.calls.updateRelease, 1);
+});
+
+test("deploy recovery stops before another publication when live smoke fails", async () => {
+  const publishing = draftRelease({
+    body: marker("publishing"),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const github = scriptedGithub({
+    listReleases: [[publishing]],
+    remoteTagCommit: [null],
+    getRelease: [publishing],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
+    updateRelease: [new Error("transport interrupted")]
+  });
+  const smokeError = new Error("live candidate smoke failed");
+  await assert.rejects(
+    runDeployPublication(
+      orchestrator(github),
+      {
+        ...RELEASE,
+        releaseId: DRAFT_ID,
+        assets: [CERTIFIED_ASSET]
+      },
+      () => {
+        throw smokeError;
+      }
+    ),
+    (error) => error === smokeError
+  );
+  assert.equal(github.calls.updateRelease, 1);
+  assert.equal(github.calls.downloadAsset, 1);
+  assert.equal(github.calls.deleteRelease, 0);
+});
+
+test("deploy recovery rechecks ownership after live smoke", async () => {
+  const publishing = draftRelease({
+    body: marker("publishing"),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const unowned = draftRelease({
+    body: marker("publishing", { runId: "33196586801" }),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const github = scriptedGithub({
+    listReleases: [[publishing], [publishing], [unowned]],
+    remoteTagCommit: [null],
+    getRelease: [publishing],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
+    updateRelease: [new Error("transport interrupted")]
+  });
+  let smokes = 0;
+  await assert.rejects(
+    runDeployPublication(
+      orchestrator(github),
+      {
+        ...RELEASE,
+        releaseId: DRAFT_ID,
+        assets: [CERTIFIED_ASSET]
+      },
+      () => {
+        smokes += 1;
+      }
+    ),
+    ReleaseHoldError
+  );
+  assert.equal(smokes, 1);
+  assert.equal(github.calls.updateRelease, 1);
+  assert.equal(github.calls.downloadAsset, 1);
+});
+
+test("deploy recovery refuses assets changed after the first publication attempt", async () => {
+  const publishing = draftRelease({
+    body: marker("publishing"),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const github = scriptedGithub({
+    listReleases: [[publishing]],
+    remoteTagCommit: [null],
+    getRelease: [publishing],
+    downloadAsset: [CERTIFIED_ASSET.bytes, Buffer.from("tampered")],
+    updateRelease: [new Error("transport interrupted")]
+  });
+  let smokes = 0;
+  await assert.rejects(
+    runDeployPublication(
+      orchestrator(github),
+      {
+        ...RELEASE,
+        releaseId: DRAFT_ID,
+        assets: [CERTIFIED_ASSET]
+      },
+      () => {
+        smokes += 1;
+      }
+    ),
+    /asset differs/
+  );
+  assert.equal(smokes, 1);
+  assert.equal(github.calls.updateRelease, 1);
+});
+
+test("deploy publication does not retry permanent errors", async () => {
+  const publishing = draftRelease({
+    body: marker("publishing"),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const github = scriptedGithub({
+    listReleases: [[publishing]],
+    remoteTagCommit: [null],
+    getRelease: [publishing],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
+    updateRelease: [{ status: 1, stderr: "HTTP 403 forbidden" }]
+  });
+  await assert.rejects(
+    runDeployPublication(
+      orchestrator(github),
+      {
+        ...RELEASE,
+        releaseId: DRAFT_ID,
+        assets: [CERTIFIED_ASSET]
+      },
+      () => {
+        throw new Error("permanent failure must not trigger recovery smoke");
+      }
+    ),
+    /GitHub publish failed/
+  );
+  assert.equal(github.calls.updateRelease, 1);
+});
+
+test("deploy publication has one bounded recovery window and remains failed when exhausted", async () => {
+  const publishing = draftRelease({
+    body: marker("publishing"),
+    assets: CERTIFIED_RELEASE_ASSETS
+  });
+  const github = scriptedGithub({
+    listReleases: [[publishing]],
+    remoteTagCommit: [null],
+    getRelease: [publishing],
+    downloadAsset: [CERTIFIED_ASSET.bytes],
+    updateRelease: [{ status: 1, stderr: "HTTP 502" }]
+  });
+  let smokes = 0;
+  await assert.rejects(
+    runDeployPublication(
+      orchestrator(github),
+      {
+        ...RELEASE,
+        releaseId: DRAFT_ID,
+        assets: [CERTIFIED_ASSET]
+      },
+      () => {
+        smokes += 1;
+      }
+    ),
+    PublicationStateUnknownError
+  );
+  assert.equal(github.calls.updateRelease, 10);
+  assert.equal(smokes, 5);
+  assert.equal(github.calls.deleteRelease, 0);
 });
 
 test("ambiguous publication after publishing intent holds and never deletes", async () => {
