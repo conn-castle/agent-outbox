@@ -519,8 +519,19 @@ unexpected source, adapter, or parser failures retain sanitized reporting and
 middleware and application conversion. Provider transport limits may reject
 requests before the Worker fetch entry. Next's Node middleware copy is
 configured with headroom above the route ceiling so valid large forms reach the
-route intact. Other Worker routes and scheduled processing keep their existing
-behavior.
+route intact. Repository Node launchers use `scripts/node-server.mjs` to guard
+ingress before Next can make that copy. Only POSTs to `/human/mutations` (with
+an optional trailing slash) and possible server-action POSTs to `/human` (with
+an optional trailing slash) use the raised copy allowance. Review server actions
+are identified by a `next-action` header, multipart content type, or Next's
+URL-encoded action transport. Middleware, origin checks, authentication, and the
+route/action caps still run normally. Other declarations above 10,485,760 bytes
+are rejected before Next; unknown-length bodies are counted to that ceiling and
+only accepted chunks are replayed into Next. Ingress overflow returns JSON 413
+`request_too_large` with the API envelope. Small route-specific limits still
+apply after ingress. This guard belongs to the Node entry point; invoking bare
+`next start` or `next dev` bypasses it. Other Worker routes and scheduled
+processing keep their existing behavior.
 
 ## Output Routes
 

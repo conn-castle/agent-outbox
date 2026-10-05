@@ -105,21 +105,17 @@ try {
   ]);
 
   const appDatabaseUrl = `postgresql://agent_outbox_app:${APP_ROLE_PASSWORD}@127.0.0.1:${postgresHostPort()}/${DATABASE_NAME}`;
-  nextProcess = spawn(
-    "corepack",
-    ["pnpm", "exec", "next", "start", "-H", "127.0.0.1", "-p", APP_PORT],
-    {
-      env: {
-        ...browserEnvironment,
-        PORT: APP_PORT,
-        APP_BASE_URL,
-        PUBLIC_APP_BASE_URL,
-        DATABASE_APP_ROLE_URL: appDatabaseUrl,
-        CALLER_KEY_HASH_SECRET: HASH_SECRET
-      },
-      stdio: "inherit"
-    }
-  );
+  nextProcess = spawn(process.execPath, ["scripts/node-server.mjs", "start"], {
+    env: {
+      ...browserEnvironment,
+      PORT: APP_PORT,
+      APP_BASE_URL,
+      PUBLIC_APP_BASE_URL,
+      DATABASE_APP_ROLE_URL: appDatabaseUrl,
+      CALLER_KEY_HASH_SECRET: HASH_SECRET
+    },
+    stdio: "inherit"
+  });
 
   nextProcess.on("exit", (code, signal) => {
     cleanup();

@@ -30,6 +30,7 @@ const nextConfig: NextConfig = {
   experimental: {
     // Next's Node middleware copy otherwise truncates valid forms at 10 MiB.
     // Leave headroom so the route can detect overflow before the copy truncates.
+    // Repository Node launchers guard unrelated ingress at 10 MiB before Next.
     // OpenNext's external middleware path does not use this Next body copy.
     proxyClientMaxBodySize:
       HUMAN_MUTATION_REQUEST_BODY_BYTE_LIMIT + 1024 * 1024,

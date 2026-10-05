@@ -131,7 +131,13 @@ type BoundedRequestBody =
       } | null;
     };
 
-/** Count forwarded bytes without buffering or copying the whole request. */
+/**
+ * Rejects declared overflow before acquiring a reader; otherwise owns the source
+ * reader and counts forwarded bytes without an extra whole-body copy. Preserves
+ * a null body. After consumption errors, callers inspect failure(), an observation
+ * rather than a completion promise. Source reads and cancellation during limiter
+ * overflow record unexpected failures; downstream cancel(reason) does not.
+ */
 export function boundedRequestBody(
   request: Request,
   byteLimit: number
@@ -186,9 +192,11 @@ export function boundedRequestBody(
 }
 
 /**
- * Parses a multipart or URL-encoded body while counting streamed bytes, so an
- * oversized body is rejected before it is fully buffered. Errors from reading
- * the request stream itself are rethrown rather than reported as invalid.
+ * Parses multipart or URL-encoded forms with a streamed byte limit. Recognized
+ * overflow returns too_large; known malformed, unsupported or missing-type forms
+ * return invalid. Throws original source-read or overflow-cancellation errors
+ * before classifying parser errors, even if their messages match known malformed
+ * forms. Unexpected parser errors are also thrown for the caller to report.
  */
 export async function readFormDataWithLimit(
   request: Request,

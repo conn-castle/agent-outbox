@@ -152,6 +152,13 @@ carry `account_id`. After all steps run, the invocation fails with one summary
 error log. If the account list cannot be read, the run fails before any account
 maintenance.
 
+The repository Node entry reports ingress overflow as a warning with
+`operation=api_error.request_too_large`, `route=node_ingress`, and
+`limit_name=node_ingress_body_bytes`. Unexpected Node read or handler failures
+use `operation=node_ingress`, sanitized reporting, and an awaited bounded Sentry
+flush before the available error response is sent. The Node transport policy is
+in [the HTTP API](../spec/http-api.md#human-answer-boundary).
+
 Next.js `onRequestError` failures use `operation=next_request_error` and keep
 the SDK's unhandled `auto.function.nextjs.on_request_error` capture. Each hook
 invocation generates one `error_id` shared by the Sentry event tags/context and

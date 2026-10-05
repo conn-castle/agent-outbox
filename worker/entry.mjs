@@ -107,7 +107,12 @@ export default {
   }
 };
 
-/** @param {Request} request */
+/**
+ * Selects POSTs with canonical, trailing-slash or decoded mutation paths for
+ * resource protection. Does not rewrite URLs or authorize actions; selecting an
+ * encoded spelling does not establish that the router accepts it.
+ * @param {Request} request
+ */
 function isHumanMutationPost(request) {
   if (request.method !== "POST") return false;
   // OpenNext also matches decoded paths; include the optional trailing slash

@@ -179,8 +179,8 @@ list/detail review, popup controls, skipped ordering, search/filter/sort,
 narrow bulk compatibility, pre-read undo, no-undo-after-read state,
 hostile-content rendering, and live caller-connect browser/device approval
 against a disposable migrated `postgres:17` database. It first compiles an
-optimized test-only build into `.next-browser`, then serves it with `next start`
-on loopback; it must not require real Clerk or provider credentials. See the
+optimized test-only build into `.next-browser`, then serves it through the
+guarded `scripts/node-server.mjs start` entry on loopback; it must not require real Clerk or provider credentials. See the
 [browser build and fixture isolation contract](../ops/release.md#pre-release-gate)
 for the canonical build, environment, and artifact rules.
 

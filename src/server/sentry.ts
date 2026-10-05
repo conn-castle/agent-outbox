@@ -125,8 +125,13 @@ export function reportRuntimeFailure(
   };
 }
 
-// The Worker can fail before Next instrumentation creates a client. The caller
-// keeps this promise alive with waitUntil, or awaits it without that context.
+/**
+ * Applies capture gates before cold client initialization or warm client reuse,
+ * then reports the original failure with sanitization and flushes an enabled
+ * client with a bounded timeout. Initialization errors are reported; flush errors
+ * or incomplete flushes produce a warning. The caller keeps this promise alive
+ * with waitUntil, or awaits it when that context is unavailable.
+ */
 export async function reportFetchRuntimeFailure(
   error: unknown,
   input: RuntimeFailureReportInput
