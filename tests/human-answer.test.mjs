@@ -84,6 +84,9 @@ const datePickerPayload = {
 const fileUploadPayload = { label: "Attach", accept_mime_types: null };
 
 /**
+ * Enforces download limits for an already authenticated identity, then reads
+ * the file. Limit and missing-profile failures are returned unchanged. This
+ * helper does not authenticate.
  * @param {ProductTransactionQuery} query
  * @param {import("../src/server/api-errors.ts").ApiRequestContext} context
  * @param {import("../src/server/caller-api-auth.ts").CallerIdentity} identity

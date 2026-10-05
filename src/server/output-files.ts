@@ -61,6 +61,11 @@ export type OutputFileDownloadAuditRow = Pick<
   | "size_bytes"
 >;
 
+/**
+ * Checks that both path ids are present and storable, then authenticates the
+ * caller and enforces download limits. Canonical UUID checks happen later in
+ * the transaction reader, not before authentication.
+ */
 export async function handleOutputFileDownloadRequest(
   request: Request,
   context: ApiRequestContext,
@@ -85,6 +90,15 @@ export async function handleOutputFileDownloadRequest(
   );
 }
 
+/**
+ * Reads one output file in a transaction the caller has already authenticated
+ * and limited. Repeats the present-and-storable path check, then treats a
+ * non-canonical output id as not found before locking that output row. A
+ * non-canonical file id is not found only after that lock. The file row is
+ * locked next. A byte length that disagrees with the stored size is
+ * temporarily unavailable; a match is audited and returned with download
+ * headers.
+ */
 export async function outputFileDownloadInTransaction(
   query: ProductTransactionQuery,
   context: ApiRequestContext,

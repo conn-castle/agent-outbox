@@ -757,6 +757,13 @@ function outputResultFromRow(
   };
 }
 
+/**
+ * Projects a stored output response. A payload that is not a record, feedback
+ * that is present but not a string, a file upload with no file metadata, or a
+ * file size that is not a non-negative safe integer is temporarily
+ * unavailable. Other response kinds keep their stored payload and kind; this
+ * does not validate every field of every kind.
+ */
 function outputResponse(
   row: OutputRow,
   files: readonly OutputFileMetadataRow[]

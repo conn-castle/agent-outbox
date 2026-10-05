@@ -113,6 +113,10 @@ type ActiveLimitBlockData = {
   limit_units: number | null;
 };
 
+/**
+ * Authenticates the caller and enforces status limits, then reads caller and
+ * key status with the authenticated `keyId`.
+ */
 export async function handleCallerStatusRequest(
   request: Request,
   context: ApiRequestContext
@@ -131,6 +135,10 @@ export async function handleCallerStatusRequest(
   );
 }
 
+/**
+ * Authenticates the caller and enforces status limits, then returns the public
+ * account status projection.
+ */
 export async function handleAccountStatusRequest(
   request: Request,
   context: ApiRequestContext
@@ -149,6 +157,11 @@ export async function handleAccountStatusRequest(
   );
 }
 
+/**
+ * Reads caller and key status, plus public account status, in the supplied
+ * transaction. The caller authenticates and enforces limits; this reader does
+ * neither.
+ */
 export async function callerStatusInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity,
@@ -192,6 +205,11 @@ export async function callerStatusInTransaction(
   };
 }
 
+/**
+ * Reads account, storage, and active-limit rows in the supplied transaction,
+ * including the internal `queued_input_items` count. The caller authenticates
+ * and enforces limits. The public projection of this snapshot omits that count.
+ */
 export async function accountStatusInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity

@@ -699,6 +699,9 @@ function loadInputQueueModuleForTest(
 }
 
 /**
+ * Loads the real output-file handler and shared caller transaction with
+ * injected database and limit outcomes. These stubs are not a live database
+ * and do not enforce production quotas.
  * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
  * @param {ReturnType<typeof callerAuth.generateCallerApiKeyMaterial>} keyMaterial
  * @param {{ transactionError?: Error, limitError?: import("../src/server/api-errors.ts").ApiErrorInput, limitRequests?: Array<{ accountId: string, kind: string }>, calls?: import("../src/server/database.ts").TransactionContextStatement[] }} [options]
@@ -719,7 +722,12 @@ function loadOutputFilesModuleForTest(
   const query =
     /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
       /** @type {unknown} */ (
-        /** @param {import("../src/server/database.ts").TransactionContextStatement} statement */
+        /**
+         * Records the statement when call capture is enabled. Credential
+         * lookup SQL returns the supplied active credential; every other
+         * statement returns no rows.
+         * @param {import("../src/server/database.ts").TransactionContextStatement} statement
+         */
         async (statement) => {
           options.calls?.push(statement);
           if (statement.sql.includes("agent_outbox_lookup_caller_credential")) {
@@ -745,10 +753,16 @@ function loadOutputFilesModuleForTest(
       "./api-errors.ts": apiErrors,
       "./caller-auth.ts": callerAuth,
       "./caller-api-limits.ts": {
+        /**
+         * Returns this fixture's hosted-free limit profile instead of reading
+         * one from a database.
+         */
         async accountLimitProfileForAccount() {
           return "hosted-free";
         },
         /**
+         * Records the account and operation, then returns the configured
+         * denial or success. This does not enforce a real quota.
          * @param {unknown} _query
          * @param {{ accountId: string }} identity
          * @param {unknown} _profile
@@ -762,12 +776,21 @@ function loadOutputFilesModuleForTest(
         }
       },
       "./canonical-input.ts": {
+        /**
+         * Treats every error as outside canonical-input integrity
+         * classification, so this fixture never takes that branch.
+         */
         isCanonicalInputIntegrityError() {
           return false;
         }
       },
       "./database.ts": {
-        /** @type {typeof runProductTransaction} */
+        /**
+         * Checks the test connection string and request id, runs the callback,
+         * then throws the configured error or returns the callback result. It
+         * does not commit or roll back a database transaction.
+         * @type {typeof runProductTransaction}
+         */
         async runProductTransaction(connectionString, context, callback) {
           assert.equal(connectionString, "postgresql://observability-test");
           assert.equal(context.requestId, "req-output-file-observability");
@@ -777,6 +800,9 @@ function loadOutputFilesModuleForTest(
           }
           return result;
         },
+        /**
+         * Accepts the identity context and performs no database work.
+         */
         async setProductTransactionIdentityContext() {}
       },
       "./logging.ts": logging,
