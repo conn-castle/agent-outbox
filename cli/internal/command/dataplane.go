@@ -812,14 +812,26 @@ func validateFileGetFlags(fileFlags fileGetFlags, jsonMode bool) error {
 	return nil
 }
 
+// downloadFileToPath stages downloaded bytes in a 0600 file beside outputPath,
+// then syncs and closes it before renaming it into place. Without force, it
+// refuses path entries found by checks before download and before rename.
+// The final check and rename are separate operations; a path created between
+// them can still be overwritten. With force, rename replaces a symlink itself,
+// without writing through it. Initial inspection refuses directories and errors
+// other than a missing path even with force.
 func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string, outputPath string, force bool) (*foundation.DownloadResponse, error) {
 	outputPath = strings.TrimSpace(outputPath)
 	if outputPath == "" {
 		return nil, foundation.NewUsageError("--output path is required.")
 	}
-	if stat, err := os.Stat(outputPath); err == nil {
-		if stat.IsDir() {
-			return nil, foundation.NewUsageError("Output path is a directory.")
+	// Lstat so an existing symlink, including a dangling one, counts as existing.
+	if _, err := os.Lstat(outputPath); err == nil {
+		if stat, err := os.Stat(outputPath); err == nil {
+			if stat.IsDir() {
+				return nil, foundation.NewUsageError("Output path is a directory.")
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not inspect output path.")
 		}
 		if !force {
 			return nil, foundation.NewUsageError("Output path already exists; pass --force to overwrite it.")
@@ -862,7 +874,7 @@ func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string
 	}
 	closeFile = false
 	if !force {
-		if _, err := os.Stat(outputPath); err == nil {
+		if _, err := os.Lstat(outputPath); err == nil {
 			return nil, foundation.NewUsageError("Output path already exists; pass --force to overwrite it.")
 		} else if !os.IsNotExist(err) {
 			return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not inspect output path.")
