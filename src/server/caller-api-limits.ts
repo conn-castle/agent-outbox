@@ -790,6 +790,7 @@ async function checkInputStockLimits(
 
   const queued = limitStatus(profile, "queued_input_items");
   if (
+    input.queuedItemDelta > 0 &&
     queued.setting.mode === "enabled" &&
     nonNegativeInteger(stock.queued_input_items) + input.queuedItemDelta >
       queued.setting.value
