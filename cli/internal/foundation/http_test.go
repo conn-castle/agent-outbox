@@ -812,7 +812,13 @@ func TestAPIClientRefusesRedirectsToCleartextNonLoopbackHTTP(t *testing.T) {
 					method + " https://app.example/api/example": redirectResponse(status, "http://app.example/api/example"),
 					method + " http://app.example/api/example":  successResponse(`{"ok":true,"data":{"value":"ok"}}`),
 				}}
-				client := APIClient{BaseURL: "https://app.example", HTTPClient: fixture.client(), NewRequestID: func() string { return "req_redirect" }}
+				var injectedCalls int
+				httpClient := fixture.client()
+				httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+					injectedCalls++
+					return nil
+				}
+				client := APIClient{BaseURL: "https://app.example", HTTPClient: httpClient, NewRequestID: func() string { return "req_redirect" }}
 
 				var err error
 				var download bytes.Buffer
@@ -832,6 +838,9 @@ func TestAPIClientRefusesRedirectsToCleartextNonLoopbackHTTP(t *testing.T) {
 				if operation == "write" && appErr.WriteOutcome != "unknown" {
 					t.Fatalf("write outcome = %q, want unknown", appErr.WriteOutcome)
 				}
+				if injectedCalls != 0 {
+					t.Fatalf("injected CheckRedirect calls = %d, want 0", injectedCalls)
+				}
 				if len(fixture.requests) != 1 || !strings.HasPrefix(fixture.requests[0], method+" https://app.example/api/example ") {
 					t.Fatalf("requests = %q, want only the original https request", fixture.requests)
 				}
@@ -850,7 +859,13 @@ func TestAPIClientRefusesRedirectsThatChangeTheRequestMethod(t *testing.T) {
 				"POST https://app.example/api/input/send":   redirectResponse(status, "https://app.example/api/caller/status"),
 				"GET https://app.example/api/caller/status": successResponse(`{"ok":true,"data":{"value":"status"}}`),
 			}}
-			client := APIClient{BaseURL: "https://app.example", HTTPClient: fixture.client(), NewRequestID: func() string { return "req_method" }}
+			var injectedCalls int
+			httpClient := fixture.client()
+			httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+				injectedCalls++
+				return nil
+			}
+			client := APIClient{BaseURL: "https://app.example", HTTPClient: httpClient, NewRequestID: func() string { return "req_method" }}
 
 			_, err := client.DoWrite(context.Background(), http.MethodPost, "/api/input/send", "aob_live_fixture", map[string]string{"a": "b"}, nil)
 
@@ -860,6 +875,9 @@ func TestAPIClientRefusesRedirectsThatChangeTheRequestMethod(t *testing.T) {
 			}
 			if len(fixture.requests) != 1 {
 				t.Fatalf("requests = %q, want only the original POST", fixture.requests)
+			}
+			if injectedCalls != 0 {
+				t.Fatalf("injected CheckRedirect calls = %d, want 0", injectedCalls)
 			}
 		})
 	}
@@ -934,31 +952,42 @@ func TestAPIClientAppliesRedirectPolicyBeforeInjectedCheckRedirect(t *testing.T)
 	}
 }
 
-func TestAPIClientKeepsTheTenRedirectLimit(t *testing.T) {
+func TestAPIClientPreservesRedirectCountPolicy(t *testing.T) {
 	callbackErr := errors.New("injected redirect rejection")
-	for _, callback := range []string{"none", "permits", "rejects at limit"} {
+	const responseBody = `{"ok":true,"data":{"value":"ok"}}`
+	for _, callback := range []string{"none", "permits", "rejects beyond limit"} {
 		for _, operation := range []string{"do", "write", "download"} {
 			t.Run(callback+"/"+operation, func(t *testing.T) {
 				method := http.MethodGet
 				if operation == "write" {
 					method = http.MethodPost
 				}
-				fixture := &redirectFixture{}
-				fixture.routes = map[string]func(*http.Request) *http.Response{
-					method + " https://app.example/api/example": func(r *http.Request) *http.Response {
+				fixture := &redirectFixture{routes: map[string]func(*http.Request) *http.Response{}}
+				const endpoint = "https://app.example/api/example"
+				if callback == "none" {
+					fixture.routes[method+" "+endpoint] = func(r *http.Request) *http.Response {
 						// Bound the cycle so a missing hop guard fails instead of hanging.
-						if len(fixture.requests) > 10 {
-							return successResponse(`{"ok":true,"data":{"value":"ok"}}`)(r)
+						if len(fixture.requests) > 12 {
+							return successResponse(responseBody)(r)
 						}
-						return redirectResponse(http.StatusTemporaryRedirect, "https://app.example/api/example")(r)
-					},
+						return redirectResponse(http.StatusTemporaryRedirect, endpoint)(r)
+					}
+				} else {
+					// Twelve redirects followed by success keep permissive callbacks finite.
+					current := endpoint
+					for hop := 1; hop <= 12; hop++ {
+						next := endpoint + "?hop=" + strconv.Itoa(hop)
+						fixture.routes[method+" "+current] = redirectResponse(http.StatusTemporaryRedirect, next)
+						current = next
+					}
+					fixture.routes[method+" "+current] = successResponse(responseBody)
 				}
 				httpClient := fixture.client()
 				var injectedCalls int
 				if callback != "none" {
 					httpClient.CheckRedirect = func(_ *http.Request, via []*http.Request) error {
 						injectedCalls++
-						if callback == "rejects at limit" && len(via) == 10 {
+						if callback == "rejects beyond limit" && len(via) == 12 {
 							return callbackErr
 						}
 						return nil
@@ -968,28 +997,50 @@ func TestAPIClientKeepsTheTenRedirectLimit(t *testing.T) {
 
 				var err error
 				var download bytes.Buffer
+				var out struct {
+					Value string `json:"value"`
+				}
 				switch operation {
 				case "do":
-					_, err = client.Do(context.Background(), method, "/api/example", "aob_live_fixture", nil, nil)
+					_, err = client.Do(context.Background(), method, "/api/example", "aob_live_fixture", nil, &out)
 				case "write":
-					_, err = client.DoWrite(context.Background(), method, "/api/example", "aob_live_fixture", map[string]string{"a": "b"}, nil)
+					_, err = client.DoWrite(context.Background(), method, "/api/example", "aob_live_fixture", map[string]string{"a": "b"}, &out)
 				case "download":
 					_, err = client.Download(context.Background(), "/api/example", "aob_live_fixture", &download)
 				}
 
-				if len(fixture.requests) != 10 {
-					t.Fatalf("request count = %d, want 10", len(fixture.requests))
+				wantRequests := 10
+				if callback == "permits" {
+					wantRequests = 13
+				} else if callback == "rejects beyond limit" {
+					wantRequests = 12
+				}
+				if len(fixture.requests) != wantRequests {
+					t.Fatalf("request count = %d, want %d", len(fixture.requests), wantRequests)
+				}
+				if callback != "none" && injectedCalls != 12 {
+					t.Fatalf("injected CheckRedirect calls = %d, want 12", injectedCalls)
+				}
+				if callback == "permits" {
+					if err != nil {
+						t.Fatalf("permitted redirect chain failed: %v", err)
+					}
+					if operation == "download" {
+						if download.String() != responseBody {
+							t.Fatalf("download = %q, want %q", download.String(), responseBody)
+						}
+					} else if out.Value != "ok" {
+						t.Fatalf("value = %q, want ok", out.Value)
+					}
+					return
 				}
 				assertAPIUnavailable(t, err, "req_loop")
-				if callback == "rejects at limit" {
+				if callback == "rejects beyond limit" {
 					if !errors.Is(err, callbackErr) {
 						t.Fatalf("error = %v, want injected callback error", err)
 					}
 				} else if cause := errors.Unwrap(err); cause == nil || !strings.Contains(cause.Error(), "stopped after 10 redirects") {
 					t.Fatalf("error = %v, want ten-redirect limit error", err)
-				}
-				if callback != "none" && injectedCalls != 10 {
-					t.Fatalf("injected CheckRedirect calls = %d, want 10", injectedCalls)
 				}
 				if operation == "write" && err.(*AppError).WriteOutcome != "unknown" {
 					t.Fatalf("write outcome = %q, want unknown", err.(*AppError).WriteOutcome)

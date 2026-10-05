@@ -293,8 +293,9 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 	return downloadMeta, nil
 }
 
-// httpClient returns the configured client with the CLI redirect policy
-// applied, so injected clients follow the same rules as the default one.
+// httpClient returns the configured client with the CLI redirect safety policy
+// applied. Existing callbacks own redirect-count policy; the wrapper preserves
+// net/http's default limit only when no callback exists.
 func (c APIClient) httpClient() *http.Client {
 	base := c.HTTPClient
 	if base == nil {
@@ -307,9 +308,7 @@ func (c APIClient) httpClient() *http.Client {
 			return err
 		}
 		if next != nil {
-			if err := next(req, via); err != nil {
-				return err
-			}
+			return next(req, via)
 		}
 		// Setting CheckRedirect replaces net/http's default ten-hop limit.
 		if len(via) >= 10 {
