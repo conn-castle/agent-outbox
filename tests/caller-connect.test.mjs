@@ -12,6 +12,7 @@ import {
 import {
   approveConnectBrowserSetupRequest,
   approveConnectDeviceSetupRequest,
+  callerSetupCodeDigest,
   denyConnectSetupRequest,
   exchangeApprovedConnectSetupRequest,
   getConnectBrowserApprovalPreview,
@@ -24,7 +25,6 @@ import {
   handleConnectDevicePollRequest,
   handleConnectExchangeRequest
 } from "../src/server/caller-connect.ts";
-import { callerSetupCodeDigest } from "../src/server/caller-control-plane.ts";
 import { handleRevokeConfirmRequest } from "../src/server/caller-credential-operations.ts";
 import { runProductTransaction } from "../src/server/database.ts";
 import {

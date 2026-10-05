@@ -1,8 +1,16 @@
-import { randomBytes } from "node:crypto";
-
 import {
-  apiTemporaryUnavailable,
-  type ApiRequestContext
+  createHmac,
+  randomBytes,
+  randomInt,
+  timingSafeEqual
+} from "node:crypto";
+
+import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
+
+import type {
+  ApiErrorInput,
+  ApiFieldError,
+  ApiRequestContext
 } from "./api-errors.ts";
 import {
   accountLimitProfileForAccount,
@@ -10,60 +18,38 @@ import {
   enforceIpControlPlaneLimit
 } from "./caller-api-limits.ts";
 import {
+  callerApiKeySecretDigest,
+  callerCredentialLookupStatement,
   generateCallerApiKeyMaterial,
+  parseCallerBearerApiKey,
+  type CallerApiKeyDisplayMetadata,
+  type CallerCredentialLookupRow,
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
-import {
-  CONTROL_PLANE_CODE_EXPIRES_IN_SECONDS,
-  DEVICE_POLL_INTERVAL_SECONDS,
-  SETUP_TOKEN_BYTES,
-  DEVICE_TOKEN_BYTES,
-  UUID_PATTERN,
-  callerCredentialLifecycleLockStatement,
-  callerSetupCodeDigest,
-  generateUserCode,
-  normalizeUserCode,
-  setupRequestExpired,
-  publicAppBaseUrl,
-  parseObjectBody,
-  parseDevicePollBody,
-  parseSetupCodeBody,
-  requiredText,
-  requiredCallbackUrl,
-  invalidRequestError,
-  invalidSetupRequestError,
-  notFoundError,
-  isUniqueViolation,
-  markSetupRequestExpiredStatement,
-  markSetupRequestExchangedStatement,
-  withControlPlaneTransaction,
-  verifyPendingCredential,
-  handlePendingCredentialRequest,
-  type ControlPlaneResult,
-  type ControlPlaneRequestOptions,
-  type ControlPlaneSurface,
-  type PendingCredentialBearer
-} from "./caller-control-plane.ts";
+import { callerCredentialLifecycleLockStatement } from "./caller-credential-operations.ts";
+import { absoluteHttpOrigin } from "./env.ts";
 import {
   runProductTransaction,
   withSavepoint,
+  type ProductTransactionContext,
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
+import { requireCallerKeyHashSecret } from "./env.ts";
+import { isStorableString, unstorableStringError } from "./input-schema.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
-const CONNECT_SURFACE: ControlPlaneSurface = {
-  validationFailedMessage: "Caller connect request failed validation.",
-  databaseUnavailableMessage:
-    "Caller connect database configuration is unavailable.",
-  unexpectedFailureMessage: "Caller connect request failed unexpectedly.",
-  temporarilyUnavailableMessage: "Caller connect is temporarily unavailable.",
-  bearerRequiredMessage: "Pending connect bearer credential is required.",
-  invalidCredentialMessage:
-    "Pending connect credential is invalid or no longer usable."
-};
+export const CONNECT_BROWSER_SETUP_CODE_EXPIRES_IN_SECONDS =
+  SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds;
+export const CONNECT_DEVICE_CODE_EXPIRES_IN_SECONDS =
+  SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds;
+export const CONNECT_DEVICE_POLL_INTERVAL_SECONDS =
+  SYSTEM_CONTRACT.defaultDevicePollIntervalSeconds;
+
+type ConnectResult<TData> =
+  { ok: true; data: TData } | { ok: false; error: ApiErrorInput };
 
 type BrowserStartBody = {
   localCallerName: string;
@@ -74,6 +60,19 @@ type BrowserStartBody = {
 type DeviceStartBody = {
   localCallerName: string;
   displayName: string;
+};
+
+type DevicePollBody = {
+  deviceCode: string;
+};
+
+type ExchangeBody = {
+  setupCode: string;
+};
+
+type ConnectRequestOptions = {
+  now?: Date;
+  runProductTransaction?: typeof runProductTransaction;
 };
 
 type SetupRequestIdRow = {
@@ -147,6 +146,16 @@ type CredentialRow = {
   key_last_four: string;
   created_at: string | Date;
 };
+
+type SetupRequestIdBody = {
+  setupRequestId: string;
+};
+
+type PendingConnectCredentialBearer = {
+  apiKey: string;
+  keyId: string;
+  secret: string;
+} & CallerApiKeyDisplayMetadata;
 
 type PendingConnectCredentialRow = {
   caller_credential_id: string;
@@ -245,6 +254,17 @@ export type ConnectTerminalSetupData = {
     display_name: string;
   } | null;
 };
+
+const TOKEN_HASH_ALGORITHM = "sha256";
+const SETUP_TOKEN_BYTES = 32;
+const DEVICE_TOKEN_BYTES = 32;
+const USER_CODE_GROUP_LENGTH = 4;
+const USER_CODE_GROUPS = 2;
+const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const MAX_CONNECT_TEXT_LENGTH = 128;
+const MAX_CALLBACK_URL_LENGTH = 2048;
+const UUID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const CALLER_ALREADY_EXISTS_MESSAGE =
   "A caller with this name already exists for this account. Use caller rotate or choose a different name.";
 const CALLER_ALREADY_EXISTS_FIELD_MESSAGE =
@@ -254,9 +274,9 @@ export async function handleConnectBrowserStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: ControlPlaneRequestOptions = {}
+  options: ConnectRequestOptions = {}
 ): Promise<
-  ControlPlaneResult<{
+  ConnectResult<{
     approval_url: string;
     setup_request_id: string;
     expires_at: string;
@@ -274,18 +294,17 @@ export async function handleConnectBrowserStartRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return apiTemporaryUnavailable(
+    return temporaryUnavailableError(
       "Trusted client IP is unavailable for caller connect start."
     );
   }
 
   const expiresAt = new Date(
     (options.now ?? new Date()).getTime() +
-      CONTROL_PLANE_CODE_EXPIRES_IN_SECONDS * 1000
+      CONNECT_BROWSER_SETUP_CODE_EXPIRES_IN_SECONDS * 1000
   );
 
   return withControlPlaneTransaction(
-    CONNECT_SURFACE,
     context,
     "caller_connect_browser_start",
     async (query) => {
@@ -325,9 +344,9 @@ export async function handleConnectDeviceStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: ControlPlaneRequestOptions = {}
+  options: ConnectRequestOptions = {}
 ): Promise<
-  ControlPlaneResult<{
+  ConnectResult<{
     device_code: string;
     user_code: string;
     verification_uri: string;
@@ -348,7 +367,7 @@ export async function handleConnectDeviceStartRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return apiTemporaryUnavailable(
+    return temporaryUnavailableError(
       "Trusted client IP is unavailable for caller connect start."
     );
   }
@@ -357,11 +376,10 @@ export async function handleConnectDeviceStartRequest(
   const userCode = generateUserCode();
   const expiresAt = new Date(
     (options.now ?? new Date()).getTime() +
-      CONTROL_PLANE_CODE_EXPIRES_IN_SECONDS * 1000
+      CONNECT_DEVICE_CODE_EXPIRES_IN_SECONDS * 1000
   );
 
   return withControlPlaneTransaction(
-    CONNECT_SURFACE,
     context,
     "caller_connect_device_start",
     async (query) => {
@@ -397,7 +415,7 @@ export async function handleConnectDeviceStartRequest(
             userCode
           )}`,
           expires_at: expiresAt.toISOString(),
-          poll_interval_seconds: DEVICE_POLL_INTERVAL_SECONDS
+          poll_interval_seconds: CONNECT_DEVICE_POLL_INTERVAL_SECONDS
         }
       };
     },
@@ -409,9 +427,9 @@ export async function handleConnectDevicePollRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: ControlPlaneRequestOptions = {}
-): Promise<ControlPlaneResult<ConnectCredentialResponseData>> {
-  const parsed = parseDevicePollBody(CONNECT_SURFACE, body);
+  options: ConnectRequestOptions = {}
+): Promise<ConnectResult<ConnectCredentialResponseData>> {
+  const parsed = parseDevicePollBody(body);
   if (!parsed.ok) {
     return parsed;
   }
@@ -419,18 +437,19 @@ export async function handleConnectDevicePollRequest(
   const deviceCodeHash = callerSetupCodeDigest(parsed.data.deviceCode);
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return apiTemporaryUnavailable(
+    return temporaryUnavailableError(
       "Trusted client IP is unavailable for caller connect poll."
     );
   }
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(CONNECT_SURFACE.databaseUnavailableMessage);
+    return temporaryUnavailableError(
+      "Caller connect database configuration is unavailable."
+    );
   }
 
   const contextResult = await withControlPlaneTransaction(
-    CONNECT_SURFACE,
     context,
     "caller_connect_device_poll",
     async (query) => {
@@ -473,7 +492,7 @@ export async function handleConnectDevicePollRequest(
       }
 
       if (!row.account_id || !row.approved_by_user_id) {
-        return apiTemporaryUnavailable(
+        return temporaryUnavailableError(
           "Caller connect approval is temporarily unavailable."
         );
       }
@@ -510,9 +529,9 @@ export async function handleConnectExchangeRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: ControlPlaneRequestOptions = {}
-): Promise<ControlPlaneResult<ConnectCredentialResponseData>> {
-  const parsed = parseSetupCodeBody(CONNECT_SURFACE, body);
+  options: ConnectRequestOptions = {}
+): Promise<ConnectResult<ConnectCredentialResponseData>> {
+  const parsed = parseExchangeBody(body);
   if (!parsed.ok) {
     return parsed;
   }
@@ -520,18 +539,19 @@ export async function handleConnectExchangeRequest(
   const setupCodeHash = callerSetupCodeDigest(parsed.data.setupCode);
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return apiTemporaryUnavailable(
+    return temporaryUnavailableError(
       "Trusted client IP is unavailable for caller connect exchange."
     );
   }
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(CONNECT_SURFACE.databaseUnavailableMessage);
+    return temporaryUnavailableError(
+      "Caller connect database configuration is unavailable."
+    );
   }
 
   const contextResult = await withControlPlaneTransaction(
-    CONNECT_SURFACE,
     context,
     "caller_connect_exchange_lookup",
     async (query) => {
@@ -559,7 +579,7 @@ export async function handleConnectExchangeRequest(
         return invalidRequestError("Setup code is invalid or already used.");
       }
       if (!row.account_id || !row.approved_by_user_id) {
-        return apiTemporaryUnavailable(
+        return temporaryUnavailableError(
           "Caller connect approval is temporarily unavailable."
         );
       }
@@ -596,25 +616,77 @@ export async function handleConnectActivateRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: ControlPlaneRequestOptions = {}
-): Promise<ControlPlaneResult<ConnectActivateResponseData>> {
-  return handlePendingCredentialRequest(
-    CONNECT_SURFACE,
-    request,
+  options: ConnectRequestOptions = {}
+): Promise<ConnectResult<ConnectActivateResponseData>> {
+  const parsed = parseSetupRequestIdBody(body);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const pendingCredential = pendingConnectCredentialFromRequest(request);
+  if (!pendingCredential.ok) {
+    return pendingCredential;
+  }
+
+  const ipAddress = trustedClientIpAddress(request);
+  if (!ipAddress) {
+    return temporaryUnavailableError(
+      "Trusted client IP is unavailable for caller connect activation."
+    );
+  }
+
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return temporaryUnavailableError(
+      "Caller connect database configuration is unavailable."
+    );
+  }
+
+  const lookupResult = await withControlPlaneTransaction(
     context,
-    body,
-    options,
+    "caller_connect_activate_lookup",
+    async (query) => {
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_activation"
+      );
+      if (!limit.ok) {
+        return limit;
+      }
+
+      return lookupPendingConnectCredential(query, pendingCredential.data);
+    },
+    options
+  );
+
+  if (!lookupResult.ok) {
+    return lookupResult;
+  }
+
+  return withScopedProductTransaction(
+    connectionString,
+    context,
     {
-      trustedIpUnavailableMessage:
-        "Trusted client IP is unavailable for caller connect activation.",
-      limitKind: "caller_connect_activation",
-      operation: "caller_connect_activate",
-      run: (query, input) =>
-        activateConnectPendingCredential(query, input, {
+      authSurface: "caller",
+      accountId: lookupResult.data.accountId,
+      callerId: lookupResult.data.callerId
+    },
+    "caller_connect_activate",
+    (query) =>
+      activateConnectPendingCredential(
+        query,
+        {
+          ...lookupResult.data,
+          setupRequestId: parsed.data.setupRequestId,
+          pendingCredential: pendingCredential.data
+        },
+        {
           requestId: context.requestId,
           now: options.now
-        })
-    }
+        }
+      ),
+    options
   );
 }
 
@@ -622,29 +694,83 @@ export async function handleConnectAbortRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: ControlPlaneRequestOptions = {}
-): Promise<ControlPlaneResult<ConnectAbortResponseData>> {
-  return handlePendingCredentialRequest(
-    CONNECT_SURFACE,
-    request,
+  options: ConnectRequestOptions = {}
+): Promise<ConnectResult<ConnectAbortResponseData>> {
+  const parsed = parseSetupRequestIdBody(body);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const pendingCredential = pendingConnectCredentialFromRequest(request);
+  if (!pendingCredential.ok) {
+    return pendingCredential;
+  }
+
+  const ipAddress = trustedClientIpAddress(request);
+  if (!ipAddress) {
+    return temporaryUnavailableError(
+      "Trusted client IP is unavailable for caller connect abort."
+    );
+  }
+
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return temporaryUnavailableError(
+      "Caller connect database configuration is unavailable."
+    );
+  }
+
+  const lookupResult = await withControlPlaneTransaction(
     context,
-    body,
-    options,
+    "caller_connect_abort_lookup",
+    async (query) => {
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_activation"
+      );
+      if (!limit.ok) {
+        return limit;
+      }
+
+      return lookupPendingConnectCredential(query, pendingCredential.data);
+    },
+    options
+  );
+
+  if (!lookupResult.ok) {
+    return lookupResult;
+  }
+
+  return withScopedProductTransaction(
+    connectionString,
+    context,
     {
-      trustedIpUnavailableMessage:
-        "Trusted client IP is unavailable for caller connect abort.",
-      limitKind: "caller_connect_activation",
-      operation: "caller_connect_abort",
-      run: (query, input) =>
-        abortConnectPendingCredential(query, input, { now: options.now })
-    }
+      authSurface: "caller",
+      accountId: lookupResult.data.accountId,
+      callerId: lookupResult.data.callerId
+    },
+    "caller_connect_abort",
+    (query) =>
+      abortConnectPendingCredential(
+        query,
+        {
+          ...lookupResult.data,
+          setupRequestId: parsed.data.setupRequestId,
+          pendingCredential: pendingCredential.data
+        },
+        {
+          now: options.now
+        }
+      ),
+    options
   );
 }
 
 export async function getConnectBrowserApprovalPreview(
   query: ProductTransactionQuery,
   input: { setupRequestId: string; now?: Date }
-): Promise<ControlPlaneResult<ConnectApprovalPreviewData>> {
+): Promise<ConnectResult<ConnectApprovalPreviewData>> {
   if (!UUID_PATTERN.test(input.setupRequestId)) {
     return invalidSetupRequestError();
   }
@@ -663,7 +789,7 @@ export async function getConnectBrowserApprovalPreview(
 export async function getConnectDeviceApprovalPreview(
   query: ProductTransactionQuery,
   input: { userCode: string; accountId: string; now?: Date }
-): Promise<ControlPlaneResult<ConnectApprovalPreviewData>> {
+): Promise<ConnectResult<ConnectApprovalPreviewData>> {
   const targetResult = await query<DeviceSetupApprovalTargetRow>(
     deviceApprovalTargetStatement(
       callerSetupCodeDigest(normalizeUserCode(input.userCode))
@@ -693,7 +819,7 @@ export async function getConnectTerminalSetupState(
     accountId: string;
     statuses: readonly SetupTerminalStatus[];
   }
-): Promise<ControlPlaneResult<ConnectTerminalSetupData>> {
+): Promise<ConnectResult<ConnectTerminalSetupData>> {
   if (!UUID_PATTERN.test(input.setupRequestId)) {
     return invalidSetupRequestError();
   }
@@ -735,7 +861,7 @@ export async function approveConnectBrowserSetupRequest(
     userId: string;
     now?: Date;
   }
-): Promise<ControlPlaneResult<ConnectBrowserApprovalData>> {
+): Promise<ConnectResult<ConnectBrowserApprovalData>> {
   if (!UUID_PATTERN.test(input.setupRequestId)) {
     return invalidSetupRequestError();
   }
@@ -754,7 +880,7 @@ export async function approveConnectBrowserSetupRequest(
   }
 
   if (!target.callback_url) {
-    return apiTemporaryUnavailable(
+    return temporaryUnavailableError(
       "Caller connect setup request is temporarily unavailable."
     );
   }
@@ -817,7 +943,7 @@ export async function approveConnectDeviceSetupRequest(
     userId: string;
     now?: Date;
   }
-): Promise<ControlPlaneResult<ConnectDeviceApprovalData>> {
+): Promise<ConnectResult<ConnectDeviceApprovalData>> {
   const targetResult = await query<DeviceSetupApprovalTargetRow>(
     deviceApprovalTargetStatement(
       callerSetupCodeDigest(normalizeUserCode(input.userCode))
@@ -909,7 +1035,7 @@ export async function denyConnectSetupRequest(
     setupRequestId: string;
     accountId: string;
   }
-): Promise<ControlPlaneResult<{ setup_request_id: string; denied: true }>> {
+): Promise<ConnectResult<{ setup_request_id: string; denied: true }>> {
   if (!UUID_PATTERN.test(input.setupRequestId)) {
     return invalidSetupRequestError();
   }
@@ -954,7 +1080,7 @@ function createBrowserSetupRequestStatement(input: {
       input.displayName,
       input.callbackUrl,
       input.expiresAt.toISOString(),
-      DEVICE_POLL_INTERVAL_SECONDS
+      CONNECT_DEVICE_POLL_INTERVAL_SECONDS
     ]
   };
 }
@@ -986,9 +1112,15 @@ function createDeviceSetupRequestStatement(input: {
       input.deviceCodeHash,
       input.userCodeHash,
       input.expiresAt.toISOString(),
-      DEVICE_POLL_INTERVAL_SECONDS
+      CONNECT_DEVICE_POLL_INTERVAL_SECONDS
     ]
   };
+}
+
+export function callerSetupCodeDigest(value: string) {
+  return createHmac(TOKEN_HASH_ALGORITHM, requireCallerKeyHashSecret())
+    .update(value)
+    .digest("hex");
 }
 
 async function exchangeConnectSetupWithHumanContext(
@@ -1000,8 +1132,8 @@ async function exchangeConnectSetupWithHumanContext(
     flow: "browser" | "device";
     codeHash: string;
   },
-  options: ControlPlaneRequestOptions = {}
-): Promise<ControlPlaneResult<ConnectCredentialResponseData>> {
+  options: ConnectRequestOptions = {}
+): Promise<ConnectResult<ConnectCredentialResponseData>> {
   const runTransaction = options.runProductTransaction ?? runProductTransaction;
   try {
     return await runTransaction(
@@ -1039,7 +1171,7 @@ async function exchangeConnectSetupWithHumanContext(
       request_id: context.requestId,
       account_id: input.accountId
     });
-    return apiTemporaryUnavailable(
+    return temporaryUnavailableError(
       "Caller connect exchange is temporarily unavailable.",
       { errorId: context.correlationId, reported: true }
     );
@@ -1050,7 +1182,7 @@ async function connectApprovalPreviewFromTarget(
   query: ProductTransactionQuery,
   target: SetupApprovalTargetRow | null,
   now: Date = new Date()
-): Promise<ControlPlaneResult<ConnectApprovalPreviewData>> {
+): Promise<ConnectResult<ConnectApprovalPreviewData>> {
   if (!target) {
     return notFoundError("Caller connect setup request was not found.");
   }
@@ -1065,7 +1197,7 @@ async function connectApprovalPreviewFromTarget(
 
 function connectApprovalPreviewData(
   target: SetupApprovalTargetRow
-): ControlPlaneResult<ConnectApprovalPreviewData> {
+): ConnectResult<ConnectApprovalPreviewData> {
   return {
     ok: true,
     data: {
@@ -1088,7 +1220,7 @@ export async function exchangeApprovedConnectSetupRequest(
     codeHash: string;
   },
   options: { requestId: string; now?: Date }
-): Promise<ControlPlaneResult<ConnectCredentialResponseData>> {
+): Promise<ConnectResult<ConnectCredentialResponseData>> {
   const targetResult = await query<SetupExchangeTargetRow>(
     input.flow === "browser"
       ? browserExchangeTargetStatement(input.codeHash)
@@ -1116,7 +1248,7 @@ export async function exchangeApprovedConnectSetupRequest(
     !target.caller_display_name ||
     !target.account_tier
   ) {
-    return apiTemporaryUnavailable(
+    return temporaryUnavailableError(
       "Caller connect exchange is temporarily unavailable."
     );
   }
@@ -1168,10 +1300,10 @@ async function activateConnectPendingCredential(
     accountId: string;
     callerId: string;
     setupRequestId: string;
-    pendingCredential: PendingCredentialBearer;
+    pendingCredential: PendingConnectCredentialBearer;
   },
   options: { requestId: string; now?: Date }
-): Promise<ControlPlaneResult<ConnectActivateResponseData>> {
+): Promise<ConnectResult<ConnectActivateResponseData>> {
   // Serialize with revoke and rotate before locking the credential row, in the
   // same advisory-lock-then-row-lock order they use.
   await query(callerCredentialLifecycleLockStatement(input));
@@ -1179,13 +1311,11 @@ async function activateConnectPendingCredential(
     connectPendingCredentialStatement(input)
   );
   const credential = credentialResult.rows[0];
-  const verified = await verifyPendingCredential(
-    CONNECT_SURFACE,
+  const verified = await verifyPendingConnectCredential(
     query,
     credential ?? null,
     input.pendingCredential,
-    options.now ?? new Date(),
-    expireConnectPendingCredentialStatement
+    options.now ?? new Date()
   );
   if (!verified.ok) {
     return verified;
@@ -1219,22 +1349,20 @@ async function abortConnectPendingCredential(
     accountId: string;
     callerId: string;
     setupRequestId: string;
-    pendingCredential: PendingCredentialBearer;
+    pendingCredential: PendingConnectCredentialBearer;
   },
   options: { now?: Date }
-): Promise<ControlPlaneResult<ConnectAbortResponseData>> {
+): Promise<ConnectResult<ConnectAbortResponseData>> {
   await query(callerCredentialLifecycleLockStatement(input));
   const credentialResult = await query<PendingConnectCredentialRow>(
     connectPendingCredentialStatement(input)
   );
   const credential = credentialResult.rows[0];
-  const verified = await verifyPendingCredential(
-    CONNECT_SURFACE,
+  const verified = await verifyPendingConnectCredential(
     query,
     credential ?? null,
     input.pendingCredential,
-    options.now ?? new Date(),
-    expireConnectPendingCredentialStatement
+    options.now ?? new Date()
   );
   if (!verified.ok) {
     return verified;
@@ -1255,13 +1383,188 @@ async function abortConnectPendingCredential(
   };
 }
 
+async function withControlPlaneTransaction<TData>(
+  context: ApiRequestContext,
+  operation: string,
+  callback: (query: ProductTransactionQuery) => Promise<ConnectResult<TData>>,
+  options: ConnectRequestOptions = {}
+): Promise<ConnectResult<TData>> {
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return temporaryUnavailableError(
+      "Caller connect database configuration is unavailable."
+    );
+  }
+
+  const runTransaction = options.runProductTransaction ?? runProductTransaction;
+  try {
+    return await runTransaction(
+      connectionString,
+      {
+        requestId: context.requestId,
+        authSurface: "control_plane"
+      },
+      callback
+    );
+  } catch (error) {
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
+      surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
+      operation,
+      message: "Caller connect request failed unexpectedly.",
+      request_id: context.requestId
+    });
+    return temporaryUnavailableError(
+      "Caller connect is temporarily unavailable.",
+      { errorId: context.correlationId, reported: true }
+    );
+  }
+}
+
+async function withScopedProductTransaction<TData>(
+  connectionString: string,
+  context: ApiRequestContext,
+  scopedContext: Omit<ProductTransactionContext, "requestId">,
+  operation: string,
+  callback: (query: ProductTransactionQuery) => Promise<ConnectResult<TData>>,
+  options: ConnectRequestOptions = {}
+): Promise<ConnectResult<TData>> {
+  const runTransaction = options.runProductTransaction ?? runProductTransaction;
+  try {
+    return await runTransaction(
+      connectionString,
+      {
+        requestId: context.requestId,
+        ...scopedContext
+      },
+      callback
+    );
+  } catch (error) {
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
+      surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
+      operation,
+      message: "Caller connect request failed unexpectedly.",
+      request_id: context.requestId,
+      account_id: scopedContext.accountId,
+      caller_id: scopedContext.callerId
+    });
+    return temporaryUnavailableError(
+      "Caller connect is temporarily unavailable.",
+      { errorId: context.correlationId, reported: true }
+    );
+  }
+}
+
+function pendingConnectCredentialFromRequest(
+  request: Request
+): ConnectResult<PendingConnectCredentialBearer> {
+  const parsed = parseCallerBearerApiKey(request.headers.get("authorization"));
+  if (!parsed.ok) {
+    if (parsed.code !== "missing_authorization") {
+      return invalidCallerCredentialsError();
+    }
+    return {
+      ok: false,
+      error: {
+        status: 401,
+        code: "authentication_required",
+        message: "Pending connect bearer credential is required."
+      }
+    };
+  }
+  return { ok: true, data: parsed };
+}
+
+async function lookupPendingConnectCredential(
+  query: ProductTransactionQuery,
+  bearer: PendingConnectCredentialBearer
+): Promise<ConnectResult<{ accountId: string; callerId: string }>> {
+  const result = await query<CallerCredentialLookupRow>(
+    callerCredentialLookupStatement(bearer.keyId)
+  );
+  const row = result.rows[0];
+  if (!row || row.status !== "pending_activation" || row.revoked_at) {
+    return invalidCallerCredentialsError();
+  }
+
+  if (!/^[a-fA-F0-9]{64}$/.test(row.secret_hmac_sha256)) {
+    return invalidCallerCredentialsError();
+  }
+
+  const suppliedDigest = callerApiKeySecretDigest(bearer.secret);
+  const supplied = Buffer.from(suppliedDigest, "hex");
+  const stored = Buffer.from(row.secret_hmac_sha256, "hex");
+  if (!timingSafeEqual(supplied, stored)) {
+    return invalidCallerCredentialsError();
+  }
+
+  return {
+    ok: true,
+    data: {
+      accountId: row.account_id,
+      callerId: row.caller_id
+    }
+  };
+}
+
+async function verifyPendingConnectCredential(
+  query: ProductTransactionQuery,
+  credential: PendingConnectCredentialRow | null,
+  bearer: PendingConnectCredentialBearer,
+  now: Date
+): Promise<ConnectResult<null>> {
+  if (!credential) {
+    return invalidCallerCredentialsError();
+  }
+
+  if (
+    credential.status !== "pending_activation" ||
+    credential.revoked_at ||
+    !credential.expires_at ||
+    new Date(credential.expires_at).getTime() <= now.getTime()
+  ) {
+    if (
+      credential.status === "pending_activation" &&
+      credential.expires_at &&
+      new Date(credential.expires_at).getTime() <= now.getTime()
+    ) {
+      await query(
+        expireConnectPendingCredentialStatement(credential.caller_credential_id)
+      );
+    }
+    return invalidCallerCredentialsError();
+  }
+
+  if (!/^[a-fA-F0-9]{64}$/.test(credential.secret_hmac_sha256)) {
+    return invalidCallerCredentialsError();
+  }
+
+  const suppliedDigest = callerApiKeySecretDigest(bearer.secret);
+  const supplied = Buffer.from(suppliedDigest, "hex");
+  const stored = Buffer.from(credential.secret_hmac_sha256, "hex");
+  if (!timingSafeEqual(supplied, stored)) {
+    return invalidCallerCredentialsError();
+  }
+
+  return { ok: true, data: null };
+}
+
 async function enforceConnectApprovalLimit(
   query: ProductTransactionQuery,
   accountId: string
-): Promise<ControlPlaneResult<null>> {
+): Promise<ConnectResult<null>> {
   const profile = await accountLimitProfileForAccount(query, accountId);
   if (!profile) {
-    return apiTemporaryUnavailable(
+    return temporaryUnavailableError(
       "Caller connect approval is temporarily unavailable."
     );
   }
@@ -1283,7 +1586,7 @@ async function ensurePendingApprovalTarget(
   query: ProductTransactionQuery,
   target: SetupApprovalTargetRow,
   now: Date = new Date()
-): Promise<ControlPlaneResult<null>> {
+): Promise<ConnectResult<null>> {
   if (setupRequestExpired(target, now)) {
     await query(markSetupRequestExpiredStatement(target.setup_request_id));
     return invalidRequestError("Caller connect setup request is expired.");
@@ -1302,7 +1605,7 @@ async function ensureConnectCallerSlugAvailable(
   query: ProductTransactionQuery,
   accountId: string,
   target: SetupApprovalTargetRow
-): Promise<ControlPlaneResult<null>> {
+): Promise<ConnectResult<null>> {
   const result = await query<ExistingCallerSlugRow>(
     existingConnectCallerSlugStatement({
       accountId,
@@ -1320,7 +1623,7 @@ async function createConnectCaller(
   query: ProductTransactionQuery,
   accountId: string,
   target: SetupApprovalTargetRow
-): Promise<ControlPlaneResult<CallerRow>> {
+): Promise<ConnectResult<CallerRow>> {
   try {
     const result = await withSavepoint(query, "caller_connect_caller", () =>
       query<CallerRow>(
@@ -1656,6 +1959,39 @@ function denySetupRequestStatement(input: {
   };
 }
 
+function markSetupRequestExpiredStatement(
+  setupRequestId: string
+): TransactionContextStatement {
+  return {
+    sql: `
+      update public.agent_outbox_caller_setup_requests
+      set
+        status = 'expired',
+        updated_at = now()
+      where setup_request_id = $1
+        and status in ('pending', 'approved')
+    `,
+    values: [setupRequestId]
+  };
+}
+
+function markSetupRequestExchangedStatement(
+  setupRequestId: string
+): TransactionContextStatement {
+  return {
+    sql: `
+      update public.agent_outbox_caller_setup_requests
+      set
+        status = 'exchanged',
+        exchanged_at = now(),
+        updated_at = now()
+      where setup_request_id = $1
+        and status = 'approved'
+    `,
+    values: [setupRequestId]
+  };
+}
+
 function insertConnectCredentialStatement(input: {
   accountId: string;
   callerId: string;
@@ -1698,7 +2034,7 @@ function insertConnectCredentialStatement(input: {
 
 function connectPendingCredentialStatement(input: {
   setupRequestId: string;
-  pendingCredential: PendingCredentialBearer;
+  pendingCredential: PendingConnectCredentialBearer;
 }): TransactionContextStatement {
   return {
     sql: `
@@ -1783,37 +2119,256 @@ function insertCallerRegisteredAuditStatement(input: {
   };
 }
 
-function parseBrowserStartBody(
-  body: unknown
-): ControlPlaneResult<BrowserStartBody> {
-  return parseObjectBody(CONNECT_SURFACE, body, (record, fields) => {
-    const localCallerName = requiredText(record, "local_caller_name", fields);
-    const displayName = requiredText(record, "display_name", fields);
-    const callbackUrl = requiredCallbackUrl(record, "callback_url", fields);
+function parseBrowserStartBody(body: unknown): ConnectResult<BrowserStartBody> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return validationError([
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
 
-    return {
+  const localCallerName = requiredText(body, "local_caller_name", fields);
+  const displayName = requiredText(body, "display_name", fields);
+  const callbackUrl = requiredCallbackUrl(body, "callback_url", fields);
+
+  if (fields.length > 0) {
+    return validationError(fields);
+  }
+
+  return {
+    ok: true,
+    data: {
       localCallerName,
       displayName,
       callbackUrl
-    };
-  });
+    }
+  };
 }
 
-function parseDeviceStartBody(
-  body: unknown
-): ControlPlaneResult<DeviceStartBody> {
-  return parseObjectBody(CONNECT_SURFACE, body, (record, fields) => {
-    const localCallerName = requiredText(record, "local_caller_name", fields);
-    const displayName = requiredText(record, "display_name", fields);
+function parseDeviceStartBody(body: unknown): ConnectResult<DeviceStartBody> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return validationError([
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
 
-    return {
+  const localCallerName = requiredText(body, "local_caller_name", fields);
+  const displayName = requiredText(body, "display_name", fields);
+
+  if (fields.length > 0) {
+    return validationError(fields);
+  }
+
+  return {
+    ok: true,
+    data: {
       localCallerName,
       displayName
-    };
-  });
+    }
+  };
 }
 
-function callerAlreadyExistsError(): ControlPlaneResult<never> {
+function parseDevicePollBody(body: unknown): ConnectResult<DevicePollBody> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return validationError([
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
+
+  const deviceCode = requiredText(body, "device_code", fields, 512);
+
+  if (fields.length > 0) {
+    return validationError(fields);
+  }
+
+  return { ok: true, data: { deviceCode } };
+}
+
+function parseExchangeBody(body: unknown): ConnectResult<ExchangeBody> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return validationError([
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
+
+  const setupCode = requiredText(body, "setup_code", fields, 512);
+
+  if (fields.length > 0) {
+    return validationError(fields);
+  }
+
+  return { ok: true, data: { setupCode } };
+}
+
+function parseSetupRequestIdBody(
+  body: unknown
+): ConnectResult<SetupRequestIdBody> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return validationError([
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
+
+  const setupRequestId = requiredUuidText(body, "setup_request_id", fields);
+  if (fields.length > 0) {
+    return validationError(fields);
+  }
+  return { ok: true, data: { setupRequestId } };
+}
+
+function requiredUuidText(
+  record: Record<string, unknown>,
+  key: string,
+  fields: ApiFieldError[]
+) {
+  const value = requiredText(record, key, fields, MAX_CONNECT_TEXT_LENGTH);
+  if (!value) {
+    return "";
+  }
+
+  if (!UUID_PATTERN.test(value)) {
+    fields.push(
+      fieldError(key, "invalid_uuid", `${key} must be a UUID-formatted string.`)
+    );
+    return "";
+  }
+
+  return value;
+}
+
+function requiredText(
+  record: Record<string, unknown>,
+  key: string,
+  fields: ApiFieldError[],
+  maxLength = MAX_CONNECT_TEXT_LENGTH
+) {
+  const value = record[key];
+  if (typeof value !== "string" || value.trim() === "") {
+    fields.push(fieldError(key, "required", `${key} is required.`));
+    return "";
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length > maxLength) {
+    fields.push(
+      fieldError(
+        key,
+        "too_long",
+        `${key} must be at most ${maxLength} characters.`
+      )
+    );
+    return "";
+  }
+  if (!isStorableString(trimmed)) {
+    fields.push(unstorableStringError(key));
+    return "";
+  }
+
+  return trimmed;
+}
+
+function requiredCallbackUrl(
+  record: Record<string, unknown>,
+  key: string,
+  fields: ApiFieldError[]
+) {
+  const raw = requiredText(record, key, fields, MAX_CALLBACK_URL_LENGTH);
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    const url = new URL(raw);
+    const localhost =
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "localhost" ||
+      url.hostname === "[::1]";
+    if (url.protocol !== "http:" || !localhost) {
+      fields.push(
+        fieldError(
+          key,
+          "invalid_callback_url",
+          "callback_url must be an http localhost callback URL."
+        )
+      );
+      return "";
+    }
+  } catch {
+    fields.push(
+      fieldError(
+        key,
+        "invalid_callback_url",
+        "callback_url must be a valid URL."
+      )
+    );
+    return "";
+  }
+
+  return raw;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function validationError(fields: ApiFieldError[]): ConnectResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 422,
+      code: "validation_failed",
+      message: "Caller connect request failed validation.",
+      fields
+    }
+  };
+}
+
+function fieldError(
+  path: string,
+  code: string,
+  message: string
+): ApiFieldError {
+  return { path, code, message };
+}
+
+// Browser pages and form actions pass setup_request_id unvalidated; a
+// malformed id can never match a row and would otherwise fail the uuid cast.
+function invalidSetupRequestError(): ConnectResult<never> {
+  return invalidRequestError("Invalid setup request.");
+}
+
+function invalidRequestError(message: string): ConnectResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 400,
+      code: "invalid_request",
+      message
+    }
+  };
+}
+
+function notFoundError(message: string): ConnectResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 404,
+      code: "not_found",
+      message
+    }
+  };
+}
+
+function callerAlreadyExistsError(): ConnectResult<never> {
   return {
     ok: false,
     error: {
@@ -1829,4 +2384,79 @@ function callerAlreadyExistsError(): ControlPlaneResult<never> {
       ]
     }
   };
+}
+
+function invalidCallerCredentialsError(): ConnectResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 401,
+      code: "invalid_caller_credentials",
+      message: "Pending connect credential is invalid or no longer usable."
+    }
+  };
+}
+
+function temporaryUnavailableError(
+  message: string,
+  options?: { errorId?: string; reported?: boolean }
+): ConnectResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message,
+      ...(options?.errorId ? { errorId: options.errorId } : {}),
+      ...(options?.reported ? { reported: true } : {})
+    }
+  };
+}
+
+function isUniqueViolation(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  return "code" in error && (error as { code?: unknown }).code === "23505";
+}
+
+function publicAppBaseUrl(): ConnectResult<string> {
+  const value = process.env.PUBLIC_APP_BASE_URL;
+  if (!value) {
+    return temporaryUnavailableError(
+      "Public app base URL configuration is unavailable."
+    );
+  }
+
+  const origin = absoluteHttpOrigin(value);
+  if (!origin) {
+    return temporaryUnavailableError(
+      "Public app base URL configuration is invalid."
+    );
+  }
+  return { ok: true, data: origin };
+}
+
+function generateUserCode() {
+  const characters = [];
+  for (
+    let index = 0;
+    index < USER_CODE_GROUP_LENGTH * USER_CODE_GROUPS;
+    index += 1
+  ) {
+    characters.push(USER_CODE_ALPHABET[randomInt(USER_CODE_ALPHABET.length)]);
+  }
+
+  return `${characters.slice(0, USER_CODE_GROUP_LENGTH).join("")}-${characters
+    .slice(USER_CODE_GROUP_LENGTH)
+    .join("")}`;
+}
+
+function normalizeUserCode(userCode: string) {
+  return userCode.replace(/[\s-]+/g, "").toUpperCase();
+}
+
+function setupRequestExpired(row: { expires_at: string | Date }, now: Date) {
+  return new Date(row.expires_at).getTime() <= now.getTime();
 }
