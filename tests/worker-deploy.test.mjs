@@ -32,7 +32,6 @@ import {
   buildWranglerVersionsUploadArgsWithConfig,
   parseUploadedWorkerVersionId,
   runWorkerVersionUpload,
-  secretsDotenvContent,
   validateWorkerDeployEnvironment,
   validateWorkerTrafficEnvironment,
   workerBuildEnvironment,
@@ -211,7 +210,11 @@ function workerDeployEnv(overrides = {}) {
 }
 
 test("worker deploy wrapper builds, passes explicit bindings, and removes the temp secrets file", () => {
-  const env = workerDeployEnv();
+  const env = workerDeployEnv({
+    CALLER_KEY_HASH_SECRET: `${HASH_SECRET_FIXTURE}#after-hash`,
+    CLERK_SECRET_KEY: "`sk_test_backticked`",
+    SMOKE_OR_CLEANUP_TOKEN: "token with space='quoted' \"double\" back\\slash"
+  });
   const tempBase = mkdtempSync(
     path.join(os.tmpdir(), "agent-outbox-worker-deploy-test-")
   );
@@ -240,11 +243,13 @@ test("worker deploy wrapper builds, passes explicit bindings, and removes the te
           secretsFilePath = args[secretsFileIndex] ?? null;
           assert.ok(secretsFilePath, "deploy command must pass --secrets-file");
           assert.equal(existsSync(secretsFilePath), true);
-          const secretNames = readFileSync(secretsFilePath, "utf8")
-            .trim()
-            .split("\n")
-            .map((line) => line.split("=", 1)[0]);
-          assert.deepEqual(secretNames, WORKER_DEPLOY_SECRET_NAMES);
+          // Wrangler parses a JSON secrets file before falling back to dotenv.
+          assert.deepEqual(
+            JSON.parse(readFileSync(secretsFilePath, "utf8")),
+            Object.fromEntries(
+              WORKER_DEPLOY_SECRET_NAMES.map((name) => [name, env[name]])
+            )
+          );
 
           const configFileIndex = args.indexOf("--config") + 1;
           configFilePath = args[configFileIndex] ?? null;
@@ -385,30 +390,6 @@ for (const failingStep of ["dry-run", "upload"]) {
   });
 }
 
-test("worker deploy secrets file writes raw dotenv values and rejects ambiguous characters", () => {
-  const content = secretsDotenvContent(workerDeployEnv());
-  assert.equal(content.includes('"'), false);
-  assert.equal(content.includes("CLERK_SECRET_KEY=sk_test_clerk"), true);
-  assert.throws(
-    () =>
-      secretsDotenvContent(
-        workerDeployEnv({
-          CLERK_SECRET_KEY: 'sk_test_"quoted"'
-        })
-      ),
-    /must not contain whitespace, quotes, or backslashes/
-  );
-  assert.throws(
-    () =>
-      secretsDotenvContent(
-        workerDeployEnv({
-          SMOKE_OR_CLEANUP_TOKEN: "token with space"
-        })
-      ),
-    /must not contain whitespace, quotes, or backslashes/
-  );
-});
-
 test("worker deploy command environments keep runtime secrets out of build and deploy subprocesses", () => {
   const env = workerDeployEnv({
     PATH: "/usr/bin",
@@ -500,7 +481,7 @@ test("worker deploy wrapper requires production config and rejects a retired ana
 
   const withoutAnalytics = buildWranglerVersionsUploadArgsWithConfig(
     workerDeployEnv(),
-    "/tmp/worker-secrets.env",
+    "/tmp/worker-secrets.json",
     "/tmp/wrangler.jsonc"
   );
   assert.deepEqual(withoutAnalytics.slice(0, 6), [
@@ -521,7 +502,7 @@ test("worker deploy wrapper requires production config and rejects a retired ana
     workerDeployEnv({
       NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "analytics-token"
     }),
-    "/tmp/worker-secrets.env"
+    "/tmp/worker-secrets.json"
   );
   assert.equal(
     withRetiredAnalyticsToken.includes(

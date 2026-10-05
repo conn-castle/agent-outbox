@@ -171,7 +171,6 @@ type TargetInputRow = {
   status: "pending" | "answered";
   current_revision: number;
   non_file_payload_bytes: string | number;
-  updated_at: Date;
   account_audit_id: string;
   caller_audit_id: string;
 };
@@ -544,7 +543,6 @@ export function targetInputForAnswerStatement(
         i.status,
         i.current_revision,
         i.non_file_payload_bytes,
-        i.updated_at,
         a.account_audit_id,
         c.caller_audit_id
       from public.agent_outbox_input_items i
@@ -816,7 +814,12 @@ function createOutputResultStatement(input: {
         previous_input_updated_at,
         expires_at
       )
-      values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12)
+      values (
+        $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10,
+        -- Copied in SQL so undo restores the exact microsecond queue position.
+        (select updated_at from public.agent_outbox_input_items where input_item_id = $3),
+        $11
+      )
       returning output_result_id
     `,
     values: [
@@ -830,7 +833,6 @@ function createOutputResultStatement(input: {
       input.payload.responsePayloadBytes,
       timestampValue(input.answeredAt),
       input.input.humanUserId,
-      timestampValue(input.targetInput.updated_at),
       timestampValue(expiresAt)
     ]
   };
