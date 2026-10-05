@@ -8,6 +8,7 @@ import {
   sentryReleaseUploadEnabled
 } from "./src/server/observability";
 import { applicationSecurityHeaders } from "./src/server/http-security";
+import { HUMAN_MUTATION_REQUEST_BODY_BYTE_LIMIT } from "./src/server/request-body";
 
 const sentryNextjsEdgeEntry =
   "./node_modules/@sentry/nextjs/build/esm/edge/index.js";
@@ -27,6 +28,12 @@ const nextConfig: NextConfig = {
   devIndicators:
     process.env.AGENT_OUTBOX_BROWSER_FIXTURE === "1" ? false : undefined,
   experimental: {
+    // Next's Node middleware copy otherwise truncates valid forms at 10 MiB.
+    // Leave headroom so the route can detect overflow before the copy truncates.
+    // Repository Node launchers guard unrelated ingress at 10 MiB before Next.
+    // OpenNext's external middleware path does not use this Next body copy.
+    proxyClientMaxBodySize:
+      HUMAN_MUTATION_REQUEST_BODY_BYTE_LIMIT + 1024 * 1024,
     serverActions: {
       bodySizeLimit: "34mb"
     }

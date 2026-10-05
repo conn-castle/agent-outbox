@@ -2070,6 +2070,24 @@ test("human mutation transport rejects cross-origin requests", async ({
   });
 });
 
+test("human mutation transport rejects malformed bodies as invalid requests", async ({
+  page,
+  baseURL
+}) => {
+  const response = await page.request.post("/human/mutations", {
+    headers: {
+      Origin: new URL(baseURL ?? "").origin,
+      "Content-Type": "multipart/form-data; boundary=x"
+    },
+    data: "not a form"
+  });
+  expect(response.status()).toBe(400);
+  await expect(response.json()).resolves.toMatchObject({
+    ok: false,
+    code: "invalid_request"
+  });
+});
+
 test("review actions disappear within 20 ms without shifting the workspace", async ({
   page
 }) => {

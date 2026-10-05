@@ -15,16 +15,18 @@ records exist, never roll back to earlier code: it cannot verify those records'
 fingerprints. Application rollback does not remove the nullable column.
 
 Browser verification builds an optimized, test-only Next.js application into
-`.next-browser`, then serves it on loopback with `next start` and a disposable
-database. Compilation finishes before browser execution; the harness rebuilds
-before every run. `.next-browser` must never be deployed; normal builds use
-`.next` and embed a disabled fixture gate. Browser-build compilation clears the
-application database URL to prevent reads from a developer database during
-prerendering; only the runtime server receives the disposable database URL. The
-test build requires `AGENT_OUTBOX_BROWSER_BUILD=1`, `APP_ENV=test`, and loopback
-HTTP base URLs. Runtime fixture flags cannot enable fixtures in a normal
-production build. `tsconfig.browser.json` keeps generated test-build types
-separate from `.next`.
+`.next-browser`, then serves it on loopback through the guarded Node entry
+(`scripts/node-server.mjs start`) and a disposable database. The Node ingress
+contract is documented in
+[the HTTP API](../spec/http-api.md#human-answer-boundary). Compilation finishes
+before browser execution; the harness rebuilds before every run. `.next-browser`
+must never be deployed; normal builds use `.next` and embed a disabled fixture
+gate. Browser-build compilation clears the application database URL to prevent
+reads from a developer database during prerendering; only the runtime server
+receives the disposable database URL. The test build requires
+`AGENT_OUTBOX_BROWSER_BUILD=1`, `APP_ENV=test`, and loopback HTTP base URLs.
+Runtime fixture flags cannot enable fixtures in a normal production build.
+`tsconfig.browser.json` keeps generated test-build types separate from `.next`.
 
 Browser verification uses one Playwright worker to limit browser memory
 pressure. This does not impose a hard memory cap on the build or server. Failed
