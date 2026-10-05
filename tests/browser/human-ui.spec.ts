@@ -2070,6 +2070,24 @@ test("human mutation transport rejects cross-origin requests", async ({
   });
 });
 
+test("human mutation transport rejects malformed bodies as invalid requests", async ({
+  page,
+  baseURL
+}) => {
+  const response = await page.request.post("/human/mutations", {
+    headers: {
+      Origin: new URL(baseURL ?? "").origin,
+      "Content-Type": "multipart/form-data; boundary=x"
+    },
+    data: "not a form"
+  });
+  expect(response.status()).toBe(400);
+  await expect(response.json()).resolves.toMatchObject({
+    ok: false,
+    code: "invalid_request"
+  });
+});
+
 test("review actions disappear within 20 ms without shifting the workspace", async ({
   page
 }) => {
@@ -3273,6 +3291,22 @@ test("deployment fixture renders hostile caller content inertly", async ({
   await expect(
     detail.getByText(/api key|manual key|archive|gmail/i)
   ).toHaveCount(0);
+});
+
+test("compose links do not open a composer for an unanswerable action", async ({
+  page
+}) => {
+  await page.goto(
+    "/human?item=00000000-0000-4000-8000-000000000523&compose=unavailable_upload"
+  );
+
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect(detail).toContainText("fixtureUnsafeScript()");
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
+  await openSecondaryActions(page);
+  await expect(
+    detail.getByRole("button", { name: "Unavailable upload" })
+  ).toBeDisabled();
 });
 
 test("fixture storyboard catalogs every use case at desktop tablet and phone widths", async ({

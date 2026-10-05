@@ -494,6 +494,45 @@ actor context. The MVP does not expose public `app/api/human/*` answer routes;
 human writes require Clerk-backed authentication and Agent Outbox account
 membership, never caller API keys.
 
+Hydrated review pages send answers, bulk answers, and undo through the
+same-origin `POST /human/mutations` route; JavaScript-disabled forms use the
+server actions directly. The hydrated route accepts multipart and URL-encoded
+forms with a 39,448,576-byte transport safety ceiling: the larger of 100
+independent 128,000-byte answers with up to 3x percent-encoding expansion, or
+one 32,000,000-byte raw file plus an encoded answer, with 1 MiB for protocol
+fields, form framing, and ordinary action/notice/view metadata. The semantic
+limits remain per answer and per file; bulk permits at most 100 distinct items.
+The server-action transport retains its separate 34 MiB (35,651,584-byte) cap.
+
+The Worker fetch entry checks mutation POST declarations and counts a forwarded
+stream before OpenNext's external middleware converter consumes the body. An
+oversized declaration is rejected without reading it; streamed overflow stops
+the converter's first body read without adding a whole-request copy. The route
+uses the same bound for parsing, including local Next runs. Both return the
+mutation envelope with 413 `request_too_large` for a recognized size overflow.
+Ordinary origin, authentication, and action checks remain at the route; the
+Worker's early rejection is a resource safeguard for oversized mutation bodies.
+
+Known malformed or unsupported forms return 400 `invalid_request` at the route;
+unexpected source, adapter, or parser failures retain sanitized reporting and
+503 `temporary_unavailable`. OpenNext still buffers accepted bodies for
+middleware and application conversion. Provider transport limits may reject
+requests before the Worker fetch entry. Next's Node middleware copy is
+configured with headroom above the route ceiling so valid large forms reach the
+route intact. Repository Node launchers use `scripts/node-server.mjs` to guard
+ingress before Next can make that copy. Only POSTs to `/human/mutations` (with
+an optional trailing slash) and possible server-action POSTs to `/human` (with
+an optional trailing slash) use the raised copy allowance. Review server actions
+are identified by a `next-action` header, multipart content type, or Next's
+URL-encoded action transport. Middleware, origin checks, authentication, and the
+route/action caps still run normally. Other declarations above 10,485,760 bytes
+are rejected before Next; unknown-length bodies are counted to that ceiling and
+only accepted chunks are replayed into Next. Ingress overflow returns JSON 413
+`request_too_large` with the API envelope. Small route-specific limits still
+apply after ingress. This guard belongs to the Node entry point; invoking bare
+`next start` or `next dev` bypasses it. Other Worker routes and scheduled
+processing keep their existing behavior.
+
 ## Output Routes
 
 Successful output route responses include `Cache-Control: no-store`. Read

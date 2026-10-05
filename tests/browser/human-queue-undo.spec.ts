@@ -459,51 +459,75 @@ test("bulk apply answers a new selection after a successful bulk answer", async 
   await expectQueueMembership(page, pending);
 });
 
-test("rejected undo keeps every answered item in History and restores no queue rows", async ({
-  page
-}) => {
-  const initial = await openQueue(page);
-  const refreshes = await holdRefreshes(page);
-  try {
-    for (const [, action] of actions) await answer(page, action);
-    await page.route("**/human/mutations", async (route) => {
-      const form = await requestForm(route);
-      await route.fulfill({
-        status: 409,
-        json: {
-          ok: false,
-          operation: "undo",
-          inputItemIds: [form.get("inputItemId")],
-          code: "output_already_read",
-          message: "Output result has already been read by the caller."
-        }
+for (const [code, message] of [
+  ["output_already_read", "Output result has already been read by the caller."],
+  ["not_found", "Output result was not found."]
+] as const) {
+  test(`${code} undo rejection keeps answered items in History and withdraws Undo`, async ({
+    page
+  }) => {
+    const initial = await openQueue(page);
+    const refreshes = await holdRefreshes(page);
+    try {
+      for (const [, action] of actions) await answer(page, action);
+      await page.route("**/human/mutations", async (route) => {
+        const form = await requestForm(route);
+        await route.fulfill({
+          status: 409,
+          json: {
+            ok: false,
+            operation: "undo",
+            inputItemIds: [form.get("inputItemId")],
+            code,
+            message
+          }
+        });
       });
-    });
-    await undo(page);
-    await expect(page.locator(".last-action-error")).toContainText(
-      "already been read"
-    );
-    await page.unroute("**/human/mutations");
+      await undo(page);
+      await expect(page.locator(".last-action-error")).toContainText(message);
+      // The rejection is permanent, so Undo is no longer offered.
+      await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+      await page.unroute("**/human/mutations");
+      const pending = initial.filter(
+        (title) => !actions.some(([item]) => item === title)
+      );
+      await expectQueue(page, pending);
+    } finally {
+      await refreshes.release();
+    }
     const pending = initial.filter(
       (title) => !actions.some(([item]) => item === title)
     );
-    await expectQueue(page, pending);
-  } finally {
-    await refreshes.release();
-  }
-  const pending = initial.filter(
-    (title) => !actions.some(([item]) => item === title)
+    await sortByTitle(page);
+    await expectQueueMembership(page, pending);
+    await page.reload();
+    await expectHydrated(page);
+    await expectQueueMembership(page, pending);
+    await expectHistory(
+      page,
+      actions.map(([title]) => title),
+      pending
+    );
+  });
+}
+
+test("temporarily failed undo keeps Undo available for retry", async ({
+  page
+}) => {
+  const [, action] = actions[0];
+  await openQueue(page);
+  await answer(page, action);
+  await page.route("**/human/mutations", (route) =>
+    route.fulfill({ status: 503, body: "Service Unavailable" })
   );
-  await sortByTitle(page);
-  await expectQueueMembership(page, pending);
-  await page.reload();
-  await expectHydrated(page);
-  await expectQueueMembership(page, pending);
-  await expectHistory(
-    page,
-    actions.map(([title]) => title),
-    pending
+  await undo(page);
+  await expect(page.locator(".last-action-error")).toContainText(
+    "temporarily unavailable"
   );
+  await page.unroute("**/human/mutations");
+  await expect(
+    page.getByRole("button", { name: `Undo “${action}”`, exact: true })
+  ).toBeVisible();
 });
 
 async function openQueue(page: Page, href = "/human") {
