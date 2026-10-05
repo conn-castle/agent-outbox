@@ -50,9 +50,16 @@ export function registerClientEventFlushListeners(target: Window) {
   };
 }
 
-// Installed from instrumentation-client.ts, which runs before hydration: React
-// reports hydration mismatches as recoverable errors before any effect runs, so
-// a listener attached later never sees them.
+/**
+ * Install browser failure telemetry before React hydration, from
+ * instrumentation-client.ts. Once per Window in this module instance, register
+ * capture listeners for uncaught errors/rejections and pagehide/hidden-visibility
+ * flush listeners. Registrations last for the page lifetime; no disposer is
+ * returned.
+ *
+ * Ignore resource error events without an error object. Classify uncaught errors
+ * and rejections, then enqueue name-only telemetry in the shared bounded queue.
+ */
 export function installClientErrorEvents(target: Window) {
   if (installedErrorTargets.has(target)) {
     return;
@@ -79,6 +86,10 @@ export function installClientErrorEvents(target: Window) {
   registerClientEventFlushListeners(target);
 }
 
+/**
+ * Classify an uncaught error or rejection with the existing React classifier and
+ * enqueue only hydration_error or client_error, never the exception itself.
+ */
 function emitUncaughtErrorEvent(error: unknown) {
   emitClientEvent(
     classifyReactError(error) === "hydration"
