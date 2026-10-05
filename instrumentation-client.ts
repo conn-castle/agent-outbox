@@ -1,5 +1,8 @@
 import posthog from "posthog-js";
+import { installClientErrorEvents } from "./src/client/client-events";
 import { sanitizeAnalyticsEvent } from "./src/client/posthog-privacy";
+
+installClientErrorEvents(window);
 
 const POSTHOG_TOKEN = "phc_BHtwwAqkFjpvoWoJ2KwLTeRK9W9k5SWLw8ENhUZW2web";
 const BROWSER_FIXTURE =

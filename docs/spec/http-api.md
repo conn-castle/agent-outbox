@@ -91,8 +91,9 @@ POST /api/client-events
 Behavior:
 
 - Accepts best-effort browser event batches for narrow frontend failure
-  visibility only. The browser emitter reports uncaught client errors and React
-  boundary-classified hydration failures, and the GitHub sign-in controller
+  visibility only. The browser emitter reports uncaught client errors and
+  hydration failures, classified from a global error listener installed before
+  hydration and from React error boundaries, and the GitHub sign-in controller
   reports provider-launch failures. Canonical human server actions report failed
   human-action and file-upload submissions directly as trusted `server_action`
   events.
