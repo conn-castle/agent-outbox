@@ -125,6 +125,7 @@ export async function enforceAccountRequestLimits(
   );
 }
 
+/** Caller control-plane operations with an IP request quota. */
 export type ControlPlaneIpLimitKind = Extract<
   LimitOperationKind,
   | "caller_connect_start"
@@ -140,6 +141,13 @@ export type ControlPlaneIpLimitKind = Extract<
   | "caller_revoke_confirm"
 >;
 
+/**
+ * Enforces IP request windows for caller connect, rotate, and revoke operations.
+ * Pass the trusted client IP and the query from the control-plane transaction.
+ * Uses hosted-free limit settings and increments each checked quota window.
+ * Returns the existing limit error when a window is exceeded; query errors
+ * propagate to the caller's transaction error handling.
+ */
 export async function enforceIpControlPlaneLimit(
   query: ProductTransactionQuery,
   ipAddress: string,
