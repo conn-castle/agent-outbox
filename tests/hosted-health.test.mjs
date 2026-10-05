@@ -46,23 +46,35 @@ function textPage(status = 200) {
 }
 
 function healthFetch() {
-  const seenHeaders = /** @type {Array<Record<string, string>>} */ ([]);
+  const seenRequests =
+    /** @type {Array<{ pathname: string, headers: Record<string, string> }>} */ ([]);
   return {
-    seenHeaders,
+    seenRequests,
     /**
      * @param {string | URL} url
      * @param {{ headers?: Record<string, string> }} [init]
      */
     async fetch(url, init = {}) {
-      seenHeaders.push(init.headers ?? {});
       const pathname = new URL(url).pathname;
+      seenRequests.push({ pathname, headers: init.headers ?? {} });
       if (["/sign-in", "/sign-out", "/human"].includes(pathname)) {
         return textPage();
       }
       if (pathname === "/api/runtime/canary") {
-        return jsonResponse(200, { ok: true, code: "runtime_canary_ok" });
+        return jsonResponse(200, {
+          ok: true,
+          code: "runtime_canary_ok",
+          environment: {
+            configured: true,
+            appEnv: "production",
+            release: "release-sha"
+          }
+        });
       }
-      if (pathname === "/api/runtime/caller-auth") {
+      if (
+        pathname === "/api/runtime/caller-auth" ||
+        pathname === "/api/runtime/database"
+      ) {
         const authorization = init.headers?.Authorization;
         if (!authorization) {
           return jsonResponse(401, {
@@ -76,6 +88,8 @@ function healthFetch() {
             code: "invalid_bearer_token"
           });
         }
+      }
+      if (pathname === "/api/runtime/caller-auth") {
         return jsonResponse(200, { ok: true, code: "caller_auth_accepted" });
       }
       if (pathname === "/api/runtime/database") {
@@ -96,8 +110,17 @@ function healthFetch() {
       if (pathname === "/api/runtime/sentry") {
         return jsonResponse(200, {
           ok: true,
-          code: "sentry_canary_ok",
+          error_id: "sentry_test",
+          sentry_capture_enabled: false,
+          sentry_capture_configured: true,
           sentry_capture_suppressed: true
+        });
+      }
+      if (pathname === "/api/runtime/error") {
+        return jsonResponse(500, {
+          ok: false,
+          error_id: "err_test",
+          code: "structured_error_canary"
         });
       }
       return jsonResponse(404, { ok: false, code: "not_found" });
@@ -169,8 +192,8 @@ test("hosted health returns action_required for unavailable safe evidence", asyn
   );
   assert.equal(JSON.stringify(summary).includes("secret-smoke-token"), false);
   assert.ok(
-    fake.seenHeaders.some(
-      (headers) => headers.Authorization === "Bearer secret-smoke-token"
+    fake.seenRequests.some(
+      (request) => request.headers.Authorization === "Bearer secret-smoke-token"
     )
   );
 });
@@ -274,4 +297,210 @@ test("hosted health accepts the outgoing database canary contract during rollout
     checks.find((entry) => entry.name === "database")?.status,
     "pass"
   );
+});
+
+/**
+ * @param {string} pathname
+ * @param {{ status: number, body: Record<string, unknown> }} response
+ */
+function healthFetchOverriding(pathname, response) {
+  const fake = healthFetch();
+  return /** @type {any} */ (
+    async (
+      /** @type {string | URL} */ url,
+      /** @type {{ headers?: Record<string, string> }} */ init = {}
+    ) => {
+      if (new URL(url).pathname === pathname && init.headers?.Authorization) {
+        return jsonResponse(response.status, response.body);
+      }
+      return fake.fetch(url, init);
+    }
+  );
+}
+
+test("hosted health fails when the runtime environment is not configured", async () => {
+  const checks = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: healthFetchOverriding("/api/runtime/canary", {
+      status: 200,
+      body: {
+        ok: true,
+        code: "runtime_canary_ok",
+        environment: { configured: false, appEnv: "production" }
+      }
+    })
+  });
+
+  assert.equal(
+    checks.find((entry) => entry.name === "runtime")?.status,
+    "fail"
+  );
+  assert.equal(exitCodeForHostedHealth(checks), 1);
+});
+
+test("hosted health fails when the runtime canary omits authenticated environment posture", async () => {
+  const checks = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: healthFetchOverriding("/api/runtime/canary", {
+      status: 200,
+      body: { ok: true, code: "runtime_canary_ok" }
+    })
+  });
+
+  assert.equal(
+    checks.find((entry) => entry.name === "runtime")?.status,
+    "fail"
+  );
+  assert.equal(exitCodeForHostedHealth(checks), 1);
+});
+
+test("hosted health requires production Sentry capture readiness", async () => {
+  const unconfiguredSentry = {
+    status: 200,
+    body: {
+      ok: true,
+      error_id: "sentry_test",
+      sentry_capture_enabled: false,
+      sentry_capture_configured: false,
+      sentry_capture_suppressed: true
+    }
+  };
+  const production = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: healthFetchOverriding("/api/runtime/sentry", unconfiguredSentry)
+  });
+  assert.equal(
+    production.find((entry) => entry.name === "sentry")?.status,
+    "fail"
+  );
+  assert.equal(exitCodeForHostedHealth(production), 1);
+
+  const fake = healthFetch();
+  const development = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: /** @type {any} */ (
+      async (
+        /** @type {string | URL} */ url,
+        /** @type {{ headers?: Record<string, string> }} */ init = {}
+      ) => {
+        const pathname = new URL(url).pathname;
+        if (pathname === "/api/runtime/canary") {
+          return jsonResponse(200, {
+            ok: true,
+            code: "runtime_canary_ok",
+            environment: { configured: true, appEnv: "development" }
+          });
+        }
+        if (pathname === "/api/runtime/sentry") {
+          return jsonResponse(
+            unconfiguredSentry.status,
+            unconfiguredSentry.body
+          );
+        }
+        return fake.fetch(url, init);
+      }
+    )
+  });
+  assert.equal(
+    development.find((entry) => entry.name === "sentry")?.status,
+    "pass"
+  );
+});
+
+test("hosted health fails when the Sentry canary would emit a real event", async () => {
+  const checks = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: healthFetchOverriding("/api/runtime/sentry", {
+      status: 200,
+      body: {
+        ok: true,
+        error_id: "sentry_test",
+        sentry_capture_enabled: true,
+        sentry_capture_configured: true,
+        sentry_capture_suppressed: true
+      }
+    })
+  });
+
+  assert.equal(checks.find((entry) => entry.name === "sentry")?.status, "fail");
+  assert.equal(exitCodeForHostedHealth(checks), 1);
+});
+
+test("hosted health proves structured error correlation without capturing to Sentry", async () => {
+  const fake = healthFetch();
+  const checks = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: /** @type {any} */ (fake.fetch)
+  });
+
+  assert.deepEqual(
+    checks.find((entry) => entry.name === "error_correlation"),
+    {
+      name: "error_correlation",
+      status: "pass",
+      code: "structured_error_canary",
+      message: "/api/runtime/error rejected as expected",
+      status_code: 500
+    }
+  );
+  const errorRequests = fake.seenRequests.filter(
+    (request) => request.pathname === "/api/runtime/error"
+  );
+  assert.equal(errorRequests.length, 1);
+  assert.equal(errorRequests[0].headers["x-agent-outbox-runtime-smoke"], "1");
+  assert.equal(
+    errorRequests[0].headers.Authorization,
+    "Bearer secret-smoke-token"
+  );
+});
+
+for (const [label, response] of /** @type {const} */ ([
+  [
+    "returns a generic internal error",
+    { status: 500, body: { ok: false, code: "internal_error" } }
+  ],
+  [
+    "omits a safe error_id",
+    {
+      status: 500,
+      body: { ok: false, code: "structured_error_canary", error_id: "req_x" }
+    }
+  ],
+  ["is not deployed", { status: 404, body: { ok: false, code: "not_found" } }]
+])) {
+  test(`hosted health fails when the error correlation canary ${label}`, async () => {
+    const checks = await runHostedHealthChecks(baseEnv(), {
+      fetchImpl: healthFetchOverriding("/api/runtime/error", response)
+    });
+
+    assert.equal(
+      checks.find((entry) => entry.name === "error_correlation")?.status,
+      "fail"
+    );
+    assert.equal(exitCodeForHostedHealth(checks), 1);
+  });
+}
+
+test("hosted health fails when the database canary accepts a missing bearer", async () => {
+  const fake = healthFetch();
+  const checks = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: /** @type {any} */ (
+      async (
+        /** @type {string | URL} */ url,
+        /** @type {{ headers?: Record<string, string> }} */ init = {}
+      ) => {
+        if (new URL(url).pathname === "/api/runtime/database") {
+          return jsonResponse(200, {
+            ok: true,
+            code: "database_canary_ok",
+            transaction_context_matched: true,
+            restricted_role_matched: true,
+            human_review_query_matched: true
+          });
+        }
+        return fake.fetch(url, init);
+      }
+    )
+  });
+
+  assert.equal(
+    checks.find((entry) => entry.name === "database_rejects_missing_auth")
+      ?.status,
+    "fail"
+  );
+  assert.equal(exitCodeForHostedHealth(checks), 1);
 });
