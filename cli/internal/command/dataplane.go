@@ -579,8 +579,7 @@ func secretStoreForCommand(opts Options, configPath string, configPathOwned bool
 }
 
 func readInputSubmissionFile(path string) (json.RawMessage, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return nil, foundation.NewUsageError("--file is required.")
 	}
 	data, err := os.ReadFile(path)
@@ -820,8 +819,7 @@ func validateFileGetFlags(fileFlags fileGetFlags, jsonMode bool) error {
 // without writing through it. Initial inspection refuses directories and errors
 // other than a missing path even with force.
 func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string, outputPath string, force bool) (*foundation.DownloadResponse, error) {
-	outputPath = strings.TrimSpace(outputPath)
-	if outputPath == "" {
+	if strings.TrimSpace(outputPath) == "" {
 		return nil, foundation.NewUsageError("--output path is required.")
 	}
 	// Lstat so an existing symlink, including a dangling one, counts as existing.
