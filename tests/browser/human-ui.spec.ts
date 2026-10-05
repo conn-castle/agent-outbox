@@ -3275,6 +3275,22 @@ test("deployment fixture renders hostile caller content inertly", async ({
   ).toHaveCount(0);
 });
 
+test("compose links do not open a composer for an unanswerable action", async ({
+  page
+}) => {
+  await page.goto(
+    "/human?item=00000000-0000-4000-8000-000000000523&compose=unavailable_upload"
+  );
+
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect(detail).toContainText("fixtureUnsafeScript()");
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
+  await openSecondaryActions(page);
+  await expect(
+    detail.getByRole("button", { name: "Unavailable upload" })
+  ).toBeDisabled();
+});
+
 test("fixture storyboard catalogs every use case at desktop tablet and phone widths", async ({
   page,
   isMobile
