@@ -156,6 +156,10 @@ export async function handleAccountStatusRequest(
       unavailableMessage: "Account status is temporarily unavailable.",
       unexpectedFailureMessage: "Caller status request failed unexpectedly."
     },
+    /**
+     * Reads the authenticated account snapshot after status limits, then omits
+     * `queued_input_items` from successful public results and returns failures unchanged.
+     */
     async (query, identity) =>
       publicAccountStatus(await accountStatusInTransaction(query, identity))
   );
