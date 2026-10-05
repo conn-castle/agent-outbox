@@ -817,9 +817,14 @@ func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string
 	if outputPath == "" {
 		return nil, foundation.NewUsageError("--output path is required.")
 	}
-	if stat, err := os.Stat(outputPath); err == nil {
-		if stat.IsDir() {
-			return nil, foundation.NewUsageError("Output path is a directory.")
+	// Lstat so an existing symlink, including a dangling one, counts as existing.
+	if _, err := os.Lstat(outputPath); err == nil {
+		if stat, err := os.Stat(outputPath); err == nil {
+			if stat.IsDir() {
+				return nil, foundation.NewUsageError("Output path is a directory.")
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not inspect output path.")
 		}
 		if !force {
 			return nil, foundation.NewUsageError("Output path already exists; pass --force to overwrite it.")
@@ -862,7 +867,7 @@ func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string
 	}
 	closeFile = false
 	if !force {
-		if _, err := os.Stat(outputPath); err == nil {
+		if _, err := os.Lstat(outputPath); err == nil {
 			return nil, foundation.NewUsageError("Output path already exists; pass --force to overwrite it.")
 		} else if !os.IsNotExist(err) {
 			return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not inspect output path.")
