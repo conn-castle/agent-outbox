@@ -12,6 +12,7 @@ import {
   classifyReactError,
   clientEventsTestInternals,
   emitClientEvent,
+  installClientErrorEvents,
   registerClientEventFlushListeners
 } from "../src/client/client-events.ts";
 import {
@@ -186,6 +187,117 @@ test("registerClientEventFlushListeners flushes on pagehide and hidden visibilit
     globalThis.fetch = previousFetch;
   }
 });
+
+test("installClientErrorEvents installs once per window and reports each uncaught failure once", async () => {
+  const previousFetch = globalThis.fetch;
+  /** @type {FetchCall[]} */
+  const posts = [];
+  globalThis.fetch = async (url, init) => {
+    posts.push({
+      url: String(url),
+      init: /** @type {FetchCall["init"]} */ (init ?? {})
+    });
+    return new Response(null, { status: 204 });
+  };
+
+  const firstWindow = Object.assign(new RecordedEventTarget(), {
+    document: Object.assign(new RecordedEventTarget(), {
+      visibilityState: "visible"
+    })
+  });
+  const secondWindow = Object.assign(new RecordedEventTarget(), {
+    document: Object.assign(new RecordedEventTarget(), {
+      visibilityState: "hidden"
+    })
+  });
+
+  try {
+    clientEventsTestInternals.queue.length = 0;
+    for (const target of [firstWindow, secondWindow]) {
+      const window = /** @type {Window} */ (/** @type {unknown} */ (target));
+      installClientErrorEvents(window);
+      installClientErrorEvents(window);
+      assert.deepEqual(target.registrations, [
+        "error",
+        "unhandledrejection",
+        "pagehide"
+      ]);
+      assert.deepEqual(target.document.registrations, ["visibilitychange"]);
+    }
+
+    firstWindow.dispatchEvent(
+      Object.assign(new Event("error"), {
+        error: new Error("Minified React error #418; see docs")
+      })
+    );
+    firstWindow.dispatchEvent(
+      Object.assign(new Event("error"), {
+        error: new Error("plain browser failure")
+      })
+    );
+    // Resource load failures have no error object and must not be reported.
+    firstWindow.dispatchEvent(new Event("error"));
+    firstWindow.dispatchEvent(
+      Object.assign(new Event("error"), { error: null })
+    );
+    firstWindow.dispatchEvent(
+      Object.assign(new Event("unhandledrejection"), {
+        reason: new Error("rejected request")
+      })
+    );
+    firstWindow.dispatchEvent(
+      Object.assign(new Event("unhandledrejection"), {
+        reason: new Error("Minified React error #418; rejected recovery")
+      })
+    );
+    firstWindow.document.dispatchEvent(new Event("visibilitychange"));
+    assert.equal(posts.length, 0, "visible document must not flush");
+    firstWindow.dispatchEvent(new Event("pagehide"));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(posts.length, 1);
+    assert.deepEqual(JSON.parse(String(posts[0].init.body)), {
+      events: [
+        { name: "hydration_error" },
+        { name: "client_error" },
+        { name: "client_error" },
+        { name: "hydration_error" }
+      ]
+    });
+
+    // A second window still receives its own listeners and flushes when hidden.
+    secondWindow.dispatchEvent(
+      Object.assign(new Event("error"), {
+        error: new Error("second window failure")
+      })
+    );
+    secondWindow.document.dispatchEvent(new Event("visibilitychange"));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(posts.length, 2);
+    assert.deepEqual(JSON.parse(String(posts[1].init.body)), {
+      events: [{ name: "client_error" }]
+    });
+  } finally {
+    clientEventsTestInternals.queue.length = 0;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+// Real EventTarget retains distinct callbacks, unlike a one-handler Map fake.
+class RecordedEventTarget extends EventTarget {
+  /** @type {string[]} */
+  registrations = [];
+
+  /**
+   * @param {string} type
+   * @param {EventListenerOrEventListenerObject | null} callback
+   * @param {boolean | AddEventListenerOptions} [options]
+   */
+  addEventListener(type, callback, options) {
+    this.registrations.push(type);
+    super.addEventListener(type, callback, options);
+  }
+}
 
 test("app error boundary emits hydration_error or client_error from classified React errors", () => {
   /** @type {TestClientEvent[]} */

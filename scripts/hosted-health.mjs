@@ -3,15 +3,19 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parseEnv } from "./dotenv.mjs";
+import {
+  RUNTIME_SMOKE_HEADERS,
+  assertRuntimeCanaryEnvironment,
+  assertRuntimeDatabaseCanary,
+  assertRuntimeErrorCanary,
+  assertRuntimeSentryCanary
+} from "./runtime-smoke.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_FILE_NAME = "AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE";
 const FALLBACK_ENV_FILE_NAME = "AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE";
 const REQUEST_TIMEOUT_MS = 10_000;
 const REQUIRED_ENV_NAMES = ["APP_BASE_URL", "SMOKE_OR_CLEANUP_TOKEN"];
-const SMOKE_HEADERS = {
-  "x-agent-outbox-runtime-smoke": "1"
-};
 
 const OPERATOR_EVIDENCE = [
   {
@@ -106,6 +110,8 @@ export async function runHostedHealthChecks(env, options = {}) {
 
   const authHeaders = { Authorization: `Bearer ${token}` };
   const checks = [];
+  /** @type {unknown} */
+  let runtimeAppEnv;
 
   checks.push(
     await pageCheck(fetchImpl, baseUrl, "/sign-in", "app", timeoutMs)
@@ -119,7 +125,11 @@ export async function runHostedHealthChecks(env, options = {}) {
   checks.push(
     await jsonCheck(fetchImpl, baseUrl, "/api/runtime/canary", "runtime", {
       headers: authHeaders,
-      timeoutMs
+      timeoutMs,
+      validate: (body) => {
+        runtimeAppEnv = body.environment?.appEnv;
+        assertRuntimeCanaryEnvironment(body, undefined);
+      }
     })
   );
   checks.push(
@@ -154,14 +164,21 @@ export async function runHostedHealthChecks(env, options = {}) {
     )
   );
   checks.push(
+    await errorCodeCheck(
+      fetchImpl,
+      baseUrl,
+      "/api/runtime/database",
+      "database_rejects_missing_auth",
+      401,
+      "missing_authorization",
+      { timeoutMs }
+    )
+  );
+  checks.push(
     await jsonCheck(fetchImpl, baseUrl, "/api/runtime/database", "database", {
       headers: authHeaders,
       timeoutMs,
-      validate: (body) =>
-        body.transaction_context_matched === true &&
-        body.restricted_role_matched === true &&
-        (body.human_review_query_matched === undefined ||
-          body.human_review_query_matched === true)
+      validate: (body) => assertRuntimeDatabaseCanary(body)
     })
   );
   checks.push(
@@ -180,10 +197,25 @@ export async function runHostedHealthChecks(env, options = {}) {
   checks.push(
     await jsonCheck(fetchImpl, baseUrl, "/api/runtime/sentry", "sentry", {
       method: "POST",
-      headers: { ...SMOKE_HEADERS, ...authHeaders },
+      headers: { ...RUNTIME_SMOKE_HEADERS, ...authHeaders },
       timeoutMs,
-      validate: (body) => body.sentry_capture_suppressed === true
+      validate: (body) => assertRuntimeSentryCanary(body, runtimeAppEnv)
     })
+  );
+  checks.push(
+    await errorCodeCheck(
+      fetchImpl,
+      baseUrl,
+      "/api/runtime/error",
+      "error_correlation",
+      500,
+      "structured_error_canary",
+      {
+        headers: { ...RUNTIME_SMOKE_HEADERS, ...authHeaders },
+        timeoutMs,
+        validate: assertRuntimeErrorCanary
+      }
+    )
   );
 
   for (const evidence of OPERATOR_EVIDENCE) {
@@ -229,7 +261,7 @@ async function pageCheck(fetchImpl, baseUrl, pathname, name, timeoutMs) {
  *   method?: string,
  *   headers?: Record<string, string>,
  *   timeoutMs: number,
- *   validate?: (body: Record<string, unknown>) => boolean
+ *   validate?: (body: Record<string, any>) => void
  * }} options
  */
 async function jsonCheck(fetchImpl, baseUrl, pathname, name, options) {
@@ -253,8 +285,13 @@ async function jsonCheck(fetchImpl, baseUrl, pathname, name, options) {
         { status_code: response.status }
       );
     }
-    const valid = options.validate ? options.validate(body) : true;
-    if (response.ok && body.ok === true && valid) {
+    if (response.ok && body.ok === true) {
+      const invalid = validationFailure(options.validate, body);
+      if (invalid) {
+        return check(name, "fail", "unexpected_response", invalid, {
+          status_code: response.status
+        });
+      }
       return check(name, "pass", String(body.code ?? "ok"), `${pathname} ok`, {
         status_code: response.status
       });
@@ -278,7 +315,11 @@ async function jsonCheck(fetchImpl, baseUrl, pathname, name, options) {
  * @param {string} name
  * @param {number} status
  * @param {string} code
- * @param {{ headers?: Record<string, string>, timeoutMs: number }} options
+ * @param {{
+ *   headers?: Record<string, string>,
+ *   timeoutMs: number,
+ *   validate?: (body: Record<string, any>) => void
+ * }} options
  */
 async function errorCodeCheck(
   fetchImpl,
@@ -309,6 +350,12 @@ async function errorCodeCheck(
       );
     }
     if (response.status === status && body.ok === false && body.code === code) {
+      const invalid = validationFailure(options.validate, body);
+      if (invalid) {
+        return check(name, "fail", "unexpected_response", invalid, {
+          status_code: response.status
+        });
+      }
       return check(name, "pass", code, `${pathname} rejected as expected`, {
         status_code: response.status
       });
@@ -345,6 +392,22 @@ function evidenceCheck(env, evidence) {
     evidence.code,
     evidence.message
   );
+}
+
+/**
+ * Runs a shared runtime-smoke assertion and returns its message when it fails.
+ *
+ * @param {((body: Record<string, any>) => void) | undefined} validate
+ * @param {Record<string, unknown>} body
+ * @returns {string | null}
+ */
+function validationFailure(validate, body) {
+  try {
+    validate?.(body);
+    return null;
+  } catch (error) {
+    return safeErrorMessage(error);
+  }
 }
 
 /**

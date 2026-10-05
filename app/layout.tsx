@@ -4,7 +4,6 @@ import Script from "next/script";
 import type { ReactNode } from "react";
 
 import { AppActionProvider } from "../src/components/actions/AppActionProvider";
-import { ClientEventsInit } from "../src/components/observability/ClientEventsInit";
 import { SiteFooter } from "../src/components/SiteFooter";
 import { SiteHeader } from "../src/components/SiteHeader";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate";
@@ -34,7 +33,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           src="/immediate-action-feedback.js"
           strategy="beforeInteractive"
         />
-        <ClientEventsInit />
         {process.env.CLERK_PUBLISHABLE_KEY && !browserFixtureEnabled ? (
           <ClerkProvider publishableKey={process.env.CLERK_PUBLISHABLE_KEY}>
             <AppActionProvider>{content}</AppActionProvider>

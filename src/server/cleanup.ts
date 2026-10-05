@@ -1,6 +1,10 @@
 import type { TransactionContextStatement } from "./database.ts";
 import type { LimitWindowKind } from "./limits.ts";
-import { fixedWindowLimitNames, getLimitDefinition } from "./limits.ts";
+import {
+  fixedWindowLimitNames,
+  getLimitDefinition,
+  quotaWindowStartUtc
+} from "./limits.ts";
 
 const CALLER_SETUP_REQUEST_RETENTION_DAYS = 7;
 const STRIPE_WEBHOOK_EVENT_RETENTION_DAYS = 90;
@@ -81,18 +85,6 @@ export function outputTimeoutCleanupStatement(
   return {
     sql: "select public.agent_outbox_delete_expired_outputs($1) as deleted_count",
     values: [timestampValue(now)]
-  };
-}
-
-export function downgradeGraceExpiryStatement(
-  nonFilePayloadLimitBytes: number,
-  now: Date
-): TransactionContextStatement {
-  assertNonFilePayloadLimitBytes(nonFilePayloadLimitBytes);
-
-  return {
-    sql: "select * from public.agent_outbox_cleanup_downgrade_grace_expiry($1, $2)",
-    values: [nonFilePayloadLimitBytes, timestampValue(now)]
   };
 }
 
@@ -271,15 +263,6 @@ export function neverActivatedCallerPruningStatement(
   };
 }
 
-export function quotaWindowMaintenanceStatements(
-  now: Date
-): TransactionContextStatement[] {
-  return [
-    accountQuotaWindowMaintenanceStatement(now),
-    ...globalQuotaWindowMaintenanceStatements(now)
-  ];
-}
-
 export function quotaWindowPruningCutoff(
   now: Date,
   windowKinds?: readonly LimitWindowKind[]
@@ -292,18 +275,12 @@ export function quotaWindowPruningCutoff(
           allowed === null ||
           allowed.has(getLimitDefinition(limitName).windowKind!)
       )
-      .map((limitName) => {
-        const start = new Date(now.getTime());
-        const windowKind = getLimitDefinition(limitName).windowKind!;
-        start.setUTCSeconds(0, 0);
-        if (windowKind === "day" || windowKind === "calendar_month") {
-          start.setUTCHours(0, 0, 0, 0);
-        }
-        if (windowKind === "calendar_month") {
-          start.setUTCDate(1);
-        }
-        return start.getTime();
-      })
+      .map((limitName) =>
+        quotaWindowStartUtc(
+          getLimitDefinition(limitName).windowKind!,
+          now
+        ).getTime()
+      )
   );
 
   return new Date(oldestLiveWindowStart);

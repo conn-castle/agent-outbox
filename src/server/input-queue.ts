@@ -2,7 +2,11 @@ import {
   auditSafeLifecycleEvent,
   type AuditSafeLifecycleEvent
 } from "./accounting.ts";
-import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
+import {
+  apiValidationFailed,
+  type ApiErrorInput,
+  type ApiRequestContext
+} from "./api-errors.ts";
 import {
   runAuthenticatedCallerTransaction,
   type CallerIdentity
@@ -72,6 +76,48 @@ type AuditContextRow = {
   caller_audit_id: string;
 };
 
+class CallerItemIdStorageError extends Error {
+  constructor(cause: Error) {
+    super("Caller item id cannot fit its uniqueness index.", { cause });
+    this.name = "CallerItemIdStorageError";
+  }
+}
+
+function isCallerItemIdIndexWidthError(error: unknown): error is Error {
+  if (!(error instanceof Error)) return false;
+  const postgresError = error as Error & {
+    code?: string;
+    routine?: string;
+    schema?: string;
+    table?: string;
+    constraint?: string;
+    column?: string;
+  };
+  if (postgresError.code !== "54000") return false;
+
+  if (postgresError.routine === "_bt_check_third_page") {
+    return (
+      postgresError.schema === "public" &&
+      postgresError.table === "agent_outbox_input_items" &&
+      postgresError.constraint ===
+        "agent_outbox_input_items_caller_id_caller_item_id_key" &&
+      postgresError.column == null
+    );
+  }
+
+  // PostgreSQL's larger tuple-width failure has no object metadata. This
+  // predicate is used only around the root input INSERT: its sole unbounded
+  // indexed value is caller_item_id. Other program-limit errors must escape.
+  return (
+    (postgresError.routine === "index_form_tuple_context" ||
+      postgresError.routine === "index_form_tuple") &&
+    postgresError.schema == null &&
+    postgresError.table == null &&
+    postgresError.constraint == null &&
+    postgresError.column == null
+  );
+}
+
 export async function handleInputQueueRequest(
   request: Request,
   context: ApiRequestContext,
@@ -119,6 +165,19 @@ export async function handleInputQueueRequest(
     }
     return transaction.data;
   } catch (error) {
+    // This marker escapes the exact INSERT and is returned only after the
+    // transaction helper has rolled back. Failed rollback/cleanup replaces or
+    // wraps it, so those uncertain outcomes keep the normal 503/reporting path.
+    if (error instanceof CallerItemIdStorageError) {
+      return apiValidationFailed("Input submission failed validation.", [
+        {
+          path: "caller_item_id",
+          code: "invalid_string",
+          message:
+            "caller_item_id cannot fit the item uniqueness index. Use a shorter ID."
+        }
+      ]);
+    }
     reportRuntimeFailure(error, {
       errorId: context.correlationId,
       request_id: context.requestId,
@@ -263,7 +322,12 @@ export async function sendInputItem(
   const inserted = await query<{
     input_item_id: string;
     current_revision: number;
-  }>(insertInputItemStatement(identity, submission));
+  }>(insertInputItemStatement(identity, submission)).catch((error: unknown) => {
+    if (isCallerItemIdIndexWidthError(error)) {
+      throw new CallerItemIdStorageError(error);
+    }
+    throw error;
+  });
   const insertedRow = inserted.rows[0];
 
   if (!insertedRow) {

@@ -7,7 +7,8 @@ import {
   enforceAcceptedInputSubmissionLimits,
   enforceCallerRequestLimits,
   enforceHumanFileUploadLimits,
-  incrementQuotaWindowStatement
+  incrementQuotaWindowStatement,
+  quotaWindow
 } from "../src/server/caller-api-limits.ts";
 
 /**
@@ -746,4 +747,47 @@ test("quota statement builders scope rows to account metric and window", () => {
     20,
     "concurrent_write_requests_per_account"
   ]);
+});
+
+test("quota windows follow UTC minute, day, and calendar month boundaries", () => {
+  /**
+   * @param {"minute" | "day" | "calendar_month"} windowKind
+   * @param {string} at
+   */
+  const windowAt = (windowKind, at) =>
+    quotaWindow(
+      /** @type {Parameters<typeof quotaWindow>[0]} */ ({ windowKind }),
+      new Date(at)
+    );
+
+  assert.deepEqual(windowAt("minute", "2026-06-30T12:34:56.789Z"), {
+    windowKind: "minute",
+    windowStartUtc: "2026-06-30T12:34:00.000Z",
+    windowEndUtc: "2026-06-30T12:35:00.000Z"
+  });
+  assert.deepEqual(windowAt("minute", "2026-12-31T23:59:59.999Z"), {
+    windowKind: "minute",
+    windowStartUtc: "2026-12-31T23:59:00.000Z",
+    windowEndUtc: "2027-01-01T00:00:00.000Z"
+  });
+  assert.deepEqual(windowAt("day", "2026-06-30T23:59:59.999Z"), {
+    windowKind: "day",
+    windowStartUtc: "2026-06-30T00:00:00.000Z",
+    windowEndUtc: "2026-07-01T00:00:00.000Z"
+  });
+  assert.deepEqual(windowAt("calendar_month", "2026-01-31T12:00:00.000Z"), {
+    windowKind: "calendar_month",
+    windowStartUtc: "2026-01-01T00:00:00.000Z",
+    windowEndUtc: "2026-02-01T00:00:00.000Z"
+  });
+  assert.deepEqual(windowAt("calendar_month", "2028-02-29T23:59:59.999Z"), {
+    windowKind: "calendar_month",
+    windowStartUtc: "2028-02-01T00:00:00.000Z",
+    windowEndUtc: "2028-03-01T00:00:00.000Z"
+  });
+  assert.deepEqual(windowAt("calendar_month", "2026-12-31T23:59:59.999Z"), {
+    windowKind: "calendar_month",
+    windowStartUtc: "2026-12-01T00:00:00.000Z",
+    windowEndUtc: "2027-01-01T00:00:00.000Z"
+  });
 });

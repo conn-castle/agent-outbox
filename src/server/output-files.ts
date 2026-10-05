@@ -178,12 +178,18 @@ export async function outputFileDownloadInTransaction(
       message: "Output file was not found."
     }
   };
+  if (!CANONICAL_UUID_PATTERN.test(path.outputResultId)) {
+    return notFound;
+  }
   // Lock the output row before its file row, matching acknowledgement,
   // pre-read undo, and cleanup, whose output deletion cascades to file rows.
   const output = await query(
     callerOutputLockStatement(identity, path.outputResultId)
   );
   if (output.rows.length === 0) {
+    return notFound;
+  }
+  if (!CANONICAL_UUID_PATTERN.test(path.fileId)) {
     return notFound;
   }
 
@@ -221,6 +227,12 @@ export async function outputFileDownloadInTransaction(
   };
 }
 
+// Only canonical lowercase UUIDs can match a stored output or file id. Callers
+// check ids against this before the uuid casts below so a malformed path id
+// cannot abort the caller's transaction.
+export const CANONICAL_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export function callerOutputLockStatement(
   identity: CallerIdentity,
   outputResultId: string
@@ -231,7 +243,7 @@ export function callerOutputLockStatement(
       from public.agent_outbox_output_results
       where account_id = $1
         and caller_id = $2
-        and output_result_id::text = $3
+        and output_result_id = $3::uuid
       for update
     `,
     values: [identity.accountId, identity.callerId, outputResultId]
@@ -272,8 +284,8 @@ export function outputFileDownloadStatement(
        and c.caller_id = f.caller_id
       where f.account_id = $1
         and f.caller_id = $2
-        and f.output_result_id::text = $3
-        and f.output_file_id::text = $4
+        and f.output_result_id = $3::uuid
+        and f.output_file_id = $4::uuid
       limit 1
       for update of f
     `,

@@ -139,13 +139,9 @@ func (c APIClient) do(ctx context.Context, method string, apiPath string, bearer
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 	}
 
-	client := c.HTTPClient
-	if client == nil {
-		client = defaultHTTPClient
-	}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, responseFailure(CodeAPIUnavailable, "Could not reach Agent Outbox API.", &APIResponse{RequestID: requestID}, kind, err)
+		return nil, requestFailure(&APIResponse{RequestID: requestID}, kind, err)
 	}
 	defer resp.Body.Close()
 
@@ -223,13 +219,9 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 	}
 
-	client := c.HTTPClient
-	if client == nil {
-		client = defaultHTTPClient
-	}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return nil, responseFailure(CodeAPIUnavailable, "Could not reach Agent Outbox API.", &APIResponse{RequestID: requestID}, readRequest, err)
+		return nil, requestFailure(&APIResponse{RequestID: requestID}, readRequest, err)
 	}
 	defer resp.Body.Close()
 
@@ -299,6 +291,61 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 		return downloadMeta, responseFailure(CodeLocalIO, "Could not write output file bytes.", &downloadMeta.APIResponse, readRequest, err)
 	}
 	return downloadMeta, nil
+}
+
+// httpClient returns the configured client with the CLI redirect safety policy
+// applied. Existing callbacks own redirect-count policy; the wrapper preserves
+// net/http's default limit only when no callback exists.
+func (c APIClient) httpClient() *http.Client {
+	base := c.HTTPClient
+	if base == nil {
+		base = defaultHTTPClient
+	}
+	client := *base
+	next := base.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := checkRedirect(req, via); err != nil {
+			return err
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		// Setting CheckRedirect replaces net/http's default ten-hop limit.
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &client
+}
+
+// redirectRefusal is returned by checkRedirect for redirects the CLI must not
+// follow. net/http forwards the Authorization header to same-domain redirect
+// targets regardless of scheme, and rewrites POST to GET on 301/302/303.
+type redirectRefusal struct {
+	message string
+}
+
+func (r *redirectRefusal) Error() string {
+	return r.message
+}
+
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if req.URL.Scheme != "https" && !(req.URL.Scheme == "http" && isLoopbackHost(req.URL.Hostname())) {
+		return &redirectRefusal{message: "Agent Outbox API redirected to a URL that is not https or loopback http; the CLI refused to follow it so caller API keys never travel unencrypted."}
+	}
+	if req.Method != via[0].Method {
+		return &redirectRefusal{message: "Agent Outbox API redirected with a request method change; the CLI refused to follow it so the request is not silently altered."}
+	}
+	return nil
+}
+
+func requestFailure(meta *APIResponse, kind requestKind, err error) *AppError {
+	var refusal *redirectRefusal
+	if errors.As(err, &refusal) {
+		return responseFailure(CodeAPIResponseInvalid, refusal.message, meta, kind, err)
+	}
+	return responseFailure(CodeAPIUnavailable, "Could not reach Agent Outbox API.", meta, kind, err)
 }
 
 func copyBodyWithLimit(dst io.Writer, src io.Reader, byteLimit int64) (bool, error) {

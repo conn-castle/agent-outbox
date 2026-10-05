@@ -677,6 +677,7 @@ function loadInputQueueModuleForTest(
   return /** @type {ReturnType<typeof loadInputQueueModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/input-queue.ts", {
       "./accounting.ts": { async auditSafeLifecycleEvent() {} },
+      "./api-errors.ts": { apiValidationFailed },
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},

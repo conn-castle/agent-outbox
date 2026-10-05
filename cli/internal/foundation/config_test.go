@@ -270,3 +270,64 @@ func TestResolveConfigPathFailsWithoutAnySource(t *testing.T) {
 		t.Fatalf("error code = %q, want %q", appErr.Code, CodeConfig)
 	}
 }
+
+func TestResolveConfigPathValidatesOnlySelectedCleanedFilename(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		flag        string
+		env         string
+		defaultPath string
+		want        string
+		reject      bool
+	}{
+		{
+			name: "reserved flag cannot fall back",
+			flag: " settings/nested/../credentials.json/. ", env: "env.json", defaultPath: "default.json",
+			reject: true,
+		},
+		{
+			name: "reserved env cannot fall back",
+			flag: " ", env: " settings/nested/../.Agent-Outbox.LOCK/. ", defaultPath: "default.json",
+			reject: true,
+		},
+		{
+			name: "reserved default",
+			flag: " ", env: " ", defaultPath: " settings/nested/../Credentials.JSON/. ",
+			reject: true,
+		},
+		{
+			name: "flag overrides reserved env and default",
+			flag: " settings/nested/../custom.json ", env: "credentials.json", defaultPath: ".agent-outbox.lock",
+			want: "settings/custom.json",
+		},
+		{
+			name: "env overrides reserved default",
+			flag: " ", env: " settings/nested/../custom.json ", defaultPath: "credentials.json",
+			want: "settings/custom.json",
+		},
+		{
+			name: "reserved directory name is allowed",
+			flag: ".agent-outbox.lock/config.json",
+			want: ".agent-outbox.lock/config.json",
+		},
+		{
+			name:        "other filename is allowed",
+			defaultPath: "credentials.json.backup",
+			want:        "credentials.json.backup",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveConfigPath(filepath.FromSlash(tc.flag), Env{EnvConfigPath: filepath.FromSlash(tc.env)}, filepath.FromSlash(tc.defaultPath))
+			if tc.reject {
+				appErr, ok := err.(*AppError)
+				if !ok || appErr.Code != "config_error" || ExitCodeFor(err) != 78 || got != "" {
+					t.Fatalf("path = %q, err = %v; want empty path and config_error/78", got, err)
+				}
+				return
+			}
+			if err != nil || got != filepath.FromSlash(tc.want) {
+				t.Fatalf("path = %q, err = %v; want %q", got, err, filepath.FromSlash(tc.want))
+			}
+		})
+	}
+}
