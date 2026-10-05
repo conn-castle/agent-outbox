@@ -87,8 +87,9 @@ export function installClientErrorEvents(target: Window) {
 }
 
 /**
- * Classify an uncaught error or rejection with the existing React classifier and
- * enqueue only hydration_error or client_error, never the exception itself.
+ * Classify an uncaught error or rejection with the existing classifyReactError
+ * function and enqueue only the name hydration_error or client_error, never the
+ * exception itself.
  */
 function emitUncaughtErrorEvent(error: unknown) {
   emitClientEvent(
