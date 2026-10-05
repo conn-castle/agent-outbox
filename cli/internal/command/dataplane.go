@@ -812,6 +812,13 @@ func validateFileGetFlags(fileFlags fileGetFlags, jsonMode bool) error {
 	return nil
 }
 
+// downloadFileToPath stages downloaded bytes in a 0600 file beside outputPath,
+// then syncs and closes it before renaming it into place. Without force, it
+// refuses path entries found by checks before download and before rename.
+// The final check and rename are separate operations; a path created between
+// them can still be overwritten. With force, rename replaces a symlink itself,
+// without writing through it. Initial inspection refuses directories and errors
+// other than a missing path even with force.
 func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string, outputPath string, force bool) (*foundation.DownloadResponse, error) {
 	outputPath = strings.TrimSpace(outputPath)
 	if outputPath == "" {
