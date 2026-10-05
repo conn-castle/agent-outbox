@@ -329,8 +329,3 @@ export async function handleContactRequest(
 
   return jsonResponse({ ok: true }, 200);
 }
-
-export const contactTestInternals = {
-  parseContactSubmission,
-  contactEmailText
-};

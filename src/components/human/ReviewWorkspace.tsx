@@ -643,8 +643,13 @@ export function ReviewWorkspace({
       const canonicalRows = mutation.inputItemIds.map((id) =>
         rows.find((row) => row.inputItemId === id)
       );
+      // After a timeout, a fresh bulk view must also release the projection
+      // when every submitted row is still pending, so those rows can be retried.
+      // Selection removal below independently requires evidence of an answer.
       const reflected =
-        mutation.operation === "undo"
+        (mutation.operation === "bulk-answer" &&
+          record.status === "indeterminate") ||
+        (mutation.operation === "undo"
           ? mutation.requiresCanonicalPendingRow
             ? canonicalRows.every((row, index) => {
                 const snapshot = mutation.rowSnapshots.find(
@@ -661,14 +666,9 @@ export function ReviewWorkspace({
             : canonicalRows.every(
                 (row) => row === undefined || row.status === "pending"
               )
-          : mutation.operation === "bulk-answer" &&
-              record.status === "indeterminate"
-            ? canonicalRows.some(
-                (row) => row === undefined || row.status !== "pending"
-              )
-            : canonicalRows.every(
-                (row) => row === undefined || row.status !== "pending"
-              );
+          : canonicalRows.every(
+              (row) => row === undefined || row.status !== "pending"
+            ));
       if (reflected) {
         // A later answer can reach the server before the undo's pending row
         // ever reaches this view. Retire that older restoration along with

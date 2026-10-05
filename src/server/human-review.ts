@@ -223,6 +223,8 @@ const DEFAULT_REVIEW_LIST_LIMIT = 50;
 export const REVIEW_PAGE_SIZE = 100;
 const MAX_REVIEW_LIST_LIMIT = REVIEW_PAGE_SIZE;
 const REVIEW_PAGE_QUERY_LIMIT = MAX_REVIEW_LIST_LIMIT + 1;
+const CANONICAL_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export async function humanReviewListInTransaction(
   query: ProductTransactionQuery,
@@ -307,8 +309,9 @@ export async function humanReviewDetailInTransaction(
   context: AuthorizedHumanAccountContext,
   inputItemId: string
 ): Promise<HumanReviewDetail | null> {
-  // PostgreSQL text cannot contain a null byte, so this ID cannot exist.
-  if (inputItemId.includes("\0")) return null;
+  // Only canonical lowercase UUIDs can match a stored input_item_id; guarding
+  // here keeps the uuid casts below from aborting the page's transaction.
+  if (!CANONICAL_UUID_PATTERN.test(inputItemId)) return null;
   const input = await query<HumanReviewRow>(
     humanReviewDetailStatement(context, inputItemId)
   );
@@ -652,7 +655,7 @@ export function humanReviewDetailStatement(
     sql: `
       ${reviewRowSelect({ includeDetails: true })}
       where i.account_id = $1
-        and i.input_item_id::text = $2
+        and i.input_item_id = $2::uuid
     `,
     values: [context.accountId, inputItemId]
   };
@@ -669,7 +672,7 @@ export function humanReviewLinkButtonsStatement(
         icon,
         url
       from public.agent_outbox_input_link_buttons
-      where input_item_id::text = $1
+      where input_item_id = $1::uuid
       order by display_order, input_link_button_id
     `,
     values: [inputItemId]
@@ -693,7 +696,7 @@ export function humanReviewActionsStatement(
         popup_kind,
         popup_payload
       from public.agent_outbox_input_actions
-      where input_item_id::text = $1
+      where input_item_id = $1::uuid
       order by display_order, input_action_id
     `,
     values: [inputItemId]
@@ -714,7 +717,7 @@ export function humanReviewActionOptionsStatement(
       from public.agent_outbox_input_action_popup_options option
       join public.agent_outbox_input_actions action
         on action.input_action_id = option.input_action_id
-      where action.input_item_id::text = $1
+      where action.input_item_id = $1::uuid
       order by option.input_action_id, option.display_order, option.input_action_popup_option_id
     `,
     values: [inputItemId]

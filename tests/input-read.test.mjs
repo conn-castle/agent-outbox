@@ -616,6 +616,34 @@ test("input read body rejects caller_item_id values Postgres cannot match unchan
   }
 });
 
+test("input read rejects a body caller_id before the transaction", async () => {
+  const previous = process.env.DATABASE_APP_ROLE_URL;
+  delete process.env.DATABASE_APP_ROLE_URL;
+  try {
+    const result = await handleInputReadRequest(
+      new Request("https://api.test/api/input/read", { method: "POST" }),
+      context,
+      {
+        caller_item_id: "email:thread_123",
+        caller_id: "00000000-0000-4000-8000-000000000999"
+      }
+    );
+    assert.equal(result.ok ? null : result.error.status, 422);
+    assert.deepEqual(
+      result.ok
+        ? null
+        : result.error.fields?.map((field) => [field.path, field.code]),
+      [["caller_id", "caller_id_not_allowed"]]
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previous;
+    }
+  }
+});
+
 test("input read wrappers surface the caller-transaction config guard", async () => {
   const previous = process.env.DATABASE_APP_ROLE_URL;
   delete process.env.DATABASE_APP_ROLE_URL;

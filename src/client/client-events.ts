@@ -16,6 +16,7 @@ const CLIENT_EVENT_QUEUE_LIMIT = CLIENT_EVENT_BATCH_LIMIT * 8;
 const queue: ClientEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
+const installedErrorTargets = new WeakSet<Window>();
 
 export function emitClientEvent(name: ClientEventName) {
   try {
@@ -47,6 +48,55 @@ export function registerClientEventFlushListeners(target: Window) {
     target.removeEventListener("pagehide", flush);
     target.document.removeEventListener("visibilitychange", flushWhenHidden);
   };
+}
+
+/**
+ * Install browser failure telemetry before React hydration, from
+ * instrumentation-client.ts. Once per Window in this module instance, register
+ * capture listeners for uncaught errors/rejections and pagehide/hidden-visibility
+ * flush listeners. Registrations last for the page lifetime; no disposer is
+ * returned.
+ *
+ * Ignore resource error events without an error object. Classify uncaught errors
+ * and rejections, then enqueue name-only telemetry in the shared bounded queue.
+ */
+export function installClientErrorEvents(target: Window) {
+  if (installedErrorTargets.has(target)) {
+    return;
+  }
+  installedErrorTargets.add(target);
+
+  target.addEventListener(
+    "error",
+    (event) => {
+      // Resource load failures dispatch error events without an error object.
+      if (event.error != null) {
+        emitUncaughtErrorEvent(event.error);
+      }
+    },
+    { capture: true }
+  );
+  target.addEventListener(
+    "unhandledrejection",
+    (event) => {
+      emitUncaughtErrorEvent(event.reason);
+    },
+    { capture: true }
+  );
+  registerClientEventFlushListeners(target);
+}
+
+/**
+ * Classify an uncaught error or rejection with the existing classifyReactError
+ * function and enqueue only the name hydration_error or client_error, never the
+ * exception itself.
+ */
+function emitUncaughtErrorEvent(error: unknown) {
+  emitClientEvent(
+    classifyReactError(error) === "hydration"
+      ? "hydration_error"
+      : "client_error"
+  );
 }
 
 export function classifyReactError(error: unknown): "hydration" | "other" {

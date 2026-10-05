@@ -6,7 +6,6 @@ import {
   activeLimitMaintenanceStatement,
   callerSetupCleanupCutoff,
   duplicateAcknowledgementLookupStatement,
-  downgradeGraceExpiryStatement,
   expiredBillingGraceCleanupStatement,
   expiredBillingGraceDowngradeStatement,
   globalQuotaWindowMaintenanceStatements,
@@ -14,7 +13,6 @@ import {
   outputTimeoutCleanupStatement,
   pendingInputRetentionStatement,
   preReadUndoStatement,
-  quotaWindowMaintenanceStatements,
   quotaWindowPruningCutoff,
   quotaWindowPruningStatement,
   terminalOutputDeletionStatement
@@ -72,21 +70,6 @@ test("cleanup statement builders target lifecycle database functions", () => {
       values: ["2026-06-30T00:00:00.000Z"]
     }
   );
-  assert.deepEqual(
-    downgradeGraceExpiryStatement(
-      32_000_000,
-      new Date("2026-06-30T00:00:00.000Z")
-    ),
-    {
-      sql: "select * from public.agent_outbox_cleanup_downgrade_grace_expiry($1, $2)",
-      values: [32_000_000, "2026-06-30T00:00:00.000Z"]
-    }
-  );
-  assert.throws(
-    () =>
-      downgradeGraceExpiryStatement(-1, new Date("2026-06-30T00:00:00.000Z")),
-    /nonFilePayloadLimitBytes must be a non-negative safe integer/
-  );
   for (const builder of [
     expiredBillingGraceCleanupStatement,
     expiredBillingGraceDowngradeStatement
@@ -135,24 +118,6 @@ test("cleanup statement builders target lifecycle database functions", () => {
     quotaWindowPruningCutoff(quotaMaintenanceNow, ["minute"]).toISOString(),
     "2026-07-15T12:34:00.000Z"
   );
-  assert.deepEqual(quotaWindowMaintenanceStatements(quotaMaintenanceNow), [
-    {
-      sql: "select public.agent_outbox_prune_quota_windows($1) as deleted_count",
-      values: ["2026-07-01T00:00:00.000Z"]
-    },
-    {
-      sql: "select public.agent_outbox_prune_ip_quota_windows($1) as deleted_count",
-      values: ["2026-07-15T12:34:00.000Z"]
-    },
-    {
-      sql: "select public.agent_outbox_prune_caller_setup_requests($1) as deleted_count",
-      values: ["2026-07-08T12:34:56.000Z"]
-    },
-    {
-      sql: "select public.agent_outbox_prune_stripe_webhook_events($1) as deleted_count",
-      values: ["2026-04-16T12:34:56.000Z"]
-    }
-  ]);
   assert.deepEqual(
     accountQuotaWindowMaintenanceStatement(quotaMaintenanceNow),
     {

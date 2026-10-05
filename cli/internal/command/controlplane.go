@@ -8,6 +8,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -146,6 +148,9 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err := ensureLocalCallerNameAvailable(runtime.Config, localName); err != nil {
 				return err
 			}
+			if err := ensureConnectServerMatchesConfig(runtime.Config, runtime.Client.BaseURL); err != nil {
+				return err
+			}
 			if err := preflightWritableLocalPersistence(runtime); err != nil {
 				return err
 			}
@@ -171,10 +176,10 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 	documentCommand(cmd, commandHelpSpec{
 		Purpose:     "Create a local caller connection through human approval, store the display-once caller credential locally, then activate it with the hosted app.",
 		Arguments:   "<caller> is the local caller name to store in Agent Outbox config.",
-		Flags:       "Headless and SSH sessions automatically use terminal device-code approval. --device-code or --browser forces a flow. Global --config, --base-url, --json, and --no-color are available.",
+		Flags:       "Headless and SSH sessions automatically use terminal device-code approval. --device-code or --browser forces a flow. Global --config, --base-url, --json, and --no-color are available. All callers in a config share its base URL; use a separate --config for a different server.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox caller connect steward-email\nagent-outbox caller connect steward-email --device-code --json",
-		ExitCodes:   "0 success. 64 usage. 73 local or hosted caller name already exists. 74 secret-store failure. 75 temporary approval/API failure. 77 permission. 78 config.",
+		ExitCodes:   "0 success. 64 usage. 73 local or hosted caller name already exists. 74 secret-store failure. 75 temporary approval/API failure. 77 permission. 78 config, including an origin that differs from the existing callers' config base_url.",
 		RelatedDocs: "docs/spec/http-api.md#caller-connect-control-plane, docs/spec/errors.md, and agent-outbox docs caller.",
 	})
 	return cmd
@@ -1092,6 +1097,9 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 		if err := ensureLocalCallerNameAvailable(runtime.Config, localName); err != nil {
 			return err
 		}
+		if err := ensureConnectServerMatchesConfig(runtime.Config, runtime.Client.BaseURL); err != nil {
+			return err
+		}
 		previousConfig := cloneConfig(runtime.Config)
 
 		if err := storeCallerSecret(runtime, result.Caller.CallerID, pendingKey); err != nil {
@@ -1192,6 +1200,64 @@ func ensureLocalCallerNameAvailable(cfg foundation.Config, localName string) err
 		if caller.Name == localName {
 			return foundation.NewAppError(foundation.CodeCallerAlreadyExists, "Local caller name is already configured; use agent-outbox caller rotate, agent-outbox caller disconnect, or choose a different caller name.")
 		}
+	}
+	return nil
+}
+
+// ensureConnectServerMatchesConfig keeps a config file bound to one server. Its callers share
+// the config base_url, so saving a different connect server would send their credentials there.
+func ensureConnectServerMatchesConfig(cfg foundation.Config, connectBaseURL string) error {
+	if len(cfg.Callers) == 0 {
+		return nil
+	}
+	configBaseURL, err := foundation.ResolveBaseURL("", foundation.Env{}, cfg)
+	if err != nil {
+		return foundation.WrapConfigError("Local config base_url is not a valid Agent Outbox base URL.", err)
+	}
+	configURL, err := url.Parse(configBaseURL)
+	if err != nil {
+		return foundation.WrapConfigError("Local config base_url could not be parsed.", err)
+	}
+	connectURL, err := url.Parse(connectBaseURL)
+	if err != nil {
+		return foundation.WrapConfigError("Connect base URL could not be parsed.", err)
+	}
+	origin := func(parsed *url.URL) (scheme, hostname, zone, port string) {
+		// Compare decoded components; resolved URLs retain escapes for the client and config.
+		scheme = parsed.Scheme
+		hostname = parsed.Hostname()
+		if zoneIndex := strings.IndexByte(hostname, '%'); zoneIndex >= 0 {
+			hostname, zone = hostname[:zoneIndex], hostname[zoneIndex:]
+		}
+		if address, err := netip.ParseAddr(hostname); err == nil {
+			// Normalize IP spelling only for comparison; keep IPv4-mapped IPv6 distinct from IPv4.
+			hostname = address.String()
+		} else {
+			// Fold only ASCII host letters; Unicode folding can equate distinct IDNA names.
+			hostBytes := []byte(hostname)
+			for i, b := range hostBytes {
+				if 'A' <= b && b <= 'Z' {
+					hostBytes[i] = b + ('a' - 'A')
+				}
+			}
+			hostname = string(hostBytes)
+		}
+		port = parsed.Port()
+		if port == "" {
+			if scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		}
+		// Compare port numbers without changing the resolved URL's spelling.
+		return scheme, hostname, zone, strings.TrimLeft(port, "0")
+	}
+	configScheme, configHost, configZone, configPort := origin(configURL)
+	connectScheme, connectHost, connectZone, connectPort := origin(connectURL)
+	// IPv6 zone identifiers retain their exact identity.
+	if configScheme != connectScheme || configHost != connectHost || configZone != connectZone || configPort != connectPort {
+		return foundation.NewAppError(foundation.CodeConfig, fmt.Sprintf("Local config callers are connected to %s, not %s; use a separate --config to connect a caller to a different Agent Outbox server.", configBaseURL, connectBaseURL))
 	}
 	return nil
 }

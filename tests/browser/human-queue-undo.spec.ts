@@ -248,6 +248,50 @@ test("a timed-out bulk answer that committed leaves the selection", async ({
   await expect(page.locator(".bulk-actions")).toHaveCount(0);
 });
 
+test("a timed-out bulk answer that did not commit keeps visible selections for retry", async ({
+  page
+}) => {
+  await page.addInitScript(() => {
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    let intercepted = false;
+    AbortSignal.timeout = (ms: number) => {
+      if (ms !== 20_000 || intercepted) return originalTimeout(ms);
+      intercepted = true;
+      return originalTimeout(50);
+    };
+  });
+  const initial = await openQueue(page, "/human?fixture_dataset=pagination");
+  await selectRows(page, [permit, followUp]);
+  // The request never reaches the server, so the refreshed page contains both
+  // pending rows. This also covers returning before an off-page refresh renders.
+  await page.route("**/human/mutations", () => {});
+  const aborted = page.waitForEvent("requestfailed", (request) =>
+    request.url().endsWith("/human/mutations")
+  );
+  await applyBulk(page);
+  await aborted;
+  await expect(page.locator(".row-title")).toHaveText(initial);
+  for (const title of [permit, followUp])
+    await expect(
+      row(page, title).getByRole("checkbox", { name: "Select review" })
+    ).toBeChecked();
+  await expect(page.locator(".bulk-actions")).toContainText(
+    "2 selected pending rows"
+  );
+  await page.unroute("**/human/mutations");
+  const retried = mutationResponse(page);
+  await applyBulk(page);
+  expect((await retried).ok()).toBe(true);
+  await expect(row(page, permit)).toHaveCount(0);
+  await expect(row(page, followUp)).toHaveCount(0);
+  await expect(page.locator(".bulk-actions")).toHaveCount(0);
+  await page.reload();
+  await expectHydrated(page);
+  await expect(row(page, permit)).toHaveCount(0);
+  await expect(row(page, followUp)).toHaveCount(0);
+  await expectHistory(page, [permit, followUp], []);
+});
+
 for (const offView of ["filter", "page"] as const) {
   test(`a timed-out bulk answer that did not commit keeps selections off-${offView} for retry`, async ({
     page

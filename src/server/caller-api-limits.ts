@@ -12,6 +12,7 @@ import {
   accountLimitStatusMetadata,
   limitErrorMetadata,
   limitProfileSelectorForAccountTier,
+  quotaWindowStartUtc,
   type AccountTier,
   type LimitName,
   type LimitOperationKind,
@@ -789,6 +790,7 @@ async function checkInputStockLimits(
 
   const queued = limitStatus(profile, "queued_input_items");
   if (
+    input.queuedItemDelta > 0 &&
     queued.setting.mode === "enabled" &&
     nonNegativeInteger(stock.queued_input_items) + input.queuedItemDelta >
       queued.setting.value
@@ -901,15 +903,7 @@ export function quotaWindow(
   limit: LimitStatusMetadata & { windowKind: LimitWindowKind },
   now: Date
 ) {
-  const start = new Date(now.getTime());
-  start.setUTCSeconds(0, 0);
-  if (limit.windowKind === "day" || limit.windowKind === "calendar_month") {
-    start.setUTCHours(0, 0, 0, 0);
-  }
-  if (limit.windowKind === "calendar_month") {
-    start.setUTCDate(1);
-  }
-
+  const start = quotaWindowStartUtc(limit.windowKind, now);
   const end = new Date(start.getTime());
   if (limit.windowKind === "minute") {
     end.setUTCMinutes(end.getUTCMinutes() + 1);

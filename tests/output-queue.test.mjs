@@ -675,6 +675,90 @@ test("ack deletes live output and recognizes duplicate acknowledgements", async 
   ]);
 });
 
+test("read and ack report malformed output ids as not found without querying", async () => {
+  // A uuid cast failure would abort the caller transaction and surface as 503.
+  for (const outputResultId of [
+    "not-a-uuid",
+    `${outputOneId}0`,
+    `${outputOneId} `,
+    `${outputOneId}\n`,
+    `${outputOneId}\r`,
+    `${outputOneId}\t`,
+    `${outputOneId}\u0001`,
+    `${outputOneId}\u2028`,
+    "ABCDEFAB-1234-7ABC-8DEF-ABCDEFABCDEF",
+    "ABCDEFAB-1234-4ABC-0DEF-ABCDEFABCDEF"
+  ]) {
+    const readQuery = fakeQuery([[outputRow()], [], []]);
+    const ackQuery = fakeQuery([
+      [{ output_result_id: outputOneId }],
+      [{ output_deleted: true, input_deleted: true, files_deleted: 0 }]
+    ]);
+    const notFound = await readOutputResultInTransaction(
+      readQuery,
+      identity,
+      outputResultId
+    );
+    const ack = await acknowledgeOutputInTransaction(
+      ackQuery,
+      identity,
+      context,
+      outputResultId
+    );
+
+    assert.equal(notFound.ok, false);
+    assert.equal(ack.ok, false);
+    if (notFound.ok || ack.ok) assert.fail(outputResultId);
+    assert.equal(notFound.error.status, 404);
+    assert.deepEqual(ack.error, notFound.error);
+    assert.equal(readQuery.calls.length, 0);
+    assert.equal(ackQuery.calls.length, 0);
+  }
+});
+
+test("uppercase and mixed-case acks preserve duplicate success and the supplied casing", async () => {
+  const id = "abcdefab-1234-4abc-8def-abcdefabcdef";
+  for (const outputResultId of [id.toUpperCase(), id.replace("a", "A")]) {
+    const read = await readOutputResultInTransaction(
+      fakeQuery([]),
+      identity,
+      outputResultId
+    );
+    assert.equal(read.ok ? 200 : read.error.status, 404);
+    for (const alreadyRecorded of [false, true]) {
+      const query = fakeQuery([[{ already_recorded: alreadyRecorded }]]);
+      const result = await acknowledgeOutputInTransaction(
+        query,
+        identity,
+        context,
+        outputResultId
+      );
+      assert.deepEqual(
+        result,
+        alreadyRecorded
+          ? {
+              ok: true,
+              data: {
+                output_result_id: outputResultId,
+                acknowledged: true,
+                already_acknowledged: true
+              }
+            }
+          : {
+              ok: false,
+              error: {
+                status: 404,
+                code: "not_found",
+                message: "Output result was not found for this caller."
+              }
+            }
+      );
+      assert.equal(query.calls.length, 1);
+      assert.match(query.calls[0].sql, /agent_outbox_audit_events/);
+    }
+  }
+});
+
 test("output pagination parsing fails loudly on invalid limits and cursors", () => {
   assert.deepEqual(parseOutputPageQuery(new URLSearchParams()), {
     ok: true,
@@ -741,7 +825,9 @@ test("output pagination parsing fails loudly on invalid limits and cursors", () 
 });
 
 test("output query builders scope by authenticated caller and metadata-only file reads", () => {
-  assert.deepEqual(outputResultByIdStatement(identity, outputOneId).values, [
+  const singleResult = outputResultByIdStatement(identity, outputOneId);
+  assert.match(singleResult.sql, /output_result_id = \$3::uuid/);
+  assert.deepEqual(singleResult.values, [
     identity.accountId,
     identity.callerId,
     outputOneId
@@ -894,6 +980,26 @@ test("output request wrappers reject malformed requests before the transaction",
     );
     assert.equal(readAllBadBody.ok, false);
     assert.equal(readAllBadBody.ok ? null : readAllBadBody.error.status, 422);
+
+    const readAllCallerId = await handleOutputReadAllRequest(
+      new Request("https://api.test/api/output/read-all", { method: "POST" }),
+      context,
+      {
+        limit: 25,
+        cursor: null,
+        caller_id: "00000000-0000-4000-8000-000000000999"
+      }
+    );
+    assert.equal(readAllCallerId.ok ? null : readAllCallerId.error.status, 422);
+    assert.deepEqual(
+      readAllCallerId.ok
+        ? null
+        : readAllCallerId.error.fields?.map((field) => [
+            field.path,
+            field.code
+          ]),
+      [["caller_id", "caller_id_not_allowed"]]
+    );
   } finally {
     if (previous === undefined) {
       delete process.env.DATABASE_APP_ROLE_URL;
