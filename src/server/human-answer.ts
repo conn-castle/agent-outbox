@@ -171,7 +171,6 @@ type TargetInputRow = {
   status: "pending" | "answered";
   current_revision: number;
   non_file_payload_bytes: string | number;
-  updated_at: Date;
   account_audit_id: string;
   caller_audit_id: string;
 };
@@ -287,23 +286,21 @@ export async function createHumanAnswerInTransaction(
     return invalidActionResponse("action_value", "Selected action is invalid.");
   }
 
+  const optionResult = await query<PopupOptionRow>(
+    inputActionOptionsStatement(action.input_action_id)
+  );
+  const optionValues = optionResult.rows.map((row) => row.option_value);
   const popup = answerablePopup(
     action.input_action_id,
     persistedPopup(
       action.input_action_id,
       action.popup_kind,
       action.popup_payload
-    )
-  );
-
-  const optionResult = await query<PopupOptionRow>(
-    inputActionOptionsStatement(action.input_action_id)
+    ),
+    optionValues.length
   );
   const payloadResult = validatedResponsePayload(
-    {
-      ...popup,
-      optionValues: optionResult.rows.map((row) => row.option_value)
-    },
+    { ...popup, optionValues },
     input.response,
     input.feedback
   );
@@ -546,7 +543,6 @@ export function targetInputForAnswerStatement(
         i.status,
         i.current_revision,
         i.non_file_payload_bytes,
-        i.updated_at,
         a.account_audit_id,
         c.caller_audit_id
       from public.agent_outbox_input_items i
@@ -818,7 +814,12 @@ function createOutputResultStatement(input: {
         previous_input_updated_at,
         expires_at
       )
-      values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12)
+      values (
+        $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10,
+        -- Copied in SQL so undo restores the exact microsecond queue position.
+        (select updated_at from public.agent_outbox_input_items where input_item_id = $3),
+        $11
+      )
       returning output_result_id
     `,
     values: [
@@ -832,7 +833,6 @@ function createOutputResultStatement(input: {
       input.payload.responsePayloadBytes,
       timestampValue(input.answeredAt),
       input.input.humanUserId,
-      timestampValue(input.targetInput.updated_at),
       timestampValue(expiresAt)
     ]
   };
@@ -1330,24 +1330,62 @@ function byteCount(value: string | number) {
   return numeric;
 }
 
-// Checks stored bound and MIME values before the response is inspected, so a
-// malformed configuration fails loudly instead of disabling a check.
+// Checks stored bound, timezone, and MIME values against the input rules
+// before the response is inspected, so a malformed configuration fails loudly
+// instead of disabling a check or reaching the stored answer.
 function answerablePopup(
   inputActionId: string,
-  popup: PersistedPopup
+  popup: PersistedPopup,
+  optionCount: number
 ): PersistedPopup {
   const source = `popup_payload for input action ${inputActionId}`;
+  const malformed = (rule: string) =>
+    new Error(`Malformed persisted ${source}: ${rule}.`);
+  if (popup.popupKind === "free_text") {
+    const { min_length, max_length } = popup.popupPayload;
+    if (
+      min_length !== null &&
+      (!Number.isInteger(min_length) || min_length < 0)
+    ) {
+      throw malformed("min_length must be a non-negative integer or null");
+    }
+    if (
+      max_length !== null &&
+      (!Number.isInteger(max_length) || max_length <= 0)
+    ) {
+      throw malformed("max_length must be a positive integer or null");
+    }
+    if (min_length !== null && max_length !== null && min_length > max_length) {
+      throw malformed("min_length must not exceed max_length");
+    }
+  }
+  if (popup.popupKind === "multi_select") {
+    const { min_selected, max_selected } = popup.popupPayload;
+    if (
+      !Number.isInteger(min_selected) ||
+      !Number.isInteger(max_selected) ||
+      min_selected < 0 ||
+      min_selected > max_selected ||
+      max_selected > optionCount
+    ) {
+      throw malformed(
+        "multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count"
+      );
+    }
+  }
   if (popup.popupKind === "date_picker") {
-    const { mode, min_value, max_value } = popup.popupPayload;
+    const { mode, display_timezone, min_value, max_value } = popup.popupPayload;
+    // Mirrors the input rule, which accepts and stores an empty timezone.
+    if (display_timezone && !isIanaTimeZone(display_timezone)) {
+      throw malformed("display_timezone must be an IANA timezone name");
+    }
     const validBound = mode === "date" ? validDateOnly : validUtcDateTime;
     for (const [key, value] of [
       ["min_value", min_value],
       ["max_value", max_value]
     ] as const) {
       if (value !== null && !validBound(value)) {
-        throw new Error(
-          `Malformed persisted ${source}: ${key} must be a valid ${mode} bound.`
-        );
+        throw malformed(`${key} must be a valid ${mode} bound`);
       }
     }
   }
@@ -1361,8 +1399,8 @@ function answerablePopup(
     normalizeMimeTypePattern
   );
   if (patterns.length === 0 || !patterns.every((pattern) => pattern !== null)) {
-    throw new Error(
-      `Malformed persisted ${source}: accept_mime_types must contain at least one valid MIME type pattern.`
+    throw malformed(
+      "accept_mime_types must contain at least one valid MIME type pattern"
     );
   }
   return {

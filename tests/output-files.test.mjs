@@ -101,10 +101,8 @@ test("output file download lookup scopes by account caller output and file ids",
   assert.match(statement.sql, /join public\.agent_outbox_output_results o/);
   assert.match(statement.sql, /f\.account_id = \$1/);
   assert.match(statement.sql, /f\.caller_id = \$2/);
-  // Cast id columns to text so a non-UUID path segment yields zero rows (404)
-  // instead of a Postgres 22P02 uuid cast error swallowed into a 503.
-  assert.match(statement.sql, /f\.output_result_id::text = \$3/);
-  assert.match(statement.sql, /f\.output_file_id::text = \$4/);
+  assert.match(statement.sql, /f\.output_result_id = \$3::uuid/);
+  assert.match(statement.sql, /f\.output_file_id = \$4::uuid/);
   assert.match(statement.sql, /for update of f\s*$/i);
 });
 
@@ -126,6 +124,7 @@ test("output file download returns raw bytes and writes content-safe byte audit"
   assert.equal(result.ok ? result.headers.get("Content-Length") : "", "7");
 
   assert.equal(query.calls.length, 3);
+  assert.match(query.calls[0].sql, /output_result_id = \$3::uuid/);
   assert.match(query.calls[2].sql, /agent_outbox_audit_events/);
   assert.deepEqual(query.calls[2].values, [
     "file_downloaded",
@@ -187,6 +186,37 @@ test("output file download reports not found without audit when ids do not match
       }
     });
     assert.equal(query.calls.length, rowsByCall.length);
+  }
+});
+
+test("output file download rejects noncanonical ids before casting and locks canonical outputs first", async () => {
+  // A uuid cast failure would abort the caller transaction and surface as 503.
+  for (const ids of [
+    { ...path, outputResultId: "not-a-uuid" },
+    { ...path, fileId: "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz" },
+    { ...path, outputResultId: path.outputResultId.replace(/^0/, "A") },
+    { ...path, fileId: `${path.fileId} ` }
+  ]) {
+    const query = fakeQuery([[lockedOutputRow], [fileRow()]]);
+    const result = await outputFileDownloadInTransaction(
+      query,
+      context,
+      identity,
+      ids
+    );
+
+    assert.deepEqual(result, {
+      ok: false,
+      error: {
+        status: 404,
+        code: "not_found",
+        message: "Output file was not found."
+      }
+    });
+    assert.equal(
+      query.calls.length,
+      ids.outputResultId === path.outputResultId ? 1 : 0
+    );
   }
 });
 

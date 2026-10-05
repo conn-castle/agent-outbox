@@ -135,6 +135,15 @@ with `operation=runtime.scheduled.sentry_init`; a flush that times out or fails
 emits a warning log with `operation=runtime.scheduled.sentry_flush`, meaning
 captured events from that invocation may not have reached Sentry.
 
+Unexpected errors at the Worker's human mutation fetch boundary can precede
+Next.js instrumentation. This boundary initializes a missing Sentry client when
+capture is enabled, reports the sanitized original failure, and keeps a bounded
+flush alive with `waitUntil` (or awaits it when unavailable). Initialization
+failures emit an error log with `operation=runtime.fetch.sentry_init`;
+incomplete or failed flushes warn with `operation=runtime.fetch.sentry_flush`.
+Neither replaces the original 503 response or its error log. Known 400/413
+rejections do not initialize, capture, or flush through this boundary.
+
 Scheduled cleanup runs each global prune and each account's maintenance in its
 own transaction, so one failing step does not block the others. Each failed step
 emits an error log with `operation=maintenance.scheduled_cleanup`: global prunes
@@ -142,6 +151,13 @@ use the message `scheduled cleanup global maintenance failed`, and account steps
 carry `account_id`. After all steps run, the invocation fails with one summary
 error log. If the account list cannot be read, the run fails before any account
 maintenance.
+
+The repository Node entry reports ingress overflow as a warning with
+`operation=api_error.request_too_large`, `route=node_ingress`, and
+`limit_name=node_ingress_body_bytes`. Unexpected Node read or handler failures
+use `operation=node_ingress`, sanitized reporting, and an awaited bounded Sentry
+flush before the available error response is sent. The Node transport policy is
+in [the HTTP API](../spec/http-api.md#human-answer-boundary).
 
 Next.js `onRequestError` failures use `operation=next_request_error` and keep
 the SDK's unhandled `auto.function.nextjs.on_request_error` capture. Each hook

@@ -643,8 +643,13 @@ export function ReviewWorkspace({
       const canonicalRows = mutation.inputItemIds.map((id) =>
         rows.find((row) => row.inputItemId === id)
       );
+      // After a timeout, a fresh bulk view must also release the projection
+      // when every submitted row is still pending, so those rows can be retried.
+      // Selection removal below independently requires evidence of an answer.
       const reflected =
-        mutation.operation === "undo"
+        (mutation.operation === "bulk-answer" &&
+          record.status === "indeterminate") ||
+        (mutation.operation === "undo"
           ? mutation.requiresCanonicalPendingRow
             ? canonicalRows.every((row, index) => {
                 const snapshot = mutation.rowSnapshots.find(
@@ -661,14 +666,9 @@ export function ReviewWorkspace({
             : canonicalRows.every(
                 (row) => row === undefined || row.status === "pending"
               )
-          : mutation.operation === "bulk-answer" &&
-              record.status === "indeterminate"
-            ? canonicalRows.some(
-                (row) => row === undefined || row.status !== "pending"
-              )
-            : canonicalRows.every(
-                (row) => row === undefined || row.status !== "pending"
-              );
+          : canonicalRows.every(
+              (row) => row === undefined || row.status !== "pending"
+            ));
       if (reflected) {
         // A later answer can reach the server before the undo's pending row
         // ever reaches this view. Retire that older restoration along with
@@ -859,6 +859,21 @@ export function ReviewWorkspace({
     ) {
       setLastError(null);
     }
+    function clearLastUndoFor(inputItemIds: string[]) {
+      const outputResultId = normalizedFormText(
+        submission.formData,
+        "outputResultId"
+      );
+      setLastUndo((current) => {
+        if (!current) {
+          return null;
+        }
+        const matchesAnswer =
+          inputItemIds.includes(current.inputItemId) &&
+          (!outputResultId || current.outputResultId === outputResultId);
+        return matchesAnswer ? null : current;
+      });
+    }
     enqueue({
       scope: HUMAN_MUTATION_SCOPE,
       optimistic,
@@ -930,20 +945,7 @@ export function ReviewWorkspace({
           return;
         }
         if (result.operation === "undo") {
-          const restoredOutputResultId = normalizedFormText(
-            submission.formData,
-            "outputResultId"
-          );
-          setLastUndo((current) => {
-            if (!current) {
-              return null;
-            }
-            const matchesAnswer =
-              result.inputItemIds.includes(current.inputItemId) &&
-              (!restoredOutputResultId ||
-                current.outputResultId === restoredOutputResultId);
-            return matchesAnswer ? null : current;
-          });
+          clearLastUndoFor(result.inputItemIds);
           setLastError(null);
           return;
         }
@@ -981,6 +983,15 @@ export function ReviewWorkspace({
             }
           }
           router.refresh();
+        }
+        if (
+          submission.operation === "undo" &&
+          error instanceof HumanMutationError &&
+          (error.result?.code === "output_already_read" ||
+            error.result?.code === "not_found")
+        ) {
+          // These undo rejections are permanent; retrying cannot succeed.
+          clearLastUndoFor(submission.inputItemIds);
         }
         const message =
           error instanceof HumanMutationError

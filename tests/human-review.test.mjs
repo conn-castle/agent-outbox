@@ -58,6 +58,7 @@ import {
   accountCanUpgrade,
   humanAccountIdentityOrFallback
 } from "../src/shared/account-display.ts";
+import { readFormDataWithLimit } from "../src/server/request-body.ts";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -2066,6 +2067,31 @@ test("multiline answers keep the browser's line breaks after multipart submissio
   const parsedBulk = parseBulkHumanAnswersForm(await multipartRoundTrip(bulk));
   assert.equal(parsedBulk.ok, true);
   assert.equal(parsedBulk.items[0]?.feedback, "Old line\nClassic Mac line");
+});
+
+test("human mutation body limit accepts the exact byte boundary and counts invalid lengths", async () => {
+  const encoded = "feedback=accepted";
+  for (const length of [
+    undefined,
+    "",
+    "not-a-length",
+    "1",
+    String(encoded.length)
+  ]) {
+    const body = await readFormDataWithLimit(
+      new Request("https://agent-outbox.test/human/mutations", {
+        method: "POST",
+        body: encoded,
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          ...(length === undefined ? {} : { "content-length": length })
+        }
+      }),
+      encoded.length
+    );
+    assert.ok(body.ok);
+    assert.equal(body.formData.get("feedback"), "accepted");
+  }
 });
 
 test("datetime picker bounds offer only minutes the server accepts", () => {

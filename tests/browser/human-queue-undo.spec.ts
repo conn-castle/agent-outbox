@@ -248,6 +248,50 @@ test("a timed-out bulk answer that committed leaves the selection", async ({
   await expect(page.locator(".bulk-actions")).toHaveCount(0);
 });
 
+test("a timed-out bulk answer that did not commit keeps visible selections for retry", async ({
+  page
+}) => {
+  await page.addInitScript(() => {
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    let intercepted = false;
+    AbortSignal.timeout = (ms: number) => {
+      if (ms !== 20_000 || intercepted) return originalTimeout(ms);
+      intercepted = true;
+      return originalTimeout(50);
+    };
+  });
+  const initial = await openQueue(page, "/human?fixture_dataset=pagination");
+  await selectRows(page, [permit, followUp]);
+  // The request never reaches the server, so the refreshed page contains both
+  // pending rows. This also covers returning before an off-page refresh renders.
+  await page.route("**/human/mutations", () => {});
+  const aborted = page.waitForEvent("requestfailed", (request) =>
+    request.url().endsWith("/human/mutations")
+  );
+  await applyBulk(page);
+  await aborted;
+  await expect(page.locator(".row-title")).toHaveText(initial);
+  for (const title of [permit, followUp])
+    await expect(
+      row(page, title).getByRole("checkbox", { name: "Select review" })
+    ).toBeChecked();
+  await expect(page.locator(".bulk-actions")).toContainText(
+    "2 selected pending rows"
+  );
+  await page.unroute("**/human/mutations");
+  const retried = mutationResponse(page);
+  await applyBulk(page);
+  expect((await retried).ok()).toBe(true);
+  await expect(row(page, permit)).toHaveCount(0);
+  await expect(row(page, followUp)).toHaveCount(0);
+  await expect(page.locator(".bulk-actions")).toHaveCount(0);
+  await page.reload();
+  await expectHydrated(page);
+  await expect(row(page, permit)).toHaveCount(0);
+  await expect(row(page, followUp)).toHaveCount(0);
+  await expectHistory(page, [permit, followUp], []);
+});
+
 for (const offView of ["filter", "page"] as const) {
   test(`a timed-out bulk answer that did not commit keeps selections off-${offView} for retry`, async ({
     page
@@ -415,51 +459,75 @@ test("bulk apply answers a new selection after a successful bulk answer", async 
   await expectQueueMembership(page, pending);
 });
 
-test("rejected undo keeps every answered item in History and restores no queue rows", async ({
-  page
-}) => {
-  const initial = await openQueue(page);
-  const refreshes = await holdRefreshes(page);
-  try {
-    for (const [, action] of actions) await answer(page, action);
-    await page.route("**/human/mutations", async (route) => {
-      const form = await requestForm(route);
-      await route.fulfill({
-        status: 409,
-        json: {
-          ok: false,
-          operation: "undo",
-          inputItemIds: [form.get("inputItemId")],
-          code: "output_already_read",
-          message: "Output result has already been read by the caller."
-        }
+for (const [code, message] of [
+  ["output_already_read", "Output result has already been read by the caller."],
+  ["not_found", "Output result was not found."]
+] as const) {
+  test(`${code} undo rejection keeps answered items in History and withdraws Undo`, async ({
+    page
+  }) => {
+    const initial = await openQueue(page);
+    const refreshes = await holdRefreshes(page);
+    try {
+      for (const [, action] of actions) await answer(page, action);
+      await page.route("**/human/mutations", async (route) => {
+        const form = await requestForm(route);
+        await route.fulfill({
+          status: 409,
+          json: {
+            ok: false,
+            operation: "undo",
+            inputItemIds: [form.get("inputItemId")],
+            code,
+            message
+          }
+        });
       });
-    });
-    await undo(page);
-    await expect(page.locator(".last-action-error")).toContainText(
-      "already been read"
-    );
-    await page.unroute("**/human/mutations");
+      await undo(page);
+      await expect(page.locator(".last-action-error")).toContainText(message);
+      // The rejection is permanent, so Undo is no longer offered.
+      await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+      await page.unroute("**/human/mutations");
+      const pending = initial.filter(
+        (title) => !actions.some(([item]) => item === title)
+      );
+      await expectQueue(page, pending);
+    } finally {
+      await refreshes.release();
+    }
     const pending = initial.filter(
       (title) => !actions.some(([item]) => item === title)
     );
-    await expectQueue(page, pending);
-  } finally {
-    await refreshes.release();
-  }
-  const pending = initial.filter(
-    (title) => !actions.some(([item]) => item === title)
+    await sortByTitle(page);
+    await expectQueueMembership(page, pending);
+    await page.reload();
+    await expectHydrated(page);
+    await expectQueueMembership(page, pending);
+    await expectHistory(
+      page,
+      actions.map(([title]) => title),
+      pending
+    );
+  });
+}
+
+test("temporarily failed undo keeps Undo available for retry", async ({
+  page
+}) => {
+  const [, action] = actions[0];
+  await openQueue(page);
+  await answer(page, action);
+  await page.route("**/human/mutations", (route) =>
+    route.fulfill({ status: 503, body: "Service Unavailable" })
   );
-  await sortByTitle(page);
-  await expectQueueMembership(page, pending);
-  await page.reload();
-  await expectHydrated(page);
-  await expectQueueMembership(page, pending);
-  await expectHistory(
-    page,
-    actions.map(([title]) => title),
-    pending
+  await undo(page);
+  await expect(page.locator(".last-action-error")).toContainText(
+    "temporarily unavailable"
   );
+  await page.unroute("**/human/mutations");
+  await expect(
+    page.getByRole("button", { name: `Undo “${action}”`, exact: true })
+  ).toBeVisible();
 });
 
 async function openQueue(page: Page, href = "/human") {

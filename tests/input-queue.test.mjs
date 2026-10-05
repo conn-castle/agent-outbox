@@ -152,6 +152,7 @@ function pendingInputRow() {
  *   inputRows?: QueryResultRow[],
  *   accountStockUsageRows?: QueryResultRow[],
  *   insertedInputRows?: QueryResultRow[],
+ *   updatedInputRows?: QueryResultRow[],
  *   insertedActionRows?: QueryResultRow[],
  *   auditRows?: QueryResultRow[]
  * }} InputQueueThrottleQueryOptions
@@ -169,6 +170,7 @@ function inputQueueThrottleQuery({
   inputRows = [],
   accountStockUsageRows = [],
   insertedInputRows = [],
+  updatedInputRows = [],
   insertedActionRows = [],
   auditRows = [
     {
@@ -209,6 +211,9 @@ function inputQueueThrottleQuery({
     }
     if (/insert into public\.agent_outbox_input_items/.test(statement.sql)) {
       return queryResult(insertedInputRows);
+    }
+    if (/update public\.agent_outbox_input_items/.test(statement.sql)) {
+      return queryResult(updatedInputRows);
     }
     if (/insert into public\.agent_outbox_input_actions/.test(statement.sql)) {
       return queryResult(insertedActionRows);
@@ -1468,6 +1473,68 @@ test("allowed input send still reaches accepted-submission checks before inserti
       call.values?.includes("burst_input_submissions_per_account_per_minute")
     ),
     true
+  );
+});
+
+test("input replace succeeds when queued items already exceed the free cap", async () => {
+  const overCapStock = [
+    {
+      queued_input_items: "1500",
+      non_file_stored_bytes: "0",
+      overall_stored_bytes: "0"
+    }
+  ];
+  /** @param {MockProductTransactionQuery} query */
+  const wroteLimitBlock = (query) =>
+    query.calls.some((call) =>
+      call.sql.includes("insert into public.agent_outbox_account_limit_blocks")
+    );
+
+  const replaceQuery = inputQueueThrottleQuery({
+    defaultQuotaWindowRows: [{ used_units: "1" }],
+    advisoryLockRows: [{ acquired: true }],
+    inputRows: [pendingInputRow()],
+    accountStockUsageRows: overCapStock,
+    updatedInputRows: [{ current_revision: 3 }],
+    insertedActionRows: [{ input_action_id: "action-1" }]
+  });
+  const replace = await handleInputQueueRequestInTransaction(
+    replaceQuery,
+    context,
+    identity,
+    "replace",
+    baseInput()
+  );
+
+  assert.equal(replace.ok, true);
+  assert.equal(
+    replace.ok && replace.data.operation === "replace"
+      ? replace.data.revision
+      : null,
+    3
+  );
+  assert.equal(wroteLimitBlock(replaceQuery), false);
+
+  const sendQuery = inputQueueThrottleQuery({
+    defaultQuotaWindowRows: [{ used_units: "1" }],
+    advisoryLockRows: [{ acquired: true }],
+    accountStockUsageRows: overCapStock
+  });
+  const send = await handleInputQueueRequestInTransaction(
+    sendQuery,
+    context,
+    identity,
+    "send",
+    baseInput({ caller_item_id: "email:over_cap" })
+  );
+
+  assert.equal(send.ok, false);
+  assert.equal(send.ok ? null : send.error.code, "storage_limit_exceeded");
+  assert.equal(
+    send.ok || !send.error.limit || !("limit_name" in send.error.limit)
+      ? null
+      : send.error.limit.limit_name,
+    "queued_input_items"
   );
 });
 

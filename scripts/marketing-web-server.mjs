@@ -8,7 +8,7 @@ if (!port || !baseUrl || !publicBaseUrl) {
   throw new Error("PORT, APP_BASE_URL, and PUBLIC_APP_BASE_URL are required.");
 }
 
-const child = spawn("pnpm", ["exec", "next", "dev", "-p", port], {
+const child = spawn(process.execPath, ["scripts/node-server.mjs", "dev"], {
   env: {
     ...process.env,
     APP_ENV: "test",

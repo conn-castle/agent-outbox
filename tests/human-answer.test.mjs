@@ -12,8 +12,14 @@ import {
 } from "../src/server/human-answer.ts";
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
-import { handleOutputFileDownloadAuthenticatedTransaction } from "../src/server/output-files.ts";
-import { acknowledgeOutputInTransaction } from "../src/server/output-queue.ts";
+import {
+  handleOutputFileDownloadAuthenticatedTransaction,
+  outputFileDownloadInTransaction
+} from "../src/server/output-files.ts";
+import {
+  acknowledgeOutputInTransaction,
+  readOutputResultInTransaction
+} from "../src/server/output-queue.ts";
 import { runScheduledCleanup } from "../src/server/scheduled.ts";
 import { accountLimitStatusMetadata } from "../src/server/limits.ts";
 import {
@@ -22,6 +28,7 @@ import {
   preserveBodyErrorDuringTeardown,
   teardownAttempt
 } from "./helpers/database.mjs";
+import { parseValidSubmission } from "./helpers/canonical-input.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -560,7 +567,6 @@ const pendingInputRow = {
   status: "pending",
   current_revision: 3,
   non_file_payload_bytes: "100",
-  updated_at: new Date("2026-06-29T09:00:00.000Z"),
   account_audit_id: "audit-account-1",
   caller_audit_id: "audit-caller-1"
 };
@@ -590,6 +596,108 @@ const malformedPopupCases = [
     response: { kind: "multi_select", values: ["a", "b", "c"] },
     message:
       "Malformed persisted popup_payload for input action action-1: max_selected must be a finite number, got string."
+  },
+  {
+    name: "free-text negative minimum",
+    kind: "free_text",
+    payload: {
+      ...freeTextPayload,
+      label: "private stored label",
+      min_length: -1
+    },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must be a non-negative integer or null."
+  },
+  {
+    name: "free-text fractional maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 2.5 },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text zero maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 0 },
+    response: { kind: "free_text", text: "" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text minimum above maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 5, max_length: 3 },
+    response: { kind: "free_text", text: "four" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must not exceed max_length."
+  },
+  {
+    name: "multi-select maximum above the stored option count",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, max_selected: 4 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select fractional minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 0.5 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select negative minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: -1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select minimum above maximum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 2, max_selected: 1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "date-picker invalid timezone with a matching date response",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      label: "private stored label",
+      display_timezone: "Not/AZone"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: "Not/AZone"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name."
+  },
+  {
+    name: "datetime-picker invalid timezone",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      mode: "datetime",
+      display_timezone: "Not/AZone"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-06-29T12:00:00.000Z",
+      display_timezone: "UTC"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name."
   },
   {
     name: "date-picker minimum with a number type",
@@ -726,7 +834,7 @@ for (const scenario of malformedPopupCases) {
         assert.equal(error.message, scenario.message);
         assert.doesNotMatch(
           error.message,
-          /private stored|not a mime|text\/plain|"5"|"2"|2026-06-30/
+          /private stored|not a mime|text\/plain|"5"|"2"|2026-06-30|AZone/
         );
         return true;
       }
@@ -781,6 +889,52 @@ for (const scenario of boundedPopupCases) {
   });
 }
 
+/** @type {Array<{kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse}>} */
+const boundaryPopupCases = [
+  {
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 0, max_length: 1 },
+    response: { kind: "free_text", text: "x" }
+  },
+  {
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 0, max_selected: 3 },
+    response: { kind: "multi_select", values: ["a", "b", "c"] }
+  },
+  {
+    kind: "date_picker",
+    payload: { ...datePickerPayload, display_timezone: "" },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: ""
+    }
+  }
+];
+for (const scenario of boundaryPopupCases) {
+  test(`human answer service accepts stored ${scenario.kind} settings at the input-rule limits`, async () => {
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    const result = await createHumanAnswerInTransaction(
+      mockQuery(calls, {
+        inputRows: [pendingInputRow],
+        actionRows: [
+          {
+            input_action_id: "action-1",
+            popup_kind: scenario.kind,
+            popup_payload: scenario.payload
+          }
+        ],
+        optionRows: ["a", "b", "c"].map((option_value) => ({ option_value })),
+        outputRows: [{ output_result_id: "output-1" }]
+      }),
+      { ...baseAnswerInput, response: scenario.response }
+    );
+    assert.equal(result.ok, true);
+  });
+}
+
 test("human answer service rejects stale revisions before creating output", async () => {
   /** @type {TransactionContextStatement[]} */
   const calls = [];
@@ -794,7 +948,6 @@ test("human answer service rejects stale revisions before creating output", asyn
           status: "pending",
           current_revision: 4,
           non_file_payload_bytes: 100,
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -829,7 +982,6 @@ test("human answer service creates one output with feedback and content-safe aud
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -867,7 +1019,7 @@ test("human answer service creates one output with feedback and content-safe aud
   );
   assert.ok(outputInsert);
   assert.ok(outputInsert.values);
-  assert.deepEqual(outputInsert.values.slice(0, 12), [
+  assert.deepEqual(outputInsert.values, [
     baseAnswerInput.accountId,
     baseAnswerInput.callerId,
     baseAnswerInput.inputItemId,
@@ -878,7 +1030,6 @@ test("human answer service creates one output with feedback and content-safe aud
     67,
     "2026-06-30T12:00:00.000Z",
     baseAnswerInput.humanUserId,
-    "2026-06-29T09:00:00.000Z",
     "2026-07-14T12:00:00.000Z"
   ]);
 
@@ -920,7 +1071,6 @@ test("human answer service stores uploaded bytes in one output file row and cont
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -1012,7 +1162,6 @@ test("human answer service rejects oversized uploaded files before reading bytes
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -1154,8 +1303,8 @@ test(
         });
         assert.equal(page.totalCount, expected.length);
         assert.deepEqual(
-          page.rows.map((row) => row.inputItemId).sort(),
-          [...expected].sort()
+          page.rows.map((row) => row.inputItemId),
+          expected
         );
       }
     }
@@ -1197,6 +1346,18 @@ test(
           [crypto.randomUUID(), itemId]
         );
       }
+      // The answered item and the untouched item differ by less than one
+      // millisecond so undo must restore the exact microsecond timestamp.
+      for (const [itemId, updatedAt] of [
+        [ids.inputItemId, "2026-06-29T09:00:00.123456Z"],
+        [untouchedItemId, "2026-06-29T09:00:00.123400Z"],
+        [otherItemId, "2026-06-29T08:00:00.000000Z"]
+      ]) {
+        await client.query(
+          "update public.agent_outbox_input_items set updated_at = $2 where input_item_id = $1",
+          [itemId, updatedAt]
+        );
+      }
       await client.query("commit");
       await client.query("begin");
       await client.query("select set_config($1, $2, true)", [
@@ -1217,11 +1378,11 @@ test(
       ]);
 
       const originalInput = await client.query(
-        `select updated_at from public.agent_outbox_input_items where input_item_id = $1`,
+        `select updated_at::text from public.agent_outbox_input_items where input_item_id = $1`,
         [ids.inputItemId]
       );
-      const originalUpdatedAt = originalInput.rows[0].updated_at.toISOString();
-      await assertQueues([ids.inputItemId, otherItemId, untouchedItemId], []);
+      const originalUpdatedAt = originalInput.rows[0].updated_at;
+      await assertQueues([ids.inputItemId, untouchedItemId, otherItemId], []);
       const otherAnswer = await createHumanAnswerInTransaction(query, {
         accountId: ids.accountId,
         callerId: ids.callerId,
@@ -1253,11 +1414,11 @@ test(
 
       assert.equal(answer.ok, true);
       assert.equal(answer.responseKind, "none");
-      await assertQueues([untouchedItemId], [ids.inputItemId, otherItemId]);
+      await assertQueues([untouchedItemId], [otherItemId, ids.inputItemId]);
 
       const answeredRows = await client.query(
         `
-          select i.status, i.answered_at, o.expires_at, o.previous_input_updated_at
+          select i.status, i.answered_at, o.expires_at, o.previous_input_updated_at::text
           from public.agent_outbox_input_items i
           join public.agent_outbox_output_results o
             on o.input_item_id = i.input_item_id
@@ -1271,7 +1432,7 @@ test(
         "2026-07-14T12:00:00.000Z"
       );
       assert.equal(
-        answeredRows.rows[0].previous_input_updated_at.toISOString(),
+        answeredRows.rows[0].previous_input_updated_at,
         originalUpdatedAt
       );
 
@@ -1297,7 +1458,7 @@ test(
 
       const restoredRows = await client.query(
         `
-          select status, current_revision, updated_at
+          select status, current_revision, updated_at::text
           from public.agent_outbox_input_items
           where input_item_id = $1
         `,
@@ -1306,10 +1467,7 @@ test(
       assert.equal(restoredRows.rows[0].status, "pending");
       assert.equal(restoredRows.rows[0].current_revision, 2);
       await assertQueues([ids.inputItemId, untouchedItemId], [otherItemId]);
-      assert.equal(
-        restoredRows.rows[0].updated_at.toISOString(),
-        originalUpdatedAt
-      );
+      assert.equal(restoredRows.rows[0].updated_at, originalUpdatedAt);
 
       const legacyAnswer = await createHumanAnswerInTransaction(
         (statement) => client.query(statement.sql, statement.values),
@@ -1327,7 +1485,7 @@ test(
         }
       );
       assert.equal(legacyAnswer.ok, true);
-      await assertQueues([untouchedItemId], [ids.inputItemId, otherItemId]);
+      await assertQueues([untouchedItemId], [otherItemId, ids.inputItemId]);
       if (!legacyAnswer.ok) assert.fail("expected legacy fallback answer");
       await client.query(
         `update public.agent_outbox_output_results set previous_input_updated_at = null where output_result_id = $1`,
@@ -1942,6 +2100,295 @@ test(
           await cleanupHumanAnswerDatabaseTest(owner, ids);
         },
         "Ack and download concurrency test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "output lookups preserve canonical live ids and case-insensitive duplicate acks without aborting the transaction",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const caller = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const identity = { accountId: ids.accountId, callerId: ids.callerId };
+    const context = {
+      requestId: "req-canonical-output-ids",
+      correlationId: "corr-canonical-output-ids"
+    };
+    // Guarantee two alphabetic characters so uppercase and mixed-case forms
+    // are always distinct from each other and from the stored ids.
+    const outputResultId = crypto.randomUUID().replace(/^../, "ab");
+    const fileId = crypto.randomUUID().replace(/^../, "cd");
+    const submission = parseValidSubmission({
+      caller_item_id: "caller-item-db",
+      row_type: { display: "Review", icon: "inbox" },
+      title: "Title",
+      subtitle: "Subtitle",
+      summary: "Summary",
+      link_buttons: [],
+      actions: [
+        {
+          display: "Approve",
+          icon: "check",
+          value: "approve",
+          overflow: false,
+          popup: { kind: "file_upload", ...fileUploadPayload }
+        }
+      ]
+    });
+    /** @param {string} id */
+    const caseForms = (id) => [
+      id.toUpperCase(),
+      id.replace(/^[a-f]/, (c) => c.toUpperCase())
+    ];
+    /** @param {string} id */
+    const noncanonicalForms = (id) => [
+      id.replaceAll("-", ""),
+      `{${id}}`,
+      "not-a-uuid",
+      ` ${id}`,
+      ...[
+        " ",
+        "\t",
+        "\n",
+        "\r",
+        "\r\n",
+        "\u0001",
+        "\u00a0",
+        "\u2028",
+        "\u2029",
+        "\ufeff"
+      ].map((suffix) => `${id}${suffix}`)
+    ];
+    /** @type {unknown} */
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await owner.query("begin");
+      await seedDatabaseRows(owner, ids);
+      await owner.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid' where account_id = $1",
+        [ids.accountId]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+        [ids.actionId, JSON.stringify(fileUploadPayload)]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_items set normalized_content_fingerprint = $2 where input_item_id = $1",
+        [ids.inputItemId, submission.normalizedContentFingerprint]
+      );
+      await owner.query(
+        `
+          insert into public.agent_outbox_output_results(
+            output_result_id, account_id, caller_id, input_item_id,
+            caller_item_id, action_value, response_kind, response_payload,
+            response_payload_bytes, answered_by_user_id,
+            previous_input_updated_at, expires_at
+          )
+          select $1, account_id, caller_id, input_item_id,
+            caller_item_id, 'approve', 'file_upload', '{}'::jsonb,
+            2, $3, updated_at, now() + interval '14 days'
+          from public.agent_outbox_input_items where input_item_id = $2
+        `,
+        [outputResultId, ids.inputItemId, ids.userId]
+      );
+      const bytes = Buffer.from("answer");
+      const sha256 = Buffer.from(
+        await crypto.subtle.digest("SHA-256", bytes)
+      ).toString("hex");
+      await owner.query(
+        `
+          insert into public.agent_outbox_output_files(
+            output_file_id, output_result_id, account_id, caller_id,
+            filename, mime_type, size_bytes, sha256, file_bytes
+          )
+          values ($1, $2, $3, $4, 'answer.txt', 'text/plain', $5, $6, $7)
+        `,
+        [
+          fileId,
+          outputResultId,
+          ids.accountId,
+          ids.callerId,
+          bytes.length,
+          sha256,
+          bytes
+        ]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_items set status = 'answered' where input_item_id = $1",
+        [ids.inputItemId]
+      );
+      await owner.query("commit");
+
+      // As on main, a malformed file id still waits for the canonical
+      // output's lock. Rejecting it before the lock changes timeout behavior.
+      await owner.query("begin");
+      await owner.query(
+        "select output_result_id from public.agent_outbox_output_results where output_result_id = $1 for update",
+        [outputResultId]
+      );
+      try {
+        await assert.rejects(
+          runHumanAnswerDatabaseTransaction(
+            caller,
+            ids,
+            "caller",
+            async (query) => {
+              await query({ sql: "set local statement_timeout = '100ms'" });
+              // Exercise the lock directly so a timeout in earlier quota
+              // queries cannot falsely satisfy this assertion.
+              return outputFileDownloadInTransaction(query, context, identity, {
+                outputResultId,
+                fileId: "not-a-uuid"
+              });
+            }
+          ),
+          { code: "57014" }
+        );
+      } finally {
+        await owner.query("rollback");
+      }
+
+      // Every lookup shares one transaction, so a failed uuid cast would
+      // abort it and fail every later statement.
+      await runHumanAnswerDatabaseTransaction(
+        caller,
+        ids,
+        "caller",
+        async (query) => {
+          for (const id of [
+            ...caseForms(outputResultId),
+            ...noncanonicalForms(outputResultId)
+          ]) {
+            const read = await readOutputResultInTransaction(
+              query,
+              identity,
+              id
+            );
+            assert.equal(read.ok ? 200 : read.error.status, 404, id);
+            const download =
+              await handleOutputFileDownloadAuthenticatedTransaction(
+                query,
+                context,
+                identity,
+                { outputResultId: id, fileId }
+              );
+            assert.equal(download.ok ? 200 : download.error.status, 404, id);
+            const ack = await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              id
+            );
+            assert.equal(ack.ok ? 200 : ack.error.status, 404, id);
+          }
+          for (const id of [
+            ...caseForms(fileId),
+            ...noncanonicalForms(fileId)
+          ]) {
+            const download =
+              await handleOutputFileDownloadAuthenticatedTransaction(
+                query,
+                context,
+                identity,
+                { outputResultId, fileId: id }
+              );
+            assert.equal(download.ok ? 200 : download.error.status, 404, id);
+          }
+
+          const read = await readOutputResultInTransaction(
+            query,
+            identity,
+            outputResultId
+          );
+          assert.equal(read.ok, true);
+          const download =
+            await handleOutputFileDownloadAuthenticatedTransaction(
+              query,
+              context,
+              identity,
+              { outputResultId, fileId }
+            );
+          assert.equal(download.ok ? download.bytes.toString() : "", "answer");
+          assert.deepEqual(
+            await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              outputResultId
+            ),
+            {
+              ok: true,
+              data: {
+                output_result_id: outputResultId,
+                acknowledged: true,
+                already_acknowledged: false
+              }
+            }
+          );
+        }
+      );
+
+      // Main's retained-audit fallback accepts casing variants even though
+      // those forms cannot match the live output row.
+      await runHumanAnswerDatabaseTransaction(
+        caller,
+        ids,
+        "caller",
+        async (query) => {
+          for (const id of [...caseForms(outputResultId), outputResultId]) {
+            assert.deepEqual(
+              await acknowledgeOutputInTransaction(
+                query,
+                identity,
+                context,
+                id
+              ),
+              {
+                ok: true,
+                data: {
+                  output_result_id: id,
+                  acknowledged: true,
+                  already_acknowledged: true
+                }
+              }
+            );
+          }
+          for (const id of noncanonicalForms(outputResultId)) {
+            const ack = await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              id
+            );
+            assert.equal(ack.ok ? 200 : ack.error.status, 404, id);
+          }
+          assert.equal(
+            (await query({ sql: "select 1 as alive" })).rows[0].alive,
+            1
+          );
+        }
+      );
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await caller.end();
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Canonical output id test and teardown both failed."
       );
     }
   }
@@ -2678,6 +3125,11 @@ function mockQuery(calls, rowsByKind) {
   const query = async (statement) => {
     calls.push(statement);
 
+    if (
+      statement.sql.includes("insert into public.agent_outbox_output_results")
+    ) {
+      return queryResult(rowsByKind.outputRows ?? []);
+    }
     if (statement.sql.includes("from public.agent_outbox_input_items")) {
       return queryResult(rowsByKind.inputRows ?? []);
     }
@@ -2711,11 +3163,6 @@ function mockQuery(calls, rowsByKind) {
     }
     if (statement.sql.includes("agent_outbox_account_stock_usage")) {
       return queryResult(rowsByKind.accountStockUsageRows ?? []);
-    }
-    if (
-      statement.sql.includes("insert into public.agent_outbox_output_results")
-    ) {
-      return queryResult(rowsByKind.outputRows ?? []);
     }
     if (
       statement.sql.includes("insert into public.agent_outbox_output_files")
