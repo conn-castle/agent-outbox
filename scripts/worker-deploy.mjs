@@ -578,33 +578,25 @@ export function wranglerConfigWithHyperdrive(wranglerConfigText, hyperdriveId) {
 }
 
 /**
- * @param {string} value
- * @returns {string}
- */
-function dotenvValue(value) {
-  if (/[\r\n]/.test(value)) {
-    throw new Error("Worker deploy secret values must be single-line strings");
-  }
-  if (/[\s"'\\]/.test(value)) {
-    throw new Error(
-      "Worker deploy secret values must not contain whitespace, quotes, or backslashes"
-    );
-  }
-  return value;
-}
-
-/**
+ * Wrangler parses a secrets file as JSON before falling back to dotenv, so a
+ * JSON object carries every value verbatim, including `#` and backticks that
+ * its dotenv parser would truncate or strip.
+ *
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
  * @returns {string}
  */
-export function secretsDotenvContent(env) {
-  return `${REQUIRED_SECRET_NAMES.map((name) => {
-    const value = env[name];
-    if (typeof value !== "string") {
-      throw new Error(`${name} is required for production Worker deploy`);
-    }
-    return `${name}=${dotenvValue(value)}`;
-  }).join("\n")}\n`;
+function secretsFileContent(env) {
+  return `${JSON.stringify(
+    Object.fromEntries(
+      REQUIRED_SECRET_NAMES.map((name) => {
+        const value = env[name];
+        if (typeof value !== "string") {
+          throw new Error(`${name} is required for production Worker deploy`);
+        }
+        return [name, value];
+      })
+    )
+  )}\n`;
 }
 
 /**
@@ -655,10 +647,10 @@ export function writeSecretsFile(env, options = {}) {
   const directory = mkdtempSync(
     path.join(selectTempBase(env, options.tempBase), "agent-outbox-worker-")
   );
-  const secretsFilePath = path.join(directory, "worker-secrets.env");
+  const secretsFilePath = path.join(directory, "worker-secrets.json");
 
   try {
-    writeFileSync(secretsFilePath, secretsDotenvContent(env), {
+    writeFileSync(secretsFilePath, secretsFileContent(env), {
       encoding: "utf8",
       mode: 0o600
     });
