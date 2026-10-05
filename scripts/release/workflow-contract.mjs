@@ -401,7 +401,16 @@ export function validateProductionDeployWorkflow(
       ".github/workflows/deploy-production.yml must prepare and byte-verify the exact-candidate draft before production mutation"
     );
   }
-  if (!publishReleaseStep.includes("id: publish-release")) {
+  if (
+    !publishReleaseStep.includes("id: publish-release") ||
+    !publishReleaseStep.includes(
+      "APP_BASE_URL: https://app.agent-outbox.dev"
+    ) ||
+    !publishReleaseStep.includes(
+      "SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}"
+    ) ||
+    /continue-on-error:/.test(publishReleaseStep)
+  ) {
     failures.push(
       ".github/workflows/deploy-production.yml must publish and prove the exact release only after live verification"
     );

@@ -338,6 +338,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AGENT_OUTBOX_GITHUB_RELEASE_ID:
             ${{ steps.prepare-draft.outputs.github_release_id }}
+          APP_BASE_URL: https://app.agent-outbox.dev
+          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}
         run: node scripts/production-release.mjs publish
 
       - name: Reconcile uncommitted release

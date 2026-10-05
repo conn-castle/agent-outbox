@@ -627,6 +627,43 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   }
 });
 
+test("publication recovery requires smoke credentials and cannot hide exhausted failures", () => {
+  const deployWorkflow = readFileSync(
+    new URL("../.github/workflows/deploy-production.yml", import.meta.url),
+    "utf8"
+  );
+  const marker = "      - name: Publish exact-candidate GitHub release\n";
+  const start = deployWorkflow.indexOf(marker);
+  const end = deployWorkflow.indexOf(
+    "      - name: Reconcile uncommitted release",
+    start
+  );
+  const publish = deployWorkflow.slice(start, end);
+  for (const unsafePublish of [
+    publish.replace(
+      "          APP_BASE_URL: https://app.agent-outbox.dev\n",
+      ""
+    ),
+    publish.replace(
+      "          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}\n",
+      ""
+    ),
+    publish.replace(marker, `${marker}        continue-on-error: true\n`)
+  ]) {
+    assert.notEqual(unsafePublish, publish);
+    const unsafe =
+      deployWorkflow.slice(0, start) +
+      unsafePublish +
+      deployWorkflow.slice(end);
+    assert.equal(
+      validateProductionDeployWorkflow(unsafe, "24.18.0").includes(
+        ".github/workflows/deploy-production.yml must publish and prove the exact release only after live verification"
+      ),
+      true
+    );
+  }
+});
+
 test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {
   const unsafeWorkflow = `
     on:

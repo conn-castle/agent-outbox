@@ -282,6 +282,17 @@ committed unit. Anonymous-download verification and Homebrew tap automation run
 afterward as idempotent distribution checks; their failure never rolls back or
 deletes a committed release.
 
+If the publish step cannot prove its final GitHub state, it automatically opens
+one additional bounded publication recovery window. A release already proven
+committed needs no mutation. Before every recovery publication mutation, it
+reruns the full live runtime smoke for the exact candidate SHA (without a
+version override) and re-proves the certified CLI asset inventory and bytes. A
+successful recovery finishes the deploy job normally, so public CLI verification
+and Homebrew distribution continue in the same workflow run. Failed smoke,
+ownership or asset mismatches, permanent errors, and exhausted recovery fail the
+job; cleanup and signal compensation never gain publication assets or bypass
+smoke.
+
 Within the certified artifact's seven-day retention window, choose **Re-run
 failed jobs** on the original workflow run. This reuses the exact artifact and
 the same run ID so the owned draft can be adopted. If that run already marked
