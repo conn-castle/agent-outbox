@@ -567,7 +567,6 @@ const pendingInputRow = {
   status: "pending",
   current_revision: 3,
   non_file_payload_bytes: "100",
-  updated_at: new Date("2026-06-29T09:00:00.000Z"),
   account_audit_id: "audit-account-1",
   caller_audit_id: "audit-caller-1"
 };
@@ -949,7 +948,6 @@ test("human answer service rejects stale revisions before creating output", asyn
           status: "pending",
           current_revision: 4,
           non_file_payload_bytes: 100,
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -984,7 +982,6 @@ test("human answer service creates one output with feedback and content-safe aud
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -1022,7 +1019,7 @@ test("human answer service creates one output with feedback and content-safe aud
   );
   assert.ok(outputInsert);
   assert.ok(outputInsert.values);
-  assert.deepEqual(outputInsert.values.slice(0, 12), [
+  assert.deepEqual(outputInsert.values, [
     baseAnswerInput.accountId,
     baseAnswerInput.callerId,
     baseAnswerInput.inputItemId,
@@ -1033,7 +1030,6 @@ test("human answer service creates one output with feedback and content-safe aud
     67,
     "2026-06-30T12:00:00.000Z",
     baseAnswerInput.humanUserId,
-    "2026-06-29T09:00:00.000Z",
     "2026-07-14T12:00:00.000Z"
   ]);
 
@@ -1075,7 +1071,6 @@ test("human answer service stores uploaded bytes in one output file row and cont
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -1167,7 +1162,6 @@ test("human answer service rejects oversized uploaded files before reading bytes
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -1309,8 +1303,8 @@ test(
         });
         assert.equal(page.totalCount, expected.length);
         assert.deepEqual(
-          page.rows.map((row) => row.inputItemId).sort(),
-          [...expected].sort()
+          page.rows.map((row) => row.inputItemId),
+          expected
         );
       }
     }
@@ -1352,6 +1346,18 @@ test(
           [crypto.randomUUID(), itemId]
         );
       }
+      // The answered item and the untouched item differ by less than one
+      // millisecond so undo must restore the exact microsecond timestamp.
+      for (const [itemId, updatedAt] of [
+        [ids.inputItemId, "2026-06-29T09:00:00.123456Z"],
+        [untouchedItemId, "2026-06-29T09:00:00.123400Z"],
+        [otherItemId, "2026-06-29T08:00:00.000000Z"]
+      ]) {
+        await client.query(
+          "update public.agent_outbox_input_items set updated_at = $2 where input_item_id = $1",
+          [itemId, updatedAt]
+        );
+      }
       await client.query("commit");
       await client.query("begin");
       await client.query("select set_config($1, $2, true)", [
@@ -1372,11 +1378,11 @@ test(
       ]);
 
       const originalInput = await client.query(
-        `select updated_at from public.agent_outbox_input_items where input_item_id = $1`,
+        `select updated_at::text from public.agent_outbox_input_items where input_item_id = $1`,
         [ids.inputItemId]
       );
-      const originalUpdatedAt = originalInput.rows[0].updated_at.toISOString();
-      await assertQueues([ids.inputItemId, otherItemId, untouchedItemId], []);
+      const originalUpdatedAt = originalInput.rows[0].updated_at;
+      await assertQueues([ids.inputItemId, untouchedItemId, otherItemId], []);
       const otherAnswer = await createHumanAnswerInTransaction(query, {
         accountId: ids.accountId,
         callerId: ids.callerId,
@@ -1408,11 +1414,11 @@ test(
 
       assert.equal(answer.ok, true);
       assert.equal(answer.responseKind, "none");
-      await assertQueues([untouchedItemId], [ids.inputItemId, otherItemId]);
+      await assertQueues([untouchedItemId], [otherItemId, ids.inputItemId]);
 
       const answeredRows = await client.query(
         `
-          select i.status, i.answered_at, o.expires_at, o.previous_input_updated_at
+          select i.status, i.answered_at, o.expires_at, o.previous_input_updated_at::text
           from public.agent_outbox_input_items i
           join public.agent_outbox_output_results o
             on o.input_item_id = i.input_item_id
@@ -1426,7 +1432,7 @@ test(
         "2026-07-14T12:00:00.000Z"
       );
       assert.equal(
-        answeredRows.rows[0].previous_input_updated_at.toISOString(),
+        answeredRows.rows[0].previous_input_updated_at,
         originalUpdatedAt
       );
 
@@ -1452,7 +1458,7 @@ test(
 
       const restoredRows = await client.query(
         `
-          select status, current_revision, updated_at
+          select status, current_revision, updated_at::text
           from public.agent_outbox_input_items
           where input_item_id = $1
         `,
@@ -1461,10 +1467,7 @@ test(
       assert.equal(restoredRows.rows[0].status, "pending");
       assert.equal(restoredRows.rows[0].current_revision, 2);
       await assertQueues([ids.inputItemId, untouchedItemId], [otherItemId]);
-      assert.equal(
-        restoredRows.rows[0].updated_at.toISOString(),
-        originalUpdatedAt
-      );
+      assert.equal(restoredRows.rows[0].updated_at, originalUpdatedAt);
 
       const legacyAnswer = await createHumanAnswerInTransaction(
         (statement) => client.query(statement.sql, statement.values),
@@ -1482,7 +1485,7 @@ test(
         }
       );
       assert.equal(legacyAnswer.ok, true);
-      await assertQueues([untouchedItemId], [ids.inputItemId, otherItemId]);
+      await assertQueues([untouchedItemId], [otherItemId, ids.inputItemId]);
       if (!legacyAnswer.ok) assert.fail("expected legacy fallback answer");
       await client.query(
         `update public.agent_outbox_output_results set previous_input_updated_at = null where output_result_id = $1`,
@@ -3122,6 +3125,11 @@ function mockQuery(calls, rowsByKind) {
   const query = async (statement) => {
     calls.push(statement);
 
+    if (
+      statement.sql.includes("insert into public.agent_outbox_output_results")
+    ) {
+      return queryResult(rowsByKind.outputRows ?? []);
+    }
     if (statement.sql.includes("from public.agent_outbox_input_items")) {
       return queryResult(rowsByKind.inputRows ?? []);
     }
@@ -3155,11 +3163,6 @@ function mockQuery(calls, rowsByKind) {
     }
     if (statement.sql.includes("agent_outbox_account_stock_usage")) {
       return queryResult(rowsByKind.accountStockUsageRows ?? []);
-    }
-    if (
-      statement.sql.includes("insert into public.agent_outbox_output_results")
-    ) {
-      return queryResult(rowsByKind.outputRows ?? []);
     }
     if (
       statement.sql.includes("insert into public.agent_outbox_output_files")
