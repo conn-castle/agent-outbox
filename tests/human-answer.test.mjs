@@ -1961,6 +1961,11 @@ test(
 test(
   "acknowledging an output while its file downloads finishes without deadlocking",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  /**
+   * Checks that acknowledgement and a limited download attempt finish
+   * without deadlocking. The download returns 404 not_found after
+   * acknowledgement removes the output.
+   */
   async () => {
     assert.ok(databaseUrl);
     const owner = await connectedDatabaseClient(databaseUrl);
@@ -2061,6 +2066,10 @@ test(
         downloader,
         ids,
         "caller",
+        /**
+         * Attempts a limited download while acknowledgement holds the output
+         * lock. The enclosing test asserts the eventual outcome.
+         */
         (query) =>
           downloadOutputFileWithLimits(
             query,
@@ -2128,6 +2137,11 @@ test(
 test(
   "output lookups preserve canonical live ids and case-insensitive duplicate acks without aborting the transaction",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  /**
+   * Checks canonical live lookups, limited downloads, and case-insensitive
+   * duplicate acknowledgements without aborting lookup transactions. The
+   * fixture spans multiple transactions.
+   */
   async () => {
     assert.ok(databaseUrl);
     const owner = await connectedDatabaseClient(databaseUrl);
@@ -2285,6 +2299,11 @@ test(
         caller,
         ids,
         "caller",
+        /**
+         * Rejects noncanonical and case-variant live ids, then reads,
+         * downloads with limits, and acknowledges the canonical output in
+         * this transaction.
+         */
         async (query) => {
           for (const id of [
             ...caseForms(outputResultId),

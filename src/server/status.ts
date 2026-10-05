@@ -130,6 +130,10 @@ export async function handleCallerStatusRequest(
       unavailableMessage: "Caller status is temporarily unavailable.",
       unexpectedFailureMessage: "Caller status request failed unexpectedly."
     },
+    /**
+     * Reads caller status with the authenticated identity and `keyId` after
+     * authentication and status limits.
+     */
     (query, identity) =>
       callerStatusInTransaction(query, identity, identity.keyId)
   );

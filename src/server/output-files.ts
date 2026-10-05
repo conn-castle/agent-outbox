@@ -85,6 +85,10 @@ export async function handleOutputFileDownloadRequest(
       unavailableMessage: "Output file download is temporarily unavailable.",
       unexpectedFailureMessage: "Output file download failed unexpectedly."
     },
+    /**
+     * Delegates the transaction, context, authenticated identity, and path to
+     * the file reader after authentication and download limits.
+     */
     (query, identity) =>
       outputFileDownloadInTransaction(query, context, identity, path)
   );

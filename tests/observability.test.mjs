@@ -3103,7 +3103,15 @@ test("billing session resolution failures share billing route error ids", async 
   );
 });
 
-test("input queue and output file catch paths share error ids across logs and Sentry", async () => {
+// prettier-ignore
+test(
+  "input queue and output file catch paths share error ids across logs and Sentry",
+  /**
+   * Exercises real output authentication and the shared wrapper with an
+   * injected transaction failure, alongside the input-queue fixture. Checks
+   * error ids, logs, Sentry, messages, and that raw errors are not leaked.
+   */
+  async () => {
   /** @type {Array<{ tags: Map<string, unknown>, contexts: Array<{ name: string, value: Record<string, unknown> }> }>} */
   const sentryScopes = [];
   /** @type {Array<{ name?: string }>} */
@@ -3270,7 +3278,15 @@ test("input queue and output file catch paths share error ids across logs and Se
   assert.equal(serializedLogs.includes("raw output transaction secret"), false);
 });
 
-test("output file limit denial returns the error before any output lookup", async () => {
+// prettier-ignore
+test(
+  "output file limit denial returns the error before any output lookup",
+  /**
+   * Exercises real authentication and an injected limit denial. Checks the
+   * returned error, the authenticated account and operation, and that no
+   * output lookup runs. This does not enforce a production quota.
+   */
+  async () => {
   const keyMaterial = await withProcessEnv(
     { CALLER_KEY_HASH_SECRET: CALLER_KEY_HASH_SECRET_FIXTURE },
     callerAuth.generateCallerApiKeyMaterial
