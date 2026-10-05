@@ -153,13 +153,15 @@ STRIPE_WEBHOOK_SECRET
 ```
 
 `wrangler.jsonc` declares these true Worker secrets under `secrets.required`.
-The production deploy wrapper writes only these names to a temporary dotenv
+The production deploy wrapper writes only these names to a temporary JSON
 secrets file outside the repository and passes it to Wrangler with
-`--secrets-file`; these values are not passed to the OpenNext build subprocess.
-The file is removed after the deploy attempt. The pinned Wrangler dry-run did
-not reject a dummy secrets file missing one required name, so treat the repo
-deploy wrapper's required-environment check and the structural smoke guard as
-the enforced inventory checks.
+`--secrets-file`; JSON preserves every value verbatim, including `#` and
+backticks that Wrangler's dotenv fallback would truncate or strip. These values
+are not passed to the OpenNext build subprocess. The file is removed after the
+deploy attempt. The pinned Wrangler dry-run did not reject a dummy secrets file
+missing one required name, so treat the repo deploy wrapper's
+required-environment check and the structural smoke guard as the enforced
+inventory checks.
 
 Do not install `DATABASE_APP_ROLE_URL` as a production Worker secret. Production
 database access is through the `AGENT_OUTBOX_DATABASE` Hyperdrive binding
