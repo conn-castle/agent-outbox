@@ -1417,6 +1417,10 @@ test("expired pending replacement activate and abort requests fail and expire th
         assert.match(callerQuery.calls[3].sql, /status = 'expired'/);
         assert.match(
           callerQuery.calls[3].sql,
+          /pending_replacement_for_credential_id = null/
+        );
+        assert.match(
+          callerQuery.calls[3].sql,
           /pending_replacement_setup_request_id = null/
         );
 
@@ -1531,7 +1535,7 @@ test("revoke confirm revokes credentials without deleting caller history, queue 
 
 /**
  * @param {import("../src/server/caller-auth.ts").DisplayOnceCallerApiKeyMaterial} material
- * @param {{ expiresAt?: string, pendingStatus?: string, pendingSecretDigest?: string }} [options]
+ * @param {{ expiresAt?: string, pendingStatus?: string, pendingSecretDigest?: string, lookupSecretDigest?: string }} [options]
  */
 function pendingRotateRunner(material, options = {}) {
   const expiresAt = options.expiresAt ?? "2026-07-02T00:10:00.000Z";
@@ -1553,7 +1557,7 @@ function pendingRotateRunner(material, options = {}) {
         key_id: material.keyId,
         key_prefix: material.keyPrefix,
         key_last_four: material.keyLastCharacters,
-        secret_hmac_sha256: material.secretDigest,
+        secret_hmac_sha256: options.lookupSecretDigest ?? material.secretDigest,
         status: "pending_activation",
         revoked_at: null,
         expires_at: expiresAt
@@ -1899,3 +1903,431 @@ test(
     }
   }
 );
+
+test("rotate pending handlers preserve validation, authentication, availability and failure reports", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
+    },
+    async () => {
+      const material = generateCallerApiKeyMaterial();
+      const context = {
+        requestId: "req-pending-contract",
+        correlationId: "corr-pending-contract"
+      };
+      const body = { setup_request_id: SETUP_REQUEST_ID };
+      const authorization = `Bearer ${material.plaintextApiKey}`;
+      const handlers = [
+        {
+          handler: handleRotateActivateRequest,
+          ipMessage:
+            "Trusted client IP is unavailable for caller rotate activation.",
+          lookupOperation: "caller_rotate_activate_lookup",
+          operation: "caller_rotate_activate"
+        },
+        {
+          handler: handleRotateAbortRequest,
+          ipMessage:
+            "Trusted client IP is unavailable for caller rotate abort.",
+          lookupOperation: "caller_rotate_abort_lookup",
+          operation: "caller_rotate_abort"
+        }
+      ];
+      for (const entry of handlers) {
+        const request = (headers = { authorization }) =>
+          controlRequest("/api/caller/rotate/activate", { headers });
+        for (const invalidBody of [null, []]) {
+          assert.deepEqual(
+            await entry.handler(request(), context, invalidBody),
+            {
+              ok: false,
+              error: {
+                status: 422,
+                code: "validation_failed",
+                message:
+                  "Caller credential operation request failed validation.",
+                fields: [
+                  {
+                    path: "",
+                    code: "invalid_request",
+                    message: "Request body must be an object."
+                  }
+                ]
+              }
+            }
+          );
+        }
+        assert.deepEqual(
+          await entry.handler(request({ authorization: "" }), context, body),
+          {
+            ok: false,
+            error: {
+              status: 401,
+              code: "authentication_required",
+              message: "Pending replacement bearer credential is required."
+            }
+          }
+        );
+        assert.deepEqual(
+          await entry.handler(
+            request({ authorization: "Bearer malformed" }),
+            context,
+            body
+          ),
+          {
+            ok: false,
+            error: {
+              status: 401,
+              code: "invalid_caller_credentials",
+              message:
+                "Pending replacement credential is invalid or no longer usable."
+            }
+          }
+        );
+        assert.deepEqual(
+          await entry.handler(
+            controlRequest("/api/caller/rotate/activate", {
+              headers: { authorization, "cf-connecting-ip": "" }
+            }),
+            context,
+            body
+          ),
+          {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message: entry.ipMessage
+            }
+          }
+        );
+        await withProcessEnv({ DATABASE_APP_ROLE_URL: undefined }, async () => {
+          assert.deepEqual(await entry.handler(request(), context, body), {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message:
+                "Caller credential operation database configuration is unavailable."
+            }
+          });
+        });
+        for (const failAt of [1, 2]) {
+          const { controlQuery } = pendingRotateRunner(material);
+          let calls = 0;
+          /** @type {typeof import("../src/server/database.ts").runProductTransaction} */
+          const runProductTransaction = async (_url, _context, callback) => {
+            calls += 1;
+            if (calls === failAt)
+              throw new Error("injected transaction failure");
+            return callback(controlQuery);
+          };
+          /** @type {string[]} */
+          const lines = [];
+          const originalError = console.error;
+          let result;
+          try {
+            console.error = (line) => lines.push(line);
+            result = await entry.handler(request(), context, body, {
+              runProductTransaction
+            });
+          } finally {
+            console.error = originalError;
+          }
+          assert.equal(calls, failAt);
+          assert.deepEqual(result, {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message:
+                "Caller credential operation is temporarily unavailable.",
+              errorId: context.correlationId,
+              reported: true
+            }
+          });
+          assert.equal(lines.length, 1);
+          const log = JSON.parse(lines[0]);
+          assert.equal(
+            log.operation,
+            failAt === 1 ? entry.lookupOperation : entry.operation
+          );
+          assert.equal(
+            log.message,
+            "Caller credential operation failed unexpectedly."
+          );
+          assert.equal(log.error_id, context.correlationId);
+          assert.equal(log.request_id, context.requestId);
+          assert.equal(log.surface, "api");
+          assert.equal(log.status_code, 503);
+          assert.equal(log.account_id, failAt === 1 ? undefined : ACCOUNT_ID);
+          assert.equal(log.caller_id, failAt === 1 ? undefined : CALLER_ID);
+        }
+      }
+    }
+  );
+});
+
+test("rotate parsers preserve ordered fields and the 512-character code limit", async () => {
+  await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
+    async () => {
+      const context = {
+        requestId: "req-parser-contract",
+        correlationId: "corr-parser-contract"
+      };
+      assert.deepEqual(
+        await handleRotateBrowserStartRequest(
+          controlRequest("/start"),
+          context,
+          {}
+        ),
+        {
+          ok: false,
+          error: {
+            status: 422,
+            code: "validation_failed",
+            message: "Caller credential operation request failed validation.",
+            fields: [
+              {
+                path: "caller_id",
+                code: "required",
+                message: "caller_id is required."
+              },
+              {
+                path: "local_caller_name",
+                code: "required",
+                message: "local_caller_name is required."
+              },
+              {
+                path: "callback_url",
+                code: "required",
+                message: "callback_url is required."
+              }
+            ]
+          }
+        }
+      );
+      const routes = [
+        {
+          handler: handleRotateDevicePollRequest,
+          field: "device_code",
+          ipMessage: "Trusted client IP is unavailable for caller rotate poll.",
+          tooLongMessage: "device_code must be at most 512 characters."
+        },
+        {
+          handler: handleRevokeConfirmRequest,
+          field: "setup_code",
+          ipMessage:
+            "Trusted client IP is unavailable for caller revoke confirmation.",
+          tooLongMessage: "setup_code must be at most 512 characters."
+        }
+      ];
+      for (const route of routes) {
+        const request = controlRequest("/code", {
+          headers: { "cf-connecting-ip": "" }
+        });
+        for (const length of [200, 512]) {
+          assert.deepEqual(
+            await route.handler(request, context, {
+              [route.field]: "x".repeat(length)
+            }),
+            {
+              ok: false,
+              error: {
+                status: 503,
+                code: "temporary_unavailable",
+                message: route.ipMessage
+              }
+            }
+          );
+        }
+        assert.deepEqual(
+          await route.handler(request, context, {
+            [route.field]: "x".repeat(513)
+          }),
+          {
+            ok: false,
+            error: {
+              status: 422,
+              code: "validation_failed",
+              message: "Caller credential operation request failed validation.",
+              fields: [
+                {
+                  path: route.field,
+                  code: "too_long",
+                  message: route.tooLongMessage
+                }
+              ]
+            }
+          }
+        );
+      }
+    }
+  );
+});
+
+test("rotate and revoke control-plane requests keep their IP limit metrics", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
+      PUBLIC_APP_BASE_URL: "https://app.example.test"
+    },
+    async () => {
+      const material = generateCallerApiKeyMaterial();
+      const context = {
+        requestId: "req-limit-contract",
+        correlationId: "corr-limit-contract"
+      };
+      for (const handler of [
+        handleRotateActivateRequest,
+        handleRotateAbortRequest
+      ]) {
+        const { runner, controlQuery } = pendingRotateRunner(material);
+        await handler(
+          controlRequest("/rotate", {
+            headers: { authorization: `Bearer ${material.plaintextApiKey}` }
+          }),
+          context,
+          { setup_request_id: SETUP_REQUEST_ID },
+          {
+            now: new Date("2026-07-02T00:00:00.000Z"),
+            runProductTransaction: runner.runProductTransaction
+          }
+        );
+        assert.equal(
+          controlQuery.calls[0].values?.[1],
+          "caller_rotate_activation_requests_per_ip_per_minute"
+        );
+      }
+      const startBody = {
+        caller_id: CALLER_ID,
+        local_caller_name: "local-agent"
+      };
+      const browserStartBody = {
+        ...startBody,
+        callback_url: "http://127.0.0.1:8765/callback"
+      };
+      for (const entry of [
+        {
+          handler: handleRotateBrowserStartRequest,
+          body: browserStartBody,
+          insertedRows: [{ setup_request_id: SETUP_REQUEST_ID }],
+          metric: "caller_rotate_start_requests_per_ip_per_minute"
+        },
+        {
+          handler: handleRevokeBrowserStartRequest,
+          body: browserStartBody,
+          insertedRows: [{ setup_request_id: SETUP_REQUEST_ID }],
+          metric: "caller_revoke_start_requests_per_ip_per_minute"
+        },
+        {
+          handler: handleRotateDeviceStartRequest,
+          body: startBody,
+          metric: "caller_rotate_start_requests_per_ip_per_minute"
+        },
+        {
+          handler: handleRevokeDeviceStartRequest,
+          body: startBody,
+          metric: "caller_revoke_start_requests_per_ip_per_minute"
+        },
+        {
+          handler: handleRotateDevicePollRequest,
+          body: { device_code: "device-code" },
+          metric: "caller_rotate_poll_requests_per_ip_per_minute"
+        },
+        {
+          handler: handleRevokeDevicePollRequest,
+          body: { device_code: "device-code" },
+          metric: "caller_revoke_poll_requests_per_ip_per_minute"
+        },
+        {
+          handler: handleRotateExchangeRequest,
+          body: { setup_code: "setup-code" },
+          metric: "caller_rotate_exchange_requests_per_ip_per_minute"
+        },
+        {
+          handler: handleRevokeConfirmRequest,
+          body: { setup_code: "setup-code" },
+          metric: "caller_revoke_confirm_requests_per_ip_per_minute"
+        }
+      ]) {
+        const query = fakeQuery((_statement, callNumber) =>
+          callNumber === 1 ? [{ used_units: "1" }] : (entry.insertedRows ?? [])
+        );
+        const runner = fakeTransactionRunner([query]);
+        await entry.handler(controlRequest("/limit"), context, entry.body, {
+          runProductTransaction: runner.runProductTransaction
+        });
+        assert.equal(query.calls[0].values?.[1], entry.metric);
+      }
+    }
+  );
+});
+
+test("rotate activation rejects a malformed stored digest before hashing the bearer secret", async () => {
+  const material = await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
+    () => generateCallerApiKeyMaterial()
+  );
+  const expected = {
+    ok: false,
+    error: {
+      status: 401,
+      code: "invalid_caller_credentials",
+      message: "Pending replacement credential is invalid or no longer usable."
+    }
+  };
+
+  // The lookup rejects the malformed digest without needing the hash secret,
+  // so an unavailable secret cannot turn the 401 into a 503.
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: undefined,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
+    },
+    async () => {
+      const { runner } = pendingRotateRunner(material, {
+        lookupSecretDigest: "not-a-digest"
+      });
+      const result = await handleRotateActivateRequest(
+        controlRequest("/rotate", {
+          headers: { authorization: `Bearer ${material.plaintextApiKey}` }
+        }),
+        { requestId: "req-bad-digest", correlationId: "corr-bad-digest" },
+        { setup_request_id: SETUP_REQUEST_ID },
+        {
+          now: new Date("2026-07-02T00:00:00.000Z"),
+          runProductTransaction: runner.runProductTransaction
+        }
+      );
+      assert.deepEqual(result, expected);
+    }
+  );
+
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
+    },
+    async () => {
+      const { runner } = pendingRotateRunner(material, {
+        pendingSecretDigest: "not-a-digest"
+      });
+      const result = await handleRotateActivateRequest(
+        controlRequest("/rotate", {
+          headers: { authorization: `Bearer ${material.plaintextApiKey}` }
+        }),
+        { requestId: "req-bad-digest", correlationId: "corr-bad-digest" },
+        { setup_request_id: SETUP_REQUEST_ID },
+        {
+          now: new Date("2026-07-02T00:00:00.000Z"),
+          runProductTransaction: runner.runProductTransaction
+        }
+      );
+      assert.deepEqual(result, expected);
+    }
+  );
+});
