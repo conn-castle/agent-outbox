@@ -11,6 +11,11 @@ import type {
 } from "../../../src/shared/human-mutation";
 import { createCorrelationId } from "../../../src/server/correlation";
 import { humanBrowserFixtureEnabled } from "../../../src/server/human-review-fixture-gate";
+import { humanMutationTransportFailureResponse } from "../../../src/server/human-mutation-response";
+import {
+  HUMAN_MUTATION_REQUEST_BODY_BYTE_LIMIT,
+  readFormDataWithLimit
+} from "../../../src/server/request-body";
 import { reportRuntimeFailure } from "../../../src/server/sentry";
 
 export const dynamic = "force-dynamic";
@@ -48,20 +53,18 @@ export async function POST(request: Request) {
         );
       }
     }
-    const formData = await request.formData();
-    const operation = formData.get("_operation");
-    if (!isHumanMutationOperation(operation)) {
-      return mutationResponse(
-        {
-          ok: false,
-          operation: "answer",
-          code: "invalid_request",
-          message: "Action failed: invalid request.",
-          inputItemIds: []
-        },
-        400
-      );
+    const body = await readFormDataWithLimit(
+      request,
+      HUMAN_MUTATION_REQUEST_BODY_BYTE_LIMIT
+    );
+    if (!body.ok) {
+      return body.reason === "too_large"
+        ? humanMutationTransportFailureResponse("request_too_large")
+        : invalidRequestResponse();
     }
+    const formData = body.formData;
+    const operation = formData.get("_operation");
+    if (!isHumanMutationOperation(operation)) return invalidRequestResponse();
 
     const result = await executeMutation(operation, formData);
     return mutationResponse(
@@ -80,16 +83,7 @@ export async function POST(request: Request) {
       operation: "human_mutation",
       message: "Human mutation failed unexpectedly."
     });
-    return mutationResponse(
-      {
-        ok: false,
-        operation: "answer",
-        code: "temporary_unavailable",
-        message: "Action is temporarily unavailable.",
-        inputItemIds: []
-      },
-      503
-    );
+    return humanMutationTransportFailureResponse("temporary_unavailable");
   }
 }
 
@@ -134,6 +128,19 @@ function failureStatus(code: string) {
     return 503;
   }
   return 409;
+}
+
+function invalidRequestResponse() {
+  return mutationResponse(
+    {
+      ok: false,
+      operation: "answer",
+      code: "invalid_request",
+      message: "Action failed: invalid request.",
+      inputItemIds: []
+    },
+    400
+  );
 }
 
 function mutationResponse(result: HumanMutationResult, status: number) {

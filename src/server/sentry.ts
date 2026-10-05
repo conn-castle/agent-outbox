@@ -10,7 +10,7 @@ import { createCorrelationId } from "./correlation.ts";
 import { runtimeRelease } from "./observability.ts";
 
 const RUNTIME_SMOKE_SENTRY_SUPPRESS_HEADER = "x-agent-outbox-runtime-smoke";
-const SCHEDULED_SENTRY_FLUSH_TIMEOUT_MS = 2_000;
+const STANDALONE_SENTRY_FLUSH_TIMEOUT_MS = 2_000;
 const SANITIZED_RUNTIME_FAILURE_MESSAGE = "Agent Outbox runtime failure";
 const SANITIZED_DATABASE_OPERATION = "db.query";
 
@@ -123,6 +123,46 @@ export function reportRuntimeFailure(
     sentry_captured: sentryCaptured,
     log
   };
+}
+
+// The Worker can fail before Next instrumentation creates a client. The caller
+// keeps this promise alive with waitUntil, or awaits it without that context.
+export async function reportFetchRuntimeFailure(
+  error: unknown,
+  input: RuntimeFailureReportInput
+): Promise<void> {
+  const enabled = !input.suppressCapture && sentryCaptureEnabled();
+  if (enabled && !Sentry.getClient()) {
+    try {
+      Sentry.init(sentryRuntimeInitOptions());
+    } catch (initError) {
+      reportRuntimeFailure(initError, {
+        errorId: createCorrelationId("sentry"),
+        surface: "app",
+        operation: "runtime.fetch.sentry_init",
+        message: "fetch Sentry initialization failed"
+      });
+    }
+  }
+
+  // Report the original failure even when initialization fails.
+  reportRuntimeFailure(error, input);
+  if (enabled && Sentry.getClient()) {
+    let flushed = false;
+    try {
+      flushed = await Sentry.flush(STANDALONE_SENTRY_FLUSH_TIMEOUT_MS);
+    } catch {
+      // SDK failures must not replace the original fetch response.
+    }
+    if (!flushed) {
+      emitRuntimeLog({
+        level: "warn",
+        surface: "app",
+        operation: "runtime.fetch.sentry_flush",
+        message: "fetch Sentry flush did not complete"
+      });
+    }
+  }
 }
 
 export function sentryRuntimeInitOptions() {
@@ -311,7 +351,7 @@ export async function runWithScheduledSentry<TResult>(
     if (Sentry.getClient()) {
       // Flush failures must not replace the task's own outcome.
       const flushed = await Sentry.flush(
-        SCHEDULED_SENTRY_FLUSH_TIMEOUT_MS
+        STANDALONE_SENTRY_FLUSH_TIMEOUT_MS
       ).catch(() => false);
       if (!flushed) {
         emitRuntimeLog({

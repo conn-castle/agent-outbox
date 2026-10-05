@@ -135,6 +135,15 @@ with `operation=runtime.scheduled.sentry_init`; a flush that times out or fails
 emits a warning log with `operation=runtime.scheduled.sentry_flush`, meaning
 captured events from that invocation may not have reached Sentry.
 
+Unexpected errors at the Worker's human mutation fetch boundary can precede
+Next.js instrumentation. This boundary initializes a missing Sentry client when
+capture is enabled, reports the sanitized original failure, and keeps a bounded
+flush alive with `waitUntil` (or awaits it when unavailable). Initialization
+failures emit an error log with `operation=runtime.fetch.sentry_init`;
+incomplete or failed flushes warn with `operation=runtime.fetch.sentry_flush`.
+Neither replaces the original 503 response or its error log. Known 400/413
+rejections do not initialize, capture, or flush through this boundary.
+
 Scheduled cleanup runs each global prune and each account's maintenance in its
 own transaction, so one failing step does not block the others. Each failed step
 emits an error log with `operation=maintenance.scheduled_cleanup`: global prunes
