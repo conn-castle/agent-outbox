@@ -91,8 +91,9 @@ POST /api/client-events
 Behavior:
 
 - Accepts best-effort browser event batches for narrow frontend failure
-  visibility only. The browser emitter reports uncaught client errors and React
-  boundary-classified hydration failures, and the GitHub sign-in controller
+  visibility only. The browser emitter reports uncaught client errors and
+  hydration failures, classified from a global error listener installed before
+  hydration and from React error boundaries, and the GitHub sign-in controller
   reports provider-launch failures. Canonical human server actions report failed
   human-action and file-upload submissions directly as trusted `server_action`
   events.
@@ -501,8 +502,12 @@ and must not be cached.
 
 Path ids (`output_result_id`, `file_id`) containing U+0000 or lone surrogates
 are rejected with 422 `validation_failed` (`invalid_string`) before rate-limit
-accounting. A cursor that cannot be decoded to a valid position is rejected with
-422 `validation_failed` (`invalid_cursor`).
+accounting. Live output lookups require the exact canonical lowercase UUID the
+server returned, including hyphens and without surrounding whitespace. Other
+forms return 404 `not_found` after authentication and rate-limit accounting.
+Duplicate acknowledgement has the retained-audit exception described below. A
+cursor that cannot be decoded to a valid position is rejected with 422
+`validation_failed` (`invalid_cursor`).
 
 ### Check Output
 
@@ -597,7 +602,12 @@ Success `data`:
 }
 ```
 
-Duplicate acknowledgement success sets `already_acknowledged` to `true`.
+Duplicate acknowledgement success sets `already_acknowledged` to `true`. When
+retained audit metadata proves the prior acknowledgement, its lookup also
+accepts uppercase or mixed-case hyphenated UUIDs and echoes the supplied id
+casing. Those forms still return 404 while the output is live and has not been
+acknowledged. Unhyphenated, braced, or whitespace-padded ids return 404 in both
+cases.
 
 ### Download Output File
 

@@ -2797,6 +2797,54 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await expect(lastUndoButton(page, "Select checks")).toBeVisible();
 });
 
+test("free-text defaults outside the length bounds submit only after editing", async ({
+  page
+}) => {
+  const mutations: Request[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/human/mutations")) mutations.push(request);
+  });
+  const cases = [
+    {
+      action: "Request edit",
+      label: "Requested change",
+      defaultValue: "Change: ",
+      message: "Enter at least 10 characters.",
+      edited: "Change: tighten the handoff language."
+    },
+    {
+      action: "Add handoff note",
+      label: "Handoff note",
+      defaultValue:
+        "Confirm the July 8 notice end date with the resident before handoff.",
+      message: "Enter no more than 40 characters.",
+      edited: "Confirm the July 8 notice end date."
+    }
+  ];
+
+  for (const { action, label, defaultValue, message, edited } of cases) {
+    await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
+    await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+    await openSecondaryActions(page);
+    await page.getByRole("button", { name: action }).click();
+    const field = page.getByLabel(label);
+    await expect(field).toHaveValue(defaultValue);
+
+    await page.getByRole("button", { name: action }).click();
+    await expect(field).toHaveJSProperty("validationMessage", message);
+    await expect(field).toBeVisible();
+
+    await field.fill(edited);
+    await expect(field).toHaveJSProperty("validationMessage", "");
+    await page.getByRole("button", { name: action }).click();
+    await expect(lastUndoButton(page, action)).toBeVisible();
+    expect(mutations).toHaveLength(1);
+    await lastUndoButton(page).click();
+    await expect(lastUndoButton(page)).toHaveCount(0);
+    mutations.length = 0;
+  }
+});
+
 test("row popup actions open a focused composer instead of the full detail", async ({
   page,
   isMobile

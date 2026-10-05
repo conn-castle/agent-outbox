@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"agent-outbox/internal/foundation"
@@ -135,8 +136,7 @@ func TestInputSendPostsFileAndRendersStableJSON(t *testing.T) {
 	}
 }
 
-func TestInputSendReadsFilePathWithoutTrimming(t *testing.T) {
-	dir := t.TempDir()
+func TestInputFileCommandsReadFilePathWithoutTrimming(t *testing.T) {
 	inputJSON := func(callerItemID string) []byte {
 		return []byte(fmt.Sprintf(`{
   "caller_item_id": %q,
@@ -148,31 +148,37 @@ func TestInputSendReadsFilePathWithoutTrimming(t *testing.T) {
   "actions": [{"display": "Approve", "icon": "check", "value": "approve", "overflow": false, "popup": {"kind": "none"}}]
 }`, callerItemID))
 	}
-	spacedPath := filepath.Join(dir, "input.json ")
-	if err := os.WriteFile(spacedPath, inputJSON("item_spaced"), 0o600); err != nil {
-		t.Fatalf("write spaced input fixture: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "input.json"), inputJSON("item_trimmed"), 0o600); err != nil {
-		t.Fatalf("write trimmed-name input fixture: %v", err)
-	}
-	var gotID any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("request body was not JSON: %v", err)
-		}
-		gotID = body["caller_item_id"]
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"ok":true,"request_id":"req_server","correlation_id":"corr_server","data":{"caller_item_id":"item_spaced","status":"pending","revision":1,"created":true,"duplicate":false}}`)
-	}))
-	defer server.Close()
+	for _, spacedPath := range []string{" input.json", "input.json ", " input.json "} {
+		for _, operation := range []string{"send", "replace"} {
+			t.Run(fmt.Sprintf("%s/%q", operation, spacedPath), func(t *testing.T) {
+				t.Chdir(t.TempDir())
+				if err := os.WriteFile(spacedPath, inputJSON("item_spaced"), 0o600); err != nil {
+					t.Fatalf("write spaced input fixture: %v", err)
+				}
+				if err := os.WriteFile("input.json", inputJSON("item_trimmed"), 0o600); err != nil {
+					t.Fatalf("write trimmed-name input fixture: %v", err)
+				}
+				var gotID any
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Errorf("request body was not JSON: %v", err)
+					}
+					gotID = body["caller_item_id"]
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprint(w, `{"ok":true,"request_id":"req_server","correlation_id":"corr_server","data":{"caller_item_id":"item_spaced","status":"pending","revision":1,"created":true,"duplicate":false}}`)
+				}))
+				defer server.Close()
 
-	_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "send", "--file", spacedPath})
-	if code != foundation.ExitSuccess {
-		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
-	}
-	if gotID != "item_spaced" {
-		t.Fatalf("caller_item_id body = %v, want the item from the exact --file path", gotID)
+				_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", operation, "--file", spacedPath})
+				if code != foundation.ExitSuccess {
+					t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+				}
+				if gotID != "item_spaced" {
+					t.Fatalf("caller_item_id body = %v, want the item from the exact --file path", gotID)
+				}
+			})
+		}
 	}
 }
 
@@ -381,93 +387,71 @@ func TestInputListHumanReadableOutputEscapesCallerItemID(t *testing.T) {
 	}
 }
 
-func TestInputReadPreservesCallerItemIDWhitespace(t *testing.T) {
-	const callerItemID = " item "
-	var gotID string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/input/read" {
-			t.Errorf("request = %s %s, want POST /api/input/read", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("request body was not JSON: %v", err)
-			return
-		}
-		gotID, _ = body["caller_item_id"].(string)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"ok":true,"request_id":"req_input_read","correlation_id":"corr_input_read","data":{"caller_item_id":%q}}`, callerItemID)
-	}))
-	defer server.Close()
+func TestInputItemCommandsPreserveCallerItemIDWhitespace(t *testing.T) {
+	for _, callerItemID := range []string{" item ", " "} {
+		for _, subcommand := range []string{"read", "delete"} {
+			t.Run(fmt.Sprintf("%s/%q", subcommand, callerItemID), func(t *testing.T) {
+				wantPath := "/api/input/" + subcommand
+				var gotID string
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost || r.URL.Path != wantPath {
+						t.Errorf("request = %s %s, want POST %s", r.Method, r.URL.Path, wantPath)
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Errorf("request body was not JSON: %v", err)
+						return
+					}
+					gotID, _ = body["caller_item_id"].(string)
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(w, `{"ok":true,"request_id":"req_input","correlation_id":"corr_input","data":{"caller_item_id":%q}}`, callerItemID)
+				}))
+				defer server.Close()
 
-	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "read", callerItemID})
-	if code != foundation.ExitSuccess {
-		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
-	}
-	if stderr != "" {
-		t.Fatalf("stderr should be empty: %s", stderr)
-	}
-	if gotID != callerItemID {
-		t.Fatalf("caller_item_id body = %q, want %q", gotID, callerItemID)
-	}
-	if !strings.Contains(stdout, `"caller_item_id":" item "`) {
-		t.Fatalf("stdout missing preserved caller_item_id: %s", stdout)
+				stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", subcommand, callerItemID})
+				if code != foundation.ExitSuccess {
+					t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+				}
+				if stderr != "" {
+					t.Fatalf("stderr should be empty: %s", stderr)
+				}
+				if gotID != callerItemID {
+					t.Fatalf("caller_item_id body = %q, want %q", gotID, callerItemID)
+				}
+				if decodeCommandJSON(t, stdout)["data"].(map[string]any)["caller_item_id"] != callerItemID {
+					t.Fatalf("stdout missing preserved caller_item_id: %s", stdout)
+				}
+			})
+		}
 	}
 }
 
-func TestInputDeletePreservesCallerItemIDWhitespace(t *testing.T) {
-	for _, callerItemID := range []string{" item ", " "} {
-		t.Run(fmt.Sprintf("%q", callerItemID), func(t *testing.T) {
-			var gotID any
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/api/input/delete" {
-					t.Errorf("request = %s %s, want POST /api/input/delete", r.Method, r.URL.Path)
-					w.WriteHeader(http.StatusNotFound)
-					return
-				}
-				var body map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Errorf("request body was not JSON: %v", err)
-					return
-				}
-				gotID = body["caller_item_id"]
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprintf(w, `{"ok":true,"request_id":"req_delete","correlation_id":"corr_delete","data":{"caller_item_id":%q,"deleted":true}}`, callerItemID)
+func TestInputItemCommandsRejectEmptyCallerItemID(t *testing.T) {
+	for _, subcommand := range []string{"read", "delete"} {
+		t.Run(subcommand, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				w.WriteHeader(http.StatusInternalServerError)
 			}))
 			defer server.Close()
 
-			_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "input", "delete", callerItemID})
-			if code != foundation.ExitSuccess {
-				t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+			stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"input", subcommand, ""})
+			if code != foundation.ExitUsage {
+				t.Fatalf("exit code = %d, want usage; stderr: %s", code, stderr)
 			}
-			if gotID != callerItemID {
-				t.Fatalf("caller_item_id body = %q, want %q", gotID, callerItemID)
+			if requests != 0 {
+				t.Fatalf("server requests = %d, want local validation to stop before HTTP", requests)
+			}
+			if stdout != "" {
+				t.Fatalf("stdout should be empty for usage errors")
+			}
+			if !strings.Contains(stderr, "caller_item_id is required") {
+				t.Fatalf("stderr missing required-id error: %s", stderr)
 			}
 		})
-	}
-}
-
-func TestInputReadRejectsEmptyCallerItemID(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"input", "read", ""})
-	if code != foundation.ExitUsage {
-		t.Fatalf("exit code = %d, want usage; stderr: %s", code, stderr)
-	}
-	if requests != 0 {
-		t.Fatalf("server requests = %d, want local validation to stop before HTTP", requests)
-	}
-	if stdout != "" {
-		t.Fatalf("stdout should be empty for usage errors")
-	}
-	if !strings.Contains(stderr, "caller_item_id is required") {
-		t.Fatalf("stderr missing required-id error: %s", stderr)
 	}
 }
 
@@ -729,6 +713,255 @@ func TestOutputFileGetRefusesOverwriteBeforeDownload(t *testing.T) {
 	}
 }
 
+func TestOutputFileGetRefusesToReplaceDanglingSymlinkBeforeDownload(t *testing.T) {
+	dir := t.TempDir()
+	linkPath := filepath.Join(dir, "answer.bin")
+	linkTarget := filepath.Join(dir, "missing-target")
+	if err := os.Symlink(linkTarget, linkPath); err != nil {
+		t.Fatalf("create dangling symlink: %v", err)
+	}
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "output", "file", "get", "out_1", "file_1", "--output", linkPath})
+	if code != foundation.ExitUsage {
+		t.Fatalf("exit code = %d, want usage; stderr: %s", code, stderr)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("download requests = %d, want overwrite refusal before HTTP", got)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for overwrite refusal")
+	}
+	if !strings.Contains(stderr, `"code":"usage_error"`) || !strings.Contains(stderr, "Output path already exists; pass --force to overwrite it.") {
+		t.Fatalf("stderr missing overwrite refusal: %s", stderr)
+	}
+	if got, err := os.Readlink(linkPath); err != nil || got != linkTarget {
+		t.Fatalf("symlink should be untouched; readlink = %q, %v", got, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read output dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "answer.bin" {
+		t.Fatalf("output dir should only contain the symlink, found %v", entries)
+	}
+}
+
+func TestOutputFileGetForceReplacesDanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "answer.bin")
+	linkTarget := filepath.Join(dir, "missing-target")
+	if err := os.Symlink(linkTarget, outputPath); err != nil {
+		t.Fatalf("create dangling symlink: %v", err)
+	}
+	fileBytes := []byte("downloaded bytes")
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(fileBytes)))
+		_, _ = w.Write(fileBytes)
+	}))
+	defer server.Close()
+
+	_, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "output", "file", "get", "out_1", "file_1", "--output", outputPath, "--force"})
+	if code != foundation.ExitSuccess || stderr != "" {
+		t.Fatalf("exit code = %d, want success; stderr: %s", code, stderr)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("download requests = %d, want 1", got)
+	}
+	info, err := os.Lstat(outputPath)
+	if err != nil {
+		t.Fatalf("inspect downloaded file: %v", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("downloaded output mode = %v, want regular 0600 file", info.Mode())
+	}
+	written, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read downloaded file: %v", err)
+	}
+	if !bytes.Equal(written, fileBytes) {
+		t.Fatalf("downloaded bytes = %q, want %q", written, fileBytes)
+	}
+	if _, err := os.Lstat(linkTarget); !os.IsNotExist(err) {
+		t.Fatalf("original symlink target should remain absent, got %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read output dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "answer.bin" {
+		t.Fatalf("output dir should only contain the downloaded file, found %v", entries)
+	}
+}
+
+func TestOutputFileGetRefusesSymlinkToDirectoryBeforeDownload(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%t", force), func(t *testing.T) {
+			dir := t.TempDir()
+			linkPath := filepath.Join(dir, "answer.bin")
+			linkTarget := filepath.Join(dir, "target-dir")
+			if err := os.Mkdir(linkTarget, 0o700); err != nil {
+				t.Fatalf("create target directory: %v", err)
+			}
+			markerPath := filepath.Join(linkTarget, "marker")
+			markerBytes := []byte("unchanged target contents")
+			if err := os.WriteFile(markerPath, markerBytes, 0o600); err != nil {
+				t.Fatalf("write target marker: %v", err)
+			}
+			before, err := os.Stat(linkTarget)
+			if err != nil {
+				t.Fatalf("inspect target directory: %v", err)
+			}
+			if err := os.Symlink(linkTarget, linkPath); err != nil {
+				t.Fatalf("create directory symlink: %v", err)
+			}
+			var requests atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+
+			args := []string{"--json", "output", "file", "get", "out_1", "file_1", "--output", linkPath}
+			if force {
+				args = append(args, "--force")
+			}
+			stdout, stderr, code := executeDataPlaneCommand(t, server.URL, args)
+			if code != foundation.ExitUsage {
+				t.Fatalf("exit code = %d, want usage; stderr: %s", code, stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("stdout should be empty for directory refusal: %s", stdout)
+			}
+			if !strings.Contains(stderr, `"code":"usage_error"`) || !strings.Contains(stderr, `"message":"Output path is a directory."`) {
+				t.Fatalf("stderr missing exact directory diagnostic: %s", stderr)
+			}
+			if got := requests.Load(); got != 0 {
+				t.Fatalf("download requests = %d, want refusal before HTTP", got)
+			}
+			if got, err := os.Readlink(linkPath); err != nil || got != linkTarget {
+				t.Fatalf("symlink should be untouched; readlink = %q, %v", got, err)
+			}
+			after, err := os.Stat(linkTarget)
+			if err != nil {
+				t.Fatalf("inspect preserved target directory: %v", err)
+			}
+			if !after.IsDir() || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+				t.Fatalf("target directory changed: before=%v, after=%v", before, after)
+			}
+			written, err := os.ReadFile(markerPath)
+			if err != nil || !bytes.Equal(written, markerBytes) {
+				t.Fatalf("target marker changed: bytes=%q, error=%v", written, err)
+			}
+			entries, err := os.ReadDir(linkTarget)
+			if err != nil {
+				t.Fatalf("read target directory: %v", err)
+			}
+			if len(entries) != 1 || entries[0].Name() != "marker" {
+				t.Fatalf("target directory should only contain the marker, found %v", entries)
+			}
+			entries, err = os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("read output dir: %v", err)
+			}
+			if len(entries) != 2 || entries[0].Name() != "answer.bin" || entries[1].Name() != "target-dir" {
+				t.Fatalf("output dir should only contain the symlink and target directory, found %v", entries)
+			}
+		})
+	}
+}
+
+func TestOutputFileGetRefusesSelfReferencingSymlinkBeforeDownload(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%t", force), func(t *testing.T) {
+			dir := t.TempDir()
+			linkPath := filepath.Join(dir, "answer.bin")
+			if err := os.Symlink(linkPath, linkPath); err != nil {
+				t.Fatalf("create self-referencing symlink: %v", err)
+			}
+			var requests atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+
+			args := []string{"--json", "output", "file", "get", "out_1", "file_1", "--output", linkPath}
+			if force {
+				args = append(args, "--force")
+			}
+			stdout, stderr, code := executeDataPlaneCommand(t, server.URL, args)
+			if code != foundation.ExitTemporary {
+				t.Fatalf("exit code = %d, want temporary; stderr: %s", code, stderr)
+			}
+			if stdout != "" {
+				t.Fatalf("stdout should be empty for inspection failure: %s", stdout)
+			}
+			if !strings.Contains(stderr, `"code":"local_io_error"`) || !strings.Contains(stderr, `"message":"Could not inspect output path."`) {
+				t.Fatalf("stderr missing exact local I/O diagnostic: %s", stderr)
+			}
+			if got := requests.Load(); got != 0 {
+				t.Fatalf("download requests = %d, want inspection failure before HTTP", got)
+			}
+			if got, err := os.Readlink(linkPath); err != nil || got != linkPath {
+				t.Fatalf("symlink should be untouched; readlink = %q, %v", got, err)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("read output dir: %v", err)
+			}
+			if len(entries) != 1 || entries[0].Name() != "answer.bin" {
+				t.Fatalf("output dir should only contain the symlink, found %v", entries)
+			}
+		})
+	}
+}
+
+func TestOutputFileGetRefusesSymlinkCreatedDuringDownload(t *testing.T) {
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "answer.bin")
+	linkTarget := filepath.Join(dir, "missing-target")
+	fileBytes := []byte("downloaded bytes")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if err := os.Symlink(linkTarget, outputPath); err != nil {
+			t.Errorf("create symlink during download: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(fileBytes)))
+		_, _ = w.Write(fileBytes)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "output", "file", "get", "out_1", "file_1", "--output", outputPath})
+	if code != foundation.ExitUsage {
+		t.Fatalf("exit code = %d, want usage; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout should be empty for overwrite refusal")
+	}
+	if !strings.Contains(stderr, `"code":"usage_error"`) || !strings.Contains(stderr, "Output path already exists; pass --force to overwrite it.") {
+		t.Fatalf("stderr missing overwrite refusal: %s", stderr)
+	}
+	if got, err := os.Readlink(outputPath); err != nil || got != linkTarget {
+		t.Fatalf("symlink should be untouched; readlink = %q, %v", got, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read output dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("output dir should only contain the symlink, found %d entries", len(entries))
+	}
+}
+
 func TestOutputFileGetKeepsBytesOutOfJSONAndDiagnostics(t *testing.T) {
 	fileBytes := []byte("TOP-SECRET-FILE-BYTES")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -774,34 +1007,37 @@ func TestOutputFileGetWritesExactOutputPath(t *testing.T) {
 	}))
 	defer server.Close()
 
-	dir := t.TempDir()
-	existingPath := filepath.Join(dir, "report.pdf")
-	original := []byte("original local bytes")
-	if err := os.WriteFile(existingPath, original, 0o600); err != nil {
-		t.Fatalf("write existing file: %v", err)
-	}
-	outputPath := existingPath + " "
-	stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "output", "file", "get", "out_1", "file_1", "--output", outputPath, "--force"})
-	if code != foundation.ExitSuccess {
-		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
-	}
-	written, err := os.ReadFile(outputPath)
-	if err != nil {
-		t.Fatalf("read exact output path: %v", err)
-	}
-	if !bytes.Equal(written, fileBytes) {
-		t.Fatalf("exact output path bytes = %q", string(written))
-	}
-	untouched, err := os.ReadFile(existingPath)
-	if err != nil {
-		t.Fatalf("read existing file: %v", err)
-	}
-	if !bytes.Equal(untouched, original) {
-		t.Fatalf("download overwrote the trimmed path: %q", string(untouched))
-	}
-	data := decodeCommandJSON(t, stdout)["data"].(map[string]any)
-	if data["output"] != outputPath {
-		t.Fatalf("reported output = %q, want %q", data["output"], outputPath)
+	for _, outputPath := range []string{" report.pdf", "report.pdf ", " report.pdf "} {
+		t.Run(fmt.Sprintf("%q", outputPath), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			existingPath := "report.pdf"
+			original := []byte("original local bytes")
+			if err := os.WriteFile(existingPath, original, 0o600); err != nil {
+				t.Fatalf("write existing file: %v", err)
+			}
+			stdout, stderr, code := executeDataPlaneCommand(t, server.URL, []string{"--json", "output", "file", "get", "out_1", "file_1", "--output", outputPath, "--force"})
+			if code != foundation.ExitSuccess {
+				t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+			}
+			written, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatalf("read exact output path: %v", err)
+			}
+			if !bytes.Equal(written, fileBytes) {
+				t.Fatalf("exact output path bytes = %q", string(written))
+			}
+			untouched, err := os.ReadFile(existingPath)
+			if err != nil {
+				t.Fatalf("read existing file: %v", err)
+			}
+			if !bytes.Equal(untouched, original) {
+				t.Fatalf("download overwrote the trimmed path: %q", string(untouched))
+			}
+			data := decodeCommandJSON(t, stdout)["data"].(map[string]any)
+			if data["output"] != outputPath {
+				t.Fatalf("reported output = %q, want %q", data["output"], outputPath)
+			}
+		})
 	}
 }
 

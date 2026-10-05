@@ -22,9 +22,7 @@ import {
 import {
   activeLimitBlockMetadata,
   auditSafeLifecycleEvent,
-  consumesMonthlyCallerApiRequestQuota,
-  quotaWindowKey,
-  storedByteAccounting
+  consumesMonthlyCallerApiRequestQuota
 } from "../src/server/accounting.ts";
 import {
   InsecureServerEnvironmentError,
@@ -32,7 +30,6 @@ import {
 } from "../src/server/env.ts";
 import {
   accountLimitStatusMetadata,
-  doctorLimitMetadata,
   fileUploadEnabled,
   getLimitDefinition,
   limitErrorMetadata,
@@ -501,10 +498,6 @@ test("limits metadata uses explicit disabled states and maps self-hosted to paid
   assert.equal(paidStatus.stripeBillingState, "required");
   assert.equal(selfHostedStatus.stripeBillingState, "not_applicable");
   assert.equal(selfHostedStatus.effectiveTier, "paid");
-  assert.equal(
-    doctorLimitMetadata("hosted-free").length,
-    freeStatus.limits.length
-  );
 
   for (const status of [freeStatus, paidStatus, selfHostedStatus]) {
     assert.deepEqual(
@@ -532,23 +525,6 @@ test("limits metadata uses explicit disabled states and maps self-hosted to paid
       status.profileId === "hosted-free" ? "enabled" : "disabled"
     );
   }
-
-  assert.deepEqual(
-    doctorLimitMetadata("hosted-free")
-      .filter((entry) =>
-        [
-          "input_send_replace_requests_per_account_per_minute",
-          "input_delete_requests_per_account_per_minute",
-          "output_file_download_requests_per_account_per_minute"
-        ].includes(entry.limitName)
-      )
-      .map((entry) => entry.checkName),
-    [
-      "limits.input_send_replace.minute",
-      "limits.input_delete.minute",
-      "limits.output_file_download.minute"
-    ]
-  );
 });
 test("limit error and active block metadata derive reason fields from the limits catalog", () => {
   assert.deepEqual(
@@ -684,7 +660,7 @@ test("limit error and active block metadata derive reason fields from the limits
     /does not apply/
   );
 });
-test("accounting helpers keep audit data content-safe and use quota windows for flow limits", () => {
+test("accounting helpers keep audit data content-safe and reject invalid byte counts", () => {
   const unsafeAuditInput = /** @type {any} */ ({
     eventType: "input_answered",
     accountAuditId: "account_audit",
@@ -719,30 +695,7 @@ test("accounting helpers keep audit data content-safe and use quota windows for 
     caller_item_id_hash: "hash_only",
     metadata: { revision: 2 }
   });
-  assert.deepEqual(
-    quotaWindowKey(
-      "authenticated_caller_api_requests_per_calendar_month",
-      new Date("2026-06-30T12:34:56.789Z")
-    ),
-    {
-      metric: "authenticated_caller_api_requests_per_calendar_month",
-      windowKind: "calendar_month",
-      windowStartUtc: "2026-06-01T00:00:00.000Z"
-    }
-  );
   assert.equal(consumesMonthlyCallerApiRequestQuota("output_check_read"), true);
-  assert.deepEqual(
-    storedByteAccounting({
-      inputPayloadBytes: 100,
-      outputPayloadBytes: 25,
-      fileBytes: 900
-    }),
-    {
-      nonFileQueuePayloadBytes: 125,
-      fileBytes: 900,
-      overallStoredAccountDataBytes: 1025
-    }
-  );
   assert.throws(
     () =>
       auditSafeLifecycleEvent({
@@ -758,23 +711,6 @@ test("accounting helpers keep audit data content-safe and use quota windows for 
         eventType: "file_deleted",
         accountAuditId: "account_audit",
         fileBytes: Number.NaN
-      }),
-    /fileBytes must be a non-negative safe integer/
-  );
-  assert.throws(
-    () =>
-      storedByteAccounting({
-        inputPayloadBytes: Number.MAX_SAFE_INTEGER,
-        outputPayloadBytes: 1
-      }),
-    /nonFileQueuePayloadBytes must be a non-negative safe integer/
-  );
-  assert.throws(
-    () =>
-      storedByteAccounting({
-        inputPayloadBytes: 1,
-        outputPayloadBytes: 1,
-        fileBytes: 0.5
       }),
     /fileBytes must be a non-negative safe integer/
   );

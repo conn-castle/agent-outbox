@@ -28,11 +28,10 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-10-03 persisted-popup-semantic-validation: Stored popup decoding omits semantic invariants
-    Priority: Medium. Area: Human answers / Human review
-    Description: Stored popup decoding checks field types but accepts negative or fractional free-text bounds, invalid civil-date timezones, and multi-select maxima exceeding the stored option count. These configurations also pass answer validation on main before PR #143, although the input normalizer rejects them.
-    Next step: Validate persisted integer/range/timezone and option-count invariants before inspecting responses, with content-free failures and coverage through the answer transaction boundary.
-    Notes: Deferred from PR #143 review comment 4170808270 because its scope preserves existing review-page decoding behavior and fixes wrong-typed stored fields plus date-bound/MIME-pattern validity.
+- Issue 2026-10-04 stripe-duplicate-subscriptions: One account can hold several live Stripe subscriptions
+    Priority: Medium. Area: Billing
+    Description: Checkout (`src/server/billing.ts`) is refused only when the account is already live, so completing two Checkout sessions opened while free creates two subscriptions (and, with no stored customer, two Stripe customers). Subscription webhooks match by subscription id, customer id, or metadata account id and overwrite the stored subscription, so the account follows whichever subscription last emitted an event; cancelling one can start downgrade grace and paid-data cleanup while the other keeps charging, and the Billing Portal shows only the stored customer.
+    Open question: Whether to prevent a second live subscription before Checkout, ignore and report events for non-stored subscriptions, or both.
 
 - Issue 2026-10-02 cli-device-expiry-test-race: CLI device-expiry test races under `go test -race`
     Priority: Low. Area: CLI tests
@@ -61,7 +60,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-08-17 legacy-color-transition: Existing arbitrary persisted colors lack a transition policy
     Priority: High. Area: Human review / Data compatibility
-    Description: The former runtime accepted safe CSS colors, the current API accepts only named colors, and unrestricted legacy database values now silently fall back during rendering.
+    Description: Releases v0.1.0–v0.1.2 accepted safe CSS colors (hex, `rgb()`/`hsl()`, extra names) and the current API accepts only named colors. Legacy values silently fall back during rendering, and they fail the canonical shape check (`src/server/canonical-input.ts`), so `/api/input/read` and `/api/output/{id}/read` return 503 for such items and one such row fails the whole `/api/output/read-all` page.
     Next step: Inventory persisted values and establish an explicit migration or compatibility path before release.
 
 - Issue 2026-07-11 human-review-search-seq-scan: Human review search filters cannot use indexes at scale

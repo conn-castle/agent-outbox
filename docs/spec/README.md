@@ -77,12 +77,15 @@ Global flags:
   The value must be an `https` origin — or an `http` origin whose host is
   loopback (`localhost`, `127.0.0.1`, or `::1`) — with no path, query, userinfo,
   or fragment. Cleartext `http` to non-loopback hosts is rejected so caller API
-  keys never travel unencrypted off the local machine. This loopback allowance
-  is a transport rule only. Caller connect, rotate, and revoke control-plane
-  routes still require the server's trusted-client-IP policy from
-  [http-api.md](http-api.md#caller-connect-control-plane); direct localhost
-  control-plane requests fail unless the local ingress or test fixture supplies
-  that trusted IP signal.
+  keys never travel unencrypted off the local machine. The same rule applies to
+  redirects: the CLI follows only redirects that keep the request method and
+  target an `https` URL or a loopback `http` URL, and fails any other redirect
+  with `api_response_invalid` without sending the redirected request. This
+  loopback allowance is a transport rule only. Caller connect, rotate, and
+  revoke control-plane routes still require the server's trusted-client-IP
+  policy from [http-api.md](http-api.md#caller-connect-control-plane); direct
+  localhost control-plane requests fail unless the local ingress or test fixture
+  supplies that trusted IP signal.
 - `--config <path>` selects the local Agent Outbox config file for the command.
 - `--caller <caller>` selects a locally configured caller by the local caller
   name.
@@ -99,7 +102,9 @@ Environment variables:
 Precedence:
 
 - Config path selection is `--config`, then `AGENT_OUTBOX_CONFIG_PATH`, then the
-  platform-standard Agent Outbox config path.
+  platform-standard Agent Outbox config path. A selected config file named
+  `credentials.json` or `.agent-outbox.lock` (compared without case) fails with
+  `config_error` because those names are reserved beside the config.
 - Base URL selection is `--base-url`, then `AGENT_OUTBOX_BASE_URL`, then local
   CLI config `base_url` from the selected config file, then
   `https://app.agent-outbox.dev`.

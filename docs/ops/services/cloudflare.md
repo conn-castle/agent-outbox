@@ -61,6 +61,10 @@ operations.
   custom-domain flow changes.
 - `workers.dev` is disabled for the production Worker; `agent-outbox.dev` is the
   public website origin and `app.agent-outbox.dev` is the hosted app/API origin.
+- Static assets are served from `.open-next/assets` before the Worker runs, so
+  Next.js `headers()` does not reach them. `public/_headers` gives them the
+  production security headers and long-term caching for content-hashed
+  `/_next/static/*` files.
 - Local `.env` uses project-specific Cloudflare variable names for operator
   convenience and does not define generic `CLOUDFLARE_API_TOKEN`.
 - GitHub Actions deploy environments map the Worker deploy token into

@@ -120,6 +120,37 @@ test("application security headers add HSTS only in production", () => {
     "Next.js must apply the security-header policy to every application path"
   );
 });
+test("Cloudflare static assets get production security headers and immutable build caching", () => {
+  // Cloudflare answers static asset requests before the Worker runs, so
+  // next.config.ts headers() never reaches them; public/_headers must match.
+  const rules = readFileSync(
+    new URL("../public/_headers", import.meta.url),
+    "utf8"
+  )
+    .trim()
+    .split(/\n(?=\S)/)
+    .map((block) => {
+      const [path, ...lines] = block.split("\n");
+      return [
+        path,
+        lines.map((line) => {
+          const separator = line.indexOf(":");
+          return {
+            key: line.slice(0, separator).trim(),
+            value: line.slice(separator + 1).trim()
+          };
+        })
+      ];
+    });
+
+  assert.deepEqual(rules, [
+    ["/*", applicationSecurityHeaders("production")],
+    [
+      "/_next/static/*",
+      [{ key: "Cache-Control", value: "public,max-age=31536000,immutable" }]
+    ]
+  ]);
+});
 test("runtime canary keeps configuration detail behind smoke bearer auth", () => {
   withProcessEnv(
     {

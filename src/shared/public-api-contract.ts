@@ -347,7 +347,11 @@ const InputPrioritySchema = Type.Union([
 
 export const InputSubmissionSchema = openObject(
   {
-    caller_item_id: Type.String({ minLength: 1 }),
+    caller_item_id: Type.String({
+      minLength: 1,
+      description:
+        "Caller-owned stable logical item id. Input send returns 422 validation_failed if the id cannot fit the item uniqueness index."
+    }),
     priority: Type.Optional(nullable(InputPrioritySchema)),
     row_type: openObject({
       display: Type.String({ minLength: 1 }),
