@@ -326,13 +326,21 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 					return flowErr
 				}
 			}
-			runtime, selected, err := selectedLocalControlRuntime(opts, flags)
+			runtime, err := localControlRuntimeForCommand(opts, flags)
+			if err != nil {
+				return err
+			}
+			selected, err := selectConfiguredCaller(flags.caller, opts.Env, runtime.Config)
 			if err != nil {
 				return err
 			}
 			var confirmed revokeConfirmData
 			if revoke {
-				runtime, selected, err = selectedControlRuntime(opts, flags)
+				runtime, err = controlRuntimeForCommand(opts, flags)
+				if err != nil {
+					return err
+				}
+				selected, err = selectConfiguredCaller(flags.caller, opts.Env, runtime.Config)
 				if err != nil {
 					return err
 				}
@@ -388,24 +396,27 @@ func localControlRuntimeForCommand(opts Options, flags *rootFlags) (*controlPlan
 }
 
 func controlRuntimeForCommand(opts Options, flags *rootFlags) (*controlPlaneRuntime, error) {
-	configPath, cfg, configPathOwned, err := loadConfigDetails(flags, opts.Env)
+	runtime, err := localControlRuntimeForCommand(opts, flags)
 	if err != nil {
 		return nil, err
 	}
-	baseURL, err := foundation.ResolveBaseURL(flags.baseURL, opts.Env, cfg)
-	if err != nil {
+	if err := attachAPIClient(runtime, opts, flags); err != nil {
 		return nil, err
 	}
-	return &controlPlaneRuntime{
-		ConfigPath:      configPath,
-		ConfigPathOwned: configPathOwned,
-		Config:          cfg,
-		Client: foundation.APIClient{
-			BaseURL:      baseURL,
-			HTTPClient:   opts.HTTPClient,
-			NewRequestID: opts.NewRequestID,
-		},
-	}, nil
+	return runtime, nil
+}
+
+func attachAPIClient(runtime *controlPlaneRuntime, opts Options, flags *rootFlags) error {
+	baseURL, err := foundation.ResolveBaseURL(flags.baseURL, opts.Env, runtime.Config)
+	if err != nil {
+		return err
+	}
+	runtime.Client = foundation.APIClient{
+		BaseURL:      baseURL,
+		HTTPClient:   opts.HTTPClient,
+		NewRequestID: opts.NewRequestID,
+	}
+	return nil
 }
 
 func writableControlRuntimeForCommand(opts Options, flags *rootFlags) (*controlPlaneRuntime, error) {
@@ -428,38 +439,23 @@ func attachWritableSecretStore(runtime *controlPlaneRuntime, opts Options) error
 	return nil
 }
 
-func selectedControlRuntime(opts Options, flags *rootFlags) (*controlPlaneRuntime, foundation.CallerConfig, error) {
+func selectConfiguredCaller(name string, env foundation.Env, cfg foundation.Config) (foundation.CallerConfig, error) {
+	selected, err := foundation.SelectCaller(name, env, cfg)
+	if err != nil {
+		return foundation.CallerConfig{}, err
+	}
+	if strings.TrimSpace(selected.CallerID) == "" {
+		return foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
+	}
+	return selected, nil
+}
+
+func selectedWritableControlRuntime(opts Options, flags *rootFlags) (*controlPlaneRuntime, foundation.CallerConfig, error) {
 	runtime, err := controlRuntimeForCommand(opts, flags)
 	if err != nil {
 		return nil, foundation.CallerConfig{}, err
 	}
-	selected, err := foundation.SelectCaller(flags.caller, opts.Env, runtime.Config)
-	if err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	if strings.TrimSpace(selected.CallerID) == "" {
-		return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
-	}
-	return runtime, selected, nil
-}
-
-func selectedLocalControlRuntime(opts Options, flags *rootFlags) (*controlPlaneRuntime, foundation.CallerConfig, error) {
-	runtime, err := localControlRuntimeForCommand(opts, flags)
-	if err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	selected, err := foundation.SelectCaller(flags.caller, opts.Env, runtime.Config)
-	if err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	if strings.TrimSpace(selected.CallerID) == "" {
-		return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
-	}
-	return runtime, selected, nil
-}
-
-func selectedWritableControlRuntime(opts Options, flags *rootFlags) (*controlPlaneRuntime, foundation.CallerConfig, error) {
-	runtime, selected, err := selectedControlRuntime(opts, flags)
+	selected, err := selectConfiguredCaller(flags.caller, opts.Env, runtime.Config)
 	if err != nil {
 		return nil, foundation.CallerConfig{}, err
 	}
@@ -478,15 +474,12 @@ func namedControlRuntime(opts Options, flags *rootFlags, name string) (*controlP
 	if err != nil {
 		return nil, foundation.CallerConfig{}, err
 	}
-	for _, caller := range runtime.Config.Callers {
-		if caller.Name == name {
-			if strings.TrimSpace(caller.CallerID) == "" {
-				return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
-			}
-			return runtime, caller, nil
-		}
+	// revoke <caller> deliberately ignores --caller and AGENT_OUTBOX_CALLER.
+	selected, err := selectConfiguredCaller(name, nil, runtime.Config)
+	if err != nil {
+		return nil, foundation.CallerConfig{}, err
 	}
-	return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeUnknownCaller, "Selected caller is not present in local config; run agent-outbox caller list or agent-outbox caller connect <caller>.")
+	return runtime, selected, nil
 }
 
 func writableSecretStoreForCommand(opts Options, configPath string, configPathOwned bool) (foundation.CallerSecretStore, error) {
