@@ -27,8 +27,8 @@ import {
 } from "./database.ts";
 import { quotaWindow, quotaWindowUsageStatement } from "./caller-api-limits.ts";
 import {
-  accountLimitStatusMetadata,
   limitProfileSelectorForAccountTier,
+  limitStatusMetadata,
   type LimitName,
   type LimitStatusMetadata,
   type LimitWindowKind
@@ -425,15 +425,11 @@ export async function humanReviewAccountBannerInTransaction(
     return apiTemporaryUnavailable("Account usage is temporarily unavailable.");
   }
 
-  const metadata = accountLimitStatusMetadata(profile);
   const now = new Date();
   const usage: HumanAccountUsageMetric[] = [];
   for (const limitName of ACCOUNT_POPOVER_QUOTA_LIMITS) {
-    const limit = metadata.limits.find(
-      (candidate) => candidate.limitName === limitName
-    );
+    const limit = limitStatusMetadata(profile, limitName);
     if (
-      !limit ||
       !limit.windowKind ||
       limit.setting.mode !== "enabled" ||
       !isUsageUnit(limit.unit)
@@ -472,15 +468,13 @@ export async function humanReviewAccountBannerInTransaction(
   if (queuedItems == null) {
     return apiTemporaryUnavailable("Account usage is temporarily unavailable.");
   }
-  const queueLimit = metadata.limits.find(
-    (limit) => limit.limitName === "queued_input_items"
-  );
+  const queueLimit = limitStatusMetadata(profile, "queued_input_items");
   usage.push({
     limitName: "queued_input_items",
-    label: queueLimit?.statusLabel ?? "Queued input items",
+    label: queueLimit.statusLabel,
     used: queuedItems,
     limit:
-      queueLimit?.setting.mode === "enabled" ? queueLimit.setting.value : null,
+      queueLimit.setting.mode === "enabled" ? queueLimit.setting.value : null,
     unit: "items",
     resetsAt: null
   });

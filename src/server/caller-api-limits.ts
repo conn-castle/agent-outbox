@@ -10,9 +10,12 @@ import type {
 } from "./database.ts";
 import {
   accountLimitStatusMetadata,
+  isLimitName,
   limitErrorMetadata,
   limitProfileSelectorForAccountTier,
+  limitStatusMetadata,
   quotaWindowStartUtc,
+  storageLimitName,
   type AccountTier,
   type LimitName,
   type LimitOperationKind,
@@ -305,7 +308,7 @@ export async function enforceHumanFileUploadLimits(
     );
   }
 
-  const enabled = limitStatus(profile, "file_upload_enabled");
+  const enabled = limitStatusMetadata(profile, "file_upload_enabled");
   if (enabled.setting.mode !== "enabled" || enabled.setting.value !== 1) {
     return limitError(profile, identity, "file_upload", "file_upload_enabled", {
       usedUnits: 1,
@@ -313,7 +316,7 @@ export async function enforceHumanFileUploadLimits(
     });
   }
 
-  const perFile = limitStatus(profile, "uploaded_bytes_per_file");
+  const perFile = limitStatusMetadata(profile, "uploaded_bytes_per_file");
   if (
     perFile.setting.mode !== "enabled" ||
     fileByteDelta > perFile.setting.value
@@ -345,7 +348,10 @@ export async function enforceHumanFileUploadLimits(
   const stock = await query<AccountStockUsageRow>(
     accountStockUsageStatement(identity)
   );
-  const storage = limitStatus(profile, "overall_stored_account_data_bytes");
+  const storage = limitStatusMetadata(
+    profile,
+    "overall_stored_account_data_bytes"
+  );
   const usedUnits =
     nonNegativeInteger(stock.rows[0]?.overall_stored_bytes ?? 0) +
     fileByteDelta;
@@ -714,7 +720,7 @@ async function checkInputStockLimits(
   );
   const stock = result.rows[0];
 
-  const queued = limitStatus(profile, "queued_input_items");
+  const queued = limitStatusMetadata(profile, "queued_input_items");
   if (
     input.queuedItemDelta > 0 &&
     queued.setting.mode === "enabled" &&
@@ -739,14 +745,10 @@ async function checkInputStockLimits(
     return { ok: true };
   }
 
-  const effectiveTier = accountLimitStatusMetadata(profile).effectiveTier;
-  const storageLimitName: LimitName =
-    effectiveTier === "free"
-      ? "stored_non_file_queue_payload_bytes"
-      : "overall_stored_account_data_bytes";
-  const storage = limitStatus(profile, storageLimitName);
+  const storageLimit = storageLimitName(profile);
+  const storage = limitStatusMetadata(profile, storageLimit);
   const currentBytes =
-    storageLimitName === "stored_non_file_queue_payload_bytes"
+    storageLimit === "stored_non_file_queue_payload_bytes"
       ? nonNegativeInteger(stock.non_file_stored_bytes)
       : nonNegativeInteger(stock.overall_stored_bytes);
   const usedUnits = currentBytes + input.nonFilePayloadByteDelta;
@@ -758,7 +760,7 @@ async function checkInputStockLimits(
       profile,
       "input_submission",
       {
-        limitName: storageLimitName,
+        limitName: storageLimit,
         usedUnits,
         limitResetsAt: null
       }
@@ -813,16 +815,6 @@ function limitForOperation(
       limit.setting.mode === "enabled"
     );
   });
-}
-
-function limitStatus(profile: LimitProfileSelector, limitName: LimitName) {
-  const limit = accountLimitStatusMetadata(profile).limits.find((entry) => {
-    return entry.limitName === limitName;
-  });
-  if (!limit) {
-    throw new Error(`Missing limit metadata for ${limitName}`);
-  }
-  return limit;
 }
 
 export function quotaWindow(
@@ -940,11 +932,12 @@ function activeLimitBlockAppliesToProfile(
   profile: LimitProfileSelector,
   block: ActiveLimitBlockMetadata
 ) {
-  const limit = accountLimitStatusMetadata(profile).limits.find((entry) => {
-    return entry.limitName === block.limit_name;
-  });
+  if (!isLimitName(block.limit_name)) {
+    return false;
+  }
 
-  if (!limit || limit.setting.mode !== "enabled") {
+  const limit = limitStatusMetadata(profile, block.limit_name);
+  if (limit.setting.mode !== "enabled") {
     return false;
   }
 

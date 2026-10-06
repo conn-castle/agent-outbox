@@ -1,45 +1,5 @@
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
-export const LIMIT_NAMES = [
-  "input_submissions_per_calendar_month",
-  "input_submissions_per_day",
-  "authenticated_caller_api_requests_per_calendar_month",
-  "queued_input_items",
-  "input_retention_days",
-  "unacknowledged_output_timeout_days",
-  "downgrade_grace_days",
-  "file_upload_enabled",
-  "input_request_body_bytes_excluding_files",
-  "human_answer_request_body_bytes_excluding_files",
-  "stored_non_file_queue_payload_bytes",
-  "overall_stored_account_data_bytes",
-  "uploaded_bytes_per_file",
-  "burst_input_submissions_per_account_per_minute",
-  "concurrent_write_requests_per_account",
-  "concurrent_file_uploading_requests_per_account",
-  "input_send_replace_requests_per_account_per_minute",
-  "input_delete_requests_per_account_per_minute",
-  "output_check_read_requests_per_account_per_minute",
-  "output_file_download_requests_per_account_per_minute",
-  "output_ack_requests_per_account_per_minute",
-  "caller_connect_approvals_per_account_per_minute",
-  "caller_rotate_approvals_per_account_per_minute",
-  "caller_revoke_approvals_per_account_per_minute",
-  "caller_connect_start_requests_per_ip_per_minute",
-  "caller_connect_poll_requests_per_ip_per_minute",
-  "caller_connect_exchange_requests_per_ip_per_minute",
-  "caller_connect_activation_requests_per_ip_per_minute",
-  "caller_rotate_start_requests_per_ip_per_minute",
-  "caller_rotate_poll_requests_per_ip_per_minute",
-  "caller_rotate_exchange_requests_per_ip_per_minute",
-  "caller_rotate_activation_requests_per_ip_per_minute",
-  "caller_revoke_start_requests_per_ip_per_minute",
-  "caller_revoke_poll_requests_per_ip_per_minute",
-  "caller_revoke_confirm_requests_per_ip_per_minute"
-] as const;
-
-export type LimitName = (typeof LIMIT_NAMES)[number];
-
 export type AccountTier = "hosted_free" | "hosted_paid" | "self_hosted";
 export type LimitProfileId = "hosted-free" | "hosted-paid" | "self-hosted";
 export type LimitProfileSelector = LimitProfileId;
@@ -97,42 +57,6 @@ export const MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS = [
   "status"
 ] as const satisfies readonly LimitOperationKind[];
 
-export type LimitReasonCode =
-  | "monthly_input_submission_quota_exceeded"
-  | "daily_input_submission_quota_exceeded"
-  | "monthly_caller_api_quota_exceeded"
-  | "queued_input_item_limit_exceeded"
-  | "pending_input_retention_expired"
-  | "unacknowledged_output_timeout_expired"
-  | "downgrade_grace_expired"
-  | "file_upload_upgrade_required"
-  | "input_request_too_large"
-  | "human_answer_request_too_large"
-  | "stored_non_file_payload_limit_exceeded"
-  | "overall_stored_account_data_limit_exceeded"
-  | "uploaded_file_too_large"
-  | "input_submission_rate_limited"
-  | "concurrent_write_limit_exceeded"
-  | "concurrent_file_upload_limit_exceeded"
-  | "input_send_replace_rate_limited"
-  | "input_delete_rate_limited"
-  | "output_check_read_rate_limited"
-  | "output_file_download_rate_limited"
-  | "output_ack_rate_limited"
-  | "caller_connect_approval_rate_limited"
-  | "caller_rotate_approval_rate_limited"
-  | "caller_revoke_approval_rate_limited"
-  | "caller_connect_start_rate_limited"
-  | "caller_connect_poll_rate_limited"
-  | "caller_connect_exchange_rate_limited"
-  | "caller_connect_activation_rate_limited"
-  | "caller_rotate_start_rate_limited"
-  | "caller_rotate_poll_rate_limited"
-  | "caller_rotate_exchange_rate_limited"
-  | "caller_rotate_activation_rate_limited"
-  | "caller_revoke_start_rate_limited"
-  | "caller_revoke_poll_rate_limited"
-  | "caller_revoke_confirm_rate_limited";
 export type LimitErrorCode =
   | "quota_limit_exceeded"
   | "rate_limit_exceeded"
@@ -168,14 +92,13 @@ export type NotApplicableLimit = {
 
 export type LimitSetting = EnabledLimit | DisabledLimit | NotApplicableLimit;
 
-export type LimitDefinition = {
-  name: LimitName;
+type LimitDefinition<ReasonCode extends string = LimitReasonCode> = {
   category: LimitCategory;
   unit: LimitUnit;
   operationKinds: readonly LimitOperationKind[];
   windowKind?: LimitWindowKind;
   resetRule: LimitResetRule;
-  reasonCode: LimitReasonCode;
+  reasonCode: ReasonCode;
   reason: string;
   errorCode: LimitErrorCode;
   statusLabel: string;
@@ -227,9 +150,8 @@ export type LimitErrorMetadata = {
   unit: LimitUnit;
 };
 
-const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
+const LIMIT_DEFINITIONS = {
   input_submissions_per_calendar_month: {
-    name: "input_submissions_per_calendar_month",
     category: "product",
     unit: "submissions",
     operationKinds: ["input_submission"],
@@ -242,7 +164,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Monthly input submissions"
   },
   input_submissions_per_day: {
-    name: "input_submissions_per_day",
     category: "product",
     unit: "submissions",
     operationKinds: ["input_submission"],
@@ -255,7 +176,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Daily input submissions"
   },
   authenticated_caller_api_requests_per_calendar_month: {
-    name: "authenticated_caller_api_requests_per_calendar_month",
     category: "product",
     unit: "requests",
     operationKinds: MONTHLY_CALLER_API_REQUEST_QUOTA_OPERATION_KINDS,
@@ -268,7 +188,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Monthly caller API requests"
   },
   queued_input_items: {
-    name: "queued_input_items",
     category: "product",
     unit: "items",
     operationKinds: ["input_submission"],
@@ -280,7 +199,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Queued input items"
   },
   input_retention_days: {
-    name: "input_retention_days",
     category: "cleanup",
     unit: "days",
     operationKinds: ["cleanup"],
@@ -292,7 +210,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Pending input retention"
   },
   unacknowledged_output_timeout_days: {
-    name: "unacknowledged_output_timeout_days",
     category: "cleanup",
     unit: "days",
     operationKinds: ["cleanup", "output_ack"],
@@ -304,7 +221,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Unacknowledged output timeout"
   },
   downgrade_grace_days: {
-    name: "downgrade_grace_days",
     category: "billing",
     unit: "days",
     operationKinds: ["billing", "cleanup"],
@@ -316,7 +232,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Downgrade grace"
   },
   file_upload_enabled: {
-    name: "file_upload_enabled",
     category: "product",
     unit: "boolean",
     operationKinds: ["file_upload", "input_submission"],
@@ -327,7 +242,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "File uploads"
   },
   input_request_body_bytes_excluding_files: {
-    name: "input_request_body_bytes_excluding_files",
     category: "runtime",
     unit: "bytes",
     operationKinds: ["input_submission"],
@@ -338,7 +252,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Input request body bytes"
   },
   human_answer_request_body_bytes_excluding_files: {
-    name: "human_answer_request_body_bytes_excluding_files",
     category: "runtime",
     unit: "bytes",
     operationKinds: ["human_answer_submission"],
@@ -349,7 +262,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Human answer request body bytes"
   },
   stored_non_file_queue_payload_bytes: {
-    name: "stored_non_file_queue_payload_bytes",
     category: "product",
     unit: "bytes",
     operationKinds: [
@@ -365,7 +277,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Stored non-file queue bytes"
   },
   overall_stored_account_data_bytes: {
-    name: "overall_stored_account_data_bytes",
     category: "product",
     unit: "bytes",
     operationKinds: [
@@ -382,7 +293,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Overall stored account bytes"
   },
   uploaded_bytes_per_file: {
-    name: "uploaded_bytes_per_file",
     category: "runtime",
     unit: "bytes",
     operationKinds: ["file_upload"],
@@ -393,7 +303,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Uploaded bytes per file"
   },
   burst_input_submissions_per_account_per_minute: {
-    name: "burst_input_submissions_per_account_per_minute",
     category: "runtime",
     unit: "submissions",
     operationKinds: ["input_submission"],
@@ -405,7 +314,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Input submission burst rate"
   },
   concurrent_write_requests_per_account: {
-    name: "concurrent_write_requests_per_account",
     category: "runtime",
     unit: "concurrent_requests",
     operationKinds: ["input_submission", "human_answer_submission"],
@@ -416,7 +324,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Concurrent write requests"
   },
   concurrent_file_uploading_requests_per_account: {
-    name: "concurrent_file_uploading_requests_per_account",
     category: "runtime",
     unit: "concurrent_requests",
     operationKinds: ["file_upload"],
@@ -427,7 +334,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Concurrent file uploads"
   },
   input_send_replace_requests_per_account_per_minute: {
-    name: "input_send_replace_requests_per_account_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["input_send_replace"],
@@ -439,7 +345,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Input send/replace request rate"
   },
   input_delete_requests_per_account_per_minute: {
-    name: "input_delete_requests_per_account_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["input_delete"],
@@ -451,7 +356,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Input delete request rate"
   },
   output_check_read_requests_per_account_per_minute: {
-    name: "output_check_read_requests_per_account_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["output_check_read"],
@@ -463,7 +367,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Output check/read request rate"
   },
   output_file_download_requests_per_account_per_minute: {
-    name: "output_file_download_requests_per_account_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["output_file_download"],
@@ -475,7 +378,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Output file download request rate"
   },
   output_ack_requests_per_account_per_minute: {
-    name: "output_ack_requests_per_account_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["output_ack"],
@@ -487,7 +389,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Output acknowledgement request rate"
   },
   caller_connect_approvals_per_account_per_minute: {
-    name: "caller_connect_approvals_per_account_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_connect_approval"],
@@ -499,7 +400,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller connect approval request rate"
   },
   caller_rotate_approvals_per_account_per_minute: {
-    name: "caller_rotate_approvals_per_account_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_rotate_approval"],
@@ -511,7 +411,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller rotate approval request rate"
   },
   caller_revoke_approvals_per_account_per_minute: {
-    name: "caller_revoke_approvals_per_account_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_revoke_approval"],
@@ -523,7 +422,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller revoke approval request rate"
   },
   caller_connect_start_requests_per_ip_per_minute: {
-    name: "caller_connect_start_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_connect_start"],
@@ -535,7 +433,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller connect start request rate"
   },
   caller_connect_poll_requests_per_ip_per_minute: {
-    name: "caller_connect_poll_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_connect_poll"],
@@ -547,7 +444,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller connect poll request rate"
   },
   caller_connect_exchange_requests_per_ip_per_minute: {
-    name: "caller_connect_exchange_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_connect_exchange"],
@@ -559,7 +455,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller connect exchange request rate"
   },
   caller_connect_activation_requests_per_ip_per_minute: {
-    name: "caller_connect_activation_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_connect_activation"],
@@ -571,7 +466,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller connect activation request rate"
   },
   caller_rotate_start_requests_per_ip_per_minute: {
-    name: "caller_rotate_start_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_rotate_start"],
@@ -583,7 +477,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller rotate start request rate"
   },
   caller_rotate_poll_requests_per_ip_per_minute: {
-    name: "caller_rotate_poll_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_rotate_poll"],
@@ -595,7 +488,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller rotate poll request rate"
   },
   caller_rotate_exchange_requests_per_ip_per_minute: {
-    name: "caller_rotate_exchange_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_rotate_exchange"],
@@ -607,7 +499,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller rotate exchange request rate"
   },
   caller_rotate_activation_requests_per_ip_per_minute: {
-    name: "caller_rotate_activation_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_rotate_activation"],
@@ -619,7 +510,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller rotate activation request rate"
   },
   caller_revoke_start_requests_per_ip_per_minute: {
-    name: "caller_revoke_start_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_revoke_start"],
@@ -631,7 +521,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller revoke start request rate"
   },
   caller_revoke_poll_requests_per_ip_per_minute: {
-    name: "caller_revoke_poll_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_revoke_poll"],
@@ -643,7 +532,6 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     statusLabel: "Caller revoke poll request rate"
   },
   caller_revoke_confirm_requests_per_ip_per_minute: {
-    name: "caller_revoke_confirm_requests_per_ip_per_minute",
     category: "runtime",
     unit: "requests",
     operationKinds: ["caller_revoke_confirm"],
@@ -654,30 +542,24 @@ const LIMIT_DEFINITIONS: Readonly<Record<LimitName, LimitDefinition>> = {
     errorCode: "rate_limit_exceeded",
     statusLabel: "Caller revoke confirmation request rate"
   }
-};
+} as const satisfies Record<string, LimitDefinition<string>>;
 
-const HOSTED_FREE_LIMITS = {
-  input_submissions_per_calendar_month: enabled(5_000),
-  input_submissions_per_day: enabled(1_000),
-  authenticated_caller_api_requests_per_calendar_month: enabled(100_000),
-  queued_input_items: enabled(1_000),
-  input_retention_days: enabled(60),
+export type LimitName = keyof typeof LIMIT_DEFINITIONS;
+export type LimitReasonCode =
+  (typeof LIMIT_DEFINITIONS)[LimitName]["reasonCode"];
+
+const LIMIT_NAMES = Object.keys(LIMIT_DEFINITIONS) as LimitName[];
+
+const SHARED_LIMITS = {
   unacknowledged_output_timeout_days: enabled(
     SYSTEM_CONTRACT.unacknowledgedOutputTimeoutDays
   ),
-  downgrade_grace_days: notApplicable("free_tier_not_billed"),
-  file_upload_enabled: disabled("file_upload_disabled"),
   input_request_body_bytes_excluding_files: enabled(
     SYSTEM_CONTRACT.inputSubmissionBodyBytes
   ),
   human_answer_request_body_bytes_excluding_files: enabled(
     SYSTEM_CONTRACT.humanAnswerResponseBodyBytes
   ),
-  stored_non_file_queue_payload_bytes: enabled(32_000_000),
-  overall_stored_account_data_bytes: notApplicable(
-    "free_tier_uses_non_file_storage_cap"
-  ),
-  uploaded_bytes_per_file: disabled("file_upload_disabled"),
   burst_input_submissions_per_account_per_minute: enabled(120),
   concurrent_write_requests_per_account: enabled(20),
   concurrent_file_uploading_requests_per_account: enabled(5),
@@ -700,9 +582,26 @@ const HOSTED_FREE_LIMITS = {
   caller_revoke_start_requests_per_ip_per_minute: enabled(30),
   caller_revoke_poll_requests_per_ip_per_minute: enabled(30),
   caller_revoke_confirm_requests_per_ip_per_minute: enabled(30)
+} satisfies Partial<Record<LimitName, LimitSetting>>;
+
+const HOSTED_FREE_LIMITS = {
+  ...SHARED_LIMITS,
+  input_submissions_per_calendar_month: enabled(5_000),
+  input_submissions_per_day: enabled(1_000),
+  authenticated_caller_api_requests_per_calendar_month: enabled(100_000),
+  queued_input_items: enabled(1_000),
+  input_retention_days: enabled(60),
+  downgrade_grace_days: notApplicable("free_tier_not_billed"),
+  file_upload_enabled: disabled("file_upload_disabled"),
+  stored_non_file_queue_payload_bytes: enabled(32_000_000),
+  overall_stored_account_data_bytes: notApplicable(
+    "free_tier_uses_non_file_storage_cap"
+  ),
+  uploaded_bytes_per_file: disabled("file_upload_disabled")
 } satisfies Record<LimitName, LimitSetting>;
 
 const HOSTED_PAID_LIMITS = {
+  ...SHARED_LIMITS,
   input_submissions_per_calendar_month: disabled("paid_tier_unlimited"),
   input_submissions_per_day: disabled("paid_tier_unlimited"),
   authenticated_caller_api_requests_per_calendar_month: disabled(
@@ -710,44 +609,13 @@ const HOSTED_PAID_LIMITS = {
   ),
   queued_input_items: disabled("paid_tier_unlimited"),
   input_retention_days: disabled("paid_tier_no_retention_cleanup"),
-  unacknowledged_output_timeout_days: enabled(
-    SYSTEM_CONTRACT.unacknowledgedOutputTimeoutDays
-  ),
   downgrade_grace_days: enabled(SYSTEM_CONTRACT.billingDowngradeGraceDays),
   file_upload_enabled: enabled(1),
-  input_request_body_bytes_excluding_files: enabled(
-    SYSTEM_CONTRACT.inputSubmissionBodyBytes
-  ),
-  human_answer_request_body_bytes_excluding_files: enabled(
-    SYSTEM_CONTRACT.humanAnswerResponseBodyBytes
-  ),
   stored_non_file_queue_payload_bytes: disabled(
     "paid_tier_uses_overall_storage_cap"
   ),
   overall_stored_account_data_bytes: enabled(1_000_000_000),
-  uploaded_bytes_per_file: enabled(SYSTEM_CONTRACT.rawFileBytes),
-  burst_input_submissions_per_account_per_minute: enabled(120),
-  concurrent_write_requests_per_account: enabled(20),
-  concurrent_file_uploading_requests_per_account: enabled(5),
-  input_send_replace_requests_per_account_per_minute: enabled(600),
-  input_delete_requests_per_account_per_minute: enabled(600),
-  output_check_read_requests_per_account_per_minute: enabled(120),
-  output_file_download_requests_per_account_per_minute: enabled(60),
-  output_ack_requests_per_account_per_minute: enabled(600),
-  caller_connect_approvals_per_account_per_minute: enabled(30),
-  caller_rotate_approvals_per_account_per_minute: enabled(30),
-  caller_revoke_approvals_per_account_per_minute: enabled(30),
-  caller_connect_start_requests_per_ip_per_minute: enabled(30),
-  caller_connect_poll_requests_per_ip_per_minute: enabled(30),
-  caller_connect_exchange_requests_per_ip_per_minute: enabled(30),
-  caller_connect_activation_requests_per_ip_per_minute: enabled(30),
-  caller_rotate_start_requests_per_ip_per_minute: enabled(30),
-  caller_rotate_poll_requests_per_ip_per_minute: enabled(30),
-  caller_rotate_exchange_requests_per_ip_per_minute: enabled(30),
-  caller_rotate_activation_requests_per_ip_per_minute: enabled(30),
-  caller_revoke_start_requests_per_ip_per_minute: enabled(30),
-  caller_revoke_poll_requests_per_ip_per_minute: enabled(30),
-  caller_revoke_confirm_requests_per_ip_per_minute: enabled(30)
+  uploaded_bytes_per_file: enabled(SYSTEM_CONTRACT.rawFileBytes)
 } satisfies Record<LimitName, LimitSetting>;
 
 const SELF_HOSTED_LIMITS = {
@@ -792,7 +660,11 @@ export function getLimitProfile(selector: LimitProfileSelector): LimitProfile {
   return LIMIT_PROFILES[selector];
 }
 
-export function getLimitDefinition(limitName: LimitName) {
+export function isLimitName(value: string): value is LimitName {
+  return Object.hasOwn(LIMIT_DEFINITIONS, value);
+}
+
+export function getLimitDefinition(limitName: LimitName): LimitDefinition {
   return LIMIT_DEFINITIONS[limitName];
 }
 
@@ -834,7 +706,7 @@ export function limitStatusMetadata(
   limitName: LimitName
 ): LimitStatusMetadata {
   const profile = getLimitProfile(selector);
-  const definition = LIMIT_DEFINITIONS[limitName];
+  const definition = getLimitDefinition(limitName);
 
   return {
     profileId: profile.profileId,
@@ -859,7 +731,7 @@ export function limitErrorMetadata(
   } = {}
 ): LimitErrorMetadata {
   const profile = getLimitProfile(selector);
-  const definition = LIMIT_DEFINITIONS[limitName];
+  const definition = getLimitDefinition(limitName);
   const setting = profile.limits[limitName];
 
   return {
@@ -875,6 +747,14 @@ export function limitErrorMetadata(
   };
 }
 
+export function storageLimitName(
+  selector: LimitProfileSelector
+): "stored_non_file_queue_payload_bytes" | "overall_stored_account_data_bytes" {
+  return getLimitProfile(selector).effectiveTier === "free"
+    ? "stored_non_file_queue_payload_bytes"
+    : "overall_stored_account_data_bytes";
+}
+
 export function fileUploadEnabled(selector: LimitProfileSelector) {
   const setting = getLimitProfile(selector).limits.file_upload_enabled;
 
@@ -883,7 +763,7 @@ export function fileUploadEnabled(selector: LimitProfileSelector) {
 
 export function fixedWindowLimitNames(): readonly LimitName[] {
   return LIMIT_NAMES.filter((limitName) => {
-    return Boolean(LIMIT_DEFINITIONS[limitName].windowKind);
+    return Boolean(getLimitDefinition(limitName).windowKind);
   });
 }
 
