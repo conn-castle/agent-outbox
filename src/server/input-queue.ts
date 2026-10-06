@@ -1,7 +1,4 @@
-import {
-  auditSafeLifecycleEvent,
-  type AuditSafeLifecycleEvent
-} from "./accounting.ts";
+import { auditEventInsertStatement } from "./accounting.ts";
 import {
   apiTemporaryUnavailable,
   apiValidationFailed,
@@ -340,14 +337,15 @@ export async function sendInputItem(
 
   await insertChildRows(query, insertedRow.input_item_id, submission);
   await query(
-    auditEventStatement(await auditContext(query, identity), {
-      event_type: "input_submitted",
-      input_item_id: insertedRow.input_item_id,
-      item_status: "pending",
-      non_file_bytes: submission.nonFilePayloadBytes,
-      request_id: context.requestId,
-      correlation_id: context.correlationId,
-      caller_item_id_hash: submission.callerItemIdHash,
+    auditEventInsertStatement({
+      eventType: "input_submitted",
+      ...(await auditContext(query, identity)),
+      inputItemId: insertedRow.input_item_id,
+      itemStatus: "pending",
+      nonFileBytes: submission.nonFilePayloadBytes,
+      requestId: context.requestId,
+      correlationId: context.correlationId,
+      callerItemIdHash: submission.callerItemIdHash,
       metadata: { revision: insertedRow.current_revision }
     })
   );
@@ -423,14 +421,15 @@ export async function replaceInputItem(
   await query(deleteActionsStatement(existing.input_item_id));
   await insertChildRows(query, existing.input_item_id, submission);
   await query(
-    auditEventStatement(await auditContext(query, identity), {
-      event_type: "input_replaced",
-      input_item_id: existing.input_item_id,
-      item_status: "pending",
-      non_file_bytes: submission.nonFilePayloadBytes,
-      request_id: context.requestId,
-      correlation_id: context.correlationId,
-      caller_item_id_hash: submission.callerItemIdHash,
+    auditEventInsertStatement({
+      eventType: "input_replaced",
+      ...(await auditContext(query, identity)),
+      inputItemId: existing.input_item_id,
+      itemStatus: "pending",
+      nonFileBytes: submission.nonFilePayloadBytes,
+      requestId: context.requestId,
+      correlationId: context.correlationId,
+      callerItemIdHash: submission.callerItemIdHash,
       metadata: { revision }
     })
   );
@@ -464,17 +463,16 @@ export async function deleteInputItem(
 
   await query(deleteInputItemStatement(existing.input_item_id));
   await query(
-    auditEventStatement(await auditContext(query, identity), {
-      event_type: "input_deleted",
-      input_item_id: existing.input_item_id,
-      item_status: "pending",
-      non_file_bytes: databaseNonNegativeInteger(
-        existing.non_file_payload_bytes
-      ),
-      deletion_reason: "caller_delete",
-      request_id: context.requestId,
-      correlation_id: context.correlationId,
-      caller_item_id_hash: sha256Hex(callerItemId),
+    auditEventInsertStatement({
+      eventType: "input_deleted",
+      ...(await auditContext(query, identity)),
+      inputItemId: existing.input_item_id,
+      itemStatus: "pending",
+      nonFileBytes: databaseNonNegativeInteger(existing.non_file_payload_bytes),
+      deletionReason: "caller_delete",
+      requestId: context.requestId,
+      correlationId: context.correlationId,
+      callerItemIdHash: sha256Hex(callerItemId),
       metadata: {}
     })
   );
@@ -834,57 +832,9 @@ async function auditContext(
   if (!row) {
     throw new Error("Input queue audit context was not found");
   }
-  return row;
-}
-
-function auditEventStatement(
-  context: AuditContextRow,
-  input: Omit<AuditSafeLifecycleEvent, "account_audit_id" | "caller_audit_id">
-): TransactionContextStatement {
-  const event = auditSafeLifecycleEvent({
-    eventType: input.event_type,
-    accountAuditId: context.account_audit_id,
-    callerAuditId: context.caller_audit_id,
-    inputItemId: input.input_item_id,
-    itemStatus: input.item_status,
-    nonFileBytes: input.non_file_bytes,
-    deletionReason: input.deletion_reason,
-    requestId: input.request_id,
-    correlationId: input.correlation_id,
-    callerItemIdHash: input.caller_item_id_hash,
-    metadata: input.metadata
-  });
-
   return {
-    sql: `
-      insert into public.agent_outbox_audit_events (
-        event_type,
-        account_audit_id,
-        caller_audit_id,
-        input_item_id,
-        item_status,
-        non_file_bytes,
-        deletion_reason,
-        request_id,
-        correlation_id,
-        caller_item_id_hash,
-        metadata
-      )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
-    `,
-    values: [
-      event.event_type,
-      event.account_audit_id,
-      event.caller_audit_id ?? null,
-      event.input_item_id ?? null,
-      event.item_status ?? null,
-      event.non_file_bytes ?? null,
-      event.deletion_reason ?? null,
-      event.request_id ?? null,
-      event.correlation_id ?? null,
-      event.caller_item_id_hash ?? null,
-      JSON.stringify(event.metadata)
-    ]
+    accountAuditId: row.account_audit_id,
+    callerAuditId: row.caller_audit_id
   };
 }
 

@@ -1295,7 +1295,7 @@ test("delete removes only pending input items", async () => {
   // from the existing row, matching input_submitted/input_replaced.
   assert.match(deleteQuery.calls[3].sql, /agent_outbox_audit_events/);
   assert.equal(deleteQuery.calls[3].values?.[0], "input_deleted");
-  assert.equal(deleteQuery.calls[3].values?.[5], 4096);
+  assert.equal(deleteQuery.calls[3].values?.[8], 4096);
   assert.equal(answered.ok, false);
   assert.equal(answered.ok ? null : answered.error.code, "input_not_pending");
 });
