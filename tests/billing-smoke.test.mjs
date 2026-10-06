@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
-  billingSmokeSummary,
-  exitCodeForBillingSmoke,
   readBillingSmokeEnv,
   runBillingSmokeChecks
 } from "../scripts/billing-smoke.mjs";
+import { checksSummary, exitCodeForChecks } from "../scripts/hosted-checks.mjs";
 
 function baseEnv(overrides = {}) {
   return new Map(
@@ -38,6 +39,158 @@ function jsonResponse(status, body) {
   };
 }
 
+test("billing smoke session checks report request failures", async () => {
+  const checks = await runBillingSmokeChecks(
+    baseEnv({ AGENT_OUTBOX_BILLING_SMOKE_COOKIE: "session=smoke-session" }),
+    {
+      fetchImpl: async () => {
+        throw new Error("boom");
+      }
+    }
+  );
+  for (const name of [
+    "checkout_monthly",
+    "checkout_yearly",
+    "billing_portal_session"
+  ]) {
+    const actual = checks.find((entry) => entry.name === name);
+    const expected = {
+      name,
+      status: "fail",
+      code: "request_failed",
+      message: "boom"
+    };
+    assert.deepEqual(actual, expected);
+    assert.deepEqual(Object.keys(actual ?? {}), Object.keys(expected));
+  }
+});
+
+test("billing smoke session checks fall back to unexpected-response codes", async () => {
+  const checks = await runBillingSmokeChecks(
+    baseEnv({ AGENT_OUTBOX_BILLING_SMOKE_COOKIE: "session=smoke-session" }),
+    { fetchImpl: /** @type {any} */ (async () => jsonResponse(500, {})) }
+  );
+  for (const [name, code, message] of [
+    [
+      "checkout_monthly",
+      "checkout_unexpected_response",
+      "monthly Checkout session was not created."
+    ],
+    [
+      "checkout_yearly",
+      "checkout_unexpected_response",
+      "yearly Checkout session was not created."
+    ],
+    [
+      "billing_portal_session",
+      "portal_unexpected_response",
+      "Billing Portal session was not created."
+    ]
+  ]) {
+    const actual = checks.find((entry) => entry.name === name);
+    const expected = { name, status: "fail", code, message, status_code: 500 };
+    assert.deepEqual(actual, expected);
+    assert.deepEqual(Object.keys(actual ?? {}), Object.keys(expected));
+  }
+});
+
+test("billing smoke catches invalid base URLs in session checks", async () => {
+  const checks = await runBillingSmokeChecks(
+    baseEnv({
+      APP_BASE_URL: "not a url",
+      PUBLIC_APP_BASE_URL: "not a url",
+      AGENT_OUTBOX_BILLING_SMOKE_COOKIE: "session=smoke-session"
+    }),
+    { fetchImpl: async () => assert.fail("fetch must not be called") }
+  );
+  for (const name of [
+    "checkout_monthly",
+    "checkout_yearly",
+    "billing_portal_session"
+  ]) {
+    const actual = checks.find((entry) => entry.name === name);
+    assert.equal(actual?.status, "fail");
+    assert.equal(actual?.code, "request_failed");
+  }
+});
+
+test("billing smoke CLI reports env-file failures, summaries, and exit codes", async (t) => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "billing-smoke-cli-"));
+  try {
+    const missingPath = path.join(tempDir, "missing.env");
+    const emptyPath = path.join(tempDir, "empty.env");
+    writeFileSync(emptyPath, "");
+    const configuredPath = path.join(tempDir, "configured.env");
+    writeFileSync(
+      configuredPath,
+      [...baseEnv()].map(([name, value]) => `${name}=${value}`).join("\n")
+    );
+    const missingConfiguration = {
+      ok: false,
+      action_required: false,
+      checks: [
+        {
+          name: "configuration",
+          status: "fail",
+          code: "missing_configuration",
+          message:
+            "Missing required values: APP_BASE_URL, PUBLIC_APP_BASE_URL, STRIPE_PAID_MONTHLY_PRICE_ID, STRIPE_PAID_YEARLY_PRICE_ID, STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
+        }
+      ]
+    };
+    const cookieRequired = checksSummary(
+      await runBillingSmokeChecks(baseEnv())
+    );
+    assert.equal(cookieRequired.action_required, true);
+    for (const { label, envPath, status, stdout, stderr } of [
+      {
+        label: "missing explicit file",
+        envPath: missingPath,
+        status: 1,
+        stdout: "",
+        stderr: `Billing smoke env file does not exist: ${missingPath}\n`
+      },
+      {
+        label: "empty explicit file",
+        envPath: emptyPath,
+        status: 1,
+        stdout: JSON.stringify(missingConfiguration, null, 2) + "\n",
+        stderr: ""
+      },
+      {
+        label: "configured file without a session cookie",
+        envPath: configuredPath,
+        status: 2,
+        stdout: JSON.stringify(cookieRequired, null, 2) + "\n",
+        stderr: ""
+      }
+    ]) {
+      await t.test(label, () => {
+        const result = spawnSync(
+          process.execPath,
+          [
+            fileURLToPath(
+              new URL("../scripts/billing-smoke.mjs", import.meta.url)
+            )
+          ],
+          {
+            env: {
+              NODE_ENV: "test",
+              AGENT_OUTBOX_BILLING_SMOKE_ENV_FILE: envPath
+            },
+            encoding: "utf8"
+          }
+        );
+        assert.equal(result.status, status);
+        assert.equal(result.stdout, stdout);
+        assert.equal(result.stderr, stderr);
+      });
+    }
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
 test("billing smoke fails loud when required env is missing", async () => {
   const checks = await runBillingSmokeChecks(new Map());
 
@@ -50,7 +203,7 @@ test("billing smoke fails loud when required env is missing", async () => {
         "Missing required values: APP_BASE_URL, PUBLIC_APP_BASE_URL, STRIPE_PAID_MONTHLY_PRICE_ID, STRIPE_PAID_YEARLY_PRICE_ID, STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
     }
   ]);
-  assert.equal(exitCodeForBillingSmoke(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
 });
 
 test("billing smoke reads explicit env file before runtime smoke fallback", () => {
@@ -95,10 +248,10 @@ test("billing smoke requires a Clerk session before creating hosted sessions", a
       }
     )
   });
-  const summary = billingSmokeSummary(checks);
+  const summary = checksSummary(checks);
 
   assert.equal(calls, 0);
-  assert.equal(exitCodeForBillingSmoke(checks), 2);
+  assert.equal(exitCodeForChecks(checks), 2);
   assert.equal(summary.action_required, true);
   assert.deepEqual(
     checks
@@ -139,9 +292,9 @@ test("billing smoke creates no-charge session checks without leaking cookie", as
       )
     }
   );
-  const summary = billingSmokeSummary(checks);
+  const summary = checksSummary(checks);
 
-  assert.equal(exitCodeForBillingSmoke(checks), 2);
+  assert.equal(exitCodeForChecks(checks), 2);
   assert.equal(summary.action_required, true);
   assert.equal(JSON.stringify(summary).includes("super-secret-cookie"), false);
   assert.deepEqual(
@@ -173,7 +326,7 @@ test("billing smoke fails invalid hosted redirect configuration", async () => {
     })
   );
 
-  assert.equal(exitCodeForBillingSmoke(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
   assert.equal(
     checks.find((entry) => entry.name === "public_urls")?.code,
     "public_urls_mismatch"
@@ -219,7 +372,7 @@ test("billing smoke preserves status for non-JSON endpoint responses", async () 
       status_code: 502
     }
   );
-  assert.equal(exitCodeForBillingSmoke(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
 });
 
 test("billing smoke treats missing Stripe customer as portal action_required", async () => {
@@ -258,5 +411,5 @@ test("billing smoke treats missing Stripe customer as portal action_required", a
         "Billing Portal smoke requires an account with an existing Stripe customer."
     }
   );
-  assert.equal(exitCodeForBillingSmoke(checks), 2);
+  assert.equal(exitCodeForChecks(checks), 2);
 });

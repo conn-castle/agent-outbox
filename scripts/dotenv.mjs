@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+
 /**
  * Parse a dotenv-style document into a name/value map.
  *
@@ -22,4 +25,27 @@ export function parseEnv(content) {
   }
 
   return values;
+}
+
+/**
+ * Read an operator env file, defaulting to `<root>/.env`. A missing default
+ * file yields an empty map; a missing explicitly named file is an error.
+ *
+ * @param {string | undefined} explicitPath
+ * @param {string} root
+ * @param {string} label
+ * @returns {Map<string, string>}
+ */
+export function readOptionalEnvFile(explicitPath, root, label) {
+  const envPath =
+    explicitPath && explicitPath.trim() !== ""
+      ? path.resolve(explicitPath)
+      : path.join(root, ".env");
+  if (!existsSync(envPath)) {
+    if (explicitPath) {
+      throw new Error(`${label} env file does not exist: ${envPath}`);
+    }
+    return new Map();
+  }
+  return parseEnv(readFileSync(envPath, "utf8"));
 }
