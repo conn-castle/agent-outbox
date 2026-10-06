@@ -29,6 +29,8 @@ const CALLER = {
 function loadActions(behavior = {}) {
   /** @type {Array<Record<string, unknown>>} */
   const domainInputs = [];
+  /** @type {string[]} */
+  const domainCalls = [];
   /** @type {Array<Record<string, unknown>>} */
   const sessionInputs = [];
   /** @type {Array<Record<string, unknown>>} */
@@ -36,9 +38,10 @@ function loadActions(behavior = {}) {
 
   /**
    * @param {(input: Record<string, unknown>) => unknown} success
+   * @param {string} domainName
    */
   const domainFunction =
-    (success) =>
+    (success, domainName) =>
     /**
      * @param {unknown} _query
      * @param {Record<string, unknown>} input
@@ -46,6 +49,7 @@ function loadActions(behavior = {}) {
     async (_query, input) => {
       // Copy out of the VM realm so deepStrictEqual compares plain objects.
       domainInputs.push({ ...input });
+      domainCalls.push(domainName);
       const override = behavior.domainResult?.();
       if (override instanceof Error) throw override;
       return override ?? { ok: true, data: success(input) };
@@ -72,22 +76,36 @@ function loadActions(behavior = {}) {
       }
     },
     "../../src/server/caller-connect": {
-      approveConnectBrowserSetupRequest: domainFunction(browserApproval),
-      approveConnectDeviceSetupRequest: domainFunction(() => ({
-        setup_request_id: "setup-device",
-        caller: CALLER
-      })),
-      denyConnectSetupRequest: domainFunction(denied)
+      approveConnectBrowserSetupRequest: domainFunction(
+        browserApproval,
+        "connect_browser"
+      ),
+      approveConnectDeviceSetupRequest: domainFunction(
+        () => ({
+          setup_request_id: "setup-device",
+          caller: CALLER
+        }),
+        "connect_device"
+      ),
+      denyConnectSetupRequest: domainFunction(denied, "connect_deny")
     },
     "../../src/server/caller-credential-operations": {
-      approveCredentialOperationBrowserSetupRequest:
-        domainFunction(browserApproval),
-      approveCredentialOperationDeviceSetupRequest: domainFunction((input) => ({
-        setup_request_id: "setup-device",
-        operation: input.operation,
-        caller: CALLER
-      })),
-      denyCredentialOperationSetupRequest: domainFunction(denied)
+      approveCredentialOperationBrowserSetupRequest: domainFunction(
+        browserApproval,
+        "credential_browser"
+      ),
+      approveCredentialOperationDeviceSetupRequest: domainFunction(
+        (input) => ({
+          setup_request_id: "setup-device",
+          operation: input.operation,
+          caller: CALLER
+        }),
+        "credential_device"
+      ),
+      denyCredentialOperationSetupRequest: domainFunction(
+        denied,
+        "credential_deny"
+      )
     },
     "../../src/server/caller-connect-clerk-fixture": {
       CALLER_CONNECT_FIXTURE_USER_ID_PARAM: FIXTURE_PARAM
@@ -129,7 +147,7 @@ function loadActions(behavior = {}) {
 
   /**
    * @param {string} name
-   * @param {Record<string, string>} fields
+   * @param {Record<string, string | Blob>} fields
    */
   function run(name, fields) {
     const formData = new FormData();
@@ -141,7 +159,7 @@ function loadActions(behavior = {}) {
 
   /**
    * @param {string} name
-   * @param {Record<string, string>} fields
+   * @param {Record<string, string | Blob>} fields
    * @returns {Promise<string>}
    */
   async function redirectOf(name, fields) {
@@ -157,7 +175,7 @@ function loadActions(behavior = {}) {
     return /** @type {string} */ (path);
   }
 
-  return { run, redirectOf, domainInputs, sessionInputs, reports };
+  return { run, redirectOf, domainInputs, domainCalls, sessionInputs, reports };
 }
 
 /**
@@ -205,12 +223,14 @@ for (const op of OPERATIONS) {
   const errorPage = `/caller/${op.operation}/error`;
 
   test(`${op.operation} approval actions redirect to the operation's success targets`, async () => {
-    const { redirectOf, domainInputs, sessionInputs } = loadActions();
+    const { redirectOf, domainInputs, domainCalls, sessionInputs, reports } =
+      loadActions();
+    const fixtureFields = { [FIXTURE_PARAM]: " user_fixture " };
 
     assert.equal(
       await redirectOf(op.approveBrowser, {
         setupRequestId: " setup-1 ",
-        ...fixture
+        ...fixtureFields
       }),
       url("http://127.0.0.1:4567/callback", {
         state: "local",
@@ -220,14 +240,22 @@ for (const op of OPERATIONS) {
       })
     );
     assert.equal(
-      await redirectOf(op.previewDevice, { userCode: "ABCD-EFGH", ...fixture }),
+      await redirectOf(op.previewDevice, {
+        userCode: " ABCD-EFGH ",
+        ...fixtureFields
+      }),
       url(`/caller/${op.operation}/device`, {
         user_code: "ABCD-EFGH",
         ...fixture
       })
     );
+    assert.equal(sessionInputs.length, 1);
+    assert.equal(domainInputs.length, 1);
     assert.equal(
-      await redirectOf(op.approveDevice, { userCode: "ABCD-EFGH", ...fixture }),
+      await redirectOf(op.approveDevice, {
+        userCode: " ABCD-EFGH ",
+        ...fixtureFields
+      }),
       url(`/caller/${op.operation}/success`, {
         ...op.deviceSuccessParams,
         ...fixture
@@ -235,7 +263,10 @@ for (const op of OPERATIONS) {
     );
     for (const deny of [op.denyBrowser, op.denyDevice]) {
       assert.equal(
-        await redirectOf(deny, { setupRequestId: "setup-1", ...fixture }),
+        await redirectOf(deny, {
+          setupRequestId: " setup-1 ",
+          ...fixtureFields
+        }),
         url(errorPage, {
           status: "200",
           code: "setup_denied",
@@ -246,6 +277,13 @@ for (const op of OPERATIONS) {
       );
     }
 
+    const domain = op.operation === "connect" ? "connect" : "credential";
+    assert.deepEqual(domainCalls, [
+      `${domain}_browser`,
+      `${domain}_device`,
+      `${domain}_deny`,
+      `${domain}_deny`
+    ]);
     const approval = { accountId: SESSION.accountId, userId: SESSION.userId };
     const denial = {
       ...op.domainInput,
@@ -258,6 +296,7 @@ for (const op of OPERATIONS) {
       denial,
       denial
     ]);
+    assert.deepEqual(reports, []);
     assert.deepEqual(
       sessionInputs,
       [
@@ -274,118 +313,195 @@ for (const op of OPERATIONS) {
     );
   });
 
-  test(`${op.operation} approval actions redirect failures to the operation's error page`, async () => {
-    const missing = loadActions();
-    for (const [name, message] of [
-      [op.approveBrowser, "Missing setup request."],
-      [op.denyBrowser, "Missing setup request."],
-      [op.denyDevice, "Missing setup request."],
-      [op.previewDevice, "Missing device code."],
-      [op.approveDevice, "Missing device code."]
+  test(`${op.operation} validates required fields before session or domain work`, async () => {
+    const subject = loadActions();
+    for (const [name, field, message] of [
+      [op.approveBrowser, "setupRequestId", "Missing setup request."],
+      [op.denyBrowser, "setupRequestId", "Missing setup request."],
+      [op.denyDevice, "setupRequestId", "Missing setup request."],
+      [op.previewDevice, "userCode", "Missing device code."],
+      [op.approveDevice, "userCode", "Missing device code."]
     ]) {
+      for (const value of [undefined, " ", new Blob(["non-text"])]) {
+        const fields =
+          value === undefined ? fixture : { [field]: value, ...fixture };
+        assert.equal(
+          await subject.redirectOf(name, fields),
+          url(errorPage, {
+            status: "400",
+            code: "invalid_request",
+            message,
+            ...fixture
+          })
+        );
+      }
+    }
+    assert.deepEqual(subject.sessionInputs, []);
+    assert.deepEqual(subject.domainInputs, []);
+    assert.deepEqual(subject.reports, []);
+  });
+}
+
+for (const op of OPERATIONS) {
+  test(`${op.operation} all mutation entries retain error and framework-control-flow contracts`, async () => {
+    const fields = {
+      setupRequestId: " setup-1 ",
+      userCode: " ABCD-EFGH ",
+      [FIXTURE_PARAM]: " user_fixture "
+    };
+    const actions = [
+      [op.approveBrowser, "approve", "approve", "browser_approval"],
+      [op.approveDevice, "device", "device", "device_approval"],
+      [op.denyBrowser, "deny", "approve", "deny"],
+      [op.denyDevice, "deny", "device", "deny"]
+    ];
+    for (const [name, kind, page, operation] of actions) {
+      for (const failureKind of [
+        "session",
+        "domain",
+        "domainThrow",
+        "transactionThrow",
+        "domainControlFlow",
+        "transactionControlFlow"
+      ]) {
+        const controlFlow = Object.assign(new Error("NEXT_REDIRECT"), {
+          controlFlow: true
+        });
+        const unavailable = new Error("unavailable");
+        const failure = {
+          status: 409,
+          code: "conflict",
+          message: "Cannot approve."
+        };
+        const sessionFailure = {
+          status: 401,
+          code: "authentication_required",
+          message: "Sign in again."
+        };
+        const behavior =
+          failureKind === "session"
+            ? { transaction: async () => ({ ok: false, ...sessionFailure }) }
+            : failureKind === "domain"
+              ? { domainResult: () => ({ ok: false, error: failure }) }
+              : failureKind === "domainThrow"
+                ? { domainResult: () => unavailable }
+                : failureKind === "transactionThrow"
+                  ? {
+                      transaction: async () => {
+                        throw unavailable;
+                      }
+                    }
+                  : failureKind === "domainControlFlow"
+                    ? { domainResult: () => controlFlow }
+                    : {
+                        transaction: async () => {
+                          throw controlFlow;
+                        }
+                      };
+        const subject = loadActions(behavior);
+        if (failureKind.endsWith("ControlFlow")) {
+          await assert.rejects(
+            subject.run(name, fields),
+            (error) => error === controlFlow
+          );
+          assert.deepEqual(subject.reports, []);
+          continue;
+        }
+        const expected =
+          failureKind === "session"
+            ? sessionFailure
+            : failureKind === "domain"
+              ? failure
+              : {
+                  status: 503,
+                  code: "temporary_unavailable",
+                  message: `Caller ${op.operation} approval is temporarily unavailable.`
+                };
+        assert.equal(
+          await subject.redirectOf(name, fields),
+          url(`/caller/${op.operation}/error`, {
+            status: String(expected.status),
+            code: expected.code,
+            message: expected.message,
+            [FIXTURE_PARAM]: "user_fixture"
+          })
+        );
+        if (!failureKind.endsWith("Throw"))
+          assert.deepEqual(subject.reports, []);
+        else {
+          assert.equal(subject.reports.length, 1);
+          const { startedAtMs, ...report } = subject.reports[0];
+          assert.equal(typeof startedAtMs, "number");
+          assert.deepEqual(report, {
+            requestId: `caller_${op.operation}_${kind}_req_test`,
+            route: `/caller/${op.operation}/${page}`,
+            operation: `caller_${op.operation}_${operation}`,
+            method: "POST",
+            session: failureKind === "domainThrow" ? SESSION : undefined
+          });
+        }
+      }
+    }
+  });
+
+  test(`${op.operation} field and URL contracts retain fixture normalization and query ordering`, async () => {
+    const subject = loadActions();
+    const fixture = { [FIXTURE_PARAM]: " user_fixture " };
+    for (const name of [op.previewDevice, op.approveDevice]) {
+      const params =
+        name === op.previewDevice
+          ? { user_code: "ABCD-EFGH" }
+          : op.deviceSuccessParams;
       assert.equal(
-        await missing.redirectOf(name, { ...fixture }),
-        url(errorPage, {
-          status: "400",
-          code: "invalid_request",
-          message,
-          ...fixture
-        })
+        await subject.redirectOf(name, { userCode: " ABCD-EFGH ", ...fixture }),
+        url(
+          `/caller/${op.operation}/${name === op.previewDevice ? "device" : "success"}`,
+          { ...params, [FIXTURE_PARAM]: "user_fixture" }
+        )
       );
     }
-    assert.deepEqual(missing.sessionInputs, []);
-
-    const domainFailure = loadActions({
+    const emptyFixture = loadActions();
+    assert.equal(
+      await emptyFixture.redirectOf(op.previewDevice, {
+        userCode: "ABCD-EFGH",
+        [FIXTURE_PARAM]: " "
+      }),
+      url(`/caller/${op.operation}/device`, { user_code: "ABCD-EFGH" })
+    );
+    for (const fixtureValue of [" ", new Blob(["user_fixture"])]) {
+      const noFixture = loadActions();
+      assert.equal(
+        await noFixture.redirectOf(op.approveDevice, {
+          userCode: "ABCD-EFGH",
+          [FIXTURE_PARAM]: fixtureValue
+        }),
+        url(`/caller/${op.operation}/success`, op.deviceSuccessParams)
+      );
+      assert.equal(noFixture.sessionInputs[0].fixtureClerkUserId, "");
+    }
+    const existingParams = loadActions({
       domainResult: () => ({
-        ok: false,
-        error: {
-          status: 409,
-          code: "setup_request_not_pending",
-          message: "Setup request is no longer pending."
+        ok: true,
+        data: {
+          setup_request_id: "request +?",
+          setup_code: "code +?",
+          caller: CALLER,
+          callback_url:
+            "http://127.0.0.1:4567/callback?setup_code=old&state=local&status=old"
         }
       })
     });
-    const sessionFailure = loadActions({
-      transaction: async () => ({
-        ok: false,
-        status: 401,
-        code: "authentication_required",
-        message: "Sign in again."
+    assert.equal(
+      await existingParams.redirectOf(op.approveBrowser, {
+        setupRequestId: "setup-1",
+        ...fixture
+      }),
+      url("http://127.0.0.1:4567/callback", {
+        setup_code: "code +?",
+        state: "local",
+        status: "approved",
+        setup_request_id: "request +?"
       })
-    });
-    for (const name of [op.approveBrowser, op.approveDevice, op.denyBrowser]) {
-      const fields = { setupRequestId: "setup-1", userCode: "ABCD-EFGH" };
-      assert.equal(
-        await domainFailure.redirectOf(name, fields),
-        url(errorPage, {
-          status: "409",
-          code: "setup_request_not_pending",
-          message: "Setup request is no longer pending."
-        })
-      );
-      assert.equal(
-        await sessionFailure.redirectOf(name, fields),
-        url(errorPage, {
-          status: "401",
-          code: "authentication_required",
-          message: "Sign in again."
-        })
-      );
-    }
-
-    const thrown = loadActions({
-      domainResult: () => new Error("raw approval failure")
-    });
-    for (const name of [op.approveBrowser, op.approveDevice, op.denyDevice]) {
-      assert.equal(
-        await thrown.redirectOf(name, {
-          setupRequestId: "setup-1",
-          userCode: "ABCD-EFGH",
-          ...fixture
-        }),
-        url(errorPage, {
-          status: "503",
-          code: "temporary_unavailable",
-          message: `Caller ${op.operation} approval is temporarily unavailable.`,
-          ...fixture
-        })
-      );
-    }
-    assert.deepEqual(
-      thrown.reports.map(
-        ({ requestId, route, method, operation, session }) => ({
-          requestId,
-          route,
-          method,
-          operation,
-          session
-        })
-      ),
-      [
-        ["approve_req", "approve", "browser_approval"],
-        ["device_req", "device", "device_approval"],
-        ["deny_req", "device", "deny"]
-      ].map(([requestKind, page, operation]) => ({
-        requestId: `caller_${op.operation}_${requestKind}_test`,
-        route: `/caller/${op.operation}/${page}`,
-        method: "POST",
-        operation: `caller_${op.operation}_${operation}`,
-        session: SESSION
-      }))
     );
-
-    const controlFlow = Object.assign(new Error("NEXT_REDIRECT"), {
-      controlFlow: true
-    });
-    const signIn = loadActions({
-      transaction: async () => {
-        throw controlFlow;
-      }
-    });
-    await assert.rejects(
-      signIn.run(op.approveDevice, { userCode: "ABCD-EFGH" }),
-      (error) => error === controlFlow
-    );
-    assert.deepEqual(signIn.reports, []);
   });
 }

@@ -5,7 +5,8 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import {
   approveConnectBrowserSetupRequest,
   approveConnectDeviceSetupRequest,
-  denyConnectSetupRequest
+  denyConnectSetupRequest,
+  type ConnectDeviceApprovalData
 } from "../../src/server/caller-connect";
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../src/server/caller-connect-clerk-fixture";
 import {
@@ -24,53 +25,12 @@ import {
 
 type ApprovalOperation = "connect" | "rotate" | "revoke";
 
+type ApprovalData = ConnectDeviceApprovalData & {
+  callback_url?: string;
+  setup_code?: string;
+};
+
 type ApprovalError = { status: number; code: string; message: string };
-
-type ApprovalHandlers = {
-  approveBrowser(
-    query: ProductTransactionQuery,
-    input: { setupRequestId: string; accountId: string; userId: string }
-  ): Promise<
-    SetupResult<{
-      setup_request_id: string;
-      setup_code?: string;
-      callback_url?: string;
-    }>
-  >;
-  /** Resolves to the success page's query parameters. */
-  approveDevice(
-    query: ProductTransactionQuery,
-    input: { userCode: string; accountId: string; userId: string }
-  ): Promise<SetupResult<Record<string, string>>>;
-  deny(
-    query: ProductTransactionQuery,
-    input: { setupRequestId: string; accountId: string }
-  ): Promise<SetupResult<{ setup_request_id: string }>>;
-  deniedMessage: string;
-};
-
-const APPROVAL_HANDLERS: Record<ApprovalOperation, ApprovalHandlers> = {
-  connect: {
-    approveBrowser: approveConnectBrowserSetupRequest,
-    async approveDevice(query, input) {
-      const result = await approveConnectDeviceSetupRequest(query, input);
-      return result.ok
-        ? {
-            ok: true,
-            data: {
-              flow: "device",
-              setup_request_id: result.data.setup_request_id,
-              caller: result.data.caller.display_name
-            }
-          }
-        : result;
-    },
-    deny: denyConnectSetupRequest,
-    deniedMessage: "Caller setup was canceled."
-  },
-  rotate: credentialOperationHandlers("rotate"),
-  revoke: credentialOperationHandlers("revoke")
-};
 
 const MISSING_FIELD_MESSAGES = {
   setupRequestId: "Missing setup request.",
@@ -78,7 +38,7 @@ const MISSING_FIELD_MESSAGES = {
 };
 
 export async function approveBrowserConnect(formData: FormData) {
-  await approveBrowser("connect", formData);
+  await approve("connect", "browser", formData);
 }
 
 export async function previewDeviceConnect(formData: FormData) {
@@ -86,7 +46,7 @@ export async function previewDeviceConnect(formData: FormData) {
 }
 
 export async function approveDeviceConnect(formData: FormData) {
-  await approveDevice("connect", formData);
+  await approve("connect", "device", formData);
 }
 
 export async function denyBrowserConnect(formData: FormData) {
@@ -98,11 +58,11 @@ export async function denyDeviceConnect(formData: FormData) {
 }
 
 export async function approveRotateBrowser(formData: FormData) {
-  await approveBrowser("rotate", formData);
+  await approve("rotate", "browser", formData);
 }
 
 export async function approveRevokeBrowser(formData: FormData) {
-  await approveBrowser("revoke", formData);
+  await approve("revoke", "browser", formData);
 }
 
 export async function previewRotateDevice(formData: FormData) {
@@ -114,11 +74,11 @@ export async function previewRevokeDevice(formData: FormData) {
 }
 
 export async function approveRotateDevice(formData: FormData) {
-  await approveDevice("rotate", formData);
+  await approve("rotate", "device", formData);
 }
 
 export async function approveRevokeDevice(formData: FormData) {
-  await approveDevice("revoke", formData);
+  await approve("revoke", "device", formData);
 }
 
 export async function denyRotateBrowser(formData: FormData) {
@@ -137,115 +97,90 @@ export async function denyRevokeDevice(formData: FormData) {
   await deny("revoke", "device", formData);
 }
 
-function credentialOperationHandlers(
-  operation: "rotate" | "revoke"
-): ApprovalHandlers {
-  return {
-    approveBrowser: (query, input) =>
-      approveCredentialOperationBrowserSetupRequest(query, {
-        operation,
-        ...input
-      }),
-    async approveDevice(query, input) {
-      const result = await approveCredentialOperationDeviceSetupRequest(query, {
-        operation,
-        ...input
-      });
-      return result.ok
-        ? { ok: true, data: { setup_request_id: result.data.setup_request_id } }
-        : result;
-    },
-    deny: (query, input) =>
-      denyCredentialOperationSetupRequest(query, { operation, ...input }),
-    deniedMessage: `Caller ${operation} was canceled.`
-  };
-}
-
-async function approveBrowser(
+/**
+ * Browser success returns to the approved callback. Device success stays local:
+ * connect includes flow and caller; rotate/revoke include only the request ID.
+ */
+async function approve(
   operation: ApprovalOperation,
+  flow: "browser" | "device",
   formData: FormData
 ) {
-  const fixtureClerkUserId = fixtureClerkUserIdField(formData);
-  const setupRequestId = requiredField(
+  const { value, fixtureClerkUserId } = approvalInput(
     operation,
     formData,
-    "setupRequestId",
-    fixtureClerkUserId
+    flow === "browser" ? "setupRequestId" : "userCode"
   );
-  const data = await runApproval(
+  const page = flow === "browser" ? "approve" : "device";
+  const data = await runApproval<ApprovalData>(
     operation,
     {
-      requestId: createCorrelationId(`caller_${operation}_approve_req`),
-      route: `/caller/${operation}/approve`,
-      operation: `caller_${operation}_browser_approval`
+      requestId: createCorrelationId(`caller_${operation}_${page}_req`),
+      route: `/caller/${operation}/${page}`,
+      operation: `caller_${operation}_${flow}_approval`
     },
-    (query, session) =>
-      APPROVAL_HANDLERS[operation].approveBrowser(query, {
-        setupRequestId,
-        accountId: session.accountId,
-        userId: session.userId
-      }),
+    (query, session) => {
+      const input = { accountId: session.accountId, userId: session.userId };
+      if (flow === "browser") {
+        const browserInput = { setupRequestId: value, ...input };
+        return operation === "connect"
+          ? approveConnectBrowserSetupRequest(query, browserInput)
+          : approveCredentialOperationBrowserSetupRequest(query, {
+              operation,
+              ...browserInput
+            });
+      }
+      const deviceInput = { userCode: value, ...input };
+      return operation === "connect"
+        ? approveConnectDeviceSetupRequest(query, deviceInput)
+        : approveCredentialOperationDeviceSetupRequest(query, {
+            operation,
+            ...deviceInput
+          });
+    },
     fixtureClerkUserId
   );
 
-  const callbackUrl = new URL(data.callback_url!);
-  callbackUrl.searchParams.set("status", "approved");
-  callbackUrl.searchParams.set("setup_request_id", data.setup_request_id);
-  callbackUrl.searchParams.set("setup_code", data.setup_code!);
-  redirect(callbackUrl.toString());
+  if (flow === "browser") {
+    const callbackUrl = new URL(data.callback_url!);
+    callbackUrl.searchParams.set("status", "approved");
+    callbackUrl.searchParams.set("setup_request_id", data.setup_request_id);
+    callbackUrl.searchParams.set("setup_code", data.setup_code!);
+    redirect(callbackUrl.toString());
+  }
+  const successParams: Record<string, string> =
+    operation === "connect"
+      ? {
+          flow: "device",
+          setup_request_id: data.setup_request_id,
+          caller: data.caller.display_name
+        }
+      : { setup_request_id: data.setup_request_id };
+  const query = queryWithFixture(successParams, fixtureClerkUserId);
+  redirect(`/caller/${operation}/success?${query}`);
 }
 
+/** Previews the trimmed device code without opening a transaction. */
 async function previewDevice(operation: ApprovalOperation, formData: FormData) {
-  const fixtureClerkUserId = fixtureClerkUserIdField(formData);
-  const userCode = requiredField(
+  const { value: userCode, fixtureClerkUserId } = approvalInput(
     operation,
     formData,
-    "userCode",
-    fixtureClerkUserId
+    "userCode"
   );
   const query = queryWithFixture({ user_code: userCode }, fixtureClerkUserId);
   redirect(`/caller/${operation}/device?${query}`);
 }
 
-async function approveDevice(operation: ApprovalOperation, formData: FormData) {
-  const fixtureClerkUserId = fixtureClerkUserIdField(formData);
-  const userCode = requiredField(
-    operation,
-    formData,
-    "userCode",
-    fixtureClerkUserId
-  );
-  const successParams = await runApproval(
-    operation,
-    {
-      requestId: createCorrelationId(`caller_${operation}_device_req`),
-      route: `/caller/${operation}/device`,
-      operation: `caller_${operation}_device_approval`
-    },
-    (query, session) =>
-      APPROVAL_HANDLERS[operation].approveDevice(query, {
-        userCode,
-        accountId: session.accountId,
-        userId: session.userId
-      }),
-    fixtureClerkUserId
-  );
-
-  const query = queryWithFixture(successParams, fixtureClerkUserId);
-  redirect(`/caller/${operation}/success?${query}`);
-}
-
+/** Denial uses its originating page for session/report context and the domain-returned request ID. */
 async function deny(
   operation: ApprovalOperation,
   page: "approve" | "device",
   formData: FormData
 ) {
-  const fixtureClerkUserId = fixtureClerkUserIdField(formData);
-  const setupRequestId = requiredField(
+  const { value: setupRequestId, fixtureClerkUserId } = approvalInput(
     operation,
     formData,
-    "setupRequestId",
-    fixtureClerkUserId
+    "setupRequestId"
   );
   const data = await runApproval(
     operation,
@@ -254,11 +189,15 @@ async function deny(
       route: `/caller/${operation}/${page}`,
       operation: `caller_${operation}_deny`
     },
-    (query, session) =>
-      APPROVAL_HANDLERS[operation].deny(query, {
+    (query, session) => {
+      const input = {
         setupRequestId,
         accountId: session.accountId
-      }),
+      };
+      return operation === "connect"
+        ? denyConnectSetupRequest(query, input)
+        : denyCredentialOperationSetupRequest(query, { operation, ...input });
+    },
     fixtureClerkUserId
   );
 
@@ -268,7 +207,10 @@ async function deny(
       {
         status: 200,
         code: "setup_denied",
-        message: APPROVAL_HANDLERS[operation].deniedMessage
+        message:
+          operation === "connect"
+            ? "Caller setup was canceled."
+            : `Caller ${operation} was canceled.`
       },
       fixtureClerkUserId,
       data.setup_request_id
@@ -276,13 +218,17 @@ async function deny(
   );
 }
 
-function requiredField(
+/** Validates before session/domain work; retains the fixture identity for redirects. */
+function approvalInput(
   operation: ApprovalOperation,
   formData: FormData,
-  key: keyof typeof MISSING_FIELD_MESSAGES,
-  fixtureClerkUserId: string
+  key: keyof typeof MISSING_FIELD_MESSAGES
 ) {
   const value = textField(formData, key);
+  const fixtureClerkUserId = textField(
+    formData,
+    CALLER_CONNECT_FIXTURE_USER_ID_PARAM
+  );
   if (!value) {
     redirect(
       errorPath(
@@ -296,7 +242,7 @@ function requiredField(
       )
     );
   }
-  return value;
+  return { value, fixtureClerkUserId };
 }
 
 function textField(formData: FormData, key: string) {
@@ -304,14 +250,10 @@ function textField(formData: FormData, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function fixtureClerkUserIdField(formData: FormData) {
-  return textField(formData, CALLER_CONNECT_FIXTURE_USER_ID_PARAM);
-}
-
 /**
  * Runs `callback` in the caller-connect human transaction and returns its
- * data, redirecting to the operation's error page on any session, domain, or
- * unexpected failure.
+ * successful domain data. Session and domain errors redirect without reporting;
+ * framework control flow is rethrown before unexpected failures are reported.
  */
 async function runApproval<TData>(
   operation: ApprovalOperation,
@@ -368,6 +310,7 @@ async function runApproval<TData>(
   return transaction.data.data;
 }
 
+/** Error query order is status, code, message, fixture identity, then request ID. */
 function errorPath(
   operation: ApprovalOperation,
   error: ApprovalError,
@@ -384,6 +327,7 @@ function errorPath(
   return `/caller/${operation}/error?${query}`;
 }
 
+/** Appends fixture identity after the supplied parameters, preserving their order. */
 function queryWithFixture(
   params: Record<string, string>,
   fixtureClerkUserId: string
