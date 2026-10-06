@@ -217,9 +217,11 @@ export async function callerStatusInTransaction(
 }
 
 /**
- * Reads account, storage, and active-limit rows in the supplied transaction,
- * including the internal `queued_input_items` count. The caller authenticates
- * and enforces limits. The public projection of this snapshot omits that count.
+ * Reads account, storage, and active-limit rows using only accountId in the
+ * supplied transaction. Accepts caller or authorized human account identity;
+ * the invoking boundary must authenticate, authorize account access, and enforce
+ * applicable limits. Includes the internal queued_input_items count, which
+ * public status projections omit.
  */
 export async function accountStatusInTransaction(
   query: ProductTransactionQuery,

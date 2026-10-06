@@ -216,6 +216,11 @@ export const REVIEW_PAGE_SIZE = 100;
 const CANONICAL_UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/**
+ * Returns up to REVIEW_PAGE_SIZE matching rows starting at options.offset
+ * (default 0). The extra fetched row only sets hasNext; totalCount covers all
+ * matching rows before pagination. Throws if that count is unavailable or invalid.
+ */
 export async function humanReviewPageInTransaction(
   query: ProductTransactionQuery,
   context: AuthorizedHumanAccountContext,
@@ -281,6 +286,11 @@ export async function runHumanReviewQueryCanary(
   );
 }
 
+/**
+ * Loads account-scoped detail using the list's shared link-button projection.
+ * Links retain displayOrder, display, icon, and url, ordered by display order
+ * then link ID.
+ */
 export async function humanReviewDetailInTransaction(
   query: ProductTransactionQuery,
   context: AuthorizedHumanAccountContext,
@@ -457,7 +467,11 @@ function isUsageUnit(
   return unit === "requests" || unit === "submissions" || unit === "items";
 }
 
-/** Selects a review page plus one row that signals a next page. */
+/**
+ * Builds the account-scoped, filtered and sorted query with a fixed limit of
+ * REVIEW_PAGE_SIZE + 1 and an offset defaulting to 0. The extra row is a
+ * sentinel for humanReviewPageInTransaction, not a visible row.
+ */
 export function humanReviewListStatement(
   context: AuthorizedHumanAccountContext,
   options: HumanReviewListOptions = {}
