@@ -2,7 +2,6 @@ import {
   apiTimestamp,
   apiValidationFailed,
   isJsonRecord,
-  parseBoundedPageLimit,
   type ApiErrorInput,
   type ApiRequestContext
 } from "./api-errors.ts";
@@ -31,15 +30,18 @@ import {
   isStorableString,
   unstorableStringError
 } from "./input-schema.ts";
-import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
+import {
+  encodePageCursor,
+  pageFromRows,
+  parsePageRequest,
+  type PageRequest
+} from "./pagination.ts";
 import {
   InputReadRequestSchema,
   publicInputReadShapeMatches,
   publicSchemaFieldErrors
 } from "../shared/public-api-contract.ts";
 
-export const INPUT_PAGE_DEFAULT_LIMIT = SYSTEM_CONTRACT.outputPageDefaultLimit;
-export const INPUT_PAGE_MAX_LIMIT = SYSTEM_CONTRACT.outputPageMaxLimit;
 export const INPUT_READ_LIMIT_OPERATION_KIND = "output_check_read";
 export const INPUT_LIST_OPERATION = "input_list";
 export const INPUT_READ_OPERATION = "input_read";
@@ -73,10 +75,6 @@ type InputCursor = {
   inputItemId: string;
 };
 
-type ParsedPageRequest =
-  | { ok: true; limit: number; cursor: InputCursor | null }
-  | { ok: false; error: ApiErrorInput };
-
 type InputListRow = {
   input_item_id: string;
   caller_item_id: string;
@@ -87,6 +85,7 @@ type InputListRow = {
   answered_at: string | Date | null;
 };
 
+const INPUT_VALIDATION_MESSAGE = "Input read request failed validation.";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -146,15 +145,18 @@ export async function listInputsInTransaction(
   const pageRows = await query<InputListRow>(
     inputListPageStatement(identity, limit, cursor)
   );
-  const page = pageRows.rows.slice(0, limit);
-  const hasMore = pageRows.rows.length > limit;
+  const { page, hasMore, nextCursor } = pageFromRows(
+    pageRows.rows,
+    limit,
+    cursorFromInputRow
+  );
 
   return {
     ok: true,
     data: {
       items: page.map(inputListItemFromRow),
       has_more: hasMore,
-      next_cursor: hasMore ? cursorFromInputRow(page[page.length - 1]) : null,
+      next_cursor: nextCursor,
       returned_count: page.length,
       page_limit: limit
     }
@@ -203,11 +205,12 @@ export async function readInputInTransaction(
 
 export function parseInputPageQuery(
   searchParams: URLSearchParams
-): ParsedPageRequest {
-  return parseInputPageParameters({
-    limit: searchParams.get("limit"),
-    cursor: searchParams.get("cursor")
-  });
+): PageRequest<InputCursor> {
+  return parsePageRequest(
+    { limit: searchParams.get("limit"), cursor: searchParams.get("cursor") },
+    inputCursorFromPayload,
+    INPUT_VALIDATION_MESSAGE
+  );
 }
 
 export function parseInputReadBody(
@@ -331,12 +334,16 @@ export function liveInputForReadStatement(
 }
 
 export function cursorFromInputRow(row: { input_item_id: string }) {
-  return Buffer.from(
-    JSON.stringify({
-      input_item_id: row.input_item_id
-    }),
-    "utf8"
-  ).toString("base64url");
+  return encodePageCursor({ input_item_id: row.input_item_id });
+}
+
+function inputCursorFromPayload(
+  payload: Record<string, unknown>
+): InputCursor | null {
+  return typeof payload.input_item_id === "string" &&
+    UUID_PATTERN.test(payload.input_item_id)
+    ? { inputItemId: payload.input_item_id }
+    : null;
 }
 
 function publicInputReadResult(input: CanonicalInput): InputReadResult {
@@ -362,84 +369,11 @@ function inputListItemFromRow(row: InputListRow): InputListItem {
   };
 }
 
-function parseInputPageParameters(input: {
-  limit: unknown;
-  cursor: unknown;
-}): ParsedPageRequest {
-  const limit = parseBoundedPageLimit(
-    input.limit,
-    INPUT_PAGE_DEFAULT_LIMIT,
-    INPUT_PAGE_MAX_LIMIT
-  );
-  const cursor = parseCursor(input.cursor);
-  const fields = [
-    ...(limit.ok ? [] : limit.fields),
-    ...(cursor.ok ? [] : cursor.fields)
-  ];
-
-  if (!limit.ok || !cursor.ok) {
-    return validationFailed(fields);
-  }
-
-  return {
-    ok: true,
-    limit: limit.value,
-    cursor: cursor.value
-  };
-}
-
-function parseCursor(value: unknown) {
-  if (value == null || value === "") {
-    return { ok: true as const, value: null };
-  }
-  if (typeof value !== "string") {
-    return {
-      ok: false as const,
-      fields: [
-        {
-          path: "cursor",
-          code: "invalid_cursor",
-          message: "cursor must be an opaque string or null."
-        }
-      ]
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-    if (
-      isJsonRecord(parsed) &&
-      typeof parsed.input_item_id === "string" &&
-      UUID_PATTERN.test(parsed.input_item_id)
-    ) {
-      return {
-        ok: true as const,
-        value: {
-          inputItemId: parsed.input_item_id
-        }
-      };
-    }
-  } catch {
-    // Return the safe validation error below.
-  }
-
-  return {
-    ok: false as const,
-    fields: [
-      {
-        path: "cursor",
-        code: "invalid_cursor",
-        message: "cursor is invalid or expired."
-      }
-    ]
-  };
-}
-
 function validationFailed(fields: ApiErrorInput["fields"]): {
   ok: false;
   error: ApiErrorInput;
 } {
-  return apiValidationFailed("Input read request failed validation.", fields);
+  return apiValidationFailed(INPUT_VALIDATION_MESSAGE, fields);
 }
 
 function notFoundError(): InputReadQueueResult {
