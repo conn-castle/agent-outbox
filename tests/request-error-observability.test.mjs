@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import vm from "node:vm";
-
-import ts from "typescript";
 
 import { emitRuntimeLog, safeErrorName } from "../src/server/logging.ts";
 import {
@@ -15,9 +9,9 @@ import {
   classifyNextRequestError
 } from "../src/server/request-error-observability.ts";
 import { withProcessEnv } from "./helpers/process-env.mjs";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 
 const require = createRequire(import.meta.url);
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FORBIDDEN_EVIDENCE = [
   "/wp-login.php",
   "/does-not-exist",
@@ -734,58 +728,28 @@ async function captureStructuredLogs(callback) {
  * @returns {{ onRequestError: Function }}
  */
 function loadInstrumentationForTest(stubs) {
-  const source = readFileSync(resolve(REPO_ROOT, "instrumentation.ts"), "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
-    },
-    fileName: "instrumentation.ts"
-  }).outputText;
-  const testModule = {
-    exports: /** @type {Record<string, unknown>} */ ({})
-  };
-
-  vm.runInNewContext(
-    compiled,
-    {
-      console,
-      exports: testModule.exports,
-      module: testModule,
-      process,
-      /**
-       * @param {string} specifier
-       */
-      require(specifier) {
-        if (specifier === "@sentry/nextjs") {
-          return {
-            withScope: stubs.withScope,
-            captureRequestError: stubs.captureRequestError
-          };
-        }
-        if (specifier === "./src/server/correlation") {
-          return { createCorrelationId: stubs.createCorrelationId };
-        }
-        if (specifier === "./src/server/logging") {
-          return { emitRuntimeLog, safeErrorName };
-        }
-        if (specifier === "./src/server/request-error-observability") {
-          return {
-            NEXT_REQUEST_ERROR_MESSAGE,
-            NEXT_REQUEST_ERROR_OPERATION,
-            classifyNextRequestError
-          };
-        }
-        if (specifier === "./src/server/sentry") {
-          return { sentryCaptureEnabled: stubs.sentryCaptureEnabled };
-        }
-
-        return require(specifier);
+  const exportsForTestModule = loadModuleForTest("instrumentation.ts", {
+    stubs: {
+      "@sentry/nextjs": {
+        withScope: stubs.withScope,
+        captureRequestError: stubs.captureRequestError
+      },
+      "./src/server/correlation": {
+        createCorrelationId: stubs.createCorrelationId
+      },
+      "./src/server/logging": { emitRuntimeLog, safeErrorName },
+      "./src/server/request-error-observability": {
+        NEXT_REQUEST_ERROR_MESSAGE,
+        NEXT_REQUEST_ERROR_OPERATION,
+        classifyNextRequestError
+      },
+      "./src/server/sentry": {
+        sentryCaptureEnabled: stubs.sentryCaptureEnabled
       }
     },
-    { filename: "instrumentation.ts" }
-  );
+    globals: { console, process },
+    fallbackRequire: require
+  });
 
-  return /** @type {{ onRequestError: Function }} */ (testModule.exports);
+  return /** @type {{ onRequestError: Function }} */ (exportsForTestModule);
 }

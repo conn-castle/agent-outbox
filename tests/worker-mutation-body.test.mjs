@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
-import vm from "node:vm";
-import ts from "typescript";
 
 import * as requestBody from "../src/server/request-body.ts";
 import { humanMutationTransportFailureResponse } from "../src/server/human-mutation-response.ts";
@@ -13,14 +10,11 @@ import {
   parseUndoHumanAnswerForm
 } from "../src/server/human-action-form.ts";
 import { validatedResponsePayload } from "../src/server/human-answer.ts";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 
 const origin = "https://agent-outbox.test";
 const id = "00000000-0000-4000-8000-000000000003";
 const callerId = "00000000-0000-4000-8000-000000000005";
-const workerSource = readFileSync(
-  new URL("../worker/entry.mjs", import.meta.url),
-  "utf8"
-);
 
 // Real Worker fetch/scheduled exports, body limiter, transport responses and
 // Hyperdrive mapping and Sentry reporting/init/flush/logging. OpenNext, scheduled
@@ -112,38 +106,22 @@ function harness(options = {}) {
   // dependencies. Config gating, safe logging and exception sanitizing are real.
   /** @param {string} path @param {Record<string, unknown>} dependencies */
   function loadRuntime(path, dependencies) {
-    const exports = {};
-    const compiled = ts.transpileModule(
-      readFileSync(new URL(path, import.meta.url), "utf8"),
-      {
-        compilerOptions: {
-          module: ts.ModuleKind.CommonJS,
-          target: ts.ScriptTarget.ES2024,
-          esModuleInterop: true
-        }
-      }
-    ).outputText;
-    vm.runInNewContext(compiled, {
-      exports,
-      Error,
-      AggregateError,
-      process: processDouble,
-      console: consoleDouble,
-      /** @param {string} specifier */
-      require(specifier) {
-        if (!Object.hasOwn(dependencies, specifier))
-          throw new Error(`Unexpected runtime dependency: ${specifier}`);
-        return dependencies[specifier];
+    return loadModuleForTest(path, {
+      stubs: dependencies,
+      globals: {
+        Error,
+        AggregateError,
+        process: processDouble,
+        console: consoleDouble
       }
     });
-    return exports;
   }
-  const observability = loadRuntime("../src/server/observability.ts", {});
-  const logging = loadRuntime("../src/server/logging.ts", {
+  const observability = loadRuntime("src/server/observability.ts", {});
+  const logging = loadRuntime("src/server/logging.ts", {
     "./observability.ts": observability
   });
   const runtime = /** @type {typeof import("../src/server/sentry.ts")} */ (
-    loadRuntime("../src/server/sentry.ts", {
+    loadRuntime("src/server/sentry.ts", {
       "@sentry/nextjs": sdk,
       "./logging.ts": logging,
       "./observability.ts": observability,
@@ -221,30 +199,13 @@ function harness(options = {}) {
       }
     }
   };
-  const compiled = ts.transpileModule(workerSource, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024,
-      esModuleInterop: true
-    }
-  }).outputText;
   const exports =
     /** @type {{ default: { fetch: (request: Request, env: unknown, context: unknown) => Promise<Response>, scheduled: (controller: { cron: string, scheduledTime: number }, env: unknown, context?: { waitUntil: (promise: Promise<void>) => void }) => Promise<void> } } & typeof durableObjects} */ (
-      /** @type {unknown} */ ({})
+      loadModuleForTest("worker/entry.mjs", {
+        stubs: dependencies,
+        globals: { Request, Response, URL, Date }
+      })
     );
-  vm.runInNewContext(compiled, {
-    exports,
-    Request,
-    Response,
-    URL,
-    Date,
-    /** @param {string} specifier */
-    require(specifier) {
-      if (!Object.hasOwn(dependencies, specifier))
-        throw new Error(`Unexpected Worker dependency: ${specifier}`);
-      return dependencies[/** @type {keyof typeof dependencies} */ (specifier)];
-    }
-  });
   return { worker: exports.default, state, exports, durableObjects };
 }
 

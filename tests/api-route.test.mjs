@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import vm from "node:vm";
-import ts from "typescript";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 import { tsImport } from "tsx/esm/api";
 
 import * as apiRoute from "../src/server/api-route.ts";
@@ -272,21 +270,10 @@ const routeCases = [
  */
 function loadRoute(route, handlerModule, handlerName, handler) {
   const filename = resolve(root, `app${route}/route.ts`);
-  const compiled = ts.transpileModule(readFileSync(filename, "utf8"), {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
-    },
-    fileName: filename
-  }).outputText;
-  const module = { exports: {} };
-  vm.runInNewContext(
-    compiled,
-    {
-      module,
-      exports: module.exports,
+  return /** @type {Record<string, (request: Request, context?: any) => Promise<Response>>} */ (
+    loadModuleForTest(`app${route}/route.ts`, {
       /** @param {string} specifier */
-      require(specifier) {
+      fallbackRequire(specifier) {
         const path = resolve(dirname(filename), specifier);
         if (path === resolve(root, "src/server/api-route")) return apiRoute;
         if (path === resolve(root, `src/server/${handlerModule}`)) {
@@ -294,10 +281,8 @@ function loadRoute(route, handlerModule, handlerName, handler) {
         }
         throw new Error(`Unexpected route dependency: ${specifier}`);
       }
-    },
-    { filename }
+    })
   );
-  return module.exports;
 }
 
 /** @param {string} method @param {string} route @param {string} [body] */

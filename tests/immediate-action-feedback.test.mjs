@@ -5,14 +5,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
-import ts from "typescript";
+import { transpileForTest } from "./helpers/transpiled-module.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_SCRIPT = resolve(REPO_ROOT, "public/immediate-action-feedback.js");
-const TS_SOURCE = resolve(
-  REPO_ROOT,
-  "src/components/actions/immediate-action-feedback.ts"
-);
 
 /**
  * @param {"public" | "typescript"} source
@@ -190,13 +186,9 @@ function installFeedback(source) {
       filename: "public/immediate-action-feedback.js"
     });
   } else {
-    const compiled = ts.transpileModule(readFileSync(TS_SOURCE, "utf8"), {
-      compilerOptions: {
-        module: ts.ModuleKind.CommonJS,
-        target: ts.ScriptTarget.ES2024
-      },
-      fileName: "src/components/actions/immediate-action-feedback.ts"
-    }).outputText;
+    const compiled = transpileForTest(
+      "src/components/actions/immediate-action-feedback.ts"
+    );
     vm.runInNewContext(compiled, sandbox, {
       filename: "src/components/actions/immediate-action-feedback.ts"
     });

@@ -1,31 +1,28 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { readFileSync } from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
 import test from "node:test";
-import vm from "node:vm";
-
-import ts from "typescript";
 
 import * as correlation from "../src/server/correlation.ts";
 import * as logging from "../src/server/logging.ts";
 import * as observability from "../src/server/observability.ts";
 import * as requestErrors from "../src/server/request-error-observability.ts";
 import { withProcessEnv } from "./helpers/process-env.mjs";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 
 const require = createRequire(import.meta.url);
 globalThis.AsyncLocalStorage = AsyncLocalStorage;
 /** @type {typeof import("@sentry/nextjs")} */
 const Sentry = require("../node_modules/@sentry/nextjs/build/cjs/edge/index.js");
 /** @typedef {Parameters<NonNullable<ReturnType<NonNullable<ReturnType<typeof Sentry.getClient>>["getTransport"]>>["send"]>[0]} Envelope */
-const runtime = loadModule("../src/server/sentry.ts", {
+const runtime = loadModule("src/server/sentry.ts", {
   "@sentry/nextjs": Sentry,
   "./logging.ts": logging,
   "./correlation.ts": correlation,
   "./observability.ts": observability
 });
-const { onRequestError } = loadModule("../instrumentation.ts", {
+const { onRequestError } = loadModule("instrumentation.ts", {
   "@sentry/nextjs": Sentry,
   "./src/server/correlation": correlation,
   "./src/server/logging": logging,
@@ -682,32 +679,7 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
  * @returns {Record<string, Function>}
  */
 function loadModule(path, modules) {
-  const source = readFileSync(new URL(path, import.meta.url), "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
-    },
-    fileName: path
-  }).outputText;
-  const testModule = { exports: {} };
-  vm.runInNewContext(
-    compiled,
-    {
-      console,
-      exports: testModule.exports,
-      module: testModule,
-      process,
-      /** @param {string} specifier */
-      require(specifier) {
-        if (specifier in modules) {
-          return modules[specifier];
-        }
-        throw new Error(`Unexpected test import: ${specifier}`);
-      }
-    },
-    { filename: path }
+  return /** @type {Record<string, Function>} */ (
+    loadModuleForTest(path, { stubs: modules, globals: { console, process } })
   );
-  return testModule.exports;
 }

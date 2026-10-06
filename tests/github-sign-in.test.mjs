@@ -1,15 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import vm from "node:vm";
 
-import ts from "typescript";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 
 const require = createRequire(import.meta.url);
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLERK_CALL_TIMEOUT_MS = 10_000;
 const SAME_PAGE_FAILURE_DELAY_MS = 3_000;
 const ACTIVE_ATTEMPT_RECOVERY_MS = 15_000;
@@ -31,19 +26,6 @@ function loadGitHubSignInButton({
   clerkLoaded = true,
   onEvent
 }) {
-  const source = readFileSync(
-    resolve(REPO_ROOT, "src/components/auth/GitHubSignInButton.tsx"),
-    "utf8"
-  );
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      jsx: ts.JsxEmit.ReactJSX,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
-    },
-    fileName: "src/components/auth/GitHubSignInButton.tsx"
-  }).outputText;
   const stateChanges = /** @type {unknown[]} */ ([]);
   let timerId = 0;
   let now = 0;
@@ -78,67 +60,48 @@ function loadGitHubSignInButton({
       timers.delete(id);
     }
   };
-  const testModule = {
-    exports: /** @type {Record<string, unknown>} */ ({})
-  };
-
-  vm.runInNewContext(
-    compiled,
+  const exportsForTestModule = loadModuleForTest(
+    "src/components/auth/GitHubSignInButton.tsx",
     {
-      console,
-      URLSearchParams,
-      exports: testModule.exports,
-      module: testModule,
-      queueMicrotask,
-      /** @param {string} specifier */
-      require(specifier) {
-        if (specifier === "@clerk/nextjs") {
-          return {
-            useClerk: () => ({ loaded: clerkLoaded }),
-            useSignIn: () => ({
-              signIn,
-              fetchStatus: "idle",
-              errors: []
-            })
-          };
-        }
-        if (specifier === "next/navigation") {
-          return { usePathname: () => pathname };
-        }
-        if (specifier === "react") {
-          return {
-            /** @param {() => void | (() => void)} effect */
-            useEffect(effect) {
-              const cleanup = effect();
-              if (typeof cleanup === "function") effectCleanups.push(cleanup);
-            },
-            /** @param {unknown} initialValue */
-            useRef(initialValue) {
-              return { current: initialValue };
-            },
-            /** @param {unknown} initialValue */
-            useState(initialValue) {
-              return [
-                initialValue,
-                (/** @type {unknown} */ value) => stateChanges.push(value)
-              ];
-            }
-          };
-        }
-        if (specifier === "../../client/client-events.ts") {
-          return { emitClientEvent: onEvent };
-        }
-        return require(specifier);
+      stubs: {
+        "@clerk/nextjs": {
+          useClerk: () => ({ loaded: clerkLoaded }),
+          useSignIn: () => ({
+            signIn,
+            fetchStatus: "idle",
+            errors: []
+          })
+        },
+        "next/navigation": { usePathname: () => pathname },
+        react: {
+          /** @param {() => void | (() => void)} effect */
+          useEffect(effect) {
+            const cleanup = effect();
+            if (typeof cleanup === "function") effectCleanups.push(cleanup);
+          },
+          /** @param {unknown} initialValue */
+          useRef(initialValue) {
+            return { current: initialValue };
+          },
+          /** @param {unknown} initialValue */
+          useState(initialValue) {
+            return [
+              initialValue,
+              (/** @type {unknown} */ value) => stateChanges.push(value)
+            ];
+          }
+        },
+        "../../client/client-events.ts": { emitClientEvent: onEvent }
       },
-      window: windowStub
-    },
-    { filename: "src/components/auth/GitHubSignInButton.tsx" }
+      globals: { console, URLSearchParams, queueMicrotask, window: windowStub },
+      fallbackRequire: require
+    }
   );
 
   return {
     GitHubSignInButton:
       /** @type {(props?: { redirectUrl?: string }) => import("react").ReactElement | null} */ (
-        testModule.exports.GitHubSignInButton
+        exportsForTestModule.GitHubSignInButton
       ),
     /** @param {string} type */
     dispatchWindowEvent(type) {

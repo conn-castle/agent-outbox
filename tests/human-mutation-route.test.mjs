@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
-import vm from "node:vm";
-import ts from "typescript";
 
 import {
   parseBulkHumanAnswersForm,
@@ -13,15 +10,12 @@ import { validatedResponsePayload } from "../src/server/human-answer.ts";
 import * as requestBody from "../src/server/request-body.ts";
 import { humanMutationTransportFailureResponse } from "../src/server/human-mutation-response.ts";
 import { SYSTEM_CONTRACT } from "../src/shared/system-contract.ts";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 
 const origin = "https://agent-outbox.test";
 const inputItemId = "00000000-0000-4000-8000-000000000003";
 const callerId = "00000000-0000-4000-8000-000000000005";
 const outputResultId = "00000000-0000-4000-8000-000000000004";
-const routeSource = readFileSync(
-  new URL("../app/human/mutations/route.ts", import.meta.url),
-  "utf8"
-);
 
 // Execute the real POST export, real bounded reader, native form parser, and
 // actual form/response validators. Clerk, fixture readiness, correlation IDs,
@@ -143,28 +137,13 @@ function routeHarness() {
       }
     }
   };
-  const compiled = ts.transpileModule(routeSource, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
-    }
-  }).outputText;
   const exports =
     /** @type {{ POST: (request: Request) => Promise<Response> }} */ (
-      /** @type {unknown} */ ({})
+      loadModuleForTest("app/human/mutations/route.ts", {
+        stubs: dependencies,
+        globals: { Response, URL, Date }
+      })
     );
-  vm.runInNewContext(compiled, {
-    exports,
-    Response,
-    URL,
-    Date,
-    /** @param {string} specifier */
-    require(specifier) {
-      if (!Object.hasOwn(dependencies, specifier))
-        throw new Error(`Unexpected route dependency: ${specifier}`);
-      return dependencies[/** @type {keyof typeof dependencies} */ (specifier)];
-    }
-  });
   return { POST: exports.POST, state };
 }
 
