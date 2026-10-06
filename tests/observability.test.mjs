@@ -15,11 +15,11 @@ import { accountWriteLockStatement } from "../src/server/caller-api-limits.ts";
 import { formatVersionLabel } from "../src/server/app-version.ts";
 import { authenticateCallerApiRequest } from "../src/server/caller-api-auth.ts";
 import * as callerAuth from "../src/server/caller-auth.ts";
-import * as canonicalInput from "../src/server/canonical-input.ts";
 import {
   isStorableString,
   unstorableStringError
 } from "../src/server/input-schema.ts";
+import * as canonicalInput from "../src/server/canonical-input.ts";
 import {
   apiErrorResponse,
   apiRequestContext,
@@ -84,6 +84,7 @@ import { queryResult } from "./helpers/fake-query.mjs";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const CALLER_KEY_HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
 
 /**
  * @typedef {(error: unknown, input: Record<string, unknown>) => {
@@ -699,6 +700,8 @@ function loadInputQueueModuleForTest(
 
 /**
  * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
+ * @param {ReturnType<typeof callerAuth.generateCallerApiKeyMaterial>} [keyMaterial]
+ * @param {{ limitError?: import("../src/server/api-errors.ts").ApiErrorInput, limitRequests?: Array<{ accountId: string, kind: string }>, calls?: import("../src/server/database.ts").TransactionContextStatement[] }} [options]
  * @returns {{
  *   plaintextApiKey: string,
  *   handleOutputFileDownloadRequest(
@@ -708,8 +711,12 @@ function loadInputQueueModuleForTest(
  *   ): Promise<{ ok: boolean, error?: import("../src/server/api-errors.ts").ApiErrorInput }>
  * }}
  */
-function loadOutputFilesModuleForTest(reportRuntimeFailure) {
-  const material = callerAuth.generateCallerApiKeyMaterial();
+function loadOutputFilesModuleForTest(
+  reportRuntimeFailure,
+  keyMaterial,
+  options = {}
+) {
+  const material = keyMaterial ?? callerAuth.generateCallerApiKeyMaterial();
   const identity = {
     accountId: "00000000-0000-4000-8000-000000000301",
     callerId: "00000000-0000-4000-8000-000000000302"
@@ -718,6 +725,7 @@ function loadOutputFilesModuleForTest(reportRuntimeFailure) {
    * @param {import("../src/server/database.ts").TransactionContextStatement} statement
    */
   const fakeQuery = async (statement) => {
+    options.calls?.push(statement);
     if (/agent_outbox_lookup_caller_credential/.test(statement.sql)) {
       return {
         rows: [
@@ -758,12 +766,15 @@ function loadOutputFilesModuleForTest(reportRuntimeFailure) {
       "./caller-api-limits.ts": {
         /**
          * @param {unknown} _query
-         * @param {unknown} _identity
+         * @param {{ accountId: string }} identity
          * @param {string} kind
          */
-        async enforceAccountOperationLimits(_query, _identity, kind) {
+        async enforceAccountOperationLimits(_query, identity, kind) {
           assert.equal(kind, "output_file_download");
-          return { ok: true };
+          options.limitRequests?.push({ accountId: identity.accountId, kind });
+          return options.limitError
+            ? { ok: false, error: options.limitError }
+            : { ok: true };
         }
       },
       "./canonical-input.ts": canonicalInput,
@@ -813,7 +824,10 @@ function loadOutputFilesModuleForTest(reportRuntimeFailure) {
         },
         "./caller-api-auth.ts": callerApiAuth,
         "./database.ts": {},
-        "./input-schema.ts": { isStorableString, unstorableStringError }
+        "./input-schema.ts": {
+          isStorableString,
+          unstorableStringError
+        }
       })
     )
   };
@@ -3094,7 +3108,15 @@ test("billing session resolution failures share billing route error ids", async 
   );
 });
 
-test("input queue and output file catch paths share error ids across logs and Sentry", async () => {
+// prettier-ignore
+test(
+  "input queue and output file catch paths share error ids across logs and Sentry",
+  /**
+   * Exercises real output authentication and the shared wrapper with an
+   * injected transaction failure, alongside the input-queue fixture. Checks
+   * error ids, logs, Sentry, messages, and that raw errors are not leaked.
+   */
+  async () => {
   /** @type {Array<{ tags: Map<string, unknown>, contexts: Array<{ name: string, value: Record<string, unknown> }> }>} */
   const sentryScopes = [];
   /** @type {Array<{ name?: string, message?: string }>} */
@@ -3145,9 +3167,9 @@ test("input queue and output file catch paths share error ids across logs and Se
 
   const logs = await withProcessEnv(
     {
-      CALLER_KEY_HASH_SECRET: "0123456789abcdef0123456789abcdef",
       APP_ENV: "production",
       DATABASE_APP_ROLE_URL: "postgresql://observability-test",
+      CALLER_KEY_HASH_SECRET: CALLER_KEY_HASH_SECRET_FIXTURE,
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
       SENTRY_RELEASE: "agent-outbox@2026.07.07",
       CI: undefined,
@@ -3243,6 +3265,7 @@ test("input queue and output file catch paths share error ids across logs and Se
   assert.equal(outputLog.account_id, "00000000-0000-4000-8000-000000000301");
   assert.equal(outputLog.caller_id, "00000000-0000-4000-8000-000000000302");
   assert.equal(typeof outputLog.duration_ms, "number");
+  assert.equal(outputLog.message, "Output file download failed unexpectedly.");
   assert.deepEqual(
     sentryScopes.map((scope) => scope.tags.get("error_id")),
     ["corr-input-queue-observability", "corr-output-file-observability"]
@@ -3258,6 +3281,70 @@ test("input queue and output file catch paths share error ids across logs and Se
   const serializedLogs = JSON.stringify(logs);
   assert.equal(serializedLogs.includes("raw input transaction secret"), false);
   assert.equal(serializedLogs.includes("raw output transaction secret"), false);
+});
+
+// prettier-ignore
+test(
+  "output file limit denial returns the error before any output lookup",
+  /**
+   * Exercises real authentication and an injected limit denial. Checks the
+   * returned error, the authenticated account and operation, and that no
+   * output lookup runs. This does not enforce a production quota.
+   */
+  async () => {
+  const keyMaterial = await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: CALLER_KEY_HASH_SECRET_FIXTURE },
+    callerAuth.generateCallerApiKeyMaterial
+  );
+  /** @type {import("../src/server/database.ts").TransactionContextStatement[]} */
+  const calls = [];
+  /** @type {Array<{ accountId: string, kind: string }>} */
+  const limitRequests = [];
+  /** @type {import("../src/server/api-errors.ts").ApiErrorInput} */
+  const limitError = {
+    status: 429,
+    code: "rate_limit_exceeded",
+    message: "Output file download request limit exceeded."
+  };
+  const { handleOutputFileDownloadRequest } = loadOutputFilesModuleForTest(
+    () => assert.fail("Limit denial must not report a runtime failure."),
+    keyMaterial,
+    { calls, limitError, limitRequests }
+  );
+  const request = new Request(
+    "https://app.agent-outbox.dev/api/output/result/files/file",
+    { headers: { Authorization: `Bearer ${keyMaterial.plaintextApiKey}` } }
+  );
+  const context = apiRequestContext(
+    request,
+    "/api/output/[output_result_id]/files/[file_id]"
+  );
+  context.requestId = "req-output-file-observability";
+
+  const result = await withProcessEnv(
+    {
+      DATABASE_APP_ROLE_URL: "postgresql://observability-test",
+      CALLER_KEY_HASH_SECRET: CALLER_KEY_HASH_SECRET_FIXTURE
+    },
+    () =>
+      handleOutputFileDownloadRequest(request, context, {
+        outputResultId: "00000000-0000-4000-8000-000000000303",
+        fileId: "00000000-0000-4000-8000-000000000304"
+      })
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, limitError);
+  assert.deepEqual(limitRequests, [
+    {
+      accountId: "00000000-0000-4000-8000-000000000301",
+      kind: "output_file_download"
+    }
+  ]);
+  assert.equal(
+    calls.some((call) => /agent_outbox_output_(files|results)/.test(call.sql)),
+    false
+  );
 });
 
 test("scheduled cleanup failures log request account and duration without error text", async () => {

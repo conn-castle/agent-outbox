@@ -278,6 +278,14 @@ export async function runAuthenticatedCallerTransaction<TResult>(
   );
 }
 
+/**
+ * Authenticates the caller and enforces operation limits before the callback
+ * runs. The callback receives the full success identity, including `keyId`.
+ * Configuration, authentication, and limit failures are returned unchanged. A
+ * caught canonical-input integrity error is reported and returned as that
+ * distinct failure. Any other thrown error is reported as an unexpected
+ * runtime failure and returned with the operation's unavailable message.
+ */
 export async function runGuardedCallerTransaction<TResult>(
   request: Request,
   context: ApiRequestContext,
