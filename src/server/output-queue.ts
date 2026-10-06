@@ -3,11 +3,9 @@ import {
   apiTimestamp,
   apiValidationFailed,
   isJsonRecord,
-  parseBoundedPageLimit,
   type ApiErrorInput,
   type ApiRequestContext
 } from "./api-errors.ts";
-import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
   duplicateAcknowledgementLookupStatement,
   terminalOutputDeletionStatement
@@ -37,13 +35,19 @@ import {
   materializeCanonicalInputsByItemId
 } from "./canonical-input.ts";
 import {
+  encodePageCursor,
+  invalidPageLimitField,
+  pageFromRows,
+  parsePageRequest,
+  type PageRequest
+} from "./pagination.ts";
+import {
   OutputReadAllRequestSchema,
   publicOutputReadAllShapeMatches,
   publicSchemaFieldErrors
 } from "../shared/public-api-contract.ts";
 
-export const OUTPUT_PAGE_DEFAULT_LIMIT = SYSTEM_CONTRACT.outputPageDefaultLimit;
-export const OUTPUT_PAGE_MAX_LIMIT = SYSTEM_CONTRACT.outputPageMaxLimit;
+const OUTPUT_VALIDATION_MESSAGE = "Output queue request failed validation.";
 
 const outputCheckReadOperation = {
   rateLimitKind: "output_check_read",
@@ -105,17 +109,6 @@ export type OutputAckResult = {
   acknowledged: true;
   already_acknowledged: boolean;
 };
-
-type ParsedPageRequest =
-  | {
-      ok: true;
-      limit: number;
-      cursor: OutputCursor | null;
-    }
-  | {
-      ok: false;
-      error: ApiErrorInput;
-    };
 
 type OutputCursor = {
   answeredAt: string;
@@ -276,8 +269,11 @@ export async function checkOutputPageInTransaction(
   const pageRows = await query<OutputCheckPageRow>(
     outputCheckPageStatement(identity, limit, cursor)
   );
-  const page = pageRows.rows.slice(0, limit);
-  const hasMore = pageRows.rows.length > limit;
+  const { page, hasMore, nextCursor } = pageFromRows(
+    pageRows.rows,
+    limit,
+    cursorFromOutputRow
+  );
 
   return {
     ok: true,
@@ -285,7 +281,7 @@ export async function checkOutputPageInTransaction(
       items: page.map(outputCheckItemFromRow),
       ready_count: Number(readyCount.rows[0].ready_count),
       has_more: hasMore,
-      next_cursor: hasMore ? cursorFromOutputRow(page[page.length - 1]) : null,
+      next_cursor: nextCursor,
       returned_count: page.length,
       page_limit: limit
     }
@@ -340,8 +336,11 @@ export async function readAllOutputPageInTransaction(
   const pageRows = await query<OutputPageRow>(
     outputPageStatement(identity, limit, cursor, { lockRows: true })
   );
-  const page = pageRows.rows.slice(0, limit);
-  const hasMore = pageRows.rows.length > limit;
+  const { page, hasMore, nextCursor } = pageFromRows(
+    pageRows.rows,
+    limit,
+    cursorFromOutputRow
+  );
   const outputResultIds = page.map((row) => row.output_result_id);
   const filesByOutputId = await outputFileMetadataByResultId(
     query,
@@ -394,7 +393,7 @@ export async function readAllOutputPageInTransaction(
       unavailable_outputs: unavailableOutputs,
       unavailable_count: unavailableOutputs.length,
       has_more: hasMore,
-      next_cursor: hasMore ? cursorFromOutputRow(page[page.length - 1]) : null,
+      next_cursor: nextCursor,
       returned_count: items.length,
       page_limit: limit
     }
@@ -458,14 +457,17 @@ export async function acknowledgeOutputInTransaction(
 
 export function parseOutputPageQuery(
   searchParams: URLSearchParams
-): ParsedPageRequest {
-  return parseOutputPageParameters({
-    limit: searchParams.get("limit"),
-    cursor: searchParams.get("cursor")
-  });
+): PageRequest<OutputCursor> {
+  return parsePageRequest(
+    { limit: searchParams.get("limit"), cursor: searchParams.get("cursor") },
+    outputCursorFromPayload,
+    OUTPUT_VALIDATION_MESSAGE
+  );
 }
 
-export function parseOutputReadAllBody(body: unknown): ParsedPageRequest {
+export function parseOutputReadAllBody(
+  body: unknown
+): PageRequest<OutputCursor> {
   if (!isJsonRecord(body)) {
     return validationFailed([
       {
@@ -485,19 +487,14 @@ export function parseOutputReadAllBody(body: unknown): ParsedPageRequest {
     body.limit !== null &&
     typeof body.limit !== "number"
   ) {
-    return validationFailed([
-      {
-        path: "limit",
-        code: "invalid_limit",
-        message: `limit must be an integer from 1 through ${OUTPUT_PAGE_MAX_LIMIT}.`
-      }
-    ]);
+    return validationFailed([invalidPageLimitField()]);
   }
 
-  const parsed = parseOutputPageParameters({
-    limit: body.limit,
-    cursor: body.cursor
-  });
+  const parsed = parsePageRequest(
+    { limit: body.limit, cursor: body.cursor },
+    outputCursorFromPayload,
+    OUTPUT_VALIDATION_MESSAGE
+  );
   if (!parsed.ok) return parsed;
   if (publicOutputReadAllShapeMatches(body)) return parsed;
 
@@ -835,99 +832,34 @@ function outputCheckItemFromRow(row: OutputCheckPageRow): OutputCheckItem {
   };
 }
 
-function parseOutputPageParameters(input: {
-  limit: unknown;
-  cursor: unknown;
-}): ParsedPageRequest {
-  const limit = parseBoundedPageLimit(
-    input.limit,
-    OUTPUT_PAGE_DEFAULT_LIMIT,
-    OUTPUT_PAGE_MAX_LIMIT
-  );
-  const cursor = parseCursor(input.cursor);
-  const fields = [
-    ...(limit.ok ? [] : limit.fields),
-    ...(cursor.ok ? [] : cursor.fields)
-  ];
-
-  if (!limit.ok || !cursor.ok) {
-    return validationFailed(fields);
-  }
-
-  return {
-    ok: true,
-    limit: limit.value,
-    cursor: cursor.value
-  };
-}
-
-function parseCursor(value: unknown) {
-  if (value == null || value === "") {
-    return { ok: true as const, value: null };
-  }
-  if (typeof value !== "string") {
-    return {
-      ok: false as const,
-      fields: [
-        {
-          path: "cursor",
-          code: "invalid_cursor",
-          message: "cursor must be an opaque string or null."
-        }
-      ]
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-    if (
-      isJsonRecord(parsed) &&
-      typeof parsed.answered_at === "string" &&
-      typeof parsed.output_result_id === "string" &&
-      isValidUtcDateTime(parsed.answered_at) &&
-      // Postgres timestamptz has no year 0000.
-      !parsed.answered_at.startsWith("0000-") &&
-      UUID_PATTERN.test(parsed.output_result_id)
-    ) {
-      return {
-        ok: true as const,
-        value: {
-          answeredAt: parsed.answered_at,
-          outputResultId: parsed.output_result_id
-        }
-      };
-    }
-  } catch {
-    // Return the safe validation error below.
-  }
-
-  return {
-    ok: false as const,
-    fields: [
-      {
-        path: "cursor",
-        code: "invalid_cursor",
-        message: "cursor is invalid or expired."
+function outputCursorFromPayload(
+  payload: Record<string, unknown>
+): OutputCursor | null {
+  return typeof payload.answered_at === "string" &&
+    typeof payload.output_result_id === "string" &&
+    isValidUtcDateTime(payload.answered_at) &&
+    // Postgres timestamptz has no year 0000.
+    !payload.answered_at.startsWith("0000-") &&
+    UUID_PATTERN.test(payload.output_result_id)
+    ? {
+        answeredAt: payload.answered_at,
+        outputResultId: payload.output_result_id
       }
-    ]
-  };
+    : null;
 }
 
 export function cursorFromOutputRow(row: OutputPageCursorRow) {
-  return Buffer.from(
-    JSON.stringify({
-      answered_at: row.answered_at_cursor,
-      output_result_id: row.output_result_id
-    }),
-    "utf8"
-  ).toString("base64url");
+  return encodePageCursor({
+    answered_at: row.answered_at_cursor,
+    output_result_id: row.output_result_id
+  });
 }
 
 function validationFailed(fields: ApiErrorInput["fields"]): {
   ok: false;
   error: ApiErrorInput;
 } {
-  return apiValidationFailed("Output queue request failed validation.", fields);
+  return apiValidationFailed(OUTPUT_VALIDATION_MESSAGE, fields);
 }
 
 function notFoundError(): OutputQueueResult {

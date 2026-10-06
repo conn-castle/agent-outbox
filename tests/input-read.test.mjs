@@ -580,10 +580,38 @@ test("input page parsing fails loudly on invalid limits and cursors", () => {
     limit: 25,
     cursor: null
   });
-  assert.equal(parseInputPageQuery(new URLSearchParams("limit=101")).ok, false);
-  assert.equal(
-    parseInputPageQuery(new URLSearchParams("cursor=not-a-cursor")).ok,
-    false
+  assert.deepEqual(
+    parseInputPageQuery(new URLSearchParams("limit=101&cursor=not-a-cursor")),
+    {
+      ok: false,
+      error: {
+        status: 422,
+        code: "validation_failed",
+        message: "Input read request failed validation.",
+        fields: [
+          {
+            path: "limit",
+            code: "invalid_limit",
+            message: "limit must be an integer from 1 through 100."
+          },
+          {
+            path: "cursor",
+            code: "invalid_cursor",
+            message: "cursor is invalid or expired."
+          }
+        ]
+      }
+    }
+  );
+  // Cursors already issued to callers must keep decoding.
+  const issuedCursor = Buffer.from(
+    `{"input_item_id":"${inputOneId}"}`,
+    "utf8"
+  ).toString("base64url");
+  assert.equal(cursorFromInputRow({ input_item_id: inputOneId }), issuedCursor);
+  assert.deepEqual(
+    parseInputPageQuery(new URLSearchParams({ cursor: issuedCursor })),
+    { ok: true, limit: 25, cursor: { inputItemId: inputOneId } }
   );
   assert.equal(parseInputReadBody({ caller_item_id: "" }).ok, false);
   assert.equal(parseInputReadBody(null).ok, false);

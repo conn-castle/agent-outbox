@@ -805,6 +805,21 @@ test("output pagination parsing fails loudly on invalid limits and cursors", () 
       ]
     }
   });
+  assert.deepEqual(parseOutputReadAllBody({ limit: 25, cursor: 123 }), {
+    ok: false,
+    error: {
+      status: 422,
+      code: "validation_failed",
+      message: "Output queue request failed validation.",
+      fields: [
+        {
+          path: "cursor",
+          code: "invalid_cursor",
+          message: "cursor must be an opaque string or null."
+        }
+      ]
+    }
+  });
   assert.equal(
     parseOutputReadAllBody({ limit: 25, cursor: "not-a-cursor" }).ok,
     false
@@ -868,10 +883,14 @@ test("output page cursor preserves microsecond precision across the keyset round
     })
   );
 
-  assert.deepEqual(decodeCursor(cursor), {
-    answered_at: "2026-06-30T23:25:51.123456Z",
-    output_result_id: outputOneId
-  });
+  // Cursors already issued to callers must keep decoding.
+  assert.equal(
+    cursor,
+    Buffer.from(
+      `{"answered_at":"2026-06-30T23:25:51.123456Z","output_result_id":"${outputOneId}"}`,
+      "utf8"
+    ).toString("base64url")
+  );
 
   const parsed = parseOutputReadAllBody({ limit: 10, cursor });
   assert.equal(parsed.ok, true);

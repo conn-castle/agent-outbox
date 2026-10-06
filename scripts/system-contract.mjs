@@ -276,7 +276,7 @@ export function systemContractDriftFailures(contract = readSystemContract()) {
     "SYSTEM_CONTRACT.unacknowledgedOutputTimeoutDays",
     "${HUMAN_ANSWER_RESPONSE_BYTE_LIMIT}-byte cap"
   ]);
-  requireMarkers(failures, "src/server/output-queue.ts", [
+  requireMarkers(failures, "src/server/pagination.ts", [
     "SYSTEM_CONTRACT.outputPageDefaultLimit",
     "SYSTEM_CONTRACT.outputPageMaxLimit"
   ]);
