@@ -1,16 +1,25 @@
-/** Setup-request helpers shared by caller connect and rotate/revoke flows. */
+/** Setup-request and transaction helpers shared by caller connect and rotate/revoke flows. */
 import { createHmac, randomInt } from "node:crypto";
 
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
 import {
   apiTemporaryUnavailable,
+  apiValidationFailed,
   type ApiErrorInput,
-  type ApiFieldError
+  type ApiFieldError,
+  type ApiRequestContext
 } from "./api-errors.ts";
-import type { TransactionContextStatement } from "./database.ts";
+import {
+  runProductTransaction,
+  type ProductTransactionContext,
+  type ProductTransactionQuery,
+  type TransactionContextStatement
+} from "./database.ts";
 import { absoluteHttpOrigin, requireCallerKeyHashSecret } from "./env.ts";
 import { isStorableString, unstorableStringError } from "./input-schema.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 const SETUP_CODE_EXPIRES_IN_SECONDS =
   SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds;
@@ -277,4 +286,165 @@ export function callerCredentialLifecycleLockStatement(input: {
     `,
     values: [input.accountId, input.callerId]
   };
+}
+
+export type CallerFlowMessages = {
+  validationFailed: string;
+  databaseUnavailable: string;
+  unexpectedFailure: string;
+  temporarilyUnavailable: string;
+};
+
+export type CallerFlowRequestOptions = {
+  now?: Date;
+  runProductTransaction?: typeof runProductTransaction;
+};
+
+/**
+ * Reads device_code from a plain object, trims it, and requires nonempty,
+ * storable text of at most 512 UTF-16 code units. Invalid input returns a
+ * 422 validation failure with the flow's message and field errors.
+ * This validates request text only; the caller must verify the device token.
+ */
+export function parseDevicePollBody(
+  messages: CallerFlowMessages,
+  body: unknown
+): SetupResult<{ deviceCode: string }> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return apiValidationFailed(messages.validationFailed, [
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
+
+  const deviceCode = requiredText(body, "device_code", fields, 512);
+
+  if (fields.length > 0) {
+    return apiValidationFailed(messages.validationFailed, fields);
+  }
+
+  return { ok: true, data: { deviceCode } };
+}
+
+/**
+ * Reads setup_code from a plain object, trims it, and requires nonempty,
+ * storable text of at most 512 UTF-16 code units. Invalid input returns a
+ * 422 validation failure with the flow's message and field errors.
+ * This validates request text only; the caller must verify the setup token.
+ */
+export function parseSetupCodeBody(
+  messages: CallerFlowMessages,
+  body: unknown
+): SetupResult<{ setupCode: string }> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return apiValidationFailed(messages.validationFailed, [
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
+
+  const setupCode = requiredText(body, "setup_code", fields, 512);
+
+  if (fields.length > 0) {
+    return apiValidationFailed(messages.validationFailed, fields);
+  }
+
+  return { ok: true, data: { setupCode } };
+}
+
+/**
+ * Requires DATABASE_APP_ROLE_URL, then runs the callback with control-plane
+ * context and the request ID using the injected or default transaction runner.
+ * Returns callback results, including failures, unchanged. Missing database
+ * configuration returns the flow's database-unavailable 503; thrown transaction
+ * or callback failures are reported with operation and request context and
+ * return the flow's temporary-unavailable 503 with the correlation ID.
+ */
+export async function withControlPlaneTransaction<TData>(
+  messages: CallerFlowMessages,
+  context: ApiRequestContext,
+  operation: string,
+  callback: (query: ProductTransactionQuery) => Promise<SetupResult<TData>>,
+  options: CallerFlowRequestOptions = {}
+): Promise<SetupResult<TData>> {
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return apiTemporaryUnavailable(messages.databaseUnavailable);
+  }
+
+  const runTransaction = options.runProductTransaction ?? runProductTransaction;
+  try {
+    return await runTransaction(
+      connectionString,
+      {
+        requestId: context.requestId,
+        authSurface: "control_plane"
+      },
+      callback
+    );
+  } catch (error) {
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
+      surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
+      operation,
+      message: messages.unexpectedFailure,
+      request_id: context.requestId
+    });
+    return apiTemporaryUnavailable(messages.temporarilyUnavailable, {
+      errorId: context.correlationId,
+      reported: true
+    });
+  }
+}
+
+/**
+ * Runs the callback using the supplied connection string and scope plus the
+ * request ID, through the injected or default transaction runner. The caller
+ * supplies the connection string; this wrapper does not check configuration.
+ * Returns callback results, including failures, unchanged. Thrown transaction
+ * or callback failures are reported with operation, request, and account/caller
+ * context and return the flow's temporary-unavailable 503 with the correlation ID.
+ */
+export async function withScopedProductTransaction<TData>(
+  messages: CallerFlowMessages,
+  connectionString: string,
+  context: ApiRequestContext,
+  scopedContext: Omit<ProductTransactionContext, "requestId">,
+  operation: string,
+  callback: (query: ProductTransactionQuery) => Promise<SetupResult<TData>>,
+  options: CallerFlowRequestOptions = {}
+): Promise<SetupResult<TData>> {
+  const runTransaction = options.runProductTransaction ?? runProductTransaction;
+  try {
+    return await runTransaction(
+      connectionString,
+      {
+        requestId: context.requestId,
+        ...scopedContext
+      },
+      callback
+    );
+  } catch (error) {
+    reportRuntimeFailure(error, {
+      errorId: context.correlationId,
+      surface: "api",
+      route: context.route,
+      method: context.method,
+      status_code: 503,
+      duration_ms: durationSinceMs(context.startedAtMs),
+      operation,
+      message: messages.unexpectedFailure,
+      request_id: context.requestId,
+      account_id: scopedContext.accountId,
+      caller_id: scopedContext.callerId
+    });
+    return apiTemporaryUnavailable(messages.temporarilyUnavailable, {
+      errorId: context.correlationId,
+      reported: true
+    });
+  }
 }

@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 
 import {
   apiTemporaryUnavailable,
+  apiValidationFailed,
   type ApiFieldError,
   type ApiRequestContext
 } from "./api-errors.ts";
@@ -19,9 +20,7 @@ import {
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
 import {
-  runProductTransaction,
   withSavepoint,
-  type ProductTransactionContext,
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
@@ -41,6 +40,8 @@ import {
   markSetupRequestExpiredStatement,
   normalizeUserCode,
   notFoundError,
+  parseDevicePollBody,
+  parseSetupCodeBody,
   publicAppBaseUrl,
   requiredCallbackUrl,
   requiredText,
@@ -48,12 +49,23 @@ import {
   setupCodeDigest,
   setupRequestExpired,
   setupRequestExpiresAt,
+  withControlPlaneTransaction,
+  withScopedProductTransaction,
+  type CallerFlowMessages,
+  type CallerFlowRequestOptions as RequestOptions,
   type SetupResult,
   type SetupRequestStatus
 } from "./caller-setup-requests.ts";
-import { durationSinceMs } from "./logging.ts";
-import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
+
+const MESSAGES: CallerFlowMessages = {
+  validationFailed: "Caller credential operation request failed validation.",
+  databaseUnavailable:
+    "Caller credential operation database configuration is unavailable.",
+  unexpectedFailure: "Caller credential operation failed unexpectedly.",
+  temporarilyUnavailable:
+    "Caller credential operation is temporarily unavailable."
+};
 
 type CredentialOperation = "rotate" | "revoke";
 type SetupFlow = "browser" | "device";
@@ -68,11 +80,6 @@ type NonEmptyTerminalStatusList = readonly [
 
 type OperationResult<TData> = SetupResult<TData>;
 
-type RequestOptions = {
-  now?: Date;
-  runProductTransaction?: typeof runProductTransaction;
-};
-
 type BrowserStartBody = {
   callerId: string;
   localCallerName: string;
@@ -82,14 +89,6 @@ type BrowserStartBody = {
 type DeviceStartBody = {
   callerId: string;
   localCallerName: string;
-};
-
-type DevicePollBody = {
-  deviceCode: string;
-};
-
-type SetupCodeBody = {
-  setupCode: string;
 };
 
 type SetupRequestIdBody = {
@@ -342,7 +341,7 @@ export async function handleRotateExchangeRequest(
   body: unknown,
   options: RequestOptions = {}
 ): Promise<OperationResult<RotateExchangeResponseData>> {
-  const parsed = parseSetupCodeBody(body);
+  const parsed = parseSetupCodeBody(MESSAGES, body);
   if (!parsed.ok) {
     return parsed;
   }
@@ -357,12 +356,11 @@ export async function handleRotateExchangeRequest(
   const setupCodeHash = setupCodeDigest(parsed.data.setupCode);
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller credential operation database configuration is unavailable."
-    );
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
   }
 
   const contextResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_rotate_exchange_lookup",
     async (query) => {
@@ -390,6 +388,7 @@ export async function handleRotateExchangeRequest(
   }
 
   return withScopedProductTransaction(
+    MESSAGES,
     connectionString,
     context,
     {
@@ -432,12 +431,11 @@ export async function handleRotateActivateRequest(
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller credential operation database configuration is unavailable."
-    );
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
   }
 
   const lookupResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_rotate_activate_lookup",
     async (query) => {
@@ -460,6 +458,7 @@ export async function handleRotateActivateRequest(
   }
 
   return withScopedProductTransaction(
+    MESSAGES,
     connectionString,
     context,
     {
@@ -509,12 +508,11 @@ export async function handleRotateAbortRequest(
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller credential operation database configuration is unavailable."
-    );
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
   }
 
   const lookupResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_rotate_abort_lookup",
     async (query) => {
@@ -537,6 +535,7 @@ export async function handleRotateAbortRequest(
   }
 
   return withScopedProductTransaction(
+    MESSAGES,
     connectionString,
     context,
     {
@@ -612,7 +611,7 @@ export async function handleRevokeConfirmRequest(
   body: unknown,
   options: RequestOptions = {}
 ): Promise<OperationResult<RevokeConfirmResponseData>> {
-  const parsed = parseSetupCodeBody(body);
+  const parsed = parseSetupCodeBody(MESSAGES, body);
   if (!parsed.ok) {
     return parsed;
   }
@@ -627,12 +626,11 @@ export async function handleRevokeConfirmRequest(
   const setupCodeHash = setupCodeDigest(parsed.data.setupCode);
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller credential operation database configuration is unavailable."
-    );
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
   }
 
   const contextResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_revoke_confirm_lookup",
     async (query) => {
@@ -660,6 +658,7 @@ export async function handleRevokeConfirmRequest(
   }
 
   return withScopedProductTransaction(
+    MESSAGES,
     connectionString,
     context,
     {
@@ -947,6 +946,7 @@ async function handleOperationBrowserStartRequest(
   const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
 
   return withControlPlaneTransaction(
+    MESSAGES,
     context,
     `caller_${operation}_browser_start`,
     async (query) => {
@@ -1035,6 +1035,7 @@ async function handleOperationDeviceStartRequest(
   const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
 
   return withControlPlaneTransaction(
+    MESSAGES,
     context,
     `caller_${operation}_device_start`,
     async (query) => {
@@ -1095,7 +1096,7 @@ async function handleOperationDevicePollRequest(
   body: unknown,
   options: RequestOptions
 ): Promise<OperationResult<DeviceSetupCodeData>> {
-  const parsed = parseDevicePollBody(body);
+  const parsed = parseDevicePollBody(MESSAGES, body);
   if (!parsed.ok) {
     return parsed;
   }
@@ -1109,6 +1110,7 @@ async function handleOperationDevicePollRequest(
   const deviceCodeHash = setupCodeDigest(parsed.data.deviceCode);
 
   return withControlPlaneTransaction(
+    MESSAGES,
     context,
     `caller_${operation}_device_poll`,
     async (query) => {
@@ -1491,87 +1493,6 @@ async function confirmRevokeSetupRequest(
       revoked_at: revokedAt
     }
   };
-}
-
-async function withControlPlaneTransaction<TData>(
-  context: ApiRequestContext,
-  operation: string,
-  callback: (query: ProductTransactionQuery) => Promise<OperationResult<TData>>,
-  options: RequestOptions = {}
-): Promise<OperationResult<TData>> {
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller credential operation database configuration is unavailable."
-    );
-  }
-
-  const runTransaction = options.runProductTransaction ?? runProductTransaction;
-  try {
-    return await runTransaction(
-      connectionString,
-      {
-        requestId: context.requestId,
-        authSurface: "control_plane"
-      },
-      callback
-    );
-  } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
-      operation,
-      message: "Caller credential operation failed unexpectedly.",
-      request_id: context.requestId
-    });
-    return apiTemporaryUnavailable(
-      "Caller credential operation is temporarily unavailable.",
-      { errorId: context.correlationId, reported: true }
-    );
-  }
-}
-
-async function withScopedProductTransaction<TData>(
-  connectionString: string,
-  context: ApiRequestContext,
-  scopedContext: Omit<ProductTransactionContext, "requestId">,
-  operation: string,
-  callback: (query: ProductTransactionQuery) => Promise<OperationResult<TData>>,
-  options: RequestOptions = {}
-): Promise<OperationResult<TData>> {
-  const runTransaction = options.runProductTransaction ?? runProductTransaction;
-  try {
-    return await runTransaction(
-      connectionString,
-      {
-        requestId: context.requestId,
-        ...scopedContext
-      },
-      callback
-    );
-  } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
-      operation,
-      message: "Caller credential operation failed unexpectedly.",
-      request_id: context.requestId,
-      account_id: scopedContext.accountId,
-      caller_id: scopedContext.callerId
-    });
-    return apiTemporaryUnavailable(
-      "Caller credential operation is temporarily unavailable.",
-      { errorId: context.correlationId, reported: true }
-    );
-  }
 }
 
 async function setupExchangeContext(
@@ -2434,7 +2355,7 @@ function parseBrowserStartBody(
 ): OperationResult<BrowserStartBody> {
   const fields: ApiFieldError[] = [];
   if (!isPlainRecord(body)) {
-    return validationError([
+    return apiValidationFailed(MESSAGES.validationFailed, [
       fieldError("", "invalid_request", "Request body must be an object.")
     ]);
   }
@@ -2444,7 +2365,7 @@ function parseBrowserStartBody(
   const callbackUrl = requiredCallbackUrl(body, "callback_url", fields);
 
   if (fields.length > 0) {
-    return validationError(fields);
+    return apiValidationFailed(MESSAGES.validationFailed, fields);
   }
 
   return { ok: true, data: { callerId, localCallerName, callbackUrl } };
@@ -2453,7 +2374,7 @@ function parseBrowserStartBody(
 function parseDeviceStartBody(body: unknown): OperationResult<DeviceStartBody> {
   const fields: ApiFieldError[] = [];
   if (!isPlainRecord(body)) {
-    return validationError([
+    return apiValidationFailed(MESSAGES.validationFailed, [
       fieldError("", "invalid_request", "Request body must be an object.")
     ]);
   }
@@ -2462,40 +2383,10 @@ function parseDeviceStartBody(body: unknown): OperationResult<DeviceStartBody> {
   const localCallerName = requiredText(body, "local_caller_name", fields);
 
   if (fields.length > 0) {
-    return validationError(fields);
+    return apiValidationFailed(MESSAGES.validationFailed, fields);
   }
 
   return { ok: true, data: { callerId, localCallerName } };
-}
-
-function parseDevicePollBody(body: unknown): OperationResult<DevicePollBody> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return validationError([
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const deviceCode = requiredText(body, "device_code", fields, 512);
-  if (fields.length > 0) {
-    return validationError(fields);
-  }
-  return { ok: true, data: { deviceCode } };
-}
-
-function parseSetupCodeBody(body: unknown): OperationResult<SetupCodeBody> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return validationError([
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const setupCode = requiredText(body, "setup_code", fields, 512);
-  if (fields.length > 0) {
-    return validationError(fields);
-  }
-  return { ok: true, data: { setupCode } };
 }
 
 function parseSetupRequestIdBody(
@@ -2503,14 +2394,14 @@ function parseSetupRequestIdBody(
 ): OperationResult<SetupRequestIdBody> {
   const fields: ApiFieldError[] = [];
   if (!isPlainRecord(body)) {
-    return validationError([
+    return apiValidationFailed(MESSAGES.validationFailed, [
       fieldError("", "invalid_request", "Request body must be an object.")
     ]);
   }
 
   const setupRequestId = requiredUuidText(body, "setup_request_id", fields);
   if (fields.length > 0) {
-    return validationError(fields);
+    return apiValidationFailed(MESSAGES.validationFailed, fields);
   }
   return { ok: true, data: { setupRequestId } };
 }
@@ -2525,18 +2416,6 @@ function approvalCaller(target: ApprovalTargetRow) {
 
 function operationLabel(operation: CredentialOperation) {
   return `Caller ${operation}`;
-}
-
-function validationError(fields: ApiFieldError[]): OperationResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 422,
-      code: "validation_failed",
-      message: "Caller credential operation request failed validation.",
-      fields
-    }
-  };
 }
 
 function invalidCallerCredentialsError(): OperationResult<never> {

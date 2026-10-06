@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 
 import {
   apiTemporaryUnavailable,
+  apiValidationFailed,
   type ApiFieldError,
   type ApiRequestContext
 } from "./api-errors.ts";
@@ -21,7 +22,6 @@ import {
 import {
   runProductTransaction,
   withSavepoint,
-  type ProductTransactionContext,
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
@@ -41,6 +41,8 @@ import {
   markSetupRequestExpiredStatement,
   normalizeUserCode,
   notFoundError,
+  parseDevicePollBody,
+  parseSetupCodeBody,
   publicAppBaseUrl,
   requiredCallbackUrl,
   requiredText,
@@ -48,12 +50,23 @@ import {
   setupCodeDigest,
   setupRequestExpired,
   setupRequestExpiresAt,
+  withControlPlaneTransaction,
+  withScopedProductTransaction,
+  type CallerFlowMessages,
+  type CallerFlowRequestOptions as ConnectRequestOptions,
   type SetupResult,
   type SetupRequestStatus
 } from "./caller-setup-requests.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
+
+const MESSAGES: CallerFlowMessages = {
+  validationFailed: "Caller connect request failed validation.",
+  databaseUnavailable: "Caller connect database configuration is unavailable.",
+  unexpectedFailure: "Caller connect request failed unexpectedly.",
+  temporarilyUnavailable: "Caller connect is temporarily unavailable."
+};
 
 type ConnectResult<TData> = SetupResult<TData>;
 
@@ -66,19 +79,6 @@ type BrowserStartBody = {
 type DeviceStartBody = {
   localCallerName: string;
   displayName: string;
-};
-
-type DevicePollBody = {
-  deviceCode: string;
-};
-
-type ExchangeBody = {
-  setupCode: string;
-};
-
-type ConnectRequestOptions = {
-  now?: Date;
-  runProductTransaction?: typeof runProductTransaction;
 };
 
 type SetupRequestIdRow = {
@@ -295,6 +295,7 @@ export async function handleConnectBrowserStartRequest(
   const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
 
   return withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_connect_browser_start",
     async (query) => {
@@ -367,6 +368,7 @@ export async function handleConnectDeviceStartRequest(
   const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
 
   return withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_connect_device_start",
     async (query) => {
@@ -416,7 +418,7 @@ export async function handleConnectDevicePollRequest(
   body: unknown,
   options: ConnectRequestOptions = {}
 ): Promise<ConnectResult<ConnectCredentialResponseData>> {
-  const parsed = parseDevicePollBody(body);
+  const parsed = parseDevicePollBody(MESSAGES, body);
   if (!parsed.ok) {
     return parsed;
   }
@@ -431,12 +433,11 @@ export async function handleConnectDevicePollRequest(
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller connect database configuration is unavailable."
-    );
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
   }
 
   const contextResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_connect_device_poll",
     async (query) => {
@@ -518,7 +519,7 @@ export async function handleConnectExchangeRequest(
   body: unknown,
   options: ConnectRequestOptions = {}
 ): Promise<ConnectResult<ConnectCredentialResponseData>> {
-  const parsed = parseExchangeBody(body);
+  const parsed = parseSetupCodeBody(MESSAGES, body);
   if (!parsed.ok) {
     return parsed;
   }
@@ -533,12 +534,11 @@ export async function handleConnectExchangeRequest(
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller connect database configuration is unavailable."
-    );
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
   }
 
   const contextResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_connect_exchange_lookup",
     async (query) => {
@@ -624,12 +624,11 @@ export async function handleConnectActivateRequest(
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller connect database configuration is unavailable."
-    );
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
   }
 
   const lookupResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_connect_activate_lookup",
     async (query) => {
@@ -652,6 +651,7 @@ export async function handleConnectActivateRequest(
   }
 
   return withScopedProductTransaction(
+    MESSAGES,
     connectionString,
     context,
     {
@@ -702,12 +702,11 @@ export async function handleConnectAbortRequest(
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller connect database configuration is unavailable."
-    );
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
   }
 
   const lookupResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
     "caller_connect_abort_lookup",
     async (query) => {
@@ -730,6 +729,7 @@ export async function handleConnectAbortRequest(
   }
 
   return withScopedProductTransaction(
+    MESSAGES,
     connectionString,
     context,
     {
@@ -1374,87 +1374,6 @@ async function abortConnectPendingCredential(
   };
 }
 
-async function withControlPlaneTransaction<TData>(
-  context: ApiRequestContext,
-  operation: string,
-  callback: (query: ProductTransactionQuery) => Promise<ConnectResult<TData>>,
-  options: ConnectRequestOptions = {}
-): Promise<ConnectResult<TData>> {
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return apiTemporaryUnavailable(
-      "Caller connect database configuration is unavailable."
-    );
-  }
-
-  const runTransaction = options.runProductTransaction ?? runProductTransaction;
-  try {
-    return await runTransaction(
-      connectionString,
-      {
-        requestId: context.requestId,
-        authSurface: "control_plane"
-      },
-      callback
-    );
-  } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
-      operation,
-      message: "Caller connect request failed unexpectedly.",
-      request_id: context.requestId
-    });
-    return apiTemporaryUnavailable(
-      "Caller connect is temporarily unavailable.",
-      { errorId: context.correlationId, reported: true }
-    );
-  }
-}
-
-async function withScopedProductTransaction<TData>(
-  connectionString: string,
-  context: ApiRequestContext,
-  scopedContext: Omit<ProductTransactionContext, "requestId">,
-  operation: string,
-  callback: (query: ProductTransactionQuery) => Promise<ConnectResult<TData>>,
-  options: ConnectRequestOptions = {}
-): Promise<ConnectResult<TData>> {
-  const runTransaction = options.runProductTransaction ?? runProductTransaction;
-  try {
-    return await runTransaction(
-      connectionString,
-      {
-        requestId: context.requestId,
-        ...scopedContext
-      },
-      callback
-    );
-  } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
-      operation,
-      message: "Caller connect request failed unexpectedly.",
-      request_id: context.requestId,
-      account_id: scopedContext.accountId,
-      caller_id: scopedContext.callerId
-    });
-    return apiTemporaryUnavailable(
-      "Caller connect is temporarily unavailable.",
-      { errorId: context.correlationId, reported: true }
-    );
-  }
-}
-
 function pendingConnectCredentialFromRequest(
   request: Request
 ): ConnectResult<PendingConnectCredentialBearer> {
@@ -2056,7 +1975,7 @@ function insertCallerRegisteredAuditStatement(input: {
 function parseBrowserStartBody(body: unknown): ConnectResult<BrowserStartBody> {
   const fields: ApiFieldError[] = [];
   if (!isPlainRecord(body)) {
-    return validationError([
+    return apiValidationFailed(MESSAGES.validationFailed, [
       fieldError("", "invalid_request", "Request body must be an object.")
     ]);
   }
@@ -2066,7 +1985,7 @@ function parseBrowserStartBody(body: unknown): ConnectResult<BrowserStartBody> {
   const callbackUrl = requiredCallbackUrl(body, "callback_url", fields);
 
   if (fields.length > 0) {
-    return validationError(fields);
+    return apiValidationFailed(MESSAGES.validationFailed, fields);
   }
 
   return {
@@ -2082,7 +2001,7 @@ function parseBrowserStartBody(body: unknown): ConnectResult<BrowserStartBody> {
 function parseDeviceStartBody(body: unknown): ConnectResult<DeviceStartBody> {
   const fields: ApiFieldError[] = [];
   if (!isPlainRecord(body)) {
-    return validationError([
+    return apiValidationFailed(MESSAGES.validationFailed, [
       fieldError("", "invalid_request", "Request body must be an object.")
     ]);
   }
@@ -2091,7 +2010,7 @@ function parseDeviceStartBody(body: unknown): ConnectResult<DeviceStartBody> {
   const displayName = requiredText(body, "display_name", fields);
 
   if (fields.length > 0) {
-    return validationError(fields);
+    return apiValidationFailed(MESSAGES.validationFailed, fields);
   }
 
   return {
@@ -2103,67 +2022,21 @@ function parseDeviceStartBody(body: unknown): ConnectResult<DeviceStartBody> {
   };
 }
 
-function parseDevicePollBody(body: unknown): ConnectResult<DevicePollBody> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return validationError([
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const deviceCode = requiredText(body, "device_code", fields, 512);
-
-  if (fields.length > 0) {
-    return validationError(fields);
-  }
-
-  return { ok: true, data: { deviceCode } };
-}
-
-function parseExchangeBody(body: unknown): ConnectResult<ExchangeBody> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return validationError([
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const setupCode = requiredText(body, "setup_code", fields, 512);
-
-  if (fields.length > 0) {
-    return validationError(fields);
-  }
-
-  return { ok: true, data: { setupCode } };
-}
-
 function parseSetupRequestIdBody(
   body: unknown
 ): ConnectResult<SetupRequestIdBody> {
   const fields: ApiFieldError[] = [];
   if (!isPlainRecord(body)) {
-    return validationError([
+    return apiValidationFailed(MESSAGES.validationFailed, [
       fieldError("", "invalid_request", "Request body must be an object.")
     ]);
   }
 
   const setupRequestId = requiredUuidText(body, "setup_request_id", fields);
   if (fields.length > 0) {
-    return validationError(fields);
+    return apiValidationFailed(MESSAGES.validationFailed, fields);
   }
   return { ok: true, data: { setupRequestId } };
-}
-
-function validationError(fields: ApiFieldError[]): ConnectResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 422,
-      code: "validation_failed",
-      message: "Caller connect request failed validation.",
-      fields
-    }
-  };
 }
 
 function callerAlreadyExistsError(): ConnectResult<never> {
