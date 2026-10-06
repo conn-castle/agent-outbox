@@ -300,6 +300,12 @@ export type CallerFlowRequestOptions = {
   runProductTransaction?: typeof runProductTransaction;
 };
 
+/**
+ * Reads device_code from a plain object, trims it, and requires nonempty,
+ * storable text of at most 512 UTF-16 code units. Invalid input returns a
+ * 422 validation failure with the flow's message and field errors.
+ * This validates request text only; the caller must verify the device token.
+ */
 export function parseDevicePollBody(
   messages: CallerFlowMessages,
   body: unknown
@@ -320,6 +326,12 @@ export function parseDevicePollBody(
   return { ok: true, data: { deviceCode } };
 }
 
+/**
+ * Reads setup_code from a plain object, trims it, and requires nonempty,
+ * storable text of at most 512 UTF-16 code units. Invalid input returns a
+ * 422 validation failure with the flow's message and field errors.
+ * This validates request text only; the caller must verify the setup token.
+ */
 export function parseSetupCodeBody(
   messages: CallerFlowMessages,
   body: unknown
@@ -340,6 +352,14 @@ export function parseSetupCodeBody(
   return { ok: true, data: { setupCode } };
 }
 
+/**
+ * Requires DATABASE_APP_ROLE_URL, then runs the callback with control-plane
+ * context and the request ID using the injected or default transaction runner.
+ * Returns callback results, including failures, unchanged. Missing database
+ * configuration returns the flow's database-unavailable 503; thrown transaction
+ * or callback failures are reported with operation and request context and
+ * return the flow's temporary-unavailable 503 with the correlation ID.
+ */
 export async function withControlPlaneTransaction<TData>(
   messages: CallerFlowMessages,
   context: ApiRequestContext,
@@ -381,6 +401,14 @@ export async function withControlPlaneTransaction<TData>(
   }
 }
 
+/**
+ * Runs the callback using the supplied connection string and scope plus the
+ * request ID, through the injected or default transaction runner. The caller
+ * supplies the connection string; this wrapper does not check configuration.
+ * Returns callback results, including failures, unchanged. Thrown transaction
+ * or callback failures are reported with operation, request, and account/caller
+ * context and return the flow's temporary-unavailable 503 with the correlation ID.
+ */
 export async function withScopedProductTransaction<TData>(
   messages: CallerFlowMessages,
   connectionString: string,
