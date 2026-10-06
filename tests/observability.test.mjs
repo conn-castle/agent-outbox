@@ -14,6 +14,8 @@ import { persistedPopup } from "../src/server/persisted-payload.ts";
 import { accountWriteLockStatement } from "../src/server/caller-api-limits.ts";
 import { formatVersionLabel } from "../src/server/app-version.ts";
 import { authenticateCallerApiRequest } from "../src/server/caller-api-auth.ts";
+import * as callerAuth from "../src/server/caller-auth.ts";
+import * as canonicalInput from "../src/server/canonical-input.ts";
 import {
   isStorableString,
   unstorableStringError
@@ -23,6 +25,7 @@ import {
   apiRequestContext,
   apiResponseHeaders,
   apiSuccessResponse,
+  apiTemporaryUnavailable,
   apiValidationFailed
 } from "../src/server/api-errors.ts";
 import {
@@ -344,6 +347,9 @@ function loadBillingModuleForTest(reportRuntimeFailure) {
         if (specifier === "./env.ts") {
           return { absoluteHttpOrigin };
         }
+        if (specifier === "./api-errors.ts") {
+          return { apiTemporaryUnavailable };
+        }
         if (specifier === "./logging.ts") {
           return { durationSinceMs, emitRuntimeLog, safeErrorName };
         }
@@ -377,6 +383,7 @@ function loadBillingSessionModuleForTest(reportRuntimeFailure) {
   const billingModule = loadBillingModuleForTest(reportRuntimeFailure);
   return /** @type {{ billingHumanSessionFromClerkUser: typeof import("../src/server/billing-session.ts").billingHumanSessionFromClerkUser }} */ (
     loadCommonJsModuleForTest("src/server/billing-session.ts", {
+      "./api-errors.ts": { apiTemporaryUnavailable },
       "./billing.ts": billingModule,
       "./human-session.ts": {
         requiredHumanSessionConfiguration: () => [],
@@ -677,7 +684,7 @@ function loadInputQueueModuleForTest(
   return /** @type {ReturnType<typeof loadInputQueueModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/input-queue.ts", {
       "./accounting.ts": { async auditSafeLifecycleEvent() {} },
-      "./api-errors.ts": { apiValidationFailed },
+      "./api-errors.ts": { apiTemporaryUnavailable, apiValidationFailed },
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
@@ -700,6 +707,7 @@ function loadInputQueueModuleForTest(
 /**
  * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
  * @returns {{
+ *   plaintextApiKey: string,
  *   handleOutputFileDownloadRequest(
  *     request: Request,
  *     context: import("../src/server/api-errors.ts").ApiRequestContext,
@@ -708,42 +716,118 @@ function loadInputQueueModuleForTest(
  * }}
  */
 function loadOutputFilesModuleForTest(reportRuntimeFailure) {
+  const material = callerAuth.generateCallerApiKeyMaterial();
+  const identity = {
+    accountId: "00000000-0000-4000-8000-000000000301",
+    callerId: "00000000-0000-4000-8000-000000000302"
+  };
   /**
-   * @param {Request} _request
-   * @param {import("../src/server/api-errors.ts").ApiRequestContext} context
-   * @param {string} connectionString
-   * @param {(query: (statement?: unknown) => Promise<{ rows: unknown[] }>, identity: { accountId: string, callerId: string }) => Promise<unknown>} callback
+   * @param {import("../src/server/database.ts").TransactionContextStatement} statement
    */
-  const runAuthenticatedCallerTransaction = async (
-    _request,
-    context,
-    connectionString,
-    callback
-  ) => {
-    assert.equal(connectionString, "postgresql://observability-test");
-    assert.equal(context.requestId, "req-output-file-observability");
-    await callback(async () => ({ rows: [] }), {
-      accountId: "00000000-0000-4000-8000-000000000301",
-      callerId: "00000000-0000-4000-8000-000000000302"
-    });
+  const fakeQuery = async (statement) => {
+    if (/agent_outbox_lookup_caller_credential/.test(statement.sql)) {
+      return {
+        rows: [
+          {
+            account_id: identity.accountId,
+            caller_id: identity.callerId,
+            key_id: material.keyId,
+            secret_hmac_sha256: material.secretDigest,
+            status: "active",
+            revoked_at: null,
+            expires_at: null
+          }
+        ],
+        rowCount: 1,
+        command: "",
+        oid: 0,
+        fields: []
+      };
+    }
+    if (
+      /^(savepoint|release savepoint)/.test(statement.sql) ||
+      /update public.agent_outbox_caller_credentials/.test(statement.sql)
+    ) {
+      return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+    }
+    assert.match(statement.sql, /from public.agent_outbox_output_results/);
     throw new Error("raw output transaction secret");
   };
-
-  return /** @type {ReturnType<typeof loadOutputFilesModuleForTest>} */ (
-    loadCommonJsModuleForTest("src/server/output-files.ts", {
-      "./accounting.ts": { async auditSafeLifecycleEvent() {} },
-      "./api-errors.ts": { apiResponseHeaders, apiValidationFailed },
-      "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
+  const query =
+    /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
+      /** @type {unknown} */ (fakeQuery)
+    );
+  const callerApiAuth = loadCommonJsModuleForTest(
+    "src/server/caller-api-auth.ts",
+    {
+      "./caller-auth.ts": callerAuth,
+      "./api-errors.ts": { apiTemporaryUnavailable },
       "./caller-api-limits.ts": {
-        async accountLimitProfileForAccount() {},
-        async enforceCallerRequestLimits() {}
+        async accountLimitProfileForAccount() {
+          return { tier: "hosted_free" };
+        },
+        /**
+         * @param {unknown} _query
+         * @param {unknown} _identity
+         * @param {unknown} _profile
+         * @param {string} kind
+         */
+        async enforceCallerRequestLimits(_query, _identity, _profile, kind) {
+          assert.equal(kind, "output_file_download");
+          return { ok: true };
+        }
       },
-      "./database.ts": {},
-      "./input-schema.ts": { isStorableString, unstorableStringError },
-      "./logging.ts": { durationSinceMs },
-      "./sentry.ts": { reportRuntimeFailure }
-    })
+      "./canonical-input.ts": canonicalInput,
+      "./database.ts": {
+        /**
+         * @param {string} connectionString
+         * @param {import("../src/server/database.ts").ProductTransactionContext} context
+         * @param {(query: import("../src/server/database.ts").ProductTransactionQuery) => Promise<unknown>} callback
+         */
+        async runProductTransaction(connectionString, context, callback) {
+          assert.equal(connectionString, "postgresql://observability-test");
+          assert.equal(context.requestId, "req-output-file-observability");
+          return callback(query);
+        },
+        /**
+         * @param {import("../src/server/database.ts").ProductTransactionQuery} transactionQuery
+         * @param {import("../src/server/database.ts").ProductTransactionContext} context
+         */
+        async setProductTransactionIdentityContext(transactionQuery, context) {
+          assert.equal(transactionQuery, query);
+          assert.equal(context.accountId, identity.accountId);
+          assert.equal(context.callerId, identity.callerId);
+        }
+      },
+      "./logging.ts": { durationSinceMs, emitRuntimeLog, safeErrorName },
+      "./sentry.ts": {
+        reportRuntimeFailure: /** @type {RuntimeFailureReporterForTest} */ (
+          (error, input) => {
+            assert.ok(error instanceof Error);
+            assert.equal(error.message, "raw output transaction secret");
+            return reportRuntimeFailure(error, input);
+          }
+        )
+      }
+    }
   );
+
+  return {
+    plaintextApiKey: material.plaintextApiKey,
+    .../** @type {Pick<ReturnType<typeof loadOutputFilesModuleForTest>, "handleOutputFileDownloadRequest">} */ (
+      loadCommonJsModuleForTest("src/server/output-files.ts", {
+        "./accounting.ts": { async auditSafeLifecycleEvent() {} },
+        "./api-errors.ts": {
+          apiResponseHeaders,
+          apiTemporaryUnavailable,
+          apiValidationFailed
+        },
+        "./caller-api-auth.ts": callerApiAuth,
+        "./database.ts": {},
+        "./input-schema.ts": { isStorableString, unstorableStringError }
+      })
+    )
+  };
 }
 
 /**
@@ -3032,7 +3116,7 @@ test("billing session resolution failures share billing route error ids", async 
 test("input queue and output file catch paths share error ids across logs and Sentry", async () => {
   /** @type {Array<{ tags: Map<string, unknown>, contexts: Array<{ name: string, value: Record<string, unknown> }> }>} */
   const sentryScopes = [];
-  /** @type {Array<{ name?: string }>} */
+  /** @type {Array<{ name?: string, message?: string }>} */
   const capturedExceptions = [];
   const sentryStub = {
     /**
@@ -3062,14 +3146,14 @@ test("input queue and output file catch paths share error ids across logs and Se
      * @param {unknown} error
      */
     captureException(error) {
-      capturedExceptions.push(/** @type {{ name?: string }} */ (error));
+      capturedExceptions.push(
+        /** @type {{ name?: string, message?: string }} */ (error)
+      );
     }
   };
   const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
   const { handleInputQueueRequest: handleInputQueue } =
     loadInputQueueModuleForTest(reportRuntimeFailure);
-  const { handleOutputFileDownloadRequest: handleOutputFileDownload } =
-    loadOutputFilesModuleForTest(reportRuntimeFailure);
   const inputRequest = new Request(
     "https://app.agent-outbox.dev/api/input/send",
     { method: "POST" }
@@ -3077,19 +3161,10 @@ test("input queue and output file catch paths share error ids across logs and Se
   const inputContext = apiRequestContext(inputRequest, "/api/input/send");
   inputContext.requestId = "req-input-queue-observability";
   inputContext.correlationId = "corr-input-queue-observability";
-  const outputRequest = new Request(
-    "https://app.agent-outbox.dev/api/output/result/files/file",
-    { method: "GET" }
-  );
-  const outputContext = apiRequestContext(
-    outputRequest,
-    "/api/output/[output_result_id]/files/[file_id]"
-  );
-  outputContext.requestId = "req-output-file-observability";
-  outputContext.correlationId = "corr-output-file-observability";
 
   const logs = await withProcessEnv(
     {
+      CALLER_KEY_HASH_SECRET: "0123456789abcdef0123456789abcdef",
       APP_ENV: "production",
       DATABASE_APP_ROLE_URL: "postgresql://observability-test",
       SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
@@ -3099,6 +3174,23 @@ test("input queue and output file catch paths share error ids across logs and Se
     },
     () =>
       captureStructuredLogs(async () => {
+        const {
+          handleOutputFileDownloadRequest: handleOutputFileDownload,
+          plaintextApiKey
+        } = loadOutputFilesModuleForTest(reportRuntimeFailure);
+        const outputRequest = new Request(
+          "https://app.agent-outbox.dev/api/output/result/files/file",
+          {
+            method: "GET",
+            headers: { authorization: `Bearer ${plaintextApiKey}` }
+          }
+        );
+        const outputContext = apiRequestContext(
+          outputRequest,
+          "/api/output/[output_result_id]/files/[file_id]"
+        );
+        outputContext.requestId = "req-output-file-observability";
+        outputContext.correlationId = "corr-output-file-observability";
         const inputResult = await handleInputQueue(
           inputRequest,
           inputContext,
@@ -3118,8 +3210,8 @@ test("input queue and output file catch paths share error ids across logs and Se
           outputRequest,
           outputContext,
           {
-            outputResultId: "output_result_observability",
-            fileId: "output_file_observability"
+            outputResultId: "00000000-0000-4000-8000-000000000303",
+            fileId: "00000000-0000-4000-8000-000000000304"
           }
         );
         assert.equal(outputResult.ok, false);
@@ -3131,6 +3223,10 @@ test("input queue and output file catch paths share error ids across logs and Se
             outputContext.correlationId
           );
           assert.equal(outputResult.error?.reported, true);
+          assert.equal(
+            outputResult.error?.message,
+            "Output file download is temporarily unavailable."
+          );
           await apiErrorResponse(outputContext, outputResult.error).json();
         }
       })
@@ -3139,6 +3235,7 @@ test("input queue and output file catch paths share error ids across logs and Se
   assert.equal(logs.length, 2);
   assert.equal(sentryScopes.length, 2);
   assert.equal(capturedExceptions.length, 2);
+  assert.equal(capturedExceptions[1].message, "Agent Outbox runtime failure");
   const inputLog = logs.find((log) => log.operation === "input_send");
   const outputLog = logs.find(
     (log) => log.operation === "output_file_download"
@@ -3161,6 +3258,7 @@ test("input queue and output file catch paths share error ids across logs and Se
   );
   assert.equal(outputLog.method, "GET");
   assert.equal(outputLog.status_code, 503);
+  assert.equal(outputLog.message, "Output file download failed unexpectedly.");
   assert.equal(outputLog.account_id, "00000000-0000-4000-8000-000000000301");
   assert.equal(outputLog.caller_id, "00000000-0000-4000-8000-000000000302");
   assert.equal(typeof outputLog.duration_ms, "number");

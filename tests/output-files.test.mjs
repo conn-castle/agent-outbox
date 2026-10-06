@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { consumesMonthlyCallerApiRequestQuota } from "../src/server/accounting.ts";
 import {
-  handleOutputFileDownloadAuthenticatedTransaction,
   handleOutputFileDownloadRequest,
   outputFileDownloadAuditStatement,
   outputFileDownloadHeaders,
@@ -12,6 +11,8 @@ import {
   safeAttachmentFilename,
   safeContentType
 } from "../src/server/output-files.ts";
+
+import { guardedOutputFileDownloadForTest } from "./helpers/output-files.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
@@ -354,7 +355,7 @@ test("output file download transaction blocks on the per-minute request throttle
     );
   query.calls = calls;
 
-  const result = await handleOutputFileDownloadAuthenticatedTransaction(
+  const result = await guardedOutputFileDownloadForTest(
     query,
     context,
     identity,
@@ -412,7 +413,7 @@ test("paid output file download transaction enforces the minute throttle without
     );
   query.calls = calls;
 
-  const result = await handleOutputFileDownloadAuthenticatedTransaction(
+  const result = await guardedOutputFileDownloadForTest(
     query,
     context,
     identity,

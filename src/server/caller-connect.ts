@@ -1,6 +1,10 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
-import type { ApiFieldError, ApiRequestContext } from "./api-errors.ts";
+import {
+  apiTemporaryUnavailable,
+  type ApiFieldError,
+  type ApiRequestContext
+} from "./api-errors.ts";
 import {
   accountLimitProfileForAccount,
   enforceAccountRequestLimits,
@@ -48,7 +52,6 @@ import {
   setupCodeDigest,
   setupRequestExpired,
   setupRequestExpiresAt,
-  temporaryUnavailableError,
   type SetupResult,
   type SetupRequestStatus
 } from "./caller-setup-requests.ts";
@@ -288,7 +291,7 @@ export async function handleConnectBrowserStartRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller connect start."
     );
   }
@@ -354,7 +357,7 @@ export async function handleConnectDeviceStartRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller connect start."
     );
   }
@@ -417,14 +420,14 @@ export async function handleConnectDevicePollRequest(
   const deviceCodeHash = setupCodeDigest(parsed.data.deviceCode);
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller connect poll."
     );
   }
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect database configuration is unavailable."
     );
   }
@@ -468,7 +471,7 @@ export async function handleConnectDevicePollRequest(
       }
 
       if (!row.account_id || !row.approved_by_user_id) {
-        return temporaryUnavailableError(
+        return apiTemporaryUnavailable(
           "Caller connect approval is temporarily unavailable."
         );
       }
@@ -515,14 +518,14 @@ export async function handleConnectExchangeRequest(
   const setupCodeHash = setupCodeDigest(parsed.data.setupCode);
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller connect exchange."
     );
   }
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect database configuration is unavailable."
     );
   }
@@ -551,7 +554,7 @@ export async function handleConnectExchangeRequest(
         return invalidRequestError("Setup code is invalid or already used.");
       }
       if (!row.account_id || !row.approved_by_user_id) {
-        return temporaryUnavailableError(
+        return apiTemporaryUnavailable(
           "Caller connect approval is temporarily unavailable."
         );
       }
@@ -602,14 +605,14 @@ export async function handleConnectActivateRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller connect activation."
     );
   }
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect database configuration is unavailable."
     );
   }
@@ -676,14 +679,14 @@ export async function handleConnectAbortRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller connect abort."
     );
   }
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect database configuration is unavailable."
     );
   }
@@ -844,7 +847,7 @@ export async function approveConnectBrowserSetupRequest(
   }
 
   if (!target.callback_url) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect setup request is temporarily unavailable."
     );
   }
@@ -1129,7 +1132,7 @@ async function exchangeConnectSetupWithHumanContext(
       request_id: context.requestId,
       account_id: input.accountId
     });
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect exchange is temporarily unavailable.",
       { errorId: context.correlationId, reported: true }
     );
@@ -1206,7 +1209,7 @@ export async function exchangeApprovedConnectSetupRequest(
     !target.caller_display_name ||
     !target.account_tier
   ) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect exchange is temporarily unavailable."
     );
   }
@@ -1349,7 +1352,7 @@ async function withControlPlaneTransaction<TData>(
 ): Promise<ConnectResult<TData>> {
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect database configuration is unavailable."
     );
   }
@@ -1376,7 +1379,7 @@ async function withControlPlaneTransaction<TData>(
       message: "Caller connect request failed unexpectedly.",
       request_id: context.requestId
     });
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect is temporarily unavailable.",
       { errorId: context.correlationId, reported: true }
     );
@@ -1415,7 +1418,7 @@ async function withScopedProductTransaction<TData>(
       account_id: scopedContext.accountId,
       caller_id: scopedContext.callerId
     });
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect is temporarily unavailable.",
       { errorId: context.correlationId, reported: true }
     );
@@ -1522,7 +1525,7 @@ async function enforceConnectApprovalLimit(
 ): Promise<ConnectResult<null>> {
   const profile = await accountLimitProfileForAccount(query, accountId);
   if (!profile) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller connect approval is temporarily unavailable."
     );
   }
