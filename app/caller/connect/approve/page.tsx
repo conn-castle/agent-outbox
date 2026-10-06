@@ -11,7 +11,7 @@ import {
   requiredCallerConnectSessionConfiguration,
   runCallerConnectHumanTransaction
 } from "../session";
-import { ConnectErrorPanel, ConnectPageShell } from "../ui";
+import { ConnectErrorPage, MISSING_SETUP_REQUEST_ERROR } from "../ui";
 import { BrowserApprovalView } from "../views";
 
 export const dynamic = "force-dynamic";
@@ -27,18 +27,11 @@ export default async function CallerConnectApprovePage({
 
   if (!setupRequestId) {
     return (
-      <ConnectPageShell
+      <ConnectErrorPage
         title="This connection request is incomplete"
         description="The request is missing the information needed to continue."
-      >
-        <ConnectErrorPanel
-          error={{
-            status: 400,
-            code: "invalid_request",
-            message: "Missing setup request."
-          }}
-        />
-      </ConnectPageShell>
+        error={MISSING_SETUP_REQUEST_ERROR}
+      />
     );
   }
 
@@ -71,12 +64,11 @@ export default async function CallerConnectApprovePage({
     );
     if (!transaction.ok) {
       return (
-        <ConnectPageShell
+        <ConnectErrorPage
           title="We couldn't load this request"
           description="The connection request could not be verified."
-        >
-          <ConnectErrorPanel error={transaction} />
-        </ConnectPageShell>
+          error={transaction}
+        />
       );
     }
     session = transaction.session;
@@ -112,11 +104,10 @@ export default async function CallerConnectApprovePage({
       fixtureClerkUserId={fixtureClerkUserId}
     />
   ) : (
-    <ConnectPageShell
+    <ConnectErrorPage
       title="We couldn't load this request"
       description="The connection request could not be verified."
-    >
-      <ConnectErrorPanel error={preview.error} />
-    </ConnectPageShell>
+      error={preview.error}
+    />
   );
 }
