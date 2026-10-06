@@ -17,11 +17,11 @@ import {
 
 import { guardedOutputFileDownloadForTest } from "./helpers/output-files.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
+import { fakeQuery, queryResult } from "./helpers/fake-query.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
- * @typedef {import("pg").QueryResultRow} QueryResultRow
  */
 
 const context = {
@@ -60,37 +60,6 @@ function fileRow(overrides = {}) {
     file_bytes: Buffer.from("payload"),
     ...overrides
   };
-}
-
-/**
- * @param {QueryResultRow[][]} rowsByCall
- * @returns {ProductTransactionQuery & { calls: TransactionContextStatement[] }}
- */
-function fakeQuery(rowsByCall) {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /**
-   * @param {TransactionContextStatement} statement
-   */
-  const query = async (statement) => {
-    calls.push(statement);
-    const rows = rowsByCall[calls.length - 1] ?? [];
-    return queryResult(rows);
-  };
-  const typed =
-    /** @type {ProductTransactionQuery & { calls: TransactionContextStatement[] }} */ (
-      /** @type {unknown} */ (query)
-    );
-  typed.calls = calls;
-  return typed;
-}
-
-/**
- * @param {QueryResultRow[]} rows
- * @returns {import("pg").QueryResult<QueryResultRow>}
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 test("output file download lookup scopes by account caller output and file ids", () => {

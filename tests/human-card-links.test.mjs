@@ -24,6 +24,7 @@ import {
   preserveBodyErrorDuringTeardown,
   resetRoleAndRollback
 } from "./helpers/database.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 test("card links encode arbitrary caller IDs and survive the sign-in return URL", () => {
   const id = "email:thread /?#&+% café 東京";
@@ -283,7 +284,7 @@ test("linked card reads run after session bootstrap in one repeatable-read trans
     ) => {
       statements.push(statement);
       if (/agent_outbox_bootstrap_clerk_human/.test(statement.sql)) {
-        return queryRows([
+        return queryResult([
           {
             user_id: userId,
             account_id: accountId,
@@ -293,12 +294,12 @@ test("linked card reads run after session bootstrap in one repeatable-read trans
         ]);
       }
       if (/agent_outbox_account_members/.test(statement.sql)) {
-        return queryRows([
+        return queryResult([
           { account_id: accountId, user_id: userId, role: "owner" }
         ]);
       }
       if (/agent_outbox_accounts/.test(statement.sql)) {
-        return queryRows([
+        return queryResult([
           {
             account_id: accountId,
             label: "Link test",
@@ -309,14 +310,14 @@ test("linked card reads run after session bootstrap in one repeatable-read trans
         ]);
       }
       if (/partition by i\.status/.test(statement.sql)) {
-        return queryRows([
+        return queryResult([
           { input_item_id: inputItemId, status: "pending", position: "150" }
         ]);
       }
       if (/count\(\*\)/.test(statement.sql)) {
-        return queryRows([{ total_count: "150" }]);
+        return queryResult([{ total_count: "150" }]);
       }
-      return queryRows([]);
+      return queryResult([]);
     };
     return callback(
       /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
@@ -599,13 +600,6 @@ test(
     assert.equal(committed, "read committed");
   }
 );
-
-/**
- * @param {import("pg").QueryResultRow[]} rows
- */
-function queryRows(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
-}
 
 /**
  * @param {import("pg").Client} client
