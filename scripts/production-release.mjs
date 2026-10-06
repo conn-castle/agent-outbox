@@ -18,6 +18,7 @@ import {
   FULL_GIT_SHA,
   GITHUB_RELEASE_ID_ENV_NAME,
   PRIOR_WORKER_VERSION_ID_ENV_NAME,
+  PublicationStateUnknownError,
   ReleaseHoldError,
   WORKER_NAME,
   isFullGitSha,
@@ -271,7 +272,12 @@ async function prepareReleaseDraft() {
     const result = await runDraftPreparation(defaultOrchestrator(), input);
     writeGithubOutputs({
       github_release_id: String(result.releaseId),
-      draft_state: result.kind === "committed" ? "committed" : "prepared"
+      draft_state:
+        result.kind === "committed"
+          ? "committed"
+          : result.kind === "owned_publishing"
+            ? "publishing"
+            : "prepared"
     });
   });
 }
@@ -389,6 +395,61 @@ async function promoteWorker() {
   });
 }
 
+/**
+ * Recover uncertain publication once inside the successful deploy path. Each
+ * recovery mutation requires a fresh full live smoke and certified byte proof;
+ * cleanup and signal compensation never receive this capability.
+ *
+ * @param {import("./release/phases.mjs").ReleaseOrchestrator} orchestrator
+ * @param {Parameters<typeof runReleasePublication>[1]} input
+ * @param {() => unknown | Promise<unknown>} verifyLiveCandidate
+ */
+export async function runDeployPublication(
+  orchestrator,
+  input,
+  verifyLiveCandidate
+) {
+  try {
+    return await runReleasePublication(orchestrator, input);
+  } catch (error) {
+    if (!(error instanceof PublicationStateUnknownError)) {
+      throw error;
+    }
+    console.warn(
+      `${input.releaseTag} publication is unproven; attempting one bounded recovery with fresh live smoke and certified assets.`
+    );
+    return runReleasePublication(orchestrator, {
+      ...input,
+      verifyLiveCandidate
+    });
+  }
+}
+
+function verifyLiveCandidateForPublication() {
+  const result = spawnSync("corepack", ["pnpm", "run", "smoke-runtime"], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      AGENT_OUTBOX_EXPECTED_RELEASE: requireFullGitSha(
+        process.env.GITHUB_SHA,
+        "GITHUB_SHA"
+      ),
+      AGENT_OUTBOX_REQUIRE_HUMAN_REVIEW_QUERY_CANARY: "1",
+      AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV: "1",
+      AGENT_OUTBOX_WORKER_VERSION_OVERRIDE: ""
+    },
+    stdio: "inherit"
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new ReleaseHoldError(
+      "fresh live runtime smoke failed; refusing automatic publication recovery"
+    );
+  }
+}
+
 async function publishRelease() {
   await withDeployCompensation(async () => {
     const context = resolveReleaseContext(process.env, {
@@ -397,14 +458,18 @@ async function publishRelease() {
       requireReleaseId: true
     });
     try {
-      await runReleasePublication(defaultOrchestrator(), {
-        repository: context.repository,
-        releaseTag: context.releaseTag,
-        expectedSha: context.candidateSha,
-        runId: /** @type {string} */ (context.runId),
-        releaseId: /** @type {number} */ (context.releaseId),
-        assets: certifiedReleaseAssets()
-      });
+      await runDeployPublication(
+        defaultOrchestrator(),
+        {
+          repository: context.repository,
+          releaseTag: context.releaseTag,
+          expectedSha: context.candidateSha,
+          runId: /** @type {string} */ (context.runId),
+          releaseId: /** @type {number} */ (context.releaseId),
+          assets: certifiedReleaseAssets()
+        },
+        verifyLiveCandidateForPublication
+      );
       writeGithubOutputs({ publication_state: "published" });
     } catch (error) {
       writeGithubOutputs({
