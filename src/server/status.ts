@@ -12,10 +12,13 @@ import {
   type CallerIdentity
 } from "./caller-api-auth.ts";
 import {
-  accountLimitStatusMetadata,
+  fileUploadEnabled,
+  getLimitProfile,
+  isLimitName,
   limitErrorMetadata,
   limitProfileSelectorForAccountTier,
   limitStatusMetadata,
+  storageLimitName,
   type AccountTier,
   type LimitName,
   type LimitOperationKind,
@@ -260,11 +263,10 @@ export async function accountStatusInTransaction(
       account_id: accountRow.account_id,
       label: accountRow.label,
       tier: accountRow.tier,
-      effective_tier: accountLimitStatusMetadata(profile).effectiveTier,
+      effective_tier: getLimitProfile(profile).effectiveTier,
       billing_status: accountRow.billing_status,
       grace_ends_at: nullableTimestampValue(accountRow.billing_grace_ends_at),
-      file_upload_enabled:
-        accountLimitStatusMetadata(profile).fileUploadEnabled,
+      file_upload_enabled: fileUploadEnabled(profile),
       storage,
       queued_input_items: databaseNonNegativeInteger(
         storageRow.queued_input_items
@@ -373,11 +375,7 @@ function accountStorageStatus(
   profile: LimitProfileSelector,
   row: StorageStatusRow
 ): AccountStatusData["storage"] | null {
-  const metadata = accountLimitStatusMetadata(profile);
-  const limitName: LimitName =
-    metadata.effectiveTier === "free"
-      ? "stored_non_file_queue_payload_bytes"
-      : "overall_stored_account_data_bytes";
+  const limitName = storageLimitName(profile);
   const storedBytes =
     limitName === "stored_non_file_queue_payload_bytes"
       ? databaseNonNegativeInteger(row.non_file_stored_bytes)
@@ -415,11 +413,12 @@ function activeLimitBlockForStatus(
   storageRow: StorageStatusRow,
   block: ActiveLimitBlockData
 ): ActiveLimitBlockData | null {
-  const limit = accountLimitStatusMetadata(profile).limits.find((entry) => {
-    return entry.limitName === block.limit_name;
-  });
+  if (!isLimitName(block.limit_name)) {
+    return null;
+  }
 
-  if (!limit || limit.setting.mode !== "enabled") {
+  const limit = limitStatusMetadata(profile, block.limit_name);
+  if (limit.setting.mode !== "enabled") {
     return null;
   }
 

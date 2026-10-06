@@ -18,7 +18,8 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import {
-  accountLimitStatusMetadata,
+  getLimitProfile,
+  LIMIT_PROFILES,
   type AccountTier,
   limitProfileSelectorForAccountTier,
   type LimitProfileSelector
@@ -360,33 +361,18 @@ function pendingInputRetentionCutoff(
   now: Date,
   profile: LimitProfileSelector
 ): Date | null {
-  const retentionLimit = accountLimitStatusMetadata(profile).limits.find(
-    (limit) => limit.limitName === "input_retention_days"
-  );
+  const retention = getLimitProfile(profile).limits.input_retention_days;
 
-  if (!retentionLimit) {
-    throw new Error("Missing input_retention_days limit metadata.");
-  }
-  if (retentionLimit.setting.mode !== "enabled") {
+  if (retention.mode !== "enabled") {
     return null;
   }
 
-  return new Date(now.getTime() - retentionLimit.setting.value * ONE_DAY_MS);
+  return new Date(now.getTime() - retention.value * ONE_DAY_MS);
 }
 
 function freeTierNonFilePayloadLimitBytes(): number {
-  const freeProfile = accountLimitStatusMetadata("hosted-free");
-  const limit = freeProfile.limits.find(
-    (entry) => entry.limitName === "stored_non_file_queue_payload_bytes"
-  );
-
-  if (!limit || limit.setting.mode !== "enabled") {
-    throw new Error(
-      "Missing enabled stored_non_file_queue_payload_bytes limit for hosted-free profile."
-    );
-  }
-
-  return limit.setting.value;
+  return LIMIT_PROFILES["hosted-free"].limits
+    .stored_non_file_queue_payload_bytes.value;
 }
 
 function cleanupAccountTargetFromRow(
