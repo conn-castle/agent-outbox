@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import vm from "node:vm";
-
-import ts from "typescript";
 
 import {
   classifyReactError,
@@ -21,8 +15,9 @@ import {
   RATE_LIMIT_RULE_DESCRIPTION
 } from "../scripts/cloudflare-ratelimit.mjs";
 
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
+
 const require = createRequire(import.meta.url);
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
  * @typedef {{ name: string, category?: string }} TestClientEvent
@@ -514,66 +509,35 @@ test("Cloudflare rate-limit check and apply handle a fresh zone without the rule
  * @param {ClientEventsStub} clientEventsStub
  */
 function loadErrorBoundaryForTest(clientEventsStub, path = "app/error.tsx") {
-  const source = readFileSync(resolve(REPO_ROOT, path), "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      jsx: ts.JsxEmit.ReactJSX,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
+  const exportsForTestModule = loadModuleForTest(path, {
+    stubs: {
+      react: {
+        /**
+         * @param {() => void} callback
+         */
+        useEffect: (callback) => callback()
+      },
+      "react/jsx-runtime": {
+        /**
+         * @param {unknown} type
+         * @param {unknown} props
+         */
+        jsx: (type, props) => ({ type, props }),
+        /**
+         * @param {unknown} type
+         * @param {unknown} props
+         */
+        jsxs: (type, props) => ({ type, props })
+      },
+      "../src/client/client-events.ts": clientEventsStub,
+      // global-error.tsx imports the stylesheet for standalone rendering;
+      // CSS is a bundler concern with no runtime module shape.
+      "./globals.css": {}
     },
-    fileName: path
-  }).outputText;
-  const testModule = {
-    exports: /** @type {Record<string, unknown>} */ ({})
-  };
-
-  vm.runInNewContext(
-    compiled,
-    {
-      exports: testModule.exports,
-      module: testModule,
-      /**
-       * @param {string} specifier
-       */
-      require(specifier) {
-        if (specifier === "react") {
-          return {
-            /**
-             * @param {() => void} callback
-             */
-            useEffect: (callback) => callback()
-          };
-        }
-        if (specifier === "react/jsx-runtime") {
-          return {
-            /**
-             * @param {unknown} type
-             * @param {unknown} props
-             */
-            jsx: (type, props) => ({ type, props }),
-            /**
-             * @param {unknown} type
-             * @param {unknown} props
-             */
-            jsxs: (type, props) => ({ type, props })
-          };
-        }
-        if (specifier === "../src/client/client-events.ts") {
-          return clientEventsStub;
-        }
-        if (specifier === "./globals.css") {
-          // global-error.tsx imports the stylesheet for standalone rendering;
-          // CSS is a bundler concern with no runtime module shape.
-          return {};
-        }
-        return require(specifier);
-      }
-    },
-    { filename: "app/error.tsx" }
-  );
+    fallbackRequire: require
+  });
 
   return /** @type {(props: { error: Error, reset: () => void }) => unknown} */ (
-    testModule.exports.default
+    exportsForTestModule.default
   );
 }

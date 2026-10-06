@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import vm from "node:vm";
 
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import ts from "typescript";
 
 import { persistedPopup } from "../src/server/persisted-payload.ts";
 import { accountWriteLockStatement } from "../src/server/caller-api-limits.ts";
@@ -81,9 +76,9 @@ import {
 } from "./helpers/database.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
 import { queryResult } from "./helpers/fake-query.mjs";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 
 const require = createRequire(import.meta.url);
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CALLER_KEY_HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
 
 /**
@@ -139,34 +134,13 @@ async function captureStructuredLogs(callback) {
  * @returns {import("react").ComponentType<{ children: import("react").ReactNode }>}
  */
 function loadRootLayoutForTest() {
-  const source = readFileSync(resolve(REPO_ROOT, "app/layout.tsx"), "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      jsx: ts.JsxEmit.ReactJSX,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
-    },
-    fileName: "app/layout.tsx"
-  }).outputText;
-  const testModule = {
-    exports: /** @type {Record<string, unknown>} */ ({})
-  };
-
-  vm.runInNewContext(
-    compiled,
-    {
-      console,
-      exports: testModule.exports,
-      module: testModule,
-      process,
-      require: rootLayoutTestRequire
-    },
-    { filename: "app/layout.tsx" }
-  );
+  const exportsForTestModule = loadModuleForTest("app/layout.tsx", {
+    globals: { console, process },
+    fallbackRequire: rootLayoutTestRequire
+  });
 
   return /** @type {import("react").ComponentType<{ children: import("react").ReactNode }>} */ (
-    testModule.exports.default
+    exportsForTestModule.default
   );
 }
 
@@ -187,57 +161,20 @@ function renderRootLayoutForTest() {
  */
 function loadSentryModuleForTest(sentryStub) {
   const sentry = { getClient: () => ({}), ...sentryStub };
-  const source = readFileSync(
-    resolve(REPO_ROOT, "src/server/sentry.ts"),
-    "utf8"
-  );
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
+  const exportsForTestModule = loadModuleForTest("src/server/sentry.ts", {
+    stubs: {
+      "@sentry/nextjs": sentry,
+      "./correlation.ts": {
+        createCorrelationId: (/** @type {string} */ prefix) => `${prefix}_test`
+      },
+      "./logging.ts": { emitRuntimeLog, safeErrorCode, safeErrorName },
+      "./observability.ts": { runtimeRelease }
     },
-    fileName: "src/server/sentry.ts"
-  }).outputText;
-  const testModule = {
-    exports: /** @type {Record<string, unknown>} */ ({})
-  };
+    globals: { Error, console, process },
+    fallbackRequire: require
+  });
 
-  vm.runInNewContext(
-    compiled,
-    {
-      Error,
-      console,
-      exports: testModule.exports,
-      module: testModule,
-      process,
-      /**
-       * @param {string} specifier
-       */
-      require(specifier) {
-        if (specifier === "@sentry/nextjs") {
-          return sentry;
-        }
-        if (specifier === "./correlation.ts") {
-          return {
-            createCorrelationId: (/** @type {string} */ prefix) =>
-              `${prefix}_test`
-          };
-        }
-        if (specifier === "./logging.ts") {
-          return { emitRuntimeLog, safeErrorCode, safeErrorName };
-        }
-        if (specifier === "./observability.ts") {
-          return { runtimeRelease };
-        }
-
-        return require(specifier);
-      }
-    },
-    { filename: "src/server/sentry.ts" }
-  );
-
-  return /** @type {SentryModuleForTest} */ (testModule.exports);
+  return /** @type {SentryModuleForTest} */ (exportsForTestModule);
 }
 
 /**
@@ -245,53 +182,18 @@ function loadSentryModuleForTest(sentryStub) {
  * @returns {Pick<typeof import("../src/server/api-errors.ts"), "apiErrorResponse">}
  */
 function loadApiErrorsModuleForTest(captureRuntimeException) {
-  const source = readFileSync(
-    resolve(REPO_ROOT, "src/server/api-errors.ts"),
-    "utf8"
-  );
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
+  const exportsForTestModule = loadModuleForTest("src/server/api-errors.ts", {
+    stubs: {
+      "./correlation.ts": { createCorrelationId: () => "unused-correlation" },
+      "./logging.ts": { durationSinceMs, emitRuntimeLog },
+      "./sentry.ts": { captureRuntimeException }
     },
-    fileName: "src/server/api-errors.ts"
-  }).outputText;
-  const testModule = {
-    exports: /** @type {Record<string, unknown>} */ ({})
-  };
-
-  vm.runInNewContext(
-    compiled,
-    {
-      console,
-      exports: testModule.exports,
-      module: testModule,
-      process,
-      Response,
-      Headers,
-      /**
-       * @param {string} specifier
-       */
-      require(specifier) {
-        if (specifier === "./correlation.ts") {
-          return { createCorrelationId: () => "unused-correlation" };
-        }
-        if (specifier === "./logging.ts") {
-          return { durationSinceMs, emitRuntimeLog };
-        }
-        if (specifier === "./sentry.ts") {
-          return { captureRuntimeException };
-        }
-
-        return require(specifier);
-      }
-    },
-    { filename: "src/server/api-errors.ts" }
-  );
+    globals: { console, process, Response, Headers },
+    fallbackRequire: require
+  });
 
   return /** @type {Pick<typeof import("../src/server/api-errors.ts"), "apiErrorResponse">} */ (
-    testModule.exports
+    exportsForTestModule
   );
 }
 
@@ -304,73 +206,32 @@ function loadApiErrorsModuleForTest(captureRuntimeException) {
  * }}
  */
 function loadBillingModuleForTest(reportRuntimeFailure) {
-  const source = readFileSync(
-    resolve(REPO_ROOT, "src/server/billing.ts"),
-    "utf8"
-  );
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
+  const exportsForTestModule = loadModuleForTest("src/server/billing.ts", {
+    stubs: {
+      "../shared/system-contract.ts": { SYSTEM_CONTRACT },
+      "./database.ts": {
+        async runProductTransaction() {
+          throw new Error("unexpected test transaction runner call");
+        }
+      },
+      "./request-body.ts": {
+        async readJsonBodyWithLimit() {},
+        readRawRequestBodyWithLimit
+      },
+      "./env.ts": { absoluteHttpOrigin },
+      "./api-errors.ts": { apiTemporaryUnavailable },
+      "./logging.ts": { durationSinceMs, emitRuntimeLog, safeErrorName },
+      "./sentry.ts": { reportRuntimeFailure }
     },
-    fileName: "src/server/billing.ts"
-  }).outputText;
-  const testModule = {
-    exports: /** @type {Record<string, unknown>} */ ({})
-  };
-
-  vm.runInNewContext(
-    compiled,
-    {
-      console,
-      exports: testModule.exports,
-      module: testModule,
-      process,
-      /**
-       * @param {string} specifier
-       */
-      require(specifier) {
-        if (specifier === "../shared/system-contract.ts") {
-          return { SYSTEM_CONTRACT };
-        }
-        if (specifier === "./database.ts") {
-          return {
-            async runProductTransaction() {
-              throw new Error("unexpected test transaction runner call");
-            }
-          };
-        }
-        if (specifier === "./request-body.ts") {
-          return {
-            async readJsonBodyWithLimit() {},
-            readRawRequestBodyWithLimit
-          };
-        }
-        if (specifier === "./env.ts") {
-          return { absoluteHttpOrigin };
-        }
-        if (specifier === "./api-errors.ts") {
-          return { apiTemporaryUnavailable };
-        }
-        if (specifier === "./logging.ts") {
-          return { durationSinceMs, emitRuntimeLog, safeErrorName };
-        }
-        if (specifier === "./sentry.ts") {
-          return { reportRuntimeFailure };
-        }
-
-        return require(specifier);
-      }
-    },
-    { filename: "src/server/billing.ts" }
-  );
+    globals: { console, process },
+    fallbackRequire: require
+  });
 
   const billingModule = /** @type {{
     createBillingPortalSessionForAccount: typeof createBillingPortalSessionForAccount,
     createCheckoutSessionForAccount: typeof createCheckoutSessionForAccount,
     handleStripeWebhookRequest: typeof handleStripeWebhookRequest
-  }} */ (testModule.exports);
+  }} */ (exportsForTestModule);
   return billingModule;
 }
 
@@ -407,117 +268,57 @@ function loadBillingSessionModuleForTest(reportRuntimeFailure) {
  * }}
  */
 function loadHumanAnswerModuleForTest(reportRuntimeFailure, transactionQuery) {
-  const source = readFileSync(
-    resolve(REPO_ROOT, "src/server/human-answer.ts"),
-    "utf8"
-  );
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
-    },
-    fileName: "src/server/human-answer.ts"
-  }).outputText;
-  const testModule = {
-    exports: /** @type {Record<string, unknown>} */ ({})
-  };
-
-  vm.runInNewContext(
-    compiled,
+  const exportsForTestModule = loadCommonJsModuleForTest(
+    "src/server/human-answer.ts",
     {
-      AggregateError,
-      Error,
-      Buffer,
-      console,
-      exports: testModule.exports,
-      module: testModule,
-      process,
-      URLSearchParams,
-      /**
-       * @param {string} specifier
-       */
-      require(specifier) {
-        if (specifier === "node:buffer") {
-          return require(specifier);
+      "../shared/system-contract.ts": { SYSTEM_CONTRACT },
+      "./accounting.ts": {
+        /** @param {Record<string, unknown>} input */
+        auditSafeLifecycleEvent(input) {
+          return { ...input, metadata: input.metadata ?? {} };
         }
-        if (specifier === "node:crypto") {
-          return require(specifier);
+      },
+      "./api-errors.ts": { apiLimitMetadata: () => null },
+      "./caller-api-limits.ts": {
+        accountWriteLockStatement,
+        async accountLimitProfileForAccount() {
+          return null;
+        },
+        async enforceHumanFileUploadLimits() {
+          return { ok: true };
         }
-        if (specifier === "../shared/system-contract.ts") {
-          return { SYSTEM_CONTRACT };
+      },
+      "./cleanup.ts": { preReadUndoStatement: () => ({ sql: "", values: [] }) },
+      "./database.ts": {
+        /**
+         * @param {string} _connectionString
+         * @param {unknown} _context
+         * @param {(query: import("../src/server/database.ts").ProductTransactionQuery) => Promise<unknown>} callback
+         */
+        async runProductTransaction(_connectionString, _context, callback) {
+          if (transactionQuery) return callback(transactionQuery);
+          throw new Error("raw human answer database secret");
         }
-        if (specifier === "./accounting.ts") {
-          return {
-            /** @param {Record<string, unknown>} input */
-            auditSafeLifecycleEvent(input) {
-              return { ...input, metadata: input.metadata ?? {} };
-            }
-          };
-        }
-        if (specifier === "./api-errors.ts") {
-          return { apiLimitMetadata: () => null };
-        }
-        if (specifier === "./caller-api-limits.ts") {
-          return {
-            accountWriteLockStatement,
-            async accountLimitProfileForAccount() {
-              return null;
-            },
-            async enforceHumanFileUploadLimits() {
-              return { ok: true };
-            }
-          };
-        }
-        if (specifier === "./cleanup.ts") {
-          return { preReadUndoStatement: () => ({ sql: "", values: [] }) };
-        }
-        if (specifier === "./database.ts") {
-          return {
-            /**
-             * @param {string} _connectionString
-             * @param {unknown} _context
-             * @param {(query: import("../src/server/database.ts").ProductTransactionQuery) => Promise<unknown>} callback
-             */
-            async runProductTransaction(_connectionString, _context, callback) {
-              if (transactionQuery) return callback(transactionQuery);
-              throw new Error("raw human answer database secret");
-            }
-          };
-        }
-        if (specifier === "./persisted-payload.ts") {
-          return { persistedPopup };
-        }
-        if (specifier === "./input-schema.ts") {
-          return {
-            compareUtcDateTimeValues: () => 0,
-            isIanaTimeZone: () => true,
-            isValidUtcDateTime: () => true
-          };
-        }
-        if (specifier === "./logging.ts") {
-          return { durationSinceMs, emitRuntimeLog };
-        }
-        if (specifier === "./output-files.ts") {
-          return {
-            safeAttachmentFilename: () => "upload.txt",
-            safeContentType: () => "text/plain"
-          };
-        }
-        if (specifier === "./sentry.ts") {
-          return { reportRuntimeFailure };
-        }
-
-        return require(specifier);
-      }
-    },
-    { filename: "src/server/human-answer.ts" }
+      },
+      "./persisted-payload.ts": { persistedPopup },
+      "./input-schema.ts": {
+        compareUtcDateTimeValues: () => 0,
+        isIanaTimeZone: () => true,
+        isValidUtcDateTime: () => true
+      },
+      "./logging.ts": { durationSinceMs, emitRuntimeLog },
+      "./output-files.ts": {
+        safeAttachmentFilename: () => "upload.txt",
+        safeContentType: () => "text/plain"
+      },
+      "./sentry.ts": { reportRuntimeFailure }
+    }
   );
 
   const exportsForTest = /** @type {{
     createHumanAnswer: typeof createHumanAnswer,
     humanAnswerUndoTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerUndoTransactionFailure
-  }} */ (testModule.exports);
+  }} */ (exportsForTestModule);
   return exportsForTest;
 }
 
@@ -556,45 +357,18 @@ function loadHumanSessionModuleForTest(reportRuntimeFailure) {
  * @returns {Record<string, unknown>}
  */
 function loadCommonJsModuleForTest(relativePath, stubs) {
-  const source = readFileSync(resolve(REPO_ROOT, relativePath), "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      esModuleInterop: true,
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2024
-    },
-    fileName: relativePath
-  }).outputText;
-  const testModule = {
-    exports: /** @type {Record<string, unknown>} */ ({})
-  };
-
-  vm.runInNewContext(
-    compiled,
-    {
+  return loadModuleForTest(relativePath, {
+    stubs,
+    globals: {
       AggregateError,
       Error,
       Buffer,
       console,
-      exports: testModule.exports,
-      module: testModule,
       process,
-      URLSearchParams,
-      /**
-       * @param {string} specifier
-       */
-      require(specifier) {
-        if (Object.prototype.hasOwnProperty.call(stubs, specifier)) {
-          return stubs[specifier];
-        }
-
-        return require(specifier);
-      }
+      URLSearchParams
     },
-    { filename: relativePath }
-  );
-
-  return testModule.exports;
+    fallbackRequire: require
+  });
 }
 
 /**

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
-import ts from "typescript";
+import { transpileForTest } from "./helpers/transpiled-module.mjs";
 import { getNextConfigEnv } from "next/dist/lib/static-env.js";
 import {
   browserBuildConfig,
@@ -130,12 +130,7 @@ function compiledGate(file, exportName, enabled) {
   for (const [key, value] of Object.entries(definitions)) {
     source = source.replaceAll(key, JSON.stringify(value));
   }
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
+  const compiled = transpileForTest(`src/server/${file}`, source);
   /** @param {Record<string, string>} environment */
   return (environment) => {
     const exports = {};
