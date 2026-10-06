@@ -80,6 +80,39 @@ type paginatedResult struct {
 	Response   *foundation.APIResponse
 }
 
+// pagedList describes one paginated queue endpoint. Output read --all is the
+// only one that marks results read, so it alone is sent as a write and
+// reports unavailable outputs.
+type pagedList struct {
+	path       string
+	marksRead  bool
+	emptyText  string
+	formatItem func(json.RawMessage) string
+	pagesLeft  string
+}
+
+var (
+	inputListPages = pagedList{
+		path:       "/api/input/list",
+		emptyText:  "no live input\n",
+		formatItem: compactInputItem,
+		pagesLeft:  "input",
+	}
+	outputCheckPages = pagedList{
+		path:       "/api/output/check",
+		emptyText:  "no output ready\n",
+		formatItem: compactOutputItem,
+		pagesLeft:  "unread",
+	}
+	outputReadAllPages = pagedList{
+		path:       "/api/output/read-all",
+		marksRead:  true,
+		emptyText:  "no output ready\n",
+		formatItem: compactOutputItem,
+		pagesLeft:  "unread",
+	}
+)
+
 type fileGetFlags struct {
 	OutputPath string
 	Stdout     bool
@@ -87,7 +120,7 @@ type fileGetFlags struct {
 }
 
 func addDataPlaneCommands(caller *cobra.Command, input *cobra.Command, output *cobra.Command, account *cobra.Command, opts Options, flags *rootFlags) {
-	caller.AddCommand(requireCaller(apiGetCommand("status", "Show selected caller status", "/api/caller/status", opts, flags)))
+	caller.AddCommand(requireCaller(statusCommand("caller", opts, flags)))
 
 	input.AddCommand(inputJSONFileCommand("send", "Submit a new input item", "/api/input/send", opts, flags))
 	input.AddCommand(inputJSONFileCommand("replace", "Replace a pending input item", "/api/input/replace", opts, flags))
@@ -111,48 +144,53 @@ func addDataPlaneCommands(caller *cobra.Command, input *cobra.Command, output *c
 	output.AddCommand(file)
 	output.AddCommand(outputAckCommand(opts, flags))
 
-	account.AddCommand(apiGetCommand("status", "Show selected account status", "/api/account/status", opts, flags))
+	account.AddCommand(statusCommand("account", opts, flags))
 }
 
-func apiGetCommand(use string, short string, apiPath string, opts Options, flags *rootFlags) *cobra.Command {
+// statusCommand builds "<scope> status", where scope is "caller" or "account".
+func statusCommand(scope string, opts Options, flags *rootFlags) *cobra.Command {
+	short := "Show selected " + scope + " status"
+	apiPath := "/api/" + scope + "/status"
 	cmd := &cobra.Command{
-		Use:           use,
+		Use:           "status",
 		Short:         short,
 		Args:          noArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runtime, err := runtimeForCommand(opts, flags)
-			if err != nil {
-				return err
-			}
-			var data json.RawMessage
-			meta, err := runtime.Client.Do(cmd.Context(), http.MethodGet, apiPath, runtime.Bearer, nil, &data)
-			if err != nil {
-				return err
-			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data, false)
+			return requestRaw(cmd.Context(), opts, flags, http.MethodGet, apiPath, nil, false)
 		},
-	}
-	related := "docs/spec/http-api.md and docs/spec/errors.md."
-	exampleCommand := use
-	if apiPath == "/api/caller/status" {
-		related = "docs/spec/http-api.md#caller-status, docs/spec/errors.md, and agent-outbox docs status."
-		exampleCommand = "caller status"
-	} else if apiPath == "/api/account/status" {
-		related = "docs/spec/http-api.md#account-status, docs/spec/errors.md, and agent-outbox docs status."
-		exampleCommand = "account status"
 	}
 	documentCommand(cmd, commandHelpSpec{
 		Purpose:     short + " by calling " + apiPath + " with the selected local caller credential.",
 		Arguments:   "None. Select the local caller with --caller, AGENT_OUTBOX_CALLER, or the single configured caller.",
 		Flags:       "--json prints the API data in the shared success envelope. Global --caller, --config, --base-url, and --no-color are available.",
 		Environment: globalEnvironmentHelp(),
-		Examples:    "agent-outbox " + exampleCommand + "\nagent-outbox " + exampleCommand + " --json",
+		Examples:    "agent-outbox " + scope + " status\nagent-outbox " + scope + " status --json",
 		ExitCodes:   "0 success. 74 secret-store failure. 75 temporary API failure. 77 permission/auth failure. 78 config or caller selection.",
-		RelatedDocs: related,
+		RelatedDocs: "docs/spec/http-api.md#" + scope + "-status, docs/spec/errors.md, and agent-outbox docs status.",
 	})
 	return cmd
+}
+
+// requestRaw sends one API request with the selected caller credential and
+// prints the raw response data. write selects DoWrite and, when local output
+// then fails, reports that the API accepted the write.
+func requestRaw(ctx context.Context, opts Options, flags *rootFlags, method string, apiPath string, body any, write bool) error {
+	runtime, err := runtimeForCommand(opts, flags)
+	if err != nil {
+		return err
+	}
+	do := runtime.Client.Do
+	if write {
+		do = runtime.Client.DoWrite
+	}
+	var data json.RawMessage
+	meta, err := do(ctx, method, apiPath, runtime.Bearer, body, &data)
+	if err != nil {
+		return err
+	}
+	return renderRawSuccess(opts.Stdout, flags.json, meta, data, write)
 }
 
 func inputJSONFileCommand(use string, short string, apiPath string, opts Options, flags *rootFlags) *cobra.Command {
@@ -168,16 +206,7 @@ func inputJSONFileCommand(use string, short string, apiPath string, opts Options
 			if err != nil {
 				return err
 			}
-			runtime, err := runtimeForCommand(opts, flags)
-			if err != nil {
-				return err
-			}
-			var data json.RawMessage
-			meta, err := runtime.Client.DoWrite(cmd.Context(), http.MethodPost, apiPath, runtime.Bearer, body, &data)
-			if err != nil {
-				return err
-			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data, true)
+			return requestRaw(cmd.Context(), opts, flags, http.MethodPost, apiPath, body, true)
 		},
 	}
 	cmd.Flags().StringVar(&filePath, "file", "", "input submission JSON file")
@@ -205,23 +234,7 @@ func inputDeleteCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if callerItemID == "" {
 				return foundation.NewUsageError("caller_item_id is required.")
 			}
-			runtime, err := runtimeForCommand(opts, flags)
-			if err != nil {
-				return err
-			}
-			var data json.RawMessage
-			meta, err := runtime.Client.DoWrite(
-				cmd.Context(),
-				http.MethodPost,
-				"/api/input/delete",
-				runtime.Bearer,
-				map[string]string{"caller_item_id": callerItemID},
-				&data,
-			)
-			if err != nil {
-				return err
-			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data, true)
+			return requestRaw(cmd.Context(), opts, flags, http.MethodPost, "/api/input/delete", map[string]string{"caller_item_id": callerItemID}, true)
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
@@ -245,16 +258,7 @@ func inputListCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runtime, err := runtimeForCommand(opts, flags)
-			if err != nil {
-				return err
-			}
-			result, err := fetchPages(cmd.Context(), runtime, "input-list", page)
-			if err != nil {
-				return err
-			}
-			warnInputPagesLeft(opts.Stderr, result.Pagination)
-			return renderInputListSuccess(opts.Stdout, flags.json, result)
+			return listPages(cmd.Context(), opts, flags, inputListPages, page)
 		},
 	}
 	addPageFlags(cmd, &page)
@@ -282,23 +286,7 @@ func inputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if callerItemID == "" {
 				return foundation.NewUsageError("caller_item_id is required.")
 			}
-			runtime, err := runtimeForCommand(opts, flags)
-			if err != nil {
-				return err
-			}
-			var data json.RawMessage
-			meta, err := runtime.Client.Do(
-				cmd.Context(),
-				http.MethodPost,
-				"/api/input/read",
-				runtime.Bearer,
-				map[string]string{"caller_item_id": callerItemID},
-				&data,
-			)
-			if err != nil {
-				return err
-			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data, false)
+			return requestRaw(cmd.Context(), opts, flags, http.MethodPost, "/api/input/read", map[string]string{"caller_item_id": callerItemID}, false)
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
@@ -322,16 +310,7 @@ func outputCheckCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runtime, err := runtimeForCommand(opts, flags)
-			if err != nil {
-				return err
-			}
-			result, err := fetchPages(cmd.Context(), runtime, "check", page)
-			if err != nil {
-				return err
-			}
-			warnUnreadPagesLeft(opts.Stderr, result.Pagination)
-			return renderPaginatedSuccess(opts.Stdout, flags.json, result, false)
+			return listPages(cmd.Context(), opts, flags, outputCheckPages, page)
 		},
 	}
 	addPageFlags(cmd, &page)
@@ -368,29 +347,10 @@ func outputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if !readAll && (cmd.Flags().Changed("page-size") || cmd.Flags().Changed("cursor") || cmd.Flags().Changed("no-auto-page")) {
 				return foundation.NewUsageError("--page-size, --cursor, and --no-auto-page require output read --all.")
 			}
-			runtime, err := runtimeForCommand(opts, flags)
-			if err != nil {
-				return err
-			}
 			if readAll {
-				result, err := fetchPages(cmd.Context(), runtime, "read-all", page)
-				if err != nil {
-					return err
-				}
-				warnUnreadPagesLeft(opts.Stderr, result.Pagination)
-				if !flags.json && unavailableCount(result.Data) > 0 {
-					_, _ = fmt.Fprintf(opts.Stderr, "%d output result(s) were temporarily unavailable because file metadata could not be read; retry later or read by output_result_id\n", unavailableCount(result.Data))
-				}
-				return renderPaginatedSuccess(opts.Stdout, flags.json, result, true)
+				return listPages(cmd.Context(), opts, flags, outputReadAllPages, page)
 			}
-
-			var data json.RawMessage
-			path := "/api/output/" + url.PathEscape(args[0]) + "/read"
-			meta, err := runtime.Client.DoWrite(cmd.Context(), http.MethodPost, path, runtime.Bearer, nil, &data)
-			if err != nil {
-				return err
-			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data, true)
+			return requestRaw(cmd.Context(), opts, flags, http.MethodPost, "/api/output/"+url.PathEscape(args[0])+"/read", nil, true)
 		},
 	}
 	cmd.Flags().BoolVar(&readAll, "all", false, "read all ready output pages")
@@ -469,17 +429,7 @@ func outputAckCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runtime, err := runtimeForCommand(opts, flags)
-			if err != nil {
-				return err
-			}
-			var data json.RawMessage
-			path := "/api/output/" + url.PathEscape(args[0]) + "/ack"
-			meta, err := runtime.Client.DoWrite(cmd.Context(), http.MethodPost, path, runtime.Bearer, nil, &data)
-			if err != nil {
-				return err
-			}
-			return renderRawSuccess(opts.Stdout, flags.json, meta, data, true)
+			return requestRaw(cmd.Context(), opts, flags, http.MethodPost, "/api/output/"+url.PathEscape(args[0])+"/ack", nil, true)
 		},
 	}
 	documentCommand(cmd, commandHelpSpec{
@@ -656,7 +606,39 @@ func containsClearlyUnsafeHTML(value string) bool {
 	return false
 }
 
-func fetchPages(ctx context.Context, runtime *apiRuntime, kind string, page pageFlags) (*paginatedResult, error) {
+func listPages(ctx context.Context, opts Options, flags *rootFlags, list pagedList, page pageFlags) error {
+	runtime, err := runtimeForCommand(opts, flags)
+	if err != nil {
+		return err
+	}
+	result, err := fetchPages(ctx, runtime, list, page)
+	if err != nil {
+		return err
+	}
+	if pagination := result.Pagination; !pagination.Complete && pagination.HasMore && pagination.NextCursor != nil {
+		_, _ = fmt.Fprintf(opts.Stderr, "%s pages left; rerun with --cursor %s or omit --no-auto-page to auto-page all results\n", list.pagesLeft, *pagination.NextCursor)
+	}
+	if !flags.json && unavailableCount(result.Data) > 0 {
+		_, _ = fmt.Fprintf(opts.Stderr, "%d output result(s) were temporarily unavailable because file metadata could not be read; retry later or read by output_result_id\n", unavailableCount(result.Data))
+	}
+	if flags.json {
+		return commandOutputResponseError(renderJSON(opts.Stdout, successEnvelope{
+			OK:         true,
+			Data:       result.Data,
+			Pagination: &result.Pagination,
+		}), result.Response, list.marksRead)
+	}
+	if len(result.Data.Items) == 0 {
+		return commandOutputResponseError(writeCommandOutput(opts.Stdout, []byte(list.emptyText)), result.Response, list.marksRead)
+	}
+	var out bytes.Buffer
+	for _, item := range result.Data.Items {
+		out.WriteString(list.formatItem(item) + "\n")
+	}
+	return commandOutputResponseError(writeCommandOutput(opts.Stdout, out.Bytes()), result.Response, list.marksRead)
+}
+
+func fetchPages(ctx context.Context, runtime *apiRuntime, list pagedList, page pageFlags) (*paginatedResult, error) {
 	if page.PageSize < 1 || page.PageSize > foundation.SystemContractOutputPageMaxLimit {
 		return nil, foundation.NewUsageError(fmt.Sprintf("--page-size must be between 1 and %d.", foundation.SystemContractOutputPageMaxLimit))
 	}
@@ -674,7 +656,7 @@ func fetchPages(ctx context.Context, runtime *apiRuntime, kind string, page page
 			PageLimit: page.PageSize,
 		},
 	}
-	if kind == "read-all" {
+	if list.marksRead {
 		unavailableOutputs := []unavailableOutput{}
 		unavailableCount := 0
 		result.Data.UnavailableOutputs = &unavailableOutputs
@@ -682,9 +664,9 @@ func fetchPages(ctx context.Context, runtime *apiRuntime, kind string, page page
 	}
 
 	for {
-		nextPage, meta, err := fetchPage(ctx, runtime, kind, page.PageSize, cursor)
+		nextPage, meta, err := fetchPage(ctx, runtime, list, page.PageSize, cursor)
 		if err != nil {
-			if kind == "read-all" && len(result.Data.Items) > 0 {
+			if list.marksRead && len(result.Data.Items) > 0 {
 				var appErr *foundation.AppError
 				if errors.As(err, &appErr) && appErr.WriteOutcome != "accepted" {
 					appErr.WriteOutcome = "unknown"
@@ -693,7 +675,7 @@ func fetchPages(ctx context.Context, runtime *apiRuntime, kind string, page page
 			return nil, err
 		}
 		if err := validatePage(nextPage); err != nil {
-			return nil, invalidPageResponseError(kind, err.Error(), meta)
+			return nil, invalidPageResponseError(list.marksRead, err.Error(), meta)
 		}
 		result.Response = meta
 		if result.Data.ReadyCount == nil && nextPage.ReadyCount != nil {
@@ -721,16 +703,16 @@ func fetchPages(ctx context.Context, runtime *apiRuntime, kind string, page page
 
 		nextCursor := strings.TrimSpace(*nextPage.NextCursor)
 		if seenCursors[nextCursor] {
-			return nil, invalidPageResponseError(kind, "Agent Outbox API returned a repeated pagination cursor.", meta)
+			return nil, invalidPageResponseError(list.marksRead, "Agent Outbox API returned a repeated pagination cursor.", meta)
 		}
 		seenCursors[nextCursor] = true
 		cursor = nextCursor
 	}
 }
 
-func invalidPageResponseError(kind string, message string, meta *foundation.APIResponse) *foundation.AppError {
+func invalidPageResponseError(marksRead bool, message string, meta *foundation.APIResponse) *foundation.AppError {
 	appErr := foundation.NewAPIResponseInvalidError(message, meta)
-	if kind == "read-all" {
+	if marksRead {
 		appErr.WriteOutcome = "accepted"
 	}
 	return appErr
@@ -743,26 +725,9 @@ func unavailableCount(data paginatedData) int {
 	return *data.UnavailableCount
 }
 
-func fetchPage(ctx context.Context, runtime *apiRuntime, kind string, pageSize int, cursor string) (*queuePage, *foundation.APIResponse, error) {
+func fetchPage(ctx context.Context, runtime *apiRuntime, list pagedList, pageSize int, cursor string) (*queuePage, *foundation.APIResponse, error) {
 	var page queuePage
-	switch kind {
-	case "input-list":
-		values := url.Values{}
-		values.Set("limit", fmt.Sprintf("%d", pageSize))
-		if cursor != "" {
-			values.Set("cursor", cursor)
-		}
-		meta, err := runtime.Client.Do(ctx, http.MethodGet, "/api/input/list?"+values.Encode(), runtime.Bearer, nil, &page)
-		return &page, meta, err
-	case "check":
-		values := url.Values{}
-		values.Set("limit", fmt.Sprintf("%d", pageSize))
-		if cursor != "" {
-			values.Set("cursor", cursor)
-		}
-		meta, err := runtime.Client.Do(ctx, http.MethodGet, "/api/output/check?"+values.Encode(), runtime.Bearer, nil, &page)
-		return &page, meta, err
-	case "read-all":
+	if list.marksRead {
 		body := struct {
 			Limit  int     `json:"limit"`
 			Cursor *string `json:"cursor"`
@@ -770,11 +735,16 @@ func fetchPage(ctx context.Context, runtime *apiRuntime, kind string, pageSize i
 		if cursor != "" {
 			body.Cursor = &cursor
 		}
-		meta, err := runtime.Client.DoWrite(ctx, http.MethodPost, "/api/output/read-all", runtime.Bearer, body, &page)
+		meta, err := runtime.Client.DoWrite(ctx, http.MethodPost, list.path, runtime.Bearer, body, &page)
 		return &page, meta, err
-	default:
-		return nil, nil, foundation.NewAppError(foundation.CodeInternalError, "Unknown pagination kind.")
 	}
+	values := url.Values{}
+	values.Set("limit", fmt.Sprintf("%d", pageSize))
+	if cursor != "" {
+		values.Set("cursor", cursor)
+	}
+	meta, err := runtime.Client.Do(ctx, http.MethodGet, list.path+"?"+values.Encode(), runtime.Bearer, nil, &page)
+	return &page, meta, err
 }
 
 func validatePage(page *queuePage) error {
@@ -898,42 +868,6 @@ func renderRawSuccess(w io.Writer, jsonMode bool, meta *foundation.APIResponse, 
 	return commandOutputResponseError(writeCommandOutput(w, out.Bytes()), meta, mutates)
 }
 
-func renderPaginatedSuccess(w io.Writer, jsonMode bool, result *paginatedResult, mutates bool) error {
-	if jsonMode {
-		return commandOutputResponseError(renderJSON(w, successEnvelope{
-			OK:         true,
-			Data:       result.Data,
-			Pagination: &result.Pagination,
-		}), result.Response, mutates)
-	}
-	if len(result.Data.Items) == 0 {
-		return commandOutputResponseError(writeCommandOutput(w, []byte("no output ready\n")), result.Response, mutates)
-	}
-	var out bytes.Buffer
-	for _, item := range result.Data.Items {
-		out.WriteString(compactOutputItem(item) + "\n")
-	}
-	return commandOutputResponseError(writeCommandOutput(w, out.Bytes()), result.Response, mutates)
-}
-
-func renderInputListSuccess(w io.Writer, jsonMode bool, result *paginatedResult) error {
-	if jsonMode {
-		return commandOutputResponseError(renderJSON(w, successEnvelope{
-			OK:         true,
-			Data:       result.Data,
-			Pagination: &result.Pagination,
-		}), result.Response, false)
-	}
-	if len(result.Data.Items) == 0 {
-		return commandOutputResponseError(writeCommandOutput(w, []byte("no live input\n")), result.Response, false)
-	}
-	var out bytes.Buffer
-	for _, item := range result.Data.Items {
-		out.WriteString(compactInputItem(item) + "\n")
-	}
-	return commandOutputResponseError(writeCommandOutput(w, out.Bytes()), result.Response, false)
-}
-
 func renderStructuredSuccess(w io.Writer, jsonMode bool, meta *foundation.APIResponse, data any) error {
 	if jsonMode {
 		envelope := successEnvelope{OK: true, Data: data}
@@ -1017,20 +951,6 @@ func compactInputItem(item json.RawMessage) string {
 		return string(item)
 	}
 	return strings.Join(parts, " ")
-}
-
-func warnUnreadPagesLeft(w io.Writer, pagination paginationMetadata) {
-	if pagination.Complete || !pagination.HasMore || pagination.NextCursor == nil {
-		return
-	}
-	_, _ = fmt.Fprintf(w, "unread pages left; rerun with --cursor %s or omit --no-auto-page to auto-page all results\n", *pagination.NextCursor)
-}
-
-func warnInputPagesLeft(w io.Writer, pagination paginationMetadata) {
-	if pagination.Complete || !pagination.HasMore || pagination.NextCursor == nil {
-		return
-	}
-	_, _ = fmt.Fprintf(w, "input pages left; rerun with --cursor %s or omit --no-auto-page to auto-page all results\n", *pagination.NextCursor)
 }
 
 func exactArgs(n int) cobra.PositionalArgs {
