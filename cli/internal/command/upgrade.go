@@ -90,20 +90,3 @@ func loadConfigAllowMissingDefault(flags *rootFlags, env foundation.Env) (founda
 	}
 	return foundation.LoadConfig(path)
 }
-
-func resolvedOptionalConfigPath(flags *rootFlags, env foundation.Env) (string, bool, error) {
-	explicit := strings.TrimSpace(flags.config) != "" || strings.TrimSpace(env.Get(foundation.EnvConfigPath)) != ""
-	defaultPath := ""
-	if !explicit {
-		paths, err := foundation.DefaultPathsFromOS()
-		if err != nil {
-			return "", false, foundation.WrapConfigError("Could not determine local Agent Outbox config path.", err)
-		}
-		defaultPath = paths.ConfigPath
-	}
-	path, err := foundation.ResolveConfigPath(flags.config, env, defaultPath)
-	if err != nil {
-		return "", explicit, err
-	}
-	return path, explicit, nil
-}

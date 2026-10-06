@@ -235,23 +235,29 @@ func loadConfig(flags *rootFlags, env foundation.Env) (foundation.Config, error)
 }
 
 func loadConfigDetails(flags *rootFlags, env foundation.Env) (string, foundation.Config, bool, error) {
-	defaultPath := ""
-	defaultPathSelected := false
-	if strings.TrimSpace(flags.config) == "" && strings.TrimSpace(env.Get(foundation.EnvConfigPath)) == "" {
-		paths, err := foundation.DefaultPathsFromOS()
-		if err != nil {
-			return "", foundation.Config{}, false, foundation.WrapConfigError("Could not determine local Agent Outbox config path.", err)
-		}
-		defaultPath = paths.ConfigPath
-		defaultPathSelected = true
-	}
-
-	path, err := foundation.ResolveConfigPath(flags.config, env, defaultPath)
+	path, explicit, err := resolvedOptionalConfigPath(flags, env)
 	if err != nil {
 		return "", foundation.Config{}, false, err
 	}
 	cfg, err := foundation.LoadConfig(path)
-	return path, cfg, defaultPathSelected, err
+	return path, cfg, !explicit, err
+}
+
+func resolvedOptionalConfigPath(flags *rootFlags, env foundation.Env) (string, bool, error) {
+	explicit := strings.TrimSpace(flags.config) != "" || strings.TrimSpace(env.Get(foundation.EnvConfigPath)) != ""
+	defaultPath := ""
+	if !explicit {
+		paths, err := foundation.DefaultPathsFromOS()
+		if err != nil {
+			return "", false, foundation.WrapConfigError("Could not determine local Agent Outbox config path.", err)
+		}
+		defaultPath = paths.ConfigPath
+	}
+	path, err := foundation.ResolveConfigPath(flags.config, env, defaultPath)
+	if err != nil {
+		return "", explicit, err
+	}
+	return path, explicit, nil
 }
 
 func parentCommand(use string, short string) *cobra.Command {

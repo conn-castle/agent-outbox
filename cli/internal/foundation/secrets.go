@@ -48,11 +48,17 @@ func NewFileCallerSecretStore(path string, chmodExistingParent bool) (*FileCalle
 }
 
 func (s *FileCallerSecretStore) StoreCallerKey(callerID string, callerAPIKey string) error {
+	return s.withLocalStateLock(func() error {
+		return s.StoreCallerKeyWithHeldLocalStateLock(callerID, callerAPIKey)
+	})
+}
+
+func (s *FileCallerSecretStore) withLocalStateLock(run func() error) error {
 	lock, err := AcquireLocalStateLock(s.Path)
 	if err != nil {
 		return WrapSecretStoreError("Could not lock local credentials file.", err)
 	}
-	if err := s.StoreCallerKeyWithHeldLocalStateLock(callerID, callerAPIKey); err != nil {
+	if err := run(); err != nil {
 		_ = lock.Close()
 		return err
 	}
@@ -100,18 +106,9 @@ func (s *FileCallerSecretStore) LoadCallerKey(callerID string) (string, error) {
 }
 
 func (s *FileCallerSecretStore) DeleteCallerKey(callerID string) error {
-	lock, err := AcquireLocalStateLock(s.Path)
-	if err != nil {
-		return WrapSecretStoreError("Could not lock local credentials file.", err)
-	}
-	if err := s.DeleteCallerKeyWithHeldLocalStateLock(callerID); err != nil {
-		_ = lock.Close()
-		return err
-	}
-	if err := lock.Close(); err != nil {
-		return WrapSecretStoreError("Could not unlock local credentials file.", err)
-	}
-	return nil
+	return s.withLocalStateLock(func() error {
+		return s.DeleteCallerKeyWithHeldLocalStateLock(callerID)
+	})
 }
 
 func (s *FileCallerSecretStore) DeleteCallerKeyWithHeldLocalStateLock(callerID string) error {
