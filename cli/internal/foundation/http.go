@@ -102,6 +102,9 @@ func (c APIClient) DoWrite(ctx context.Context, method string, apiPath string, b
 	return c.do(ctx, method, apiPath, bearerToken, body, out, writeRequest)
 }
 
+// do serves Do and DoWrite with Accept: application/json and closes the response
+// body. Metadata is nil on build or transport failures and remains available
+// when response decoding or validation fails.
 func (c APIClient) do(ctx context.Context, method string, apiPath string, bearerToken string, body any, out any, kind requestKind) (*APIResponse, error) {
 	resp, responseMeta, err := c.send(ctx, method, apiPath, bearerToken, "application/json", body, kind)
 	if err != nil {
@@ -127,6 +130,9 @@ func (c APIClient) do(ctx context.Context, method string, apiPath string, bearer
 	return responseMeta, nil
 }
 
+// Download uses Accept: */* and closes the response body. Metadata is nil on
+// build or transport failures. Decoded download error envelopes contribute safe
+// diagnostic IDs to the returned metadata even when envelope validation fails.
 func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken string, dst io.Writer) (*DownloadResponse, error) {
 	resp, responseMeta, err := c.send(ctx, http.MethodGet, apiPath, bearerToken, "*/*", nil, readRequest)
 	if err != nil {
@@ -565,6 +571,8 @@ func safePartialLimitMetadata(limit *LimitMetadata) *LimitMetadata {
 	return result
 }
 
+// writeOutcome keeps read errors free of write outcomes, even when response
+// handling classifies a failure as accepted or unknown.
 func writeOutcome(kind requestKind, outcome string) string {
 	if kind == writeRequest {
 		return outcome
