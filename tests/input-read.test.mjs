@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { enforceCallerOperationLimits } from "../src/server/caller-api-auth.ts";
+import { enforceAccountOperationLimits } from "../src/server/caller-api-limits.ts";
 import {
   CanonicalInputIntegrityError,
   canonicalInputActionsStatement,
@@ -793,7 +793,7 @@ test("input list and read share output_check_read limits under distinct operatio
       }
     ]
   ]);
-  const result = await enforceCallerOperationLimits(
+  const result = await enforceAccountOperationLimits(
     query,
     identity,
     INPUT_READ_LIMIT_OPERATION_KIND,

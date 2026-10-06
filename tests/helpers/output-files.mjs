@@ -1,4 +1,4 @@
-import { enforceCallerOperationLimits } from "../../src/server/caller-api-auth.ts";
+import { enforceAccountOperationLimits } from "../../src/server/caller-api-limits.ts";
 import { outputFileDownloadInTransaction } from "../../src/server/output-files.ts";
 
 /**
@@ -16,7 +16,7 @@ export async function guardedOutputFileDownloadForTest(
   identity,
   path
 ) {
-  const access = await enforceCallerOperationLimits(
+  const access = await enforceAccountOperationLimits(
     query,
     identity,
     "output_file_download",

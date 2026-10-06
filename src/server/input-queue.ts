@@ -16,14 +16,13 @@ import {
   accountLimitProfileForAccount,
   accountWriteLockStatement,
   enforceAcceptedInputSubmissionLimits,
-  enforceCallerRequestLimits,
+  enforceAccountRequestLimits,
   type CallerLimitGuardResult
 } from "./caller-api-limits.ts";
 import type {
   ProductTransactionQuery,
   TransactionContextStatement
 } from "./database.ts";
-import { type LimitProfileSelector } from "./limits.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import {
@@ -210,7 +209,7 @@ export async function handleInputQueueRequestInTransaction(
     // send/replace in account-before-input lock order, matching human answers.
     await query(accountWriteLockStatement(auth));
   }
-  const profile = await accountLimitProfile(query, auth.accountId);
+  const profile = await accountLimitProfileForAccount(query, auth.accountId);
   if (!profile) {
     return apiTemporaryUnavailable(
       "Input queue operation is temporarily unavailable."
@@ -222,7 +221,7 @@ export async function handleInputQueueRequestInTransaction(
     if (!parsed.ok) {
       return { ok: false, error: parsed.error };
     }
-    const requestLimit = await enforceCallerRequestLimits(
+    const requestLimit = await enforceAccountRequestLimits(
       query,
       auth,
       profile,
@@ -242,7 +241,7 @@ export async function handleInputQueueRequestInTransaction(
     return { ok: false, error: parsed.error };
   }
 
-  const requestLimit = await enforceCallerRequestLimits(
+  const requestLimit = await enforceAccountRequestLimits(
     query,
     auth,
     profile,
@@ -800,13 +799,6 @@ async function insertChildRows(
       await query(insertPopupOptionStatement(inputActionId, option));
     }
   }
-}
-
-export async function accountLimitProfile(
-  query: ProductTransactionQuery,
-  accountId: string
-): Promise<LimitProfileSelector | null> {
-  return accountLimitProfileForAccount(query, accountId);
 }
 
 function inputResultFromLimitGuard(

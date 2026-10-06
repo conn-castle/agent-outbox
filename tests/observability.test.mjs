@@ -683,7 +683,7 @@ function loadInputQueueModuleForTest(
         async accountLimitProfileForAccount() {},
         accountWriteLockStatement() {},
         async enforceAcceptedInputSubmissionLimits() {},
-        async enforceCallerRequestLimits() {}
+        async enforceAccountRequestLimits() {}
       },
       "./database.ts": {},
       "./input-schema.ts": {
@@ -756,16 +756,12 @@ function loadOutputFilesModuleForTest(reportRuntimeFailure) {
       "./caller-auth.ts": callerAuth,
       "./api-errors.ts": { apiTemporaryUnavailable },
       "./caller-api-limits.ts": {
-        async accountLimitProfileForAccount() {
-          return { tier: "hosted_free" };
-        },
         /**
          * @param {unknown} _query
          * @param {unknown} _identity
-         * @param {unknown} _profile
          * @param {string} kind
          */
-        async enforceCallerRequestLimits(_query, _identity, _profile, kind) {
+        async enforceAccountOperationLimits(_query, _identity, kind) {
           assert.equal(kind, "output_file_download");
           return { ok: true };
         }
