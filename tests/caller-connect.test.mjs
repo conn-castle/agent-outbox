@@ -2378,6 +2378,53 @@ test("pending connect credentials cannot authenticate caller data-plane requests
   );
 });
 
+test("connect activate and abort IP denial stops before credential lookup and caller transaction", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
+    },
+    async () => {
+      const material = generateCallerApiKeyMaterial();
+      for (const handler of [
+        handleConnectActivateRequest,
+        handleConnectAbortRequest
+      ]) {
+        const query = fakeQuery(() => [{ used_units: "31" }]);
+        const runner = fakeTransactionRunner([query]);
+        const result = await handler(
+          connectRequest("/pending", {
+            headers: { authorization: `Bearer ${material.plaintextApiKey}` }
+          }),
+          {
+            requestId: "req-pending-limit",
+            correlationId: "corr-pending-limit"
+          },
+          { setup_request_id: SETUP_REQUEST_ID },
+          { runProductTransaction: runner.runProductTransaction }
+        );
+        assert.equal(result.ok, false);
+        if (result.ok) assert.fail("expected pending connect IP denial");
+        assert.equal(result.error.status, 429);
+        assert.equal(result.error.code, "rate_limit_exceeded");
+        assert.ok(result.error.limit && "limitName" in result.error.limit);
+        assert.equal(
+          result.error.limit.limitName,
+          "caller_connect_activation_requests_per_ip_per_minute"
+        );
+        assert.equal(query.calls.length, 1);
+        assert.deepEqual(query.calls[0].values?.slice(0, 3), [
+          CONNECT_TEST_IP,
+          "caller_connect_activation_requests_per_ip_per_minute",
+          "minute"
+        ]);
+        assert.equal(runner.contexts.length, 1);
+        assert.equal(runner.contexts[0].authSurface, "control_plane");
+      }
+    }
+  );
+});
+
 test("connect activate is the only step that activates the pending credential and emits the caller_registered audit", async () => {
   await withProcessEnv(
     {

@@ -2168,7 +2168,7 @@ test("rotate parsers preserve ordered fields and the 512-character code limit", 
   );
 });
 
-test("rotate and revoke control-plane requests keep their IP limit metrics", async () => {
+test("rotate and revoke control-plane requests enforce their IP buckets before lookup or mutation", async () => {
   await withProcessEnv(
     {
       CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
@@ -2186,7 +2186,7 @@ test("rotate and revoke control-plane requests keep their IP limit metrics", asy
         handleRotateAbortRequest
       ]) {
         const { runner, controlQuery } = pendingRotateRunner(material);
-        await handler(
+        const result = await handler(
           controlRequest("/rotate", {
             headers: { authorization: `Bearer ${material.plaintextApiKey}` }
           }),
@@ -2197,10 +2197,33 @@ test("rotate and revoke control-plane requests keep their IP limit metrics", asy
             runProductTransaction: runner.runProductTransaction
           }
         );
+        assert.equal(result.ok, true);
         assert.equal(
           controlQuery.calls[0].values?.[1],
           "caller_rotate_activation_requests_per_ip_per_minute"
         );
+        const deniedQuery = fakeQuery(() => [{ used_units: "31" }]);
+        const deniedRunner = fakeTransactionRunner([deniedQuery]);
+        const denied = await handler(
+          controlRequest("/rotate", {
+            headers: { authorization: `Bearer ${material.plaintextApiKey}` }
+          }),
+          context,
+          { setup_request_id: SETUP_REQUEST_ID },
+          { runProductTransaction: deniedRunner.runProductTransaction }
+        );
+        assert.equal(denied.ok, false);
+        if (denied.ok) assert.fail("expected pending rotate IP denial");
+        assert.equal(denied.error.status, 429);
+        assert.equal(denied.error.code, "rate_limit_exceeded");
+        assert.ok(denied.error.limit && "limitName" in denied.error.limit);
+        assert.equal(
+          denied.error.limit.limitName,
+          "caller_rotate_activation_requests_per_ip_per_minute"
+        );
+        assert.equal(deniedQuery.calls.length, 1);
+        assert.equal(deniedRunner.contexts.length, 1);
+        assert.equal(deniedRunner.contexts[0].authSurface, "control_plane");
       }
       const startBody = {
         caller_id: CALLER_ID,
@@ -2254,14 +2277,46 @@ test("rotate and revoke control-plane requests keep their IP limit metrics", asy
           metric: "caller_revoke_confirm_requests_per_ip_per_minute"
         }
       ]) {
-        const query = fakeQuery((_statement, callNumber) =>
-          callNumber === 1 ? [{ used_units: "1" }] : (entry.insertedRows ?? [])
-        );
-        const runner = fakeTransactionRunner([query]);
-        await entry.handler(controlRequest("/limit"), context, entry.body, {
-          runProductTransaction: runner.runProductTransaction
-        });
-        assert.equal(query.calls[0].values?.[1], entry.metric);
+        for (const usedUnits of [30, 31]) {
+          const query = fakeQuery((_statement, callNumber) =>
+            callNumber === 1
+              ? [{ used_units: String(usedUnits) }]
+              : (entry.insertedRows ?? [])
+          );
+          const runner = fakeTransactionRunner([query]);
+          const result = await entry.handler(
+            controlRequest("/limit"),
+            context,
+            entry.body,
+            { runProductTransaction: runner.runProductTransaction }
+          );
+          assert.deepEqual(query.calls[0].values?.slice(0, 3), [
+            TEST_IP,
+            entry.metric,
+            "minute"
+          ]);
+          assert.equal(runner.contexts.length, 1, entry.metric);
+          assert.equal(runner.contexts[0].authSurface, "control_plane");
+          if (usedUnits === 30) {
+            assert.equal(result.ok, "caller_id" in entry.body, entry.metric);
+            if (!result.ok) assert.equal(result.error.code, "invalid_request");
+            assert.equal(query.calls.length, 2, entry.metric);
+          } else {
+            assert.equal(result.ok, false, entry.metric);
+            if (result.ok)
+              assert.fail(`expected IP denial for ${entry.metric}`);
+            assert.equal(result.error.status, 429, entry.metric);
+            assert.equal(
+              result.error.code,
+              "rate_limit_exceeded",
+              entry.metric
+            );
+            assert.ok(result.error.limit && "limitName" in result.error.limit);
+            assert.equal(result.error.limit.limitName, entry.metric);
+            assert.equal(result.error.limit.usedUnits, 31);
+            assert.equal(query.calls.length, 1, entry.metric);
+          }
+        }
       }
     }
   );
