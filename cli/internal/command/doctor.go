@@ -96,18 +96,14 @@ func runDoctor(ctx context.Context, opts Options, flags *rootFlags) []doctorChec
 	bearer, bearerOK, secretCheck := doctorSecretStoreCheck(opts, path, !explicit, caller, callerOK)
 	checks = append(checks, secretCheck)
 
-	client := foundation.APIClient{
-		BaseURL:      baseURL,
-		HTTPClient:   opts.HTTPClient,
-		NewRequestID: opts.NewRequestID,
-	}
+	client := newAPIClient(opts, baseURL)
 	checks = append(checks, doctorRemoteStatusCheck(ctx, "caller_status", "/api/caller/status", client, bearer, baseURLOK, bearerOK))
 	checks = append(checks, doctorRemoteStatusCheck(ctx, "account_status", "/api/account/status", client, bearer, baseURLOK, bearerOK))
 	return checks
 }
 
 func doctorConfigPathCheck(flags *rootFlags, env foundation.Env) (string, bool, doctorCheck) {
-	path, explicit, err := resolvedOptionalConfigPath(flags, env)
+	path, explicit, err := resolveCommandConfigPath(flags, env)
 	if err != nil {
 		return "", explicit, failCheck("config_path", "Could not resolve local Agent Outbox config path.", foundation.CodeConfig, foundation.ExitConfig, nil)
 	}

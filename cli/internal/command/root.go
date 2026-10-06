@@ -230,20 +230,16 @@ func validateCommandContext(cmd *cobra.Command, flags *rootFlags, env foundation
 }
 
 func loadConfig(flags *rootFlags, env foundation.Env) (foundation.Config, error) {
-	_, cfg, _, err := loadConfigDetails(flags, env)
-	return cfg, err
-}
-
-func loadConfigDetails(flags *rootFlags, env foundation.Env) (string, foundation.Config, bool, error) {
-	path, explicit, err := resolvedOptionalConfigPath(flags, env)
+	path, _, err := resolveCommandConfigPath(flags, env)
 	if err != nil {
-		return "", foundation.Config{}, false, err
+		return foundation.Config{}, err
 	}
-	cfg, err := foundation.LoadConfig(path)
-	return path, cfg, !explicit, err
+	return foundation.LoadConfig(path)
 }
 
-func resolvedOptionalConfigPath(flags *rootFlags, env foundation.Env) (string, bool, error) {
+// resolveCommandConfigPath reports whether --config or AGENT_OUTBOX_CONFIG_PATH
+// chose the path; otherwise the CLI owns the default path.
+func resolveCommandConfigPath(flags *rootFlags, env foundation.Env) (string, bool, error) {
 	explicit := strings.TrimSpace(flags.config) != "" || strings.TrimSpace(env.Get(foundation.EnvConfigPath)) != ""
 	defaultPath := ""
 	if !explicit {
@@ -258,6 +254,33 @@ func resolvedOptionalConfigPath(flags *rootFlags, env foundation.Env) (string, b
 		return "", explicit, err
 	}
 	return path, explicit, nil
+}
+
+// selectCallerWithID selects the command's local caller and requires its hosted caller_id.
+func selectCallerWithID(flags *rootFlags, env foundation.Env, cfg foundation.Config) (foundation.CallerConfig, error) {
+	selected, err := foundation.SelectCaller(flags.caller, env, cfg)
+	if err != nil {
+		return foundation.CallerConfig{}, err
+	}
+	if err := requireCallerID(selected); err != nil {
+		return foundation.CallerConfig{}, err
+	}
+	return selected, nil
+}
+
+func requireCallerID(caller foundation.CallerConfig) error {
+	if strings.TrimSpace(caller.CallerID) == "" {
+		return foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
+	}
+	return nil
+}
+
+func newAPIClient(opts Options, baseURL string) foundation.APIClient {
+	return foundation.APIClient{
+		BaseURL:      baseURL,
+		HTTPClient:   opts.HTTPClient,
+		NewRequestID: opts.NewRequestID,
+	}
 }
 
 func parentCommand(use string, short string) *cobra.Command {

@@ -141,8 +141,11 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			runtime, err := writableControlRuntimeForCommand(opts, flags)
+			runtime, err := controlRuntimeForCommand(opts, flags)
 			if err != nil {
+				return err
+			}
+			if err := attachWritableSecretStore(runtime, opts); err != nil {
 				return err
 			}
 			if err := ensureLocalCallerNameAvailable(runtime.Config, localName); err != nil {
@@ -233,8 +236,15 @@ func callerRotateCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			runtime, selected, err := selectedWritableControlRuntime(opts, flags)
+			runtime, err := controlRuntimeForCommand(opts, flags)
 			if err != nil {
+				return err
+			}
+			selected, err := selectCallerWithID(flags, opts.Env, runtime.Config)
+			if err != nil {
+				return err
+			}
+			if err := attachWritableSecretStore(runtime, opts); err != nil {
 				return err
 			}
 			if err := preflightWritableLocalPersistence(runtime); err != nil {
@@ -330,7 +340,7 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			selected, err := selectConfiguredCaller(flags.caller, opts.Env, runtime.Config)
+			selected, err := selectCallerWithID(flags, opts.Env, runtime.Config)
 			if err != nil {
 				return err
 			}
@@ -340,7 +350,7 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				selected, err = selectConfiguredCaller(flags.caller, opts.Env, runtime.Config)
+				selected, err = selectCallerWithID(flags, opts.Env, runtime.Config)
 				if err != nil {
 					return err
 				}
@@ -383,14 +393,19 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 	return bypassRootPreflight(cmd)
 }
 
+// localControlRuntimeForCommand loads local config without resolving the hosted app.
 func localControlRuntimeForCommand(opts Options, flags *rootFlags) (*controlPlaneRuntime, error) {
-	configPath, cfg, configPathOwned, err := loadConfigDetails(flags, opts.Env)
+	configPath, explicit, err := resolveCommandConfigPath(flags, opts.Env)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := foundation.LoadConfig(configPath)
 	if err != nil {
 		return nil, err
 	}
 	return &controlPlaneRuntime{
 		ConfigPath:      configPath,
-		ConfigPathOwned: configPathOwned,
+		ConfigPathOwned: !explicit,
 		Config:          cfg,
 	}, nil
 }
@@ -411,58 +426,21 @@ func attachAPIClient(runtime *controlPlaneRuntime, opts Options, flags *rootFlag
 	if err != nil {
 		return err
 	}
-	runtime.Client = foundation.APIClient{
-		BaseURL:      baseURL,
-		HTTPClient:   opts.HTTPClient,
-		NewRequestID: opts.NewRequestID,
-	}
+	runtime.Client = newAPIClient(opts, baseURL)
 	return nil
-}
-
-func writableControlRuntimeForCommand(opts Options, flags *rootFlags) (*controlPlaneRuntime, error) {
-	runtime, err := controlRuntimeForCommand(opts, flags)
-	if err != nil {
-		return nil, err
-	}
-	if err := attachWritableSecretStore(runtime, opts); err != nil {
-		return nil, err
-	}
-	return runtime, nil
 }
 
 func attachWritableSecretStore(runtime *controlPlaneRuntime, opts Options) error {
-	store, err := writableSecretStoreForCommand(opts, runtime.ConfigPath, runtime.ConfigPathOwned)
+	loader, err := secretStoreForCommand(opts, runtime.ConfigPath, runtime.ConfigPathOwned)
 	if err != nil {
 		return err
 	}
+	store, ok := loader.(foundation.CallerSecretStore)
+	if !ok {
+		return foundation.NewSecretStoreError("Configured local credential loader cannot write caller credentials.")
+	}
 	runtime.Secrets = store
 	return nil
-}
-
-func selectConfiguredCaller(name string, env foundation.Env, cfg foundation.Config) (foundation.CallerConfig, error) {
-	selected, err := foundation.SelectCaller(name, env, cfg)
-	if err != nil {
-		return foundation.CallerConfig{}, err
-	}
-	if strings.TrimSpace(selected.CallerID) == "" {
-		return foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
-	}
-	return selected, nil
-}
-
-func selectedWritableControlRuntime(opts Options, flags *rootFlags) (*controlPlaneRuntime, foundation.CallerConfig, error) {
-	runtime, err := controlRuntimeForCommand(opts, flags)
-	if err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	selected, err := selectConfiguredCaller(flags.caller, opts.Env, runtime.Config)
-	if err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	if err := attachWritableSecretStore(runtime, opts); err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	return runtime, selected, nil
 }
 
 func namedControlRuntime(opts Options, flags *rootFlags, name string) (*controlPlaneRuntime, foundation.CallerConfig, error) {
@@ -475,26 +453,14 @@ func namedControlRuntime(opts Options, flags *rootFlags, name string) (*controlP
 		return nil, foundation.CallerConfig{}, err
 	}
 	// revoke <caller> deliberately ignores --caller and AGENT_OUTBOX_CALLER.
-	selected, err := selectConfiguredCaller(name, nil, runtime.Config)
+	selected, err := foundation.SelectCaller(name, nil, runtime.Config)
 	if err != nil {
 		return nil, foundation.CallerConfig{}, err
 	}
+	if err := requireCallerID(selected); err != nil {
+		return nil, foundation.CallerConfig{}, err
+	}
 	return runtime, selected, nil
-}
-
-func writableSecretStoreForCommand(opts Options, configPath string, configPathOwned bool) (foundation.CallerSecretStore, error) {
-	if opts.SecretStore != nil {
-		store, ok := opts.SecretStore.(foundation.CallerSecretStore)
-		if !ok {
-			return nil, foundation.NewSecretStoreError("Configured local credential loader cannot write caller credentials.")
-		}
-		return store, nil
-	}
-	credentialsPath, err := foundation.CredentialsPathForConfig(configPath)
-	if err != nil {
-		return nil, err
-	}
-	return foundation.NewFileCallerSecretStore(credentialsPath, configPathOwned)
 }
 
 func connectApproval(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string, useDeviceCode bool) (connectExchangeData, *foundation.APIResponse, error) {
@@ -1347,17 +1313,9 @@ func removeLocalCaller(runtime *controlPlaneRuntime, selected foundation.CallerC
 	})
 }
 
+// saveRuntimeConfig must run inside withRuntimeLocalStateLock.
 func saveRuntimeConfig(runtime *controlPlaneRuntime, cfg foundation.Config) error {
-	if runtime.ConfigPathOwned {
-		if runtime.stateLockHeld {
-			return foundation.SaveConfigInOwnerOnlyDirWithHeldLocalStateLock(runtime.ConfigPath, cfg)
-		}
-		return foundation.SaveConfigInOwnerOnlyDir(runtime.ConfigPath, cfg)
-	}
-	if runtime.stateLockHeld {
-		return foundation.SaveConfigWithHeldLocalStateLock(runtime.ConfigPath, cfg)
-	}
-	return foundation.SaveConfig(runtime.ConfigPath, cfg)
+	return foundation.SaveConfigWithHeldLocalStateLock(runtime.ConfigPath, cfg, runtime.ConfigPathOwned)
 }
 
 func storeCallerSecret(runtime *controlPlaneRuntime, callerID string, callerAPIKey string) error {

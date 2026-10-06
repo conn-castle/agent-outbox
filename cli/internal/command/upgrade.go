@@ -75,7 +75,7 @@ func resolveUpgradeURL(flags *rootFlags, env foundation.Env) (string, error) {
 }
 
 func loadConfigAllowMissingDefault(flags *rootFlags, env foundation.Env) (foundation.Config, error) {
-	path, explicit, err := resolvedOptionalConfigPath(flags, env)
+	path, explicit, err := resolveCommandConfigPath(flags, env)
 	if err != nil {
 		return foundation.Config{}, err
 	}

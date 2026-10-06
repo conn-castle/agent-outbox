@@ -56,8 +56,8 @@ func TestSaveConfigCreatesOwnerOnlyConfigWithoutSecrets(t *testing.T) {
 		}},
 	}
 
-	if err := SaveConfig(configPath, cfg); err != nil {
-		t.Fatalf("SaveConfig failed: %v", err)
+	if err := SaveConfigWithHeldLocalStateLock(configPath, cfg, false); err != nil {
+		t.Fatalf("SaveConfigWithHeldLocalStateLock failed: %v", err)
 	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -101,8 +101,8 @@ func TestSaveConfigDoesNotChmodExistingExplicitParent(t *testing.T) {
 		t.Fatalf("chmod explicit parent: %v", err)
 	}
 
-	if err := SaveConfig(filepath.Join(parent, "config.json"), Config{}); err != nil {
-		t.Fatalf("SaveConfig failed: %v", err)
+	if err := SaveConfigWithHeldLocalStateLock(filepath.Join(parent, "config.json"), Config{}, false); err != nil {
+		t.Fatalf("SaveConfigWithHeldLocalStateLock failed: %v", err)
 	}
 
 	stat, err := os.Stat(parent)
@@ -114,7 +114,7 @@ func TestSaveConfigDoesNotChmodExistingExplicitParent(t *testing.T) {
 	}
 }
 
-func TestSaveConfigInOwnerOnlyDirChmodsExistingOwnedParent(t *testing.T) {
+func TestSaveConfigChmodsExistingOwnedParent(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "agent-outbox")
 	if err := os.Mkdir(parent, 0o755); err != nil {
 		t.Fatalf("mkdir owned parent: %v", err)
@@ -123,8 +123,8 @@ func TestSaveConfigInOwnerOnlyDirChmodsExistingOwnedParent(t *testing.T) {
 		t.Fatalf("chmod owned parent: %v", err)
 	}
 
-	if err := SaveConfigInOwnerOnlyDir(filepath.Join(parent, "config.json"), Config{}); err != nil {
-		t.Fatalf("SaveConfigInOwnerOnlyDir failed: %v", err)
+	if err := SaveConfigWithHeldLocalStateLock(filepath.Join(parent, "config.json"), Config{}, true); err != nil {
+		t.Fatalf("SaveConfigWithHeldLocalStateLock failed: %v", err)
 	}
 
 	stat, err := os.Stat(parent)

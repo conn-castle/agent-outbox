@@ -220,8 +220,8 @@ func TestCallerConnectBrowserUsesAllocatedCallbackPortAndStoresCredential(t *tes
 
 func TestStoreAndActivateConnectPreservesConcurrentConfigUpdates(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	if err := foundation.SaveConfig(configPath, foundation.Config{Version: foundation.ConfigVersion}); err != nil {
-		t.Fatalf("SaveConfig fixture failed: %v", err)
+	if err := foundation.SaveConfigWithHeldLocalStateLock(configPath, foundation.Config{Version: foundation.ConfigVersion}, false); err != nil {
+		t.Fatalf("SaveConfigWithHeldLocalStateLock fixture failed: %v", err)
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1219,7 +1219,7 @@ func TestCallerConnectAcceptsEquivalentOrigins(t *testing.T) {
 				if tc.initialize {
 					existing.Callers = nil
 					store.keys = map[string]string{}
-					if err := foundation.SaveConfig(configPath, existing); err != nil {
+					if err := foundation.SaveConfigWithHeldLocalStateLock(configPath, existing, false); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -2297,7 +2297,7 @@ func TestCallerRevokeIgnoresCallerSelectorsAndDoesNotRequireWritableSecretStore(
 		t.Fatal(err)
 	}
 	cfg.Callers = append(cfg.Callers, foundation.CallerConfig{Name: "other", CallerID: "caller_other"})
-	if err := foundation.SaveConfig(configPath, cfg); err != nil {
+	if err := foundation.SaveConfigWithHeldLocalStateLock(configPath, cfg, false); err != nil {
 		t.Fatal(err)
 	}
 	var confirmed bool
@@ -2471,7 +2471,7 @@ func TestCallerControlRuntimeErrorOrder(t *testing.T) {
 					t.Fatal(err)
 				}
 				cfg.Callers[0].CallerID = ""
-				if err := foundation.SaveConfig(configPath, cfg); err != nil {
+				if err := foundation.SaveConfigWithHeldLocalStateLock(configPath, cfg, false); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -2763,6 +2763,45 @@ func TestCallerDisconnectLocalOnlyVersusRevoke(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"revoked":true`) || !strings.Contains(stdout, `"key_old"`) {
 		t.Fatalf("disconnect --revoke stdout missing revoke result: %s", stdout)
+	}
+}
+
+func TestCallerCommandsRejectSelectedCallerWithoutCallerID(t *testing.T) {
+	for _, args := range [][]string{
+		{"caller", "rotate", "--device-code"},
+		{"caller", "revoke", "steward-email", "--device-code"},
+		{"caller", "disconnect"},
+		{"caller", "disconnect", "--revoke", "--device-code"},
+		{"caller", "status"},
+		{"input", "list"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.json")
+			content := `{"version":1,"callers":[{"name":"steward-email","account_id":"acct_123","key_id":"key_old"}]}`
+			if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+				t.Fatalf("write config fixture: %v", err)
+			}
+			store := &controlPlaneSecretStore{keys: map[string]string{"": "old-secret"}}
+			_, stderr, code := executeControlCommand(t, controlCommandOptions{
+				configPath: configPath,
+				store:      store,
+				args:       append([]string{"--caller", "steward-email"}, args...),
+				httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL)
+					return nil, nil
+				})},
+			})
+			if code != foundation.ExitConfig || !strings.Contains(stderr, "Selected caller is missing caller_id in local config.") {
+				t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+			}
+			if _, ok := store.keys[""]; !ok {
+				t.Fatalf("command removed local credential state")
+			}
+			cfg, err := foundation.LoadConfig(configPath)
+			if err != nil || len(cfg.Callers) != 1 {
+				t.Fatalf("command changed local config: %#v, %v", cfg, err)
+			}
+		})
 	}
 }
 
