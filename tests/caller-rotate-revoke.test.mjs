@@ -266,6 +266,135 @@ test("malformed caller_id fails validation before rotate and revoke start transa
   }
 });
 
+test("credential operation browser start preserves validation errors before transactions", async () => {
+  await withProcessEnv(
+    { PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev" },
+    async () => {
+      const routes = [
+        { name: "rotate", handler: handleRotateBrowserStartRequest },
+        { name: "revoke", handler: handleRevokeBrowserStartRequest }
+      ];
+      const cases = [
+        {
+          key: "callback_url",
+          value: "https://127.0.0.1:1/cb",
+          code: "invalid_callback_url",
+          message: "callback_url must be an http localhost callback URL."
+        },
+        {
+          key: "callback_url",
+          value: "http://example.com/cb",
+          code: "invalid_callback_url",
+          message: "callback_url must be an http localhost callback URL."
+        },
+        {
+          key: "callback_url",
+          value: "not a url",
+          code: "invalid_callback_url",
+          message: "callback_url must be a valid URL."
+        },
+        {
+          key: "local_caller_name",
+          value: "x".repeat(129),
+          code: "too_long",
+          message: "local_caller_name must be at most 128 characters."
+        },
+        {
+          key: "local_caller_name",
+          value: undefined,
+          code: "required",
+          message: "local_caller_name is required."
+        }
+      ];
+      for (const route of routes) {
+        for (const testCase of cases) {
+          const label = `${route.name} ${testCase.key} ${testCase.value}`;
+          /** @type {Record<string, unknown>} */
+          const body = {
+            caller_id: CALLER_ID,
+            local_caller_name: "steward-email",
+            callback_url: "http://127.0.0.1:49152/callback"
+          };
+          if (testCase.value === undefined) {
+            delete body[testCase.key];
+          } else {
+            body[testCase.key] = testCase.value;
+          }
+          const runner = fakeTransactionRunner([]);
+          const result = await route.handler(
+            controlRequest(`/api/caller/${route.name}/browser/start`),
+            {
+              requestId: "req-browser-validation",
+              correlationId: "corr-browser-validation"
+            },
+            body,
+            { runProductTransaction: runner.runProductTransaction }
+          );
+          assert.deepEqual(
+            result,
+            {
+              ok: false,
+              error: {
+                status: 422,
+                code: "validation_failed",
+                message:
+                  "Caller credential operation request failed validation.",
+                fields: [
+                  {
+                    path: testCase.key,
+                    code: testCase.code,
+                    message: testCase.message
+                  }
+                ]
+              }
+            },
+            label
+          );
+          assert.equal(runner.contexts.length, 0, label);
+        }
+      }
+    }
+  );
+});
+
+test("credential operation browser start rejects missing public app URL before transactions", async () => {
+  await withProcessEnv({ PUBLIC_APP_BASE_URL: undefined }, async () => {
+    const routes = [
+      { name: "rotate", handler: handleRotateBrowserStartRequest },
+      { name: "revoke", handler: handleRevokeBrowserStartRequest }
+    ];
+    for (const route of routes) {
+      const runner = fakeTransactionRunner([]);
+      const result = await route.handler(
+        controlRequest(`/api/caller/${route.name}/browser/start`),
+        {
+          requestId: "req-browser-missing-url",
+          correlationId: "corr-browser-missing-url"
+        },
+        {
+          caller_id: CALLER_ID,
+          local_caller_name: "steward-email",
+          callback_url: "http://127.0.0.1:49152/callback"
+        },
+        { runProductTransaction: runner.runProductTransaction }
+      );
+      assert.deepEqual(
+        result,
+        {
+          ok: false,
+          error: {
+            status: 503,
+            code: "temporary_unavailable",
+            message: "Public app base URL configuration is unavailable."
+          }
+        },
+        route.name
+      );
+      assert.equal(runner.contexts.length, 0, route.name);
+    }
+  });
+});
+
 test("rotate and revoke reject text Postgres cannot store before transactions", async () => {
   await withProcessEnv(
     {

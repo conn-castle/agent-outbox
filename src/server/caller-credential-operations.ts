@@ -1,17 +1,6 @@
-import {
-  createHmac,
-  randomBytes,
-  randomInt,
-  timingSafeEqual
-} from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 
-import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
-
-import type {
-  ApiErrorInput,
-  ApiFieldError,
-  ApiRequestContext
-} from "./api-errors.ts";
+import type { ApiFieldError, ApiRequestContext } from "./api-errors.ts";
 import {
   accountLimitProfileForAccount,
   enforceAccountRequestLimits,
@@ -32,7 +21,6 @@ import {
   type CallerApiKeyDisplayMetadata,
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
-import { absoluteHttpOrigin } from "./env.ts";
 import {
   runProductTransaction,
   withSavepoint,
@@ -40,31 +28,39 @@ import {
   type ProductTransactionQuery,
   type TransactionContextStatement
 } from "./database.ts";
-import { requireCallerKeyHashSecret } from "./env.ts";
-import { isStorableString, unstorableStringError } from "./input-schema.ts";
+import {
+  DEVICE_POLL_INTERVAL_SECONDS,
+  DEVICE_TOKEN_BYTES,
+  SETUP_TOKEN_BYTES,
+  UUID_PATTERN,
+  callerCredentialLifecycleLockStatement,
+  fieldError,
+  generateUserCode,
+  invalidRequestError,
+  invalidSetupRequestError,
+  isPlainRecord,
+  isUniqueViolation,
+  markSetupRequestExchangedStatement,
+  markSetupRequestExpiredStatement,
+  normalizeUserCode,
+  notFoundError,
+  publicAppBaseUrl,
+  requiredCallbackUrl,
+  requiredText,
+  requiredUuidText,
+  setupCodeDigest,
+  setupRequestExpired,
+  setupRequestExpiresAt,
+  temporaryUnavailableError,
+  type SetupResult,
+  type SetupRequestStatus
+} from "./caller-setup-requests.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
-const CONTROL_PLANE_CODE_EXPIRES_IN_SECONDS =
-  SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds;
-const DEVICE_POLL_INTERVAL_SECONDS =
-  SYSTEM_CONTRACT.defaultDevicePollIntervalSeconds;
-const TOKEN_HASH_ALGORITHM = "sha256";
-const SETUP_TOKEN_BYTES = 32;
-const DEVICE_TOKEN_BYTES = 32;
-const USER_CODE_GROUP_LENGTH = 4;
-const USER_CODE_GROUPS = 2;
-const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const MAX_TEXT_LENGTH = 128;
-const MAX_CALLBACK_URL_LENGTH = 2048;
-const UUID_PATTERN =
-  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-
 type CredentialOperation = "rotate" | "revoke";
 type SetupFlow = "browser" | "device";
-type SetupRequestStatus =
-  "pending" | "approved" | "exchanged" | "expired" | "denied";
 type SetupTerminalStatus = Extract<
   SetupRequestStatus,
   "approved" | "exchanged" | "denied"
@@ -74,8 +70,7 @@ type NonEmptyTerminalStatusList = readonly [
   ...SetupTerminalStatus[]
 ];
 
-type OperationResult<TData> =
-  { ok: true; data: TData } | { ok: false; error: ApiErrorInput };
+type OperationResult<TData> = SetupResult<TData>;
 
 type RequestOptions = {
   now?: Date;
@@ -935,7 +930,7 @@ async function handleOperationBrowserStartRequest(
     );
   }
 
-  const expiresAt = operationExpiresAt(options.now ?? new Date());
+  const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
 
   return withControlPlaneTransaction(
     context,
@@ -1022,7 +1017,7 @@ async function handleOperationDeviceStartRequest(
     "base64url"
   )}`;
   const userCode = generateUserCode();
-  const expiresAt = operationExpiresAt(options.now ?? new Date());
+  const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
 
   return withControlPlaneTransaction(
     context,
@@ -1878,20 +1873,6 @@ function devicePollTargetStatement(
   };
 }
 
-export function callerCredentialLifecycleLockStatement(input: {
-  accountId: string;
-  callerId: string;
-}): TransactionContextStatement {
-  return {
-    sql: `
-      select pg_advisory_xact_lock(
-        ('x' || substr(md5($1 || ':' || $2 || ':caller_credential_lifecycle'), 1, 16))::bit(64)::bigint
-      ) as acquired
-    `,
-    values: [input.accountId, input.callerId]
-  };
-}
-
 function rotateExchangeTargetStatement(
   setupCodeHash: string
 ): TransactionContextStatement {
@@ -2137,39 +2118,6 @@ function storeSetupCodeStatement(input: {
         and setup_code_hash is null
     `,
     values: [input.setupRequestId, input.setupCodeHash]
-  };
-}
-
-function markSetupRequestExpiredStatement(
-  setupRequestId: string
-): TransactionContextStatement {
-  return {
-    sql: `
-      update public.agent_outbox_caller_setup_requests
-      set
-        status = 'expired',
-        updated_at = now()
-      where setup_request_id = $1
-        and status in ('pending', 'approved')
-    `,
-    values: [setupRequestId]
-  };
-}
-
-function markSetupRequestExchangedStatement(
-  setupRequestId: string
-): TransactionContextStatement {
-  return {
-    sql: `
-      update public.agent_outbox_caller_setup_requests
-      set
-        status = 'exchanged',
-        exchanged_at = now(),
-        updated_at = now()
-      where setup_request_id = $1
-        and status = 'approved'
-    `,
-    values: [setupRequestId]
   };
 }
 
@@ -2500,12 +2448,7 @@ function parseBrowserStartBody(
   }
 
   const callerId = requiredUuidText(body, "caller_id", fields);
-  const localCallerName = requiredText(
-    body,
-    "local_caller_name",
-    fields,
-    MAX_TEXT_LENGTH
-  );
+  const localCallerName = requiredText(body, "local_caller_name", fields);
   const callbackUrl = requiredCallbackUrl(body, "callback_url", fields);
 
   if (fields.length > 0) {
@@ -2524,12 +2467,7 @@ function parseDeviceStartBody(body: unknown): OperationResult<DeviceStartBody> {
   }
 
   const callerId = requiredUuidText(body, "caller_id", fields);
-  const localCallerName = requiredText(
-    body,
-    "local_caller_name",
-    fields,
-    MAX_TEXT_LENGTH
-  );
+  const localCallerName = requiredText(body, "local_caller_name", fields);
 
   if (fields.length > 0) {
     return validationError(fields);
@@ -2585,147 +2523,6 @@ function parseSetupRequestIdBody(
   return { ok: true, data: { setupRequestId } };
 }
 
-function requiredText(
-  record: Record<string, unknown>,
-  key: string,
-  fields: ApiFieldError[],
-  maxLength: number
-) {
-  const value = record[key];
-  if (typeof value !== "string" || value.trim() === "") {
-    fields.push(fieldError(key, "required", `${key} is required.`));
-    return "";
-  }
-
-  const trimmed = value.trim();
-  if (trimmed.length > maxLength) {
-    fields.push(
-      fieldError(
-        key,
-        "too_long",
-        `${key} must be at most ${maxLength} characters.`
-      )
-    );
-    return "";
-  }
-  if (!isStorableString(trimmed)) {
-    fields.push(unstorableStringError(key));
-    return "";
-  }
-
-  return trimmed;
-}
-
-function requiredUuidText(
-  record: Record<string, unknown>,
-  key: string,
-  fields: ApiFieldError[]
-) {
-  const value = requiredText(record, key, fields, MAX_TEXT_LENGTH);
-  if (!value) {
-    return "";
-  }
-
-  if (!UUID_PATTERN.test(value)) {
-    fields.push(
-      fieldError(key, "invalid_uuid", `${key} must be a UUID-formatted string.`)
-    );
-    return "";
-  }
-
-  return value;
-}
-
-function requiredCallbackUrl(
-  record: Record<string, unknown>,
-  key: string,
-  fields: ApiFieldError[]
-) {
-  const raw = requiredText(record, key, fields, MAX_CALLBACK_URL_LENGTH);
-  if (!raw) {
-    return "";
-  }
-
-  try {
-    const url = new URL(raw);
-    const localhost =
-      url.hostname === "127.0.0.1" ||
-      url.hostname === "localhost" ||
-      url.hostname === "[::1]";
-    if (url.protocol !== "http:" || !localhost) {
-      fields.push(
-        fieldError(
-          key,
-          "invalid_callback_url",
-          "callback_url must be an http localhost callback URL."
-        )
-      );
-      return "";
-    }
-  } catch {
-    fields.push(
-      fieldError(
-        key,
-        "invalid_callback_url",
-        "callback_url must be a valid URL."
-      )
-    );
-    return "";
-  }
-
-  return raw;
-}
-
-function setupCodeDigest(value: string) {
-  return createHmac(TOKEN_HASH_ALGORITHM, requireCallerKeyHashSecret())
-    .update(value)
-    .digest("hex");
-}
-
-function operationExpiresAt(now: Date) {
-  return new Date(now.getTime() + CONTROL_PLANE_CODE_EXPIRES_IN_SECONDS * 1000);
-}
-
-function setupRequestExpired(row: { expires_at: string | Date }, now: Date) {
-  return new Date(row.expires_at).getTime() <= now.getTime();
-}
-
-function publicAppBaseUrl(): OperationResult<string> {
-  const value = process.env.PUBLIC_APP_BASE_URL;
-  if (!value) {
-    return temporaryUnavailableError(
-      "Public app base URL configuration is unavailable."
-    );
-  }
-
-  const origin = absoluteHttpOrigin(value);
-  if (!origin) {
-    return temporaryUnavailableError(
-      "Public app base URL configuration is invalid."
-    );
-  }
-  return { ok: true, data: origin };
-}
-
-function generateUserCode() {
-  const characters = [];
-  for (
-    let index = 0;
-    index < USER_CODE_GROUP_LENGTH * USER_CODE_GROUPS;
-    index += 1
-  ) {
-    characters.push(USER_CODE_ALPHABET[randomInt(USER_CODE_ALPHABET.length)]);
-  }
-
-  return `${characters.slice(0, USER_CODE_GROUP_LENGTH).join("")}-${characters
-    .slice(USER_CODE_GROUP_LENGTH)
-    .join("")}`;
-}
-
-function normalizeUserCode(userCode: string) {
-  return userCode.replace(/[\s-]+/g, "").toUpperCase();
-}
-
 function approvalCaller(target: ApprovalTargetRow) {
   return {
     caller_id: target.caller_id,
@@ -2736,15 +2533,6 @@ function approvalCaller(target: ApprovalTargetRow) {
 
 function operationLabel(operation: CredentialOperation) {
   return `Caller ${operation}`;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.getPrototypeOf(value) === Object.prototype
-  );
 }
 
 function validationError(fields: ApiFieldError[]): OperationResult<never> {
@@ -2759,42 +2547,6 @@ function validationError(fields: ApiFieldError[]): OperationResult<never> {
   };
 }
 
-function fieldError(
-  path: string,
-  code: string,
-  message: string
-): ApiFieldError {
-  return { path, code, message };
-}
-
-// Browser pages and form actions pass setup_request_id unvalidated; a
-// malformed id can never match a row and would otherwise fail the uuid cast.
-function invalidSetupRequestError(): OperationResult<never> {
-  return invalidRequestError("Invalid setup request.");
-}
-
-function invalidRequestError(message: string): OperationResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 400,
-      code: "invalid_request",
-      message
-    }
-  };
-}
-
-function notFoundError(message: string): OperationResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 404,
-      code: "not_found",
-      message
-    }
-  };
-}
-
 function invalidCallerCredentialsError(): OperationResult<never> {
   return {
     ok: false,
@@ -2804,30 +2556,6 @@ function invalidCallerCredentialsError(): OperationResult<never> {
       message: "Pending replacement credential is invalid or no longer usable."
     }
   };
-}
-
-function temporaryUnavailableError(
-  message: string,
-  options?: { errorId?: string; reported?: boolean }
-): OperationResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message,
-      ...(options?.errorId ? { errorId: options.errorId } : {}),
-      ...(options?.reported ? { reported: true } : {})
-    }
-  };
-}
-
-function isUniqueViolation(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  return "code" in error && (error as { code?: unknown }).code === "23505";
 }
 
 function isForeignKeyViolation(error: unknown) {

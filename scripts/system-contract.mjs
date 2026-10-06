@@ -280,11 +280,7 @@ export function systemContractDriftFailures(contract = readSystemContract()) {
     "SYSTEM_CONTRACT.outputPageDefaultLimit",
     "SYSTEM_CONTRACT.outputPageMaxLimit"
   ]);
-  requireMarkers(failures, "src/server/caller-connect.ts", [
-    "SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds",
-    "SYSTEM_CONTRACT.defaultDevicePollIntervalSeconds"
-  ]);
-  requireMarkers(failures, "src/server/caller-credential-operations.ts", [
+  requireMarkers(failures, "src/server/caller-setup-requests.ts", [
     "SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds",
     "SYSTEM_CONTRACT.defaultDevicePollIntervalSeconds"
   ]);
