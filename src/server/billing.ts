@@ -2,7 +2,11 @@ import Stripe from "stripe";
 
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
-import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
+import {
+  apiTemporaryUnavailable,
+  type ApiErrorInput,
+  type ApiRequestContext
+} from "./api-errors.ts";
 import {
   runProductTransaction,
   type ProductTransactionQuery,
@@ -122,10 +126,9 @@ export function billingRuntimeConfig(
       : requiredBillingConfiguration(surface);
 
   if (missing.length > 0) {
-    return {
-      ok: false,
-      error: billingConfigurationError(missing)
-    };
+    return apiTemporaryUnavailable(
+      `Billing configuration is missing required variable names: ${missing.join(", ")}.`
+    );
   }
 
   const usesPublicAppBaseUrl = surface !== "webhook";
@@ -136,15 +139,9 @@ export function billingRuntimeConfig(
     ? absoluteHttpOrigin(configuredPublicAppBaseUrl)
     : null;
   if (configuredPublicAppBaseUrl && !publicAppBaseUrl) {
-    return {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message:
-          "Billing configuration has invalid PUBLIC_APP_BASE_URL; expected an absolute HTTP(S) origin."
-      }
-    };
+    return apiTemporaryUnavailable(
+      "Billing configuration has invalid PUBLIC_APP_BASE_URL; expected an absolute HTTP(S) origin."
+    );
   }
 
   return {
@@ -243,7 +240,7 @@ export async function createCheckoutSessionForAccount(input: {
   }
 
   if (!session.url) {
-    return temporaryUnavailableError("Checkout session is unavailable.");
+    return apiTemporaryUnavailable("Checkout session is unavailable.");
   }
 
   return { ok: true, data: { url: session.url } };
@@ -379,10 +376,9 @@ export async function handleStripeWebhookRequest(
       operation: "stripe_webhook_processing",
       message: "Stripe webhook processing failed unexpectedly."
     });
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Stripe webhook processing is temporarily unavailable.",
-      context.correlationId,
-      { reported: true }
+      { errorId: context.correlationId, reported: true }
     );
   }
 
@@ -894,14 +890,6 @@ function hasLiveBillingState(status: BillingStatus) {
   return status === "active" || status === "grace" || status === "past_due";
 }
 
-function billingConfigurationError(missing: readonly string[]): ApiErrorInput {
-  return {
-    status: 503,
-    code: "temporary_unavailable",
-    message: `Billing configuration is missing required variable names: ${missing.join(", ")}.`
-  };
-}
-
 function invalidBillingRequest(message: string): BillingResult<never> {
   return {
     ok: false,
@@ -923,23 +911,6 @@ function checkoutIntervalFromValue(
   return invalidBillingRequest(
     'Checkout interval must be either "monthly" or "yearly".'
   );
-}
-
-function temporaryUnavailableError(
-  message: string,
-  errorId?: string,
-  options?: { reported?: boolean }
-): BillingResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message,
-      ...(errorId ? { errorId } : {}),
-      ...(options?.reported ? { reported: true } : {})
-    }
-  };
 }
 
 export function billingRuntimeFailure(
@@ -967,7 +938,8 @@ export function billingRuntimeFailure(
     message: input.message
   });
 
-  return temporaryUnavailableError(input.responseMessage, errorId, {
+  return apiTemporaryUnavailable(input.responseMessage, {
+    errorId,
     reported: true
   });
 }

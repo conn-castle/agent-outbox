@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   accountStatusInTransaction,
   callerStatusInTransaction,
+  handleAccountStatusRequest,
+  handleCallerStatusRequest,
   storageStatusStatement
 } from "../src/server/status.ts";
 
@@ -513,4 +515,43 @@ test("status fails loudly when the authenticated account row is missing", async 
       message: "Account status is temporarily unavailable."
     }
   });
+});
+
+test("status wrappers surface the caller-transaction config guard", async () => {
+  const previous = process.env.DATABASE_APP_ROLE_URL;
+  delete process.env.DATABASE_APP_ROLE_URL;
+  try {
+    const expected = {
+      ok: false,
+      error: {
+        status: 503,
+        code: "temporary_unavailable",
+        message: "Caller API database configuration is unavailable."
+      }
+    };
+    const context = {
+      requestId: "req-status-config-guard",
+      correlationId: "corr-status-config-guard"
+    };
+    assert.deepEqual(
+      await handleCallerStatusRequest(
+        new Request("https://api.test/api/caller/status"),
+        context
+      ),
+      expected
+    );
+    assert.deepEqual(
+      await handleAccountStatusRequest(
+        new Request("https://api.test/api/account/status"),
+        context
+      ),
+      expected
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previous;
+    }
+  }
 });

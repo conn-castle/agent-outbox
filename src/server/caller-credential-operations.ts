@@ -1,6 +1,10 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
-import type { ApiFieldError, ApiRequestContext } from "./api-errors.ts";
+import {
+  apiTemporaryUnavailable,
+  type ApiFieldError,
+  type ApiRequestContext
+} from "./api-errors.ts";
 import {
   accountLimitProfileForAccount,
   enforceAccountRequestLimits,
@@ -51,7 +55,6 @@ import {
   setupCodeDigest,
   setupRequestExpired,
   setupRequestExpiresAt,
-  temporaryUnavailableError,
   type SetupResult,
   type SetupRequestStatus
 } from "./caller-setup-requests.ts";
@@ -353,7 +356,7 @@ export async function handleRotateExchangeRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller rotate exchange."
     );
   }
@@ -361,7 +364,7 @@ export async function handleRotateExchangeRequest(
   const setupCodeHash = setupCodeDigest(parsed.data.setupCode);
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller credential operation database configuration is unavailable."
     );
   }
@@ -425,14 +428,14 @@ export async function handleRotateActivateRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller rotate activation."
     );
   }
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller credential operation database configuration is unavailable."
     );
   }
@@ -498,14 +501,14 @@ export async function handleRotateAbortRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller rotate abort."
     );
   }
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller credential operation database configuration is unavailable."
     );
   }
@@ -611,7 +614,7 @@ export async function handleRevokeConfirmRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Trusted client IP is unavailable for caller revoke confirmation."
     );
   }
@@ -619,7 +622,7 @@ export async function handleRevokeConfirmRequest(
   const setupCodeHash = setupCodeDigest(parsed.data.setupCode);
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller credential operation database configuration is unavailable."
     );
   }
@@ -733,7 +736,7 @@ export async function approveCredentialOperationBrowserSetupRequest(
   }
 
   if (!target.callback_url) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       `${operationLabel(input.operation)} request is temporarily unavailable.`
     );
   }
@@ -925,7 +928,7 @@ async function handleOperationBrowserStartRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       `Trusted client IP is unavailable for caller ${operation} start.`
     );
   }
@@ -1008,7 +1011,7 @@ async function handleOperationDeviceStartRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       `Trusted client IP is unavailable for caller ${operation} start.`
     );
   }
@@ -1086,7 +1089,7 @@ async function handleOperationDevicePollRequest(
 
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       `Trusted client IP is unavailable for caller ${operation} poll.`
     );
   }
@@ -1432,7 +1435,7 @@ async function confirmRevokeSetupRequest(
   }
 
   if (!target.account_id || !target.caller_id) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller revoke confirmation is temporarily unavailable."
     );
   }
@@ -1484,7 +1487,7 @@ async function withControlPlaneTransaction<TData>(
 ): Promise<OperationResult<TData>> {
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller credential operation database configuration is unavailable."
     );
   }
@@ -1511,7 +1514,7 @@ async function withControlPlaneTransaction<TData>(
       message: "Caller credential operation failed unexpectedly.",
       request_id: context.requestId
     });
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller credential operation is temporarily unavailable.",
       { errorId: context.correlationId, reported: true }
     );
@@ -1550,7 +1553,7 @@ async function withScopedProductTransaction<TData>(
       account_id: scopedContext.accountId,
       caller_id: scopedContext.callerId
     });
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller credential operation is temporarily unavailable.",
       { errorId: context.correlationId, reported: true }
     );
@@ -1584,7 +1587,7 @@ async function setupExchangeContext(
   }
 
   if (!row.account_id || !row.approved_by_user_id) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       `Caller ${input.operation} approval is temporarily unavailable.`
     );
   }
@@ -1605,7 +1608,7 @@ async function enforceApprovalLimit(
 ): Promise<OperationResult<null>> {
   const profile = await accountLimitProfileForAccount(query, accountId);
   if (!profile) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Caller credential approval is temporarily unavailable."
     );
   }

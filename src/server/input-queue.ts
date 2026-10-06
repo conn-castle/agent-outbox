@@ -3,6 +3,7 @@ import {
   type AuditSafeLifecycleEvent
 } from "./accounting.ts";
 import {
+  apiTemporaryUnavailable,
   apiValidationFailed,
   type ApiErrorInput,
   type ApiRequestContext
@@ -133,14 +134,9 @@ export async function handleInputQueueRequest(
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Caller API database configuration is unavailable."
-      }
-    };
+    return apiTemporaryUnavailable(
+      "Caller API database configuration is unavailable."
+    );
   }
 
   let identity: CallerIdentity | undefined;
@@ -191,10 +187,13 @@ export async function handleInputQueueRequest(
       caller_id: identity?.callerId,
       message: "Input queue operation failed unexpectedly."
     });
-    return temporaryUnavailableError({
-      errorId: context.correlationId,
-      reported: true
-    });
+    return apiTemporaryUnavailable(
+      "Input queue operation is temporarily unavailable.",
+      {
+        errorId: context.correlationId,
+        reported: true
+      }
+    );
   }
 }
 
@@ -213,7 +212,9 @@ export async function handleInputQueueRequestInTransaction(
   }
   const profile = await accountLimitProfile(query, auth.accountId);
   if (!profile) {
-    return temporaryUnavailableError();
+    return apiTemporaryUnavailable(
+      "Input queue operation is temporarily unavailable."
+    );
   }
 
   if (operation === "delete") {
@@ -964,22 +965,6 @@ function internalQueueError(errorId: string): InputQueueResult {
       code: "internal_error",
       message: "Input queue operation could not be completed.",
       errorId
-    }
-  };
-}
-
-function temporaryUnavailableError(options?: {
-  errorId?: string;
-  reported?: boolean;
-}): InputQueueResult {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message: "Input queue operation is temporarily unavailable.",
-      ...(options?.errorId ? { errorId: options.errorId } : {}),
-      ...(options?.reported ? { reported: true } : {})
     }
   };
 }

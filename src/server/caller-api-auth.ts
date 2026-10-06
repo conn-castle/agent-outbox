@@ -314,7 +314,7 @@ export async function runGuardedCallerTransaction<TResult>(
   operation: GuardedCallerOperation,
   callback: (
     query: ProductTransactionQuery,
-    identity: CallerIdentity
+    identity: CallerApiAuthSuccess
   ) => Promise<TResult>
 ): Promise<TResult | { ok: false; error: ApiErrorInput }> {
   const connectionString = process.env.DATABASE_APP_ROLE_URL;

@@ -3,7 +3,11 @@ import { createHmac, randomInt } from "node:crypto";
 
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
-import type { ApiErrorInput, ApiFieldError } from "./api-errors.ts";
+import {
+  apiTemporaryUnavailable,
+  type ApiErrorInput,
+  type ApiFieldError
+} from "./api-errors.ts";
 import type { TransactionContextStatement } from "./database.ts";
 import { absoluteHttpOrigin, requireCallerKeyHashSecret } from "./env.ts";
 import { isStorableString, unstorableStringError } from "./input-schema.ts";
@@ -167,33 +171,17 @@ export function notFoundError(message: string): SetupResult<never> {
   };
 }
 
-export function temporaryUnavailableError(
-  message: string,
-  options?: { errorId?: string; reported?: boolean }
-): SetupResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message,
-      ...(options?.errorId ? { errorId: options.errorId } : {}),
-      ...(options?.reported ? { reported: true } : {})
-    }
-  };
-}
-
 export function publicAppBaseUrl(): SetupResult<string> {
   const value = process.env.PUBLIC_APP_BASE_URL;
   if (!value) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Public app base URL configuration is unavailable."
     );
   }
 
   const origin = absoluteHttpOrigin(value);
   if (!origin) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Public app base URL configuration is invalid."
     );
   }

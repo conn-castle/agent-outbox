@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import pg from "pg";
+
 import { consumesMonthlyCallerApiRequestQuota } from "../src/server/accounting.ts";
+import { generateCallerApiKeyMaterial } from "../src/server/caller-auth.ts";
 import {
-  handleOutputFileDownloadAuthenticatedTransaction,
   handleOutputFileDownloadRequest,
   outputFileDownloadAuditStatement,
   outputFileDownloadHeaders,
@@ -12,6 +14,9 @@ import {
   safeAttachmentFilename,
   safeContentType
 } from "../src/server/output-files.ts";
+
+import { guardedOutputFileDownloadForTest } from "./helpers/output-files.mjs";
+import { withProcessEnv } from "./helpers/process-env.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
@@ -307,6 +312,98 @@ test("output file download counts as a monthly caller API request operation by c
   );
 });
 
+test("output file download handler returns throttle denial without looking up outputs or files", async (t) => {
+  await withProcessEnv(
+    {
+      DATABASE_APP_ROLE_URL: "postgresql://output-file-throttle-test",
+      CALLER_KEY_HASH_SECRET: "0123456789abcdef0123456789abcdef"
+    },
+    async () => {
+      const material = generateCallerApiKeyMaterial();
+      /** @type {string[]} */
+      const calls = [];
+      t.mock.method(pg.Client.prototype, "connect", async () => {});
+      t.mock.method(pg.Client.prototype, "end", async () => {});
+      t.mock.method(
+        pg.Client.prototype,
+        "query",
+        async (
+          /** @type {string} */ sql,
+          /** @type {unknown[]} */ values = []
+        ) => {
+          calls.push(sql);
+          if (/agent_outbox_lookup_caller_credential/.test(sql)) {
+            return queryResult([
+              {
+                account_id: identity.accountId,
+                caller_id: identity.callerId,
+                key_id: material.keyId,
+                secret_hmac_sha256: material.secretDigest,
+                status: "active",
+                revoked_at: null,
+                expires_at: null
+              }
+            ]);
+          }
+          if (/select tier from public\.agent_outbox_accounts/.test(sql)) {
+            return queryResult([{ tier: "hosted_paid" }]);
+          }
+          if (
+            /insert into public\.agent_outbox_account_quota_windows/.test(sql)
+          ) {
+            // Stub exhausted minute quota while running the real caller guard.
+            assert.equal(
+              values[1],
+              "output_file_download_requests_per_account_per_minute"
+            );
+            return queryResult([{ used_units: "61" }]);
+          }
+          if (/agent_outbox_account_limit_blocks/.test(sql)) {
+            assert.equal(values[1], "output_file_download");
+            return queryResult([]);
+          }
+          if (
+            /^(begin|commit|rollback)$/.test(sql.trim()) ||
+            /^(savepoint|release savepoint) caller_last_used$/.test(sql) ||
+            /set_config\(/.test(sql) ||
+            /update public\.agent_outbox_caller_credentials/.test(sql)
+          ) {
+            return queryResult([]);
+          }
+          assert.fail(`Unexpected database query: ${sql}`);
+        }
+      );
+
+      const result = await handleOutputFileDownloadRequest(
+        new Request("https://api.test/api/output/result/files/file", {
+          headers: { authorization: `Bearer ${material.plaintextApiKey}` }
+        }),
+        context,
+        path
+      );
+
+      assert.equal(result.ok, false);
+      if (result.ok)
+        assert.fail("expected output file download throttle denial");
+      assert.equal(result.error.status, 429);
+      assert.equal(result.error.code, "rate_limit_exceeded");
+      assert.ok(result.error.limit && "operation_kind" in result.error.limit);
+      assert.equal(result.error.limit.operation_kind, "output_file_download");
+      assert.equal(
+        result.error.limit.limit_name,
+        "output_file_download_requests_per_account_per_minute"
+      );
+      assert.equal(result.error.limit.used_units, 61);
+      assert.equal(
+        calls.some((sql) =>
+          /from public\.agent_outbox_output_(results|files)/.test(sql)
+        ),
+        false
+      );
+    }
+  );
+});
+
 test("output file download transaction blocks on the per-minute request throttle before file lookup", async () => {
   /** @type {TransactionContextStatement[]} */
   const calls = [];
@@ -354,7 +451,7 @@ test("output file download transaction blocks on the per-minute request throttle
     );
   query.calls = calls;
 
-  const result = await handleOutputFileDownloadAuthenticatedTransaction(
+  const result = await guardedOutputFileDownloadForTest(
     query,
     context,
     identity,
@@ -412,7 +509,7 @@ test("paid output file download transaction enforces the minute throttle without
     );
   query.calls = calls;
 
-  const result = await handleOutputFileDownloadAuthenticatedTransaction(
+  const result = await guardedOutputFileDownloadForTest(
     query,
     context,
     identity,
