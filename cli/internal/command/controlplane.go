@@ -347,7 +347,12 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 			}
 			var confirmed revokeConfirmData
 			if revoke {
-				if err := attachAPIClient(runtime, opts, flags); err != nil {
+				runtime, err = controlRuntimeForCommand(opts, flags)
+				if err != nil {
+					return err
+				}
+				selected, err = selectConfiguredCaller(flags.caller, opts.Env, runtime.Config)
+				if err != nil {
 					return err
 				}
 				confirmed, err = runRevokeFlow(cmd.Context(), opts, runtime, selected, useDeviceCode)

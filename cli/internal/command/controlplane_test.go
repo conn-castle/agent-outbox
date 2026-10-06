@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2396,6 +2397,82 @@ func TestCallerControlRuntimeErrorOrder(t *testing.T) {
 				t.Fatalf("failed command changed local state: err=%v keys=%#v", err, store.keys)
 			}
 		})
+	}
+}
+
+func TestCallerDisconnectRevokeReselectsCallerFromUpdatedConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := syscall.Mkfifo(configPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The first read receives the old config through the pipe. Before closing
+	// that read, replace the path with the new config, as a concurrent writer
+	// would. Subsequent reads then see the new caller and server.
+	writerResult := make(chan error, 1)
+	go func() {
+		file, err := os.OpenFile(configPath, os.O_WRONLY, 0)
+		if err != nil {
+			writerResult <- err
+			return
+		}
+		defer file.Close()
+		if _, err := io.WriteString(file, `{"version":1,"base_url":"https://old.example","callers":[{"name":"steward-email","caller_id":"caller_old"}]}`); err != nil {
+			writerResult <- err
+			return
+		}
+		if err := os.Rename(configPath, configPath+".initial-pipe"); err != nil {
+			writerResult <- err
+			return
+		}
+		writerResult <- os.WriteFile(configPath, []byte(`{"version":1,"base_url":"https://new.example","callers":[{"name":"steward-email","caller_id":"caller_new"}]}`), 0o600)
+	}()
+
+	store := &controlPlaneSecretStore{keys: map[string]string{"caller_old": "old-fixture", "caller_new": "new-fixture"}}
+	var paths []string
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath, store: store,
+		args: []string{"--json", "caller", "disconnect", "--revoke", "--device-code"},
+		httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host != "new.example" {
+				t.Errorf("request origin = %s, want updated config origin", r.URL)
+			}
+			paths = append(paths, r.URL.Path)
+			recorder := httptest.NewRecorder()
+			switch r.URL.Path {
+			case "/api/caller/revoke/device/start":
+				var body map[string]string
+				decodeJSONBody(t, r, &body)
+				if !reflect.DeepEqual(body, map[string]string{"caller_id": "caller_new", "local_caller_name": "steward-email"}) {
+					t.Errorf("revoke start body = %#v, want updated caller", body)
+				}
+				writeEnvelope(recorder, `{"device_code":"dev_revoke","verification_uri":"https://new.example/approve","expires_at":"2026-07-02T20:10:00Z"}`)
+			case "/api/caller/revoke/device/poll":
+				writeEnvelope(recorder, `{"setup_code":"setup_revoke_code","setup_request_id":"setup_revoke"}`)
+			case "/api/caller/revoke/confirm":
+				writeEnvelope(recorder, `{"caller_id":"caller_new","revoked_key_ids":["key_new"],"revoked_at":"2026-07-02T20:01:00Z"}`)
+			default:
+				t.Errorf("unexpected request: %s", r.URL)
+				recorder.WriteHeader(http.StatusInternalServerError)
+			}
+			return recorder.Result(), nil
+		})},
+	})
+	if err := <-writerResult; err != nil {
+		t.Fatalf("concurrent config writer: %v", err)
+	}
+	if code != foundation.ExitSuccess || !strings.Contains(stdout, `"caller_id":"caller_new"`) {
+		t.Fatalf("exit=%d, stdout=%s, stderr=%s", code, stdout, stderr)
+	}
+	if !reflect.DeepEqual(paths, []string{"/api/caller/revoke/device/start", "/api/caller/revoke/device/poll", "/api/caller/revoke/confirm"}) {
+		t.Fatalf("request paths = %#v", paths)
+	}
+	if !reflect.DeepEqual(store.keys, map[string]string{"caller_old": "old-fixture"}) {
+		t.Fatalf("credential state after disconnect = %#v", store.keys)
+	}
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil || cfg.BaseURL != "https://new.example" || len(cfg.Callers) != 0 {
+		t.Fatalf("config after disconnect = %#v, err=%v", cfg, err)
 	}
 }
 
