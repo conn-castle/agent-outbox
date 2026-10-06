@@ -3,7 +3,7 @@ import {
   approveRotateDevice,
   denyRotateDevice,
   previewRotateDevice
-} from "../../credential-actions";
+} from "../../approval-actions";
 
 export const dynamic = "force-dynamic";
 

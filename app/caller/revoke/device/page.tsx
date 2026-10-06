@@ -3,7 +3,7 @@ import {
   approveRevokeDevice,
   denyRevokeDevice,
   previewRevokeDevice
-} from "../../credential-actions";
+} from "../../approval-actions";
 
 export const dynamic = "force-dynamic";
 

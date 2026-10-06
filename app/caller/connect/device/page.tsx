@@ -4,7 +4,7 @@ import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectDeviceApprovalPreview } from "../../../../src/server/caller-connect";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import type { HumanAccountSession } from "../../../../src/server/human-session";
-import { previewDeviceConnect } from "../actions";
+import { previewDeviceConnect } from "../../approval-actions";
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/caller-connect-clerk-fixture";
 import {
   firstParam,

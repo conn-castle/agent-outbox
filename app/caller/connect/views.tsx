@@ -11,7 +11,7 @@ import {
   approveDeviceConnect,
   denyBrowserConnect,
   denyDeviceConnect
-} from "./actions";
+} from "../approval-actions";
 import {
   ConnectionSummary,
   ConnectActions,
