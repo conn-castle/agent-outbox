@@ -2414,27 +2414,13 @@ func TestCallerDisconnectDeletesCredentialFromFileStoreUnderHeldLock(t *testing.
 	}
 
 	// Deleting through the unlocked store API while disconnect holds the local
-	// state lock would deadlock, so bound the run.
-	type result struct {
-		stdout, stderr string
-		code           int
-	}
-	done := make(chan result, 1)
-	go func() {
-		stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
-			configPath: configPath,
-			args:       []string{"--json", "--caller", "steward-email", "caller", "disconnect"},
-		})
-		done <- result{stdout, stderr, code}
-	}()
-	var got result
-	select {
-	case got = <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("caller disconnect did not finish with the file credential store")
-	}
-	if got.code != foundation.ExitSuccess {
-		t.Fatalf("exit code = %d, stderr: %s", got.code, got.stderr)
+	// state lock would deadlock; rely on go test -timeout to bound the run.
+	_, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		args:       []string{"--json", "--caller", "steward-email", "caller", "disconnect"},
+	})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
 	}
 	if _, err := fileStore.LoadCallerKey("caller_123"); !errors.Is(err, foundation.ErrSecretNotFound) {
 		t.Fatalf("credential after disconnect: %v, want ErrSecretNotFound", err)
