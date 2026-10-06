@@ -15,10 +15,7 @@ import {
   type ApiErrorInput,
   type ApiRequestContext
 } from "./api-errors.ts";
-import {
-  accountLimitProfileForAccount,
-  enforceCallerRequestLimits
-} from "./caller-api-limits.ts";
+import { enforceAccountOperationLimits } from "./caller-api-limits.ts";
 import {
   canonicalInputIntegrityClientError,
   isCanonicalInputIntegrityError,
@@ -281,33 +278,6 @@ export async function runAuthenticatedCallerTransaction<TResult>(
   );
 }
 
-export async function enforceCallerOperationLimits(
-  query: ProductTransactionQuery,
-  identity: CallerIdentity,
-  rateLimitKind: LimitOperationKind,
-  unavailableMessage: string
-): Promise<{ ok: true } | { ok: false; error: ApiErrorInput }> {
-  const profile = await accountLimitProfileForAccount(
-    query,
-    identity.accountId
-  );
-  if (!profile) {
-    return apiTemporaryUnavailable(unavailableMessage);
-  }
-
-  const limit = await enforceCallerRequestLimits(
-    query,
-    identity,
-    profile,
-    rateLimitKind
-  );
-  if (!limit.ok) {
-    return { ok: false, error: limit.error };
-  }
-
-  return { ok: true };
-}
-
 export async function runGuardedCallerTransaction<TResult>(
   request: Request,
   context: ApiRequestContext,
@@ -332,7 +302,7 @@ export async function runGuardedCallerTransaction<TResult>(
       connectionString,
       async (query, auth) => {
         identity = auth;
-        const access = await enforceCallerOperationLimits(
+        const access = await enforceAccountOperationLimits(
           query,
           auth,
           operation.rateLimitKind,

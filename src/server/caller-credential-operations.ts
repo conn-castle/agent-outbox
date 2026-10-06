@@ -6,15 +6,8 @@ import {
   type ApiRequestContext
 } from "./api-errors.ts";
 import {
-  accountLimitProfileForAccount,
-  enforceAccountRequestLimits,
-  enforceIpRevokeConfirmLimit,
-  enforceIpRevokeDevicePollLimit,
-  enforceIpRevokeStartLimit,
-  enforceIpRotateActivationLimit,
-  enforceIpRotateDevicePollLimit,
-  enforceIpRotateExchangeLimit,
-  enforceIpRotateStartLimit
+  enforceAccountOperationLimits,
+  enforceIpControlPlaneLimit
 } from "./caller-api-limits.ts";
 import {
   callerCredentialLookupStatement,
@@ -373,7 +366,11 @@ export async function handleRotateExchangeRequest(
     context,
     "caller_rotate_exchange_lookup",
     async (query) => {
-      const limit = await enforceIpRotateExchangeLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_rotate_exchange"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -444,7 +441,11 @@ export async function handleRotateActivateRequest(
     context,
     "caller_rotate_activate_lookup",
     async (query) => {
-      const limit = await enforceIpRotateActivationLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_rotate_activation"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -517,7 +518,11 @@ export async function handleRotateAbortRequest(
     context,
     "caller_rotate_abort_lookup",
     async (query) => {
-      const limit = await enforceIpRotateActivationLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_rotate_activation"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -631,7 +636,11 @@ export async function handleRevokeConfirmRequest(
     context,
     "caller_revoke_confirm_lookup",
     async (query) => {
-      const limit = await enforceIpRevokeConfirmLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_revoke_confirm"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -741,10 +750,11 @@ export async function approveCredentialOperationBrowserSetupRequest(
     );
   }
 
-  const limit = await enforceApprovalLimit(
+  const limit = await enforceAccountOperationLimits(
     query,
-    input.accountId,
-    input.operation
+    { accountId: input.accountId },
+    `caller_${input.operation}_approval`,
+    "Caller credential approval is temporarily unavailable."
   );
   if (!limit.ok) {
     return limit;
@@ -803,10 +813,11 @@ export async function approveCredentialOperationDeviceSetupRequest(
     return available;
   }
 
-  const limit = await enforceApprovalLimit(
+  const limit = await enforceAccountOperationLimits(
     query,
-    input.accountId,
-    input.operation
+    { accountId: input.accountId },
+    `caller_${input.operation}_approval`,
+    "Caller credential approval is temporarily unavailable."
   );
   if (!limit.ok) {
     return limit;
@@ -939,10 +950,11 @@ async function handleOperationBrowserStartRequest(
     context,
     `caller_${operation}_browser_start`,
     async (query) => {
-      const limit =
-        operation === "rotate"
-          ? await enforceIpRotateStartLimit(query, ipAddress)
-          : await enforceIpRevokeStartLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        `caller_${operation}_start`
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -1026,10 +1038,11 @@ async function handleOperationDeviceStartRequest(
     context,
     `caller_${operation}_device_start`,
     async (query) => {
-      const limit =
-        operation === "rotate"
-          ? await enforceIpRotateStartLimit(query, ipAddress)
-          : await enforceIpRevokeStartLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        `caller_${operation}_start`
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -1099,10 +1112,11 @@ async function handleOperationDevicePollRequest(
     context,
     `caller_${operation}_device_poll`,
     async (query) => {
-      const limit =
-        operation === "rotate"
-          ? await enforceIpRotateDevicePollLimit(query, ipAddress)
-          : await enforceIpRevokeDevicePollLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        `caller_${operation}_poll`
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -1599,31 +1613,6 @@ async function setupExchangeContext(
       userId: row.approved_by_user_id
     }
   };
-}
-
-async function enforceApprovalLimit(
-  query: ProductTransactionQuery,
-  accountId: string,
-  operation: CredentialOperation
-): Promise<OperationResult<null>> {
-  const profile = await accountLimitProfileForAccount(query, accountId);
-  if (!profile) {
-    return apiTemporaryUnavailable(
-      "Caller credential approval is temporarily unavailable."
-    );
-  }
-
-  const limit = await enforceAccountRequestLimits(
-    query,
-    { accountId },
-    profile,
-    operation === "rotate" ? "caller_rotate_approval" : "caller_revoke_approval"
-  );
-  if (!limit.ok) {
-    return limit;
-  }
-
-  return { ok: true, data: null };
 }
 
 async function approvalPreviewFromTarget(

@@ -3,11 +3,7 @@ import test from "node:test";
 
 import pg from "pg";
 
-import {
-  enforceIpConnectDevicePollLimit,
-  enforceIpConnectExchangeLimit,
-  enforceIpConnectStartLimit
-} from "../src/server/caller-api-limits.ts";
+import { enforceIpControlPlaneLimit } from "../src/server/caller-api-limits.ts";
 import { authenticateCallerApiRequest } from "../src/server/caller-api-auth.ts";
 import {
   generateCallerApiKeyMaterial,
@@ -2265,25 +2261,30 @@ test("exchanged or expired connect codes cannot mint another credential", async 
 });
 
 test("per-IP connect control-plane abuse controls return retry metadata from the DB window", async () => {
+  /** @type {{ operationKind: Parameters<typeof enforceIpControlPlaneLimit>[2], limitName: string }[]} */
   const cases = [
     {
-      enforce: enforceIpConnectStartLimit,
+      operationKind: "caller_connect_start",
       limitName: "caller_connect_start_requests_per_ip_per_minute"
     },
     {
-      enforce: enforceIpConnectDevicePollLimit,
+      operationKind: "caller_connect_poll",
       limitName: "caller_connect_poll_requests_per_ip_per_minute"
     },
     {
-      enforce: enforceIpConnectExchangeLimit,
+      operationKind: "caller_connect_exchange",
       limitName: "caller_connect_exchange_requests_per_ip_per_minute"
     }
   ];
 
-  for (const { enforce, limitName } of cases) {
+  for (const { operationKind, limitName } of cases) {
     const query = fakeSavepointAwareQuery(() => [{ used_units: "31" }]);
 
-    const result = await enforce(query, "203.0.113.9");
+    const result = await enforceIpControlPlaneLimit(
+      query,
+      "203.0.113.9",
+      operationKind
+    );
 
     assert.equal(result.ok, false, limitName);
     if (result.ok) {

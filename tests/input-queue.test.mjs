@@ -4,7 +4,6 @@ import test from "node:test";
 import { tsImport } from "tsx/esm/api";
 
 import {
-  accountLimitProfile,
   deleteInputItem,
   handleInputQueueRequest,
   handleInputQueueRequestInTransaction,
@@ -14,6 +13,7 @@ import {
   sendInputItem
 } from "../src/server/input-queue.ts";
 import { callerCredentialLastUsedStatement } from "../src/server/caller-api-auth.ts";
+import { accountLimitProfileForAccount } from "../src/server/caller-api-limits.ts";
 import {
   INPUT_REQUEST_BODY_BYTE_LIMIT,
   readJsonBodyWithLimit
@@ -1562,6 +1562,9 @@ test("caller credential last-used update is scoped to authenticated account call
 test("account limit profile fails loud when the authenticated account row is missing", async () => {
   const query = fakeQuery([[]]);
 
-  assert.equal(await accountLimitProfile(query, identity.accountId), null);
+  assert.equal(
+    await accountLimitProfileForAccount(query, identity.accountId),
+    null
+  );
   assert.deepEqual(query.calls[0].values, [identity.accountId]);
 });

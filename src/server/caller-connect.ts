@@ -6,12 +6,8 @@ import {
   type ApiRequestContext
 } from "./api-errors.ts";
 import {
-  accountLimitProfileForAccount,
-  enforceAccountRequestLimits,
-  enforceIpConnectActivationLimit,
-  enforceIpConnectDevicePollLimit,
-  enforceIpConnectExchangeLimit,
-  enforceIpConnectStartLimit
+  enforceAccountOperationLimits,
+  enforceIpControlPlaneLimit
 } from "./caller-api-limits.ts";
 import {
   callerApiKeySecretDigest,
@@ -302,7 +298,11 @@ export async function handleConnectBrowserStartRequest(
     context,
     "caller_connect_browser_start",
     async (query) => {
-      const limit = await enforceIpConnectStartLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_start"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -370,7 +370,11 @@ export async function handleConnectDeviceStartRequest(
     context,
     "caller_connect_device_start",
     async (query) => {
-      const limit = await enforceIpConnectStartLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_start"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -436,7 +440,11 @@ export async function handleConnectDevicePollRequest(
     context,
     "caller_connect_device_poll",
     async (query) => {
-      const limit = await enforceIpConnectDevicePollLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_poll"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -534,7 +542,11 @@ export async function handleConnectExchangeRequest(
     context,
     "caller_connect_exchange_lookup",
     async (query) => {
-      const limit = await enforceIpConnectExchangeLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_exchange"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -621,7 +633,11 @@ export async function handleConnectActivateRequest(
     context,
     "caller_connect_activate_lookup",
     async (query) => {
-      const limit = await enforceIpConnectActivationLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_activation"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -695,7 +711,11 @@ export async function handleConnectAbortRequest(
     context,
     "caller_connect_abort_lookup",
     async (query) => {
-      const limit = await enforceIpConnectActivationLimit(query, ipAddress);
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_activation"
+      );
       if (!limit.ok) {
         return limit;
       }
@@ -852,7 +872,12 @@ export async function approveConnectBrowserSetupRequest(
     );
   }
 
-  const limit = await enforceConnectApprovalLimit(query, input.accountId);
+  const limit = await enforceAccountOperationLimits(
+    query,
+    { accountId: input.accountId },
+    "caller_connect_approval",
+    "Caller connect approval is temporarily unavailable."
+  );
   if (!limit.ok) {
     return limit;
   }
@@ -950,7 +975,12 @@ export async function approveConnectDeviceSetupRequest(
     return available;
   }
 
-  const limit = await enforceConnectApprovalLimit(query, input.accountId);
+  const limit = await enforceAccountOperationLimits(
+    query,
+    { accountId: input.accountId },
+    "caller_connect_approval",
+    "Caller connect approval is temporarily unavailable."
+  );
   if (!limit.ok) {
     return limit;
   }
@@ -1514,30 +1544,6 @@ async function verifyPendingConnectCredential(
   const stored = Buffer.from(credential.secret_hmac_sha256, "hex");
   if (!timingSafeEqual(supplied, stored)) {
     return invalidCallerCredentialsError();
-  }
-
-  return { ok: true, data: null };
-}
-
-async function enforceConnectApprovalLimit(
-  query: ProductTransactionQuery,
-  accountId: string
-): Promise<ConnectResult<null>> {
-  const profile = await accountLimitProfileForAccount(query, accountId);
-  if (!profile) {
-    return apiTemporaryUnavailable(
-      "Caller connect approval is temporarily unavailable."
-    );
-  }
-
-  const limit = await enforceAccountRequestLimits(
-    query,
-    { accountId },
-    profile,
-    "caller_connect_approval"
-  );
-  if (!limit.ok) {
-    return limit;
   }
 
   return { ok: true, data: null };
