@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 
 import {
   apiTemporaryUnavailable,
@@ -11,7 +11,12 @@ import {
   enforceIpControlPlaneLimit
 } from "./caller-api-limits.ts";
 import {
+  callerApiKeySecretDigest,
+  callerCredentialLookupStatement,
   generateCallerApiKeyMaterial,
+  parseCallerBearerApiKey,
+  type CallerApiKeyDisplayMetadata,
+  type CallerCredentialLookupRow,
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
 import {
@@ -28,7 +33,6 @@ import {
   callerCredentialLifecycleLockStatement,
   fieldError,
   generateUserCode,
-  handlePendingCredentialFinalizeRequest,
   invalidRequestError,
   invalidSetupRequestError,
   isPlainRecord,
@@ -42,25 +46,22 @@ import {
   publicAppBaseUrl,
   requiredCallbackUrl,
   requiredText,
+  requiredUuidText,
   setupCodeDigest,
   setupRequestExpired,
   setupRequestExpiresAt,
-  verifyPendingCredential,
   withControlPlaneTransaction,
+  withScopedProductTransaction,
   type CallerFlowMessages,
-  type CallerFlowRequestOptions,
-  type PendingCredentialBearer,
-  type SetupRequestStatus,
-  type SetupResult
+  type CallerFlowRequestOptions as ConnectRequestOptions,
+  type SetupResult,
+  type SetupRequestStatus
 } from "./caller-setup-requests.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
 const MESSAGES: CallerFlowMessages = {
-  bearerRequired: "Pending connect bearer credential is required.",
-  invalidCredential:
-    "Pending connect credential is invalid or no longer usable.",
   validationFailed: "Caller connect request failed validation.",
   databaseUnavailable: "Caller connect database configuration is unavailable.",
   unexpectedFailure: "Caller connect request failed unexpectedly.",
@@ -151,6 +152,16 @@ type CredentialRow = {
   key_last_four: string;
   created_at: string | Date;
 };
+
+type SetupRequestIdBody = {
+  setupRequestId: string;
+};
+
+type PendingConnectCredentialBearer = {
+  apiKey: string;
+  keyId: string;
+  secret: string;
+} & CallerApiKeyDisplayMetadata;
 
 type PendingConnectCredentialRow = {
   caller_credential_id: string;
@@ -256,7 +267,7 @@ export async function handleConnectBrowserStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: ConnectRequestOptions = {}
 ): Promise<
   ConnectResult<{
     approval_url: string;
@@ -324,7 +335,7 @@ export async function handleConnectDeviceStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: ConnectRequestOptions = {}
 ): Promise<
   ConnectResult<{
     device_code: string;
@@ -405,7 +416,7 @@ export async function handleConnectDevicePollRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: ConnectRequestOptions = {}
 ): Promise<ConnectResult<ConnectCredentialResponseData>> {
   const parsed = parseDevicePollBody(MESSAGES, body);
   if (!parsed.ok) {
@@ -506,7 +517,7 @@ export async function handleConnectExchangeRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: ConnectRequestOptions = {}
 ): Promise<ConnectResult<ConnectCredentialResponseData>> {
   const parsed = parseSetupCodeBody(MESSAGES, body);
   if (!parsed.ok) {
@@ -592,47 +603,155 @@ export async function handleConnectActivateRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: ConnectRequestOptions = {}
 ): Promise<ConnectResult<ConnectActivateResponseData>> {
-  return handlePendingCredentialFinalizeRequest({
-    request,
+  const parsed = parseSetupRequestIdBody(body);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const pendingCredential = pendingConnectCredentialFromRequest(request);
+  if (!pendingCredential.ok) {
+    return pendingCredential;
+  }
+
+  const ipAddress = trustedClientIpAddress(request);
+  if (!ipAddress) {
+    return apiTemporaryUnavailable(
+      "Trusted client IP is unavailable for caller connect activation."
+    );
+  }
+
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
+  }
+
+  const lookupResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
-    body,
-    options,
-    messages: MESSAGES,
-    ipUnavailableMessage:
-      "Trusted client IP is unavailable for caller connect activation.",
-    limitKind: "caller_connect_activation",
-    lookupOperation: "caller_connect_activate_lookup",
-    finalizeOperation: "caller_connect_activate",
-    finalize: (query, input) =>
-      activateConnectPendingCredential(query, input, {
-        requestId: context.requestId,
-        now: options.now
-      })
-  });
+    "caller_connect_activate_lookup",
+    async (query) => {
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_activation"
+      );
+      if (!limit.ok) {
+        return limit;
+      }
+
+      return lookupPendingConnectCredential(query, pendingCredential.data);
+    },
+    options
+  );
+
+  if (!lookupResult.ok) {
+    return lookupResult;
+  }
+
+  return withScopedProductTransaction(
+    MESSAGES,
+    connectionString,
+    context,
+    {
+      authSurface: "caller",
+      accountId: lookupResult.data.accountId,
+      callerId: lookupResult.data.callerId
+    },
+    "caller_connect_activate",
+    (query) =>
+      activateConnectPendingCredential(
+        query,
+        {
+          ...lookupResult.data,
+          setupRequestId: parsed.data.setupRequestId,
+          pendingCredential: pendingCredential.data
+        },
+        {
+          requestId: context.requestId,
+          now: options.now
+        }
+      ),
+    options
+  );
 }
 
 export async function handleConnectAbortRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: ConnectRequestOptions = {}
 ): Promise<ConnectResult<ConnectAbortResponseData>> {
-  return handlePendingCredentialFinalizeRequest({
-    request,
+  const parsed = parseSetupRequestIdBody(body);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const pendingCredential = pendingConnectCredentialFromRequest(request);
+  if (!pendingCredential.ok) {
+    return pendingCredential;
+  }
+
+  const ipAddress = trustedClientIpAddress(request);
+  if (!ipAddress) {
+    return apiTemporaryUnavailable(
+      "Trusted client IP is unavailable for caller connect abort."
+    );
+  }
+
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
+  }
+
+  const lookupResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
-    body,
-    options,
-    messages: MESSAGES,
-    ipUnavailableMessage:
-      "Trusted client IP is unavailable for caller connect abort.",
-    limitKind: "caller_connect_activation",
-    lookupOperation: "caller_connect_abort_lookup",
-    finalizeOperation: "caller_connect_abort",
-    finalize: (query, input) =>
-      abortConnectPendingCredential(query, input, { now: options.now })
-  });
+    "caller_connect_abort_lookup",
+    async (query) => {
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_connect_activation"
+      );
+      if (!limit.ok) {
+        return limit;
+      }
+
+      return lookupPendingConnectCredential(query, pendingCredential.data);
+    },
+    options
+  );
+
+  if (!lookupResult.ok) {
+    return lookupResult;
+  }
+
+  return withScopedProductTransaction(
+    MESSAGES,
+    connectionString,
+    context,
+    {
+      authSurface: "caller",
+      accountId: lookupResult.data.accountId,
+      callerId: lookupResult.data.callerId
+    },
+    "caller_connect_abort",
+    (query) =>
+      abortConnectPendingCredential(
+        query,
+        {
+          ...lookupResult.data,
+          setupRequestId: parsed.data.setupRequestId,
+          pendingCredential: pendingCredential.data
+        },
+        {
+          now: options.now
+        }
+      ),
+    options
+  );
 }
 
 export async function getConnectBrowserApprovalPreview(
@@ -1004,7 +1123,7 @@ async function exchangeConnectSetupWithHumanContext(
     flow: "browser" | "device";
     codeHash: string;
   },
-  options: CallerFlowRequestOptions = {}
+  options: ConnectRequestOptions = {}
 ): Promise<ConnectResult<ConnectCredentialResponseData>> {
   const runTransaction = options.runProductTransaction ?? runProductTransaction;
   try {
@@ -1172,7 +1291,7 @@ async function activateConnectPendingCredential(
     accountId: string;
     callerId: string;
     setupRequestId: string;
-    pendingCredential: PendingCredentialBearer;
+    pendingCredential: PendingConnectCredentialBearer;
   },
   options: { requestId: string; now?: Date }
 ): Promise<ConnectResult<ConnectActivateResponseData>> {
@@ -1183,13 +1302,11 @@ async function activateConnectPendingCredential(
     connectPendingCredentialStatement(input)
   );
   const credential = credentialResult.rows[0];
-  const verified = await verifyPendingCredential(
+  const verified = await verifyPendingConnectCredential(
     query,
-    MESSAGES,
-    credential,
+    credential ?? null,
     input.pendingCredential,
-    options.now ?? new Date(),
-    expireConnectPendingCredentialStatement
+    options.now ?? new Date()
   );
   if (!verified.ok) {
     return verified;
@@ -1223,7 +1340,7 @@ async function abortConnectPendingCredential(
     accountId: string;
     callerId: string;
     setupRequestId: string;
-    pendingCredential: PendingCredentialBearer;
+    pendingCredential: PendingConnectCredentialBearer;
   },
   options: { now?: Date }
 ): Promise<ConnectResult<ConnectAbortResponseData>> {
@@ -1232,13 +1349,11 @@ async function abortConnectPendingCredential(
     connectPendingCredentialStatement(input)
   );
   const credential = credentialResult.rows[0];
-  const verified = await verifyPendingCredential(
+  const verified = await verifyPendingConnectCredential(
     query,
-    MESSAGES,
-    credential,
+    credential ?? null,
     input.pendingCredential,
-    options.now ?? new Date(),
-    expireConnectPendingCredentialStatement
+    options.now ?? new Date()
   );
   if (!verified.ok) {
     return verified;
@@ -1257,6 +1372,100 @@ async function abortConnectPendingCredential(
       aborted_at: abortedAt
     }
   };
+}
+
+function pendingConnectCredentialFromRequest(
+  request: Request
+): ConnectResult<PendingConnectCredentialBearer> {
+  const parsed = parseCallerBearerApiKey(request.headers.get("authorization"));
+  if (!parsed.ok) {
+    if (parsed.code !== "missing_authorization") {
+      return invalidCallerCredentialsError();
+    }
+    return {
+      ok: false,
+      error: {
+        status: 401,
+        code: "authentication_required",
+        message: "Pending connect bearer credential is required."
+      }
+    };
+  }
+  return { ok: true, data: parsed };
+}
+
+async function lookupPendingConnectCredential(
+  query: ProductTransactionQuery,
+  bearer: PendingConnectCredentialBearer
+): Promise<ConnectResult<{ accountId: string; callerId: string }>> {
+  const result = await query<CallerCredentialLookupRow>(
+    callerCredentialLookupStatement(bearer.keyId)
+  );
+  const row = result.rows[0];
+  if (!row || row.status !== "pending_activation" || row.revoked_at) {
+    return invalidCallerCredentialsError();
+  }
+
+  if (!/^[a-fA-F0-9]{64}$/.test(row.secret_hmac_sha256)) {
+    return invalidCallerCredentialsError();
+  }
+
+  const suppliedDigest = callerApiKeySecretDigest(bearer.secret);
+  const supplied = Buffer.from(suppliedDigest, "hex");
+  const stored = Buffer.from(row.secret_hmac_sha256, "hex");
+  if (!timingSafeEqual(supplied, stored)) {
+    return invalidCallerCredentialsError();
+  }
+
+  return {
+    ok: true,
+    data: {
+      accountId: row.account_id,
+      callerId: row.caller_id
+    }
+  };
+}
+
+async function verifyPendingConnectCredential(
+  query: ProductTransactionQuery,
+  credential: PendingConnectCredentialRow | null,
+  bearer: PendingConnectCredentialBearer,
+  now: Date
+): Promise<ConnectResult<null>> {
+  if (!credential) {
+    return invalidCallerCredentialsError();
+  }
+
+  if (
+    credential.status !== "pending_activation" ||
+    credential.revoked_at ||
+    !credential.expires_at ||
+    new Date(credential.expires_at).getTime() <= now.getTime()
+  ) {
+    if (
+      credential.status === "pending_activation" &&
+      credential.expires_at &&
+      new Date(credential.expires_at).getTime() <= now.getTime()
+    ) {
+      await query(
+        expireConnectPendingCredentialStatement(credential.caller_credential_id)
+      );
+    }
+    return invalidCallerCredentialsError();
+  }
+
+  if (!/^[a-fA-F0-9]{64}$/.test(credential.secret_hmac_sha256)) {
+    return invalidCallerCredentialsError();
+  }
+
+  const suppliedDigest = callerApiKeySecretDigest(bearer.secret);
+  const supplied = Buffer.from(suppliedDigest, "hex");
+  const stored = Buffer.from(credential.secret_hmac_sha256, "hex");
+  if (!timingSafeEqual(supplied, stored)) {
+    return invalidCallerCredentialsError();
+  }
+
+  return { ok: true, data: null };
 }
 
 async function ensurePendingApprovalTarget(
@@ -1678,7 +1887,7 @@ function insertConnectCredentialStatement(input: {
 
 function connectPendingCredentialStatement(input: {
   setupRequestId: string;
-  pendingCredential: PendingCredentialBearer;
+  pendingCredential: PendingConnectCredentialBearer;
 }): TransactionContextStatement {
   return {
     sql: `
@@ -1813,6 +2022,23 @@ function parseDeviceStartBody(body: unknown): ConnectResult<DeviceStartBody> {
   };
 }
 
+function parseSetupRequestIdBody(
+  body: unknown
+): ConnectResult<SetupRequestIdBody> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return apiValidationFailed(MESSAGES.validationFailed, [
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
+
+  const setupRequestId = requiredUuidText(body, "setup_request_id", fields);
+  if (fields.length > 0) {
+    return apiValidationFailed(MESSAGES.validationFailed, fields);
+  }
+  return { ok: true, data: { setupRequestId } };
+}
+
 function callerAlreadyExistsError(): ConnectResult<never> {
   return {
     ok: false,
@@ -1827,6 +2053,17 @@ function callerAlreadyExistsError(): ConnectResult<never> {
           message: CALLER_ALREADY_EXISTS_FIELD_MESSAGE
         }
       ]
+    }
+  };
+}
+
+function invalidCallerCredentialsError(): ConnectResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 401,
+      code: "invalid_caller_credentials",
+      message: "Pending connect credential is invalid or no longer usable."
     }
   };
 }

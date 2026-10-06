@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 
 import {
   apiTemporaryUnavailable,
@@ -11,7 +11,12 @@ import {
   enforceIpControlPlaneLimit
 } from "./caller-api-limits.ts";
 import {
+  callerCredentialLookupStatement,
+  callerApiKeySecretDigest,
   generateCallerApiKeyMaterial,
+  parseCallerBearerApiKey,
+  type CallerCredentialLookupRow,
+  type CallerApiKeyDisplayMetadata,
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
 import {
@@ -27,7 +32,6 @@ import {
   callerCredentialLifecycleLockStatement,
   fieldError,
   generateUserCode,
-  handlePendingCredentialFinalizeRequest,
   invalidRequestError,
   invalidSetupRequestError,
   isPlainRecord,
@@ -45,21 +49,16 @@ import {
   setupCodeDigest,
   setupRequestExpired,
   setupRequestExpiresAt,
-  verifyPendingCredential,
   withControlPlaneTransaction,
   withScopedProductTransaction,
   type CallerFlowMessages,
-  type CallerFlowRequestOptions,
-  type PendingCredentialBearer,
-  type SetupRequestStatus,
-  type SetupResult
+  type CallerFlowRequestOptions as RequestOptions,
+  type SetupResult,
+  type SetupRequestStatus
 } from "./caller-setup-requests.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
 const MESSAGES: CallerFlowMessages = {
-  bearerRequired: "Pending replacement bearer credential is required.",
-  invalidCredential:
-    "Pending replacement credential is invalid or no longer usable.",
   validationFailed: "Caller credential operation request failed validation.",
   databaseUnavailable:
     "Caller credential operation database configuration is unavailable.",
@@ -90,6 +89,10 @@ type BrowserStartBody = {
 type DeviceStartBody = {
   callerId: string;
   localCallerName: string;
+};
+
+type SetupRequestIdBody = {
+  setupRequestId: string;
 };
 
 type SetupRequestIdRow = {
@@ -291,7 +294,7 @@ export async function handleRotateBrowserStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ) {
   return handleOperationBrowserStartRequest(
     "rotate",
@@ -306,7 +309,7 @@ export async function handleRotateDeviceStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ) {
   return handleOperationDeviceStartRequest(
     "rotate",
@@ -321,7 +324,7 @@ export async function handleRotateDevicePollRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ) {
   return handleOperationDevicePollRequest(
     "rotate",
@@ -336,7 +339,7 @@ export async function handleRotateExchangeRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ): Promise<OperationResult<RotateExchangeResponseData>> {
   const parsed = parseSetupCodeBody(MESSAGES, body);
   if (!parsed.ok) {
@@ -407,57 +410,161 @@ export async function handleRotateActivateRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ): Promise<OperationResult<RotateActivateResponseData>> {
-  return handlePendingCredentialFinalizeRequest({
-    request,
+  const parsed = parseSetupRequestIdBody(body);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const pendingCredential = pendingCredentialFromRequest(request);
+  if (!pendingCredential.ok) {
+    return pendingCredential;
+  }
+
+  const ipAddress = trustedClientIpAddress(request);
+  if (!ipAddress) {
+    return apiTemporaryUnavailable(
+      "Trusted client IP is unavailable for caller rotate activation."
+    );
+  }
+
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
+  }
+
+  const lookupResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
-    body,
-    options,
-    messages: MESSAGES,
-    ipUnavailableMessage:
-      "Trusted client IP is unavailable for caller rotate activation.",
-    limitKind: "caller_rotate_activation",
-    lookupOperation: "caller_rotate_activate_lookup",
-    finalizeOperation: "caller_rotate_activate",
-    finalize: (query, input) =>
-      activatePendingReplacementCredential(query, input, {
-        requestId: context.requestId,
-        now: options.now
-      })
-  });
+    "caller_rotate_activate_lookup",
+    async (query) => {
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_rotate_activation"
+      );
+      if (!limit.ok) {
+        return limit;
+      }
+
+      return lookupPendingReplacementCredential(query, pendingCredential.data);
+    },
+    options
+  );
+
+  if (!lookupResult.ok) {
+    return lookupResult;
+  }
+
+  return withScopedProductTransaction(
+    MESSAGES,
+    connectionString,
+    context,
+    {
+      authSurface: "caller",
+      accountId: lookupResult.data.accountId,
+      callerId: lookupResult.data.callerId
+    },
+    "caller_rotate_activate",
+    (query) =>
+      activatePendingReplacementCredential(
+        query,
+        {
+          setupRequestId: parsed.data.setupRequestId,
+          pendingCredential: pendingCredential.data
+        },
+        {
+          requestId: context.requestId,
+          now: options.now
+        }
+      ),
+    options
+  );
 }
 
 export async function handleRotateAbortRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ): Promise<OperationResult<RotateAbortResponseData>> {
-  return handlePendingCredentialFinalizeRequest({
-    request,
+  const parsed = parseSetupRequestIdBody(body);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const pendingCredential = pendingCredentialFromRequest(request);
+  if (!pendingCredential.ok) {
+    return pendingCredential;
+  }
+
+  const ipAddress = trustedClientIpAddress(request);
+  if (!ipAddress) {
+    return apiTemporaryUnavailable(
+      "Trusted client IP is unavailable for caller rotate abort."
+    );
+  }
+
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
+  }
+
+  const lookupResult = await withControlPlaneTransaction(
+    MESSAGES,
     context,
-    body,
-    options,
-    messages: MESSAGES,
-    ipUnavailableMessage:
-      "Trusted client IP is unavailable for caller rotate abort.",
-    limitKind: "caller_rotate_activation",
-    lookupOperation: "caller_rotate_abort_lookup",
-    finalizeOperation: "caller_rotate_abort",
-    finalize: (query, input) =>
-      abortPendingReplacementCredential(query, input, {
-        requestId: context.requestId,
-        now: options.now
-      })
-  });
+    "caller_rotate_abort_lookup",
+    async (query) => {
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        "caller_rotate_activation"
+      );
+      if (!limit.ok) {
+        return limit;
+      }
+
+      return lookupPendingReplacementCredential(query, pendingCredential.data);
+    },
+    options
+  );
+
+  if (!lookupResult.ok) {
+    return lookupResult;
+  }
+
+  return withScopedProductTransaction(
+    MESSAGES,
+    connectionString,
+    context,
+    {
+      authSurface: "caller",
+      accountId: lookupResult.data.accountId,
+      callerId: lookupResult.data.callerId
+    },
+    "caller_rotate_abort",
+    (query) =>
+      abortPendingReplacementCredential(
+        query,
+        {
+          setupRequestId: parsed.data.setupRequestId,
+          pendingCredential: pendingCredential.data
+        },
+        {
+          requestId: context.requestId,
+          now: options.now
+        }
+      ),
+    options
+  );
 }
 
 export async function handleRevokeBrowserStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ) {
   return handleOperationBrowserStartRequest(
     "revoke",
@@ -472,7 +579,7 @@ export async function handleRevokeDeviceStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ) {
   return handleOperationDeviceStartRequest(
     "revoke",
@@ -487,7 +594,7 @@ export async function handleRevokeDevicePollRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ) {
   return handleOperationDevicePollRequest(
     "revoke",
@@ -502,7 +609,7 @@ export async function handleRevokeConfirmRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions = {}
+  options: RequestOptions = {}
 ): Promise<OperationResult<RevokeConfirmResponseData>> {
   const parsed = parseSetupCodeBody(MESSAGES, body);
   if (!parsed.ok) {
@@ -811,7 +918,7 @@ async function handleOperationBrowserStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions
+  options: RequestOptions
 ): Promise<
   OperationResult<{
     approval_url: string;
@@ -893,7 +1000,7 @@ async function handleOperationDeviceStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions
+  options: RequestOptions
 ): Promise<
   OperationResult<{
     device_code: string;
@@ -987,7 +1094,7 @@ async function handleOperationDevicePollRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
-  options: CallerFlowRequestOptions
+  options: RequestOptions
 ): Promise<OperationResult<DeviceSetupCodeData>> {
   const parsed = parseDevicePollBody(MESSAGES, body);
   if (!parsed.ok) {
@@ -1219,13 +1326,11 @@ async function activatePendingReplacementCredential(
     pendingReplacementCredentialStatement(input)
   );
   const credential = credentialResult.rows[0];
-  const verified = await verifyPendingCredential(
+  const verified = await verifyPendingReplacementCredential(
     query,
-    MESSAGES,
-    credential,
+    credential ?? null,
     input.pendingCredential,
-    options.now ?? new Date(),
-    expirePendingCredentialStatement
+    options.now ?? new Date()
   );
   if (!verified.ok) {
     return verified;
@@ -1274,13 +1379,11 @@ async function abortPendingReplacementCredential(
     pendingReplacementCredentialStatement(input)
   );
   const credential = credentialResult.rows[0];
-  const verified = await verifyPendingCredential(
+  const verified = await verifyPendingReplacementCredential(
     query,
-    MESSAGES,
-    credential,
+    credential ?? null,
     input.pendingCredential,
-    options.now ?? new Date(),
-    expirePendingCredentialStatement
+    options.now ?? new Date()
   );
   if (!verified.ok) {
     return verified;
@@ -2145,6 +2248,108 @@ function insertCallerCredentialAuditStatement(input: {
   };
 }
 
+type PendingCredentialBearer = {
+  apiKey: string;
+  keyId: string;
+  secret: string;
+} & CallerApiKeyDisplayMetadata;
+
+function pendingCredentialFromRequest(
+  request: Request
+): OperationResult<PendingCredentialBearer> {
+  const parsed = parseCallerBearerApiKey(request.headers.get("authorization"));
+  if (!parsed.ok) {
+    if (parsed.code !== "missing_authorization") {
+      return invalidCallerCredentialsError();
+    }
+    return {
+      ok: false,
+      error: {
+        status: 401,
+        code: "authentication_required",
+        message: "Pending replacement bearer credential is required."
+      }
+    };
+  }
+  return { ok: true, data: parsed };
+}
+
+async function lookupPendingReplacementCredential(
+  query: ProductTransactionQuery,
+  bearer: PendingCredentialBearer
+): Promise<OperationResult<{ accountId: string; callerId: string }>> {
+  const result = await query<CallerCredentialLookupRow>(
+    callerCredentialLookupStatement(bearer.keyId)
+  );
+  const row = result.rows[0];
+  if (!row || row.status !== "pending_activation" || row.revoked_at) {
+    return invalidCallerCredentialsError();
+  }
+
+  if (!/^[a-fA-F0-9]{64}$/.test(row.secret_hmac_sha256)) {
+    return invalidCallerCredentialsError();
+  }
+
+  const suppliedDigest = callerApiKeySecretDigest(bearer.secret);
+  const supplied = Buffer.from(suppliedDigest, "hex");
+  const stored = Buffer.from(row.secret_hmac_sha256, "hex");
+  if (!timingSafeEqual(supplied, stored)) {
+    return invalidCallerCredentialsError();
+  }
+
+  return {
+    ok: true,
+    data: {
+      accountId: row.account_id,
+      callerId: row.caller_id
+    }
+  };
+}
+
+async function verifyPendingReplacementCredential(
+  query: ProductTransactionQuery,
+  credential: PendingReplacementCredentialRow | null,
+  bearer: PendingCredentialBearer,
+  now: Date
+): Promise<OperationResult<null>> {
+  if (!credential) {
+    return invalidCallerCredentialsError();
+  }
+
+  const expired =
+    !credential.expires_at ||
+    new Date(credential.expires_at).getTime() <= now.getTime();
+  if (
+    credential.status !== "pending_activation" ||
+    credential.revoked_at ||
+    expired
+  ) {
+    if (
+      credential.status === "pending_activation" &&
+      credential.expires_at &&
+      expired
+    ) {
+      await query(
+        expirePendingCredentialStatement(credential.caller_credential_id)
+      );
+    }
+    return invalidCallerCredentialsError();
+  }
+
+  if (!/^[a-fA-F0-9]{64}$/.test(credential.secret_hmac_sha256)) {
+    return invalidCallerCredentialsError();
+  }
+
+  const suppliedDigest = callerApiKeySecretDigest(bearer.secret);
+  const supplied = Buffer.from(suppliedDigest, "hex");
+  const stored = Buffer.from(credential.secret_hmac_sha256, "hex");
+  if (!timingSafeEqual(supplied, stored)) {
+    return invalidCallerCredentialsError();
+  }
+
+  return { ok: true, data: null };
+}
+
 function parseBrowserStartBody(
   body: unknown
 ): OperationResult<BrowserStartBody> {
@@ -2184,6 +2389,23 @@ function parseDeviceStartBody(body: unknown): OperationResult<DeviceStartBody> {
   return { ok: true, data: { callerId, localCallerName } };
 }
 
+function parseSetupRequestIdBody(
+  body: unknown
+): OperationResult<SetupRequestIdBody> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return apiValidationFailed(MESSAGES.validationFailed, [
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
+
+  const setupRequestId = requiredUuidText(body, "setup_request_id", fields);
+  if (fields.length > 0) {
+    return apiValidationFailed(MESSAGES.validationFailed, fields);
+  }
+  return { ok: true, data: { setupRequestId } };
+}
+
 function approvalCaller(target: ApprovalTargetRow) {
   return {
     caller_id: target.caller_id,
@@ -2194,6 +2416,17 @@ function approvalCaller(target: ApprovalTargetRow) {
 
 function operationLabel(operation: CredentialOperation) {
   return `Caller ${operation}`;
+}
+
+function invalidCallerCredentialsError(): OperationResult<never> {
+  return {
+    ok: false,
+    error: {
+      status: 401,
+      code: "invalid_caller_credentials",
+      message: "Pending replacement credential is invalid or no longer usable."
+    }
+  };
 }
 
 function isForeignKeyViolation(error: unknown) {

@@ -1,5 +1,5 @@
-/** Setup-request helpers and pending-credential transaction pipeline shared by caller connect and rotate/revoke flows. */
-import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
+/** Setup-request and transaction helpers shared by caller connect and rotate/revoke flows. */
+import { createHmac, randomInt } from "node:crypto";
 
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
@@ -10,14 +10,6 @@ import {
   type ApiFieldError,
   type ApiRequestContext
 } from "./api-errors.ts";
-import { enforceIpControlPlaneLimit } from "./caller-api-limits.ts";
-import {
-  callerApiKeySecretDigest,
-  callerCredentialLookupStatement,
-  parseCallerBearerApiKey,
-  type CallerApiKeyDisplayMetadata,
-  type CallerCredentialLookupRow
-} from "./caller-auth.ts";
 import {
   runProductTransaction,
   type ProductTransactionContext,
@@ -28,7 +20,6 @@ import { absoluteHttpOrigin, requireCallerKeyHashSecret } from "./env.ts";
 import { isStorableString, unstorableStringError } from "./input-schema.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
-import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
 const SETUP_CODE_EXPIRES_IN_SECONDS =
   SYSTEM_CONTRACT.controlPlaneSetupCodeExpirySeconds;
@@ -298,8 +289,6 @@ export function callerCredentialLifecycleLockStatement(input: {
 }
 
 export type CallerFlowMessages = {
-  bearerRequired: string;
-  invalidCredential: string;
   validationFailed: string;
   databaseUnavailable: string;
   unexpectedFailure: string;
@@ -310,12 +299,6 @@ export type CallerFlowRequestOptions = {
   now?: Date;
   runProductTransaction?: typeof runProductTransaction;
 };
-
-export type PendingCredentialBearer = {
-  apiKey: string;
-  keyId: string;
-  secret: string;
-} & CallerApiKeyDisplayMetadata;
 
 export function parseDevicePollBody(
   messages: CallerFlowMessages,
@@ -355,24 +338,6 @@ export function parseSetupCodeBody(
   }
 
   return { ok: true, data: { setupCode } };
-}
-
-function parseSetupRequestIdBody(
-  messages: CallerFlowMessages,
-  body: unknown
-): SetupResult<{ setupRequestId: string }> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return apiValidationFailed(messages.validationFailed, [
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const setupRequestId = requiredUuidText(body, "setup_request_id", fields);
-  if (fields.length > 0) {
-    return apiValidationFailed(messages.validationFailed, fields);
-  }
-  return { ok: true, data: { setupRequestId } };
 }
 
 export async function withControlPlaneTransaction<TData>(
@@ -454,208 +419,4 @@ export async function withScopedProductTransaction<TData>(
       reported: true
     });
   }
-}
-
-function pendingCredentialBearerFromRequest(
-  messages: CallerFlowMessages,
-  request: Request
-): SetupResult<PendingCredentialBearer> {
-  const parsed = parseCallerBearerApiKey(request.headers.get("authorization"));
-  if (!parsed.ok) {
-    if (parsed.code !== "missing_authorization") {
-      return invalidPendingCredentialError(messages);
-    }
-    return {
-      ok: false,
-      error: {
-        status: 401,
-        code: "authentication_required",
-        message: messages.bearerRequired
-      }
-    };
-  }
-  return { ok: true, data: parsed };
-}
-
-function pendingSecretMatches(secret: string, storedDigest: string): boolean {
-  if (!/^[a-fA-F0-9]{64}$/.test(storedDigest)) {
-    return false;
-  }
-
-  const suppliedDigest = callerApiKeySecretDigest(secret);
-  const supplied = Buffer.from(suppliedDigest, "hex");
-  const stored = Buffer.from(storedDigest, "hex");
-  return timingSafeEqual(supplied, stored);
-}
-
-async function lookupPendingCredential(
-  query: ProductTransactionQuery,
-  messages: CallerFlowMessages,
-  bearer: PendingCredentialBearer
-): Promise<SetupResult<{ accountId: string; callerId: string }>> {
-  const result = await query<CallerCredentialLookupRow>(
-    callerCredentialLookupStatement(bearer.keyId)
-  );
-  const row = result.rows[0];
-  if (!row || row.status !== "pending_activation" || row.revoked_at) {
-    return invalidPendingCredentialError(messages);
-  }
-
-  if (!pendingSecretMatches(bearer.secret, row.secret_hmac_sha256)) {
-    return invalidPendingCredentialError(messages);
-  }
-
-  return {
-    ok: true,
-    data: {
-      accountId: row.account_id,
-      callerId: row.caller_id
-    }
-  };
-}
-
-export async function verifyPendingCredential(
-  query: ProductTransactionQuery,
-  messages: CallerFlowMessages,
-  credential:
-    | {
-        caller_credential_id: string;
-        secret_hmac_sha256: string;
-        status: string;
-        expires_at: string | Date | null;
-        revoked_at: string | Date | null;
-      }
-    | null
-    | undefined,
-  bearer: PendingCredentialBearer,
-  now: Date,
-  expireStatement: (callerCredentialId: string) => TransactionContextStatement
-): Promise<SetupResult<null>> {
-  if (!credential) {
-    return invalidPendingCredentialError(messages);
-  }
-
-  const expired =
-    !credential.expires_at ||
-    new Date(credential.expires_at).getTime() <= now.getTime();
-  if (
-    credential.status !== "pending_activation" ||
-    credential.revoked_at ||
-    expired
-  ) {
-    if (
-      credential.status === "pending_activation" &&
-      credential.expires_at &&
-      expired
-    ) {
-      await query(expireStatement(credential.caller_credential_id));
-    }
-    return invalidPendingCredentialError(messages);
-  }
-
-  if (!pendingSecretMatches(bearer.secret, credential.secret_hmac_sha256)) {
-    return invalidPendingCredentialError(messages);
-  }
-
-  return { ok: true, data: null };
-}
-
-function invalidPendingCredentialError(
-  messages: CallerFlowMessages
-): SetupResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 401,
-      code: "invalid_caller_credentials",
-      message: messages.invalidCredential
-    }
-  };
-}
-
-export async function handlePendingCredentialFinalizeRequest<TData>(input: {
-  request: Request;
-  context: ApiRequestContext;
-  body: unknown;
-  options: CallerFlowRequestOptions;
-  messages: CallerFlowMessages;
-  ipUnavailableMessage: string;
-  limitKind: Parameters<typeof enforceIpControlPlaneLimit>[2];
-  lookupOperation: string;
-  finalizeOperation: string;
-  finalize: (
-    query: ProductTransactionQuery,
-    input: {
-      accountId: string;
-      callerId: string;
-      setupRequestId: string;
-      pendingCredential: PendingCredentialBearer;
-    }
-  ) => Promise<SetupResult<TData>>;
-}): Promise<SetupResult<TData>> {
-  const { request, context, body, options, messages } = input;
-  const parsed = parseSetupRequestIdBody(messages, body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  const pendingCredential = pendingCredentialBearerFromRequest(
-    messages,
-    request
-  );
-  if (!pendingCredential.ok) {
-    return pendingCredential;
-  }
-
-  const ipAddress = trustedClientIpAddress(request);
-  if (!ipAddress) {
-    return apiTemporaryUnavailable(input.ipUnavailableMessage);
-  }
-
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return apiTemporaryUnavailable(messages.databaseUnavailable);
-  }
-
-  const lookupResult = await withControlPlaneTransaction(
-    messages,
-    context,
-    input.lookupOperation,
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        input.limitKind
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      return lookupPendingCredential(query, messages, pendingCredential.data);
-    },
-    options
-  );
-
-  if (!lookupResult.ok) {
-    return lookupResult;
-  }
-
-  return withScopedProductTransaction(
-    messages,
-    connectionString,
-    context,
-    {
-      authSurface: "caller",
-      accountId: lookupResult.data.accountId,
-      callerId: lookupResult.data.callerId
-    },
-    input.finalizeOperation,
-    (query) =>
-      input.finalize(query, {
-        ...lookupResult.data,
-        setupRequestId: parsed.data.setupRequestId,
-        pendingCredential: pendingCredential.data
-      }),
-    options
-  );
 }
