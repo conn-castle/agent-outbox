@@ -15,16 +15,18 @@ records exist, never roll back to earlier code: it cannot verify those records'
 fingerprints. Application rollback does not remove the nullable column.
 
 Browser verification builds an optimized, test-only Next.js application into
-`.next-browser`, then serves it on loopback with `next start` and a disposable
-database. Compilation finishes before browser execution; the harness rebuilds
-before every run. `.next-browser` must never be deployed; normal builds use
-`.next` and embed a disabled fixture gate. Browser-build compilation clears the
-application database URL to prevent reads from a developer database during
-prerendering; only the runtime server receives the disposable database URL. The
-test build requires `AGENT_OUTBOX_BROWSER_BUILD=1`, `APP_ENV=test`, and loopback
-HTTP base URLs. Runtime fixture flags cannot enable fixtures in a normal
-production build. `tsconfig.browser.json` keeps generated test-build types
-separate from `.next`.
+`.next-browser`, then serves it on loopback through the guarded Node entry
+(`scripts/node-server.mjs start`) and a disposable database. The Node ingress
+contract is documented in
+[the HTTP API](../spec/http-api.md#human-answer-boundary). Compilation finishes
+before browser execution; the harness rebuilds before every run. `.next-browser`
+must never be deployed; normal builds use `.next` and embed a disabled fixture
+gate. Browser-build compilation clears the application database URL to prevent
+reads from a developer database during prerendering; only the runtime server
+receives the disposable database URL. The test build requires
+`AGENT_OUTBOX_BROWSER_BUILD=1`, `APP_ENV=test`, and loopback HTTP base URLs.
+Runtime fixture flags cannot enable fixtures in a normal production build.
+`tsconfig.browser.json` keeps generated test-build types separate from `.next`.
 
 Browser verification uses one Playwright worker to limit browser memory
 pressure. This does not impose a hard memory cap on the build or server. Failed
@@ -280,13 +282,27 @@ committed unit. Anonymous-download verification and Homebrew tap automation run
 afterward as idempotent distribution checks; their failure never rolls back or
 deletes a committed release.
 
+If the publish step cannot prove its final GitHub state, it automatically opens
+one additional bounded publication recovery window. A release already proven
+committed needs no mutation. Before every recovery publication mutation, it
+reruns the full live runtime smoke for the exact candidate SHA (without a
+version override) and re-proves the certified CLI asset inventory and bytes. A
+successful recovery finishes the deploy job normally, so public CLI verification
+and Homebrew distribution continue in the same workflow run. Failed smoke,
+ownership or asset mismatches, permanent errors, and exhausted recovery fail the
+job; cleanup and signal compensation never gain publication assets or bypass
+smoke.
+
 Within the certified artifact's seven-day retention window, choose **Re-run
 failed jobs** on the original workflow run. This reuses the exact artifact and
-the same run ID so the owned draft can be adopted. Do not re-dispatch the
-workflow or choose **Re-run all jobs** for this recovery: a fresh build embeds a
-new build date and may not be byte-identical. After artifact expiry, stop and
-prepare an explicit new-version release rather than rebuilding under an existing
-tag.
+the same run ID so the owned draft can be adopted. If that run already marked
+its draft `publishing`, the re-run skips every deploy step from asset upload
+through promotion; it never redeploys, reapplies migrations, or rolls back. It
+reruns the post-promotion smoke and, only if it passes, re-proves the certified
+assets and publishes. Do not re-dispatch the workflow or choose **Re-run all
+jobs** for this recovery: a fresh build embeds a new build date and may not be
+byte-identical. After artifact expiry, stop and prepare an explicit new-version
+release rather than rebuilding under an existing tag.
 
 ### Reconcile an abandoned pre-commit release
 
@@ -329,7 +345,12 @@ human-authored, unowned, or malformed drafts as warnings so unrelated drafts do
 not keep the schedule red. It excludes queued and in-progress runs so an active
 release is not treated as abandoned. It must not join `production-deploy`
 concurrency or mutate, because GitHub concurrency keeps only one pending run and
-can cancel a queued human release.
+can cancel a queued human release. Its token still holds `contents: write`
+because GitHub lists draft releases only to tokens with push access; with
+read-only scope the detector sees no drafts and falsely passes. The workflow
+contract validates the detector's effective permissions, including job-level
+overrides, and limits `run` commands to `make setup` and
+`node scripts/production-release.mjs detect-abandoned`.
 
 The Worker upload and traffic commands fail outside the sanctioned GitHub
 Actions workflows. Do not load production credentials locally to bypass them and

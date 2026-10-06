@@ -28,6 +28,14 @@ import {
 const CANDIDATE_UNCOMMITTED_CONDITION =
   "steps.prepare-draft.outputs.draft_state != 'committed'";
 
+/**
+ * A `publishing` draft means this run already promoted the candidate, so a
+ * re-run must not repeat any production change; it only re-verifies the live
+ * candidate and resumes publication.
+ */
+const CANDIDATE_PREPARED_CONDITION =
+  "steps.prepare-draft.outputs.draft_state == 'prepared'";
+
 const REQUIRE_MIGRATION_CREDENTIAL_COMMAND = [
   'if [[ -z "${DATABASE_MIGRATION_URL:-}" ]]; then',
   'echo "DATABASE_MIGRATION_URL is required in the production GitHub environment secrets." >&2',
@@ -65,73 +73,73 @@ export const PRODUCTION_DEPLOY_RELEASE_PHASES = [
     id: "upload-assets",
     stepName: "Upload certified CLI assets to draft",
     command: "node scripts/production-release.mjs upload-assets",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "capture-rollback",
     stepName: "Capture healthy rollback target",
     command: "node scripts/production-release.mjs capture-rollback",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "rollback-target-smoke",
     stepName: "Verify rollback target before deploy",
     command: "corepack pnpm run smoke-runtime",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "compare-triggers",
     stepName: "Compare Worker routes and cron triggers",
     command: "node scripts/production-release.mjs compare-triggers",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "upload-worker",
     stepName: "Upload inactive Worker version",
     command: "node scripts/production-release.mjs upload-worker",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "require-migration-credential",
     stepName: "Require production migration credential",
     command: REQUIRE_MIGRATION_CREDENTIAL_COMMAND,
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "validate-migrations-pre",
     stepName: "Validate production migration history before apply",
     command: "corepack pnpm run migration:validate-pre-migrate",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "migrate",
     stepName: "Apply production database migrations",
     command: "corepack pnpm run migration:migrate",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "validate-migrations-post",
     stepName: "Validate production migration history after apply",
     command: "corepack pnpm run migration:validate",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "deploy-staged",
     stepName: "Deploy prior@100 and candidate@0",
     command: "node scripts/production-release.mjs deploy-staged",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "override-smoke",
     stepName: "Verify candidate through version override",
     command: "corepack pnpm run smoke-runtime",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "promote",
     stepName: "Promote candidate to 100%",
     command: "node scripts/production-release.mjs promote",
-    condition: CANDIDATE_UNCOMMITTED_CONDITION
+    condition: CANDIDATE_PREPARED_CONDITION
   },
   {
     id: "production-smoke",

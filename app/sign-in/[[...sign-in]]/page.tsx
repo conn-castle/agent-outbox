@@ -3,10 +3,8 @@ import { SignIn } from "@clerk/nextjs";
 import { LegalAcknowledgement } from "../../../src/components/legal/LegalDocument";
 import { GitHubSignInButton } from "../../../src/components/auth/GitHubSignInButton";
 import { MissingConfigurationPanel } from "../../../src/server/ui";
-import {
-  firstSearchParam,
-  humanReviewReturnHref
-} from "../../../src/shared/human-review-view";
+import { firstSearchParam } from "../../../src/shared/human-review-view";
+import { signInReturnHref } from "../../../src/shared/sign-in-return";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +14,7 @@ export default async function SignInPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const returnHref = humanReviewReturnHref(
-    firstSearchParam(params?.redirect_url)
-  );
+  const returnHref = signInReturnHref(firstSearchParam(params?.redirect_url));
   if (!process.env.CLERK_PUBLISHABLE_KEY) {
     return (
       <MissingConfigurationPanel

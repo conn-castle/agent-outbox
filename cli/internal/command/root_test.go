@@ -3,9 +3,14 @@ package command
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"agent-outbox/internal/foundation"
@@ -200,6 +205,104 @@ func TestExecuteRejectsInvalidSelectedConfigPath(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `"code":"config_error"`) {
 		t.Fatalf("stderr did not contain config error: %s", stderr.String())
+	}
+}
+
+func TestExecuteRejectsConfigPathNamedLikeFilesBesideIt(t *testing.T) {
+	for _, name := range []string{"credentials.json", "Credentials.JSON", ".agent-outbox.lock", ".Agent-Outbox.LOCK"} {
+		for _, viaEnv := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/env=%t", name, viaEnv), func(t *testing.T) {
+				for _, tc := range []struct {
+					name     string
+					args     []string
+					existing bool
+				}{
+					{"connect/absent", []string{"caller", "connect", "steward-email", "--device-code"}, false},
+					{"status/absent", []string{"caller", "status"}, false},
+					{"connect/existing", []string{"caller", "connect", "steward-email", "--device-code"}, true},
+					{"status/existing", []string{"caller", "status"}, true},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						var requests atomic.Int32
+						server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+							requests.Add(1)
+							w.WriteHeader(http.StatusInternalServerError)
+						}))
+						defer server.Close()
+
+						configPath := filepath.Join(t.TempDir(), name)
+						// Use valid config with a selectable caller so unrelated config
+						// parsing or caller-selection errors cannot satisfy this regression.
+						original := []byte("{\n  \"version\": 1,\n  \"callers\": [{\"name\": \"alpha\", \"account_id\": \"acct_123\", \"caller_id\": \"caller_123\"}]\n}\n")
+						if tc.existing {
+							if err := os.WriteFile(configPath, original, 0o600); err != nil {
+								t.Fatalf("write config fixture: %v", err)
+							}
+						}
+						args := []string{"--json", "--base-url", server.URL}
+						env := foundation.Env{}
+						if viaEnv {
+							env[foundation.EnvConfigPath] = configPath
+						} else {
+							args = append(args, "--config", configPath)
+						}
+
+						var stdout bytes.Buffer
+						var stderr bytes.Buffer
+						code := Execute(context.Background(), Options{
+							Args:       append(args, tc.args...),
+							Stdout:     &stdout,
+							Stderr:     &stderr,
+							Env:        env,
+							HTTPClient: server.Client(),
+						})
+						if code != 78 {
+							t.Errorf("exit code = %d, want 78; stderr: %s", code, stderr.String())
+						}
+						if stdout.Len() != 0 {
+							t.Errorf("stdout should stay empty for config path errors: %s", stdout.String())
+						}
+						var result struct {
+							OK    bool                `json:"ok"`
+							Error foundation.AppError `json:"error"`
+						}
+						if err := json.Unmarshal(stderr.Bytes(), &result); err != nil {
+							t.Errorf("stderr is not a JSON error: %v; stderr: %s", err, stderr.String())
+						}
+						if result.OK || result.Error.Code != "config_error" {
+							t.Errorf("want failed config_error envelope; stderr: %s", stderr.String())
+						}
+						if !strings.Contains(result.Error.Message, name) || !strings.Contains(result.Error.Message, "reserved") {
+							t.Errorf("want reserved filename error, got: %s", stderr.String())
+						}
+						if result.Error.WriteOutcome != "" {
+							t.Errorf("preflight error has write_outcome = %q", result.Error.WriteOutcome)
+						}
+						if got := requests.Load(); got != 0 {
+							t.Errorf("server received %d requests, want none", got)
+						}
+						entries, err := os.ReadDir(filepath.Dir(configPath))
+						if err != nil {
+							t.Fatalf("read local state directory: %v", err)
+						}
+						if tc.existing {
+							if len(entries) != 1 || entries[0].Name() != name {
+								t.Errorf("local state directory changed (credentials or lock created): %v", entries)
+							}
+							got, err := os.ReadFile(configPath)
+							if err != nil {
+								t.Fatalf("read original config file: %v", err)
+							}
+							if !bytes.Equal(got, original) {
+								t.Errorf("existing valid config JSON changed: %q", got)
+							}
+						} else if len(entries) != 0 {
+							t.Errorf("local files created despite config rejection: %v", entries)
+						}
+					})
+				}
+			})
+		}
 	}
 }
 

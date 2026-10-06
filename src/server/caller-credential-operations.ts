@@ -41,6 +41,7 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import { requireCallerKeyHashSecret } from "./env.ts";
+import { isStorableString, unstorableStringError } from "./input-schema.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
@@ -678,6 +679,10 @@ export async function getCredentialOperationBrowserApprovalPreview(
     now?: Date;
   }
 ): Promise<OperationResult<CredentialOperationApprovalPreviewData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<ApprovalTargetRow>(
     approvalTargetBySetupRequestIdStatement(input)
   );
@@ -713,6 +718,10 @@ export async function approveCredentialOperationBrowserSetupRequest(
     now?: Date;
   }
 ): Promise<OperationResult<CredentialOperationApprovalData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<ApprovalTargetRow>(
     approvalTargetBySetupRequestIdStatement(input)
   );
@@ -831,6 +840,10 @@ export async function denyCredentialOperationSetupRequest(
     accountId: string;
   }
 ): Promise<OperationResult<{ setup_request_id: string; denied: true }>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<SetupRequestIdRow>(
     denySetupRequestStatement(input)
   );
@@ -857,6 +870,10 @@ export async function getCredentialOperationTerminalSetupState(
     statuses: NonEmptyTerminalStatusList;
   }
 ): Promise<OperationResult<CredentialOperationTerminalSetupData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<TerminalSetupStateRow>(
     terminalSetupStateStatement(input)
   );
@@ -1224,15 +1241,18 @@ async function exchangeRotateSetupRequest(
 
   let credential: InsertPendingReplacementCredentialRow;
   try {
-    const credentialResult = await query<InsertPendingReplacementCredentialRow>(
-      insertPendingReplacementCredentialStatement({
-        accountId: lockedTarget.account_id,
-        callerId: lockedTarget.caller_id,
-        oldCredentialId: lockedTarget.active_credential_id,
-        setupRequestId: lockedTarget.setup_request_id,
-        expiresAt: new Date(lockedTarget.expires_at),
-        material
-      })
+    const insertStatement = insertPendingReplacementCredentialStatement({
+      accountId: lockedTarget.account_id,
+      callerId: lockedTarget.caller_id,
+      oldCredentialId: lockedTarget.active_credential_id,
+      setupRequestId: lockedTarget.setup_request_id,
+      expiresAt: new Date(lockedTarget.expires_at),
+      material
+    });
+    const credentialResult = await withSavepoint(
+      query,
+      "caller_pending_replacement",
+      () => query<InsertPendingReplacementCredentialRow>(insertStatement)
     );
     credential = credentialResult.rows[0];
   } catch (error) {
@@ -1858,7 +1878,7 @@ function devicePollTargetStatement(
   };
 }
 
-function callerCredentialLifecycleLockStatement(input: {
+export function callerCredentialLifecycleLockStatement(input: {
   accountId: string;
   callerId: string;
 }): TransactionContextStatement {
@@ -2588,6 +2608,10 @@ function requiredText(
     );
     return "";
   }
+  if (!isStorableString(trimmed)) {
+    fields.push(unstorableStringError(key));
+    return "";
+  }
 
   return trimmed;
 }
@@ -2741,6 +2765,12 @@ function fieldError(
   message: string
 ): ApiFieldError {
   return { path, code, message };
+}
+
+// Browser pages and form actions pass setup_request_id unvalidated; a
+// malformed id can never match a row and would otherwise fail the uuid cast.
+function invalidSetupRequestError(): OperationResult<never> {
+  return invalidRequestError("Invalid setup request.");
 }
 
 function invalidRequestError(message: string): OperationResult<never> {

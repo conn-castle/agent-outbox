@@ -29,6 +29,7 @@ import {
   type CallerCredentialLookupRow,
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
+import { callerCredentialLifecycleLockStatement } from "./caller-credential-operations.ts";
 import { absoluteHttpOrigin } from "./env.ts";
 import {
   runProductTransaction,
@@ -38,6 +39,7 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import { requireCallerKeyHashSecret } from "./env.ts";
+import { isStorableString, unstorableStringError } from "./input-schema.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
@@ -658,6 +660,7 @@ export async function handleConnectActivateRequest(
       activateConnectPendingCredential(
         query,
         {
+          ...lookupResult.data,
           setupRequestId: parsed.data.setupRequestId,
           pendingCredential: pendingCredential.data
         },
@@ -731,6 +734,7 @@ export async function handleConnectAbortRequest(
       abortConnectPendingCredential(
         query,
         {
+          ...lookupResult.data,
           setupRequestId: parsed.data.setupRequestId,
           pendingCredential: pendingCredential.data
         },
@@ -746,6 +750,10 @@ export async function getConnectBrowserApprovalPreview(
   query: ProductTransactionQuery,
   input: { setupRequestId: string; now?: Date }
 ): Promise<ConnectResult<ConnectApprovalPreviewData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const targetResult = await query<SetupApprovalTargetRow>(
     browserApprovalTargetStatement(input.setupRequestId)
   );
@@ -791,6 +799,10 @@ export async function getConnectTerminalSetupState(
     statuses: readonly SetupTerminalStatus[];
   }
 ): Promise<ConnectResult<ConnectTerminalSetupData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<SetupTerminalStateRow>(
     terminalSetupStateStatement(input)
   );
@@ -829,6 +841,10 @@ export async function approveConnectBrowserSetupRequest(
     now?: Date;
   }
 ): Promise<ConnectResult<ConnectBrowserApprovalData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const targetResult = await query<SetupApprovalTargetRow>(
     browserApprovalTargetStatement(input.setupRequestId)
   );
@@ -999,6 +1015,10 @@ export async function denyConnectSetupRequest(
     accountId: string;
   }
 ): Promise<ConnectResult<{ setup_request_id: string; denied: true }>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
   const result = await query<SetupRequestIdRow>(
     denySetupRequestStatement(input)
   );
@@ -1256,11 +1276,16 @@ export async function exchangeApprovedConnectSetupRequest(
 async function activateConnectPendingCredential(
   query: ProductTransactionQuery,
   input: {
+    accountId: string;
+    callerId: string;
     setupRequestId: string;
     pendingCredential: PendingConnectCredentialBearer;
   },
   options: { requestId: string; now?: Date }
 ): Promise<ConnectResult<ConnectActivateResponseData>> {
+  // Serialize with revoke and rotate before locking the credential row, in the
+  // same advisory-lock-then-row-lock order they use.
+  await query(callerCredentialLifecycleLockStatement(input));
   const credentialResult = await query<PendingConnectCredentialRow>(
     connectPendingCredentialStatement(input)
   );
@@ -1300,11 +1325,14 @@ async function activateConnectPendingCredential(
 async function abortConnectPendingCredential(
   query: ProductTransactionQuery,
   input: {
+    accountId: string;
+    callerId: string;
     setupRequestId: string;
     pendingCredential: PendingConnectCredentialBearer;
   },
   options: { now?: Date }
 ): Promise<ConnectResult<ConnectAbortResponseData>> {
+  await query(callerCredentialLifecycleLockStatement(input));
   const credentialResult = await query<PendingConnectCredentialRow>(
     connectPendingCredentialStatement(input)
   );
@@ -2214,6 +2242,10 @@ function requiredText(
     );
     return "";
   }
+  if (!isStorableString(trimmed)) {
+    fields.push(unstorableStringError(key));
+    return "";
+  }
 
   return trimmed;
 }
@@ -2285,6 +2317,12 @@ function fieldError(
   message: string
 ): ApiFieldError {
   return { path, code, message };
+}
+
+// Browser pages and form actions pass setup_request_id unvalidated; a
+// malformed id can never match a row and would otherwise fail the uuid cast.
+function invalidSetupRequestError(): ConnectResult<never> {
+  return invalidRequestError("Invalid setup request.");
 }
 
 function invalidRequestError(message: string): ConnectResult<never> {

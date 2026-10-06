@@ -5,8 +5,10 @@ on:
     - cron: "13 * * * *"
   workflow_dispatch:
 
+# GitHub lists draft releases only to tokens with push access. The detector
+# never mutates; it needs write scope solely to see drafts.
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 jobs:

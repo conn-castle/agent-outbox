@@ -24,6 +24,7 @@ import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../shared/human-review-view";
 import type { HumanMutationOperation } from "../../shared/human-mutation";
 import { HumanIcon } from "./TypedContent";
 import { actionAppearanceClass } from "./action-appearance";
+import { localDateTimeBound } from "./review-format";
 
 export type HumanMutationSubmission = {
   operation: HumanMutationOperation;
@@ -32,8 +33,6 @@ export type HumanMutationSubmission = {
 };
 
 export type OnHumanMutation = (submission: HumanMutationSubmission) => void;
-
-const submittedHumanMutationForms = new WeakSet<HTMLFormElement>();
 
 // Per JS session, not per mount. useState(false)+useEffect would re-attach the
 // server action on remount until the next paint, and React 19 still starts a
@@ -105,10 +104,6 @@ function submitHumanMutationForm(
   }
   event.preventDefault();
   event.stopPropagation?.();
-  if (submittedHumanMutationForms.has(form)) {
-    return;
-  }
-  submittedHumanMutationForms.add(form);
   onMutation({
     operation,
     inputItemIds,
@@ -510,7 +505,23 @@ function FreeTextFields({
 }) {
   const payload = action.popupPayload;
   const multiline = payload.multiline === true;
+  // Browsers enforce minlength/maxlength only after the user edits the field,
+  // so an untouched caller default outside the bounds would otherwise submit.
+  const checkLength = (
+    field: HTMLInputElement | HTMLTextAreaElement | null
+  ) => {
+    field?.setCustomValidity(
+      freeTextLengthError(
+        field.value.length,
+        payload.min_length,
+        payload.max_length
+      )
+    );
+  };
   const props = {
+    ref: checkLength,
+    onInput: (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      checkLength(event.currentTarget),
     name: "response.text",
     placeholder: payload.placeholder ?? undefined,
     defaultValue: payload.default_value ?? undefined,
@@ -525,6 +536,25 @@ function FreeTextFields({
       {multiline ? <textarea {...props} rows={4} /> : <input {...props} />}
     </label>
   );
+}
+
+function freeTextLengthError(
+  length: number,
+  min: number | null | undefined,
+  max: number | null | undefined
+) {
+  // An empty value is left to the required attribute.
+  if (min != null && length > 0 && length < min) {
+    return `Enter at least ${characterCount(min)}.`;
+  }
+  if (max != null && length > max) {
+    return `Enter no more than ${characterCount(max)}.`;
+  }
+  return "";
+}
+
+function characterCount(count: number) {
+  return `${count} character${count === 1 ? "" : "s"}`;
 }
 
 function SingleSelectFields({
@@ -640,8 +670,8 @@ function DatePickerFields({
           <input
             type="datetime-local"
             name="response.value_local"
-            min={localDateTimeBound(payload.min_value, reviewTimezone)}
-            max={localDateTimeBound(payload.max_value, reviewTimezone)}
+            min={localDateTimeBound(payload.min_value, reviewTimezone, "up")}
+            max={localDateTimeBound(payload.max_value, reviewTimezone, "down")}
             aria-describedby={helper ? helperId : undefined}
             required
           />
@@ -819,22 +849,4 @@ function selectionGuidance(min: number, max: number) {
   if (min === max) return `Choose exactly ${min}.`;
   if (min === 0) return `Choose up to ${max}.`;
   return `Choose ${min} to ${max}.`;
-}
-
-function localDateTimeBound(value: string | null, timezone: string) {
-  if (!value) return undefined;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return undefined;
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((entry) => entry.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
 }

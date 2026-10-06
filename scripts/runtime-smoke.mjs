@@ -25,7 +25,7 @@ const PROCESS_ENV_NAMES = [
   REQUIRE_HUMAN_REVIEW_QUERY_ENV_NAME,
   WORKER_VERSION_OVERRIDE_ENV_NAME
 ];
-const RUNTIME_SMOKE_HEADERS = {
+export const RUNTIME_SMOKE_HEADERS = {
   "x-agent-outbox-runtime-smoke": "1"
 };
 /**
@@ -269,6 +269,46 @@ export function assertRuntimeDatabaseCanary(databaseCanary, options = {}) {
 }
 
 /**
+ * @param {Record<string, any>} sentryCanary
+ * @param {unknown} runtimeAppEnv
+ */
+export function assertRuntimeSentryCanary(sentryCanary, runtimeAppEnv) {
+  assert.equal(
+    sentryCanary.sentry_capture_enabled,
+    false,
+    "runtime smoke must not emit Sentry events"
+  );
+  assert.equal(
+    sentryCanary.sentry_capture_suppressed,
+    true,
+    "runtime smoke Sentry suppression header was not honored"
+  );
+  if (runtimeAppEnv === "production") {
+    assert.equal(
+      sentryCanary.sentry_capture_configured,
+      true,
+      "runtime smoke did not prove production Sentry capture readiness"
+    );
+  }
+}
+
+/**
+ * @param {Record<string, any>} errorCanary
+ */
+export function assertRuntimeErrorCanary(errorCanary) {
+  assert.equal(
+    errorCanary.code,
+    "structured_error_canary",
+    "/api/runtime/error did not return the structured error canary"
+  );
+  assert.match(
+    errorCanary.error_id,
+    /^err_/,
+    "/api/runtime/error did not return a safe error_id"
+  );
+}
+
+/**
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
  */
 export function runtimeSmokeAttemptCount(env) {
@@ -413,23 +453,7 @@ export async function runRuntimeSmokeChecks(env, options = {}) {
       }
     }
   );
-  assert.equal(
-    sentryCanary.sentry_capture_enabled,
-    false,
-    "runtime smoke must not emit Sentry events"
-  );
-  assert.equal(
-    sentryCanary.sentry_capture_suppressed,
-    true,
-    "runtime smoke Sentry suppression header was not honored"
-  );
-  if (runtimeAppEnv === "production") {
-    assert.equal(
-      sentryCanary.sentry_capture_configured,
-      true,
-      "runtime smoke did not prove production Sentry capture readiness"
-    );
-  }
+  assertRuntimeSentryCanary(sentryCanary, runtimeAppEnv);
   const errorCanary = await expectJsonStatus(
     fetchImpl,
     env,
@@ -442,8 +466,7 @@ export async function runRuntimeSmokeChecks(env, options = {}) {
       }
     }
   );
-  assert.equal(errorCanary.code, "structured_error_canary");
-  assert.match(errorCanary.error_id, /^err_/);
+  assertRuntimeErrorCanary(errorCanary);
 
   if (override) {
     await proveCandidateRelease("after probes");

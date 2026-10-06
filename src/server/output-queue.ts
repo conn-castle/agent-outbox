@@ -17,12 +17,21 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import type { JsonValue, OutputResponseKind } from "./human-answer.ts";
-import { isValidUtcDateTime } from "./input-schema.ts";
+import {
+  callerIdNotAllowedError,
+  isStorableString,
+  isValidUtcDateTime,
+  unstorableStringError
+} from "./input-schema.ts";
 import {
   runGuardedCallerTransaction,
   type CallerIdentity
 } from "./caller-api-auth.ts";
-import { callerOutputLockStatement, safeContentType } from "./output-files.ts";
+import {
+  CANONICAL_UUID_PATTERN,
+  callerOutputLockStatement,
+  safeContentType
+} from "./output-files.ts";
 import {
   CanonicalInputIntegrityError,
   materializeCanonicalInputsByItemId
@@ -192,6 +201,9 @@ export async function handleOutputReadRequest(
   if (!outputResultId) {
     return outputResultIdRequiredError();
   }
+  if (!isStorableString(outputResultId)) {
+    return validationFailed([unstorableStringError("output_result_id")]);
+  }
 
   return runGuardedCallerTransaction(
     request,
@@ -233,6 +245,9 @@ export async function handleOutputAckRequest(
 ): Promise<OutputQueueResult> {
   if (!outputResultId) {
     return outputResultIdRequiredError();
+  }
+  if (!isStorableString(outputResultId)) {
+    return validationFailed([unstorableStringError("output_result_id")]);
   }
 
   return runGuardedCallerTransaction(
@@ -282,6 +297,9 @@ export async function readOutputResultInTransaction(
   identity: CallerIdentity,
   outputResultId: string
 ): Promise<OutputQueueResult> {
+  if (!CANONICAL_UUID_PATTERN.test(outputResultId)) {
+    return notFoundError();
+  }
   const result = await query<OutputRow>(
     outputResultByIdStatement(identity, outputResultId)
   );
@@ -389,10 +407,15 @@ export async function acknowledgeOutputInTransaction(
   context: ApiRequestContext,
   outputResultId: string
 ): Promise<OutputQueueResult> {
-  const liveResult = await query<{ output_result_id: string }>(
-    callerOutputLockStatement(identity, outputResultId)
-  );
-  const liveOutputResultId = liveResult.rows[0]?.output_result_id;
+  // Noncanonical ids cannot match a live row, but may match a retained
+  // acknowledgement through the separate case-insensitive lookup below.
+  const liveOutputResultId = CANONICAL_UUID_PATTERN.test(outputResultId)
+    ? (
+        await query<{ output_result_id: string }>(
+          callerOutputLockStatement(identity, outputResultId)
+        )
+      ).rows[0]?.output_result_id
+    : undefined;
 
   if (liveOutputResultId) {
     const deletion = await query<TerminalDeletionRow>(
@@ -451,6 +474,10 @@ export function parseOutputReadAllBody(body: unknown): ParsedPageRequest {
         message: "Request body must be an object."
       }
     ]);
+  }
+
+  if ("caller_id" in body) {
+    return validationFailed([callerIdNotAllowedError()]);
   }
 
   if (
@@ -596,7 +623,7 @@ export function outputResultByIdStatement(
       from public.agent_outbox_output_results
       where account_id = $1
         and caller_id = $2
-        and output_result_id::text = $3
+        and output_result_id = $3::uuid
       for update
     `,
     values: [identity.accountId, identity.callerId, outputResultId]
@@ -851,6 +878,8 @@ function parseCursor(value: unknown) {
       typeof parsed.answered_at === "string" &&
       typeof parsed.output_result_id === "string" &&
       isValidUtcDateTime(parsed.answered_at) &&
+      // Postgres timestamptz has no year 0000.
+      !parsed.answered_at.startsWith("0000-") &&
       UUID_PATTERN.test(parsed.output_result_id)
     ) {
       return {

@@ -32,12 +32,22 @@ function localPort() {
   return port;
 }
 
-const nextBin = path.join("node_modules", ".bin", "next");
-const child = spawn(nextBin, ["dev", "-p", localPort()], {
-  env: { ...process.env, ...localEnv },
+const child = spawn(process.execPath, ["scripts/node-server.mjs", "dev"], {
+  env: { ...process.env, ...localEnv, PORT: localPort() },
   stdio: "inherit"
 });
 
+for (const signal of /** @type {NodeJS.Signals[]} */ ([
+  "SIGINT",
+  "SIGTERM",
+  "SIGHUP"
+])) {
+  process.once(signal, () => child.kill(signal));
+}
+
+child.once("error", (error) => {
+  throw error;
+});
 child.on("exit", (code, signal) => {
   if (signal) {
     process.kill(process.pid, signal);

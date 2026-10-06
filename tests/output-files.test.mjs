@@ -4,6 +4,7 @@ import test from "node:test";
 import { consumesMonthlyCallerApiRequestQuota } from "../src/server/accounting.ts";
 import {
   handleOutputFileDownloadAuthenticatedTransaction,
+  handleOutputFileDownloadRequest,
   outputFileDownloadAuditStatement,
   outputFileDownloadHeaders,
   outputFileDownloadInTransaction,
@@ -100,10 +101,8 @@ test("output file download lookup scopes by account caller output and file ids",
   assert.match(statement.sql, /join public\.agent_outbox_output_results o/);
   assert.match(statement.sql, /f\.account_id = \$1/);
   assert.match(statement.sql, /f\.caller_id = \$2/);
-  // Cast id columns to text so a non-UUID path segment yields zero rows (404)
-  // instead of a Postgres 22P02 uuid cast error swallowed into a 503.
-  assert.match(statement.sql, /f\.output_result_id::text = \$3/);
-  assert.match(statement.sql, /f\.output_file_id::text = \$4/);
+  assert.match(statement.sql, /f\.output_result_id = \$3::uuid/);
+  assert.match(statement.sql, /f\.output_file_id = \$4::uuid/);
   assert.match(statement.sql, /for update of f\s*$/i);
 });
 
@@ -125,6 +124,7 @@ test("output file download returns raw bytes and writes content-safe byte audit"
   assert.equal(result.ok ? result.headers.get("Content-Length") : "", "7");
 
   assert.equal(query.calls.length, 3);
+  assert.match(query.calls[0].sql, /output_result_id = \$3::uuid/);
   assert.match(query.calls[2].sql, /agent_outbox_audit_events/);
   assert.deepEqual(query.calls[2].values, [
     "file_downloaded",
@@ -186,6 +186,80 @@ test("output file download reports not found without audit when ids do not match
       }
     });
     assert.equal(query.calls.length, rowsByCall.length);
+  }
+});
+
+test("output file download rejects noncanonical ids before casting and locks canonical outputs first", async () => {
+  // A uuid cast failure would abort the caller transaction and surface as 503.
+  for (const ids of [
+    { ...path, outputResultId: "not-a-uuid" },
+    { ...path, fileId: "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz" },
+    { ...path, outputResultId: path.outputResultId.replace(/^0/, "A") },
+    { ...path, fileId: `${path.fileId} ` }
+  ]) {
+    const query = fakeQuery([[lockedOutputRow], [fileRow()]]);
+    const result = await outputFileDownloadInTransaction(
+      query,
+      context,
+      identity,
+      ids
+    );
+
+    assert.deepEqual(result, {
+      ok: false,
+      error: {
+        status: 404,
+        code: "not_found",
+        message: "Output file was not found."
+      }
+    });
+    assert.equal(
+      query.calls.length,
+      ids.outputResultId === path.outputResultId ? 1 : 0
+    );
+  }
+});
+
+test("output file download rejects ids Postgres cannot store before the transaction", async () => {
+  // A NUL in either id would fail in SQL and surface as a reported 503, so it
+  // must fail validation even with no database configured.
+  const previous = process.env.DATABASE_APP_ROLE_URL;
+  delete process.env.DATABASE_APP_ROLE_URL;
+  try {
+    const result = await handleOutputFileDownloadRequest(
+      new Request("https://api.test/api/output/x/files/y"),
+      context,
+      { outputResultId: "a\u0000b", fileId: `${path.fileId}\u0000` }
+    );
+
+    assert.deepEqual(result, {
+      ok: false,
+      error: {
+        status: 422,
+        code: "validation_failed",
+        message: "Output file download request failed validation.",
+        fields: [
+          {
+            path: "output_result_id",
+            code: "invalid_string",
+            message:
+              "output_result_id must be well-formed Unicode without NUL characters."
+          },
+          {
+            path: "file_id",
+            code: "invalid_string",
+            message:
+              "file_id must be well-formed Unicode without NUL characters."
+          }
+        ]
+      }
+    });
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previous;
+    }
   }
 });
 

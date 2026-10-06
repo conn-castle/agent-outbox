@@ -187,7 +187,7 @@ func inputJSONFileCommand(use string, short string, apiPath string, opts Options
 		Flags:       "--file <input.json> is required. --json prints the API response in the shared success envelope. Global --caller, --config, --base-url, and --no-color are available.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox input " + use + " --file input.json\nagent-outbox input " + use + " --file input.json --json",
-		ExitCodes:   "0 success. 64 usage. 65 invalid JSON/schema/safety errors. 73 live item conflict. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
+		ExitCodes:   "0 success. 64 usage. 65 invalid JSON/schema/safety errors. 73 live item conflict. 74 secret store. 75 rate/quota/temporary failure or unreadable input file. 77 permission. 78 config or caller selection.",
 		RelatedDocs: "docs/spec/input-schema.md, docs/spec/http-api.md#input-queue, docs/spec/errors.md, and agent-outbox docs input.",
 	})
 	return cmd
@@ -201,7 +201,7 @@ func inputDeleteCommand(opts Options, flags *rootFlags) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			callerItemID := strings.TrimSpace(args[0])
+			callerItemID := args[0]
 			if callerItemID == "" {
 				return foundation.NewUsageError("caller_item_id is required.")
 			}
@@ -579,13 +579,12 @@ func secretStoreForCommand(opts Options, configPath string, configPathOwned bool
 }
 
 func readInputSubmissionFile(path string) (json.RawMessage, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return nil, foundation.NewUsageError("--file is required.")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, foundation.NewAppError(foundation.CodeConfig, "Could not read input submission file.")
+		return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not read input submission file.")
 	}
 	if len(data) > inputPayloadLimitBytes {
 		return nil, foundation.NewAppError(foundation.CodeRequestTooLarge, fmt.Sprintf("Input submission JSON exceeds the %d byte limit.", foundation.SystemContractInputSubmissionBodyBytes))
@@ -812,14 +811,25 @@ func validateFileGetFlags(fileFlags fileGetFlags, jsonMode bool) error {
 	return nil
 }
 
+// downloadFileToPath stages downloaded bytes in a 0600 file beside outputPath,
+// then syncs and closes it before renaming it into place. Without force, it
+// refuses path entries found by checks before download and before rename.
+// The final check and rename are separate operations; a path created between
+// them can still be overwritten. With force, rename replaces a symlink itself,
+// without writing through it. Initial inspection refuses directories and errors
+// other than a missing path even with force.
 func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string, outputPath string, force bool) (*foundation.DownloadResponse, error) {
-	outputPath = strings.TrimSpace(outputPath)
-	if outputPath == "" {
+	if strings.TrimSpace(outputPath) == "" {
 		return nil, foundation.NewUsageError("--output path is required.")
 	}
-	if stat, err := os.Stat(outputPath); err == nil {
-		if stat.IsDir() {
-			return nil, foundation.NewUsageError("Output path is a directory.")
+	// Lstat so an existing symlink, including a dangling one, counts as existing.
+	if _, err := os.Lstat(outputPath); err == nil {
+		if stat, err := os.Stat(outputPath); err == nil {
+			if stat.IsDir() {
+				return nil, foundation.NewUsageError("Output path is a directory.")
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not inspect output path.")
 		}
 		if !force {
 			return nil, foundation.NewUsageError("Output path already exists; pass --force to overwrite it.")
@@ -862,7 +872,7 @@ func downloadFileToPath(ctx context.Context, runtime *apiRuntime, apiPath string
 	}
 	closeFile = false
 	if !force {
-		if _, err := os.Stat(outputPath); err == nil {
+		if _, err := os.Lstat(outputPath); err == nil {
 			return nil, foundation.NewUsageError("Output path already exists; pass --force to overwrite it.")
 		} else if !os.IsNotExist(err) {
 			return nil, foundation.NewAppError(foundation.CodeLocalIO, "Could not inspect output path.")

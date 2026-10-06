@@ -19,6 +19,8 @@ const (
 	EnvCaller      = "AGENT_OUTBOX_CALLER"
 	EnvConfigPath  = "AGENT_OUTBOX_CONFIG_PATH"
 	EnvAPIKey      = "AGENT_OUTBOX_API_KEY"
+
+	credentialsFileName = "credentials.json"
 )
 
 type Config struct {
@@ -76,7 +78,7 @@ func DefaultPaths(home string, env Env, goos string) Paths {
 
 	return Paths{
 		ConfigPath:      filepath.Join(dir, "config.json"),
-		CredentialsPath: filepath.Join(dir, "credentials.json"),
+		CredentialsPath: filepath.Join(dir, credentialsFileName),
 	}
 }
 
@@ -84,7 +86,7 @@ func CredentialsPathForConfig(configPath string) (string, error) {
 	if strings.TrimSpace(configPath) == "" {
 		return "", NewAppError(CodeConfig, "Local Agent Outbox config path is required before resolving credentials.")
 	}
-	return filepath.Join(filepath.Dir(filepath.Clean(configPath)), "credentials.json"), nil
+	return filepath.Join(filepath.Dir(filepath.Clean(configPath)), credentialsFileName), nil
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -115,7 +117,14 @@ func ResolveConfigPath(flagValue string, env Env, defaultPath string) (string, e
 		if trimmed == "" {
 			continue
 		}
-		return filepath.Clean(trimmed), nil
+		path := filepath.Clean(trimmed)
+		// Credentials and the local state lock live beside the config, so a
+		// config with either name would overwrite them.
+		name := filepath.Base(path)
+		if strings.EqualFold(name, credentialsFileName) || strings.EqualFold(name, localStateLockFileName) {
+			return "", NewAppError(CodeConfig, fmt.Sprintf("Local Agent Outbox config path must not be named %s; that file name is reserved beside the config.", name))
+		}
+		return path, nil
 	}
 	return "", NewAppError(CodeConfig, "Local Agent Outbox config path is required.")
 }
@@ -203,6 +212,11 @@ func normalizeBaseURL(raw string) (string, error) {
 	}
 	if parsed.Path != "" && parsed.Path != "/" {
 		return "", NewAppError(CodeConfig, "Agent Outbox base URL must not include a path.")
+	}
+	if strings.Contains(parsed.Host, "%") {
+		// Serialize decoded IPv6 zones so config reloads and API requests can reparse them.
+		origin := url.URL{Scheme: parsed.Scheme, Host: parsed.Host}
+		return origin.String(), nil
 	}
 	return parsed.Scheme + "://" + parsed.Host, nil
 }

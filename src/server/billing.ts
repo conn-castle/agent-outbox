@@ -9,7 +9,12 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import { absoluteHttpOrigin } from "./env.ts";
-import { durationSinceMs, emitRuntimeLog, safeErrorName } from "./logging.ts";
+import {
+  durationSinceMs,
+  emitRuntimeLog,
+  safeErrorName,
+  type RuntimeLogEvent
+} from "./logging.ts";
 import {
   readJsonBodyWithLimit,
   readRawRequestBodyWithLimit
@@ -49,8 +54,8 @@ type InsertWebhookEventRow = {
   stripe_receipt_order: string | null;
 };
 
-type AccountIdRow = {
-  account_id: string;
+type AccountUpdateRow = {
+  account_id: string | null;
 };
 
 export type BillingResult<TData> =
@@ -67,6 +72,15 @@ export type BillingPortalData = {
 export type BillingWebhookData = {
   processed: boolean;
 };
+
+export type StripeEventOutcome =
+  | { status: "applied"; accountId: string }
+  | { status: "duplicate" | "unhandled_type" | "stale_ordering" }
+  | {
+      status: "unapplied";
+      reason: "invalid_object" | "missing_reference" | "no_matching_account";
+      accountId: string | null;
+    };
 
 export function requiredBillingConfiguration(
   surface: "checkout" | "portal" | "webhook"
@@ -300,6 +314,11 @@ export async function handleStripeWebhookRequest(
   const stripe = input.stripe ?? stripeClient(config);
   const signature = request.headers.get("stripe-signature");
   if (!signature) {
+    emitStripeWebhookWarning(context, {
+      operation: "stripe_webhook_signature",
+      status_code: 400,
+      message: "Stripe webhook signature header is missing."
+    });
     return invalidBillingRequest("Stripe signature is required.");
   }
 
@@ -308,6 +327,11 @@ export async function handleStripeWebhookRequest(
     STRIPE_WEBHOOK_BODY_BYTE_LIMIT
   );
   if (!body.ok) {
+    emitStripeWebhookWarning(context, {
+      operation: "stripe_webhook_request_too_large",
+      status_code: 413,
+      message: "Stripe webhook request body exceeds the size limit."
+    });
     return {
       ok: false,
       error: {
@@ -326,15 +350,8 @@ export async function handleStripeWebhookRequest(
       config.webhookSecret
     );
   } catch (error) {
-    emitRuntimeLog({
-      level: "warn",
-      error_id: context.correlationId,
-      request_id: context.requestId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
+    emitStripeWebhookWarning(context, {
       status_code: 400,
-      duration_ms: durationSinceMs(context.startedAtMs),
       operation: "stripe_webhook_signature",
       message: "Stripe webhook signature verification failed.",
       error_name: safeErrorName(error)
@@ -342,10 +359,10 @@ export async function handleStripeWebhookRequest(
     return invalidBillingRequest("Stripe signature verification failed.");
   }
 
-  let processed: boolean;
+  let outcome: StripeEventOutcome;
   try {
     const runTransaction = input.runTransaction ?? runProductTransaction;
-    processed = await runTransaction(
+    outcome = await runTransaction(
       input.connectionString,
       { requestId: context.requestId, authSurface: "control_plane" },
       (query) => processStripeEventInTransaction(query, event, input.now)
@@ -369,35 +386,69 @@ export async function handleStripeWebhookRequest(
     );
   }
 
-  return { ok: true, data: { processed } };
+  if (outcome.status === "unapplied") {
+    emitStripeWebhookWarning(context, {
+      status_code: 200,
+      operation: "stripe_webhook_unapplied",
+      drop_reason: outcome.reason,
+      stripe_event_type: event.type,
+      account_id: outcome.accountId ?? undefined,
+      message:
+        "Stripe webhook event was acknowledged without changing billing state."
+    });
+  }
+
+  return { ok: true, data: { processed: outcome.status !== "duplicate" } };
+}
+
+function emitStripeWebhookWarning(
+  context: ApiRequestContext,
+  fields: Pick<RuntimeLogEvent, "operation" | "status_code" | "message"> &
+    Partial<
+      Pick<
+        RuntimeLogEvent,
+        "error_name" | "drop_reason" | "stripe_event_type" | "account_id"
+      >
+    >
+) {
+  emitRuntimeLog({
+    level: "warn",
+    error_id: context.correlationId,
+    request_id: context.requestId,
+    surface: "api",
+    route: context.route,
+    method: context.method,
+    duration_ms: durationSinceMs(context.startedAtMs),
+    ...fields
+  });
 }
 
 export async function processStripeEventInTransaction(
   query: ProductTransactionQuery,
   event: Stripe.Event,
   now: Date = new Date()
-): Promise<boolean> {
+): Promise<StripeEventOutcome> {
   const eventCreatedAt = stripeEventCreatedAt(event);
   const inserted = await query<InsertWebhookEventRow>(
     insertStripeWebhookEventStatement(event.id, event.type)
   );
   if (!inserted.rows[0]) {
-    return false;
+    return { status: "duplicate" };
   }
 
-  const accountId = await applyStripeEventInTransaction(
+  const outcome = await applyStripeEventInTransaction(
     query,
     event,
     eventCreatedAt,
     inserted.rows[0].stripe_receipt_order,
     now
   );
-  if (accountId) {
+  if (outcome.status === "applied") {
     await query(
-      associateStripeWebhookEventAccountStatement(event.id, accountId)
+      associateStripeWebhookEventAccountStatement(event.id, outcome.accountId)
     );
   }
-  return true;
+  return outcome;
 }
 
 export function billingAccountStatement(
@@ -455,6 +506,42 @@ export function associateStripeWebhookEventAccountStatement(
   };
 }
 
+const CHECKOUT_ACCOUNT_MATCH_PREDICATE =
+  "account_id = $1 and deleted_at is null";
+
+function subscriptionAccountMatchPredicate(accountParameter: number) {
+  return `deleted_at is null
+        and (
+          stripe_subscription_id = $1
+          or ($2::text is not null and stripe_customer_id = $2::text)
+          or ($${accountParameter}::uuid is not null and account_id = $${accountParameter}::uuid)
+        )`;
+}
+
+function accountUpdateWithMatchStatement(
+  update: TransactionContextStatement,
+  matchPredicate: string
+): TransactionContextStatement {
+  return {
+    // Both reads share the UPDATE's statement snapshot. A later concurrent
+    // identifier attachment cannot turn a no-match into a stale outcome.
+    sql: `
+      with updated_account as (
+        ${update.sql}
+      )
+      select account_id from updated_account
+      union all
+      select null::text as account_id
+      where not exists (select 1 from updated_account)
+        and exists (
+          select 1 from public.agent_outbox_accounts
+          where ${matchPredicate}
+        )
+    `,
+    values: update.values
+  };
+}
+
 export function checkoutCompletedAccountUpdateStatement(input: {
   accountId: string;
   customerId: string | null;
@@ -487,8 +574,9 @@ export function checkoutCompletedAccountUpdateStatement(input: {
           )
         )`
     : "";
-  return {
-    sql: `
+  return accountUpdateWithMatchStatement(
+    {
+      sql: `
       update public.agent_outbox_accounts
       set
         tier = 'hosted_paid',
@@ -501,21 +589,22 @@ export function checkoutCompletedAccountUpdateStatement(input: {
         stripe_current_period_end = $6,
         ${orderingAssignment}
         updated_at = now()
-      where account_id = $1
-        and deleted_at is null
+      where ${CHECKOUT_ACCOUNT_MATCH_PREDICATE}
         ${orderingPredicate}
       returning account_id::text as account_id
     `,
-    values: [
-      input.accountId,
-      input.customerId,
-      input.subscriptionId,
-      input.priceId,
-      input.subscriptionStatus,
-      nullableTimestampValue(input.currentPeriodEnd),
-      ...orderingValues
-    ]
-  };
+      values: [
+        input.accountId,
+        input.customerId,
+        input.subscriptionId,
+        input.priceId,
+        input.subscriptionStatus,
+        nullableTimestampValue(input.currentPeriodEnd),
+        ...orderingValues
+      ]
+    },
+    CHECKOUT_ACCOUNT_MATCH_PREDICATE
+  );
 }
 
 export function subscriptionBillingUpdateStatement(input: {
@@ -552,8 +641,9 @@ export function subscriptionBillingUpdateStatement(input: {
           )
         )`
     : "";
-  return {
-    sql: `
+  return accountUpdateWithMatchStatement(
+    {
+      sql: `
       update public.agent_outbox_accounts
       set
         tier = case
@@ -569,27 +659,24 @@ export function subscriptionBillingUpdateStatement(input: {
         stripe_current_period_end = $7,
         ${orderingAssignment}
         updated_at = now()
-      where deleted_at is null
-        and (
-          stripe_subscription_id = $1
-          or ($2::text is not null and stripe_customer_id = $2::text)
-          or ($8::uuid is not null and account_id = $8::uuid)
-        )
+      where ${subscriptionAccountMatchPredicate(8)}
         ${orderingPredicate}
       returning account_id::text as account_id
     `,
-    values: [
-      input.subscriptionId,
-      input.customerId,
-      input.priceId,
-      input.subscriptionStatus,
-      input.billingStatus,
-      nullableTimestampValue(input.graceEndsAt),
-      nullableTimestampValue(input.currentPeriodEnd),
-      input.accountId,
-      ...orderingValues
-    ]
-  };
+      values: [
+        input.subscriptionId,
+        input.customerId,
+        input.priceId,
+        input.subscriptionStatus,
+        input.billingStatus,
+        nullableTimestampValue(input.graceEndsAt),
+        nullableTimestampValue(input.currentPeriodEnd),
+        input.accountId,
+        ...orderingValues
+      ]
+    },
+    subscriptionAccountMatchPredicate(8)
+  );
 }
 
 async function applyStripeEventInTransaction(
@@ -598,7 +685,7 @@ async function applyStripeEventInTransaction(
   eventCreatedAt: Date,
   eventReceiptOrder: string | null,
   now: Date
-): Promise<string | null> {
+): Promise<StripeEventOutcome> {
   switch (event.type) {
     case "checkout.session.completed":
       return applyCheckoutCompleted(
@@ -626,7 +713,7 @@ async function applyStripeEventInTransaction(
         now
       );
     default:
-      return null;
+      return { status: "unhandled_type" };
   }
 }
 
@@ -635,18 +722,22 @@ async function applyCheckoutCompleted(
   session: Stripe.Event.Data.Object,
   eventCreatedAt: Date,
   eventReceiptOrder: string | null
-): Promise<string | null> {
+): Promise<StripeEventOutcome> {
   if (!isStripeRecord(session)) {
-    return null;
+    return { status: "unapplied", reason: "invalid_object", accountId: null };
   }
   const accountId =
     stringValue(session.client_reference_id) ??
     stringValue(recordValue(session.metadata, "account_id"));
   if (!accountId) {
-    return null;
+    return {
+      status: "unapplied",
+      reason: "missing_reference",
+      accountId: null
+    };
   }
 
-  const result = await query<AccountIdRow>(
+  const result = await query<AccountUpdateRow>(
     checkoutCompletedAccountUpdateStatement({
       accountId,
       customerId: stripeId(session.customer),
@@ -659,7 +750,7 @@ async function applyCheckoutCompleted(
     })
   );
 
-  return result.rows[0]?.account_id ?? null;
+  return accountUpdateOutcome(result.rows, accountId);
 }
 
 async function applySubscriptionEvent(
@@ -668,14 +759,23 @@ async function applySubscriptionEvent(
   eventCreatedAt: Date,
   eventReceiptOrder: string | null,
   now: Date
-): Promise<string | null> {
+): Promise<StripeEventOutcome> {
   if (!isStripeRecord(object)) {
-    return null;
+    return { status: "unapplied", reason: "invalid_object", accountId: null };
   }
   const subscriptionId = stringValue(object.id);
   if (!subscriptionId) {
-    return null;
+    return {
+      status: "unapplied",
+      reason: "missing_reference",
+      accountId: null
+    };
   }
+  const match = {
+    subscriptionId,
+    customerId: stripeId(object.customer),
+    accountId: stringValue(recordValue(object.metadata, "account_id"))
+  };
   const status = stringValue(object.status) ?? "unknown";
   const currentPeriodEnd = subscriptionCurrentPeriodEnd(object);
   const transition = billingTransitionForSubscription(
@@ -683,12 +783,10 @@ async function applySubscriptionEvent(
     currentPeriodEnd,
     now
   );
-  const result = await query<AccountIdRow>(
+  const result = await query<AccountUpdateRow>(
     subscriptionBillingUpdateStatement({
-      subscriptionId,
-      customerId: stripeId(object.customer),
+      ...match,
       priceId: subscriptionPriceId(object),
-      accountId: stringValue(recordValue(object.metadata, "account_id")),
       subscriptionStatus: status,
       billingStatus: transition.billingStatus,
       graceEndsAt: transition.graceEndsAt,
@@ -698,7 +796,7 @@ async function applySubscriptionEvent(
     })
   );
 
-  return result.rows[0]?.account_id ?? null;
+  return accountUpdateOutcome(result.rows, match.accountId);
 }
 
 async function applyInvoicePaymentFailed(
@@ -707,21 +805,28 @@ async function applyInvoicePaymentFailed(
   eventCreatedAt: Date,
   eventReceiptOrder: string | null,
   now: Date
-): Promise<string | null> {
+): Promise<StripeEventOutcome> {
   if (!isStripeRecord(object)) {
-    return null;
+    return { status: "unapplied", reason: "invalid_object", accountId: null };
   }
   const subscriptionId = invoiceSubscriptionId(object);
   if (!subscriptionId) {
-    return null;
+    return {
+      status: "unapplied",
+      reason: "missing_reference",
+      accountId: null
+    };
   }
 
-  const result = await query<AccountIdRow>(
+  const match = {
+    subscriptionId,
+    customerId: stripeId(recordValue(object, "customer")),
+    accountId: null
+  };
+  const result = await query<AccountUpdateRow>(
     subscriptionBillingUpdateStatement({
-      subscriptionId,
-      customerId: stripeId(recordValue(object, "customer")),
+      ...match,
       priceId: null,
-      accountId: null,
       subscriptionStatus: "payment_failed",
       billingStatus: "past_due",
       graceEndsAt: graceEndsAt(now),
@@ -731,7 +836,21 @@ async function applyInvoicePaymentFailed(
     })
   );
 
-  return result.rows[0]?.account_id ?? null;
+  return accountUpdateOutcome(result.rows, match.accountId);
+}
+
+function accountUpdateOutcome(
+  updatedRows: AccountUpdateRow[],
+  accountId: string | null
+): StripeEventOutcome {
+  if (updatedRows[0]?.account_id) {
+    return { status: "applied", accountId: updatedRows[0].account_id };
+  }
+  // A null account id represents a match rejected by the ordering predicate;
+  // no rows means no account matched in the update's statement snapshot.
+  return updatedRows[0]
+    ? { status: "stale_ordering" }
+    : { status: "unapplied", reason: "no_matching_account", accountId };
 }
 
 function billingTransitionForSubscription(

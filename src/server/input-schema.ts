@@ -236,6 +236,10 @@ export function parseInputDeleteBody(value: unknown): InputDeleteParseResult {
     };
   }
 
+  if ("caller_id" in value) {
+    fields.push(callerIdNotAllowedError());
+  }
+
   const callerItemId = requiredString(
     value,
     "caller_item_id",
@@ -279,13 +283,7 @@ export function parseInputSubmission(
   }
 
   if ("caller_id" in value) {
-    fields.push(
-      fieldError(
-        "caller_id",
-        "caller_id_not_allowed",
-        "Caller identity is derived from bearer authentication."
-      )
-    );
+    fields.push(callerIdNotAllowedError());
   }
 
   const callerItemId = requiredString(
@@ -1157,6 +1155,14 @@ function optionalString(value: unknown, fields: ApiFieldError[], path: string) {
 // fingerprinted or used as a lookup key.
 export function isStorableString(value: string) {
   return value.isWellFormed() && !value.includes("\u0000");
+}
+
+export function callerIdNotAllowedError(): ApiFieldError {
+  return fieldError(
+    "caller_id",
+    "caller_id_not_allowed",
+    "Caller identity is derived from bearer authentication."
+  );
 }
 
 export function unstorableStringError(path: string): ApiFieldError {

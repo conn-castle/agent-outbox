@@ -19,6 +19,10 @@ const APP_PREFIXES = [
   "/api"
 ];
 
+// Browser-posted API routes served on both hosted origins so same-origin
+// requests from website pages are not redirected to the app origin.
+const SHARED_API_PREFIXES = ["/api/contact", "/api/client-events"];
+
 function hostnameFromHostHeader(hostHeader: string): string {
   const trimmed = hostHeader.trim().toLowerCase();
   if (trimmed.startsWith("[")) {
@@ -63,7 +67,7 @@ export function pathBelongsOnWebsite(pathname: string): boolean {
 }
 
 export function pathBelongsOnApp(pathname: string): boolean {
-  if (pathname === "/api/contact" || pathname.startsWith("/api/contact/")) {
+  if (SHARED_API_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix))) {
     return false;
   }
   return APP_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix));
