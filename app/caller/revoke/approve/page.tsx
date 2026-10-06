@@ -2,7 +2,7 @@ import { CredentialOperationApprovePage } from "../../credential-pages";
 import {
   approveRevokeBrowser,
   denyRevokeBrowser
-} from "../../credential-actions";
+} from "../../approval-actions";
 
 export const dynamic = "force-dynamic";
 
