@@ -223,7 +223,7 @@ export async function callerStatusInTransaction(
  */
 export async function accountStatusInTransaction(
   query: ProductTransactionQuery,
-  identity: CallerIdentity
+  identity: Pick<CallerIdentity, "accountId">
 ): Promise<StatusResult<AccountStatusSnapshot>> {
   const accountResult = await query<AccountStatusRow>(
     accountStatusStatement(identity)
@@ -313,7 +313,7 @@ export function callerStatusStatement(
 }
 
 export function accountStatusStatement(
-  identity: CallerIdentity
+  identity: Pick<CallerIdentity, "accountId">
 ): TransactionContextStatement {
   return {
     sql: `
@@ -331,7 +331,7 @@ export function accountStatusStatement(
 }
 
 export function storageStatusStatement(
-  identity: CallerIdentity
+  identity: Pick<CallerIdentity, "accountId">
 ): TransactionContextStatement {
   return {
     sql: `
@@ -343,7 +343,7 @@ export function storageStatusStatement(
 }
 
 export function activeLimitBlocksStatement(
-  identity: CallerIdentity
+  identity: Pick<CallerIdentity, "accountId">
 ): TransactionContextStatement {
   return {
     sql: `

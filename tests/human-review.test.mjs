@@ -12,7 +12,6 @@ import {
   humanReviewAccountBannerInTransaction,
   humanReviewDetailInTransaction,
   humanReviewDetailStatement,
-  humanReviewListInTransaction,
   humanReviewPageInTransaction,
   humanReviewListStatement,
   humanReviewTypeOptionsStatement,
@@ -761,8 +760,7 @@ test("human review list statement scopes rows by account and supports focused fi
     search: "Acme",
     priorities: ["urgent", "high"],
     types: ["Release", "Copy review"],
-    sorts: [{ key: "priority", direction: "asc" }],
-    limit: 25
+    sorts: [{ key: "priority", direction: "asc" }]
   });
 
   assert.deepEqual(statement.values, [
@@ -773,7 +771,7 @@ test("human review list statement scopes rows by account and supports focused fi
     "high",
     "Release",
     "Copy review",
-    25,
+    101,
     0
   ]);
   assert.match(statement.sql, /from public\.agent_outbox_input_items i/);
@@ -1168,7 +1166,7 @@ test("human review search treats LIKE metacharacters as literal text", () => {
   assert.deepEqual(statement.values, [
     context.accountId,
     "%50!%!_off!!%",
-    50,
+    101,
     0
   ]);
   assert.equal(statement.sql.match(/ilike \$2 escape '!'/g)?.length, 6);
@@ -1187,10 +1185,11 @@ test("human review list shapes caller affordances and output read state", async 
         output_first_read_at: null,
         output_read_count: 0
       })
-    ]
+    ],
+    [{ total_count: "1" }]
   ]);
 
-  const rows = await humanReviewListInTransaction(query, context, {
+  const { rows } = await humanReviewPageInTransaction(query, context, {
     status: "all"
   });
 
@@ -1248,14 +1247,18 @@ test("human review list shapes caller affordances and output read state", async 
 
 test("human review detail lazily shapes links actions options and answerable states", async () => {
   const query = fakeQuery([
-    [reviewRow({ details_html: "<p>Details</p>" })],
     [
-      {
-        display_order: 0,
-        display: "Open source",
-        icon: "external-link",
-        url: "https://example.com/source"
-      }
+      reviewRow({
+        details_html: "<p>Details</p>",
+        link_buttons: [
+          {
+            displayOrder: 0,
+            display: "Open source",
+            icon: "external-link",
+            url: "https://example.com/source"
+          }
+        ]
+      })
     ],
     [
       {
@@ -1491,10 +1494,11 @@ test("human review list decodes every card visual the input writer persists", as
         card_visual_kind: root.card_visual_kind,
         card_visual_payload: jsonRoundTrip(root.card_visual_payload)
       });
-    })
+    }),
+    [{ total_count: String(submissions.length) }]
   ]);
 
-  const rows = await humanReviewListInTransaction(query, context, {});
+  const { rows } = await humanReviewPageInTransaction(query, context);
 
   assert.deepEqual(
     rows.map((row) => row.cardVisual),
@@ -1557,10 +1561,9 @@ test("human review list fails loudly for malformed persisted card visuals", asyn
   for (const { error, ...overrides } of cases) {
     await assert.rejects(
       () =>
-        humanReviewListInTransaction(
-          fakeQuery([[reviewRow(overrides)]]),
-          context,
-          {}
+        humanReviewPageInTransaction(
+          fakeQuery([[reviewRow(overrides)], [{ total_count: "1" }]]),
+          context
         ),
       error,
       JSON.stringify(overrides)
@@ -2391,7 +2394,6 @@ function persistedAction(overrides) {
 function detailQueryWithActions(actions) {
   return fakeQuery([
     [reviewRow()],
-    [],
     actions,
     [],
     [

@@ -8,7 +8,7 @@ import {
 } from "../src/server/human-answer.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
 import { readInputInTransaction } from "../src/server/input-read.ts";
-import { humanReviewListInTransaction } from "../src/server/human-review.ts";
+import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { compareHumanReviewRows } from "../src/shared/human-review-sort.ts";
 import { readOutputResultInTransaction } from "../src/server/output-queue.ts";
 import {
@@ -355,20 +355,22 @@ test(
           { key: "card_time", direction },
           { key: "title", direction: "asc" }
         ];
-        const rows = [];
-        for (const offset of [0, 3, 6]) {
-          rows.push(
-            ...(await humanReviewListInTransaction(query, human, {
-              status: "pending",
-              sorts,
-              limit: 3,
-              offset
-            }))
-          );
-        }
+        const { rows } = await humanReviewPageInTransaction(query, human, {
+          status: "pending",
+          sorts
+        });
         assert.deepEqual(
           rows.map((row) => row.callerItemId),
           expected
+        );
+        const offsetPage = await humanReviewPageInTransaction(query, human, {
+          status: "pending",
+          sorts,
+          offset: 3
+        });
+        assert.deepEqual(
+          offsetPage.rows.map((row) => row.callerItemId),
+          expected.slice(3)
         );
         assert.equal(rows[rows.length - 1].cardTime, null);
         assert.deepEqual(
