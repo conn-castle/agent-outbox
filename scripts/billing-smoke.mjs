@@ -1,8 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { parseEnv } from "./dotenv.mjs";
+import { readOptionalEnvFile } from "./dotenv.mjs";
+import {
+  check,
+  fetchJsonCheck,
+  responseCode,
+  runChecksCli
+} from "./hosted-checks.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_FILE_NAME = "AGENT_OUTBOX_BILLING_SMOKE_ENV_FILE";
@@ -27,30 +32,11 @@ const COOKIE_ENV_NAME = "AGENT_OUTBOX_BILLING_SMOKE_COOKIE";
 export function readBillingSmokeEnv(options = {}) {
   const env = options.env ?? process.env;
   const root = options.root ?? ROOT;
-  const explicitPath = env[ENV_FILE_NAME] ?? env[FALLBACK_ENV_FILE_NAME];
-  const envPath =
-    explicitPath && explicitPath.trim() !== ""
-      ? path.resolve(explicitPath)
-      : path.join(root, ".env");
-  if (!existsSync(envPath)) {
-    if (explicitPath) {
-      throw new Error(`Billing smoke env file does not exist: ${envPath}`);
-    }
-    return new Map();
-  }
-
-  return parseEnv(readFileSync(envPath, "utf8"));
-}
-
-/**
- * @param {string} name
- * @param {"pass" | "fail" | "action_required"} status
- * @param {string} code
- * @param {string} message
- * @param {Record<string, unknown>} [details]
- */
-function check(name, status, code, message, details = {}) {
-  return { name, status, code, message, ...details };
+  return readOptionalEnvFile(
+    env[ENV_FILE_NAME] ?? env[FALLBACK_ENV_FILE_NAME],
+    root,
+    "Billing smoke"
+  );
 }
 
 /**
@@ -202,10 +188,10 @@ async function checkoutSessionCheck(
   interval,
   timeoutMs
 ) {
-  try {
-    const response = await fetchImpl(
-      new URL("/api/billing/checkout", baseUrl),
-      {
+  return fetchJsonCheck(
+    `checkout_${interval}`,
+    () =>
+      fetchImpl(new URL("/api/billing/checkout", baseUrl), {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -213,57 +199,39 @@ async function checkoutSessionCheck(
         },
         body: JSON.stringify({ interval }),
         signal: AbortSignal.timeout(timeoutMs)
+      }),
+    `${interval} Checkout endpoint returned a non-JSON response.`,
+    (response, body) => {
+      if (response.status === 401 || response.status === 403) {
+        return check(
+          `checkout_${interval}`,
+          "action_required",
+          "valid_clerk_session_required",
+          "A valid Clerk session cookie is required for hosted Checkout smoke."
+        );
       }
-    );
-    /** @type {Record<string, unknown>} */
-    let body;
-    try {
-      body = await response.json();
-    } catch {
+      const url = responseDataUrl(body);
+      if (
+        response.ok &&
+        body.ok === true &&
+        url?.startsWith("https://checkout.stripe.com/")
+      ) {
+        return check(
+          `checkout_${interval}`,
+          "pass",
+          "checkout_session_created",
+          `${interval} Checkout session was created.`
+        );
+      }
       return check(
         `checkout_${interval}`,
         "fail",
-        "invalid_json_response",
-        `${interval} Checkout endpoint returned a non-JSON response.`,
+        responseCode(body, "checkout_unexpected_response"),
+        `${interval} Checkout session was not created.`,
         { status_code: response.status }
       );
     }
-    if (response.status === 401 || response.status === 403) {
-      return check(
-        `checkout_${interval}`,
-        "action_required",
-        "valid_clerk_session_required",
-        "A valid Clerk session cookie is required for hosted Checkout smoke."
-      );
-    }
-    const url = responseDataUrl(body);
-    if (
-      response.ok &&
-      body.ok === true &&
-      url?.startsWith("https://checkout.stripe.com/")
-    ) {
-      return check(
-        `checkout_${interval}`,
-        "pass",
-        "checkout_session_created",
-        `${interval} Checkout session was created.`
-      );
-    }
-    return check(
-      `checkout_${interval}`,
-      "fail",
-      responseCode(body, "checkout_unexpected_response"),
-      `${interval} Checkout session was not created.`,
-      { status_code: response.status }
-    );
-  } catch (error) {
-    return check(
-      `checkout_${interval}`,
-      "fail",
-      "request_failed",
-      safeErrorMessage(error)
-    );
-  }
+  );
 }
 
 /**
@@ -273,84 +241,57 @@ async function checkoutSessionCheck(
  * @param {number} timeoutMs
  */
 async function portalSessionCheck(fetchImpl, baseUrl, cookie, timeoutMs) {
-  try {
-    const response = await fetchImpl(new URL("/api/billing/portal", baseUrl), {
-      method: "POST",
-      headers: { cookie },
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-    /** @type {Record<string, unknown>} */
-    let body;
-    try {
-      body = await response.json();
-    } catch {
+  return fetchJsonCheck(
+    "billing_portal_session",
+    () =>
+      fetchImpl(new URL("/api/billing/portal", baseUrl), {
+        method: "POST",
+        headers: { cookie },
+        signal: AbortSignal.timeout(timeoutMs)
+      }),
+    "Billing Portal endpoint returned a non-JSON response.",
+    (response, body) => {
+      if (response.status === 401 || response.status === 403) {
+        return check(
+          "billing_portal_session",
+          "action_required",
+          "valid_clerk_session_required",
+          "A valid Clerk session cookie is required for Billing Portal smoke."
+        );
+      }
+      if (
+        response.status === 400 &&
+        responseCode(body, "") === "invalid_request"
+      ) {
+        return check(
+          "billing_portal_session",
+          "action_required",
+          "active_stripe_customer_required",
+          "Billing Portal smoke requires an account with an existing Stripe customer."
+        );
+      }
+      const url = responseDataUrl(body);
+      if (
+        response.ok &&
+        body.ok === true &&
+        url?.startsWith("https://billing.stripe.com/")
+      ) {
+        return check(
+          "billing_portal_session",
+          "pass",
+          "portal_session_created",
+          "Billing Portal session was created."
+        );
+      }
       return check(
         "billing_portal_session",
         "fail",
-        "invalid_json_response",
-        "Billing Portal endpoint returned a non-JSON response.",
+        responseCode(body, "portal_unexpected_response"),
+        "Billing Portal session was not created.",
         { status_code: response.status }
       );
     }
-    if (response.status === 401 || response.status === 403) {
-      return check(
-        "billing_portal_session",
-        "action_required",
-        "valid_clerk_session_required",
-        "A valid Clerk session cookie is required for Billing Portal smoke."
-      );
-    }
-    if (
-      response.status === 400 &&
-      responseCode(body, "") === "invalid_request"
-    ) {
-      return check(
-        "billing_portal_session",
-        "action_required",
-        "active_stripe_customer_required",
-        "Billing Portal smoke requires an account with an existing Stripe customer."
-      );
-    }
-    const url = responseDataUrl(body);
-    if (
-      response.ok &&
-      body.ok === true &&
-      url?.startsWith("https://billing.stripe.com/")
-    ) {
-      return check(
-        "billing_portal_session",
-        "pass",
-        "portal_session_created",
-        "Billing Portal session was created."
-      );
-    }
-    return check(
-      "billing_portal_session",
-      "fail",
-      responseCode(body, "portal_unexpected_response"),
-      "Billing Portal session was not created.",
-      { status_code: response.status }
-    );
-  } catch (error) {
-    return check(
-      "billing_portal_session",
-      "fail",
-      "request_failed",
-      safeErrorMessage(error)
-    );
-  }
-}
-
-/**
- * @param {Record<string, unknown>} body
- * @param {string} fallback
- */
-function responseCode(body, fallback) {
-  const nestedError =
-    body.error && typeof body.error === "object"
-      ? /** @type {Record<string, unknown>} */ (body.error)
-      : {};
-  return String(body.code ?? nestedError.code ?? fallback);
+  );
 }
 
 /**
@@ -364,56 +305,9 @@ function responseDataUrl(body) {
   return typeof data.url === "string" ? data.url : null;
 }
 
-/**
- * @param {unknown} error
- */
-function safeErrorMessage(error) {
-  return error instanceof Error ? error.message : "request failed";
-}
-
-/**
- * @param {Array<{ status: string }>} checks
- */
-export function exitCodeForBillingSmoke(checks) {
-  if (checks.some((entry) => entry.status === "fail")) {
-    return 1;
-  }
-  if (checks.some((entry) => entry.status === "action_required")) {
-    return 2;
-  }
-  return 0;
-}
-
-/**
- * @param {Array<{ status: string }>} checks
- */
-export function billingSmokeSummary(checks) {
-  return {
-    ok: checks.every((entry) => entry.status === "pass"),
-    action_required: checks.some((entry) => entry.status === "action_required"),
-    checks
-  };
-}
-
-async function main() {
-  let env;
-  try {
-    env = readBillingSmokeEnv();
-  } catch (error) {
-    console.error(safeErrorMessage(error));
-    process.exitCode = 1;
-    return;
-  }
-
-  const checks = await runBillingSmokeChecks(env);
-  const summary = billingSmokeSummary(checks);
-  console.log(JSON.stringify(summary, null, 2));
-  process.exitCode = exitCodeForBillingSmoke(checks);
-}
-
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  await main();
+  await runChecksCli(readBillingSmokeEnv, runBillingSmokeChecks);
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { enforceCallerOperationLimits } from "../src/server/caller-api-auth.ts";
+import { enforceAccountOperationLimits } from "../src/server/caller-api-limits.ts";
 import {
   CanonicalInputIntegrityError,
   canonicalInputActionsStatement,
@@ -45,12 +45,12 @@ import {
   richPublicInput,
   storedRowsFromSubmission
 } from "./helpers/canonical-input.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 /**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
  * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
+ * @typedef {import("./helpers/fake-query.mjs").MockProductTransactionQuery} MockProductTransactionQuery
  */
 
 const context = {
@@ -192,13 +192,6 @@ function fakeQuery(rowsByCall, canonical = {}) {
   );
   typed.calls = calls;
   return typed;
-}
-
-/**
- * @param {QueryResultRow[]} rows
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 function listRow(overrides = {}) {
@@ -800,7 +793,7 @@ test("input list and read share output_check_read limits under distinct operatio
       }
     ]
   ]);
-  const result = await enforceCallerOperationLimits(
+  const result = await enforceAccountOperationLimits(
     query,
     identity,
     INPUT_READ_LIMIT_OPERATION_KIND,

@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { ActionSubmitButton } from "../../../src/components/actions/ActionSubmitButton";
+import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../src/server/caller-connect-clerk-fixture";
 import type { HumanAccountSession } from "../../../src/server/human-session";
 import { LocalExpiry } from "./LocalExpiry";
 
@@ -7,6 +9,22 @@ type ConnectPageError = {
   status: number | string;
   code: string;
   message: string;
+};
+
+type ConnectPageShellProps = {
+  title: string;
+  description?: string;
+  tone?: "default" | "success" | "canceled";
+  dense?: boolean;
+  children: ReactNode;
+};
+
+export type FormAction = (formData: FormData) => void | Promise<void>;
+
+export const MISSING_SETUP_REQUEST_ERROR: ConnectPageError = {
+  status: 400,
+  code: "invalid_request",
+  message: "Missing setup request."
 };
 
 type ApprovalPreview = {
@@ -66,20 +84,12 @@ function LinkIcon() {
 }
 
 export function ConnectPageShell({
-  eyebrow: _eyebrow,
   title,
   description = "Confirm the request before your local caller can continue.",
   tone = "default",
   dense = false,
   children
-}: {
-  eyebrow?: string;
-  title: string;
-  description?: string;
-  tone?: "default" | "success" | "canceled";
-  dense?: boolean;
-  children: ReactNode;
-}) {
+}: ConnectPageShellProps) {
   return (
     <main className="connect-main">
       <article
@@ -122,6 +132,64 @@ export function ConnectErrorPanel({ error }: { error: ConnectPageError }) {
           </div>
         </dl>
       </details>
+    </section>
+  );
+}
+
+export function ConnectErrorPage({
+  error,
+  ...shell
+}: Omit<ConnectPageShellProps, "children"> & { error: ConnectPageError }) {
+  return (
+    <ConnectPageShell {...shell}>
+      <ConnectErrorPanel error={error} />
+    </ConnectPageShell>
+  );
+}
+
+export function FixtureIdentity({ value }: { value?: string | null }) {
+  return value ? (
+    <input
+      type="hidden"
+      name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
+      value={value}
+    />
+  ) : null;
+}
+
+export function DeviceCodeEntryCard({
+  formId,
+  action,
+  fixtureClerkUserId
+}: {
+  formId: string;
+  action: FormAction;
+  fixtureClerkUserId?: string | null;
+}) {
+  return (
+    <section className="connect-card" aria-labelledby="device-code-heading">
+      <h2 id="device-code-heading">Enter the CLI code</h2>
+      <form id={formId} action={action} className="form-stack">
+        <label className="field">
+          <span>User code</span>
+          <input
+            name="userCode"
+            autoComplete="one-time-code"
+            inputMode="text"
+            placeholder="ABCD-EFGH"
+            required
+          />
+        </label>
+        <FixtureIdentity value={fixtureClerkUserId} />
+        <ConnectActions>
+          <ActionSubmitButton
+            className="button"
+            pendingChildren="Checking code…"
+          >
+            Continue
+          </ActionSubmitButton>
+        </ConnectActions>
+      </form>
     </section>
   );
 }

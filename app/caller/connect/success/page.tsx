@@ -8,7 +8,7 @@ import {
   resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
 } from "../session";
-import { ConnectErrorPanel, ConnectPageShell } from "../ui";
+import { ConnectErrorPage, MISSING_SETUP_REQUEST_ERROR } from "../ui";
 import { ConnectionSuccessView } from "../views";
 
 export const dynamic = "force-dynamic";
@@ -42,28 +42,20 @@ export default async function CallerConnectSuccessPage({
     });
     if (!session.ok) {
       return (
-        <ConnectPageShell
+        <ConnectErrorPage
           title="We couldn't confirm this connection"
           description="The completed request could not be loaded."
-        >
-          <ConnectErrorPanel error={session} />
-        </ConnectPageShell>
+          error={session}
+        />
       );
     }
 
     return (
-      <ConnectPageShell
+      <ConnectErrorPage
         title="We couldn't confirm this connection"
         description="The completed request is missing its reference."
-      >
-        <ConnectErrorPanel
-          error={{
-            status: 400,
-            code: "invalid_request",
-            message: "Missing setup request."
-          }}
-        />
-      </ConnectPageShell>
+        error={MISSING_SETUP_REQUEST_ERROR}
+      />
     );
   }
 
@@ -88,12 +80,11 @@ export default async function CallerConnectSuccessPage({
   );
   if (!transaction.ok) {
     return (
-      <ConnectPageShell
+      <ConnectErrorPage
         title="We couldn't confirm this connection"
         description="The completed request could not be loaded."
-      >
-        <ConnectErrorPanel error={transaction} />
-      </ConnectPageShell>
+        error={transaction}
+      />
     );
   }
 
@@ -101,12 +92,11 @@ export default async function CallerConnectSuccessPage({
 
   if (!setupState.ok) {
     return (
-      <ConnectPageShell
+      <ConnectErrorPage
         title="We couldn't confirm this connection"
         description="The completed request could not be verified."
-      >
-        <ConnectErrorPanel error={setupState.error} />
-      </ConnectPageShell>
+        error={setupState.error}
+      />
     );
   }
 

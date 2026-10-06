@@ -1,6 +1,5 @@
 import { redirect, unstable_rethrow } from "next/navigation";
 
-import { ActionSubmitButton } from "../../../../src/components/actions/ActionSubmitButton";
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectDeviceApprovalPreview } from "../../../../src/server/caller-connect";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
@@ -14,7 +13,7 @@ import {
   requiredCallerConnectSessionConfiguration,
   runCallerConnectHumanTransaction
 } from "../session";
-import { ConnectActions, ConnectErrorPanel, ConnectPageShell } from "../ui";
+import { ConnectErrorPage, ConnectPageShell, DeviceCodeEntryCard } from "../ui";
 import { DeviceApprovalView } from "../views";
 
 export const dynamic = "force-dynamic";
@@ -34,40 +33,11 @@ export default async function CallerConnectDevicePage({
         title="Enter your device code"
         description="Use the code shown in the terminal where you started the connection."
       >
-        <section className="connect-card" aria-labelledby="device-code-heading">
-          <h2 id="device-code-heading">Enter the CLI code</h2>
-          <form
-            id="enter-device-code"
-            action={previewDeviceConnect}
-            className="form-stack"
-          >
-            <label className="field">
-              <span>User code</span>
-              <input
-                name="userCode"
-                autoComplete="one-time-code"
-                inputMode="text"
-                placeholder="ABCD-EFGH"
-                required
-              />
-            </label>
-            {fixtureClerkUserId ? (
-              <input
-                type="hidden"
-                name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                value={fixtureClerkUserId}
-              />
-            ) : null}
-            <ConnectActions>
-              <ActionSubmitButton
-                className="button"
-                pendingChildren="Checking code…"
-              >
-                Continue
-              </ActionSubmitButton>
-            </ConnectActions>
-          </form>
-        </section>
+        <DeviceCodeEntryCard
+          formId="enter-device-code"
+          action={previewDeviceConnect}
+          fixtureClerkUserId={fixtureClerkUserId}
+        />
       </ConnectPageShell>
     );
   }
@@ -104,12 +74,11 @@ export default async function CallerConnectDevicePage({
     );
     if (!transaction.ok) {
       return (
-        <ConnectPageShell
+        <ConnectErrorPage
           title="We couldn't load this request"
           description="The device connection request could not be verified."
-        >
-          <ConnectErrorPanel error={transaction} />
-        </ConnectPageShell>
+          error={transaction}
+        />
       );
     }
     session = transaction.session;
@@ -160,11 +129,10 @@ export default async function CallerConnectDevicePage({
       userCode={userCode}
     />
   ) : (
-    <ConnectPageShell
+    <ConnectErrorPage
       title="We couldn't load this request"
       description="The device connection request could not be verified."
-    >
-      <ConnectErrorPanel error={preview.error} />
-    </ConnectPageShell>
+      error={preview.error}
+    />
   );
 }

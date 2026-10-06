@@ -1,30 +1,25 @@
-import {
-  apiErrorResponse,
-  apiRequestContext,
-  apiSuccessResponse
-} from "../../../../src/server/api-errors";
+import { respondToJsonApiRequest } from "../../../../src/server/api-route";
 import { handleInputQueueRequest } from "../../../../src/server/input-queue";
-import { readJsonBodyWithLimit } from "../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request, "/api/input/send");
-  const body = await readJsonBodyWithLimit(request);
-  if (!body.ok) {
-    return apiErrorResponse(context, body.error);
-  }
-
-  const result = await handleInputQueueRequest(
+  return respondToJsonApiRequest(
     request,
-    context,
-    "send",
-    body.value
-  );
-  if (!result.ok) {
-    return apiErrorResponse(context, result.error);
-  }
+    "/api/input/send",
+    async (context, body) => {
+      const result = await handleInputQueueRequest(
+        request,
+        context,
+        "send",
+        body
+      );
+      if (!result.ok) {
+        return result;
+      }
 
-  const { operation: _operation, ...responseData } = result.data;
-  return apiSuccessResponse(context, responseData);
+      const { operation: _operation, ...responseData } = result.data;
+      return { ok: true, data: responseData };
+    }
+  );
 }

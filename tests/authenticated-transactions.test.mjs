@@ -17,6 +17,7 @@ import {
   preserveBodyErrorDuringTeardown,
   teardownAttempt
 } from "./helpers/database.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 const { Client } = pg;
 
@@ -777,7 +778,7 @@ function fakeTransactionRunner(rowsForStatement) {
     ) => {
       statements.push(statement);
       const rows = rowsForStatement(statement);
-      return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
+      return queryResult(rows);
     };
     const query = /** @type {ProductTransactionQuery} */ (
       /** @type {unknown} */ (rawQuery)
@@ -804,11 +805,6 @@ function identityContextValues(statements) {
       /set_config/.test(statement.sql) &&
       statement.values?.includes("agent_outbox.account_id")
   )?.values;
-}
-
-/** @param {QueryResultRow[]} rows */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 for (const savepoint of [false, true]) {

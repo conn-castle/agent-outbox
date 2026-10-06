@@ -7,7 +7,6 @@ import {
   getCredentialOperationDeviceApprovalPreview,
   getCredentialOperationTerminalSetupState
 } from "../../src/server/caller-credential-operations";
-import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../src/server/caller-connect-clerk-fixture";
 import { createCorrelationId } from "../../src/server/correlation";
 import type { ProductTransactionQuery } from "../../src/server/database";
 import type { HumanAccountSession } from "../../src/server/human-session";
@@ -24,13 +23,17 @@ import {
   AccountSummary,
   ApprovalSummary,
   ConnectActions,
+  ConnectErrorPage,
   ConnectErrorPanel,
-  ConnectPageShell
+  ConnectPageShell,
+  DeviceCodeEntryCard,
+  FixtureIdentity,
+  type FormAction,
+  MISSING_SETUP_REQUEST_ERROR
 } from "./connect/ui";
 
 type CredentialOperation = "rotate" | "revoke";
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
-type FormAction = (formData: FormData) => void | Promise<void>;
 
 export async function CredentialOperationApprovePage({
   operation,
@@ -50,15 +53,10 @@ export async function CredentialOperationApprovePage({
 
   if (!setupRequestId) {
     return (
-      <ConnectPageShell eyebrow={label} title={approvalTitle(operation)}>
-        <ConnectErrorPanel
-          error={{
-            status: 400,
-            code: "invalid_request",
-            message: "Missing setup request."
-          }}
-        />
-      </ConnectPageShell>
+      <ConnectErrorPage
+        title={approvalTitle(operation)}
+        error={MISSING_SETUP_REQUEST_ERROR}
+      />
     );
   }
 
@@ -92,15 +90,13 @@ export async function CredentialOperationApprovePage({
   );
   if (!page.ok) {
     return (
-      <ConnectPageShell eyebrow={label} title={approvalTitle(operation)}>
-        <ConnectErrorPanel error={page.error} />
-      </ConnectPageShell>
+      <ConnectErrorPage title={approvalTitle(operation)} error={page.error} />
     );
   }
   const { session, data: preview } = page;
 
   return (
-    <ConnectPageShell eyebrow={label} title={approvalTitle(operation)}>
+    <ConnectPageShell title={approvalTitle(operation)}>
       <AccountSummary session={session} />
       {preview.ok ? (
         <>
@@ -118,13 +114,7 @@ export async function CredentialOperationApprovePage({
                   name="setupRequestId"
                   value={preview.data.setup_request_id}
                 />
-                {fixtureClerkUserId ? (
-                  <input
-                    type="hidden"
-                    name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                    value={fixtureClerkUserId}
-                  />
-                ) : null}
+                <FixtureIdentity value={fixtureClerkUserId} />
                 <ActionSubmitButton
                   className="button"
                   pendingChildren="Approving…"
@@ -138,13 +128,7 @@ export async function CredentialOperationApprovePage({
                   name="setupRequestId"
                   value={preview.data.setup_request_id}
                 />
-                {fixtureClerkUserId ? (
-                  <input
-                    type="hidden"
-                    name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                    value={fixtureClerkUserId}
-                  />
-                ) : null}
+                <FixtureIdentity value={fixtureClerkUserId} />
                 <ActionSubmitButton
                   className="button secondary"
                   pendingChildren="Cancelling…"
@@ -182,41 +166,12 @@ export async function CredentialOperationDevicePage({
 
   if (!userCode) {
     return (
-      <ConnectPageShell eyebrow={label} title="Verify device code">
-        <section className="connect-card" aria-labelledby="device-code-heading">
-          <h2 id="device-code-heading">Enter the CLI code</h2>
-          <form
-            id={`enter-${operation}-device-code`}
-            action={previewAction}
-            className="form-stack"
-          >
-            <label className="field">
-              <span>User code</span>
-              <input
-                name="userCode"
-                autoComplete="one-time-code"
-                inputMode="text"
-                placeholder="ABCD-EFGH"
-                required
-              />
-            </label>
-            {fixtureClerkUserId ? (
-              <input
-                type="hidden"
-                name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                value={fixtureClerkUserId}
-              />
-            ) : null}
-            <ConnectActions>
-              <ActionSubmitButton
-                className="button"
-                pendingChildren="Checking code…"
-              >
-                Continue
-              </ActionSubmitButton>
-            </ConnectActions>
-          </form>
-        </section>
+      <ConnectPageShell title="Verify device code">
+        <DeviceCodeEntryCard
+          formId={`enter-${operation}-device-code`}
+          action={previewAction}
+          fixtureClerkUserId={fixtureClerkUserId}
+        />
       </ConnectPageShell>
     );
   }
@@ -250,16 +205,12 @@ export async function CredentialOperationDevicePage({
       })
   );
   if (!page.ok) {
-    return (
-      <ConnectPageShell eyebrow={label} title="Verify device code">
-        <ConnectErrorPanel error={page.error} />
-      </ConnectPageShell>
-    );
+    return <ConnectErrorPage title="Verify device code" error={page.error} />;
   }
   const { session, data: preview } = page;
 
   return (
-    <ConnectPageShell eyebrow={label} title="Verify device code">
+    <ConnectPageShell title="Verify device code">
       <AccountSummary session={session} />
       {preview.ok ? (
         <>
@@ -280,13 +231,7 @@ export async function CredentialOperationDevicePage({
                     required
                   />
                 </label>
-                {fixtureClerkUserId ? (
-                  <input
-                    type="hidden"
-                    name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                    value={fixtureClerkUserId}
-                  />
-                ) : null}
+                <FixtureIdentity value={fixtureClerkUserId} />
                 <ActionSubmitButton
                   className="button"
                   pendingChildren="Approving…"
@@ -300,13 +245,7 @@ export async function CredentialOperationDevicePage({
                   name="setupRequestId"
                   value={preview.data.setup_request_id}
                 />
-                {fixtureClerkUserId ? (
-                  <input
-                    type="hidden"
-                    name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-                    value={fixtureClerkUserId}
-                  />
-                ) : null}
+                <FixtureIdentity value={fixtureClerkUserId} />
                 <ActionSubmitButton
                   className="button secondary"
                   pendingChildren="Cancelling…"
@@ -356,21 +295,14 @@ export async function CredentialOperationSuccessPage({
     });
     if (!session.ok) {
       return (
-        <ConnectPageShell eyebrow={label} title={successTitle(operation)}>
-          <ConnectErrorPanel error={session} />
-        </ConnectPageShell>
+        <ConnectErrorPage title={successTitle(operation)} error={session} />
       );
     }
     return (
-      <ConnectPageShell eyebrow={label} title={successTitle(operation)}>
-        <ConnectErrorPanel
-          error={{
-            status: 400,
-            code: "invalid_request",
-            message: "Missing setup request."
-          }}
-        />
-      </ConnectPageShell>
+      <ConnectErrorPage
+        title={successTitle(operation)}
+        error={MISSING_SETUP_REQUEST_ERROR}
+      />
     );
   }
 
@@ -394,17 +326,16 @@ export async function CredentialOperationSuccessPage({
   );
   if (!page.ok) {
     return (
-      <ConnectPageShell eyebrow={label} title={successTitle(operation)}>
-        <ConnectErrorPanel error={page.error} />
-      </ConnectPageShell>
+      <ConnectErrorPage title={successTitle(operation)} error={page.error} />
     );
   }
   const { session, data: setupState } = page;
   if (!setupState.ok) {
     return (
-      <ConnectPageShell eyebrow={label} title={successTitle(operation)}>
-        <ConnectErrorPanel error={setupState.error} />
-      </ConnectPageShell>
+      <ConnectErrorPage
+        title={successTitle(operation)}
+        error={setupState.error}
+      />
     );
   }
 
@@ -412,7 +343,7 @@ export async function CredentialOperationSuccessPage({
   const callerDisplayName = setup.caller?.display_name ?? setup.display_name;
 
   return (
-    <ConnectPageShell eyebrow={label} title={successTitle(operation)}>
+    <ConnectPageShell title={successTitle(operation)}>
       <AccountSummary session={session} />
       <section className="connect-card" aria-label="Approval success">
         <p>
@@ -497,9 +428,7 @@ export async function CredentialOperationErrorPage({
     );
     if (!page.ok) {
       return (
-        <ConnectPageShell eyebrow={label} title={errorTitle(operation)}>
-          <ConnectErrorPanel error={page.error} />
-        </ConnectPageShell>
+        <ConnectErrorPage title={errorTitle(operation)} error={page.error} />
       );
     }
     const { session, data: setupState } = page;
@@ -509,7 +438,7 @@ export async function CredentialOperationErrorPage({
         setup.caller?.display_name ?? setup.display_name;
 
       return (
-        <ConnectPageShell eyebrow={label} title={errorTitle(operation)}>
+        <ConnectPageShell title={errorTitle(operation)}>
           <AccountSummary session={session} />
           <section className="connect-card" aria-label="Approval error">
             <dl className="connect-kv">
@@ -551,9 +480,10 @@ export async function CredentialOperationErrorPage({
     }
 
     return (
-      <ConnectPageShell eyebrow={label} title={errorTitle(operation)}>
-        <ConnectErrorPanel error={setupState.error} />
-      </ConnectPageShell>
+      <ConnectErrorPage
+        title={errorTitle(operation)}
+        error={setupState.error}
+      />
     );
   }
 
@@ -564,23 +494,14 @@ export async function CredentialOperationErrorPage({
     method: "GET"
   });
   if (!session.ok) {
-    return (
-      <ConnectPageShell eyebrow={label} title={errorTitle(operation)}>
-        <ConnectErrorPanel error={session} />
-      </ConnectPageShell>
-    );
+    return <ConnectErrorPage title={errorTitle(operation)} error={session} />;
   }
 
   return (
-    <ConnectPageShell eyebrow={label} title={errorTitle(operation)}>
-      <ConnectErrorPanel
-        error={{
-          status,
-          code,
-          message
-        }}
-      />
-    </ConnectPageShell>
+    <ConnectErrorPage
+      title={errorTitle(operation)}
+      error={{ status, code, message }}
+    />
   );
 }
 

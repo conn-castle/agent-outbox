@@ -6,6 +6,7 @@ import {
 } from "./accounting.ts";
 import {
   apiResponseHeaders,
+  apiTemporaryUnavailable,
   apiValidationFailed,
   type ApiErrorInput,
   type ApiRequestContext
@@ -15,16 +16,10 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import {
-  accountLimitProfileForAccount,
-  enforceCallerRequestLimits
-} from "./caller-api-limits.ts";
-import {
-  runAuthenticatedCallerTransaction,
+  runGuardedCallerTransaction,
   type CallerIdentity
 } from "./caller-api-auth.ts";
 import { isStorableString, unstorableStringError } from "./input-schema.ts";
-import { durationSinceMs } from "./logging.ts";
-import { reportRuntimeFailure } from "./sentry.ts";
 
 export type OutputFileDownloadSuccess = {
   ok: true;
@@ -76,87 +71,18 @@ export async function handleOutputFileDownloadRequest(
     return { ok: false, error: pathError };
   }
 
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return {
-      ok: false,
-      error: temporaryUnavailableError(
-        "Caller API database configuration is unavailable."
-      )
-    };
-  }
-
-  let identity: CallerIdentity | undefined;
-  try {
-    const transaction = await runAuthenticatedCallerTransaction(
-      request,
-      context,
-      connectionString,
-      async (query, auth) => {
-        identity = auth;
-        return handleOutputFileDownloadAuthenticatedTransaction(
-          query,
-          context,
-          auth,
-          path
-        );
-      }
-    );
-    if (!transaction.authenticated) {
-      return { ok: false, error: transaction.failure.clientError };
-    }
-    return transaction.data;
-  } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      request_id: context.requestId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
-      operation: "output_file_download",
-      account_id: identity?.accountId,
-      caller_id: identity?.callerId,
-      message: "Output file download failed unexpectedly."
-    });
-    return {
-      ok: false,
-      error: temporaryUnavailableError(
-        "Output file download is temporarily unavailable.",
-        { errorId: context.correlationId, reported: true }
-      )
-    };
-  }
-}
-
-export async function handleOutputFileDownloadAuthenticatedTransaction(
-  query: ProductTransactionQuery,
-  context: ApiRequestContext,
-  auth: CallerIdentity,
-  path: OutputFileDownloadPath
-): Promise<OutputFileDownloadResult> {
-  const profile = await accountLimitProfileForAccount(query, auth.accountId);
-  if (!profile) {
-    return {
-      ok: false,
-      error: temporaryUnavailableError(
-        "Output file download is temporarily unavailable."
-      )
-    };
-  }
-
-  const limit = await enforceCallerRequestLimits(
-    query,
-    auth,
-    profile,
-    "output_file_download"
+  return runGuardedCallerTransaction(
+    request,
+    context,
+    {
+      rateLimitKind: "output_file_download",
+      loggedOperation: "output_file_download",
+      unavailableMessage: "Output file download is temporarily unavailable.",
+      unexpectedFailureMessage: "Output file download failed unexpectedly."
+    },
+    (query, identity) =>
+      outputFileDownloadInTransaction(query, context, identity, path)
   );
-  if (!limit.ok) {
-    return { ok: false, error: limit.error };
-  }
-
-  return outputFileDownloadInTransaction(query, context, auth, path);
 }
 
 export async function outputFileDownloadInTransaction(
@@ -204,12 +130,9 @@ export async function outputFileDownloadInTransaction(
   const bytes = normalizeFileBytes(row.file_bytes);
   const sizeBytes = byteCount(row.size_bytes);
   if (bytes.byteLength !== sizeBytes) {
-    return {
-      ok: false,
-      error: temporaryUnavailableError(
-        "Output file metadata is temporarily unavailable."
-      )
-    };
+    return apiTemporaryUnavailable(
+      "Output file metadata is temporarily unavailable."
+    );
   }
 
   await query(
@@ -451,17 +374,4 @@ function byteCount(value: string | number) {
   }
 
   return count;
-}
-
-function temporaryUnavailableError(
-  message: string,
-  options?: { errorId?: string; reported?: boolean }
-): ApiErrorInput {
-  return {
-    status: 503,
-    code: "temporary_unavailable",
-    message,
-    ...(options?.errorId ? { errorId: options.errorId } : {}),
-    ...(options?.reported ? { reported: true } : {})
-  };
 }

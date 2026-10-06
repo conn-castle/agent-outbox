@@ -1,26 +1,13 @@
-import {
-  apiErrorResponse,
-  apiRequestContext,
-  apiSuccessResponse
-} from "../../../../src/server/api-errors";
+import { respondToJsonApiRequest } from "../../../../src/server/api-route";
 import { handleInputReadRequest } from "../../../../src/server/input-read";
-import { readJsonBodyWithLimit } from "../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request, "/api/input/read");
-  const body = await readJsonBodyWithLimit(request);
-  if (!body.ok) {
-    return apiErrorResponse(context, body.error);
-  }
-
-  const result = await handleInputReadRequest(request, context, body.value);
-  if (!result.ok) {
-    return apiErrorResponse(context, result.error);
-  }
-
-  return apiSuccessResponse(context, result.data, {
-    headers: { "Cache-Control": "no-store" }
-  });
+  return respondToJsonApiRequest(
+    request,
+    "/api/input/read",
+    (context, body) => handleInputReadRequest(request, context, body),
+    { noStore: true }
+  );
 }

@@ -1,18 +1,13 @@
-import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
-import { durationSinceMs } from "./logging.ts";
-import { reportRuntimeFailure } from "./sentry.ts";
+import {
+  apiTemporaryUnavailable,
+  type ApiErrorInput,
+  type ApiRequestContext
+} from "./api-errors.ts";
 import type {
   ProductTransactionQuery,
   TransactionContextStatement
 } from "./database.ts";
-import {
-  accountLimitProfileForAccount,
-  enforceCallerRequestLimits
-} from "./caller-api-limits.ts";
-import {
-  runAuthenticatedCallerTransaction,
-  type CallerApiAuthSuccess
-} from "./caller-api-auth.ts";
+import { runGuardedCallerTransaction } from "./caller-api-auth.ts";
 import {
   accountLimitStatusMetadata,
   limitErrorMetadata,
@@ -124,13 +119,17 @@ export async function handleCallerStatusRequest(
   request: Request,
   context: ApiRequestContext
 ): Promise<StatusResult<CallerStatusData>> {
-  return withAuthenticatedCallerStatusTransaction(
+  return runGuardedCallerTransaction(
     request,
     context,
-    "Caller status is temporarily unavailable.",
-    async (query, identity, keyId) => {
-      return callerStatusInTransaction(query, identity, keyId);
-    }
+    {
+      rateLimitKind: "status",
+      loggedOperation: "caller_status_request",
+      unavailableMessage: "Caller status is temporarily unavailable.",
+      unexpectedFailureMessage: "Caller status request failed unexpectedly."
+    },
+    (query, identity) =>
+      callerStatusInTransaction(query, identity, identity.keyId)
   );
 }
 
@@ -138,10 +137,15 @@ export async function handleAccountStatusRequest(
   request: Request,
   context: ApiRequestContext
 ): Promise<StatusResult<AccountStatusData>> {
-  return withAuthenticatedCallerStatusTransaction(
+  return runGuardedCallerTransaction(
     request,
     context,
-    "Account status is temporarily unavailable.",
+    {
+      rateLimitKind: "status",
+      loggedOperation: "caller_status_request",
+      unavailableMessage: "Account status is temporarily unavailable.",
+      unexpectedFailureMessage: "Caller status request failed unexpectedly."
+    },
     async (query, identity) =>
       publicAccountStatus(await accountStatusInTransaction(query, identity))
   );
@@ -157,9 +161,7 @@ export async function callerStatusInTransaction(
   );
   const callerRow = callerResult.rows[0];
   if (!callerRow) {
-    return temporaryUnavailableError(
-      "Caller status is temporarily unavailable."
-    );
+    return apiTemporaryUnavailable("Caller status is temporarily unavailable.");
   }
 
   const account = await accountStatusInTransaction(query, identity);
@@ -202,7 +204,7 @@ export async function accountStatusInTransaction(
   const accountRow = accountResult.rows[0];
   const profile = limitProfileSelectorForAccountTier(accountRow?.tier);
   if (!accountRow || !profile) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Account status is temporarily unavailable."
     );
   }
@@ -212,14 +214,14 @@ export async function accountStatusInTransaction(
   );
   const storageRow = storageResult.rows[0];
   if (!storageRow) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Account status is temporarily unavailable."
     );
   }
 
   const storage = accountStorageStatus(profile, storageRow);
   if (!storage) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Account status is temporarily unavailable."
     );
   }
@@ -333,74 +335,6 @@ export function activeLimitBlocksStatement(
     `,
     values: [identity.accountId]
   };
-}
-
-async function withAuthenticatedCallerStatusTransaction<TData>(
-  request: Request,
-  context: ApiRequestContext,
-  unavailableMessage: string,
-  callback: (
-    query: ProductTransactionQuery,
-    identity: CallerIdentity,
-    keyId: string
-  ) => Promise<StatusResult<TData>>
-): Promise<StatusResult<TData>> {
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return temporaryUnavailableError(
-      "Caller API database configuration is unavailable."
-    );
-  }
-
-  let identity: CallerApiAuthSuccess | undefined;
-  try {
-    const transaction = await runAuthenticatedCallerTransaction<
-      StatusResult<TData>
-    >(request, context, connectionString, async (query, auth) => {
-      identity = auth;
-      const profile = await accountLimitProfileForAccount(
-        query,
-        auth.accountId
-      );
-      if (!profile) {
-        return temporaryUnavailableError(unavailableMessage);
-      }
-
-      const limit = await enforceCallerRequestLimits(
-        query,
-        auth,
-        profile,
-        "status"
-      );
-      if (!limit.ok) {
-        return { ok: false as const, error: limit.error };
-      }
-
-      return callback(query, auth, auth.keyId);
-    });
-    if (!transaction.authenticated) {
-      return { ok: false, error: transaction.failure.clientError };
-    }
-    return transaction.data;
-  } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      request_id: context.requestId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
-      operation: "caller_status_request",
-      account_id: identity?.accountId,
-      caller_id: identity?.callerId,
-      message: "Caller status request failed unexpectedly."
-    });
-    return temporaryUnavailableError(unavailableMessage, {
-      errorId: context.correlationId,
-      reported: true
-    });
-  }
 }
 
 function publicAccountStatus(
@@ -569,20 +503,4 @@ function timestampValue(value: string | Date): string {
   return value instanceof Date
     ? value.toISOString()
     : new Date(value).toISOString();
-}
-
-function temporaryUnavailableError<TData>(
-  message: string,
-  options?: { errorId?: string; reported?: boolean }
-): StatusResult<TData> {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message,
-      ...(options?.errorId ? { errorId: options.errorId } : {}),
-      ...(options?.reported ? { reported: true } : {})
-    }
-  };
 }

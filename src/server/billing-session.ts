@@ -1,4 +1,8 @@
-import type { ApiErrorInput, ApiRequestContext } from "./api-errors.ts";
+import {
+  apiTemporaryUnavailable,
+  type ApiErrorInput,
+  type ApiRequestContext
+} from "./api-errors.ts";
 import {
   billingAccountStatement,
   billingRuntimeFailure,
@@ -28,14 +32,9 @@ export async function billingHumanSession(
 ): Promise<BillingHumanSessionResult> {
   const missing = requiredHumanSessionConfiguration();
   if (missing.length > 0) {
-    return {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message: `Billing route configuration is missing required variable names: ${missing.join(", ")}.`
-      }
-    };
+    return apiTemporaryUnavailable(
+      `Billing route configuration is missing required variable names: ${missing.join(", ")}.`
+    );
   }
 
   const { auth } = await import("@clerk/nextjs/server");
@@ -117,14 +116,7 @@ export async function billingHumanSessionFromClerkUser(input: {
   }
 
   if (!transaction.data) {
-    return {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Billing account is unavailable."
-      }
-    };
+    return apiTemporaryUnavailable("Billing account is unavailable.");
   }
 
   return {

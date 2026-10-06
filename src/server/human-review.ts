@@ -6,6 +6,7 @@ import {
   persistedNumber,
   type PersistedPopup
 } from "./persisted-payload.ts";
+import { apiTemporaryUnavailable } from "./api-errors.ts";
 import type { AuthorizedHumanAccountContext } from "./authorization.ts";
 import type { TransactionContextStatement } from "./database.ts";
 import type {
@@ -421,7 +422,7 @@ export async function humanReviewAccountBannerInTransaction(
 
   const profile = limitProfileSelectorForAccountTier(status.data.tier);
   if (!profile) {
-    return accountUsageUnavailable();
+    return apiTemporaryUnavailable("Account usage is temporarily unavailable.");
   }
 
   const metadata = accountLimitStatusMetadata(profile);
@@ -453,7 +454,9 @@ export async function humanReviewAccountBannerInTransaction(
     );
     const used = Number(result.rows[0]?.used_units ?? 0);
     if (!Number.isSafeInteger(used) || used < 0) {
-      return accountUsageUnavailable();
+      return apiTemporaryUnavailable(
+        "Account usage is temporarily unavailable."
+      );
     }
     usage.push({
       limitName,
@@ -467,7 +470,7 @@ export async function humanReviewAccountBannerInTransaction(
 
   const queuedItems = status.data.queued_input_items;
   if (queuedItems == null) {
-    return accountUsageUnavailable();
+    return apiTemporaryUnavailable("Account usage is temporarily unavailable.");
   }
   const queueLimit = metadata.limits.find(
     (limit) => limit.limitName === "queued_input_items"
@@ -496,17 +499,6 @@ function isUsageUnit(
   unit: LimitStatusMetadata["unit"]
 ): unit is HumanAccountUsageMetric["unit"] {
   return unit === "requests" || unit === "submissions" || unit === "items";
-}
-
-function accountUsageUnavailable(): StatusResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message: "Account usage is temporarily unavailable."
-    }
-  };
 }
 
 export function humanReviewListStatement(

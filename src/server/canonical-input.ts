@@ -1,4 +1,5 @@
 import {
+  apiTemporaryUnavailable,
   apiTimestamp,
   isJsonRecord,
   type ApiErrorInput,
@@ -32,6 +33,8 @@ import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
 export const CANONICAL_INPUT_INTEGRITY_OPERATION = "canonical_input_integrity";
+const CANONICAL_INPUT_UNAVAILABLE_MESSAGE =
+  "Canonical input is temporarily unavailable.";
 
 export class CanonicalInputIntegrityError extends Error {
   readonly inputItemId: string;
@@ -81,13 +84,8 @@ export function canonicalInputIntegrityClientError(options?: {
   errorId?: string;
   reported?: boolean;
 }): ApiErrorInput {
-  return {
-    status: 503,
-    code: "temporary_unavailable",
-    message: "Canonical input is temporarily unavailable.",
-    ...(options?.errorId ? { errorId: options.errorId } : {}),
-    ...(options?.reported ? { reported: true } : {})
-  };
+  return apiTemporaryUnavailable(CANONICAL_INPUT_UNAVAILABLE_MESSAGE, options)
+    .error;
 }
 
 export type CanonicalInputMetadata = {
@@ -170,16 +168,16 @@ export function reconstructCanonicalInput(args: {
 }): CanonicalInputResult {
   const parts = canonicalPartsFromRows(args);
   if (!parts) {
-    return malformedCanonicalInput();
+    return apiTemporaryUnavailable(CANONICAL_INPUT_UNAVAILABLE_MESSAGE);
   }
 
   const { fingerprintForm, rawInput } = canonicalInputForms(parts);
   const fingerprint = sha256Hex(stableStringify(fingerprintForm));
   if (fingerprint !== args.root.normalized_content_fingerprint) {
-    return malformedCanonicalInput();
+    return apiTemporaryUnavailable(CANONICAL_INPUT_UNAVAILABLE_MESSAGE);
   }
   if (!publicCanonicalRawInputShapeMatches(rawInput)) {
-    return malformedCanonicalInput();
+    return apiTemporaryUnavailable(CANONICAL_INPUT_UNAVAILABLE_MESSAGE);
   }
 
   return {
@@ -559,17 +557,6 @@ function cardVisualFromStored(
       NormalizedCardVisual,
       { kind: "progress_ring" }
     >["payload"]
-  };
-}
-
-function malformedCanonicalInput(): { ok: false; error: ApiErrorInput } {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message: "Canonical input is temporarily unavailable."
-    }
   };
 }
 

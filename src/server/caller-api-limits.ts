@@ -3,7 +3,7 @@ import {
   consumesMonthlyCallerApiRequestQuota,
   type ActiveLimitBlockMetadata
 } from "./accounting.ts";
-import type { ApiErrorInput } from "./api-errors.ts";
+import { apiTemporaryUnavailable, type ApiErrorInput } from "./api-errors.ts";
 import type {
   ProductTransactionQuery,
   TransactionContextStatement
@@ -77,12 +77,20 @@ export async function accountLimitProfileForAccount(
   return limitProfileSelectorForAccountTier(result.rows[0]?.tier);
 }
 
-export async function enforceCallerRequestLimits(
+export async function enforceAccountOperationLimits(
   query: ProductTransactionQuery,
-  identity: CallerLimitIdentity,
-  profile: LimitProfileSelector,
-  operationKind: LimitOperationKind
+  identity: AccountLimitIdentity,
+  operationKind: LimitOperationKind,
+  unavailableMessage: string
 ): Promise<CallerLimitGuardResult> {
+  const profile = await accountLimitProfileForAccount(
+    query,
+    identity.accountId
+  );
+  if (!profile) {
+    return apiTemporaryUnavailable(unavailableMessage);
+  }
+
   return enforceAccountRequestLimits(query, identity, profile, operationKind);
 }
 
@@ -125,22 +133,6 @@ export async function enforceAccountRequestLimits(
   );
 }
 
-/** Caller control-plane operations with an IP request quota. */
-export type ControlPlaneIpLimitKind = Extract<
-  LimitOperationKind,
-  | "caller_connect_start"
-  | "caller_connect_poll"
-  | "caller_connect_exchange"
-  | "caller_connect_activation"
-  | "caller_rotate_start"
-  | "caller_rotate_poll"
-  | "caller_rotate_exchange"
-  | "caller_rotate_activation"
-  | "caller_revoke_start"
-  | "caller_revoke_poll"
-  | "caller_revoke_confirm"
->;
-
 /**
  * Enforces IP request windows for caller connect, rotate, and revoke operations.
  * Pass the trusted client IP and the query from the control-plane transaction.
@@ -151,7 +143,20 @@ export type ControlPlaneIpLimitKind = Extract<
 export async function enforceIpControlPlaneLimit(
   query: ProductTransactionQuery,
   ipAddress: string,
-  operationKind: ControlPlaneIpLimitKind
+  operationKind: Extract<
+    LimitOperationKind,
+    | "caller_connect_start"
+    | "caller_connect_poll"
+    | "caller_connect_exchange"
+    | "caller_connect_activation"
+    | "caller_rotate_start"
+    | "caller_rotate_poll"
+    | "caller_rotate_exchange"
+    | "caller_rotate_activation"
+    | "caller_revoke_start"
+    | "caller_revoke_poll"
+    | "caller_revoke_confirm"
+  >
 ): Promise<CallerLimitGuardResult> {
   const now = new Date();
 
