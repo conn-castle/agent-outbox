@@ -1,28 +1,12 @@
-import {
-  apiErrorResponse,
-  apiRequestContext,
-  apiSuccessResponse
-} from "../../../../../src/server/api-errors";
+import { respondToJsonApiRequest } from "../../../../../src/server/api-route";
 import { handleRotateExchangeRequest } from "../../../../../src/server/caller-credential-operations";
-import { readJsonBodyWithLimit } from "../../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request, "/api/caller/rotate/exchange");
-  const body = await readJsonBodyWithLimit(request);
-  if (!body.ok) {
-    return apiErrorResponse(context, body.error);
-  }
-
-  const result = await handleRotateExchangeRequest(
+  return respondToJsonApiRequest(
     request,
-    context,
-    body.value
+    "/api/caller/rotate/exchange",
+    (context, body) => handleRotateExchangeRequest(request, context, body)
   );
-  if (!result.ok) {
-    return apiErrorResponse(context, result.error);
-  }
-
-  return apiSuccessResponse(context, result.data);
 }

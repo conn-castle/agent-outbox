@@ -28,6 +28,7 @@ import {
   apiTemporaryUnavailable,
   apiValidationFailed
 } from "../src/server/api-errors.ts";
+import * as apiRoute from "../src/server/api-route.ts";
 import {
   createBillingPortalSessionForAccount,
   createCheckoutSessionForAccount,
@@ -629,16 +630,7 @@ function loadCallerRouteModuleForTest(
 
   return /** @type {{ POST(request: Request): Promise<Response> }} */ (
     loadCommonJsModuleForTest(routePath, {
-      "../../../../../src/server/api-errors": {
-        apiErrorResponse,
-        apiRequestContext,
-        apiSuccessResponse
-      },
-      "../../../../../src/server/request-body": {
-        async readJsonBodyWithLimit() {
-          return { ok: true, value: {} };
-        }
-      },
+      "../../../../../src/server/api-route": apiRoute,
       [handlerModuleSpecifier]: handlerStubs
     })
   );
