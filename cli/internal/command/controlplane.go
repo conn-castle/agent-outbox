@@ -337,14 +337,17 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 					return flowErr
 				}
 			}
-			runtime, selected, err := selectedLocalControlRuntime(opts, flags)
+			runtime, err := localControlRuntimeForCommand(opts, flags)
+			if err != nil {
+				return err
+			}
+			selected, err := selectConfiguredCaller(flags.caller, opts.Env, runtime.Config)
 			if err != nil {
 				return err
 			}
 			var confirmed revokeConfirmData
 			if revoke {
-				runtime, selected, err = selectedControlRuntime(opts, flags)
-				if err != nil {
+				if err := attachAPIClient(runtime, opts, flags); err != nil {
 					return err
 				}
 				confirmed, err = runRevokeFlow(cmd.Context(), opts, runtime, selected, useDeviceCode)
@@ -399,24 +402,27 @@ func localControlRuntimeForCommand(opts Options, flags *rootFlags) (*controlPlan
 }
 
 func controlRuntimeForCommand(opts Options, flags *rootFlags) (*controlPlaneRuntime, error) {
-	configPath, cfg, configPathOwned, err := loadConfigDetails(flags, opts.Env)
+	runtime, err := localControlRuntimeForCommand(opts, flags)
 	if err != nil {
 		return nil, err
 	}
-	baseURL, err := foundation.ResolveBaseURL(flags.baseURL, opts.Env, cfg)
-	if err != nil {
+	if err := attachAPIClient(runtime, opts, flags); err != nil {
 		return nil, err
 	}
-	return &controlPlaneRuntime{
-		ConfigPath:      configPath,
-		ConfigPathOwned: configPathOwned,
-		Config:          cfg,
-		Client: foundation.APIClient{
-			BaseURL:      baseURL,
-			HTTPClient:   opts.HTTPClient,
-			NewRequestID: opts.NewRequestID,
-		},
-	}, nil
+	return runtime, nil
+}
+
+func attachAPIClient(runtime *controlPlaneRuntime, opts Options, flags *rootFlags) error {
+	baseURL, err := foundation.ResolveBaseURL(flags.baseURL, opts.Env, runtime.Config)
+	if err != nil {
+		return err
+	}
+	runtime.Client = foundation.APIClient{
+		BaseURL:      baseURL,
+		HTTPClient:   opts.HTTPClient,
+		NewRequestID: opts.NewRequestID,
+	}
+	return nil
 }
 
 func writableControlRuntimeForCommand(opts Options, flags *rootFlags) (*controlPlaneRuntime, error) {
@@ -439,38 +445,23 @@ func attachWritableSecretStore(runtime *controlPlaneRuntime, opts Options) error
 	return nil
 }
 
-func selectedControlRuntime(opts Options, flags *rootFlags) (*controlPlaneRuntime, foundation.CallerConfig, error) {
+func selectConfiguredCaller(name string, env foundation.Env, cfg foundation.Config) (foundation.CallerConfig, error) {
+	selected, err := foundation.SelectCaller(name, env, cfg)
+	if err != nil {
+		return foundation.CallerConfig{}, err
+	}
+	if strings.TrimSpace(selected.CallerID) == "" {
+		return foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
+	}
+	return selected, nil
+}
+
+func selectedWritableControlRuntime(opts Options, flags *rootFlags) (*controlPlaneRuntime, foundation.CallerConfig, error) {
 	runtime, err := controlRuntimeForCommand(opts, flags)
 	if err != nil {
 		return nil, foundation.CallerConfig{}, err
 	}
-	selected, err := foundation.SelectCaller(flags.caller, opts.Env, runtime.Config)
-	if err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	if strings.TrimSpace(selected.CallerID) == "" {
-		return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
-	}
-	return runtime, selected, nil
-}
-
-func selectedLocalControlRuntime(opts Options, flags *rootFlags) (*controlPlaneRuntime, foundation.CallerConfig, error) {
-	runtime, err := localControlRuntimeForCommand(opts, flags)
-	if err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	selected, err := foundation.SelectCaller(flags.caller, opts.Env, runtime.Config)
-	if err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	if strings.TrimSpace(selected.CallerID) == "" {
-		return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
-	}
-	return runtime, selected, nil
-}
-
-func selectedWritableControlRuntime(opts Options, flags *rootFlags) (*controlPlaneRuntime, foundation.CallerConfig, error) {
-	runtime, selected, err := selectedControlRuntime(opts, flags)
+	selected, err := selectConfiguredCaller(flags.caller, opts.Env, runtime.Config)
 	if err != nil {
 		return nil, foundation.CallerConfig{}, err
 	}
@@ -489,15 +480,12 @@ func namedControlRuntime(opts Options, flags *rootFlags, name string) (*controlP
 	if err != nil {
 		return nil, foundation.CallerConfig{}, err
 	}
-	for _, caller := range runtime.Config.Callers {
-		if caller.Name == name {
-			if strings.TrimSpace(caller.CallerID) == "" {
-				return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
-			}
-			return runtime, caller, nil
-		}
+	// revoke <caller> deliberately ignores --caller and AGENT_OUTBOX_CALLER.
+	selected, err := selectConfiguredCaller(name, nil, runtime.Config)
+	if err != nil {
+		return nil, foundation.CallerConfig{}, err
 	}
-	return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeUnknownCaller, "Selected caller is not present in local config; run agent-outbox caller list or agent-outbox caller connect <caller>.")
+	return runtime, selected, nil
 }
 
 func writableSecretStoreForCommand(opts Options, configPath string, configPathOwned bool) (foundation.CallerSecretStore, error) {
@@ -534,16 +522,24 @@ func runBrowserConnect(ctx context.Context, opts Options, runtime *controlPlaneR
 }
 
 func runDeviceConnect(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string) (connectExchangeData, *foundation.APIResponse, error) {
-	var started deviceStartData
-	meta, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/device/start", "", map[string]string{
+	return pollDeviceApproval[connectExchangeData](ctx, opts, runtime, "connect", "/api/caller/connect/device/start", "/api/caller/connect/device/poll", map[string]string{
 		"local_caller_name": localName,
 		"display_name":      localName,
-	}, &started)
+	})
+}
+
+// pollDeviceApproval starts a device-code approval, prints the approval
+// instructions, and polls until the human approves, the device code expires,
+// or the request fails.
+func pollDeviceApproval[T any](ctx context.Context, opts Options, runtime *controlPlaneRuntime, operation string, startPath string, pollPath string, startBody map[string]string) (T, *foundation.APIResponse, error) {
+	var zero T
+	var started deviceStartData
+	meta, err := runtime.Client.Do(ctx, http.MethodPost, startPath, "", startBody, &started)
 	if err != nil {
-		return connectExchangeData{}, nil, err
+		return zero, nil, err
 	}
 	if err := validateDeviceStart(started, meta); err != nil {
-		return connectExchangeData{}, nil, err
+		return zero, nil, err
 	}
 	interval := started.PollIntervalSeconds
 	if interval <= 0 {
@@ -551,16 +547,16 @@ func runDeviceConnect(ctx context.Context, opts Options, runtime *controlPlaneRu
 	}
 	deadline, err := deviceApprovalDeadline(started.ExpiresAt, nowForCommand(opts), meta)
 	if err != nil {
-		return connectExchangeData{}, nil, err
+		return zero, nil, err
 	}
-	printDeviceInstructions(opts.Stderr, "connect", started)
+	printDeviceInstructions(opts.Stderr, operation, started)
 	for {
 		pollCtx, cancelPoll, err := deviceApprovalPollContext(ctx, deadline, nowForCommand(opts))
 		if err != nil {
-			return connectExchangeData{}, nil, err
+			return zero, nil, err
 		}
-		var result connectExchangeData
-		meta, err := runtime.Client.Do(pollCtx, http.MethodPost, "/api/caller/connect/device/poll", "", map[string]string{"device_code": started.DeviceCode}, &result)
+		var result T
+		meta, err := runtime.Client.Do(pollCtx, http.MethodPost, pollPath, "", map[string]string{"device_code": started.DeviceCode}, &result)
 		err = deviceApprovalPollError(ctx, pollCtx, err)
 		cancelPoll()
 		if err == nil {
@@ -568,14 +564,14 @@ func runDeviceConnect(ctx context.Context, opts Options, runtime *controlPlaneRu
 		}
 		delay, pending := authorizationPendingDelay(err, interval)
 		if !pending {
-			return connectExchangeData{}, nil, err
+			return zero, nil, err
 		}
 		sleepDuration, err := deviceApprovalSleepDuration(deadline, nowForCommand(opts), time.Duration(delay)*time.Second)
 		if err != nil {
-			return connectExchangeData{}, nil, err
+			return zero, nil, err
 		}
 		if err := sleepForCommand(ctx, opts, sleepDuration); err != nil {
-			return connectExchangeData{}, nil, err
+			return zero, nil, err
 		}
 	}
 }
@@ -600,56 +596,20 @@ func runBrowserSetupCodeFlow(ctx context.Context, opts Options, runtime *control
 }
 
 func runDeviceSetupCodeFlow(ctx context.Context, opts Options, runtime *controlPlaneRuntime, selected foundation.CallerConfig, operation string, startPath string, pollPath string) (deviceSetupCodeData, error) {
-	var started deviceStartData
-	meta, err := runtime.Client.Do(ctx, http.MethodPost, startPath, "", map[string]string{
+	result, meta, err := pollDeviceApproval[deviceSetupCodeData](ctx, opts, runtime, operation, startPath, pollPath, map[string]string{
 		"caller_id":         selected.CallerID,
 		"local_caller_name": selected.Name,
-	}, &started)
+	})
 	if err != nil {
 		return deviceSetupCodeData{}, err
 	}
-	if err := validateDeviceStart(started, meta); err != nil {
-		return deviceSetupCodeData{}, err
+	if strings.TrimSpace(result.SetupCode) == "" {
+		return deviceSetupCodeData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a setup code.", meta)
 	}
-	interval := started.PollIntervalSeconds
-	if interval <= 0 {
-		interval = defaultDevicePollIntervalSeconds
+	if strings.TrimSpace(result.SetupRequestID) == "" {
+		return deviceSetupCodeData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a setup request id.", meta)
 	}
-	deadline, err := deviceApprovalDeadline(started.ExpiresAt, nowForCommand(opts), meta)
-	if err != nil {
-		return deviceSetupCodeData{}, err
-	}
-	printDeviceInstructions(opts.Stderr, operation, started)
-	for {
-		pollCtx, cancelPoll, err := deviceApprovalPollContext(ctx, deadline, nowForCommand(opts))
-		if err != nil {
-			return deviceSetupCodeData{}, err
-		}
-		var result deviceSetupCodeData
-		meta, err := runtime.Client.Do(pollCtx, http.MethodPost, pollPath, "", map[string]string{"device_code": started.DeviceCode}, &result)
-		err = deviceApprovalPollError(ctx, pollCtx, err)
-		cancelPoll()
-		if err == nil {
-			if strings.TrimSpace(result.SetupCode) == "" {
-				return deviceSetupCodeData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a setup code.", meta)
-			}
-			if strings.TrimSpace(result.SetupRequestID) == "" {
-				return deviceSetupCodeData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a setup request id.", meta)
-			}
-			return result, nil
-		}
-		delay, pending := authorizationPendingDelay(err, interval)
-		if !pending {
-			return deviceSetupCodeData{}, err
-		}
-		sleepDuration, err := deviceApprovalSleepDuration(deadline, nowForCommand(opts), time.Duration(delay)*time.Second)
-		if err != nil {
-			return deviceSetupCodeData{}, err
-		}
-		if err := sleepForCommand(ctx, opts, sleepDuration); err != nil {
-			return deviceSetupCodeData{}, err
-		}
-	}
+	return result, nil
 }
 
 func validateDeviceStart(started deviceStartData, meta *foundation.APIResponse) error {
