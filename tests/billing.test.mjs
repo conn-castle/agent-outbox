@@ -14,6 +14,7 @@ import {
 } from "../src/server/billing.ts";
 import { billingHumanSessionFromClerkUser } from "../src/server/billing-session.ts";
 import { INPUT_REQUEST_BODY_BYTE_LIMIT } from "../src/server/request-body.ts";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 const config = {
   secretKey: "sk_test_placeholder",
@@ -36,14 +37,6 @@ const billingEnvironmentNames = [
   "STRIPE_BILLING_PORTAL_CONFIGURATION_ID",
   "PUBLIC_APP_BASE_URL"
 ];
-
-/**
- * @param {import("pg").QueryResultRow[]} rows
- * @returns {import("pg").QueryResult<import("pg").QueryResultRow>}
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
-}
 
 test("portal billing configuration requires the explicit Stripe portal configuration", () => {
   const previous = Object.fromEntries(

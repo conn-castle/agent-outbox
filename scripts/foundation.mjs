@@ -103,6 +103,7 @@ const REQUIRED_FILES = [
     "scripts/worker-deploy.mjs",
     "scripts/runtime-smoke.mjs",
     "scripts/hosted-health.mjs",
+    "scripts/hosted-checks.mjs",
     "scripts/billing-smoke.mjs",
     ".env.example",
     "next.config.ts",

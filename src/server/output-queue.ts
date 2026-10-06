@@ -762,13 +762,13 @@ function outputResponse(
   files: readonly OutputFileMetadataRow[]
 ): { ok: true; data: JsonValue } | { ok: false; error: ApiErrorInput } {
   if (!isJsonRecord(row.response_payload)) {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Output response payload is temporarily unavailable."
     );
   }
   const feedback = row.response_payload.feedback;
   if (feedback !== undefined && typeof feedback !== "string") {
-    return temporaryUnavailableError(
+    return apiTemporaryUnavailable(
       "Output feedback is temporarily unavailable."
     );
   }
@@ -781,7 +781,7 @@ function outputResponse(
   if (row.response_kind === "file_upload") {
     const file = files[0];
     if (!file) {
-      return temporaryUnavailableError(
+      return apiTemporaryUnavailable(
         "Output file metadata is temporarily unavailable."
       );
     }
@@ -790,7 +790,7 @@ function outputResponse(
         ? file.size_bytes
         : Number(file.size_bytes);
     if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
-      return temporaryUnavailableError(
+      return apiTemporaryUnavailable(
         "Output file metadata is temporarily unavailable."
       );
     }
@@ -943,11 +943,4 @@ function outputResultIdRequiredError(): OutputQueueResult {
       message: "output_result_id is required."
     }
   };
-}
-
-function temporaryUnavailableError(
-  message: string,
-  options?: { errorId?: string; reported?: boolean }
-): { ok: false; error: ApiErrorInput } {
-  return apiTemporaryUnavailable(message, options);
 }

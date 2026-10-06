@@ -3,7 +3,7 @@ import {
   consumesMonthlyCallerApiRequestQuota,
   type ActiveLimitBlockMetadata
 } from "./accounting.ts";
-import type { ApiErrorInput } from "./api-errors.ts";
+import { apiTemporaryUnavailable, type ApiErrorInput } from "./api-errors.ts";
 import type {
   ProductTransactionQuery,
   TransactionContextStatement
@@ -77,12 +77,20 @@ export async function accountLimitProfileForAccount(
   return limitProfileSelectorForAccountTier(result.rows[0]?.tier);
 }
 
-export async function enforceCallerRequestLimits(
+export async function enforceAccountOperationLimits(
   query: ProductTransactionQuery,
-  identity: CallerLimitIdentity,
-  profile: LimitProfileSelector,
-  operationKind: LimitOperationKind
+  identity: AccountLimitIdentity,
+  operationKind: LimitOperationKind,
+  unavailableMessage: string
 ): Promise<CallerLimitGuardResult> {
+  const profile = await accountLimitProfileForAccount(
+    query,
+    identity.accountId
+  );
+  if (!profile) {
+    return apiTemporaryUnavailable(unavailableMessage);
+  }
+
   return enforceAccountRequestLimits(query, identity, profile, operationKind);
 }
 
@@ -125,96 +133,7 @@ export async function enforceAccountRequestLimits(
   );
 }
 
-export async function enforceIpConnectStartLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(query, ipAddress, "caller_connect_start");
-}
-
-export async function enforceIpConnectDevicePollLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(query, ipAddress, "caller_connect_poll");
-}
-
-export async function enforceIpConnectExchangeLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(
-    query,
-    ipAddress,
-    "caller_connect_exchange"
-  );
-}
-
-export async function enforceIpConnectActivationLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(
-    query,
-    ipAddress,
-    "caller_connect_activation"
-  );
-}
-
-export async function enforceIpRotateStartLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(query, ipAddress, "caller_rotate_start");
-}
-
-export async function enforceIpRotateDevicePollLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(query, ipAddress, "caller_rotate_poll");
-}
-
-export async function enforceIpRotateExchangeLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(query, ipAddress, "caller_rotate_exchange");
-}
-
-export async function enforceIpRotateActivationLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(
-    query,
-    ipAddress,
-    "caller_rotate_activation"
-  );
-}
-
-export async function enforceIpRevokeStartLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(query, ipAddress, "caller_revoke_start");
-}
-
-export async function enforceIpRevokeDevicePollLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(query, ipAddress, "caller_revoke_poll");
-}
-
-export async function enforceIpRevokeConfirmLimit(
-  query: ProductTransactionQuery,
-  ipAddress: string
-): Promise<CallerLimitGuardResult> {
-  return enforceIpControlPlaneLimit(query, ipAddress, "caller_revoke_confirm");
-}
-
-async function enforceIpControlPlaneLimit(
+export async function enforceIpControlPlaneLimit(
   query: ProductTransactionQuery,
   ipAddress: string,
   operationKind: Extract<

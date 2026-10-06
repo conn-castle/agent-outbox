@@ -4,7 +4,6 @@ import test from "node:test";
 import { tsImport } from "tsx/esm/api";
 
 import {
-  accountLimitProfile,
   deleteInputItem,
   handleInputQueueRequest,
   handleInputQueueRequestInTransaction,
@@ -14,6 +13,7 @@ import {
   sendInputItem
 } from "../src/server/input-queue.ts";
 import { callerCredentialLastUsedStatement } from "../src/server/caller-api-auth.ts";
+import { accountLimitProfileForAccount } from "../src/server/caller-api-limits.ts";
 import {
   INPUT_REQUEST_BODY_BYTE_LIMIT,
   readJsonBodyWithLimit
@@ -27,12 +27,12 @@ import {
   InputSubmissionSchema,
   publicSchemaFieldErrors
 } from "../src/shared/public-api-contract.ts";
+import { fakeQuery, queryResult } from "./helpers/fake-query.mjs";
 
 /**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
  * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
+ * @typedef {import("./helpers/fake-query.mjs").MockProductTransactionQuery} MockProductTransactionQuery
  */
 
 const { safeHref } = await tsImport(
@@ -99,37 +99,6 @@ function parseValidInput(input = baseInput()) {
   const result = parseInputSubmission(input, { limitProfile: "hosted-paid" });
   assert.equal(result.ok, true);
   return result.submission;
-}
-
-/**
- * @param {QueryResultRow[][]} rowsByCall
- * @returns {MockProductTransactionQuery}
- */
-function fakeQuery(rowsByCall) {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /**
-   * @param {TransactionContextStatement} statement
-   * @returns {Promise<import("pg").QueryResult<QueryResultRow>>}
-   */
-  const query = async (statement) => {
-    calls.push(statement);
-    const rows = rowsByCall[calls.length - 1] ?? [];
-    return queryResult(rows);
-  };
-  const typedQuery = /** @type {MockProductTransactionQuery} */ (
-    /** @type {unknown} */ (query)
-  );
-  typedQuery.calls = calls;
-  return typedQuery;
-}
-
-/**
- * @param {QueryResultRow[]} rows
- * @returns {import("pg").QueryResult<QueryResultRow>}
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 function pendingInputRow() {
@@ -1593,6 +1562,9 @@ test("caller credential last-used update is scoped to authenticated account call
 test("account limit profile fails loud when the authenticated account row is missing", async () => {
   const query = fakeQuery([[]]);
 
-  assert.equal(await accountLimitProfile(query, identity.accountId), null);
+  assert.equal(
+    await accountLimitProfileForAccount(query, identity.accountId),
+    null
+  );
   assert.deepEqual(query.calls[0].values, [identity.accountId]);
 });

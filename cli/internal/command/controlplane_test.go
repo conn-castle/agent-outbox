@@ -422,35 +422,163 @@ func TestCallerConnectBrowserIgnoresMalformedCallbacksUntilValidCallback(t *test
 	}
 }
 
-func TestBrowserFlowExpiresAtStopsWaiting(t *testing.T) {
-	var stderr bytes.Buffer
-	opened := false
+func TestCallerBrowserApprovalSuccess(t *testing.T) {
+	const approvalURL = "https://app.example/approve"
+	const replacementKey = "aob_live_newkey_browsersecret"
+	for _, tt := range []struct {
+		name, operation string
+		args            []string
+	}{
+		{"rotate", "rotate", []string{"caller", "rotate", "--browser"}},
+		{"revoke", "revoke", []string{"caller", "revoke", "steward-email", "--browser"}},
+		{"disconnect", "revoke", []string{"caller", "disconnect", "--revoke", "--browser"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &controlPlaneSecretStore{keys: map[string]string{"caller_123": "aob_live_oldkey_oldsecret"}}
+			var callbackURL string
+			var requests []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests = append(requests, r.URL.Path)
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %s, want POST", r.Method)
+				}
+				wantAuth := ""
+				if r.URL.Path == "/api/caller/rotate/activate" {
+					wantAuth = "Bearer " + replacementKey
+				}
+				if got := r.Header.Get("Authorization"); got != wantAuth {
+					t.Errorf("authorization = %q, want %q", got, wantAuth)
+				}
+				var body map[string]string
+				decodeJSONBody(t, r, &body)
+				switch r.URL.Path {
+				case "/api/caller/" + tt.operation + "/browser/start":
+					callbackURL = body["callback_url"]
+					callback, err := url.Parse(callbackURL)
+					if err != nil || callback.Scheme != "http" || callback.Hostname() != "127.0.0.1" || callback.Port() == "" || callback.Path != "/callback" || callback.RawQuery != "" {
+						t.Errorf("callback URL = %q, want loopback HTTP callback", callbackURL)
+					}
+					want := map[string]string{"caller_id": "caller_123", "local_caller_name": "steward-email", "callback_url": callbackURL}
+					if !reflect.DeepEqual(body, want) {
+						t.Errorf("start body = %#v, want %#v", body, want)
+					}
+					writeEnvelope(w, `{"approval_url":"https://app.example/approve","setup_request_id":"setup_browser","expires_at":"2099-07-02T20:10:00Z"}`)
+				case "/api/caller/rotate/exchange", "/api/caller/revoke/confirm":
+					if !reflect.DeepEqual(body, map[string]string{"setup_code": "setup_code_browser"}) {
+						t.Errorf("exchange/confirm body = %#v", body)
+					}
+					if tt.operation == "rotate" {
+						writeEnvelope(w, fmt.Sprintf(`{"caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"replacement_credential":{"api_key":%q,"key_id":"key_new","prefix":"aob_live","last_chars":"newx","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"},"replaces_credential":{"key_id":"key_old","last_chars":"oldx"}}`, replacementKey))
+					} else {
+						writeEnvelope(w, `{"caller_id":"caller_123","revoked_key_ids":["key_old"],"revoked_at":"2026-07-02T20:01:00Z"}`)
+					}
+				case "/api/caller/rotate/activate":
+					if !reflect.DeepEqual(body, map[string]string{"setup_request_id": "setup_browser"}) {
+						t.Errorf("activate body = %#v", body)
+					}
+					if store.keys["caller_123"] != replacementKey {
+						t.Error("activate happened before local replacement store")
+					}
+					writeEnvelope(w, `{"caller_id":"caller_123","activated_key_id":"key_new","revoked_key_id":"key_old","activated_at":"2026-07-02T20:01:00Z"}`)
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			}))
+			defer server.Close()
+			configPath := writeControlConfig(t, server.URL)
+			stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+				configPath: configPath, baseURL: server.URL, store: store,
+				args: append([]string{"--json"}, tt.args...),
+				openBrowser: func(got string) error {
+					if got != approvalURL {
+						t.Errorf("opened URL = %q, want %q", got, approvalURL)
+					}
+					resp, err := http.Get(callbackURL + "?status=approved&setup_request_id=setup_browser&setup_code=setup_code_browser")
+					if err != nil {
+						return err
+					}
+					defer resp.Body.Close()
+					if resp.StatusCode != http.StatusOK {
+						return fmt.Errorf("callback status = %d", resp.StatusCode)
+					}
+					return nil
+				},
+			})
+			if code != foundation.ExitSuccess {
+				t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+			}
+			wantRequests := []string{"/api/caller/" + tt.operation + "/browser/start", "/api/caller/revoke/confirm"}
+			if tt.operation == "rotate" {
+				wantRequests = []string{"/api/caller/rotate/browser/start", "/api/caller/rotate/exchange", "/api/caller/rotate/activate"}
+			}
+			if !reflect.DeepEqual(requests, wantRequests) {
+				t.Fatalf("requests = %#v, want %#v", requests, wantRequests)
+			}
+			if !strings.Contains(stderr, tt.operation+" approval: "+approvalURL+"\n") {
+				t.Fatalf("stderr missing approval line: %s", stderr)
+			}
+			wantJSON := `{"local_caller_name":"steward-email","caller_id":"caller_123","revoked":true,"revoked_key_ids":["key_old"],"revoked_at":"2026-07-02T20:01:00Z"}`
+			if tt.name == "disconnect" {
+				wantJSON = `{"local_caller_name":"steward-email","caller_id":"caller_123","disconnected":true,"revoked":true,"revoked_key_ids":["key_old"],"revoked_at":"2026-07-02T20:01:00Z"}`
+			} else if tt.name == "rotate" {
+				wantJSON = `{"local_caller_name":"steward-email","rotated":true,"caller":{"caller_id":"caller_123","caller_slug":"steward-email","display_name":"Steward Email"},"account":{"account_id":"acct_123","label":"Test","effective_tier":"free"},"replacement_credential":{"key_id":"key_new","prefix":"aob_live","last_chars":"newx","created_at":"2026-07-02T20:00:00Z","expires_at":"2026-07-02T20:10:00Z"},"replaces_credential":{"key_id":"key_old","prefix":"","last_chars":"oldx","created_at":""},"activation":{"caller_id":"caller_123","activated_key_id":"key_new","revoked_key_id":"key_old","activated_at":"2026-07-02T20:01:00Z"}}`
+			}
+			var result struct {
+				OK   bool           `json:"ok"`
+				Data map[string]any `json:"data"`
+			}
+			var want map[string]any
+			if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+				t.Fatalf("invalid success JSON: %v", err)
+			}
+			if err := json.Unmarshal([]byte(wantJSON), &want); err != nil {
+				t.Fatal(err)
+			}
+			if !result.OK || !reflect.DeepEqual(result.Data, want) {
+				t.Fatalf("success payload = %s, want data %s", stdout, wantJSON)
+			}
+			assertNoSecretLeak(t, replacementKey, stdout, stderr, configPath)
+		})
+	}
+}
 
-	_, err := runBrowserFlow(context.Background(), Options{
-		Stderr: &stderr,
-		OpenBrowser: func(string) error {
+func TestCallerConnectBrowserStopsAtApprovalExpiry(t *testing.T) {
+	opened := false
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+		if r.URL.Path != "/api/caller/connect/browser/start" {
+			t.Errorf("unexpected request after expiry: %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		writeEnvelope(w, fmt.Sprintf(`{"approval_url":"https://app.example/caller/connect/approve?setup=setup_expired","setup_request_id":"setup_expired","expires_at":%q}`, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)))
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: filepath.Join(t.TempDir(), "config.json"),
+		baseURL:    server.URL,
+		store:      &controlPlaneSecretStore{},
+		args:       []string{"--json", "caller", "connect", "steward-email", "--browser"},
+		now:        func() time.Time { return time.Now().UTC() },
+		openBrowser: func(string) error {
 			opened = true
 			return nil
 		},
-	}, "connect", func(string) (browserStartData, *foundation.APIResponse, error) {
-		return browserStartData{
-			ApprovalURL:    "https://app.example/caller/connect/approve?setup=setup_expired",
-			SetupRequestID: "setup_expired",
-			ExpiresAt:      time.Now().Add(-time.Minute).UTC().Format(time.RFC3339),
-		}, nil, nil
 	})
-	if err == nil {
-		t.Fatalf("runBrowserFlow succeeded after expiry")
+	if code != foundation.ExitTemporary || stdout != "" {
+		t.Fatalf("exit code = %d, want browser expiry timeout with empty stdout; stdout: %s stderr: %s", code, stdout, stderr)
 	}
-	appErr, ok := err.(*foundation.AppError)
-	if !ok {
-		t.Fatalf("error type = %T, want *AppError", err)
-	}
-	if appErr.Code != foundation.CodeTemporaryUnavailable {
-		t.Fatalf("error code = %q, want %q", appErr.Code, foundation.CodeTemporaryUnavailable)
+	if !strings.Contains(stderr, `"code":"temporary_unavailable"`) || !strings.Contains(stderr, "Timed out waiting for browser approval callback before the setup request expired.") {
+		t.Fatalf("stderr missing browser timeout code/message: %s", stderr)
 	}
 	if !opened {
 		t.Fatalf("browser opener was not called")
+	}
+	if !reflect.DeepEqual(requests, []string{"/api/caller/connect/browser/start"}) {
+		t.Fatalf("requests = %#v, want start only", requests)
 	}
 }
 
@@ -696,7 +824,7 @@ func TestCallerConnectDeviceStartRequiresValidExpiry(t *testing.T) {
 	}
 }
 
-func TestDeviceSetupCodeFlowStopsAtDeviceExpiry(t *testing.T) {
+func TestCallerRotateDeviceStopsAtDeviceExpiry(t *testing.T) {
 	now := testControlNow
 	polls := 0
 
@@ -721,43 +849,26 @@ func TestDeviceSetupCodeFlowStopsAtDeviceExpiry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	var stderr bytes.Buffer
 	var sleeps []time.Duration
-	runtime := &controlPlaneRuntime{
-		Client: foundation.APIClient{
-			BaseURL:      server.URL,
-			HTTPClient:   server.Client(),
-			NewRequestID: func() string { return "req_cli" },
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: writeControlConfig(t, server.URL),
+		baseURL:    server.URL,
+		store:      &controlPlaneSecretStore{},
+		args:       []string{"--json", "caller", "rotate", "--device-code"},
+		now: func() time.Time {
+			return now
 		},
-	}
-	_, err := runDeviceSetupCodeFlow(
-		context.Background(),
-		Options{
-			Stderr: &stderr,
-			Now: func() time.Time {
-				return now
-			},
-			Sleep: func(_ context.Context, d time.Duration) error {
-				sleeps = append(sleeps, d)
-				now = now.Add(d)
-				return nil
-			},
+		sleep: func(_ context.Context, d time.Duration) error {
+			sleeps = append(sleeps, d)
+			now = now.Add(d)
+			return nil
 		},
-		runtime,
-		foundation.CallerConfig{Name: "steward-email", CallerID: "caller_123"},
-		"rotate",
-		"/api/caller/rotate/device/start",
-		"/api/caller/rotate/device/poll",
-	)
-	if err == nil {
-		t.Fatalf("runDeviceSetupCodeFlow succeeded after device expiry")
+	})
+	if code != foundation.ExitTemporary || stdout != "" {
+		t.Fatalf("exit code = %d, want device expiry timeout with empty stdout; stdout: %s stderr: %s", code, stdout, stderr)
 	}
-	appErr, ok := err.(*foundation.AppError)
-	if !ok {
-		t.Fatalf("error type = %T, want *AppError", err)
-	}
-	if appErr.Code != foundation.CodeTemporaryUnavailable {
-		t.Fatalf("error code = %q, want %q", appErr.Code, foundation.CodeTemporaryUnavailable)
+	if !strings.Contains(stderr, `"code":"temporary_unavailable"`) || !strings.Contains(stderr, "Timed out waiting for device approval.") {
+		t.Fatalf("stderr missing device timeout code/message: %s", stderr)
 	}
 	if polls != 1 {
 		t.Fatalf("poll count = %d, want one poll before expiry", polls)
@@ -765,8 +876,8 @@ func TestDeviceSetupCodeFlowStopsAtDeviceExpiry(t *testing.T) {
 	if len(sleeps) != 1 || sleeps[0] != time.Second {
 		t.Fatalf("sleeps = %#v, want one 1s sleep capped by expiry", sleeps)
 	}
-	if !strings.Contains(stderr.String(), "user_code=ROTATE-1") {
-		t.Fatalf("device setup instructions omitted user code: %s", stderr.String())
+	if !strings.Contains(stderr, "user_code=ROTATE-1") {
+		t.Fatalf("device setup instructions omitted user code: %s", stderr)
 	}
 }
 
@@ -2738,11 +2849,11 @@ func TestCallerDeviceStartRejectsInvalidResponseBeforeInstructionsOrPoll(t *test
 func TestCallerBrowserStartRejectsInvalidResponseBeforeOpeningBrowser(t *testing.T) {
 	const valid = `{"approval_url":"https://app.example/approve","setup_request_id":"setup_123","expires_at":"2099-07-02T20:10:00Z"}`
 	for _, operation := range []string{"connect", "rotate", "revoke"} {
-		for _, tt := range []struct{ name, from, to string }{
-			{"missing approval URL", `"approval_url":"https://app.example/approve"`, `"approval_url":""`},
-			{"missing setup request id", `"setup_request_id":"setup_123"`, `"setup_request_id":" "`},
-			{"missing expiry", `"expires_at":"2099-07-02T20:10:00Z"`, `"expires_at":""`},
-			{"invalid expiry", `"expires_at":"2099-07-02T20:10:00Z"`, `"expires_at":"invalid"`},
+		for _, tt := range []struct{ name, from, to, message string }{
+			{"missing approval URL", `"approval_url":"https://app.example/approve"`, `"approval_url":""`, "Agent Outbox API did not return an approval URL."},
+			{"missing setup request id", `"setup_request_id":"setup_123"`, `"setup_request_id":" "`, "Agent Outbox API did not return a setup request id."},
+			{"missing expiry", `"expires_at":"2099-07-02T20:10:00Z"`, `"expires_at":""`, "Agent Outbox API did not return an approval expiry."},
+			{"invalid expiry", `"expires_at":"2099-07-02T20:10:00Z"`, `"expires_at":"invalid"`, "Agent Outbox API returned an invalid approval expiry."},
 		} {
 			t.Run(operation+"/"+tt.name, func(t *testing.T) {
 				requests, opens := 0, 0
@@ -2771,6 +2882,9 @@ func TestCallerBrowserStartRejectsInvalidResponseBeforeOpeningBrowser(t *testing
 					openBrowser: func(string) error { opens++; return nil },
 				})
 				assertAPIResponseInvalid(t, stdout, stderr, code)
+				if !strings.Contains(stderr, `"message":"`+tt.message+`"`) {
+					t.Fatalf("stderr missing exact message %q: %s", tt.message, stderr)
+				}
 				if requests != 1 || opens != 0 {
 					t.Fatalf("invalid browser start continued: requests=%d opens=%d", requests, opens)
 				}
@@ -2781,10 +2895,9 @@ func TestCallerBrowserStartRejectsInvalidResponseBeforeOpeningBrowser(t *testing
 
 func TestCallerDevicePollRequiresSetupCodeAndRequestID(t *testing.T) {
 	for _, operation := range []string{"rotate", "revoke"} {
-		for _, tt := range []struct {
-			data, message string
-		}{
+		for _, tt := range []struct{ data, message string }{
 			{`{"setup_request_id":"setup_123"}`, "Agent Outbox API did not return a setup code."},
+			{`{"setup_code":" ","setup_request_id":"setup_123"}`, "Agent Outbox API did not return a setup code."},
 			{`{"setup_code":"setup_code_123","setup_request_id":" "}`, "Agent Outbox API did not return a setup request id."},
 			{`{}`, "Agent Outbox API did not return a setup code."},
 		} {
@@ -2815,7 +2928,7 @@ func TestCallerDevicePollRequiresSetupCodeAndRequestID(t *testing.T) {
 				})
 				assertAPIResponseInvalid(t, stdout, stderr, code)
 				if !strings.Contains(stderr, `"message":"`+tt.message+`"`) {
-					t.Fatalf("stderr missing exact message %q: %s", tt.message, stderr)
+					t.Fatalf("stderr missing exact setup message %q: %s", tt.message, stderr)
 				}
 				if requests != 2 {
 					t.Fatalf("requests = %d, want start and poll only", requests)

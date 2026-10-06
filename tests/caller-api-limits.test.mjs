@@ -5,46 +5,17 @@ import {
   activeLimitBlockStatement,
   concurrencySlotStatement,
   enforceAcceptedInputSubmissionLimits,
-  enforceCallerRequestLimits,
+  enforceAccountRequestLimits,
   enforceHumanFileUploadLimits,
   incrementQuotaWindowStatement,
   quotaWindow
 } from "../src/server/caller-api-limits.ts";
-
-/**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
- * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
- * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
- */
+import { fakeQuery } from "./helpers/fake-query.mjs";
 
 const identity = {
   accountId: "00000000-0000-4000-8000-000000000001",
   callerId: "00000000-0000-4000-8000-000000000002"
 };
-
-/**
- * @param {QueryResultRow[][]} rowsByCall
- * @returns {MockProductTransactionQuery}
- */
-function fakeQuery(rowsByCall) {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /**
-   * @param {TransactionContextStatement} statement
-   * @returns {Promise<import("pg").QueryResult<QueryResultRow>>}
-   */
-  const query = async (statement) => {
-    calls.push(statement);
-    const rows = rowsByCall[calls.length - 1] ?? [];
-    return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
-  };
-  const typed = /** @type {MockProductTransactionQuery} */ (
-    /** @type {unknown} */ (query)
-  );
-  typed.calls = calls;
-  return typed;
-}
 
 test("caller request limits short-circuit active blocks without incrementing quota windows", async () => {
   const query = fakeQuery([
@@ -63,7 +34,7 @@ test("caller request limits short-circuit active blocks without incrementing quo
     ]
   ]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -87,7 +58,7 @@ test("caller request limits short-circuit active blocks without incrementing quo
 test("caller request limits lock and persist an active block when a quota window overflows", async () => {
   const query = fakeQuery([[], [], [{ used_units: "100001" }], []]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -115,7 +86,7 @@ test("caller request limits do not debit an earlier window when a later window o
     []
   ]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -151,7 +122,7 @@ test("send/replace request limits co-apply monthly and minute windows without pa
     []
   ]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -189,7 +160,7 @@ test("output file download request limits co-apply monthly and minute windows wi
     []
   ]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -217,7 +188,7 @@ test("paid and self-hosted profiles enforce send/replace minute limits while mon
   for (const profile of ["hosted-paid", "self-hosted"]) {
     const query = fakeQuery([[], [{ used_units: "601" }], []]);
 
-    const result = await enforceCallerRequestLimits(
+    const result = await enforceAccountRequestLimits(
       query,
       identity,
       /** @type {import("../src/server/limits.ts").LimitProfileSelector} */ (
@@ -257,7 +228,7 @@ test("paid and self-hosted profiles enforce send/replace minute limits while mon
 test("input delete request limits enforce the minute throttle without monthly quota", async () => {
   const query = fakeQuery([[], [{ used_units: "601" }], []]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -293,7 +264,7 @@ test("input delete request limits enforce the minute throttle without monthly qu
 test("paid output file downloads enforce the minute throttle with monthly quota disabled", async () => {
   const query = fakeQuery([[], [{ used_units: "61" }], []]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-paid",
@@ -323,7 +294,7 @@ test("paid output file downloads enforce the minute throttle with monthly quota 
 test("send/replace monthly quota uses the existing shared caller API request metric", async () => {
   const query = fakeQuery([[], [], [{ used_units: "100000" }], []]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -369,7 +340,7 @@ test("legacy generic monthly active blocks still block send/replace requests", a
     ]
   ]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -411,13 +382,13 @@ test("caller request limits ignore disabled-profile blocks but still enforce ena
   const paidStatusQuery = fakeQuery([[monthlyBlock]]);
   const paidOutputQuery = fakeQuery([[monthlyBlock, minuteBlock]]);
 
-  const paidStatus = await enforceCallerRequestLimits(
+  const paidStatus = await enforceAccountRequestLimits(
     paidStatusQuery,
     identity,
     "hosted-paid",
     "status"
   );
-  const paidOutput = await enforceCallerRequestLimits(
+  const paidOutput = await enforceAccountRequestLimits(
     paidOutputQuery,
     identity,
     "hosted-paid",
@@ -464,7 +435,7 @@ test("caller request limits ignore stale enabled blocks that no longer exceed th
   };
   const query = fakeQuery([[staleBlock], [], [{ used_units: "1" }]]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -490,7 +461,7 @@ test("caller request limits ignore enabled blocks without usage evidence", async
   };
   const query = fakeQuery([[nullUsageBlock], [], [{ used_units: "1" }]]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -515,7 +486,7 @@ test("caller request limits ignore blocks whose limit no longer applies to the o
   };
   const query = fakeQuery([[mismatchedBlock], [{ used_units: "1" }]]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",
@@ -540,7 +511,7 @@ test("caller request limits ignore cleanup-free blocks that require live revalid
   };
   const query = fakeQuery([[staleCleanupBlock], [{ used_units: "1" }]]);
 
-  const result = await enforceCallerRequestLimits(
+  const result = await enforceAccountRequestLimits(
     query,
     identity,
     "hosted-free",

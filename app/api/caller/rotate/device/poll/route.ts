@@ -1,28 +1,12 @@
-import {
-  apiErrorResponse,
-  apiRequestContext,
-  apiSuccessResponse
-} from "../../../../../../src/server/api-errors";
+import { respondToJsonApiRequest } from "../../../../../../src/server/api-route";
 import { handleRotateDevicePollRequest } from "../../../../../../src/server/caller-credential-operations";
-import { readJsonBodyWithLimit } from "../../../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request, "/api/caller/rotate/device/poll");
-  const body = await readJsonBodyWithLimit(request);
-  if (!body.ok) {
-    return apiErrorResponse(context, body.error);
-  }
-
-  const result = await handleRotateDevicePollRequest(
+  return respondToJsonApiRequest(
     request,
-    context,
-    body.value
+    "/api/caller/rotate/device/poll",
+    (context, body) => handleRotateDevicePollRequest(request, context, body)
   );
-  if (!result.ok) {
-    return apiErrorResponse(context, result.error);
-  }
-
-  return apiSuccessResponse(context, result.data);
 }

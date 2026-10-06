@@ -1,31 +1,19 @@
-import {
-  apiErrorResponse,
-  apiRequestContext,
-  apiSuccessResponse
-} from "../../../../../src/server/api-errors";
+import { respondToApiRequest } from "../../../../../src/server/api-route";
 import { handleOutputReadRequest } from "../../../../../src/server/output-queue";
 
 export const runtime = "nodejs";
 
 export async function POST(
   request: Request,
-  context: { params: Promise<{ output_result_id: string }> }
+  { params }: { params: Promise<{ output_result_id: string }> }
 ) {
-  const apiContext = apiRequestContext(
+  return respondToApiRequest(
     request,
-    "/api/output/[output_result_id]/read"
+    "/api/output/[output_result_id]/read",
+    async (context) => {
+      const { output_result_id: outputResultId } = await params;
+      return handleOutputReadRequest(request, context, outputResultId);
+    },
+    { noStore: true }
   );
-  const { output_result_id: outputResultId } = await context.params;
-  const result = await handleOutputReadRequest(
-    request,
-    apiContext,
-    outputResultId
-  );
-  if (!result.ok) {
-    return apiErrorResponse(apiContext, result.error);
-  }
-
-  return apiSuccessResponse(apiContext, result.data, {
-    headers: { "Cache-Control": "no-store" }
-  });
 }

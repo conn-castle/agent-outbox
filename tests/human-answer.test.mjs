@@ -12,10 +12,7 @@ import {
 } from "../src/server/human-answer.ts";
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
-import {
-  handleOutputFileDownloadAuthenticatedTransaction,
-  outputFileDownloadInTransaction
-} from "../src/server/output-files.ts";
+import { outputFileDownloadInTransaction } from "../src/server/output-files.ts";
 import {
   acknowledgeOutputInTransaction,
   readOutputResultInTransaction
@@ -29,6 +26,8 @@ import {
   teardownAttempt
 } from "./helpers/database.mjs";
 import { parseValidSubmission } from "./helpers/canonical-input.mjs";
+import { guardedOutputFileDownloadForTest } from "./helpers/output-files.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -2042,7 +2041,7 @@ test(
         ids,
         "caller",
         (query) =>
-          handleOutputFileDownloadAuthenticatedTransaction(
+          guardedOutputFileDownloadForTest(
             query,
             {
               requestId: "req-download-race",
@@ -2276,13 +2275,12 @@ test(
               id
             );
             assert.equal(read.ok ? 200 : read.error.status, 404, id);
-            const download =
-              await handleOutputFileDownloadAuthenticatedTransaction(
-                query,
-                context,
-                identity,
-                { outputResultId: id, fileId }
-              );
+            const download = await guardedOutputFileDownloadForTest(
+              query,
+              context,
+              identity,
+              { outputResultId: id, fileId }
+            );
             assert.equal(download.ok ? 200 : download.error.status, 404, id);
             const ack = await acknowledgeOutputInTransaction(
               query,
@@ -2296,13 +2294,12 @@ test(
             ...caseForms(fileId),
             ...noncanonicalForms(fileId)
           ]) {
-            const download =
-              await handleOutputFileDownloadAuthenticatedTransaction(
-                query,
-                context,
-                identity,
-                { outputResultId, fileId: id }
-              );
+            const download = await guardedOutputFileDownloadForTest(
+              query,
+              context,
+              identity,
+              { outputResultId, fileId: id }
+            );
             assert.equal(download.ok ? 200 : download.error.status, 404, id);
           }
 
@@ -2312,13 +2309,12 @@ test(
             outputResultId
           );
           assert.equal(read.ok, true);
-          const download =
-            await handleOutputFileDownloadAuthenticatedTransaction(
-              query,
-              context,
-              identity,
-              { outputResultId, fileId }
-            );
+          const download = await guardedOutputFileDownloadForTest(
+            query,
+            context,
+            identity,
+            { outputResultId, fileId }
+          );
           assert.equal(download.ok ? download.bytes.toString() : "", "answer");
           assert.deepEqual(
             await acknowledgeOutputInTransaction(
@@ -3182,14 +3178,6 @@ function mockQuery(calls, rowsByKind) {
   return /** @type {ProductTransactionQuery} */ (
     /** @type {unknown} */ (query)
   );
-}
-
-/**
- * @param {QueryResultRow[]} rows
- * @returns {import("pg").QueryResult<QueryResultRow>}
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 /**

@@ -49,6 +49,9 @@ export type ApiErrorInput = {
   reported?: boolean;
 };
 
+export type ApiResult<TData> =
+  { ok: true; data: TData } | { ok: false; error: ApiErrorInput };
+
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 export function apiRequestContext(

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -160,4 +161,19 @@ test("generated Go contract is deterministic and all selected consumers remain a
         )
     )
   );
+});
+
+test("app validation keeps its default exact-field TypeError", () => {
+  const raw = JSON.parse(
+    readFileSync(new URL("../system-contract.json", import.meta.url), "utf8")
+  );
+  const missing = { ...raw };
+  delete missing.billing_downgrade_grace_days;
+  for (const invalid of [missing, { ...raw, extra: true }]) {
+    assert.throws(() => validateTypeScriptSystemContract(invalid), {
+      name: "TypeError",
+      message: "system-contract.json fields must be exact."
+    });
+  }
+  assert.deepEqual(validateTypeScriptSystemContract(raw), readSystemContract());
 });
