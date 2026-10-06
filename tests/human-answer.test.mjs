@@ -12,7 +12,16 @@ import {
 } from "../src/server/human-answer.ts";
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
-import { outputFileDownloadInTransaction } from "../src/server/output-files.ts";
+import {
+  handleOutputFileDownloadRequest,
+  outputFileDownloadInTransaction
+} from "../src/server/output-files.ts";
+import { generateCallerApiKeyMaterial } from "../src/server/caller-auth.ts";
+import { apiRequestContext } from "../src/server/api-errors.ts";
+import {
+  handleAccountStatusRequest,
+  handleCallerStatusRequest
+} from "../src/server/status.ts";
 import {
   acknowledgeOutputInTransaction,
   readOutputResultInTransaction
@@ -26,6 +35,7 @@ import {
   teardownAttempt
 } from "./helpers/database.mjs";
 import { parseValidSubmission } from "./helpers/canonical-input.mjs";
+import { withProcessEnv } from "./helpers/process-env.mjs";
 import { guardedOutputFileDownloadForTest } from "./helpers/output-files.mjs";
 import { queryResult } from "./helpers/fake-query.mjs";
 
@@ -1938,14 +1948,303 @@ test(
 );
 
 test(
-  "acknowledging an output while its file downloads finishes without deadlocking",
+  "public caller status and downloads preserve identity, isolation, and quota transactions",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
   async () => {
     assert.ok(databaseUrl);
     const owner = await connectedDatabaseClient(databaseUrl);
     const human = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const otherIds = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await seedDatabaseRows(owner, ids);
+      await seedDatabaseRows(owner, otherIds);
+      const firstKey = await seedCallerCredential(owner, ids);
+      await owner.query(
+        "update public.agent_outbox_caller_credentials set status = 'revoked', revoked_at = now() where key_id = $1",
+        [firstKey.keyId]
+      );
+      const key = await seedCallerCredential(owner, ids);
+      const otherKey = await seedCallerCredential(owner, otherIds);
+      const siblingCallerId = crypto.randomUUID();
+      await owner.query(
+        "insert into public.agent_outbox_callers(caller_id, account_id, display_name) values ($1, $2, 'Sibling caller')",
+        [siblingCallerId, ids.accountId]
+      );
+      const siblingKey = await seedCallerCredential(owner, {
+        ...ids,
+        callerId: siblingCallerId
+      });
+      const runtimeUrl = new URL(databaseUrl);
+      runtimeUrl.searchParams.set("options", "-c role=agent_outbox_app");
+      await withProcessEnv(
+        {
+          DATABASE_APP_ROLE_URL: runtimeUrl.href,
+          CALLER_KEY_HASH_SECRET: "0123456789abcdef0123456789abcdef"
+        },
+        async () => {
+          /** @param {string} [bearer] */
+          const requestFor = (bearer = key.plaintextApiKey) =>
+            new Request("https://app.agent-outbox.dev/api/caller/status", {
+              headers: bearer ? { authorization: `Bearer ${bearer}` } : {}
+            });
+          const request = requestFor();
+          const context = apiRequestContext(request, "/api/caller/status");
+          for (const handler of [
+            handleCallerStatusRequest,
+            handleAccountStatusRequest
+          ]) {
+            const missing = requestFor("");
+            const denied = await handler(
+              missing,
+              apiRequestContext(missing, context.route)
+            );
+            assert.equal(denied.ok, false);
+            if (denied.ok) assert.fail("missing credentials must be rejected");
+            assert.equal(denied.error.code, "authentication_required");
+            assert.equal(denied.error.status, 401);
+          }
+          const revokedRequest = requestFor(firstKey.plaintextApiKey);
+          const revoked = await handleCallerStatusRequest(
+            revokedRequest,
+            context
+          );
+          if (revoked.ok) assert.fail("revoked credentials must be rejected");
+          assert.equal(revoked.error.status, 401);
+          assert.equal(revoked.error.code, "invalid_caller_credentials");
+          const caller = await handleCallerStatusRequest(request, context);
+          if (!caller.ok) assert.fail(JSON.stringify(caller));
+          assert.equal(caller.data.caller.caller_id, ids.callerId);
+          assert.equal(caller.data.caller.key.key_id, key.keyId);
+          assert.notEqual(caller.data.caller.key.key_id, firstKey.keyId);
+          assert.equal(caller.data.account.account_id, ids.accountId);
+          assert.equal("queued_input_items" in caller.data.account, false);
+          assert.doesNotMatch(
+            JSON.stringify(caller.data),
+            /secretDigest|secret_hmac_sha256/
+          );
+          const account = await handleAccountStatusRequest(request, context);
+          if (!account.ok) assert.fail(JSON.stringify(account));
+          assert.equal(account.data.account_id, ids.accountId);
+          assert.equal("queued_input_items" in account.data, false);
+          const monthly =
+            "authenticated_caller_api_requests_per_calendar_month";
+          const minute = "output_file_download_requests_per_account_per_minute";
+          /** @returns {Promise<Array<{ limit_name: string, used_units: string }>>} */
+          const quotas = async () =>
+            (
+              await owner.query(
+                "select metric as limit_name, used_units::text from public.agent_outbox_account_quota_windows where account_id = $1 order by metric",
+                [ids.accountId]
+              )
+            ).rows;
+          assert.deepEqual(await quotas(), [
+            { limit_name: monthly, used_units: "2" }
+          ]);
+          await owner.query(
+            "update public.agent_outbox_account_quota_windows set used_units = 100000 where account_id = $1",
+            [ids.accountId]
+          );
+          for (const handler of [
+            handleCallerStatusRequest,
+            handleAccountStatusRequest
+          ]) {
+            const denied = await handler(request, context);
+            if (denied.ok)
+              assert.fail("exhausted monthly status quota must be rejected");
+            assert.equal(denied.error.status, 429);
+            assert.equal(denied.error.code, "quota_limit_exceeded");
+          }
+          assert.deepEqual(await quotas(), [
+            { limit_name: monthly, used_units: "100001" }
+          ]);
+          await owner.query(
+            "update public.agent_outbox_accounts set tier = 'hosted_paid' where account_id = $1",
+            [ids.accountId]
+          );
+          await owner.query(
+            "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+            [ids.actionId, JSON.stringify(fileUploadPayload)]
+          );
+          const answered = await runHumanAnswerDatabaseTransaction(
+            human,
+            ids,
+            "human",
+            (query) =>
+              createHumanAnswerInTransaction(query, {
+                accountId: ids.accountId,
+                callerId: ids.callerId,
+                humanUserId: ids.userId,
+                inputItemId: ids.inputItemId,
+                expectedRevision: 1,
+                actionValue: "approve",
+                requestId: "req-public-download-answer",
+                correlationId: "corr-public-download-answer",
+                response: {
+                  kind: "file_upload",
+                  file: new File(["answer"], "answer.txt", {
+                    type: "text/plain"
+                  })
+                }
+              })
+          );
+          if (!answered.ok) assert.fail(JSON.stringify(answered));
+          const outputResultId = answered.outputResultId;
+          const fileId = (
+            await owner.query(
+              "select output_file_id::text as id from public.agent_outbox_output_files where output_result_id = $1",
+              [outputResultId]
+            )
+          ).rows[0].id;
+          /** @param {Request} downloadRequest */
+          const download = (downloadRequest) =>
+            handleOutputFileDownloadRequest(
+              downloadRequest,
+              apiRequestContext(
+                downloadRequest,
+                "/api/output/[output_result_id]/files/[file_id]"
+              ),
+              { outputResultId, fileId }
+            );
+          const missing = await download(requestFor(""));
+          if (missing.ok)
+            assert.fail("missing download credentials must be rejected");
+          assert.equal(missing.error.status, 401);
+          const isolated = await download(requestFor(otherKey.plaintextApiKey));
+          if (isolated.ok)
+            assert.fail("another account cannot download the file");
+          assert.equal(isolated.error.status, 404);
+          assert.equal(isolated.error.code, "not_found");
+          const sibling = await download(
+            requestFor(siblingKey.plaintextApiKey)
+          );
+          if (sibling.ok)
+            assert.fail(
+              "another caller in the account cannot download the file"
+            );
+          assert.equal(sibling.error.status, 404);
+          assert.equal(sibling.error.code, "not_found");
+          const downloaded = await download(request);
+          if (!downloaded.ok) assert.fail(JSON.stringify(downloaded));
+          assert.equal(downloaded.bytes.toString(), "answer");
+          assert.equal(downloaded.headers.get("Content-Length"), "6");
+          assert.equal(downloaded.headers.get("Content-Type"), "text/plain");
+          assert.equal(
+            downloaded.headers.get("Content-Disposition"),
+            'attachment; filename="answer.txt"'
+          );
+          const audit = await owner.query(
+            "select file_bytes::text from public.agent_outbox_audit_events where output_result_id = $1 and event_type = 'file_downloaded'",
+            [outputResultId]
+          );
+          assert.deepEqual(audit.rows, [{ file_bytes: "6" }]);
+          for (const tier of ["hosted_free", "hosted_paid"]) {
+            await owner.query(
+              "update public.agent_outbox_accounts set tier = $2 where account_id = $1",
+              [ids.accountId, tier]
+            );
+            await owner.query(
+              "delete from public.agent_outbox_account_limit_blocks where account_id = $1",
+              [ids.accountId]
+            );
+            await owner.query(
+              "delete from public.agent_outbox_account_quota_windows where account_id = $1",
+              [ids.accountId]
+            );
+            await owner.query(
+              `insert into public.agent_outbox_account_quota_windows(account_id, metric, window_kind, window_start_utc, used_units)
+             values ($1, $2, 'minute', date_trunc('minute', now() at time zone 'UTC') at time zone 'UTC', 60)`,
+              [ids.accountId, minute]
+            );
+            if (tier === "hosted_free")
+              await owner.query(
+                `insert into public.agent_outbox_account_quota_windows(account_id, metric, window_kind, window_start_utc, used_units)
+             values ($1, $2, 'calendar_month', date_trunc('month', now() at time zone 'UTC') at time zone 'UTC', 25)`,
+                [ids.accountId, monthly]
+              );
+            // A denied request must finish without waiting for this output lock.
+            await owner.query("begin");
+            await owner.query(
+              "select 1 from public.agent_outbox_output_results where output_result_id = $1 for update",
+              [outputResultId]
+            );
+            const denied = await download(request);
+            await owner.query("rollback");
+            if (denied.ok)
+              assert.fail("exhausted minute quota must be rejected");
+            assert.equal(denied.error.status, 429);
+            assert.equal(denied.error.code, "rate_limit_exceeded");
+            assert.equal(
+              denied.error.limit && "limit_name" in denied.error.limit
+                ? denied.error.limit.limit_name
+                : null,
+              minute
+            );
+            assert.deepEqual(
+              await quotas(),
+              tier === "hosted_free"
+                ? [
+                    { limit_name: monthly, used_units: "25" },
+                    { limit_name: minute, used_units: "60" }
+                  ]
+                : [{ limit_name: minute, used_units: "61" }]
+            );
+          }
+          assert.deepEqual(
+            (
+              await owner.query(
+                "select file_bytes::text from public.agent_outbox_audit_events where output_result_id = $1 and event_type = 'file_downloaded'",
+                [outputResultId]
+              )
+            ).rows,
+            [{ file_bytes: "6" }]
+          );
+        }
+      );
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await owner.query("rollback");
+          await human.end();
+          await cleanupDatabaseRows(owner, otherIds);
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Public caller boundary test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "acknowledging an output while its file downloads finishes without deadlocking",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  /**
+   * Checks that acknowledgement and a limited download attempt finish
+   * without deadlocking. The download returns 404 not_found after
+   * acknowledgement removes the output.
+   */
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const human = await connectedDatabaseClient(databaseUrl);
     const acker = await connectedDatabaseClient(databaseUrl);
-    const downloader = await connectedDatabaseClient(databaseUrl);
     const ids = {
       accountId: crypto.randomUUID(),
       userId: crypto.randomUUID(),
@@ -1973,6 +2272,7 @@ test(
         "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
         [ids.actionId, JSON.stringify(fileUploadPayload)]
       );
+      const material = await seedCallerCredential(owner, ids);
       await owner.query("commit");
       const answered = await runHumanAnswerDatabaseTransaction(
         human,
@@ -2004,9 +2304,6 @@ test(
       ).rows[0].id;
       const ackPid = (await acker.query("select pg_backend_pid() as pid"))
         .rows[0].pid;
-      const downloadPid = (
-        await downloader.query("select pg_backend_pid() as pid")
-      ).rows[0].pid;
       const identity = { accountId: ids.accountId, callerId: ids.callerId };
       const ack = runHumanAnswerDatabaseTransaction(
         acker,
@@ -2036,24 +2333,34 @@ test(
       );
       operations.push(ack);
       await Promise.race([outputLocked.promise, ack]);
-      const download = runHumanAnswerDatabaseTransaction(
-        downloader,
-        ids,
-        "caller",
-        (query) =>
-          guardedOutputFileDownloadForTest(
-            query,
-            {
-              requestId: "req-download-race",
-              correlationId: "corr-download-race"
-            },
-            identity,
-            { outputResultId, fileId }
-          )
+      const runtimeUrl = new URL(databaseUrl);
+      runtimeUrl.searchParams.set("options", "-c role=agent_outbox_app");
+      const request = new Request(
+        "https://app.agent-outbox.dev/api/output/file",
+        {
+          headers: { authorization: `Bearer ${material.plaintextApiKey}` }
+        }
+      );
+      const download = Promise.resolve(
+        withProcessEnv(
+          {
+            DATABASE_APP_ROLE_URL: runtimeUrl.href,
+            CALLER_KEY_HASH_SECRET: "0123456789abcdef0123456789abcdef"
+          },
+          () =>
+            handleOutputFileDownloadRequest(
+              request,
+              apiRequestContext(
+                request,
+                "/api/output/[output_result_id]/files/[file_id]"
+              ),
+              { outputResultId, fileId }
+            )
+        )
       );
       operations.push(download);
       const settled = Promise.allSettled([ack, download]);
-      await waitForDatabaseBlock(owner, downloadPid, ackPid);
+      await waitForDatabaseBlock(owner, null, ackPid);
       resumeAck.resolve();
       for (const result of await settled) {
         if (result.status === "rejected") throw result.reason;
@@ -2095,7 +2402,6 @@ test(
         async () => {
           await human.end();
           await acker.end();
-          await downloader.end();
           await cleanupHumanAnswerDatabaseTest(owner, ids);
         },
         "Ack and download concurrency test and teardown both failed."
@@ -2107,6 +2413,11 @@ test(
 test(
   "output lookups preserve canonical live ids and case-insensitive duplicate acks without aborting the transaction",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  /**
+   * Checks canonical live lookups, limited downloads, and case-insensitive
+   * duplicate acknowledgements without aborting lookup transactions. The
+   * fixture spans multiple transactions.
+   */
   async () => {
     assert.ok(databaseUrl);
     const owner = await connectedDatabaseClient(databaseUrl);
@@ -2264,6 +2575,11 @@ test(
         caller,
         ids,
         "caller",
+        /**
+         * Rejects noncanonical and case-variant live ids, then reads,
+         * downloads with limits, and acknowledges the canonical output in
+         * this transaction.
+         */
         async (query) => {
           for (const id of [
             ...caseForms(outputResultId),
@@ -3220,18 +3536,49 @@ async function runHumanAnswerDatabaseTransaction(
   }
 }
 
-/** @param {import("pg").Client} owner @param {number} waitingPid @param {number} blockingPid */
+/** @param {import("pg").Client} owner @param {number | null} waitingPid @param {number} blockingPid */
 async function waitForDatabaseBlock(owner, waitingPid, blockingPid) {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const wait = await owner.query(
-      "select $2::int = any(pg_blocking_pids($1::int)) as blocked",
+      `select exists (
+        select 1 from pg_stat_activity
+        where ($1::int is null and application_name = 'agent-outbox-product-transaction'
+               or pid = $1::int)
+          and $2::int = any(pg_blocking_pids(pid))
+      ) as blocked`,
       [waitingPid, blockingPid]
     );
     if (wait.rows[0].blocked) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   assert.fail("concurrent operation did not enter the expected database wait");
+}
+
+/**
+ * Seeds a real bearer credential for public caller-handler database tests.
+ * @param {import("pg").Client} client
+ * @param {HumanAnswerDatabaseIds} ids
+ */
+async function seedCallerCredential(client, ids) {
+  const material = await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: "0123456789abcdef0123456789abcdef" },
+    generateCallerApiKeyMaterial
+  );
+  await client.query(
+    `insert into public.agent_outbox_caller_credentials(
+      account_id, caller_id, key_id, key_prefix, key_last_four, secret_hmac_sha256, status
+    ) values ($1, $2, $3, $4, $5, $6, 'active')`,
+    [
+      ids.accountId,
+      ids.callerId,
+      material.keyId,
+      material.keyPrefix,
+      material.keyLastCharacters,
+      material.secretDigest
+    ]
+  );
+  return material;
 }
 
 /**

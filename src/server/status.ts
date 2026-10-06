@@ -7,7 +7,10 @@ import type {
   ProductTransactionQuery,
   TransactionContextStatement
 } from "./database.ts";
-import { runGuardedCallerTransaction } from "./caller-api-auth.ts";
+import {
+  runGuardedCallerTransaction,
+  type CallerIdentity
+} from "./caller-api-auth.ts";
 import {
   accountLimitStatusMetadata,
   limitErrorMetadata,
@@ -58,11 +61,6 @@ export type CallerStatusData = {
 
 export type StatusResult<TData> =
   { ok: true; data: TData } | { ok: false; error: ApiErrorInput };
-
-type CallerIdentity = {
-  accountId: string;
-  callerId: string;
-};
 
 type AccountBillingStatus =
   "not_applicable" | "active" | "grace" | "past_due" | "canceled";
@@ -115,6 +113,10 @@ type ActiveLimitBlockData = {
   limit_units: number | null;
 };
 
+/**
+ * Authenticates the caller and enforces status limits, then reads caller and
+ * key status with the authenticated `keyId`.
+ */
 export async function handleCallerStatusRequest(
   request: Request,
   context: ApiRequestContext
@@ -128,11 +130,19 @@ export async function handleCallerStatusRequest(
       unavailableMessage: "Caller status is temporarily unavailable.",
       unexpectedFailureMessage: "Caller status request failed unexpectedly."
     },
+    /**
+     * Reads caller status with the authenticated identity and `keyId` after
+     * authentication and status limits.
+     */
     (query, identity) =>
       callerStatusInTransaction(query, identity, identity.keyId)
   );
 }
 
+/**
+ * Authenticates the caller and enforces status limits, then returns the public
+ * account status projection.
+ */
 export async function handleAccountStatusRequest(
   request: Request,
   context: ApiRequestContext
@@ -146,11 +156,20 @@ export async function handleAccountStatusRequest(
       unavailableMessage: "Account status is temporarily unavailable.",
       unexpectedFailureMessage: "Caller status request failed unexpectedly."
     },
+    /**
+     * Reads the authenticated account snapshot after status limits, then omits
+     * `queued_input_items` from successful public results and returns failures unchanged.
+     */
     async (query, identity) =>
       publicAccountStatus(await accountStatusInTransaction(query, identity))
   );
 }
 
+/**
+ * Reads caller and key status, plus public account status, in the supplied
+ * transaction. The caller authenticates and enforces limits; this reader does
+ * neither.
+ */
 export async function callerStatusInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity,
@@ -194,6 +213,11 @@ export async function callerStatusInTransaction(
   };
 }
 
+/**
+ * Reads account, storage, and active-limit rows in the supplied transaction,
+ * including the internal `queued_input_items` count. The caller authenticates
+ * and enforces limits. The public projection of this snapshot omits that count.
+ */
 export async function accountStatusInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity
