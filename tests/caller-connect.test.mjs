@@ -16,7 +16,6 @@ import {
 import {
   approveConnectBrowserSetupRequest,
   approveConnectDeviceSetupRequest,
-  callerSetupCodeDigest,
   denyConnectSetupRequest,
   exchangeApprovedConnectSetupRequest,
   getConnectBrowserApprovalPreview,
@@ -30,6 +29,7 @@ import {
   handleConnectExchangeRequest
 } from "../src/server/caller-connect.ts";
 import { handleRevokeConfirmRequest } from "../src/server/caller-credential-operations.ts";
+import { setupCodeDigest } from "../src/server/caller-setup-requests.ts";
 import { runProductTransaction } from "../src/server/database.ts";
 import {
   assertMigrationOwnerCanSetAppRole,
@@ -323,12 +323,7 @@ test(
                 'http://127.0.0.1:49152/callback', $1, $2, $3, $4,
                 'approved', now() + interval '10 minutes')
             `,
-            [
-              callerSetupCodeDigest(revokeSetupCode),
-              accountId,
-              callerId,
-              userId
-            ]
+            [setupCodeDigest(revokeSetupCode), accountId, callerId, userId]
           );
 
           /** @type {typeof runProductTransaction} */
@@ -786,11 +781,11 @@ test("device connect start preserves Unicode text and stores only hashed device 
       ]);
       assert.equal(
         query.calls[1].values?.[2],
-        callerSetupCodeDigest(result.data.device_code)
+        setupCodeDigest(result.data.device_code)
       );
       assert.equal(
         query.calls[1].values?.[3],
-        callerSetupCodeDigest(result.data.user_code.replace(/[\s-]+/g, ""))
+        setupCodeDigest(result.data.user_code.replace(/[\s-]+/g, ""))
       );
       assert.match(String(query.calls[1].values?.[2]), /^[a-f0-9]{64}$/);
       assert.match(String(query.calls[1].values?.[3]), /^[a-f0-9]{64}$/);
@@ -878,6 +873,118 @@ test("connect start per-IP limiting blocks before setup insert", async () => {
       }
     }
   );
+});
+
+test("connect browser start preserves validation errors before transactions", async () => {
+  await withProcessEnv(
+    { PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev" },
+    async () => {
+      const cases = [
+        {
+          key: "callback_url",
+          value: "https://127.0.0.1:1/cb",
+          code: "invalid_callback_url",
+          message: "callback_url must be an http localhost callback URL."
+        },
+        {
+          key: "callback_url",
+          value: "http://example.com/cb",
+          code: "invalid_callback_url",
+          message: "callback_url must be an http localhost callback URL."
+        },
+        {
+          key: "callback_url",
+          value: "not a url",
+          code: "invalid_callback_url",
+          message: "callback_url must be a valid URL."
+        },
+        {
+          key: "local_caller_name",
+          value: "x".repeat(129),
+          code: "too_long",
+          message: "local_caller_name must be at most 128 characters."
+        },
+        {
+          key: "local_caller_name",
+          value: undefined,
+          code: "required",
+          message: "local_caller_name is required."
+        }
+      ];
+      for (const testCase of cases) {
+        const label = `${testCase.key} ${testCase.value}`;
+        /** @type {Record<string, unknown>} */
+        const body = {
+          display_name: "Steward Email",
+          local_caller_name: "steward-email",
+          callback_url: "http://127.0.0.1:49152/callback"
+        };
+        if (testCase.value === undefined) {
+          delete body[testCase.key];
+        } else {
+          body[testCase.key] = testCase.value;
+        }
+        const runner = fakeTransactionRunner([]);
+        const result = await handleConnectBrowserStartRequest(
+          connectRequest("/api/caller/connect/browser/start"),
+          {
+            requestId: "req-browser-validation",
+            correlationId: "corr-browser-validation"
+          },
+          body,
+          { runProductTransaction: runner.runProductTransaction }
+        );
+        assert.deepEqual(
+          result,
+          {
+            ok: false,
+            error: {
+              status: 422,
+              code: "validation_failed",
+              message: "Caller connect request failed validation.",
+              fields: [
+                {
+                  path: testCase.key,
+                  code: testCase.code,
+                  message: testCase.message
+                }
+              ]
+            }
+          },
+          label
+        );
+        assert.equal(runner.contexts.length, 0, label);
+      }
+    }
+  );
+});
+
+test("connect browser start rejects missing public app URL before transactions", async () => {
+  await withProcessEnv({ PUBLIC_APP_BASE_URL: undefined }, async () => {
+    const runner = fakeTransactionRunner([]);
+    const result = await handleConnectBrowserStartRequest(
+      connectRequest("/api/caller/connect/browser/start"),
+      {
+        requestId: "req-browser-missing-url",
+        correlationId: "corr-browser-missing-url"
+      },
+      {
+        display_name: "Steward Email",
+        local_caller_name: "steward-email",
+        callback_url: "http://127.0.0.1:49152/callback"
+      },
+      { runProductTransaction: runner.runProductTransaction }
+    );
+    assert.deepEqual(result, {
+      ok: false,
+      error: {
+        status: 503,
+        code: "temporary_unavailable",
+        message: "Public app base URL configuration is unavailable."
+      }
+    });
+    assert.equal(runner.contexts.length, 0);
+  });
 });
 
 test("connect rejects text Postgres cannot store before transactions", async () => {
@@ -1135,9 +1242,7 @@ test("device approval preview normalizes the user code and expires stale setup r
       if (result.ok) {
         assert.fail("expected expired preview to fail");
       }
-      assert.deepEqual(query.calls[0].values, [
-        callerSetupCodeDigest("ABCD2345")
-      ]);
+      assert.deepEqual(query.calls[0].values, [setupCodeDigest("ABCD2345")]);
       assert.equal(result.error.code, "invalid_request");
       assert.match(query.calls[1].sql, /status = 'expired'/);
       assert.deepEqual(query.calls[1].values, [setupRequestId]);
