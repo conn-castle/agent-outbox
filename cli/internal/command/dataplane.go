@@ -456,27 +456,20 @@ func addPageFlags(cmd *cobra.Command, page *pageFlags) {
 }
 
 func runtimeForCommand(opts Options, flags *rootFlags) (*apiRuntime, error) {
-	configPath, cfg, configPathOwned, err := loadConfigDetails(flags, opts.Env)
+	runtime, err := controlRuntimeForCommand(opts, flags)
 	if err != nil {
 		return nil, err
 	}
-	baseURL, err := foundation.ResolveBaseURL(flags.baseURL, opts.Env, cfg)
+	caller, err := selectCallerWithID(flags, opts.Env, runtime.Config)
 	if err != nil {
 		return nil, err
-	}
-	caller, err := foundation.SelectCaller(flags.caller, opts.Env, cfg)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(caller.CallerID) == "" {
-		return nil, foundation.NewAppError(foundation.CodeConfig, "Selected caller is missing caller_id in local config.")
 	}
 	bearer, bearerFromEnvironment, err := environmentCallerCredential(opts.Env, caller)
 	if err != nil {
 		return nil, err
 	}
 	if !bearerFromEnvironment {
-		store, err := secretStoreForCommand(opts, configPath, configPathOwned)
+		store, err := secretStoreForCommand(opts, runtime.ConfigPath, runtime.ConfigPathOwned)
 		if err != nil {
 			return nil, err
 		}
@@ -488,14 +481,7 @@ func runtimeForCommand(opts Options, flags *rootFlags) (*apiRuntime, error) {
 	if strings.TrimSpace(bearer) == "" {
 		return nil, foundation.NewSecretStoreError("Local caller credential is empty; run agent-outbox caller rotate --caller <caller>.")
 	}
-	return &apiRuntime{
-		Client: foundation.APIClient{
-			BaseURL:      baseURL,
-			HTTPClient:   opts.HTTPClient,
-			NewRequestID: opts.NewRequestID,
-		},
-		Bearer: bearer,
-	}, nil
+	return &apiRuntime{Client: runtime.Client, Bearer: bearer}, nil
 }
 
 func environmentCallerCredential(env foundation.Env, caller foundation.CallerConfig) (string, bool, error) {
