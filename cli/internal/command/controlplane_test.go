@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -590,13 +591,18 @@ func TestCallerConnectDevicePollHonorsRetryMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/caller/connect/device/start":
+			var body map[string]string
+			decodeJSONBody(t, r, &body)
+			if !reflect.DeepEqual(body, map[string]string{"local_caller_name": "steward-email", "display_name": "steward-email"}) {
+				t.Fatalf("connect device start body = %#v", body)
+			}
 			writeEnvelope(w, `{"device_code":"dev_secret","user_code":"ABCD-EFGH","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=ABCD-EFGH","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
 		case "/api/caller/connect/device/poll":
 			polls++
 			var body map[string]string
 			decodeJSONBody(t, r, &body)
-			if body["device_code"] != "dev_secret" {
-				t.Fatalf("device_code = %q", body["device_code"])
+			if !reflect.DeepEqual(body, map[string]string{"device_code": "dev_secret"}) {
+				t.Fatalf("device poll body = %#v", body)
 			}
 			if polls == 1 {
 				w.Header().Set("Retry-After", "7")
@@ -2237,6 +2243,11 @@ func TestCallerRevokeDeviceFlowConfirmsAndPreservesLocalState(t *testing.T) {
 			assertCallerOperationStart(t, r)
 			writeEnvelope(w, `{"device_code":"dev_revoke","user_code":"REVOKE-1","verification_uri":"https://app.example/caller/revoke/device","verification_uri_complete":"https://app.example/caller/revoke/device?user_code=REVOKE-1","expires_at":"2026-07-02T20:10:00Z","poll_interval_seconds":5}`)
 		case "/api/caller/revoke/device/poll":
+			var body map[string]string
+			decodeJSONBody(t, r, &body)
+			if !reflect.DeepEqual(body, map[string]string{"device_code": "dev_revoke"}) {
+				t.Fatalf("device poll body = %#v", body)
+			}
 			writeEnvelope(w, `{"setup_request_id":"setup_revoke","setup_code":"setup_revoke_code","expires_at":"2026-07-02T20:10:00Z"}`)
 		case "/api/caller/revoke/confirm":
 			confirmed = true
@@ -2279,8 +2290,16 @@ func TestCallerRevokeDeviceFlowConfirmsAndPreservesLocalState(t *testing.T) {
 	}
 }
 
-func TestCallerRevokeDoesNotRequireWritableSecretStore(t *testing.T) {
+func TestCallerRevokeIgnoresCallerSelectorsAndDoesNotRequireWritableSecretStore(t *testing.T) {
 	configPath := writeControlConfig(t, "http://placeholder.invalid")
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Callers = append(cfg.Callers, foundation.CallerConfig{Name: "other", CallerID: "caller_other"})
+	if err := foundation.SaveConfigWithHeldLocalStateLock(configPath, cfg, false); err != nil {
+		t.Fatal(err)
+	}
 	var confirmed bool
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2303,7 +2322,8 @@ func TestCallerRevokeDoesNotRequireWritableSecretStore(t *testing.T) {
 		configPath: configPath,
 		baseURL:    server.URL,
 		store:      readOnlyControlPlaneSecretStore{},
-		args:       []string{"--json", "caller", "revoke", "steward-email", "--device-code"},
+		env:        foundation.Env{foundation.EnvCaller: "other"},
+		args:       []string{"--json", "--caller", "other", "caller", "revoke", "steward-email", "--device-code"},
 	})
 	if code != foundation.ExitSuccess {
 		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
@@ -2419,6 +2439,186 @@ func TestCallerListFailsForIncompleteLocalCallerRecords(t *testing.T) {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr missing %q: %s", want, stderr)
 		}
+	}
+}
+
+func TestCallerControlRuntimeErrorOrder(t *testing.T) {
+	const unknownCaller = "Selected caller is not present in local config; run agent-outbox caller list or agent-outbox caller connect <caller>."
+	const missingCallerID = "Selected caller is missing caller_id in local config."
+	const badBaseURL = "https://example.com/not-an-origin"
+	const baseURLMessage = "Agent Outbox base URL must not include a path."
+	for _, tt := range []struct {
+		name          string
+		args          []string
+		baseURL       string
+		emptyCallerID bool
+		code          foundation.ErrorCode
+		message       string
+	}{
+		{"revoke unknown caller", []string{"caller", "revoke", "unknown", "--device-code"}, "", false, foundation.CodeUnknownCaller, unknownCaller},
+		{"revoke missing caller id", []string{"caller", "revoke", "steward-email", "--device-code"}, "", true, foundation.CodeConfig, missingCallerID},
+		{"rotate missing caller id", []string{"caller", "rotate", "--device-code"}, "", true, foundation.CodeConfig, missingCallerID},
+		{"disconnect missing caller id", []string{"caller", "disconnect"}, "", true, foundation.CodeConfig, missingCallerID},
+		{"rotate preflight base URL before caller", []string{"--caller", "unknown", "caller", "rotate", "--device-code"}, badBaseURL, false, foundation.CodeConfig, baseURLMessage},
+		{"disconnect revoke caller before base URL", []string{"--caller", "unknown", "caller", "disconnect", "--revoke", "--device-code"}, badBaseURL, false, foundation.CodeUnknownCaller, unknownCaller},
+		{"disconnect revoke invalid base URL preserves local state", []string{"--caller", "steward-email", "caller", "disconnect", "--revoke", "--device-code"}, badBaseURL, false, foundation.CodeConfig, baseURLMessage},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := writeControlConfig(t, "https://app.example")
+			if tt.emptyCallerID {
+				cfg, err := foundation.LoadConfig(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.Callers[0].CallerID = ""
+				if err := foundation.SaveConfigWithHeldLocalStateLock(configPath, cfg, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := &controlPlaneSecretStore{keys: map[string]string{"caller_123": "old-secret"}}
+			stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+				configPath: configPath, baseURL: tt.baseURL, store: store,
+				args: append([]string{"--json"}, tt.args...),
+				httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					t.Errorf("unexpected request: %s", r.URL)
+					return nil, errors.New("unexpected API request")
+				})},
+			})
+			if code != foundation.ExitConfig || stdout != "" {
+				t.Fatalf("exit=%d, want 78 with empty stdout; stdout=%s stderr=%s", code, stdout, stderr)
+			}
+			var envelope struct {
+				Error struct {
+					Code    foundation.ErrorCode `json:"code"`
+					Message string               `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(stderr), &envelope); err != nil {
+				t.Fatalf("decode error output: %v; stderr: %s", err, stderr)
+			}
+			if envelope.Error.Code != tt.code || envelope.Error.Message != tt.message {
+				t.Fatalf("error = %#v, want %s / %q", envelope.Error, tt.code, tt.message)
+			}
+			after, err := os.ReadFile(configPath)
+			if err != nil || !bytes.Equal(before, after) || !reflect.DeepEqual(store.keys, map[string]string{"caller_123": "old-secret"}) {
+				t.Fatalf("failed command changed local state: err=%v keys=%#v", err, store.keys)
+			}
+		})
+	}
+}
+
+func TestCallerDisconnectRevokeReselectsCallerFromUpdatedConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := syscall.Mkfifo(configPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The first read receives the old config through the pipe. Before closing
+	// that read, replace the path with the new config, as a concurrent writer
+	// would. Subsequent reads then see the new caller and server.
+	writerResult := make(chan error, 1)
+	go func() {
+		file, err := os.OpenFile(configPath, os.O_WRONLY, 0)
+		if err != nil {
+			writerResult <- err
+			return
+		}
+		defer file.Close()
+		if _, err := io.WriteString(file, `{"version":1,"base_url":"https://old.example","callers":[{"name":"steward-email","caller_id":"caller_old"}]}`); err != nil {
+			writerResult <- err
+			return
+		}
+		if err := os.Rename(configPath, configPath+".initial-pipe"); err != nil {
+			writerResult <- err
+			return
+		}
+		writerResult <- os.WriteFile(configPath, []byte(`{"version":1,"base_url":"https://new.example","callers":[{"name":"steward-email","caller_id":"caller_new"}]}`), 0o600)
+	}()
+
+	store := &controlPlaneSecretStore{keys: map[string]string{"caller_old": "old-fixture", "caller_new": "new-fixture"}}
+	var paths []string
+	stdout, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath, store: store,
+		args: []string{"--json", "caller", "disconnect", "--revoke", "--device-code"},
+		httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host != "new.example" {
+				t.Errorf("request origin = %s, want updated config origin", r.URL)
+			}
+			paths = append(paths, r.URL.Path)
+			recorder := httptest.NewRecorder()
+			switch r.URL.Path {
+			case "/api/caller/revoke/device/start":
+				var body map[string]string
+				decodeJSONBody(t, r, &body)
+				if !reflect.DeepEqual(body, map[string]string{"caller_id": "caller_new", "local_caller_name": "steward-email"}) {
+					t.Errorf("revoke start body = %#v, want updated caller", body)
+				}
+				writeEnvelope(recorder, `{"device_code":"dev_revoke","verification_uri":"https://new.example/approve","expires_at":"2026-07-02T20:10:00Z"}`)
+			case "/api/caller/revoke/device/poll":
+				writeEnvelope(recorder, `{"setup_code":"setup_revoke_code","setup_request_id":"setup_revoke"}`)
+			case "/api/caller/revoke/confirm":
+				writeEnvelope(recorder, `{"caller_id":"caller_new","revoked_key_ids":["key_new"],"revoked_at":"2026-07-02T20:01:00Z"}`)
+			default:
+				t.Errorf("unexpected request: %s", r.URL)
+				recorder.WriteHeader(http.StatusInternalServerError)
+			}
+			return recorder.Result(), nil
+		})},
+	})
+	if err := <-writerResult; err != nil {
+		t.Fatalf("concurrent config writer: %v", err)
+	}
+	if code != foundation.ExitSuccess || !strings.Contains(stdout, `"caller_id":"caller_new"`) {
+		t.Fatalf("exit=%d, stdout=%s, stderr=%s", code, stdout, stderr)
+	}
+	if !reflect.DeepEqual(paths, []string{"/api/caller/revoke/device/start", "/api/caller/revoke/device/poll", "/api/caller/revoke/confirm"}) {
+		t.Fatalf("request paths = %#v", paths)
+	}
+	if !reflect.DeepEqual(store.keys, map[string]string{"caller_old": "old-fixture"}) {
+		t.Fatalf("credential state after disconnect = %#v", store.keys)
+	}
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil || cfg.BaseURL != "https://new.example" || len(cfg.Callers) != 0 {
+		t.Fatalf("config after disconnect = %#v, err=%v", cfg, err)
+	}
+}
+
+func TestCallerDisconnectDeletesCredentialFromFileStoreUnderHeldLock(t *testing.T) {
+	configPath := writeControlConfig(t, "http://placeholder.invalid")
+	credentialsPath, err := foundation.CredentialsPathForConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileStore, err := foundation.NewFileCallerSecretStore(credentialsPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fileStore.StoreCallerKey("caller_123", "old-secret"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deleting through the unlocked store API while disconnect holds the local
+	// state lock would deadlock; rely on go test -timeout to bound the run.
+	_, stderr, code := executeControlCommand(t, controlCommandOptions{
+		configPath: configPath,
+		args:       []string{"--json", "--caller", "steward-email", "caller", "disconnect"},
+	})
+	if code != foundation.ExitSuccess {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr)
+	}
+	if _, err := fileStore.LoadCallerKey("caller_123"); !errors.Is(err, foundation.ErrSecretNotFound) {
+		t.Fatalf("credential after disconnect: %v, want ErrSecretNotFound", err)
+	}
+	cfg, err := foundation.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Callers) != 0 {
+		t.Fatalf("disconnect kept local caller config: %#v", cfg.Callers)
 	}
 }
 
@@ -2738,6 +2938,7 @@ func TestCallerDevicePollRequiresSetupCodeAndRequestID(t *testing.T) {
 			{`{"setup_request_id":"setup_123"}`, "Agent Outbox API did not return a setup code."},
 			{`{"setup_code":" ","setup_request_id":"setup_123"}`, "Agent Outbox API did not return a setup code."},
 			{`{"setup_code":"setup_code_123","setup_request_id":" "}`, "Agent Outbox API did not return a setup request id."},
+			{`{}`, "Agent Outbox API did not return a setup code."},
 		} {
 			t.Run(operation+"/"+tt.data, func(t *testing.T) {
 				requests := 0
@@ -3117,7 +3318,7 @@ func assertCallerOperationStart(t *testing.T, r *http.Request) {
 	t.Helper()
 	var body map[string]string
 	decodeJSONBody(t, r, &body)
-	if body["caller_id"] != "caller_123" || body["local_caller_name"] != "steward-email" {
+	if !reflect.DeepEqual(body, map[string]string{"caller_id": "caller_123", "local_caller_name": "steward-email"}) {
 		t.Fatalf("operation start body = %#v", body)
 	}
 }

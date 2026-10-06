@@ -346,7 +346,12 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 			}
 			var confirmed revokeConfirmData
 			if revoke {
-				if err := attachAPIClient(runtime, opts, flags); err != nil {
+				runtime, err = controlRuntimeForCommand(opts, flags)
+				if err != nil {
+					return err
+				}
+				selected, err = selectCallerWithID(flags, opts.Env, runtime.Config)
+				if err != nil {
 					return err
 				}
 				confirmed, err = runRevokeFlow(cmd.Context(), opts, runtime, selected, useDeviceCode)
@@ -447,15 +452,15 @@ func namedControlRuntime(opts Options, flags *rootFlags, name string) (*controlP
 	if err != nil {
 		return nil, foundation.CallerConfig{}, err
 	}
-	for _, caller := range runtime.Config.Callers {
-		if caller.Name == name {
-			if err := requireCallerID(caller); err != nil {
-				return nil, foundation.CallerConfig{}, err
-			}
-			return runtime, caller, nil
-		}
+	// revoke <caller> deliberately ignores --caller and AGENT_OUTBOX_CALLER.
+	selected, err := foundation.SelectCaller(name, nil, runtime.Config)
+	if err != nil {
+		return nil, foundation.CallerConfig{}, err
 	}
-	return nil, foundation.CallerConfig{}, foundation.NewAppError(foundation.CodeUnknownCaller, "Selected caller is not present in local config; run agent-outbox caller list or agent-outbox caller connect <caller>.")
+	if err := requireCallerID(selected); err != nil {
+		return nil, foundation.CallerConfig{}, err
+	}
+	return runtime, selected, nil
 }
 
 func connectApproval(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string, useDeviceCode bool) (connectExchangeData, *foundation.APIResponse, error) {

@@ -53,6 +53,39 @@ func TestFileCallerSecretStorePersistsOwnerOnlyCredentials(t *testing.T) {
 	if got := dirStat.Mode().Perm(); got != 0o700 {
 		t.Fatalf("credentials directory mode = %#o, want 0700", got)
 	}
+
+	if err := store.DeleteCallerKey("caller_123"); err != nil {
+		t.Fatalf("DeleteCallerKey failed: %v", err)
+	}
+	if _, err := store.LoadCallerKey("caller_123"); !errors.Is(err, ErrSecretNotFound) {
+		t.Fatalf("deleted caller load error = %v, want ErrSecretNotFound", err)
+	}
+}
+
+func TestFileCallerSecretStoreMutationsReportLockFailure(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "blocked")
+	if err := os.WriteFile(parent, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewFileCallerSecretStore(filepath.Join(parent, "credentials.json"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []struct {
+		name string
+		run  func() error
+	}{
+		{"store", func() error { return store.StoreCallerKey("caller_123", testCallerAPIKey) }},
+		{"delete", func() error { return store.DeleteCallerKey("caller_123") }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			err := operation.run()
+			var appErr *AppError
+			if !errors.As(err, &appErr) || appErr.Code != CodeSecretStore || appErr.Message != "Could not lock local credentials file." || ExitCodeFor(err) != ExitSecretStore {
+				t.Fatalf("lock failure = %v, want secret-store error and exit 74", err)
+			}
+		})
+	}
 }
 
 func TestFileCallerSecretStoreDoesNotChmodExplicitParent(t *testing.T) {
