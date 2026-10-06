@@ -5,7 +5,6 @@ import type {
   ConnectApprovalPreviewData,
   ConnectTerminalSetupData
 } from "../../../src/server/caller-connect";
-import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../src/server/caller-connect-clerk-fixture";
 import type { HumanAccountSession } from "../../../src/server/human-session";
 import {
   approveBrowserConnect,
@@ -18,6 +17,7 @@ import {
   ConnectActions,
   ConnectFlowCard,
   ConnectPageShell,
+  FixtureIdentity,
   OutcomeSummary
 } from "./ui";
 
@@ -27,16 +27,6 @@ type ApprovalViewProps = {
   fixtureClerkUserId?: string | null;
   interactive?: boolean;
 };
-
-function FixtureIdentity({ value }: { value?: string | null }) {
-  return value ? (
-    <input
-      type="hidden"
-      name={CALLER_CONNECT_FIXTURE_USER_ID_PARAM}
-      value={value}
-    />
-  ) : null;
-}
 
 export function BrowserApprovalView({
   preview,
