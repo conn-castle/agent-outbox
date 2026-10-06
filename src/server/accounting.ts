@@ -170,6 +170,13 @@ export function auditSafeLifecycleEvent(
   return event;
 }
 
+/**
+ * Builds, but does not execute, a lifecycle audit INSERT.
+ * Runs auditSafeLifecycleEvent first, so invalid byte counts throw before a
+ * statement is returned and metadata is filtered to the audit allowlist.
+ * Binds absent optional fields as SQL NULL and serializes filtered metadata
+ * as JSON; callers control transaction execution and audit-statement ordering.
+ */
 export function auditEventInsertStatement(
   input: AuditSafeLifecycleInput
 ): TransactionContextStatement {
