@@ -8,10 +8,8 @@ import {
   shouldFailClosedForMissingClerkConfiguration
 } from "../src/server/middleware-clerk-readiness.ts";
 import { middlewareFixtureBypassEnabled } from "../src/server/middleware-fixture-bypass.ts";
-import {
-  humanReviewCardHref,
-  humanReviewReturnHref
-} from "../src/shared/human-review-view.ts";
+import { humanReviewCardHref } from "../src/shared/human-review-view.ts";
+import { signInReturnHref } from "../src/shared/sign-in-return.ts";
 import {
   clerkMiddlewareCallCount,
   clerkMiddlewareMock,
@@ -85,6 +83,7 @@ test("middleware fixture bypass keeps browser fixture off caller approval pages 
     delete process.env[CALLER_CONNECT_CLERK_FIXTURE_FLAG];
 
     assert.equal(middlewareFixtureBypassEnabled("/human"), true);
+    assert.equal(middlewareFixtureBypassEnabled("/upgrade"), true);
     assert.equal(
       middlewareFixtureBypassEnabled("/caller/connect/approve"),
       false
@@ -363,11 +362,44 @@ test("signed-out card visits preserve arbitrary IDs through the sign-in redirect
     assert.equal(signIn.pathname, "/sign-in");
     assert.equal(signIn.searchParams.get("redirect_url"), destination);
     assert.equal(
-      humanReviewReturnHref(
-        signIn.searchParams.get("redirect_url") ?? undefined
-      ),
+      signInReturnHref(signIn.searchParams.get("redirect_url") ?? undefined),
       destination
     );
+  } finally {
+    clerkMiddlewareMock.signedOut = false;
+    restoreEnv(previous);
+  }
+});
+
+test("signed-out caller approval and upgrade visits return to the same page after sign-in", async () => {
+  const previous = captureMiddlewareEnv();
+  try {
+    setEnv("APP_ENV", "production");
+    setEnv("CLERK_SECRET_KEY", "sk_test");
+    setEnv("CLERK_PUBLISHABLE_KEY", "pk_test");
+    delete process.env.AGENT_OUTBOX_BROWSER_FIXTURE;
+    clerkMiddlewareMock.signedOut = true;
+    for (const destination of [
+      `/caller/connect/approve?setup_request_id=${crypto.randomUUID()}`,
+      `/caller/rotate/approve?setup_request_id=${crypto.randomUUID()}`,
+      `/caller/revoke/approve?setup_request_id=${crypto.randomUUID()}`,
+      "/caller/connect/device?user_code=ABCD-EFGH",
+      "/upgrade",
+      "/upgrade?checkout=success"
+    ]) {
+      const response = await middlewareResponse(
+        `https://app.example.test${destination}`
+      );
+      assert.equal(response.status, 307, destination);
+      const location = response.headers.get("location");
+      assert.ok(location, destination);
+      const signIn = new URL(location);
+      assert.equal(signIn.pathname, "/sign-in");
+      assert.equal(
+        signInReturnHref(signIn.searchParams.get("redirect_url") ?? undefined),
+        destination
+      );
+    }
   } finally {
     clerkMiddlewareMock.signedOut = false;
     restoreEnv(previous);

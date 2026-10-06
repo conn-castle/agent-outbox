@@ -1146,7 +1146,8 @@ validation and described in the guides.
   "properties": {
     "caller_item_id": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "Caller-owned stable logical item id. Input send returns 422 validation_failed if the id cannot fit the item uniqueness index."
     },
     "priority": {
       "oneOf": [

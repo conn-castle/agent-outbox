@@ -82,6 +82,7 @@ operator-actionable handled failures. Useful fields include:
 - `account_id` or an opaque audit-safe account id when useful
 - `caller_id` or an opaque audit-safe caller id when useful
 - `operation`
+- `stripe_event_type` for handled Stripe webhook events
 - `path_shape` on Next.js `onRequestError` logs: `contains_dot`,
   `extensionless`, or `unknown` for the original request path. The raw path is
   never logged; `contains_dot` means the request would also miss the middleware
@@ -101,6 +102,17 @@ operator-actionable handled failures. Useful fields include:
   warning log but not sent to Sentry because that Worker isolate had attempted
   another browser capture within the preceding minute
 
+Signed Stripe webhook events acknowledged without changing billing state emit a
+warn log with `operation=stripe_webhook_unapplied`, `drop_reason`
+(`invalid_object`, `missing_reference`, or `no_matching_account`), and
+`stripe_event_type`. The log includes `account_id` when an account reference is
+present. Missing references mean a missing account or subscription reference.
+Expected stale out-of-order events are not logged. Missing-signature 400
+rejections warn with `operation=stripe_webhook_signature`; oversized-body 413
+rejections warn with `operation=stripe_webhook_request_too_large`. The logged
+payload-derived fields are `stripe_event_type` and, when present, `account_id`;
+Stripe object IDs and other raw payload values are not logged.
+
 Use stable low-cardinality fields. Do not use high-cardinality caller display
 strings as log dimensions.
 
@@ -115,6 +127,37 @@ explicit `sentry_captured: false`. Alert on error-level logs, not on
 `sentry_captured` alone; `sentry_captured: false` on a `500` indicates capture
 was attempted but disabled or failed (for example a missing production DSN or
 release).
+
+Cron-triggered cleanup runs outside Next.js, so the Worker's scheduled handler
+initializes Sentry itself when the isolate has no client and flushes captured
+events before the invocation ends. An initialization failure emits an error log
+with `operation=runtime.scheduled.sentry_init`; a flush that times out or fails
+emits a warning log with `operation=runtime.scheduled.sentry_flush`, meaning
+captured events from that invocation may not have reached Sentry.
+
+Unexpected errors at the Worker's human mutation fetch boundary can precede
+Next.js instrumentation. This boundary initializes a missing Sentry client when
+capture is enabled, reports the sanitized original failure, and keeps a bounded
+flush alive with `waitUntil` (or awaits it when unavailable). Initialization
+failures emit an error log with `operation=runtime.fetch.sentry_init`;
+incomplete or failed flushes warn with `operation=runtime.fetch.sentry_flush`.
+Neither replaces the original 503 response or its error log. Known 400/413
+rejections do not initialize, capture, or flush through this boundary.
+
+Scheduled cleanup runs each global prune and each account's maintenance in its
+own transaction, so one failing step does not block the others. Each failed step
+emits an error log with `operation=maintenance.scheduled_cleanup`: global prunes
+use the message `scheduled cleanup global maintenance failed`, and account steps
+carry `account_id`. After all steps run, the invocation fails with one summary
+error log. If the account list cannot be read, the run fails before any account
+maintenance.
+
+The repository Node entry reports ingress overflow as a warning with
+`operation=api_error.request_too_large`, `route=node_ingress`, and
+`limit_name=node_ingress_body_bytes`. Unexpected Node read or handler failures
+use `operation=node_ingress`, sanitized reporting, and an awaited bounded Sentry
+flush before the available error response is sent. The Node transport policy is
+in [the HTTP API](../spec/http-api.md#human-answer-boundary).
 
 Next.js `onRequestError` failures use `operation=next_request_error` and keep
 the SDK's unhandled `auto.function.nextjs.on_request_error` capture. Each hook

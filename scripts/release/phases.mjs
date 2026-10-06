@@ -530,9 +530,18 @@ export async function runDraftPreparation(orchestrator, input) {
       };
     }
     if (classification.kind === "owned_publishing") {
-      throw new ReleaseHoldError(
-        `draft ${classification.release?.id ?? "unknown"} is already publishing; refusing to recreate or clean it`
+      if (!classification.release) {
+        throw new Error(
+          "owned publishing classification is missing a release id"
+        );
+      }
+      console.log(
+        `${input.releaseTag} draft ${classification.release.id} is already publishing on ${input.expectedSha}; resuming publication only.`
       );
+      return {
+        kind: "owned_publishing",
+        releaseId: classification.release.id
+      };
     }
     if (classification.kind === "published_tag_pending") {
       throw new PublicationStateUnknownError(input.releaseTag);
@@ -728,7 +737,8 @@ export async function proveCertifiedAssets(orchestrator, input) {
  *   expectedSha: string,
  *   runId: string,
  *   releaseId: number,
- *   assets?: { name: string, path: string, bytes: Buffer }[]
+ *   assets?: { name: string, path: string, bytes: Buffer }[],
+ *   verifyLiveCandidate?: () => unknown | Promise<unknown>
  * }} input
  * Assets are required immediately before `{ draft: false }`. Early returns for
  * committed or pending-tag state do not publish.
@@ -751,6 +761,16 @@ export async function runReleasePublication(orchestrator, input) {
         });
       }
       throw error;
+    }
+    if (
+      input.verifyLiveCandidate &&
+      (snapshot.classification.kind === "owned_prepared" ||
+        snapshot.classification.kind === "owned_publishing")
+    ) {
+      await input.verifyLiveCandidate();
+      // Smoke may take time. Re-read ownership and tag state afterward rather
+      // than using the snapshot observed before the live health check.
+      snapshot = await readGithubReleaseSnapshot(orchestrator, input);
     }
     const { classification, tagCommit } = snapshot;
     if (classification.kind === "committed") {

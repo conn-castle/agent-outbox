@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import test from "node:test";
 
 import pg from "pg";
@@ -10,6 +10,8 @@ import {
   approveCredentialOperationBrowserSetupRequest,
   approveCredentialOperationDeviceSetupRequest,
   denyCredentialOperationSetupRequest,
+  getCredentialOperationBrowserApprovalPreview,
+  getCredentialOperationTerminalSetupState,
   handleRevokeConfirmRequest,
   handleRevokeBrowserStartRequest,
   handleRevokeDeviceStartRequest,
@@ -17,6 +19,7 @@ import {
   handleRotateAbortRequest,
   handleRotateActivateRequest,
   handleRotateBrowserStartRequest,
+  handleRotateDevicePollRequest,
   handleRotateDeviceStartRequest,
   handleRotateExchangeRequest
 } from "../src/server/caller-credential-operations.ts";
@@ -127,7 +130,7 @@ function controlRequest(path, init = {}) {
   });
 }
 
-test("browser rotate start creates a rotate setup request after IP limiting", async () => {
+test("browser rotate start preserves Unicode text and creates a setup request after IP limiting", async () => {
   await withProcessEnv(
     {
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
@@ -152,8 +155,8 @@ test("browser rotate start creates a rotate setup request after IP limiting", as
         { requestId: "req-rotate-start", correlationId: "corr-rotate-start" },
         {
           caller_id: CALLER_ID,
-          local_caller_name: "steward-email",
-          callback_url: "http://127.0.0.1:49152/callback"
+          local_caller_name: "cafe\u0301-邮件-🚀",
+          callback_url: "http://127.0.0.1:49152/邮件/🚀"
         },
         {
           now: new Date("2026-07-02T00:00:00.000Z"),
@@ -179,8 +182,8 @@ test("browser rotate start creates a rotate setup request after IP limiting", as
       assert.deepEqual(query.calls[1].values, [
         "rotate",
         CALLER_ID,
-        "steward-email",
-        "http://127.0.0.1:49152/callback",
+        "cafe\u0301-邮件-🚀",
+        "http://127.0.0.1:49152/邮件/🚀",
         "2026-07-02T00:10:00.000Z",
         5
       ]);
@@ -261,6 +264,117 @@ test("malformed caller_id fails validation before rotate and revoke start transa
       `${testCase.name} must fail before the transaction runner`
     );
   }
+});
+
+test("rotate and revoke reject text Postgres cannot store before transactions", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
+      PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+    },
+    async () => {
+      const routes = [
+        {
+          name: "rotate browser start",
+          handler: handleRotateBrowserStartRequest,
+          path: "/api/caller/rotate/browser/start",
+          body: {
+            caller_id: CALLER_ID,
+            local_caller_name: "steward-email",
+            callback_url: "http://127.0.0.1:49152/callback"
+          }
+        },
+        {
+          name: "rotate device start",
+          handler: handleRotateDeviceStartRequest,
+          path: "/api/caller/rotate/device/start",
+          body: { caller_id: CALLER_ID, local_caller_name: "steward-email" }
+        },
+        {
+          name: "revoke browser start",
+          handler: handleRevokeBrowserStartRequest,
+          path: "/api/caller/revoke/browser/start",
+          body: {
+            caller_id: CALLER_ID,
+            local_caller_name: "steward-email",
+            callback_url: "http://127.0.0.1:49152/callback"
+          }
+        },
+        {
+          name: "revoke device start",
+          handler: handleRevokeDeviceStartRequest,
+          path: "/api/caller/revoke/device/start",
+          body: { caller_id: CALLER_ID, local_caller_name: "steward-email" }
+        },
+        {
+          name: "rotate device poll",
+          handler: handleRotateDevicePollRequest,
+          path: "/api/caller/rotate/device/poll",
+          body: { device_code: "dev_pending" }
+        },
+        {
+          name: "revoke device poll",
+          handler: handleRevokeDevicePollRequest,
+          path: "/api/caller/revoke/device/poll",
+          body: { device_code: "dev_pending" }
+        },
+        {
+          name: "rotate exchange",
+          handler: handleRotateExchangeRequest,
+          path: "/api/caller/rotate/exchange",
+          body: { setup_code: "setup_pending" }
+        },
+        {
+          name: "revoke confirm",
+          handler: handleRevokeConfirmRequest,
+          path: "/api/caller/revoke/confirm",
+          body: { setup_code: "setup_pending" }
+        }
+      ];
+
+      for (const route of routes) {
+        for (const [key, validValue] of Object.entries(route.body)) {
+          for (const invalid of ["\u0000", "\ud800", "\udc00"]) {
+            const value = `${validValue}${invalid}text`;
+            const label = `${route.name} ${key} ${JSON.stringify(value)}`;
+            const runner = fakeTransactionRunner([]);
+            const result = await route.handler(
+              controlRequest(route.path),
+              {
+                requestId: `req-${route.name}-unstorable`,
+                correlationId: `corr-${route.name}-unstorable`
+              },
+              {
+                ...route.body,
+                [key]: value
+              },
+              { runProductTransaction: runner.runProductTransaction }
+            );
+
+            assert.equal(result.ok, false, label);
+            if (result.ok) {
+              assert.fail(`expected ${label} to fail validation`);
+            }
+            assert.equal(result.error.status, 422, label);
+            assert.equal(result.error.code, "validation_failed", label);
+            assert.deepEqual(
+              result.error.fields,
+              [
+                {
+                  path: key,
+                  code: "invalid_string",
+                  message: `${key} must be well-formed Unicode without NUL characters.`
+                }
+              ],
+              label
+            );
+            assert.equal(runner.contexts.length, 0, label);
+          }
+        }
+      }
+    }
+  );
 });
 
 test("credential operation start rejects X-Forwarded-For-only requests before transactions", async () => {
@@ -367,6 +481,94 @@ test("malformed setup_request_id fails validation before rotate activate and abo
       0,
       `malformed setup_request_id ${testCase.name} must fail before the transaction runner`
     );
+  }
+});
+
+test("rotate and revoke browser pages and actions reject a malformed setup_request_id before querying", async () => {
+  const uppercaseSetupRequestId = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
+  for (const operation of /** @type {const} */ (["rotate", "revoke"])) {
+    /** @type {{ name: string, run: (query: MockProductTransactionQuery, setupRequestId: string) => Promise<{ ok: true } | { ok: false, error: { status: number, code: string, message: string } }> }[]} */
+    const cases = [
+      {
+        name: `${operation} approval preview`,
+        run: (query, setupRequestId) =>
+          getCredentialOperationBrowserApprovalPreview(query, {
+            operation,
+            setupRequestId,
+            accountId: ACCOUNT_ID
+          })
+      },
+      {
+        name: `${operation} terminal state`,
+        run: (query, setupRequestId) =>
+          getCredentialOperationTerminalSetupState(query, {
+            operation,
+            setupRequestId,
+            accountId: ACCOUNT_ID,
+            statuses: ["denied"]
+          })
+      },
+      {
+        name: `${operation} approve`,
+        run: (query, setupRequestId) =>
+          approveCredentialOperationBrowserSetupRequest(query, {
+            operation,
+            setupRequestId,
+            accountId: ACCOUNT_ID,
+            userId: USER_ID
+          })
+      },
+      {
+        name: `${operation} deny`,
+        run: (query, setupRequestId) =>
+          denyCredentialOperationSetupRequest(query, {
+            operation,
+            setupRequestId,
+            accountId: ACCOUNT_ID
+          })
+      }
+    ];
+
+    for (const testCase of cases) {
+      // Postgres rejects these as uuid input, so they must never reach SQL.
+      for (const setupRequestId of [
+        "not-a-uuid",
+        SETUP_REQUEST_ID.slice(0, -1),
+        `${SETUP_REQUEST_ID}'`
+      ]) {
+        const query = fakeQuery(() => {
+          throw new Error("malformed setup_request_id must not reach SQL");
+        });
+        const result = await testCase.run(query, setupRequestId);
+
+        assert.deepEqual(
+          result,
+          {
+            ok: false,
+            error: {
+              status: 400,
+              code: "invalid_request",
+              message: "Invalid setup request."
+            }
+          },
+          `${testCase.name}: ${setupRequestId}`
+        );
+        assert.equal(query.calls.length, 0, testCase.name);
+      }
+
+      // An uppercase UUID is valid uuid input and must still be looked up.
+      const query = fakeQuery(() => []);
+      const result = await testCase.run(query, uppercaseSetupRequestId);
+      assert.equal(result.ok, false, testCase.name);
+      if (result.ok) {
+        assert.fail(`expected unknown ${testCase.name} setup request to fail`);
+      }
+      assert.equal(result.error.code, "not_found", testCase.name);
+      assert.ok(
+        query.calls[0]?.values?.includes(uppercaseSetupRequestId),
+        testCase.name
+      );
+    }
   }
 });
 
@@ -1506,6 +1708,193 @@ test(
           }
         },
         "Caller start limit database test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "rotate exchange against a live pending replacement still returns the 400 without a new key",
+  {
+    skip: phase3DatabaseVerificationUrl()
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const databaseUrl = phase3DatabaseVerificationUrl();
+    assert.ok(databaseUrl);
+    const accountId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    const callerId = crypto.randomUUID();
+    const runId = randomBytes(6).toString("hex");
+    const setupCode = `setup_${runId}`;
+    const ipAddress = `2001:db8::${randomBytes(2).toString("hex")}:${randomBytes(2).toString("hex")}`;
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const client = new pg.Client({
+      application_name: "agent-outbox-rotate-exchange-pending-verification",
+      connectionString: databaseUrl
+    });
+    await client.connect();
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await client.query("begin");
+      await client.query(
+        "insert into public.agent_outbox_accounts(account_id) values ($1)",
+        [accountId]
+      );
+      await client.query(
+        "insert into public.agent_outbox_users(user_id, clerk_user_id) values ($1, $2)",
+        [userId, `clerk-${userId}`]
+      );
+      await client.query(
+        "insert into public.agent_outbox_account_members(account_id, user_id, role) values ($1, $2, 'owner')",
+        [accountId, userId]
+      );
+      await client.query(
+        "insert into public.agent_outbox_callers(caller_id, account_id, display_name, caller_slug) values ($1, $2, 'Rotate exchange caller', $3)",
+        [callerId, accountId, `rotate-exchange-${runId}`]
+      );
+      const activeRows = await client.query(
+        `
+          insert into public.agent_outbox_caller_credentials(
+            account_id, caller_id, key_id, key_prefix, key_last_four,
+            secret_hmac_sha256, status, activated_at
+          )
+          values ($1, $2, $3, 'aob_live_rotate_active', 'actv', $4, 'active', now())
+          returning caller_credential_id
+        `,
+        [accountId, callerId, `active-${runId}`, "a".repeat(64)]
+      );
+      const setupRows = await client.query(
+        `
+          insert into public.agent_outbox_caller_setup_requests(
+            operation, flow, local_caller_name, display_name, callback_url,
+            account_id, caller_id, approved_by_user_id, status, expires_at,
+            approved_at, exchanged_at, setup_code_hash
+          )
+          values
+            ('rotate', 'browser', 'rotate-exchange', 'Rotate exchange caller', 'http://127.0.0.1/callback', $1, $2, $3, 'exchanged', $4, now(), now(), null),
+            ('rotate', 'browser', 'rotate-exchange', 'Rotate exchange caller', 'http://127.0.0.1/callback', $1, $2, $3, 'approved', $4, now(), null, $5)
+          returning setup_request_id, status
+        `,
+        [
+          accountId,
+          callerId,
+          userId,
+          expiresAt,
+          createHmac("sha256", HASH_SECRET_FIXTURE)
+            .update(setupCode)
+            .digest("hex")
+        ]
+      );
+      const exchangedSetupRequestId = setupRows.rows.find(
+        (row) => row.status === "exchanged"
+      )?.setup_request_id;
+      assert.ok(exchangedSetupRequestId);
+      await client.query(
+        `
+          insert into public.agent_outbox_caller_credentials(
+            account_id, caller_id, key_id, key_prefix, key_last_four,
+            secret_hmac_sha256, status, expires_at,
+            pending_replacement_for_credential_id,
+            pending_replacement_setup_request_id
+          )
+          values ($1, $2, $3, 'aob_live_rotate_pending', 'pend', $4, 'pending_activation', $5, $6, $7)
+        `,
+        [
+          accountId,
+          callerId,
+          `pending-${runId}`,
+          "b".repeat(64),
+          expiresAt,
+          activeRows.rows[0].caller_credential_id,
+          exchangedSetupRequestId
+        ]
+      );
+      await client.query("commit");
+
+      await withProcessEnv(
+        {
+          CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+          DATABASE_APP_ROLE_URL: databaseUrl,
+          PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
+        },
+        async () => {
+          const result = await handleRotateExchangeRequest(
+            controlRequest("/api/caller/rotate/exchange", {
+              headers: { "cf-connecting-ip": ipAddress }
+            }),
+            {
+              requestId: "req-rotate-exchange-pending-db",
+              correlationId: "corr-rotate-exchange-pending-db"
+            },
+            { setup_code: setupCode }
+          );
+
+          assert.deepEqual(result, {
+            ok: false,
+            error: {
+              status: 400,
+              code: "invalid_request",
+              message: "Caller already has a pending replacement key."
+            }
+          });
+        }
+      );
+
+      const credentials = await client.query(
+        `
+          select key_id, status
+          from public.agent_outbox_caller_credentials
+          where caller_id = $1
+          order by key_id
+        `,
+        [callerId]
+      );
+      assert.deepEqual(credentials.rows, [
+        { key_id: `active-${runId}`, status: "active" },
+        { key_id: `pending-${runId}`, status: "pending_activation" }
+      ]);
+      const setupStatuses = await client.query(
+        `
+          select status
+          from public.agent_outbox_caller_setup_requests
+          where caller_id = $1
+          order by status
+        `,
+        [callerId]
+      );
+      assert.deepEqual(setupStatuses.rows, [
+        { status: "approved" },
+        { status: "exchanged" }
+      ]);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          try {
+            await client.query("rollback");
+            await client.query(
+              "delete from public.agent_outbox_ip_quota_windows where ip_address = $1::inet",
+              [ipAddress]
+            );
+            await client.query(
+              "delete from public.agent_outbox_accounts where account_id = $1",
+              [accountId]
+            );
+            await client.query(
+              "delete from public.agent_outbox_users where user_id = $1",
+              [userId]
+            );
+          } finally {
+            await client.end();
+          }
+        },
+        "Rotate exchange pending replacement database test and teardown both failed."
       );
     }
   }

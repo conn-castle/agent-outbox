@@ -10,13 +10,20 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 
+import { persistedPopup } from "../src/server/persisted-payload.ts";
+import { accountWriteLockStatement } from "../src/server/caller-api-limits.ts";
 import { formatVersionLabel } from "../src/server/app-version.ts";
 import { authenticateCallerApiRequest } from "../src/server/caller-api-auth.ts";
+import {
+  isStorableString,
+  unstorableStringError
+} from "../src/server/input-schema.ts";
 import {
   apiErrorResponse,
   apiRequestContext,
   apiResponseHeaders,
-  apiSuccessResponse
+  apiSuccessResponse,
+  apiValidationFailed
 } from "../src/server/api-errors.ts";
 import {
   createBillingPortalSessionForAccount,
@@ -59,6 +66,15 @@ import {
   sentryCaptureEnabled,
   sentryRuntimeInitOptions
 } from "../src/server/sentry.ts";
+import {
+  runProductTransaction,
+  withSavepoint
+} from "../src/server/database.ts";
+import { getConnectTerminalSetupState } from "../src/server/caller-connect.ts";
+import {
+  DATABASE_POLICY_VERIFICATION_SKIP,
+  phase3DatabaseVerificationUrl
+} from "./helpers/database.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
 
 const require = createRequire(import.meta.url);
@@ -70,6 +86,13 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  *   sentry_captured: boolean,
  *   log: Record<string, unknown>
  * }} RuntimeFailureReporterForTest
+ */
+
+/**
+ * @typedef {{
+ *   reportRuntimeFailure: RuntimeFailureReporterForTest,
+ *   runWithScheduledSentry: <T>(task: () => Promise<T>) => Promise<T>
+ * }} SentryModuleForTest
  */
 
 /**
@@ -151,10 +174,13 @@ function renderRootLayoutForTest() {
 }
 
 /**
- * @param {{ withScope: Function, captureException: Function }} sentryStub
- * @returns {{ reportRuntimeFailure: RuntimeFailureReporterForTest }}
+ * Stubs without `getClient` model an isolate where Sentry is initialized.
+ *
+ * @param {{ withScope: Function, captureException: Function, getClient?: Function, init?: Function, flush?: Function }} sentryStub
+ * @returns {SentryModuleForTest}
  */
 function loadSentryModuleForTest(sentryStub) {
+  const sentry = { getClient: () => ({}), ...sentryStub };
   const source = readFileSync(
     resolve(REPO_ROOT, "src/server/sentry.ts"),
     "utf8"
@@ -184,7 +210,13 @@ function loadSentryModuleForTest(sentryStub) {
        */
       require(specifier) {
         if (specifier === "@sentry/nextjs") {
-          return sentryStub;
+          return sentry;
+        }
+        if (specifier === "./correlation.ts") {
+          return {
+            createCorrelationId: (/** @type {string} */ prefix) =>
+              `${prefix}_test`
+          };
         }
         if (specifier === "./logging.ts") {
           return { emitRuntimeLog, safeErrorCode, safeErrorName };
@@ -199,9 +231,7 @@ function loadSentryModuleForTest(sentryStub) {
     { filename: "src/server/sentry.ts" }
   );
 
-  return /** @type {{ reportRuntimeFailure: RuntimeFailureReporterForTest }} */ (
-    testModule.exports
-  );
+  return /** @type {SentryModuleForTest} */ (testModule.exports);
 }
 
 /**
@@ -360,12 +390,13 @@ function loadBillingSessionModuleForTest(reportRuntimeFailure) {
 
 /**
  * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
+ * @param {import("../src/server/database.ts").ProductTransactionQuery} [transactionQuery]
  * @returns {{
  *   createHumanAnswer: typeof createHumanAnswer,
  *   humanAnswerUndoTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerUndoTransactionFailure
  * }}
  */
-function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
+function loadHumanAnswerModuleForTest(reportRuntimeFailure, transactionQuery) {
   const source = readFileSync(
     resolve(REPO_ROOT, "src/server/human-answer.ts"),
     "utf8"
@@ -386,6 +417,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
     compiled,
     {
       AggregateError,
+      Error,
       Buffer,
       console,
       exports: testModule.exports,
@@ -418,6 +450,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
         }
         if (specifier === "./caller-api-limits.ts") {
           return {
+            accountWriteLockStatement,
             async accountLimitProfileForAccount() {
               return null;
             },
@@ -431,10 +464,19 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure) {
         }
         if (specifier === "./database.ts") {
           return {
-            async runProductTransaction() {
+            /**
+             * @param {string} _connectionString
+             * @param {unknown} _context
+             * @param {(query: import("../src/server/database.ts").ProductTransactionQuery) => Promise<unknown>} callback
+             */
+            async runProductTransaction(_connectionString, _context, callback) {
+              if (transactionQuery) return callback(transactionQuery);
               throw new Error("raw human answer database secret");
             }
           };
+        }
+        if (specifier === "./persisted-payload.ts") {
+          return { persistedPopup };
         }
         if (specifier === "./input-schema.ts") {
           return {
@@ -635,6 +677,7 @@ function loadInputQueueModuleForTest(
   return /** @type {ReturnType<typeof loadInputQueueModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/input-queue.ts", {
       "./accounting.ts": { async auditSafeLifecycleEvent() {} },
+      "./api-errors.ts": { apiValidationFailed },
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
@@ -689,13 +732,14 @@ function loadOutputFilesModuleForTest(reportRuntimeFailure) {
   return /** @type {ReturnType<typeof loadOutputFilesModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/output-files.ts", {
       "./accounting.ts": { async auditSafeLifecycleEvent() {} },
-      "./api-errors.ts": { apiResponseHeaders },
+      "./api-errors.ts": { apiResponseHeaders, apiValidationFailed },
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
         async enforceCallerRequestLimits() {}
       },
       "./database.ts": {},
+      "./input-schema.ts": { isStorableString, unstorableStringError },
       "./logging.ts": { durationSinceMs },
       "./sentry.ts": { reportRuntimeFailure }
     })
@@ -704,7 +748,7 @@ function loadOutputFilesModuleForTest(reportRuntimeFailure) {
 
 /**
  * @param {import("../src/server/database.ts").TransactionContextStatement[]} calls
- * @param {{ accountTierRows: Array<Record<string, unknown>> }} rowsByKind
+ * @param {{ accountTierRows: Array<Record<string, unknown>>, popupPayload?: unknown }} rowsByKind
  * @returns {import("../src/server/database.ts").ProductTransactionQuery}
  */
 function mockHumanAnswerQuery(calls, rowsByKind) {
@@ -723,7 +767,6 @@ function mockHumanAnswerQuery(calls, rowsByKind) {
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-observability",
           caller_audit_id: "audit-caller-observability"
         }
@@ -734,7 +777,10 @@ function mockHumanAnswerQuery(calls, rowsByKind) {
         {
           input_action_id: "action-observability",
           popup_kind: "file_upload",
-          popup_payload: { accept_mime_types: ["text/plain"] }
+          popup_payload: rowsByKind.popupPayload ?? {
+            label: "Attach",
+            accept_mime_types: ["text/plain"]
+          }
         }
       ]);
     }
@@ -1087,6 +1133,71 @@ test("human file upload limit failures log safe operator metadata", async () => 
   const serializedLogs = JSON.stringify(logs);
   assert.equal(serializedLogs.includes("secret-upload.txt"), false);
   assert.equal(serializedLogs.includes("raw upload body"), false);
+});
+
+test("malformed stored MIME patterns reach human answer transaction failure reporting", async () => {
+  /** @type {import("../src/server/database.ts").TransactionContextStatement[]} */
+  const calls = [];
+  /** @type {Array<{error: unknown, context: Record<string, unknown>}>} */
+  const reports = [];
+  const { createHumanAnswer: createAnswer } = loadHumanAnswerModuleForTest(
+    (error, context) => {
+      reports.push({ error, context });
+      return {
+        error_id: String(context.errorId),
+        sentry_captured: true,
+        log: context
+      };
+    },
+    mockHumanAnswerQuery(calls, {
+      accountTierRows: [],
+      popupPayload: {
+        label: "private popup label",
+        accept_mime_types: ["private invalid MIME pattern"]
+      }
+    })
+  );
+  const result = await createAnswer("postgresql://human-answer-test", {
+    accountId: "account-test",
+    callerId: "caller-test",
+    humanUserId: "human-test",
+    requestId: "req-malformed-popup",
+    correlationId: "corr-malformed-popup",
+    inputItemId: "input-test",
+    expectedRevision: 3,
+    actionValue: "upload",
+    response: { kind: "none" }
+  });
+  assert.deepEqual(
+    { ...result },
+    {
+      ok: false,
+      code: "temporary_unavailable",
+      message: "Human answer is temporarily unavailable."
+    }
+  );
+  assert.equal(reports.length, 1);
+  assert.ok(reports[0].error instanceof Error);
+  assert.equal(
+    reports[0].error.message,
+    "Malformed persisted popup_payload for input action action-observability: accept_mime_types must contain at least one valid MIME type pattern."
+  );
+  assert.equal(reports[0].context.operation, "human_answer_transaction");
+  assert.equal(reports[0].context.errorId, "corr-malformed-popup");
+  assert.equal(reports[0].context.status_code, 503);
+  assert.doesNotMatch(
+    JSON.stringify(
+      reports.map((report) => ({
+        ...report,
+        error: String(/** @type {Error} */ (report.error).message)
+      }))
+    ),
+    /private popup label|private invalid MIME pattern/
+  );
+  assert.equal(
+    calls.some((call) => /^\s*(insert|update|delete)\b/i.test(call.sql)),
+    false
+  );
 });
 
 test("human answer transaction failures share error id across structured log and Sentry", async () => {
@@ -1973,7 +2084,7 @@ test("connect terminal setup state reports transaction exceptions", async () => 
         "../../../src/server/correlation": {
           createCorrelationId: () => "caller_terminal_report"
         },
-        "../../../src/server/database": {},
+        "../../../src/server/database": { withSavepoint },
         "../../../src/server/human-session": {
           requiredHumanSessionConfiguration: () => [],
           async resolveHumanAccountSession() {
@@ -2050,6 +2161,78 @@ test("connect terminal setup state reports transaction exceptions", async () => 
     false
   );
 });
+
+test(
+  "caller connect terminal state failure still returns its 503 from a live transaction",
+  {
+    skip: phase3DatabaseVerificationUrl()
+      ? false
+      : DATABASE_POLICY_VERIFICATION_SKIP
+  },
+  async () => {
+    const databaseUrl = phase3DatabaseVerificationUrl();
+    assert.ok(databaseUrl);
+    /** @type {unknown[]} */
+    const reportedErrors = [];
+    const sessionModule =
+      /** @type {{ connectTerminalSetupState(query: import("../src/server/database.ts").ProductTransactionQuery, input: Record<string, unknown>): Promise<{ ok: boolean, error?: { status: number, code: string, message: string } }> }} */ (
+        loadCommonJsModuleForTest("app/caller/connect/session.ts", {
+          "@clerk/nextjs/server": { auth: {} },
+          "next/headers": { headers: async () => new Headers() },
+          "../../../src/server/caller-connect": {
+            getConnectTerminalSetupState
+          },
+          "../../../src/server/caller-connect-clerk-fixture": {
+            CALLER_CONNECT_FIXTURE_USER_ID_HEADER: "x-fixture-user",
+            CALLER_CONNECT_FIXTURE_USER_ID_PARAM: "fixture_clerk_user_id",
+            callerConnectClerkFixtureEnabled: () => false,
+            callerConnectFixtureClerkUserId: () => null
+          },
+          "../../../src/server/correlation": {
+            createCorrelationId: () => "caller_terminal_live"
+          },
+          "../../../src/server/database": { withSavepoint },
+          "../../../src/server/human-session": {},
+          "../../../src/server/logging": { durationSinceMs },
+          "../../../src/server/sentry": {
+            /** @param {unknown} error */
+            reportRuntimeFailure(error) {
+              reportedErrors.push(error);
+            }
+          }
+        })
+      );
+
+    // A non-UUID account id makes the terminal-state select itself fail.
+    const result = await runProductTransaction(
+      databaseUrl,
+      { requestId: "req-connect-terminal-live", authSurface: "human" },
+      (query) =>
+        sessionModule.connectTerminalSetupState(query, {
+          session: { accountId: "not-a-uuid", userId: "user_terminal_live" },
+          requestId: "req-connect-terminal-live",
+          setupRequestId: crypto.randomUUID(),
+          statuses: ["approved", "exchanged"],
+          route: "/caller/connect/success",
+          method: "GET",
+          operation: "caller_connect_terminal_success",
+          unavailableMessage:
+            "Caller connect success is temporarily unavailable."
+        })
+    );
+
+    // The module runs in its own VM context, so compare plain JSON values.
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+      ok: false,
+      error: {
+        status: 503,
+        code: "temporary_unavailable",
+        message: "Caller connect success is temporarily unavailable."
+      }
+    });
+    assert.equal(reportedErrors.length, 1);
+  }
+);
 
 test("caller approval action wrappers report transaction exceptions before redirect", async () => {
   const session = {
@@ -3062,6 +3245,249 @@ test("scheduled cleanup failures log request account and duration without error 
     JSON.stringify(logs).includes("raw cleanup failure detail"),
     false
   );
+});
+
+test("scheduled cleanup logs a global prune failure without account or error text", async () => {
+  const logs = await captureStructuredLogs(async () => {
+    await assert.rejects(
+      runScheduledCleanup({
+        connectionString: "postgresql://cleanup-test",
+        requestId: "req-cleanup-global-observability",
+        now: new Date("2026-07-07T12:00:00.000Z"),
+        async runTransaction(_connectionString, _context, callback) {
+          return await callback(
+            /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
+              async (statement) => {
+                if (
+                  statement.sql.includes(
+                    "agent_outbox_prune_stripe_webhook_events"
+                  )
+                ) {
+                  throw new Error("raw global prune failure detail");
+                }
+                const rows = statement.sql.includes(
+                  "agent_outbox_cleanup_account_targets"
+                )
+                  ? []
+                  : [{ deleted_count: 0 }];
+
+                return {
+                  rows,
+                  rowCount: rows.length,
+                  command: "SELECT",
+                  oid: 0,
+                  fields: []
+                };
+              }
+            )
+          );
+        }
+      }),
+      AggregateError
+    );
+  });
+
+  assert.deepEqual(
+    logs.map((log) => [log.level, log.operation, log.message, log.account_id]),
+    [
+      [
+        "error",
+        "maintenance.scheduled_cleanup",
+        "scheduled cleanup global maintenance failed",
+        undefined
+      ],
+      [
+        "error",
+        "maintenance.scheduled_cleanup",
+        "scheduled cleanup failed",
+        undefined
+      ]
+    ]
+  );
+  assert.equal(logs[0].request_id, "req-cleanup-global-observability");
+  assert.equal(
+    JSON.stringify(logs).includes("raw global prune failure detail"),
+    false
+  );
+});
+
+const SCHEDULED_SENTRY_PRODUCTION_ENV = {
+  APP_ENV: "production",
+  SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
+  SENTRY_RELEASE: "agent-outbox@2026.07.07",
+  CI: undefined,
+  NODE_ENV: "production"
+};
+
+/**
+ * Records Sentry SDK calls in order. `init` installs a client unless
+ * `initThrows` is set, matching the SDK's per-isolate global client.
+ *
+ * @param {{ client?: object, initThrows?: boolean, flushResult?: boolean }} [options]
+ */
+function scheduledSentryStub(options = {}) {
+  /** @type {string[]} */
+  const calls = [];
+  /** @type {unknown[]} */
+  const initOptions = [];
+  /** @type {object | undefined} */
+  let client = options.client;
+  const stub = {
+    getClient() {
+      return client;
+    },
+    /** @param {unknown} value */
+    init(value) {
+      calls.push("init");
+      initOptions.push(value);
+      if (options.initThrows) {
+        throw new Error("raw sentry init detail");
+      }
+      client = {};
+    },
+    /** @param {(scope: Record<string, Function>) => void} callback */
+    withScope(callback) {
+      callback({
+        setTag() {},
+        setContext() {},
+        setFingerprint() {}
+      });
+    },
+    captureException() {
+      calls.push("capture");
+    },
+    /** @param {number} timeoutMs */
+    async flush(timeoutMs) {
+      calls.push(`flush:${timeoutMs}`);
+      // A macrotask delay proves the wrapper awaits flush before settling.
+      await new Promise((resolveFlush) => setTimeout(resolveFlush, 0));
+      calls.push("flushed");
+      return options.flushResult ?? true;
+    }
+  };
+
+  return { stub, calls, initOptions };
+}
+
+test("scheduled Sentry initializes a missing client and flushes a reported failure before rejecting", async () => {
+  const { stub, calls, initOptions } = scheduledSentryStub();
+  const { reportRuntimeFailure, runWithScheduledSentry } =
+    loadSentryModuleForTest(stub);
+  const cleanupFailure = new Error("raw cleanup failure detail");
+
+  const logs = await withProcessEnv(SCHEDULED_SENTRY_PRODUCTION_ENV, () =>
+    captureStructuredLogs(async () => {
+      await assert.rejects(
+        runWithScheduledSentry(async () => {
+          reportRuntimeFailure(cleanupFailure, {
+            errorId: "cleanup_test",
+            surface: "scheduled",
+            operation: "maintenance.scheduled_cleanup",
+            message: "scheduled cleanup failed"
+          });
+          throw cleanupFailure;
+        }).finally(() => calls.push("settled")),
+        (error) => error === cleanupFailure
+      );
+    })
+  );
+
+  assert.deepEqual(calls, [
+    "init",
+    "capture",
+    "flush:2000",
+    "flushed",
+    "settled"
+  ]);
+  // The options object comes from the vm realm, so compare its JSON shape.
+  assert.deepEqual(JSON.parse(JSON.stringify(initOptions)), [
+    {
+      dsn: SCHEDULED_SENTRY_PRODUCTION_ENV.SENTRY_DSN,
+      environment: "production",
+      release: SCHEDULED_SENTRY_PRODUCTION_ENV.SENTRY_RELEASE,
+      tracesSampleRate: 0.05,
+      maxBreadcrumbs: 0,
+      integrations: [{ name: "AgentOutboxRuntimeContentSafety" }]
+    }
+  ]);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].sentry_captured, true);
+});
+
+test("scheduled Sentry reuses an existing isolate client and returns the task result", async () => {
+  const { stub, calls } = scheduledSentryStub({ client: {} });
+  const { runWithScheduledSentry } = loadSentryModuleForTest(stub);
+
+  const result = await withProcessEnv(SCHEDULED_SENTRY_PRODUCTION_ENV, () =>
+    runWithScheduledSentry(async () => "cleanup-result")
+  );
+
+  assert.equal(result, "cleanup-result");
+  assert.deepEqual(calls, ["flush:2000", "flushed"]);
+});
+
+test("scheduled Sentry warns when the flush does not complete", async () => {
+  const { stub } = scheduledSentryStub({ client: {}, flushResult: false });
+  const { runWithScheduledSentry } = loadSentryModuleForTest(stub);
+
+  const logs = await withProcessEnv(SCHEDULED_SENTRY_PRODUCTION_ENV, () =>
+    captureStructuredLogs(async () => {
+      assert.equal(
+        await runWithScheduledSentry(async () => "cleanup-result"),
+        "cleanup-result"
+      );
+    })
+  );
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, "warn");
+  assert.equal(logs[0].operation, "runtime.scheduled.sentry_flush");
+});
+
+test("scheduled Sentry stays inactive when capture is not enabled", async () => {
+  const { stub, calls } = scheduledSentryStub();
+  const { runWithScheduledSentry } = loadSentryModuleForTest(stub);
+
+  const result = await withProcessEnv(
+    { ...SCHEDULED_SENTRY_PRODUCTION_ENV, APP_ENV: "development" },
+    () => runWithScheduledSentry(async () => "cleanup-result")
+  );
+
+  assert.equal(result, "cleanup-result");
+  assert.deepEqual(calls, []);
+});
+
+test("scheduled Sentry init failures are logged and later failures report sentry_captured false", async () => {
+  const { stub, calls } = scheduledSentryStub({ initThrows: true });
+  const { reportRuntimeFailure, runWithScheduledSentry } =
+    loadSentryModuleForTest(stub);
+  const cleanupFailure = new Error("raw cleanup failure detail");
+
+  const logs = await withProcessEnv(SCHEDULED_SENTRY_PRODUCTION_ENV, () =>
+    captureStructuredLogs(async () => {
+      await assert.rejects(
+        runWithScheduledSentry(async () => {
+          reportRuntimeFailure(cleanupFailure, {
+            errorId: "cleanup_test",
+            surface: "scheduled",
+            operation: "maintenance.scheduled_cleanup",
+            message: "scheduled cleanup failed"
+          });
+          throw cleanupFailure;
+        }),
+        (error) => error === cleanupFailure
+      );
+    })
+  );
+
+  assert.deepEqual(calls, ["init"]);
+  assert.equal(logs.length, 2);
+  assert.equal(logs[0].level, "error");
+  assert.equal(logs[0].operation, "runtime.scheduled.sentry_init");
+  assert.equal(logs[0].sentry_captured, false);
+  assert.equal(logs[1].operation, "maintenance.scheduled_cleanup");
+  assert.equal(logs[1].sentry_captured, false);
+  assert.equal(JSON.stringify(logs).includes("raw sentry init detail"), false);
 });
 
 test("client event endpoint logs only allowlisted content-safe fields", async () => {

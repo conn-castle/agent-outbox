@@ -26,7 +26,11 @@ import type {
   ProductTransactionQuery,
   TransactionContextStatement
 } from "./database.ts";
-import { isStorableString, unstorableStringError } from "./input-schema.ts";
+import {
+  callerIdNotAllowedError,
+  isStorableString,
+  unstorableStringError
+} from "./input-schema.ts";
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
   InputReadRequestSchema,
@@ -217,6 +221,10 @@ export function parseInputReadBody(
         message: "Request body must be an object."
       }
     ]);
+  }
+
+  if ("caller_id" in body) {
+    return validationFailed([callerIdNotAllowedError()]);
   }
 
   if (

@@ -2070,6 +2070,24 @@ test("human mutation transport rejects cross-origin requests", async ({
   });
 });
 
+test("human mutation transport rejects malformed bodies as invalid requests", async ({
+  page,
+  baseURL
+}) => {
+  const response = await page.request.post("/human/mutations", {
+    headers: {
+      Origin: new URL(baseURL ?? "").origin,
+      "Content-Type": "multipart/form-data; boundary=x"
+    },
+    data: "not a form"
+  });
+  expect(response.status()).toBe(400);
+  await expect(response.json()).resolves.toMatchObject({
+    ok: false,
+    code: "invalid_request"
+  });
+});
+
 test("review actions disappear within 20 ms without shifting the workspace", async ({
   page
 }) => {
@@ -2797,6 +2815,54 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await expect(lastUndoButton(page, "Select checks")).toBeVisible();
 });
 
+test("free-text defaults outside the length bounds submit only after editing", async ({
+  page
+}) => {
+  const mutations: Request[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/human/mutations")) mutations.push(request);
+  });
+  const cases = [
+    {
+      action: "Request edit",
+      label: "Requested change",
+      defaultValue: "Change: ",
+      message: "Enter at least 10 characters.",
+      edited: "Change: tighten the handoff language."
+    },
+    {
+      action: "Add handoff note",
+      label: "Handoff note",
+      defaultValue:
+        "Confirm the July 8 notice end date with the resident before handoff.",
+      message: "Enter no more than 40 characters.",
+      edited: "Confirm the July 8 notice end date."
+    }
+  ];
+
+  for (const { action, label, defaultValue, message, edited } of cases) {
+    await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
+    await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+    await openSecondaryActions(page);
+    await page.getByRole("button", { name: action }).click();
+    const field = page.getByLabel(label);
+    await expect(field).toHaveValue(defaultValue);
+
+    await page.getByRole("button", { name: action }).click();
+    await expect(field).toHaveJSProperty("validationMessage", message);
+    await expect(field).toBeVisible();
+
+    await field.fill(edited);
+    await expect(field).toHaveJSProperty("validationMessage", "");
+    await page.getByRole("button", { name: action }).click();
+    await expect(lastUndoButton(page, action)).toBeVisible();
+    expect(mutations).toHaveLength(1);
+    await lastUndoButton(page).click();
+    await expect(lastUndoButton(page)).toHaveCount(0);
+    mutations.length = 0;
+  }
+});
+
 test("row popup actions open a focused composer instead of the full detail", async ({
   page,
   isMobile
@@ -3225,6 +3291,22 @@ test("deployment fixture renders hostile caller content inertly", async ({
   await expect(
     detail.getByText(/api key|manual key|archive|gmail/i)
   ).toHaveCount(0);
+});
+
+test("compose links do not open a composer for an unanswerable action", async ({
+  page
+}) => {
+  await page.goto(
+    "/human?item=00000000-0000-4000-8000-000000000523&compose=unavailable_upload"
+  );
+
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect(detail).toContainText("fixtureUnsafeScript()");
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
+  await openSecondaryActions(page);
+  await expect(
+    detail.getByRole("button", { name: "Unavailable upload" })
+  ).toBeDisabled();
 });
 
 test("fixture storyboard catalogs every use case at desktop tablet and phone widths", async ({

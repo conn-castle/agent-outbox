@@ -12,8 +12,14 @@ import {
 } from "../src/server/human-answer.ts";
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
-import { handleOutputFileDownloadAuthenticatedTransaction } from "../src/server/output-files.ts";
-import { acknowledgeOutputInTransaction } from "../src/server/output-queue.ts";
+import {
+  handleOutputFileDownloadAuthenticatedTransaction,
+  outputFileDownloadInTransaction
+} from "../src/server/output-files.ts";
+import {
+  acknowledgeOutputInTransaction,
+  readOutputResultInTransaction
+} from "../src/server/output-queue.ts";
 import { runScheduledCleanup } from "../src/server/scheduled.ts";
 import { accountLimitStatusMetadata } from "../src/server/limits.ts";
 import {
@@ -22,6 +28,7 @@ import {
   preserveBodyErrorDuringTeardown,
   teardownAttempt
 } from "./helpers/database.mjs";
+import { parseValidSubmission } from "./helpers/canonical-input.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -51,24 +58,62 @@ const baseAnswerInput = {
   answeredAt: new Date("2026-06-30T12:00:00.000Z")
 };
 
+/** @type {import("../src/server/input-schema.ts").NormalizedFreeTextPopupPayload} */
+const freeTextPayload = {
+  label: "Reply",
+  placeholder: null,
+  default_value: null,
+  multiline: false,
+  min_length: null,
+  max_length: null
+};
+/** @type {import("../src/server/input-schema.ts").NormalizedMultiSelectPopupPayload} */
+const multiSelectPayload = {
+  label: "Choose",
+  min_selected: 0,
+  max_selected: 1
+};
+/** @type {import("../src/server/input-schema.ts").NormalizedDatePickerPopupPayload} */
+const datePickerPayload = {
+  label: "When",
+  mode: "date",
+  placeholder: null,
+  display_timezone: null,
+  min_value: null,
+  max_value: null
+};
+/** @type {import("../src/server/input-schema.ts").NormalizedFileUploadPopupPayload} */
+const fileUploadPayload = { label: "Attach", accept_mime_types: null };
+
 test("feedback accompanies every response kind without replacing or bypassing the answer", () => {
   /** @type {Array<[Parameters<typeof validatedResponsePayload>[0], import("../src/server/human-answer.ts").HumanActionResponse]>} */
   const cases = [
     [{ popupKind: "none", popupPayload: {} }, { kind: "none" }],
     [
-      { popupKind: "free_text", popupPayload: {} },
+      { popupKind: "free_text", popupPayload: freeTextPayload },
       { kind: "free_text", text: "Answer" }
     ],
     [
-      { popupKind: "single_select", popupPayload: {}, optionValues: ["yes"] },
+      {
+        popupKind: "single_select",
+        popupPayload: { label: "Choose" },
+        optionValues: ["yes"]
+      },
       { kind: "single_select", value: "yes" }
     ],
     [
-      { popupKind: "multi_select", popupPayload: {}, optionValues: ["yes"] },
+      {
+        popupKind: "multi_select",
+        popupPayload: multiSelectPayload,
+        optionValues: ["yes"]
+      },
       { kind: "multi_select", values: ["yes"] }
     ],
     [
-      { popupKind: "date_picker", popupPayload: { mode: "date" } },
+      {
+        popupKind: "date_picker",
+        popupPayload: { ...datePickerPayload, mode: "date" }
+      },
       {
         kind: "date_picker",
         mode: "date",
@@ -77,7 +122,10 @@ test("feedback accompanies every response kind without replacing or bypassing th
       }
     ],
     [
-      { popupKind: "date_picker", popupPayload: { mode: "datetime" } },
+      {
+        popupKind: "date_picker",
+        popupPayload: { ...datePickerPayload, mode: "datetime" }
+      },
       {
         kind: "date_picker",
         mode: "datetime",
@@ -86,7 +134,7 @@ test("feedback accompanies every response kind without replacing or bypassing th
       }
     ],
     [
-      { popupKind: "file_upload", popupPayload: {} },
+      { popupKind: "file_upload", popupPayload: fileUploadPayload },
       {
         kind: "file_upload",
         file: new File(["file"], "note.txt", { type: "text/plain" })
@@ -183,7 +231,7 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "single_select",
-        popupPayload: {},
+        popupPayload: { label: "Choose" },
         optionValues: ["approve", "reject"]
       },
       { kind: "single_select", value: "archive" }
@@ -207,7 +255,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "multi_select",
-        popupPayload: { min_selected: 1, max_selected: 2 },
+        popupPayload: {
+          ...multiSelectPayload,
+          min_selected: 1,
+          max_selected: 2
+        },
         optionValues: ["a", "b", "c"]
       },
       { kind: "multi_select", values: ["a", "c"] }
@@ -223,7 +275,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "date_picker",
-        popupPayload: { mode: "date", display_timezone: null },
+        popupPayload: {
+          ...datePickerPayload,
+          mode: "date",
+          display_timezone: null
+        },
         optionValues: []
       },
       {
@@ -250,7 +306,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "date_picker",
-        popupPayload: { mode: "date", display_timezone: "America/New_York" },
+        popupPayload: {
+          ...datePickerPayload,
+          mode: "date",
+          display_timezone: "America/New_York"
+        },
         optionValues: []
       },
       {
@@ -275,7 +335,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "date_picker",
-        popupPayload: { mode: "datetime", display_timezone: null },
+        popupPayload: {
+          ...datePickerPayload,
+          mode: "datetime",
+          display_timezone: null
+        },
         optionValues: []
       },
       {
@@ -303,7 +367,11 @@ test("human answer response validation enforces selected popup options and bound
     validatedResponsePayload(
       {
         popupKind: "date_picker",
-        popupPayload: { mode: "date", display_timezone: null },
+        popupPayload: {
+          ...datePickerPayload,
+          mode: "date",
+          display_timezone: null
+        },
         optionValues: []
       },
       {
@@ -324,10 +392,14 @@ test("human answer response validation enforces selected popup options and bound
       responsePayloadBytes: 65
     }
   );
-  /** @type {Array<[Record<string, unknown>, import("../src/server/human-answer.ts").HumanActionResponse, string]>} */
+  /** @type {Array<[import("../src/server/input-schema.ts").NormalizedDatePickerPopupPayload, import("../src/server/human-answer.ts").HumanActionResponse, string]>} */
   const timezoneMismatches = [
     [
-      { mode: "date", display_timezone: "America/New_York" },
+      {
+        ...datePickerPayload,
+        mode: "date",
+        display_timezone: "America/New_York"
+      },
       {
         kind: "date_picker",
         mode: "date",
@@ -337,7 +409,7 @@ test("human answer response validation enforces selected popup options and bound
       "Date-picker timezone must match the selected action."
     ],
     [
-      { mode: "datetime", display_timezone: null },
+      { ...datePickerPayload, mode: "datetime", display_timezone: null },
       {
         kind: "date_picker",
         mode: "datetime",
@@ -347,7 +419,11 @@ test("human answer response validation enforces selected popup options and bound
       "Date-picker responses require an IANA timezone name."
     ],
     [
-      { mode: "datetime", display_timezone: "America/New_York" },
+      {
+        ...datePickerPayload,
+        mode: "datetime",
+        display_timezone: "America/New_York"
+      },
       {
         kind: "date_picker",
         mode: "datetime",
@@ -377,7 +453,11 @@ test("human answer response validation enforces selected popup options and bound
 
   assert.deepEqual(
     validatedResponsePayload(
-      { popupKind: "free_text", popupPayload: {}, optionValues: [] },
+      {
+        popupKind: "free_text",
+        popupPayload: freeTextPayload,
+        optionValues: []
+      },
       { kind: "free_text", text: "   " }
     ),
     {
@@ -389,7 +469,7 @@ test("human answer response validation enforces selected popup options and bound
   );
 
   const oversizedText = validatedResponsePayload(
-    { popupKind: "free_text", popupPayload: {}, optionValues: [] },
+    { popupKind: "free_text", popupPayload: freeTextPayload, optionValues: [] },
     { kind: "free_text", text: "x".repeat(HUMAN_ANSWER_RESPONSE_BYTE_LIMIT) }
   );
   assert.equal(oversizedText.ok, false);
@@ -404,6 +484,7 @@ test("human answer response validation accepts one matching uploaded file", () =
     {
       popupKind: "file_upload",
       popupPayload: {
+        ...fileUploadPayload,
         accept_mime_types: ["application/*"]
       },
       optionValues: []
@@ -418,9 +499,7 @@ test("human answer response validation accepts one matching uploaded file", () =
   const rejected = validatedResponsePayload(
     {
       popupKind: "file_upload",
-      popupPayload: {
-        accept_mime_types: ["image/png"]
-      },
+      popupPayload: { ...fileUploadPayload, accept_mime_types: ["image/png"] },
       optionValues: []
     },
     { kind: "file_upload", file }
@@ -432,29 +511,12 @@ test("human answer response validation accepts one matching uploaded file", () =
   );
 });
 
-test("human answer response validation fails closed for malformed file upload MIME policy", () => {
-  const file = new File(["file bytes"], "receipt.pdf", {
-    type: "application/pdf"
-  });
-  const result = validatedResponsePayload(
-    {
-      popupKind: "file_upload",
-      popupPayload: {
-        accept_mime_types: ["not-a-mime-pattern"]
-      },
-      optionValues: []
-    },
-    { kind: "file_upload", file }
-  );
-
-  assert.equal(result.ok, false);
-  assert.equal(result.ok ? null : result.code, "temporary_unavailable");
-});
-
 test("human answer response validation rejects impossible and sub-millisecond datetime responses", () => {
+  /** @type {Parameters<typeof validatedResponsePayload>[0]} */
   const action = {
-    popupKind: /** @type {"date_picker"} */ ("date_picker"),
+    popupKind: "date_picker",
     popupPayload: {
+      ...datePickerPayload,
       mode: "datetime",
       min_value: "2026-01-01T00:00:00.000000001Z",
       max_value: "2026-01-01T00:00:00.000000010Z"
@@ -498,6 +560,381 @@ test("human answer response validation rejects impossible and sub-millisecond da
   );
 });
 
+const pendingInputRow = {
+  input_item_id: baseAnswerInput.inputItemId,
+  caller_item_id: "caller-item-1",
+  caller_item_id_hash: "hash-1",
+  status: "pending",
+  current_revision: 3,
+  non_file_payload_bytes: "100",
+  account_audit_id: "audit-account-1",
+  caller_audit_id: "audit-caller-1"
+};
+
+/** @type {Array<{name: string, kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse, message: string}>} */
+const malformedPopupCases = [
+  {
+    name: "free-text minimum with a string type",
+    kind: "free_text",
+    payload: {
+      ...freeTextPayload,
+      label: "private stored label",
+      min_length: "5"
+    },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must be a finite number or null, got string."
+  },
+  {
+    name: "multi-select maximum with a string type",
+    kind: "multi_select",
+    payload: {
+      ...multiSelectPayload,
+      label: "private stored label",
+      max_selected: "2"
+    },
+    response: { kind: "multi_select", values: ["a", "b", "c"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_selected must be a finite number, got string."
+  },
+  {
+    name: "free-text negative minimum",
+    kind: "free_text",
+    payload: {
+      ...freeTextPayload,
+      label: "private stored label",
+      min_length: -1
+    },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must be a non-negative integer or null."
+  },
+  {
+    name: "free-text fractional maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 2.5 },
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text zero maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, max_length: 0 },
+    response: { kind: "free_text", text: "" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_length must be a positive integer or null."
+  },
+  {
+    name: "free-text minimum above maximum",
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 5, max_length: 3 },
+    response: { kind: "free_text", text: "four" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_length must not exceed max_length."
+  },
+  {
+    name: "multi-select maximum above the stored option count",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, max_selected: 4 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select fractional minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 0.5 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select negative minimum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: -1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "multi-select minimum above maximum",
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 2, max_selected: 1 },
+    response: { kind: "multi_select", values: ["a"] },
+    message:
+      "Malformed persisted popup_payload for input action action-1: multi_select bounds must be integers satisfying 0 <= min_selected <= max_selected <= option count."
+  },
+  {
+    name: "date-picker invalid timezone with a matching date response",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      label: "private stored label",
+      display_timezone: "Not/AZone"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: "Not/AZone"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name."
+  },
+  {
+    name: "datetime-picker invalid timezone",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      mode: "datetime",
+      display_timezone: "Not/AZone"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-06-29T12:00:00.000Z",
+      display_timezone: "UTC"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: display_timezone must be an IANA timezone name."
+  },
+  {
+    name: "date-picker minimum with a number type",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      label: "private stored label",
+      min_value: 5
+    },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: null
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_value must be a string or null, got number."
+  },
+  {
+    name: "date-picker empty minimum",
+    kind: "date_picker",
+    payload: { ...datePickerPayload, min_value: "" },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: null
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: min_value must be a valid date bound."
+  },
+  {
+    name: "datetime-picker date-only maximum",
+    kind: "date_picker",
+    payload: {
+      ...datePickerPayload,
+      mode: "datetime",
+      max_value: "2026-06-30"
+    },
+    response: {
+      kind: "date_picker",
+      mode: "datetime",
+      value_utc: "2026-06-29T12:00:00.000Z",
+      display_timezone: "UTC"
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: max_value must be a valid datetime bound."
+  },
+  {
+    name: "file-upload MIME list with a non-string entry",
+    kind: "file_upload",
+    payload: {
+      ...fileUploadPayload,
+      label: "private stored label",
+      accept_mime_types: ["text/plain", 1]
+    },
+    response: {
+      kind: "file_upload",
+      file: new File(["x"], "note.txt", { type: "text/plain" })
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: accept_mime_types must be an array of strings or null, got array."
+  },
+  {
+    name: "file-upload invalid MIME pattern",
+    kind: "file_upload",
+    payload: {
+      ...fileUploadPayload,
+      label: "private stored label",
+      accept_mime_types: ["not a mime"]
+    },
+    response: {
+      kind: "file_upload",
+      file: new File(["x"], "note.txt", { type: "text/plain" })
+    },
+    message:
+      "Malformed persisted popup_payload for input action action-1: accept_mime_types must contain at least one valid MIME type pattern."
+  },
+  {
+    name: "file-upload empty MIME list before response validation",
+    kind: "file_upload",
+    payload: { ...fileUploadPayload, accept_mime_types: [] },
+    response: { kind: "none" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: accept_mime_types must contain at least one valid MIME type pattern."
+  },
+  {
+    name: "string payload",
+    kind: "free_text",
+    payload: "private stored payload",
+    response: { kind: "free_text", text: "x" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: expected a JSON object."
+  },
+  {
+    name: "array payload",
+    kind: "none",
+    payload: ["private stored payload"],
+    response: { kind: "none" },
+    message:
+      "Malformed persisted popup_payload for input action action-1: expected a JSON object."
+  },
+  {
+    name: "unknown kind",
+    kind: "mystery",
+    payload: { label: "private stored label" },
+    response: { kind: "none" },
+    message:
+      'Unsupported persisted popup_kind for input action action-1: "mystery"'
+  }
+];
+
+for (const scenario of malformedPopupCases) {
+  test(`human answer service rejects malformed persisted popup: ${scenario.name}`, async () => {
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    await assert.rejects(
+      createHumanAnswerInTransaction(
+        mockQuery(calls, {
+          inputRows: [pendingInputRow],
+          actionRows: [
+            {
+              input_action_id: "action-1",
+              popup_kind: scenario.kind,
+              popup_payload: scenario.payload
+            }
+          ],
+          optionRows: ["a", "b", "c"].map((option_value) => ({ option_value }))
+        }),
+        { ...baseAnswerInput, response: scenario.response }
+      ),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, scenario.message);
+        assert.doesNotMatch(
+          error.message,
+          /private stored|not a mime|text\/plain|"5"|"2"|2026-06-30|AZone/
+        );
+        return true;
+      }
+    );
+    assert.equal(
+      calls.some((call) => /^\s*(insert|update|delete)\b/i.test(call.sql)),
+      false
+    );
+  });
+}
+
+/** @type {Array<{kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse, field: string}>} */
+const boundedPopupCases = [
+  {
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 5 },
+    response: { kind: "free_text", text: "x" },
+    field: "response.text"
+  },
+  {
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, max_selected: 2 },
+    response: { kind: "multi_select", values: ["a", "b", "c"] },
+    field: "response.values"
+  }
+];
+for (const scenario of boundedPopupCases) {
+  test(`human answer service enforces well-formed ${scenario.kind} bounds`, async () => {
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    const result = await createHumanAnswerInTransaction(
+      mockQuery(calls, {
+        inputRows: [pendingInputRow],
+        actionRows: [
+          {
+            input_action_id: "action-1",
+            popup_kind: scenario.kind,
+            popup_payload: scenario.payload
+          }
+        ],
+        optionRows: ["a", "b", "c"].map((option_value) => ({ option_value }))
+      }),
+      { ...baseAnswerInput, response: scenario.response }
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.ok ? null : result.code, "invalid_action_response");
+    assert.equal(result.ok ? null : result.fields?.[0]?.path, scenario.field);
+    assert.equal(
+      calls.some((call) => /^\s*(insert|update|delete)\b/i.test(call.sql)),
+      false
+    );
+  });
+}
+
+/** @type {Array<{kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse}>} */
+const boundaryPopupCases = [
+  {
+    kind: "free_text",
+    payload: { ...freeTextPayload, min_length: 0, max_length: 1 },
+    response: { kind: "free_text", text: "x" }
+  },
+  {
+    kind: "multi_select",
+    payload: { ...multiSelectPayload, min_selected: 0, max_selected: 3 },
+    response: { kind: "multi_select", values: ["a", "b", "c"] }
+  },
+  {
+    kind: "date_picker",
+    payload: { ...datePickerPayload, display_timezone: "" },
+    response: {
+      kind: "date_picker",
+      mode: "date",
+      value_date: "2026-06-30",
+      display_timezone: ""
+    }
+  }
+];
+for (const scenario of boundaryPopupCases) {
+  test(`human answer service accepts stored ${scenario.kind} settings at the input-rule limits`, async () => {
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    const result = await createHumanAnswerInTransaction(
+      mockQuery(calls, {
+        inputRows: [pendingInputRow],
+        actionRows: [
+          {
+            input_action_id: "action-1",
+            popup_kind: scenario.kind,
+            popup_payload: scenario.payload
+          }
+        ],
+        optionRows: ["a", "b", "c"].map((option_value) => ({ option_value })),
+        outputRows: [{ output_result_id: "output-1" }]
+      }),
+      { ...baseAnswerInput, response: scenario.response }
+    );
+    assert.equal(result.ok, true);
+  });
+}
+
 test("human answer service rejects stale revisions before creating output", async () => {
   /** @type {TransactionContextStatement[]} */
   const calls = [];
@@ -511,7 +948,6 @@ test("human answer service rejects stale revisions before creating output", asyn
           status: "pending",
           current_revision: 4,
           non_file_payload_bytes: 100,
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -546,7 +982,6 @@ test("human answer service creates one output with feedback and content-safe aud
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -555,7 +990,7 @@ test("human answer service creates one output with feedback and content-safe aud
         {
           input_action_id: "action-1",
           popup_kind: "free_text",
-          popup_payload: { min_length: 1, max_length: 200 }
+          popup_payload: { ...freeTextPayload, min_length: 1, max_length: 200 }
         }
       ],
       outputRows: [{ output_result_id: "output-1" }]
@@ -584,7 +1019,7 @@ test("human answer service creates one output with feedback and content-safe aud
   );
   assert.ok(outputInsert);
   assert.ok(outputInsert.values);
-  assert.deepEqual(outputInsert.values.slice(0, 12), [
+  assert.deepEqual(outputInsert.values, [
     baseAnswerInput.accountId,
     baseAnswerInput.callerId,
     baseAnswerInput.inputItemId,
@@ -595,7 +1030,6 @@ test("human answer service creates one output with feedback and content-safe aud
     67,
     "2026-06-30T12:00:00.000Z",
     baseAnswerInput.humanUserId,
-    "2026-06-29T09:00:00.000Z",
     "2026-07-14T12:00:00.000Z"
   ]);
 
@@ -637,7 +1071,6 @@ test("human answer service stores uploaded bytes in one output file row and cont
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -646,7 +1079,7 @@ test("human answer service stores uploaded bytes in one output file row and cont
         {
           input_action_id: "action-1",
           popup_kind: "file_upload",
-          popup_payload: { accept_mime_types: ["text/*"] }
+          popup_payload: { ...fileUploadPayload, accept_mime_types: ["text/*"] }
         }
       ],
       accountTierRows: [{ tier: "hosted_paid" }],
@@ -729,7 +1162,6 @@ test("human answer service rejects oversized uploaded files before reading bytes
           status: "pending",
           current_revision: 3,
           non_file_payload_bytes: "100",
-          updated_at: new Date("2026-06-29T09:00:00.000Z"),
           account_audit_id: "audit-account-1",
           caller_audit_id: "audit-caller-1"
         }
@@ -738,7 +1170,10 @@ test("human answer service rejects oversized uploaded files before reading bytes
         {
           input_action_id: "action-1",
           popup_kind: "file_upload",
-          popup_payload: { accept_mime_types: ["text/plain"] }
+          popup_payload: {
+            ...fileUploadPayload,
+            accept_mime_types: ["text/plain"]
+          }
         }
       ],
       accountTierRows: [{ tier: "hosted_paid" }]
@@ -868,8 +1303,8 @@ test(
         });
         assert.equal(page.totalCount, expected.length);
         assert.deepEqual(
-          page.rows.map((row) => row.inputItemId).sort(),
-          [...expected].sort()
+          page.rows.map((row) => row.inputItemId),
+          expected
         );
       }
     }
@@ -911,6 +1346,18 @@ test(
           [crypto.randomUUID(), itemId]
         );
       }
+      // The answered item and the untouched item differ by less than one
+      // millisecond so undo must restore the exact microsecond timestamp.
+      for (const [itemId, updatedAt] of [
+        [ids.inputItemId, "2026-06-29T09:00:00.123456Z"],
+        [untouchedItemId, "2026-06-29T09:00:00.123400Z"],
+        [otherItemId, "2026-06-29T08:00:00.000000Z"]
+      ]) {
+        await client.query(
+          "update public.agent_outbox_input_items set updated_at = $2 where input_item_id = $1",
+          [itemId, updatedAt]
+        );
+      }
       await client.query("commit");
       await client.query("begin");
       await client.query("select set_config($1, $2, true)", [
@@ -931,11 +1378,11 @@ test(
       ]);
 
       const originalInput = await client.query(
-        `select updated_at from public.agent_outbox_input_items where input_item_id = $1`,
+        `select updated_at::text from public.agent_outbox_input_items where input_item_id = $1`,
         [ids.inputItemId]
       );
-      const originalUpdatedAt = originalInput.rows[0].updated_at.toISOString();
-      await assertQueues([ids.inputItemId, otherItemId, untouchedItemId], []);
+      const originalUpdatedAt = originalInput.rows[0].updated_at;
+      await assertQueues([ids.inputItemId, untouchedItemId, otherItemId], []);
       const otherAnswer = await createHumanAnswerInTransaction(query, {
         accountId: ids.accountId,
         callerId: ids.callerId,
@@ -967,11 +1414,11 @@ test(
 
       assert.equal(answer.ok, true);
       assert.equal(answer.responseKind, "none");
-      await assertQueues([untouchedItemId], [ids.inputItemId, otherItemId]);
+      await assertQueues([untouchedItemId], [otherItemId, ids.inputItemId]);
 
       const answeredRows = await client.query(
         `
-          select i.status, i.answered_at, o.expires_at, o.previous_input_updated_at
+          select i.status, i.answered_at, o.expires_at, o.previous_input_updated_at::text
           from public.agent_outbox_input_items i
           join public.agent_outbox_output_results o
             on o.input_item_id = i.input_item_id
@@ -985,7 +1432,7 @@ test(
         "2026-07-14T12:00:00.000Z"
       );
       assert.equal(
-        answeredRows.rows[0].previous_input_updated_at.toISOString(),
+        answeredRows.rows[0].previous_input_updated_at,
         originalUpdatedAt
       );
 
@@ -1011,7 +1458,7 @@ test(
 
       const restoredRows = await client.query(
         `
-          select status, current_revision, updated_at
+          select status, current_revision, updated_at::text
           from public.agent_outbox_input_items
           where input_item_id = $1
         `,
@@ -1020,10 +1467,7 @@ test(
       assert.equal(restoredRows.rows[0].status, "pending");
       assert.equal(restoredRows.rows[0].current_revision, 2);
       await assertQueues([ids.inputItemId, untouchedItemId], [otherItemId]);
-      assert.equal(
-        restoredRows.rows[0].updated_at.toISOString(),
-        originalUpdatedAt
-      );
+      assert.equal(restoredRows.rows[0].updated_at, originalUpdatedAt);
 
       const legacyAnswer = await createHumanAnswerInTransaction(
         (statement) => client.query(statement.sql, statement.values),
@@ -1041,7 +1485,7 @@ test(
         }
       );
       assert.equal(legacyAnswer.ok, true);
-      await assertQueues([untouchedItemId], [ids.inputItemId, otherItemId]);
+      await assertQueues([untouchedItemId], [otherItemId, ids.inputItemId]);
       if (!legacyAnswer.ok) assert.fail("expected legacy fallback answer");
       await client.query(
         `update public.agent_outbox_output_results set previous_input_updated_at = null where output_result_id = $1`,
@@ -1137,8 +1581,12 @@ test(
             [ids.accountId, tier]
           );
           await owner.query(
-            "update public.agent_outbox_input_actions set popup_kind = $2 where input_action_id = $1",
-            [ids.actionId, kind]
+            "update public.agent_outbox_input_actions set popup_kind = $2, popup_payload = $3::jsonb where input_action_id = $1",
+            [
+              ids.actionId,
+              kind,
+              JSON.stringify(kind === "file_upload" ? fileUploadPayload : {})
+            ]
           );
           await owner.query("commit");
           const humanPid = (await human.query("select pg_backend_pid() as pid"))
@@ -1523,8 +1971,8 @@ test(
         [ids.accountId]
       );
       await owner.query(
-        "update public.agent_outbox_input_actions set popup_kind = 'file_upload' where input_action_id = $1",
-        [ids.actionId]
+        "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+        [ids.actionId, JSON.stringify(fileUploadPayload)]
       );
       await owner.query("commit");
       const answered = await runHumanAnswerDatabaseTransaction(
@@ -1652,6 +2100,295 @@ test(
           await cleanupHumanAnswerDatabaseTest(owner, ids);
         },
         "Ack and download concurrency test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "output lookups preserve canonical live ids and case-insensitive duplicate acks without aborting the transaction",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+    const owner = await connectedDatabaseClient(databaseUrl);
+    const caller = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const identity = { accountId: ids.accountId, callerId: ids.callerId };
+    const context = {
+      requestId: "req-canonical-output-ids",
+      correlationId: "corr-canonical-output-ids"
+    };
+    // Guarantee two alphabetic characters so uppercase and mixed-case forms
+    // are always distinct from each other and from the stored ids.
+    const outputResultId = crypto.randomUUID().replace(/^../, "ab");
+    const fileId = crypto.randomUUID().replace(/^../, "cd");
+    const submission = parseValidSubmission({
+      caller_item_id: "caller-item-db",
+      row_type: { display: "Review", icon: "inbox" },
+      title: "Title",
+      subtitle: "Subtitle",
+      summary: "Summary",
+      link_buttons: [],
+      actions: [
+        {
+          display: "Approve",
+          icon: "check",
+          value: "approve",
+          overflow: false,
+          popup: { kind: "file_upload", ...fileUploadPayload }
+        }
+      ]
+    });
+    /** @param {string} id */
+    const caseForms = (id) => [
+      id.toUpperCase(),
+      id.replace(/^[a-f]/, (c) => c.toUpperCase())
+    ];
+    /** @param {string} id */
+    const noncanonicalForms = (id) => [
+      id.replaceAll("-", ""),
+      `{${id}}`,
+      "not-a-uuid",
+      ` ${id}`,
+      ...[
+        " ",
+        "\t",
+        "\n",
+        "\r",
+        "\r\n",
+        "\u0001",
+        "\u00a0",
+        "\u2028",
+        "\u2029",
+        "\ufeff"
+      ].map((suffix) => `${id}${suffix}`)
+    ];
+    /** @type {unknown} */
+    let bodyError;
+    try {
+      await assertMigrationOwnerCanSetAppRole(owner);
+      await owner.query("begin");
+      await seedDatabaseRows(owner, ids);
+      await owner.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid' where account_id = $1",
+        [ids.accountId]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+        [ids.actionId, JSON.stringify(fileUploadPayload)]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_items set normalized_content_fingerprint = $2 where input_item_id = $1",
+        [ids.inputItemId, submission.normalizedContentFingerprint]
+      );
+      await owner.query(
+        `
+          insert into public.agent_outbox_output_results(
+            output_result_id, account_id, caller_id, input_item_id,
+            caller_item_id, action_value, response_kind, response_payload,
+            response_payload_bytes, answered_by_user_id,
+            previous_input_updated_at, expires_at
+          )
+          select $1, account_id, caller_id, input_item_id,
+            caller_item_id, 'approve', 'file_upload', '{}'::jsonb,
+            2, $3, updated_at, now() + interval '14 days'
+          from public.agent_outbox_input_items where input_item_id = $2
+        `,
+        [outputResultId, ids.inputItemId, ids.userId]
+      );
+      const bytes = Buffer.from("answer");
+      const sha256 = Buffer.from(
+        await crypto.subtle.digest("SHA-256", bytes)
+      ).toString("hex");
+      await owner.query(
+        `
+          insert into public.agent_outbox_output_files(
+            output_file_id, output_result_id, account_id, caller_id,
+            filename, mime_type, size_bytes, sha256, file_bytes
+          )
+          values ($1, $2, $3, $4, 'answer.txt', 'text/plain', $5, $6, $7)
+        `,
+        [
+          fileId,
+          outputResultId,
+          ids.accountId,
+          ids.callerId,
+          bytes.length,
+          sha256,
+          bytes
+        ]
+      );
+      await owner.query(
+        "update public.agent_outbox_input_items set status = 'answered' where input_item_id = $1",
+        [ids.inputItemId]
+      );
+      await owner.query("commit");
+
+      // As on main, a malformed file id still waits for the canonical
+      // output's lock. Rejecting it before the lock changes timeout behavior.
+      await owner.query("begin");
+      await owner.query(
+        "select output_result_id from public.agent_outbox_output_results where output_result_id = $1 for update",
+        [outputResultId]
+      );
+      try {
+        await assert.rejects(
+          runHumanAnswerDatabaseTransaction(
+            caller,
+            ids,
+            "caller",
+            async (query) => {
+              await query({ sql: "set local statement_timeout = '100ms'" });
+              // Exercise the lock directly so a timeout in earlier quota
+              // queries cannot falsely satisfy this assertion.
+              return outputFileDownloadInTransaction(query, context, identity, {
+                outputResultId,
+                fileId: "not-a-uuid"
+              });
+            }
+          ),
+          { code: "57014" }
+        );
+      } finally {
+        await owner.query("rollback");
+      }
+
+      // Every lookup shares one transaction, so a failed uuid cast would
+      // abort it and fail every later statement.
+      await runHumanAnswerDatabaseTransaction(
+        caller,
+        ids,
+        "caller",
+        async (query) => {
+          for (const id of [
+            ...caseForms(outputResultId),
+            ...noncanonicalForms(outputResultId)
+          ]) {
+            const read = await readOutputResultInTransaction(
+              query,
+              identity,
+              id
+            );
+            assert.equal(read.ok ? 200 : read.error.status, 404, id);
+            const download =
+              await handleOutputFileDownloadAuthenticatedTransaction(
+                query,
+                context,
+                identity,
+                { outputResultId: id, fileId }
+              );
+            assert.equal(download.ok ? 200 : download.error.status, 404, id);
+            const ack = await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              id
+            );
+            assert.equal(ack.ok ? 200 : ack.error.status, 404, id);
+          }
+          for (const id of [
+            ...caseForms(fileId),
+            ...noncanonicalForms(fileId)
+          ]) {
+            const download =
+              await handleOutputFileDownloadAuthenticatedTransaction(
+                query,
+                context,
+                identity,
+                { outputResultId, fileId: id }
+              );
+            assert.equal(download.ok ? 200 : download.error.status, 404, id);
+          }
+
+          const read = await readOutputResultInTransaction(
+            query,
+            identity,
+            outputResultId
+          );
+          assert.equal(read.ok, true);
+          const download =
+            await handleOutputFileDownloadAuthenticatedTransaction(
+              query,
+              context,
+              identity,
+              { outputResultId, fileId }
+            );
+          assert.equal(download.ok ? download.bytes.toString() : "", "answer");
+          assert.deepEqual(
+            await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              outputResultId
+            ),
+            {
+              ok: true,
+              data: {
+                output_result_id: outputResultId,
+                acknowledged: true,
+                already_acknowledged: false
+              }
+            }
+          );
+        }
+      );
+
+      // Main's retained-audit fallback accepts casing variants even though
+      // those forms cannot match the live output row.
+      await runHumanAnswerDatabaseTransaction(
+        caller,
+        ids,
+        "caller",
+        async (query) => {
+          for (const id of [...caseForms(outputResultId), outputResultId]) {
+            assert.deepEqual(
+              await acknowledgeOutputInTransaction(
+                query,
+                identity,
+                context,
+                id
+              ),
+              {
+                ok: true,
+                data: {
+                  output_result_id: id,
+                  acknowledged: true,
+                  already_acknowledged: true
+                }
+              }
+            );
+          }
+          for (const id of noncanonicalForms(outputResultId)) {
+            const ack = await acknowledgeOutputInTransaction(
+              query,
+              identity,
+              context,
+              id
+            );
+            assert.equal(ack.ok ? 200 : ack.error.status, 404, id);
+          }
+          assert.equal(
+            (await query({ sql: "select 1 as alive" })).rows[0].alive,
+            1
+          );
+        }
+      );
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await caller.end();
+          await cleanupHumanAnswerDatabaseTest(owner, ids);
+        },
+        "Canonical output id test and teardown both failed."
       );
     }
   }
@@ -1805,8 +2542,8 @@ for (const scenario of /** @type {const} */ ([
         );
         if (scenario !== "locked over-cap non-file input") {
           await owner.query(
-            "update public.agent_outbox_input_actions set popup_kind = 'file_upload' where input_action_id = $1",
-            [ids.actionId]
+            "update public.agent_outbox_input_actions set popup_kind = 'file_upload', popup_payload = $2::jsonb where input_action_id = $1",
+            [ids.actionId, JSON.stringify(fileUploadPayload)]
           );
         } else {
           await owner.query(
@@ -2388,6 +3125,11 @@ function mockQuery(calls, rowsByKind) {
   const query = async (statement) => {
     calls.push(statement);
 
+    if (
+      statement.sql.includes("insert into public.agent_outbox_output_results")
+    ) {
+      return queryResult(rowsByKind.outputRows ?? []);
+    }
     if (statement.sql.includes("from public.agent_outbox_input_items")) {
       return queryResult(rowsByKind.inputRows ?? []);
     }
@@ -2421,11 +3163,6 @@ function mockQuery(calls, rowsByKind) {
     }
     if (statement.sql.includes("agent_outbox_account_stock_usage")) {
       return queryResult(rowsByKind.accountStockUsageRows ?? []);
-    }
-    if (
-      statement.sql.includes("insert into public.agent_outbox_output_results")
-    ) {
-      return queryResult(rowsByKind.outputRows ?? []);
     }
     if (
       statement.sql.includes("insert into public.agent_outbox_output_files")

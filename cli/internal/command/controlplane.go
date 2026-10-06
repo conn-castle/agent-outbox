@@ -8,6 +8,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -146,19 +148,23 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err := ensureLocalCallerNameAvailable(runtime.Config, localName); err != nil {
 				return err
 			}
+			if err := ensureConnectServerMatchesConfig(runtime.Config, runtime.Client.BaseURL); err != nil {
+				return err
+			}
 			if err := preflightWritableLocalPersistence(runtime); err != nil {
 				return err
 			}
 			var result connectExchangeData
+			var meta *foundation.APIResponse
 			if useDeviceCode {
-				result, err = runDeviceConnect(cmd.Context(), opts, runtime, localName)
+				result, meta, err = runDeviceConnect(cmd.Context(), opts, runtime, localName)
 			} else {
-				result, err = runBrowserConnect(cmd.Context(), opts, runtime, localName)
+				result, meta, err = runBrowserConnect(cmd.Context(), opts, runtime, localName)
 			}
 			if err != nil {
 				return err
 			}
-			activated, err := storeAndActivateConnect(cmd.Context(), runtime, localName, result)
+			activated, err := storeAndActivateConnect(cmd.Context(), runtime, localName, result, meta)
 			if err != nil {
 				return err
 			}
@@ -170,10 +176,10 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 	documentCommand(cmd, commandHelpSpec{
 		Purpose:     "Create a local caller connection through human approval, store the display-once caller credential locally, then activate it with the hosted app.",
 		Arguments:   "<caller> is the local caller name to store in Agent Outbox config.",
-		Flags:       "Headless and SSH sessions automatically use terminal device-code approval. --device-code or --browser forces a flow. Global --config, --base-url, --json, and --no-color are available.",
+		Flags:       "Headless and SSH sessions automatically use terminal device-code approval. --device-code or --browser forces a flow. Global --config, --base-url, --json, and --no-color are available. All callers in a config share its base URL; use a separate --config for a different server.",
 		Environment: globalEnvironmentHelp(),
 		Examples:    "agent-outbox caller connect steward-email\nagent-outbox caller connect steward-email --device-code --json",
-		ExitCodes:   "0 success. 64 usage. 73 local or hosted caller name already exists. 74 secret-store failure. 75 temporary approval/API failure. 77 permission. 78 config.",
+		ExitCodes:   "0 success. 64 usage. 73 local or hosted caller name already exists. 74 secret-store failure. 75 temporary approval/API failure. 77 permission. 78 config, including an origin that differs from the existing callers' config base_url.",
 		RelatedDocs: "docs/spec/http-api.md#caller-connect-control-plane, docs/spec/errors.md, and agent-outbox docs caller.",
 	})
 	return cmd
@@ -509,76 +515,80 @@ func writableSecretStoreForCommand(opts Options, configPath string, configPathOw
 	return foundation.NewFileCallerSecretStore(credentialsPath, configPathOwned)
 }
 
-func runBrowserConnect(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string) (connectExchangeData, error) {
-	setup, err := runBrowserFlow(ctx, opts, "connect", func(callbackURL string) (browserStartData, error) {
+func runBrowserConnect(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string) (connectExchangeData, *foundation.APIResponse, error) {
+	setup, err := runBrowserFlow(ctx, opts, "connect", func(callbackURL string) (browserStartData, *foundation.APIResponse, error) {
 		var started browserStartData
-		_, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/browser/start", "", map[string]string{
+		meta, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/browser/start", "", map[string]string{
 			"local_caller_name": localName,
 			"display_name":      localName,
 			"callback_url":      callbackURL,
 		}, &started)
-		return started, err
+		return started, meta, err
 	})
 	if err != nil {
-		return connectExchangeData{}, err
+		return connectExchangeData{}, nil, err
 	}
 	var result connectExchangeData
-	_, err = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/exchange", "", map[string]string{"setup_code": setup.SetupCode}, &result)
-	return result, err
+	meta, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/exchange", "", map[string]string{"setup_code": setup.SetupCode}, &result)
+	return result, meta, err
 }
 
-func runDeviceConnect(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string) (connectExchangeData, error) {
+func runDeviceConnect(ctx context.Context, opts Options, runtime *controlPlaneRuntime, localName string) (connectExchangeData, *foundation.APIResponse, error) {
 	var started deviceStartData
-	if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/device/start", "", map[string]string{
+	meta, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/device/start", "", map[string]string{
 		"local_caller_name": localName,
 		"display_name":      localName,
-	}, &started); err != nil {
-		return connectExchangeData{}, err
+	}, &started)
+	if err != nil {
+		return connectExchangeData{}, nil, err
 	}
-	printDeviceInstructions(opts.Stderr, "connect", started)
+	if err := validateDeviceStart(started, meta); err != nil {
+		return connectExchangeData{}, nil, err
+	}
 	interval := started.PollIntervalSeconds
 	if interval <= 0 {
 		interval = defaultDevicePollIntervalSeconds
 	}
-	deadline, err := deviceApprovalDeadline(started.ExpiresAt, nowForCommand(opts))
+	deadline, err := deviceApprovalDeadline(started.ExpiresAt, nowForCommand(opts), meta)
 	if err != nil {
-		return connectExchangeData{}, err
+		return connectExchangeData{}, nil, err
 	}
+	printDeviceInstructions(opts.Stderr, "connect", started)
 	for {
 		pollCtx, cancelPoll, err := deviceApprovalPollContext(ctx, deadline, nowForCommand(opts))
 		if err != nil {
-			return connectExchangeData{}, err
+			return connectExchangeData{}, nil, err
 		}
 		var result connectExchangeData
-		_, err = runtime.Client.Do(pollCtx, http.MethodPost, "/api/caller/connect/device/poll", "", map[string]string{"device_code": started.DeviceCode}, &result)
+		meta, err := runtime.Client.Do(pollCtx, http.MethodPost, "/api/caller/connect/device/poll", "", map[string]string{"device_code": started.DeviceCode}, &result)
 		err = deviceApprovalPollError(ctx, pollCtx, err)
 		cancelPoll()
 		if err == nil {
-			return result, nil
+			return result, meta, nil
 		}
 		delay, pending := authorizationPendingDelay(err, interval)
 		if !pending {
-			return connectExchangeData{}, err
+			return connectExchangeData{}, nil, err
 		}
 		sleepDuration, err := deviceApprovalSleepDuration(deadline, nowForCommand(opts), time.Duration(delay)*time.Second)
 		if err != nil {
-			return connectExchangeData{}, err
+			return connectExchangeData{}, nil, err
 		}
 		if err := sleepForCommand(ctx, opts, sleepDuration); err != nil {
-			return connectExchangeData{}, err
+			return connectExchangeData{}, nil, err
 		}
 	}
 }
 
 func runBrowserSetupCodeFlow(ctx context.Context, opts Options, runtime *controlPlaneRuntime, selected foundation.CallerConfig, operation string, startPath string) (deviceSetupCodeData, error) {
-	callback, err := runBrowserFlow(ctx, opts, operation, func(callbackURL string) (browserStartData, error) {
+	callback, err := runBrowserFlow(ctx, opts, operation, func(callbackURL string) (browserStartData, *foundation.APIResponse, error) {
 		var started browserStartData
-		_, err := runtime.Client.Do(ctx, http.MethodPost, startPath, "", map[string]string{
+		meta, err := runtime.Client.Do(ctx, http.MethodPost, startPath, "", map[string]string{
 			"caller_id":         selected.CallerID,
 			"local_caller_name": selected.Name,
 			"callback_url":      callbackURL,
 		}, &started)
-		return started, err
+		return started, meta, err
 	})
 	if err != nil {
 		return deviceSetupCodeData{}, err
@@ -591,31 +601,41 @@ func runBrowserSetupCodeFlow(ctx context.Context, opts Options, runtime *control
 
 func runDeviceSetupCodeFlow(ctx context.Context, opts Options, runtime *controlPlaneRuntime, selected foundation.CallerConfig, operation string, startPath string, pollPath string) (deviceSetupCodeData, error) {
 	var started deviceStartData
-	if _, err := runtime.Client.Do(ctx, http.MethodPost, startPath, "", map[string]string{
+	meta, err := runtime.Client.Do(ctx, http.MethodPost, startPath, "", map[string]string{
 		"caller_id":         selected.CallerID,
 		"local_caller_name": selected.Name,
-	}, &started); err != nil {
+	}, &started)
+	if err != nil {
 		return deviceSetupCodeData{}, err
 	}
-	printDeviceInstructions(opts.Stderr, operation, started)
+	if err := validateDeviceStart(started, meta); err != nil {
+		return deviceSetupCodeData{}, err
+	}
 	interval := started.PollIntervalSeconds
 	if interval <= 0 {
 		interval = defaultDevicePollIntervalSeconds
 	}
-	deadline, err := deviceApprovalDeadline(started.ExpiresAt, nowForCommand(opts))
+	deadline, err := deviceApprovalDeadline(started.ExpiresAt, nowForCommand(opts), meta)
 	if err != nil {
 		return deviceSetupCodeData{}, err
 	}
+	printDeviceInstructions(opts.Stderr, operation, started)
 	for {
 		pollCtx, cancelPoll, err := deviceApprovalPollContext(ctx, deadline, nowForCommand(opts))
 		if err != nil {
 			return deviceSetupCodeData{}, err
 		}
 		var result deviceSetupCodeData
-		_, err = runtime.Client.Do(pollCtx, http.MethodPost, pollPath, "", map[string]string{"device_code": started.DeviceCode}, &result)
+		meta, err := runtime.Client.Do(pollCtx, http.MethodPost, pollPath, "", map[string]string{"device_code": started.DeviceCode}, &result)
 		err = deviceApprovalPollError(ctx, pollCtx, err)
 		cancelPoll()
 		if err == nil {
+			if strings.TrimSpace(result.SetupCode) == "" {
+				return deviceSetupCodeData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a setup code.", meta)
+			}
+			if strings.TrimSpace(result.SetupRequestID) == "" {
+				return deviceSetupCodeData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a setup request id.", meta)
+			}
 			return result, nil
 		}
 		delay, pending := authorizationPendingDelay(err, interval)
@@ -632,14 +652,71 @@ func runDeviceSetupCodeFlow(ctx context.Context, opts Options, runtime *controlP
 	}
 }
 
+func validateDeviceStart(started deviceStartData, meta *foundation.APIResponse) error {
+	if strings.TrimSpace(started.DeviceCode) == "" {
+		return foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a device code.", meta)
+	}
+	if strings.TrimSpace(started.VerificationURI) == "" && strings.TrimSpace(started.VerificationURIComplete) == "" {
+		return foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a verification URI.", meta)
+	}
+	return nil
+}
+
+func validateConnectExchange(result connectExchangeData) string {
+	if strings.TrimSpace(result.Caller.CallerID) == "" {
+		return "Agent Outbox API did not return a caller id."
+	}
+	if strings.TrimSpace(result.Account.AccountID) == "" {
+		return "Agent Outbox API did not return an account id."
+	}
+	if strings.TrimSpace(result.Credential.KeyID) == "" {
+		return "Agent Outbox API did not return a credential key id."
+	}
+	if strings.TrimSpace(result.Credential.Prefix) == "" {
+		return "Agent Outbox API did not return a credential prefix."
+	}
+	if strings.TrimSpace(result.Credential.LastChars) == "" {
+		return "Agent Outbox API did not return a credential suffix."
+	}
+	return ""
+}
+
+func validateRotateExchange(result rotateExchangeData, selected foundation.CallerConfig) string {
+	if result.Caller.CallerID != selected.CallerID {
+		return "Agent Outbox API returned a caller id that does not match the selected caller."
+	}
+	if strings.TrimSpace(result.Account.AccountID) == "" {
+		return "Agent Outbox API did not return an account id."
+	}
+	if result.Account.AccountID != selected.AccountID {
+		return "Agent Outbox API returned an account id that does not match the selected caller."
+	}
+	if strings.TrimSpace(result.ReplacementCredential.KeyID) == "" {
+		return "Agent Outbox API did not return a replacement credential key id."
+	}
+	if strings.TrimSpace(result.ReplacementCredential.Prefix) == "" {
+		return "Agent Outbox API did not return a replacement credential prefix."
+	}
+	if strings.TrimSpace(result.ReplacementCredential.LastChars) == "" {
+		return "Agent Outbox API did not return a replacement credential suffix."
+	}
+	return ""
+}
+
 func exchangeStoreAndActivateRotate(ctx context.Context, runtime *controlPlaneRuntime, selected foundation.CallerConfig, setup deviceSetupCodeData) (rotateExchangeData, rotateActivateData, error) {
 	var exchanged rotateExchangeData
-	if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/exchange", "", map[string]string{"setup_code": setup.SetupCode}, &exchanged); err != nil {
+	meta, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/exchange", "", map[string]string{"setup_code": setup.SetupCode}, &exchanged)
+	if err != nil {
 		return rotateExchangeData{}, rotateActivateData{}, err
 	}
 	replacementKey := exchanged.ReplacementCredential.APIKey
 	if strings.TrimSpace(replacementKey) == "" {
-		return rotateExchangeData{}, rotateActivateData{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return a replacement credential.")
+		return rotateExchangeData{}, rotateActivateData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a replacement credential.", meta)
+	}
+
+	if message := validateRotateExchange(exchanged, selected); message != "" {
+		_, _ = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/abort", replacementKey, map[string]string{"setup_request_id": setup.SetupRequestID}, nil)
+		return rotateExchangeData{}, rotateActivateData{}, foundation.NewAPIResponseInvalidError(message, meta)
 	}
 
 	var activated rotateActivateData
@@ -662,19 +739,18 @@ func exchangeStoreAndActivateRotate(ctx context.Context, runtime *controlPlaneRu
 		updatedConfig := cloneConfig(runtime.Config)
 		upsertCallerConfig(&updatedConfig, current.Name, exchanged.Caller, exchanged.Account, exchanged.ReplacementCredential)
 		if err := saveRuntimeConfig(runtime, updatedConfig); err != nil {
-			restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr)
-			return err
+			return localRollbackFailureError(err, restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr), nil)
 		}
 
 		activateAttempted = true
 		if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/rotate/activate", replacementKey, map[string]string{"setup_request_id": setup.SetupRequestID}, &activated); err != nil {
 			if activateDefinitivelyDidNotCommit(err) {
-				restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr)
-				if saveErr := saveRuntimeConfig(runtime, previousConfig); saveErr != nil {
-					return rollbackSaveFailureError(err, saveErr)
+				restoreErr := restoreCallerSecret(runtime, current.CallerID, oldKey, oldKeyErr)
+				saveErr := saveRuntimeConfig(runtime, previousConfig)
+				if saveErr == nil {
+					runtime.Config = previousConfig
 				}
-				runtime.Config = previousConfig
-				return err
+				return localRollbackFailureError(err, restoreErr, saveErr)
 			}
 
 			runtime.Config = updatedConfig
@@ -692,12 +768,11 @@ func exchangeStoreAndActivateRotate(ctx context.Context, runtime *controlPlaneRu
 	return exchanged, activated, nil
 }
 
-func restoreCallerSecret(runtime *controlPlaneRuntime, callerID string, oldKey string, oldKeyErr error) {
+func restoreCallerSecret(runtime *controlPlaneRuntime, callerID string, oldKey string, oldKeyErr error) error {
 	if oldKeyErr == nil && oldKey != "" {
-		_ = storeCallerSecret(runtime, callerID, oldKey)
-		return
+		return storeCallerSecret(runtime, callerID, oldKey)
 	}
-	_ = deleteCallerSecret(runtime, callerID)
+	return deleteCallerSecretIfPresent(runtime, callerID)
 }
 
 // activateDefinitivelyDidNotCommit reports whether a validated API error proves the hosted
@@ -738,7 +813,7 @@ func runRevokeFlow(ctx context.Context, opts Options, runtime *controlPlaneRunti
 	return confirmed, err
 }
 
-func runBrowserFlow(ctx context.Context, opts Options, operation string, start func(callbackURL string) (browserStartData, error)) (browserCallbackResult, error) {
+func runBrowserFlow(ctx context.Context, opts Options, operation string, start func(callbackURL string) (browserStartData, *foundation.APIResponse, error)) (browserCallbackResult, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return browserCallbackResult{}, foundation.NewAppError(foundation.CodeLocalIO, "Could not bind a local callback listener on 127.0.0.1.")
@@ -774,17 +849,17 @@ func runBrowserFlow(ctx context.Context, opts Options, operation string, start f
 	}()
 	defer server.Close()
 
-	started, err := start("http://" + listener.Addr().String() + "/callback")
+	started, meta, err := start("http://" + listener.Addr().String() + "/callback")
 	if err != nil {
 		return browserCallbackResult{}, err
 	}
 	if strings.TrimSpace(started.ApprovalURL) == "" {
-		return browserCallbackResult{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return an approval URL.")
+		return browserCallbackResult{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return an approval URL.", meta)
 	}
 	if strings.TrimSpace(started.SetupRequestID) == "" {
-		return browserCallbackResult{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return a setup request id.")
+		return browserCallbackResult{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a setup request id.", meta)
 	}
-	deadline, err := browserApprovalDeadline(started.ExpiresAt, nowForCommand(opts))
+	deadline, err := browserApprovalDeadline(started.ExpiresAt, nowForCommand(opts), meta)
 	if err != nil {
 		return browserCallbackResult{}, err
 	}
@@ -839,14 +914,14 @@ func callbackResultFromRequest(r *http.Request, expectedSetupRequestID string) b
 	}
 }
 
-func browserApprovalDeadline(expiresAt string, now time.Time) (time.Time, error) {
+func browserApprovalDeadline(expiresAt string, now time.Time, meta *foundation.APIResponse) (time.Time, error) {
 	expiresAt = strings.TrimSpace(expiresAt)
 	if expiresAt == "" {
-		return time.Time{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return an approval expiry.")
+		return time.Time{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return an approval expiry.", meta)
 	}
 	expires, err := time.Parse(time.RFC3339, expiresAt)
 	if err != nil {
-		return time.Time{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned an invalid approval expiry.")
+		return time.Time{}, foundation.NewAPIResponseInvalidError("Agent Outbox API returned an invalid approval expiry.", meta)
 	}
 	deadline := expires.Add(browserApprovalExpiryGrace)
 	if !deadline.After(now) {
@@ -855,14 +930,14 @@ func browserApprovalDeadline(expiresAt string, now time.Time) (time.Time, error)
 	return deadline, nil
 }
 
-func deviceApprovalDeadline(expiresAt string, now time.Time) (time.Time, error) {
+func deviceApprovalDeadline(expiresAt string, now time.Time, meta *foundation.APIResponse) (time.Time, error) {
 	expiresAt = strings.TrimSpace(expiresAt)
 	if expiresAt == "" {
-		return time.Time{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return a device approval expiry.")
+		return time.Time{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a device approval expiry.", meta)
 	}
 	expires, err := time.Parse(time.RFC3339, expiresAt)
 	if err != nil {
-		return time.Time{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API returned an invalid device approval expiry.")
+		return time.Time{}, foundation.NewAPIResponseInvalidError("Agent Outbox API returned an invalid device approval expiry.", meta)
 	}
 	if !expires.After(now) {
 		return now, nil
@@ -998,22 +1073,31 @@ func sleepForCommand(ctx context.Context, opts Options, duration time.Duration) 
 // for connect: the exchange already returned a PENDING credential, so persist it locally and
 // only then confirm activation. There is no old key to preserve, so failure handling is simpler
 // than rotate.
-func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, localName string, result connectExchangeData) (connectActivateData, error) {
+func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, localName string, result connectExchangeData, meta *foundation.APIResponse) (connectActivateData, error) {
 	pendingKey := result.Credential.APIKey
 	if strings.TrimSpace(pendingKey) == "" {
-		return connectActivateData{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return a caller credential.")
+		return connectActivateData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a caller credential.", meta)
 	}
 	if strings.TrimSpace(result.SetupRequestID) == "" {
-		return connectActivateData{}, foundation.NewAppError(foundation.CodeValidationFailed, "Agent Outbox API did not return a setup request id.")
+		return connectActivateData{}, foundation.NewAPIResponseInvalidError("Agent Outbox API did not return a setup request id.", meta)
+	}
+
+	if message := validateConnectExchange(result); message != "" {
+		_, _ = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/abort", pendingKey, map[string]string{"setup_request_id": result.SetupRequestID}, nil)
+		return connectActivateData{}, foundation.NewAPIResponseInvalidError(message, meta)
 	}
 
 	var activated connectActivateData
 	activateAttempted := false
+	var credentialRollbackErr error
 	if err := withRuntimeLocalStateLock(runtime, func() error {
 		if err := reloadRuntimeConfig(runtime); err != nil {
 			return err
 		}
 		if err := ensureLocalCallerNameAvailable(runtime.Config, localName); err != nil {
+			return err
+		}
+		if err := ensureConnectServerMatchesConfig(runtime.Config, runtime.Client.BaseURL); err != nil {
 			return err
 		}
 		previousConfig := cloneConfig(runtime.Config)
@@ -1026,19 +1110,19 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 		updatedConfig.BaseURL = runtime.Client.BaseURL
 		upsertCallerConfig(&updatedConfig, localName, result.Caller, result.Account, result.Credential)
 		if err := saveRuntimeConfig(runtime, updatedConfig); err != nil {
-			_ = deleteCallerSecret(runtime, result.Caller.CallerID)
+			credentialRollbackErr = deleteCallerSecretIfPresent(runtime, result.Caller.CallerID)
 			return err
 		}
 
 		activateAttempted = true
 		if _, err := runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/activate", pendingKey, map[string]string{"setup_request_id": result.SetupRequestID}, &activated); err != nil {
 			if activateDefinitivelyDidNotCommit(err) {
-				_ = deleteCallerSecret(runtime, result.Caller.CallerID)
-				if saveErr := saveRuntimeConfig(runtime, previousConfig); saveErr != nil {
-					return rollbackSaveFailureError(err, saveErr)
+				deleteErr := deleteCallerSecretIfPresent(runtime, result.Caller.CallerID)
+				saveErr := saveRuntimeConfig(runtime, previousConfig)
+				if saveErr == nil {
+					runtime.Config = previousConfig
 				}
-				runtime.Config = previousConfig
-				return err
+				return localRollbackFailureError(err, deleteErr, saveErr)
 			}
 			runtime.Config = updatedConfig
 			return activateMayBeActiveError(err, "The hosted connect credential may already be active; the local caller was kept so the connection can be verified or reconciled.")
@@ -1048,7 +1132,11 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 		return nil
 	}); err != nil {
 		if !activateAttempted {
-			abortConnectPendingCredential(ctx, runtime, pendingKey, result)
+			deleteErr := abortConnectPendingCredential(ctx, runtime, pendingKey, result)
+			if credentialRollbackErr != nil {
+				// Abort retries a failed local rollback; report only its final deletion outcome.
+				err = localRollbackFailureError(err, deleteErr, nil)
+			}
 		}
 		return connectActivateData{}, err
 	}
@@ -1057,10 +1145,11 @@ func storeAndActivateConnect(ctx context.Context, runtime *controlPlaneRuntime, 
 
 // abortConnectPendingCredential is the best-effort cleanup for a local-persistence failure that
 // occurs before activation: expire the hosted pending key, then remove any partially stored secret.
+// It returns the local deletion result so a failed rollback can be reported after this retry.
 // No active hosted key must remain after this returns.
-func abortConnectPendingCredential(ctx context.Context, runtime *controlPlaneRuntime, pendingKey string, result connectExchangeData) {
+func abortConnectPendingCredential(ctx context.Context, runtime *controlPlaneRuntime, pendingKey string, result connectExchangeData) error {
 	_, _ = runtime.Client.Do(ctx, http.MethodPost, "/api/caller/connect/abort", pendingKey, map[string]string{"setup_request_id": result.SetupRequestID}, nil)
-	_ = runtime.Secrets.DeleteCallerKey(result.Caller.CallerID)
+	return deleteCallerSecretIfPresent(runtime, result.Caller.CallerID)
 }
 
 // activateMayBeActiveError annotates an ambiguous activate failure (transport/read/decode
@@ -1080,22 +1169,29 @@ func activateMayBeActiveError(err error, guidance string) error {
 	return &wrapped
 }
 
-// rollbackSaveFailureError annotates a definitively-uncommitted activation error when the
-// follow-up local config rollback save also failed, so the operator is warned that local
-// caller state may be inconsistent instead of seeing only the activation error. The original
-// error code and exit code are preserved.
-func rollbackSaveFailureError(activateErr error, saveErr error) error {
+// localRollbackFailureError annotates a connect or rotate failure when restoring the local
+// credential or config afterwards also failed, so the operator is warned that local caller
+// state may be inconsistent instead of seeing only the original error. It returns err
+// unchanged when both rollbacks succeeded. The original error code and exit code are preserved.
+func localRollbackFailureError(err error, credentialErr error, configErr error) error {
+	var failures []string
+	if credentialErr != nil {
+		failures = append(failures, fmt.Sprintf("Local credential rollback also failed (%v).", credentialErr))
+	}
+	if configErr != nil {
+		failures = append(failures, fmt.Sprintf("Local config rollback also failed (%v).", configErr))
+	}
+	if len(failures) == 0 {
+		return err
+	}
+	detail := strings.Join(failures, " ") + " The local caller may be inconsistent and should be checked."
 	var appErr *foundation.AppError
-	if !errors.As(activateErr, &appErr) {
-		return activateErr
+	if !errors.As(err, &appErr) {
+		return fmt.Errorf("%w %s", err, detail)
 	}
 	wrapped := *appErr
-	wrapped.Message = fmt.Sprintf(
-		"%s Local config rollback also failed (%v); the local caller may be inconsistent and should be checked.",
-		appErr.Message,
-		saveErr,
-	)
-	wrapped.ExitCode = foundation.ExitCodeFor(activateErr)
+	wrapped.Message = appErr.Message + " " + detail
+	wrapped.ExitCode = foundation.ExitCodeFor(err)
 	return &wrapped
 }
 
@@ -1104,6 +1200,64 @@ func ensureLocalCallerNameAvailable(cfg foundation.Config, localName string) err
 		if caller.Name == localName {
 			return foundation.NewAppError(foundation.CodeCallerAlreadyExists, "Local caller name is already configured; use agent-outbox caller rotate, agent-outbox caller disconnect, or choose a different caller name.")
 		}
+	}
+	return nil
+}
+
+// ensureConnectServerMatchesConfig keeps a config file bound to one server. Its callers share
+// the config base_url, so saving a different connect server would send their credentials there.
+func ensureConnectServerMatchesConfig(cfg foundation.Config, connectBaseURL string) error {
+	if len(cfg.Callers) == 0 {
+		return nil
+	}
+	configBaseURL, err := foundation.ResolveBaseURL("", foundation.Env{}, cfg)
+	if err != nil {
+		return foundation.WrapConfigError("Local config base_url is not a valid Agent Outbox base URL.", err)
+	}
+	configURL, err := url.Parse(configBaseURL)
+	if err != nil {
+		return foundation.WrapConfigError("Local config base_url could not be parsed.", err)
+	}
+	connectURL, err := url.Parse(connectBaseURL)
+	if err != nil {
+		return foundation.WrapConfigError("Connect base URL could not be parsed.", err)
+	}
+	origin := func(parsed *url.URL) (scheme, hostname, zone, port string) {
+		// Compare decoded components; resolved URLs retain escapes for the client and config.
+		scheme = parsed.Scheme
+		hostname = parsed.Hostname()
+		if zoneIndex := strings.IndexByte(hostname, '%'); zoneIndex >= 0 {
+			hostname, zone = hostname[:zoneIndex], hostname[zoneIndex:]
+		}
+		if address, err := netip.ParseAddr(hostname); err == nil {
+			// Normalize IP spelling only for comparison; keep IPv4-mapped IPv6 distinct from IPv4.
+			hostname = address.String()
+		} else {
+			// Fold only ASCII host letters; Unicode folding can equate distinct IDNA names.
+			hostBytes := []byte(hostname)
+			for i, b := range hostBytes {
+				if 'A' <= b && b <= 'Z' {
+					hostBytes[i] = b + ('a' - 'A')
+				}
+			}
+			hostname = string(hostBytes)
+		}
+		port = parsed.Port()
+		if port == "" {
+			if scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		}
+		// Compare port numbers without changing the resolved URL's spelling.
+		return scheme, hostname, zone, strings.TrimLeft(port, "0")
+	}
+	configScheme, configHost, configZone, configPort := origin(configURL)
+	connectScheme, connectHost, connectZone, connectPort := origin(connectURL)
+	// IPv6 zone identifiers retain their exact identity.
+	if configScheme != connectScheme || configHost != connectHost || configZone != connectZone || configPort != connectPort {
+		return foundation.NewAppError(foundation.CodeConfig, fmt.Sprintf("Local config callers are connected to %s, not %s; use a separate --config to connect a caller to a different Agent Outbox server.", configBaseURL, connectBaseURL))
 	}
 	return nil
 }
@@ -1274,7 +1428,7 @@ func removeLocalCaller(runtime *controlPlaneRuntime, selected foundation.CallerC
 			next = append(next, caller)
 		}
 		updated.Callers = next
-		if err := deleteCallerSecret(runtime, current.CallerID); err != nil && !errors.Is(err, foundation.ErrSecretNotFound) {
+		if err := deleteCallerSecretIfPresent(runtime, current.CallerID); err != nil {
 			return err
 		}
 		if err := saveRuntimeConfig(runtime, updated); err != nil {
@@ -1314,6 +1468,14 @@ func deleteCallerSecret(runtime *controlPlaneRuntime, callerID string) error {
 		}
 	}
 	return runtime.Secrets.DeleteCallerKey(callerID)
+}
+
+// deleteCallerSecretIfPresent removes the stored caller key, treating an already-absent key as success.
+func deleteCallerSecretIfPresent(runtime *controlPlaneRuntime, callerID string) error {
+	if err := deleteCallerSecret(runtime, callerID); err != nil && !errors.Is(err, foundation.ErrSecretNotFound) {
+		return err
+	}
+	return nil
 }
 
 func sanitizedConnectResult(localName string, result connectExchangeData, activated connectActivateData) map[string]any {

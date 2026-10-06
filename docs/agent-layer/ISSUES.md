@@ -28,15 +28,20 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-04 stripe-duplicate-subscriptions: One account can hold several live Stripe subscriptions
+    Priority: Medium. Area: Billing
+    Description: Checkout (`src/server/billing.ts`) is refused only when the account is already live, so completing two Checkout sessions opened while free creates two subscriptions (and, with no stored customer, two Stripe customers). Subscription webhooks match by subscription id, customer id, or metadata account id and overwrite the stored subscription, so the account follows whichever subscription last emitted an event; cancelling one can start downgrade grace and paid-data cleanup while the other keeps charging, and the Billing Portal shows only the stored customer.
+    Open question: Whether to prevent a second live subscription before Checkout, ignore and report events for non-stored subscriptions, or both.
+
+- Issue 2026-10-02 cli-device-expiry-test-race: CLI device-expiry test races under `go test -race`
+    Priority: Low. Area: CLI tests
+    Description: `TestCallerConnectDevicePollRequestStopsAtDeviceExpiry` (`cli/internal/command/controlplane_test.go`) increments `polls` in the HTTP handler goroutine and reads it from the test goroutine after the client cancels the in-flight poll, so `-race` reports a data race. CI runs Go tests without `-race`, so it does not fail there.
+    Next step: Synchronize the handler counter (for example, with `sync/atomic`) before adding `-race` to any Go gate.
+
 - Issue 2026-10-02 migration-gate-lexing-gaps: Destructive-migration gate misreads some SQL lexical forms
     Priority: Low. Area: Policy gates / Migrations
     Description: `scripts/policy-gates/migration-discipline-scan.mjs` matches regexes over comment-stripped text without a SQL tokenizer. These destructive statements pass without the label: `E'...\'...'` strings that hide a later `DROP x` or `SET NOT NULL` action, quoted identifiers with no surrounding whitespace (`DROP"x"`, `ALTER TABLE"t"`), `U&"..."` table names, and `ALTER FOREIGN TABLE`. Dollar-quoted text and string literals that contain `ALTER TABLE ... DROP` can falsely block additive statements.
     Next step: Add fixtures for any of these forms when a real migration uses them.
-
-- Issue 2026-09-29 human-answer-payload-decoding: Answer validation reads persisted popup bounds loosely
-    Priority: Medium. Area: Human answers / Data integrity
-    Description: `numberField`, `stringField`, and `acceptedMimeTypes` in `src/server/human-answer.ts` treat a malformed persisted `popup_payload` field (for example `min_length: "5"` or `max_selected: "2"`) as absent, so answer-time bounds are silently not enforced. The review page now rejects such payloads strictly in `src/server/human-review.ts`, which makes this mostly unreachable through the UI.
-    Next step: Make answer validation fail loudly on malformed persisted popup payload fields, consistent with the review-page decoder.
 
 - Issue 2026-09-29 docs-ui-topbar-contrast: API UI docs page renders the wordmark dark on the dark top bar
     Priority: Medium. Area: API documentation / Visual design
@@ -55,7 +60,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-08-17 legacy-color-transition: Existing arbitrary persisted colors lack a transition policy
     Priority: High. Area: Human review / Data compatibility
-    Description: The former runtime accepted safe CSS colors, the current API accepts only named colors, and unrestricted legacy database values now silently fall back during rendering.
+    Description: Releases v0.1.0–v0.1.2 accepted safe CSS colors (hex, `rgb()`/`hsl()`, extra names) and the current API accepts only named colors. Legacy values silently fall back during rendering, and they fail the canonical shape check (`src/server/canonical-input.ts`), so `/api/input/read` and `/api/output/{id}/read` return 503 for such items and one such row fails the whole `/api/output/read-all` page.
     Next step: Inventory persisted values and establish an explicit migration or compatibility path before release.
 
 - Issue 2026-07-11 human-review-search-seq-scan: Human review search filters cannot use indexes at scale

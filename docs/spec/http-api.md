@@ -91,12 +91,15 @@ POST /api/client-events
 Behavior:
 
 - Accepts best-effort browser event batches for narrow frontend failure
-  visibility only. The browser emitter reports uncaught client errors and React
-  boundary-classified hydration failures, and the GitHub sign-in controller
+  visibility only. The browser emitter reports uncaught client errors and
+  hydration failures, classified from a global error listener installed before
+  hydration and from React error boundaries, and the GitHub sign-in controller
   reports provider-launch failures. Canonical human server actions report failed
   human-action and file-upload submissions directly as trusted `server_action`
   events.
 - Requires a same-origin `Origin` header and `Content-Type: application/json`.
+- Is served on both the website and app origins without a host redirect, so
+  website pages report to their own origin.
 - Allows only client errors, hydration failures, GitHub sign-in launch failures,
   failed human-action submissions, upload failures, and major UI state
   inconsistencies.
@@ -143,8 +146,19 @@ Behavior:
 - Accepts the public `/contact` form without caller credentials or a Clerk
   session.
 - Requires a same-origin `Origin` header and `Content-Type: application/json`.
-- Accepts a bounded name, email address, allowlisted topic, and message. A
-  hidden company field must remain empty.
+- Accepts name, email, topic, message, and the optional hidden company field;
+  unknown JSON properties are ignored. Strings are trimmed before validation,
+  and email is lowercased. Normalized name is limited to 2–80 UTF-16 code units,
+  email to 254, and message to 20–4,000; trimmed topic must match the allowlist.
+  Company is rejected only when its trimmed string value is nonempty; omitted,
+  nonstring, and whitespace-only company values are ignored.
+- Caps the JSON body at `6 × (80 + 254 + 16 + 4,000) + 1,024` bytes, allowing
+  maximum-length normalized fields even when every code unit and property name
+  is escaped as `\uXXXX`. The extra allowance covers JSON syntax, field names,
+  and other body overhead. Raw whitespace, company, ignored properties, JSON
+  formatting, and duplicate property representations remain subject to the same
+  cap. Oversized declared or streamed bodies return `400` with `invalid_request`
+  without sending email.
 - Applies the `CONTACT_RATE_LIMIT` Cloudflare binding by trusted source IP at
   five attempts per minute.
 - Sends through the destination- and sender-restricted `CONTACT_EMAIL`
@@ -480,11 +494,59 @@ actor context. The MVP does not expose public `app/api/human/*` answer routes;
 human writes require Clerk-backed authentication and Agent Outbox account
 membership, never caller API keys.
 
+Hydrated review pages send answers, bulk answers, and undo through the
+same-origin `POST /human/mutations` route; JavaScript-disabled forms use the
+server actions directly. The hydrated route accepts multipart and URL-encoded
+forms with a 39,448,576-byte transport safety ceiling: the larger of 100
+independent 128,000-byte answers with up to 3x percent-encoding expansion, or
+one 32,000,000-byte raw file plus an encoded answer, with 1 MiB for protocol
+fields, form framing, and ordinary action/notice/view metadata. The semantic
+limits remain per answer and per file; bulk permits at most 100 distinct items.
+The server-action transport retains its separate 34 MiB (35,651,584-byte) cap.
+
+The Worker fetch entry checks mutation POST declarations and counts a forwarded
+stream before OpenNext's external middleware converter consumes the body. An
+oversized declaration is rejected without reading it; streamed overflow stops
+the converter's first body read without adding a whole-request copy. The route
+uses the same bound for parsing, including local Next runs. Both return the
+mutation envelope with 413 `request_too_large` for a recognized size overflow.
+Ordinary origin, authentication, and action checks remain at the route; the
+Worker's early rejection is a resource safeguard for oversized mutation bodies.
+
+Known malformed or unsupported forms return 400 `invalid_request` at the route;
+unexpected source, adapter, or parser failures retain sanitized reporting and
+503 `temporary_unavailable`. OpenNext still buffers accepted bodies for
+middleware and application conversion. Provider transport limits may reject
+requests before the Worker fetch entry. Next's Node middleware copy is
+configured with headroom above the route ceiling so valid large forms reach the
+route intact. Repository Node launchers use `scripts/node-server.mjs` to guard
+ingress before Next can make that copy. Only POSTs to `/human/mutations` (with
+an optional trailing slash) and possible server-action POSTs to `/human` (with
+an optional trailing slash) use the raised copy allowance. Review server actions
+are identified by a `next-action` header, multipart content type, or Next's
+URL-encoded action transport. Middleware, origin checks, authentication, and the
+route/action caps still run normally. Other declarations above 10,485,760 bytes
+are rejected before Next; unknown-length bodies are counted to that ceiling and
+only accepted chunks are replayed into Next. Ingress overflow returns JSON 413
+`request_too_large` with the API envelope. Small route-specific limits still
+apply after ingress. This guard belongs to the Node entry point; invoking bare
+`next start` or `next dev` bypasses it. Other Worker routes and scheduled
+processing keep their existing behavior.
+
 ## Output Routes
 
 Successful output route responses include `Cache-Control: no-store`. Read
 responses can contain human-provided answers, file metadata, or raw file bytes
 and must not be cached.
+
+Path ids (`output_result_id`, `file_id`) containing U+0000 or lone surrogates
+are rejected with 422 `validation_failed` (`invalid_string`) before rate-limit
+accounting. Live output lookups require the exact canonical lowercase UUID the
+server returned, including hyphens and without surrounding whitespace. Other
+forms return 404 `not_found` after authentication and rate-limit accounting.
+Duplicate acknowledgement has the retained-audit exception described below. A
+cursor that cannot be decoded to a valid position is rejected with 422
+`validation_failed` (`invalid_cursor`).
 
 ### Check Output
 
@@ -579,7 +641,12 @@ Success `data`:
 }
 ```
 
-Duplicate acknowledgement success sets `already_acknowledged` to `true`.
+Duplicate acknowledgement success sets `already_acknowledged` to `true`. When
+retained audit metadata proves the prior acknowledgement, its lookup also
+accepts uppercase or mixed-case hyphenated UUIDs and echoes the supplied id
+casing. Those forms still return 404 while the output is live and has not been
+acknowledged. Unhyphenated, braced, or whitespace-padded ids return 404 in both
+cases.
 
 ### Download Output File
 
@@ -701,6 +768,11 @@ For the hosted Cloudflare/OpenNext path, trusted client IP means a valid
 control-plane limits; if `CF-Connecting-IP` is missing or invalid, the route
 fails loudly with `temporary_unavailable` before rate-limit accounting or setup
 state changes.
+
+Text fields on connect routes, such as `local_caller_name` and `display_name`,
+must be well-formed Unicode without U+0000. Lone surrogates and NUL characters
+are rejected with 422 `validation_failed` (`invalid_string`) before rate-limit
+accounting or setup state changes.
 
 Connect uses standards-derived OAuth/device-flow timing:
 
@@ -958,7 +1030,8 @@ membership before binding the requested operation to an account.
 
 For hosted control-plane IP limits, trusted client IP uses the same
 Cloudflare-only policy as connect: a valid `CF-Connecting-IP` header is
-required, and `X-Forwarded-For` is not accepted as a fallback.
+required, and `X-Forwarded-For` is not accepted as a fallback. Text fields
+follow the same well-formed Unicode rule as connect.
 
 The CLI identifies the selected existing caller from local non-secret config and
 sends its opaque `caller_id` to the start route. The approval page loads caller

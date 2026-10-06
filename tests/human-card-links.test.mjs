@@ -13,9 +13,9 @@ import {
 import { loadHumanReviewPage } from "../src/server/human-review-page.ts";
 import {
   humanReviewCardHref,
-  humanReviewReturnHref,
   humanReviewViewFromRecord
 } from "../src/shared/human-review-view.ts";
+import { signInReturnHref } from "../src/shared/sign-in-return.ts";
 import {
   DATABASE_POLICY_VERIFICATION_SKIP,
   assertMigrationOwnerCanSetAppRole,
@@ -31,16 +31,17 @@ test("card links encode arbitrary caller IDs and survive the sign-in return URL"
   const url = new URL(href, "https://app.agent-outbox.dev");
   assert.equal(url.searchParams.get("caller_id"), "caller-one");
   assert.equal(url.searchParams.get("caller_item_id"), id);
-  assert.equal(humanReviewReturnHref(href), href);
+  assert.equal(signInReturnHref(href), href);
   for (const invalid of [
     undefined,
     "//evil.example/human",
     "https://evil.example/human",
     "/\\evil.example/human",
     "/human/other",
-    "/caller/connect/approve"
+    "/caller/connect/storyboard",
+    "/caller/connect/approve/other"
   ]) {
-    assert.equal(humanReviewReturnHref(invalid), undefined);
+    assert.equal(signInReturnHref(invalid), undefined);
   }
 });
 
@@ -57,7 +58,8 @@ test(
     const secondCallerId = crypto.randomUUID();
     const foreignCallerId = crypto.randomUUID();
     const userId = crypto.randomUUID();
-    const targetId = crypto.randomUUID();
+    const targetId = `a${crypto.randomUUID().slice(1)}`;
+    const foreignItemId = crypto.randomUUID();
     const copiedId = "email:thread /?#&+% café 東京";
     /** @type {import("../src/server/authorization.ts").AuthorizedHumanAccountContext} */
     const context = { surface: "human", accountId, userId, role: "owner" };
@@ -103,7 +105,7 @@ test(
         updated_at
       ) values ($1, $2, $3, $4, 'fixture-hash', $5, 'Link test', 'link', 'Review', 'Context', 'Summary', $6)`,
           [
-            isTarget ? targetId : crypto.randomUUID(),
+            isTarget ? targetId : foreign ? foreignItemId : crypto.randomUUID(),
             foreign ? otherAccountId : accountId,
             foreign
               ? foreignCallerId
@@ -189,6 +191,24 @@ test(
         assert.equal(
           await humanReviewCardInTransaction(query, context, caller, id),
           null
+        );
+      }
+      for (const id of [
+        "invalid\0id",
+        "not-a-uuid",
+        targetId.toUpperCase(),
+        foreignItemId
+      ]) {
+        assert.equal(
+          await humanReviewDetailInTransaction(query, context, id),
+          null,
+          id
+        );
+      }
+      for (const filter of [{ search: "Review\0" }, { types: ["Link\0"] }]) {
+        assert.deepEqual(
+          await humanReviewPageInTransaction(query, context, filter),
+          { totalCount: 0, rows: [], hasNext: false }
         );
       }
       await client.query("reset role");

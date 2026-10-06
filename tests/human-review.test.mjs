@@ -7,6 +7,7 @@ import {
   parseHumanAnswerForm,
   parseUndoHumanAnswerForm
 } from "../src/server/human-action-form.ts";
+import { validatedResponsePayload } from "../src/server/human-answer.ts";
 import {
   humanReviewAccountBannerInTransaction,
   humanReviewDetailInTransaction,
@@ -29,6 +30,7 @@ import {
 } from "../src/server/human-review-design-fixture.ts";
 import {
   formatQueueTimestamp,
+  localDateTimeBound,
   visualUnitSuffix
 } from "../src/components/human/review-format.ts";
 import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
@@ -54,9 +56,9 @@ import {
 import {
   accountCanManageBilling,
   accountCanUpgrade,
-  accountStorageLabel,
   humanAccountIdentityOrFallback
 } from "../src/shared/account-display.ts";
+import { readFormDataWithLimit } from "../src/server/request-body.ts";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -348,10 +350,7 @@ test("fixture resolved marker leaves pending and appears as answered history", (
   assert.equal(historyRow.status, "answered");
 });
 
-test("account banner distinguishes storage and hosted billing actions", () => {
-  assert.equal(accountStorageLabel(0, 0), "0 byte capacity");
-  assert.equal(accountStorageLabel(42, null), "Unlimited");
-  assert.equal(accountStorageLabel(25, 100), "25%");
+test("account banner distinguishes hosted billing actions", () => {
   assert.equal(
     accountCanManageBilling({
       tier: "self_hosted",
@@ -1935,6 +1934,78 @@ test("human action form parser rejects malformed hidden fields before database w
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
 });
 
+test("human answer forms accept unstorable strings in non-persisted view fields", () => {
+  const expectedAnswer = {
+    ok: true,
+    inputItemId,
+    callerId,
+    expectedRevision: 2,
+    actionValue: "approve",
+    response: { kind: "free_text", text: "Approved with one edit." }
+  };
+  const expectedBulk = {
+    ok: true,
+    actionValue: "approve",
+    items: [{ inputItemId, callerId, expectedRevision: 2 }]
+  };
+  for (const invalid of ["\0", "\ud800", "\udc00"]) {
+    for (const key of ["view.status", "view.search", "noticeAction"]) {
+      assert.deepEqual(
+        parseHumanAnswerForm(formWithRawString(answerForm(), key, invalid)),
+        expectedAnswer,
+        key
+      );
+
+      assert.deepEqual(
+        parseBulkHumanAnswersForm(formWithRawString(bulkForm(), key, invalid)),
+        expectedBulk,
+        key
+      );
+    }
+  }
+});
+
+test("human answer forms reject unstorable persisted strings", () => {
+  const nonAscii = answerForm();
+  nonAscii.set("response.text", "Approuvé — ✓");
+  nonAscii.set("feedback", "Merci 🙏");
+  assert.equal(parseHumanAnswerForm(nonAscii).ok, true);
+
+  for (const invalid of ["\0", "\ud800", "\udc00"]) {
+    for (const [key, popupKind] of [
+      ["inputItemId", "none"],
+      ["callerId", "none"],
+      ["actionValue", "none"],
+      ["response.text", "free_text"],
+      ["response.value", "single_select"],
+      ["response.values", "multi_select"],
+      ["response.value_date", "date_picker"],
+      ["response.display_timezone", "date_picker"],
+      ["feedback", "none"]
+    ]) {
+      const form = answerForm();
+      form.set("popupKind", popupKind);
+      form.set("response.mode", "date");
+      form.set("response.value_date", "2026-07-15");
+      assert.deepEqual(
+        parseHumanAnswerForm(formWithRawString(form, key, `value${invalid}`)),
+        { ok: false },
+        key
+      );
+    }
+
+    for (const key of ["bulkActionValue", `feedback.${inputItemId}`]) {
+      assert.deepEqual(
+        parseBulkHumanAnswersForm(
+          formWithRawString(bulkForm(), key, `value${invalid}`)
+        ),
+        { ok: false },
+        key
+      );
+    }
+  }
+});
+
 test("human forms accept independent feedback and reject non-text or duplicate feedback", () => {
   const form = answerForm();
   form.set("feedback", "Keep this qualification.");
@@ -1958,6 +2029,180 @@ test("human forms accept independent feedback and reject non-text or duplicate f
     parsed.items.find((item) => item.inputItemId === inputItemId)?.feedback,
     "Bulk qualification."
   );
+});
+
+test("multiline answers keep the browser's line breaks after multipart submission", async () => {
+  const text = "line one\nline two\nline three";
+  const feedback = "First note.\nSecond note.";
+  const form = answerForm();
+  form.set("response.text", text);
+  form.set("feedback", feedback);
+  const submitted = await multipartRoundTrip(form);
+  assert.equal(submitted.get("response.text"), text.replaceAll("\n", "\r\n"));
+
+  const parsed = parseHumanAnswerForm(submitted);
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.response, { kind: "free_text", text });
+  assert.equal(parsed.feedback, feedback);
+  const stored = validatedResponsePayload(
+    {
+      popupKind: "free_text",
+      popupPayload: {
+        label: "Reply",
+        placeholder: null,
+        default_value: null,
+        multiline: true,
+        min_length: null,
+        max_length: text.length
+      }
+    },
+    parsed.response,
+    parsed.feedback
+  );
+  assert.equal(stored.ok, true);
+  assert.deepEqual(stored.responsePayload, { text, feedback });
+
+  const bulk = bulkForm();
+  bulk.set(`feedback.${inputItemId}`, "Old line\rClassic Mac line");
+  const parsedBulk = parseBulkHumanAnswersForm(await multipartRoundTrip(bulk));
+  assert.equal(parsedBulk.ok, true);
+  assert.equal(parsedBulk.items[0]?.feedback, "Old line\nClassic Mac line");
+});
+
+test("human mutation body limit accepts the exact byte boundary and counts invalid lengths", async () => {
+  const encoded = "feedback=accepted";
+  for (const length of [
+    undefined,
+    "",
+    "not-a-length",
+    "1",
+    String(encoded.length)
+  ]) {
+    const body = await readFormDataWithLimit(
+      new Request("https://agent-outbox.test/human/mutations", {
+        method: "POST",
+        body: encoded,
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          ...(length === undefined ? {} : { "content-length": length })
+        }
+      }),
+      encoded.length
+    );
+    assert.ok(body.ok);
+    assert.equal(body.formData.get("feedback"), "accepted");
+  }
+});
+
+test("datetime picker bounds offer only minutes the server accepts", () => {
+  const cases = [
+    {
+      timezone: "UTC",
+      min: "2026-07-01T00:00:30Z",
+      max: "2026-07-31T23:59:59.999Z",
+      renderedMin: "2026-07-01T00:01",
+      renderedMax: "2026-07-31T23:59"
+    },
+    {
+      timezone: "UTC",
+      min: "2026-07-01T00:00:00.000000001Z",
+      max: "2026-07-31T23:59:00Z",
+      renderedMin: "2026-07-01T00:01",
+      renderedMax: "2026-07-31T23:59"
+    },
+    {
+      timezone: "UTC",
+      min: "2026-07-01T00:00:00.000Z",
+      max: "2026-07-31T23:59:00.000Z",
+      renderedMin: "2026-07-01T00:00",
+      renderedMax: "2026-07-31T23:59"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-02-01T04:59:30Z",
+      max: "2026-02-02T04:59:59Z",
+      renderedMin: "2026-02-01T00:00",
+      renderedMax: "2026-02-01T23:59"
+    },
+    {
+      timezone: "Asia/Kolkata",
+      min: "2026-03-10T10:15:41.512345678Z",
+      max: "2026-03-10T18:29:30Z",
+      renderedMin: "2026-03-10T15:46",
+      renderedMax: "2026-03-10T23:59"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:59:30Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T02:00",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T06:30:00Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T02:00",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:59:00.000000001Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T02:00",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:30:00Z",
+      max: "2026-11-01T08:00:00Z",
+      renderedMin: "2026-11-01T01:30",
+      renderedMax: "2026-11-01T03:00"
+    },
+    {
+      timezone: "Australia/Lord_Howe",
+      min: "2026-04-04T14:59:30Z",
+      max: "2026-04-04T16:30:00Z",
+      renderedMin: "2026-04-05T01:30",
+      renderedMax: "2026-04-05T03:00"
+    }
+  ];
+
+  for (const { timezone, min, max, renderedMin, renderedMax } of cases) {
+    const lower = localDateTimeBound(min, timezone, "up");
+    const upper = localDateTimeBound(max, timezone, "down");
+    assert.equal(lower, renderedMin, `${min} in ${timezone}`);
+    assert.equal(upper, renderedMax, `${max} in ${timezone}`);
+
+    const submit = (/** @type {string} */ valueLocal) => {
+      const form = answerForm();
+      form.set("actionValue", "pick_datetime");
+      form.set("popupKind", "date_picker");
+      form.set("response.mode", "datetime");
+      form.set("response.display_timezone", timezone);
+      form.set("response.value_local", valueLocal);
+      const parsed = parseHumanAnswerForm(form);
+      assert.equal(parsed.ok, true, valueLocal);
+      return validatedResponsePayload(
+        {
+          popupKind: "date_picker",
+          popupPayload: {
+            label: "Follow-up instant",
+            mode: "datetime",
+            placeholder: null,
+            display_timezone: timezone,
+            min_value: min,
+            max_value: max
+          }
+        },
+        parsed.response
+      ).ok;
+    };
+    assert.equal(submit(lower), true, `${lower} in ${timezone}`);
+    assert.equal(submit(shiftLocalMinute(lower, -1)), false);
+    assert.equal(submit(upper), true, `${upper} in ${timezone}`);
+    assert.equal(submit(shiftLocalMinute(upper, 1)), false);
+  }
 });
 
 test("browser fixture renders queue timestamps against a frozen reference", () => {
@@ -1986,6 +2231,46 @@ test("visual unit suffixes do not duplicate formatted display units", () => {
   assert.equal(visualUnitSuffix("42", ""), null);
   assert.equal(visualUnitSuffix("42", null), null);
 });
+
+/**
+ * Native FormData replaces lone surrogates with U+FFFD. Preserve raw strings
+ * here to exercise the parser's Unicode validation at its public boundary.
+ * @param {FormData} formData
+ * @param {string} key
+ * @param {string} value
+ */
+function formWithRawString(formData, key, value) {
+  formData.set(key, value);
+  if (value.isWellFormed()) return formData;
+  const entries = [...formData.entries()].filter(([name]) => name !== key);
+  entries.push([key, value]);
+  formData.get = (name) => entries.find(([key]) => key === name)?.[1] ?? null;
+  formData.getAll = (name) =>
+    entries.filter(([key]) => key === name).map(([, value]) => value);
+  formData.values = function* () {
+    for (const [, value] of entries) yield value;
+    return undefined;
+  };
+  return formData;
+}
+
+/** @param {FormData} formData */
+function multipartRoundTrip(formData) {
+  return new Request("https://agent-outbox.test/human/mutations", {
+    method: "POST",
+    body: formData
+  }).formData();
+}
+
+/**
+ * @param {string} value
+ * @param {number} minutes
+ */
+function shiftLocalMinute(value, minutes) {
+  return new Date(Date.parse(`${value}Z`) + minutes * 60_000)
+    .toISOString()
+    .slice(0, 16);
+}
 
 function answerForm() {
   const formData = new FormData();

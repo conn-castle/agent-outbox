@@ -70,7 +70,13 @@ The request must not include `caller_id`.
 
 - `caller_item_id` is the caller-owned stable logical item id. The live
   uniqueness boundary is `(caller_id, caller_item_id)` while the item is pending
-  or answered but unacknowledged.
+  or answered but unacknowledged. If a new item's id cannot fit the database
+  uniqueness index, send returns 422 `validation_failed` with field
+  `caller_item_id` and code `invalid_string` after rolling back the write. Use a
+  shorter id for that rejected new item. Storage depends on the id's content and
+  compression; there is no separate fixed id-length cap. Existing accepted ids
+  remain supported for duplicate send, pending replace, read, and pending delete
+  under the normal lifecycle rules.
 - Caller-supplied free-text strings, including `caller_item_id` on send,
   replace, delete, and read, must be well-formed Unicode without U+0000. Lone
   surrogates and NUL characters are rejected with 422 `validation_failed`
@@ -139,6 +145,11 @@ meaning.
 
 `min_length` must be non-negative, `max_length` must be positive when present,
 and `min_length <= max_length`.
+
+`default_value` is not checked against the length bounds. The hydrated review UI
+prefills it and blocks submission until the text is within the bounds. In the
+no-JavaScript fallback, an untouched out-of-range default can still be
+submitted; server validation rejects it with HTTP 422 `invalid_action_response`.
 
 `single_select` and `multi_select` fields:
 

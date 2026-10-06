@@ -10,6 +10,130 @@ import {
   validateProductionRollbackWorkflow
 } from "../scripts/release/workflow-contract.mjs";
 
+test("abandoned detector requires effective draft-visible and actions-read permissions", () => {
+  const workflow = readFileSync(
+    new URL(
+      "../.github/workflows/detect-abandoned-production-release.yml",
+      import.meta.url
+    ),
+    "utf8"
+  );
+  const contentsRead = workflow.replace(
+    "  contents: write\n",
+    "  contents: read\n"
+  );
+  const withoutActions = workflow.replace("  actions: read\n", "");
+  for (const [description, brokenWorkflow] of [
+    [
+      "contents write in workflow env cannot grant draft visibility",
+      contentsRead.replace("jobs:\n", "env:\n  contents: write\n\njobs:\n")
+    ],
+    [
+      "contents write in another job cannot grant detect draft visibility",
+      contentsRead.replace(
+        "jobs:\n",
+        "jobs:\n  unrelated:\n    permissions:\n      contents: write\n    runs-on: ubuntu-latest\n    steps:\n      - run: make setup\n"
+      )
+    ],
+    [
+      "job-level contents read overrides workflow write",
+      workflow.replace(
+        "  detect:\n",
+        "  detect:\n    permissions:\n      contents: read\n      actions: read\n"
+      )
+    ],
+    [
+      "job-level actions-only mapping drops contents scope",
+      workflow.replace(
+        "  detect:\n",
+        "  detect:\n    permissions:\n      actions: read\n"
+      )
+    ],
+    [
+      "job-level contents-only mapping drops actions scope",
+      workflow.replace(
+        "  detect:\n",
+        "  detect:\n    permissions:\n      contents: write\n"
+      )
+    ],
+    [
+      "job-level empty permissions drops inherited scopes",
+      workflow.replace("  detect:\n", "  detect:\n    permissions: {}\n")
+    ],
+    [
+      "job-level read-all cannot grant draft visibility",
+      workflow.replace("  detect:\n", "  detect:\n    permissions: read-all\n")
+    ],
+    [
+      "actions read in workflow env cannot grant owning-run visibility",
+      withoutActions.replace("jobs:\n", "env:\n  actions: read\n\njobs:\n")
+    ]
+  ]) {
+    assert.notEqual(brokenWorkflow, workflow, description);
+    assert.notDeepEqual(
+      validateAbandonedReleaseDetectionWorkflow(brokenWorkflow, "24.18.0"),
+      [],
+      description
+    );
+  }
+  const jobOverride = contentsRead.replace(
+    "  detect:\n",
+    "  detect:\n    permissions:\n      contents: write\n      actions: read\n"
+  );
+  assert.notEqual(jobOverride, workflow);
+  assert.deepEqual(
+    validateAbandonedReleaseDetectionWorkflow(jobOverride, "24.18.0"),
+    [],
+    "a complete job-level permission mapping overrides workflow contents read"
+  );
+});
+
+test("abandoned detector rejects commands outside setup and detection", () => {
+  const workflow = readFileSync(
+    new URL(
+      "../.github/workflows/detect-abandoned-production-release.yml",
+      import.meta.url
+    ),
+    "utf8"
+  );
+  for (const command of [
+    "gh release delete v0.3.0 --yes",
+    "gh release edit v0.3.0 --draft=false",
+    "gh api --method DELETE repos/conn-castle/agent-outbox/releases/379408689",
+    "gh api --method PATCH repos/conn-castle/agent-outbox/releases/379408689 -f draft=false",
+    "node scripts/production-release.mjs reconcile"
+  ]) {
+    for (const step of [
+      `      - name: Mutate release\n        run: ${command}\n`,
+      `      - run: ${command}\n`,
+      `      - name: Mutate release\n        run: |\n          ${command}\n`
+    ]) {
+      const brokenWorkflow = `${workflow}\n${step}`;
+      assert.notDeepEqual(
+        validateAbandonedReleaseDetectionWorkflow(brokenWorkflow, "24.18.0"),
+        [],
+        `reject added mutation step: ${step}`
+      );
+    }
+  }
+  for (const command of [
+    "make setup && gh release delete v0.3.0 --yes",
+    "node scripts/production-release.mjs detect-abandoned; gh release edit v0.3.0 --draft=false",
+    "|\n          node scripts/production-release.mjs detect-abandoned\n          gh release delete v0.3.0 --yes"
+  ]) {
+    const brokenWorkflow = workflow.replace(
+      "run: node scripts/production-release.mjs detect-abandoned",
+      `run: ${command}`
+    );
+    assert.notEqual(brokenWorkflow, workflow, command);
+    assert.notDeepEqual(
+      validateAbandonedReleaseDetectionWorkflow(brokenWorkflow, "24.18.0"),
+      [],
+      `reject mutation appended to an existing command: ${command}`
+    );
+  }
+});
+
 test("production deploy workflow guard accepts only the manual deploy contract", () => {
   const deployWorkflow = readFileSync(
     new URL("../.github/workflows/deploy-production.yml", import.meta.url),
@@ -129,9 +253,10 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     );
   }
   const detectorInProductionConcurrency = detectWorkflow.replace(
-    "permissions:\n  contents: read\n",
-    "concurrency:\n  group: production-deploy\npermissions:\n  contents: read\n"
+    "permissions:\n",
+    "concurrency:\n  group: production-deploy\npermissions:\n"
   );
+  assert.notEqual(detectorInProductionConcurrency, detectWorkflow);
   assert.notDeepEqual(
     validateAbandonedReleaseDetectionWorkflow(
       detectorInProductionConcurrency,
@@ -159,6 +284,18 @@ test("production deploy workflow guard accepts only the manual deploy contract",
   assert.notDeepEqual(
     validateAbandonedReleaseDetectionWorkflow(
       detectorWithoutActionsRead,
+      "24.18.0"
+    ),
+    []
+  );
+  const detectorWithoutDraftVisibility = detectWorkflow.replace(
+    "  contents: write\n",
+    "  contents: read\n"
+  );
+  assert.notEqual(detectorWithoutDraftVisibility, detectWorkflow);
+  assert.notDeepEqual(
+    validateAbandonedReleaseDetectionWorkflow(
+      detectorWithoutDraftVisibility,
       "24.18.0"
     ),
     []
@@ -459,25 +596,72 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     "deploy-job run commands must match the exported release phase contract"
   );
 
-  const promoteWithoutCandidateGuard = deployWorkflow.replace(
-    "      - name: Promote candidate to 100%\n        if: steps.prepare-draft.outputs.draft_state != 'committed'\n",
-    "      - name: Promote candidate to 100%\n"
+  const promoteGuard =
+    "      - name: Promote candidate to 100%\n        if: steps.prepare-draft.outputs.draft_state == 'prepared'\n";
+  for (const [description, replacement] of [
+    ["without a guard", "      - name: Promote candidate to 100%\n"],
+    [
+      "on a publishing re-run",
+      "      - name: Promote candidate to 100%\n        if: steps.prepare-draft.outputs.draft_state != 'committed'\n"
+    ]
+  ]) {
+    const promoteWithWrongGuard = deployWorkflow.replace(
+      promoteGuard,
+      replacement
+    );
+    assert.notEqual(
+      promoteWithWrongGuard,
+      deployWorkflow,
+      `promote guard regression fixture ${description} must modify the workflow`
+    );
+    assert.equal(
+      validateProductionDeployWorkflow(
+        promoteWithWrongGuard,
+        "24.18.0"
+      ).includes(
+        ".github/workflows/deploy-production.yml must match the exported production release phase (step name, run command, condition) contract"
+      ),
+      true,
+      `promote must not run ${description}`
+    );
+  }
+});
+
+test("publication recovery requires smoke credentials and cannot hide exhausted failures", () => {
+  const deployWorkflow = readFileSync(
+    new URL("../.github/workflows/deploy-production.yml", import.meta.url),
+    "utf8"
   );
-  assert.notEqual(
-    promoteWithoutCandidateGuard,
-    deployWorkflow,
-    "candidate-guard regression fixture must modify the workflow"
+  const marker = "      - name: Publish exact-candidate GitHub release\n";
+  const start = deployWorkflow.indexOf(marker);
+  const end = deployWorkflow.indexOf(
+    "      - name: Reconcile uncommitted release",
+    start
   );
-  assert.equal(
-    validateProductionDeployWorkflow(
-      promoteWithoutCandidateGuard,
-      "24.18.0"
-    ).includes(
-      ".github/workflows/deploy-production.yml must match the exported production release phase (step name, run command, condition) contract"
+  const publish = deployWorkflow.slice(start, end);
+  for (const unsafePublish of [
+    publish.replace(
+      "          APP_BASE_URL: https://app.agent-outbox.dev\n",
+      ""
     ),
-    true,
-    "candidate mutation steps must keep the uncommitted draft_state guard"
-  );
+    publish.replace(
+      "          SMOKE_OR_CLEANUP_TOKEN: ${{ secrets.SMOKE_OR_CLEANUP_TOKEN }}\n",
+      ""
+    ),
+    publish.replace(marker, `${marker}        continue-on-error: true\n`)
+  ]) {
+    assert.notEqual(unsafePublish, publish);
+    const unsafe =
+      deployWorkflow.slice(0, start) +
+      unsafePublish +
+      deployWorkflow.slice(end);
+    assert.equal(
+      validateProductionDeployWorkflow(unsafe, "24.18.0").includes(
+        ".github/workflows/deploy-production.yml must publish and prove the exact release only after live verification"
+      ),
+      true
+    );
+  }
 });
 
 test("production deploy workflow guard rejects automatic and incomplete deploy workflows", () => {
