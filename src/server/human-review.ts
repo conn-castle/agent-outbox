@@ -48,7 +48,6 @@ export type HumanReviewListOptions = {
   priorities?: QueuePriority[];
   types?: string[];
   sorts?: HumanReviewSortRule[];
-  limit?: number;
   offset?: number;
 };
 
@@ -192,13 +191,6 @@ type HumanReviewRow = {
   link_buttons: HumanReviewLinkButton[];
 };
 
-type LinkButtonRow = {
-  display_order: number;
-  display: string;
-  icon: string;
-  url: string;
-};
-
 type ActionRow = {
   input_action_id: string;
   display_order: number;
@@ -220,31 +212,22 @@ type ActionOptionRow = {
   icon: string | null;
 };
 
-const DEFAULT_REVIEW_LIST_LIMIT = 50;
 export const REVIEW_PAGE_SIZE = 100;
-const MAX_REVIEW_LIST_LIMIT = REVIEW_PAGE_SIZE;
-const REVIEW_PAGE_QUERY_LIMIT = MAX_REVIEW_LIST_LIMIT + 1;
 const CANONICAL_UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export async function humanReviewListInTransaction(
-  query: ProductTransactionQuery,
-  context: AuthorizedHumanAccountContext,
-  options: HumanReviewListOptions = {}
-): Promise<HumanReviewListRow[]> {
-  const rows = await query<HumanReviewRow>(
-    humanReviewListStatement(context, options)
-  );
-  return rows.rows.map(reviewListRowFromDatabase);
-}
-
+/**
+ * Returns up to REVIEW_PAGE_SIZE matching rows starting at options.offset
+ * (default 0). The extra fetched row only sets hasNext; totalCount covers all
+ * matching rows before pagination. Throws if that count is unavailable or invalid.
+ */
 export async function humanReviewPageInTransaction(
   query: ProductTransactionQuery,
   context: AuthorizedHumanAccountContext,
-  options: Omit<HumanReviewListOptions, "limit"> = {}
+  options: HumanReviewListOptions = {}
 ): Promise<HumanReviewPage> {
   const result = await query<HumanReviewRow>(
-    humanReviewListStatementWithLimit(context, options, REVIEW_PAGE_QUERY_LIMIT)
+    humanReviewListStatement(context, options)
   );
   const count = await query<{ total_count: string }>(
     humanReviewCountStatement(context, options)
@@ -255,10 +238,8 @@ export async function humanReviewPageInTransaction(
   }
   return {
     totalCount,
-    rows: result.rows
-      .slice(0, MAX_REVIEW_LIST_LIMIT)
-      .map(reviewListRowFromDatabase),
-    hasNext: result.rows.length > MAX_REVIEW_LIST_LIMIT
+    rows: result.rows.slice(0, REVIEW_PAGE_SIZE).map(reviewListRowFromDatabase),
+    hasNext: result.rows.length > REVIEW_PAGE_SIZE
   };
 }
 
@@ -305,6 +286,11 @@ export async function runHumanReviewQueryCanary(
   );
 }
 
+/**
+ * Loads account-scoped detail using the list's shared link-button projection.
+ * Links retain displayOrder, display, icon, and url, ordered by display order
+ * then link ID.
+ */
 export async function humanReviewDetailInTransaction(
   query: ProductTransactionQuery,
   context: AuthorizedHumanAccountContext,
@@ -321,9 +307,6 @@ export async function humanReviewDetailInTransaction(
     return null;
   }
 
-  const links = await query<LinkButtonRow>(
-    humanReviewLinkButtonsStatement(inputItemId)
-  );
   const actions = await query<ActionRow>(
     humanReviewActionsStatement(inputItemId)
   );
@@ -342,22 +325,14 @@ export async function humanReviewDetailInTransaction(
     optionsByActionId.set(option.input_action_id, actionOptions);
   }
 
-  const accountStatus = await accountStatusInTransaction(query, {
-    accountId: context.accountId,
-    callerId: ""
-  });
+  const accountStatus = await accountStatusInTransaction(query, context);
   const fileUploadAnswerable =
     accountStatus.ok && accountStatus.data.file_upload_enabled;
   const base = reviewListRowFromDatabase(row);
   return {
     ...base,
     detailsHtml: row.details_html ?? null,
-    linkButtons: links.rows.map((link) => ({
-      displayOrder: link.display_order,
-      display: link.display,
-      icon: link.icon,
-      url: link.url
-    })),
+    linkButtons: row.link_buttons ?? [],
     actions: actions.rows.map((action) =>
       reviewActionFromDatabase(
         action,
@@ -414,10 +389,7 @@ export async function humanReviewAccountBannerInTransaction(
   query: ProductTransactionQuery,
   context: AuthorizedHumanAccountContext
 ): Promise<StatusResult<HumanAccountBannerData>> {
-  const status = await accountStatusInTransaction(query, {
-    accountId: context.accountId,
-    callerId: ""
-  });
+  const status = await accountStatusInTransaction(query, context);
   if (!status.ok) return status;
 
   const profile = limitProfileSelectorForAccountTier(status.data.tier);
@@ -495,24 +467,17 @@ function isUsageUnit(
   return unit === "requests" || unit === "submissions" || unit === "items";
 }
 
+/**
+ * Builds the account-scoped, filtered and sorted query with a fixed limit of
+ * REVIEW_PAGE_SIZE + 1 and an offset defaulting to 0. The extra row is a
+ * sentinel for humanReviewPageInTransaction, not a visible row.
+ */
 export function humanReviewListStatement(
   context: AuthorizedHumanAccountContext,
   options: HumanReviewListOptions = {}
 ): TransactionContextStatement {
-  return humanReviewListStatementWithLimit(
-    context,
-    options,
-    boundedLimit(options.limit)
-  );
-}
-
-function humanReviewListStatementWithLimit(
-  context: AuthorizedHumanAccountContext,
-  options: HumanReviewListOptions,
-  limit: number
-): TransactionContextStatement {
   const { values, filters } = humanReviewFilters(context, options);
-  values.push(limit);
+  values.push(REVIEW_PAGE_SIZE + 1);
   const limitParameter = values.length;
   values.push(options.offset ?? 0);
 
@@ -644,24 +609,6 @@ export function humanReviewDetailStatement(
         and i.input_item_id = $2::uuid
     `,
     values: [context.accountId, inputItemId]
-  };
-}
-
-export function humanReviewLinkButtonsStatement(
-  inputItemId: string
-): TransactionContextStatement {
-  return {
-    sql: `
-      select
-        display_order,
-        display,
-        icon,
-        url
-      from public.agent_outbox_input_link_buttons
-      where input_item_id = $1::uuid
-      order by display_order, input_link_button_id
-    `,
-    values: [inputItemId]
   };
 }
 
@@ -978,13 +925,6 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
           }
         : null
   };
-}
-
-function boundedLimit(limit: number | undefined) {
-  if (limit === undefined || !Number.isSafeInteger(limit) || limit < 1) {
-    return DEFAULT_REVIEW_LIST_LIMIT;
-  }
-  return Math.min(limit, MAX_REVIEW_LIST_LIMIT);
 }
 
 function reviewActionFromDatabase(

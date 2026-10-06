@@ -4,7 +4,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 import { validateBrowserFixtureRunId } from "./scripts/browser-fixture-run-id.mjs";
 
-const port = 39010;
+// Stay below Linux's ephemeral range so Docker's random Postgres publish
+// cannot take the app port before the web server starts.
+const port = 31010;
 const baseURL = `http://127.0.0.1:${port}`;
 
 // Scope every browser-fixture Docker resource to this run so parallel runs on a
