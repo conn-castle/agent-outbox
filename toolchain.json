@@ -90,7 +90,7 @@
       "source": "npm view react-dom version --json"
     },
     "clerkNextjs": {
-      "version": "7.9.11",
+      "version": "7.9.10",
       "package": "@clerk/nextjs",
       "source": "npm view @clerk/nextjs version engines peerDependencies --json"
     },
