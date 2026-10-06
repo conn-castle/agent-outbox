@@ -10,7 +10,6 @@ import {
   undoHumanAnswerBeforeReadInTransaction,
   validatedResponsePayload
 } from "../src/server/human-answer.ts";
-import { enforceCallerOperationLimits } from "../src/server/caller-api-auth.ts";
 import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
 import {
@@ -37,6 +36,8 @@ import {
 } from "./helpers/database.mjs";
 import { parseValidSubmission } from "./helpers/canonical-input.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
+import { guardedOutputFileDownloadForTest } from "./helpers/output-files.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -92,28 +93,6 @@ const datePickerPayload = {
 };
 /** @type {import("../src/server/input-schema.ts").NormalizedFileUploadPopupPayload} */
 const fileUploadPayload = { label: "Attach", accept_mime_types: null };
-
-/**
- * Enforces download limits for an already authenticated identity, then reads
- * the file. Limit and missing-profile failures are returned unchanged. This
- * helper does not authenticate.
- * @param {ProductTransactionQuery} query
- * @param {import("../src/server/api-errors.ts").ApiRequestContext} context
- * @param {import("../src/server/caller-api-auth.ts").CallerIdentity} identity
- * @param {import("../src/server/output-files.ts").OutputFileDownloadPath} path
- */
-async function downloadOutputFileWithLimits(query, context, identity, path) {
-  const access = await enforceCallerOperationLimits(
-    query,
-    identity,
-    "output_file_download",
-    "Output file download is temporarily unavailable."
-  );
-  if (!access.ok) {
-    return access;
-  }
-  return outputFileDownloadInTransaction(query, context, identity, path);
-}
 
 test("feedback accompanies every response kind without replacing or bypassing the answer", () => {
   /** @type {Array<[Parameters<typeof validatedResponsePayload>[0], import("../src/server/human-answer.ts").HumanActionResponse]>} */
@@ -2612,7 +2591,7 @@ test(
               id
             );
             assert.equal(read.ok ? 200 : read.error.status, 404, id);
-            const download = await downloadOutputFileWithLimits(
+            const download = await guardedOutputFileDownloadForTest(
               query,
               context,
               identity,
@@ -2631,7 +2610,7 @@ test(
             ...caseForms(fileId),
             ...noncanonicalForms(fileId)
           ]) {
-            const download = await downloadOutputFileWithLimits(
+            const download = await guardedOutputFileDownloadForTest(
               query,
               context,
               identity,
@@ -2646,7 +2625,7 @@ test(
             outputResultId
           );
           assert.equal(read.ok, true);
-          const download = await downloadOutputFileWithLimits(
+          const download = await guardedOutputFileDownloadForTest(
             query,
             context,
             identity,
@@ -3515,14 +3494,6 @@ function mockQuery(calls, rowsByKind) {
   return /** @type {ProductTransactionQuery} */ (
     /** @type {unknown} */ (query)
   );
-}
-
-/**
- * @param {QueryResultRow[]} rows
- * @returns {import("pg").QueryResult<QueryResultRow>}
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 /**

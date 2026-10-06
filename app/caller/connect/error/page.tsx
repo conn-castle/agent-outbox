@@ -8,7 +8,7 @@ import {
   resolveCallerConnectHumanSession,
   runCallerConnectHumanTransaction
 } from "../session";
-import { ConnectErrorPanel, ConnectPageShell } from "../ui";
+import { ConnectErrorPage } from "../ui";
 import { ConnectionDeclinedView } from "../views";
 
 export const dynamic = "force-dynamic";
@@ -61,13 +61,12 @@ export default async function CallerConnectErrorPage({
 
     if (!transaction.ok) {
       return (
-        <ConnectPageShell
+        <ConnectErrorPage
           title="We couldn't confirm the result"
           description="The declined request could not be loaded."
           tone="canceled"
-        >
-          <ConnectErrorPanel error={transaction} />
-        </ConnectPageShell>
+          error={transaction}
+        />
       );
     }
 
@@ -82,13 +81,12 @@ export default async function CallerConnectErrorPage({
     }
 
     return (
-      <ConnectPageShell
+      <ConnectErrorPage
         title="We couldn't confirm the result"
         description="The declined request could not be verified."
         tone="canceled"
-      >
-        <ConnectErrorPanel error={terminalState.error} />
-      </ConnectPageShell>
+        error={terminalState.error}
+      />
     );
   }
 
@@ -101,29 +99,21 @@ export default async function CallerConnectErrorPage({
 
   if (!session.ok) {
     return (
-      <ConnectPageShell
+      <ConnectErrorPage
         title="Connection failed"
         description="The request could not be completed."
         tone="canceled"
-      >
-        <ConnectErrorPanel error={session} />
-      </ConnectPageShell>
+        error={session}
+      />
     );
   }
 
   return (
-    <ConnectPageShell
+    <ConnectErrorPage
       title="Connection failed"
       description="The request could not be completed."
       tone="canceled"
-    >
-      <ConnectErrorPanel
-        error={{
-          status,
-          code,
-          message
-        }}
-      />
-    </ConnectPageShell>
+      error={{ status, code, message }}
+    />
   );
 }

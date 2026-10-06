@@ -3,6 +3,7 @@ import {
   type AuditSafeLifecycleEvent
 } from "./accounting.ts";
 import {
+  apiTemporaryUnavailable,
   apiValidationFailed,
   type ApiErrorInput,
   type ApiRequestContext
@@ -15,14 +16,13 @@ import {
   accountLimitProfileForAccount,
   accountWriteLockStatement,
   enforceAcceptedInputSubmissionLimits,
-  enforceCallerRequestLimits,
+  enforceAccountRequestLimits,
   type CallerLimitGuardResult
 } from "./caller-api-limits.ts";
 import type {
   ProductTransactionQuery,
   TransactionContextStatement
 } from "./database.ts";
-import { type LimitProfileSelector } from "./limits.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 import {
@@ -133,14 +133,9 @@ export async function handleInputQueueRequest(
 
   const connectionString = process.env.DATABASE_APP_ROLE_URL;
   if (!connectionString) {
-    return {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Caller API database configuration is unavailable."
-      }
-    };
+    return apiTemporaryUnavailable(
+      "Caller API database configuration is unavailable."
+    );
   }
 
   let identity: CallerIdentity | undefined;
@@ -191,10 +186,13 @@ export async function handleInputQueueRequest(
       caller_id: identity?.callerId,
       message: "Input queue operation failed unexpectedly."
     });
-    return temporaryUnavailableError({
-      errorId: context.correlationId,
-      reported: true
-    });
+    return apiTemporaryUnavailable(
+      "Input queue operation is temporarily unavailable.",
+      {
+        errorId: context.correlationId,
+        reported: true
+      }
+    );
   }
 }
 
@@ -211,9 +209,11 @@ export async function handleInputQueueRequestInTransaction(
     // send/replace in account-before-input lock order, matching human answers.
     await query(accountWriteLockStatement(auth));
   }
-  const profile = await accountLimitProfile(query, auth.accountId);
+  const profile = await accountLimitProfileForAccount(query, auth.accountId);
   if (!profile) {
-    return temporaryUnavailableError();
+    return apiTemporaryUnavailable(
+      "Input queue operation is temporarily unavailable."
+    );
   }
 
   if (operation === "delete") {
@@ -221,7 +221,7 @@ export async function handleInputQueueRequestInTransaction(
     if (!parsed.ok) {
       return { ok: false, error: parsed.error };
     }
-    const requestLimit = await enforceCallerRequestLimits(
+    const requestLimit = await enforceAccountRequestLimits(
       query,
       auth,
       profile,
@@ -241,7 +241,7 @@ export async function handleInputQueueRequestInTransaction(
     return { ok: false, error: parsed.error };
   }
 
-  const requestLimit = await enforceCallerRequestLimits(
+  const requestLimit = await enforceAccountRequestLimits(
     query,
     auth,
     profile,
@@ -801,13 +801,6 @@ async function insertChildRows(
   }
 }
 
-export async function accountLimitProfile(
-  query: ProductTransactionQuery,
-  accountId: string
-): Promise<LimitProfileSelector | null> {
-  return accountLimitProfileForAccount(query, accountId);
-}
-
 function inputResultFromLimitGuard(
   result: CallerLimitGuardResult
 ): InputQueueResult | null {
@@ -964,22 +957,6 @@ function internalQueueError(errorId: string): InputQueueResult {
       code: "internal_error",
       message: "Input queue operation could not be completed.",
       errorId
-    }
-  };
-}
-
-function temporaryUnavailableError(options?: {
-  errorId?: string;
-  reported?: boolean;
-}): InputQueueResult {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message: "Input queue operation is temporarily unavailable.",
-      ...(options?.errorId ? { errorId: options.errorId } : {}),
-      ...(options?.reported ? { reported: true } : {})
     }
   };
 }

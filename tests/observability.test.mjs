@@ -10,21 +10,25 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 
-import * as accounting from "../src/server/accounting.ts";
-import * as apiErrors from "../src/server/api-errors.ts";
-import * as callerAuth from "../src/server/caller-auth.ts";
-import * as inputSchema from "../src/server/input-schema.ts";
-import * as logging from "../src/server/logging.ts";
 import { persistedPopup } from "../src/server/persisted-payload.ts";
 import { accountWriteLockStatement } from "../src/server/caller-api-limits.ts";
 import { formatVersionLabel } from "../src/server/app-version.ts";
 import { authenticateCallerApiRequest } from "../src/server/caller-api-auth.ts";
+import * as callerAuth from "../src/server/caller-auth.ts";
+import {
+  isStorableString,
+  unstorableStringError
+} from "../src/server/input-schema.ts";
+import * as canonicalInput from "../src/server/canonical-input.ts";
 import {
   apiErrorResponse,
   apiRequestContext,
+  apiResponseHeaders,
   apiSuccessResponse,
+  apiTemporaryUnavailable,
   apiValidationFailed
 } from "../src/server/api-errors.ts";
+import * as apiRoute from "../src/server/api-route.ts";
 import {
   createBillingPortalSessionForAccount,
   createCheckoutSessionForAccount,
@@ -76,6 +80,7 @@ import {
   phase3DatabaseVerificationUrl
 } from "./helpers/database.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -345,6 +350,9 @@ function loadBillingModuleForTest(reportRuntimeFailure) {
         if (specifier === "./env.ts") {
           return { absoluteHttpOrigin };
         }
+        if (specifier === "./api-errors.ts") {
+          return { apiTemporaryUnavailable };
+        }
         if (specifier === "./logging.ts") {
           return { durationSinceMs, emitRuntimeLog, safeErrorName };
         }
@@ -378,6 +386,7 @@ function loadBillingSessionModuleForTest(reportRuntimeFailure) {
   const billingModule = loadBillingModuleForTest(reportRuntimeFailure);
   return /** @type {{ billingHumanSessionFromClerkUser: typeof import("../src/server/billing-session.ts").billingHumanSessionFromClerkUser }} */ (
     loadCommonJsModuleForTest("src/server/billing-session.ts", {
+      "./api-errors.ts": { apiTemporaryUnavailable },
       "./billing.ts": billingModule,
       "./human-session.ts": {
         requiredHumanSessionConfiguration: () => [],
@@ -623,16 +632,7 @@ function loadCallerRouteModuleForTest(
 
   return /** @type {{ POST(request: Request): Promise<Response> }} */ (
     loadCommonJsModuleForTest(routePath, {
-      "../../../../../src/server/api-errors": {
-        apiErrorResponse,
-        apiRequestContext,
-        apiSuccessResponse
-      },
-      "../../../../../src/server/request-body": {
-        async readJsonBodyWithLimit() {
-          return { ok: true, value: {} };
-        }
-      },
+      "../../../../../src/server/api-route": apiRoute,
       [handlerModuleSpecifier]: handlerStubs
     })
   );
@@ -678,13 +678,13 @@ function loadInputQueueModuleForTest(
   return /** @type {ReturnType<typeof loadInputQueueModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/input-queue.ts", {
       "./accounting.ts": { async auditSafeLifecycleEvent() {} },
-      "./api-errors.ts": { apiValidationFailed },
+      "./api-errors.ts": { apiTemporaryUnavailable, apiValidationFailed },
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
         accountWriteLockStatement() {},
         async enforceAcceptedInputSubmissionLimits() {},
-        async enforceCallerRequestLimits() {}
+        async enforceAccountRequestLimits() {}
       },
       "./database.ts": {},
       "./input-schema.ts": {
@@ -699,13 +699,11 @@ function loadInputQueueModuleForTest(
 }
 
 /**
- * Loads the real output-file handler and shared caller transaction with
- * injected database and limit outcomes. These stubs are not a live database
- * and do not enforce production quotas.
  * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
- * @param {ReturnType<typeof callerAuth.generateCallerApiKeyMaterial>} keyMaterial
- * @param {{ transactionError?: Error, limitError?: import("../src/server/api-errors.ts").ApiErrorInput, limitRequests?: Array<{ accountId: string, kind: string }>, calls?: import("../src/server/database.ts").TransactionContextStatement[] }} [options]
+ * @param {ReturnType<typeof callerAuth.generateCallerApiKeyMaterial>} [keyMaterial]
+ * @param {{ limitError?: import("../src/server/api-errors.ts").ApiErrorInput, limitRequests?: Array<{ accountId: string, kind: string }>, calls?: import("../src/server/database.ts").TransactionContextStatement[] }} [options]
  * @returns {{
+ *   plaintextApiKey: string,
  *   handleOutputFileDownloadRequest(
  *     request: Request,
  *     context: import("../src/server/api-errors.ts").ApiRequestContext,
@@ -718,106 +716,121 @@ function loadOutputFilesModuleForTest(
   keyMaterial,
   options = {}
 ) {
-  /** @type {import("../src/server/database.ts").ProductTransactionQuery} */
+  const material = keyMaterial ?? callerAuth.generateCallerApiKeyMaterial();
+  const identity = {
+    accountId: "00000000-0000-4000-8000-000000000301",
+    callerId: "00000000-0000-4000-8000-000000000302"
+  };
+  /**
+   * @param {import("../src/server/database.ts").TransactionContextStatement} statement
+   */
+  const fakeQuery = async (statement) => {
+    options.calls?.push(statement);
+    if (/agent_outbox_lookup_caller_credential/.test(statement.sql)) {
+      return {
+        rows: [
+          {
+            account_id: identity.accountId,
+            caller_id: identity.callerId,
+            key_id: material.keyId,
+            secret_hmac_sha256: material.secretDigest,
+            status: "active",
+            revoked_at: null,
+            expires_at: null
+          }
+        ],
+        rowCount: 1,
+        command: "",
+        oid: 0,
+        fields: []
+      };
+    }
+    if (
+      /^(savepoint|release savepoint)/.test(statement.sql) ||
+      /update public.agent_outbox_caller_credentials/.test(statement.sql)
+    ) {
+      return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+    }
+    assert.match(statement.sql, /from public.agent_outbox_output_results/);
+    throw new Error("raw output transaction secret");
+  };
   const query =
     /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
-      /** @type {unknown} */ (
-        /**
-         * Records the statement when call capture is enabled. Credential
-         * lookup SQL returns the supplied active credential; every other
-         * statement returns no rows.
-         * @param {import("../src/server/database.ts").TransactionContextStatement} statement
-         */
-        async (statement) => {
-          options.calls?.push(statement);
-          if (statement.sql.includes("agent_outbox_lookup_caller_credential")) {
-            return queryResult([
-              {
-                account_id: "00000000-0000-4000-8000-000000000301",
-                caller_id: "00000000-0000-4000-8000-000000000302",
-                key_id: keyMaterial.keyId,
-                secret_hmac_sha256: keyMaterial.secretDigest,
-                status: "active",
-                revoked_at: null,
-                expires_at: null
-              }
-            ]);
-          }
-          return queryResult([]);
-        }
-      )
+      /** @type {unknown} */ (fakeQuery)
     );
   const callerApiAuth = loadCommonJsModuleForTest(
     "src/server/caller-api-auth.ts",
     {
-      "./api-errors.ts": apiErrors,
       "./caller-auth.ts": callerAuth,
+      "./api-errors.ts": { apiTemporaryUnavailable },
       "./caller-api-limits.ts": {
         /**
-         * Returns this fixture's hosted-free limit profile instead of reading
-         * one from a database.
-         */
-        async accountLimitProfileForAccount() {
-          return "hosted-free";
-        },
-        /**
-         * Records the account and operation, then returns the configured
-         * denial or success. This does not enforce a real quota.
          * @param {unknown} _query
          * @param {{ accountId: string }} identity
-         * @param {unknown} _profile
          * @param {string} kind
          */
-        async enforceCallerRequestLimits(_query, identity, _profile, kind) {
+        async enforceAccountOperationLimits(_query, identity, kind) {
+          assert.equal(kind, "output_file_download");
           options.limitRequests?.push({ accountId: identity.accountId, kind });
           return options.limitError
             ? { ok: false, error: options.limitError }
             : { ok: true };
         }
       },
-      "./canonical-input.ts": {
-        /**
-         * Treats every error as outside canonical-input integrity
-         * classification, so this fixture never takes that branch.
-         */
-        isCanonicalInputIntegrityError() {
-          return false;
-        }
-      },
+      "./canonical-input.ts": canonicalInput,
       "./database.ts": {
         /**
-         * Checks the test connection string and request id, runs the callback,
-         * then throws the configured error or returns the callback result. It
-         * does not commit or roll back a database transaction.
-         * @type {typeof runProductTransaction}
+         * @param {string} connectionString
+         * @param {import("../src/server/database.ts").ProductTransactionContext} context
+         * @param {(query: import("../src/server/database.ts").ProductTransactionQuery) => Promise<unknown>} callback
          */
         async runProductTransaction(connectionString, context, callback) {
           assert.equal(connectionString, "postgresql://observability-test");
           assert.equal(context.requestId, "req-output-file-observability");
-          const result = await callback(query);
-          if (options.transactionError) {
-            throw options.transactionError;
-          }
-          return result;
+          return callback(query);
         },
         /**
-         * Accepts the identity context and performs no database work.
+         * @param {import("../src/server/database.ts").ProductTransactionQuery} transactionQuery
+         * @param {import("../src/server/database.ts").ProductTransactionContext} context
          */
-        async setProductTransactionIdentityContext() {}
+        async setProductTransactionIdentityContext(transactionQuery, context) {
+          assert.equal(transactionQuery, query);
+          assert.equal(context.accountId, identity.accountId);
+          assert.equal(context.callerId, identity.callerId);
+        }
       },
-      "./logging.ts": logging,
-      "./sentry.ts": { reportRuntimeFailure }
+      "./logging.ts": { durationSinceMs, emitRuntimeLog, safeErrorName },
+      "./sentry.ts": {
+        reportRuntimeFailure: /** @type {RuntimeFailureReporterForTest} */ (
+          (error, input) => {
+            assert.ok(error instanceof Error);
+            assert.equal(error.message, "raw output transaction secret");
+            return reportRuntimeFailure(error, input);
+          }
+        )
+      }
     }
   );
 
-  return /** @type {ReturnType<typeof loadOutputFilesModuleForTest>} */ (
-    loadCommonJsModuleForTest("src/server/output-files.ts", {
-      "./accounting.ts": accounting,
-      "./api-errors.ts": apiErrors,
-      "./caller-api-auth.ts": callerApiAuth,
-      "./input-schema.ts": inputSchema
-    })
-  );
+  return {
+    plaintextApiKey: material.plaintextApiKey,
+    .../** @type {Pick<ReturnType<typeof loadOutputFilesModuleForTest>, "handleOutputFileDownloadRequest">} */ (
+      loadCommonJsModuleForTest("src/server/output-files.ts", {
+        "./accounting.ts": { async auditSafeLifecycleEvent() {} },
+        "./api-errors.ts": {
+          apiResponseHeaders,
+          apiTemporaryUnavailable,
+          apiValidationFailed
+        },
+        "./caller-api-auth.ts": callerApiAuth,
+        "./database.ts": {},
+        "./input-schema.ts": {
+          isStorableString,
+          unstorableStringError
+        }
+      })
+    )
+  };
 }
 
 /**
@@ -880,14 +893,6 @@ function mockHumanAnswerQuery(calls, rowsByKind) {
   return /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
     /** @type {unknown} */ (query)
   );
-}
-
-/**
- * @param {Array<Record<string, unknown>>} rows
- * @returns {import("pg").QueryResult<Record<string, unknown>>}
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 /**
@@ -3114,7 +3119,7 @@ test(
   async () => {
   /** @type {Array<{ tags: Map<string, unknown>, contexts: Array<{ name: string, value: Record<string, unknown> }> }>} */
   const sentryScopes = [];
-  /** @type {Array<{ name?: string }>} */
+  /** @type {Array<{ name?: string, message?: string }>} */
   const capturedExceptions = [];
   const sentryStub = {
     /**
@@ -3144,20 +3149,14 @@ test(
      * @param {unknown} error
      */
     captureException(error) {
-      capturedExceptions.push(/** @type {{ name?: string }} */ (error));
+      capturedExceptions.push(
+        /** @type {{ name?: string, message?: string }} */ (error)
+      );
     }
   };
   const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
   const { handleInputQueueRequest: handleInputQueue } =
     loadInputQueueModuleForTest(reportRuntimeFailure);
-  const keyMaterial = await withProcessEnv(
-    { CALLER_KEY_HASH_SECRET: CALLER_KEY_HASH_SECRET_FIXTURE },
-    callerAuth.generateCallerApiKeyMaterial
-  );
-  const { handleOutputFileDownloadRequest: handleOutputFileDownload } =
-    loadOutputFilesModuleForTest(reportRuntimeFailure, keyMaterial, {
-      transactionError: new Error("raw output transaction secret")
-    });
   const inputRequest = new Request(
     "https://app.agent-outbox.dev/api/input/send",
     { method: "POST" }
@@ -3165,19 +3164,6 @@ test(
   const inputContext = apiRequestContext(inputRequest, "/api/input/send");
   inputContext.requestId = "req-input-queue-observability";
   inputContext.correlationId = "corr-input-queue-observability";
-  const outputRequest = new Request(
-    "https://app.agent-outbox.dev/api/output/result/files/file",
-    {
-      method: "GET",
-      headers: { Authorization: `Bearer ${keyMaterial.plaintextApiKey}` }
-    }
-  );
-  const outputContext = apiRequestContext(
-    outputRequest,
-    "/api/output/[output_result_id]/files/[file_id]"
-  );
-  outputContext.requestId = "req-output-file-observability";
-  outputContext.correlationId = "corr-output-file-observability";
 
   const logs = await withProcessEnv(
     {
@@ -3191,6 +3177,23 @@ test(
     },
     () =>
       captureStructuredLogs(async () => {
+        const {
+          handleOutputFileDownloadRequest: handleOutputFileDownload,
+          plaintextApiKey
+        } = loadOutputFilesModuleForTest(reportRuntimeFailure);
+        const outputRequest = new Request(
+          "https://app.agent-outbox.dev/api/output/result/files/file",
+          {
+            method: "GET",
+            headers: { authorization: `Bearer ${plaintextApiKey}` }
+          }
+        );
+        const outputContext = apiRequestContext(
+          outputRequest,
+          "/api/output/[output_result_id]/files/[file_id]"
+        );
+        outputContext.requestId = "req-output-file-observability";
+        outputContext.correlationId = "corr-output-file-observability";
         const inputResult = await handleInputQueue(
           inputRequest,
           inputContext,
@@ -3210,8 +3213,8 @@ test(
           outputRequest,
           outputContext,
           {
-            outputResultId: "output_result_observability",
-            fileId: "output_file_observability"
+            outputResultId: "00000000-0000-4000-8000-000000000303",
+            fileId: "00000000-0000-4000-8000-000000000304"
           }
         );
         assert.equal(outputResult.ok, false);
@@ -3235,6 +3238,7 @@ test(
   assert.equal(logs.length, 2);
   assert.equal(sentryScopes.length, 2);
   assert.equal(capturedExceptions.length, 2);
+  assert.equal(capturedExceptions[1].message, "Agent Outbox runtime failure");
   const inputLog = logs.find((log) => log.operation === "input_send");
   const outputLog = logs.find(
     (log) => log.operation === "output_file_download"
@@ -3257,6 +3261,7 @@ test(
   );
   assert.equal(outputLog.method, "GET");
   assert.equal(outputLog.status_code, 503);
+  assert.equal(outputLog.message, "Output file download failed unexpectedly.");
   assert.equal(outputLog.account_id, "00000000-0000-4000-8000-000000000301");
   assert.equal(outputLog.caller_id, "00000000-0000-4000-8000-000000000302");
   assert.equal(typeof outputLog.duration_ms, "number");

@@ -61,8 +61,11 @@ of truth for stable values shared by the hosted API, CLI, deployment
 configuration, or public protocol documentation: the hosted website origin,
 hosted app origin, cleanup cron, API body ceilings, raw-file ceiling, output
 pagination, control-plane timing, output timeout, and billing downgrade grace
-period. TypeScript reads it through `src/shared/system-contract.ts`; the Node
-generator commits the matching Go constants in
+period. `src/shared/system-contract-validation.mjs` owns the shared schema and
+invariant validation. TypeScript initializes the app contract through
+`src/shared/system-contract.ts`; Node scripts read it lazily through
+`scripts/system-contract.mjs`, preserving native file, JSON, and assertion
+diagnostics. The Node generator commits the matching Go constants in
 `cli/internal/foundation/system_contract_generated.go`.
 
 Run `node scripts/system-contract.mjs generate` after intentionally changing the

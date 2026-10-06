@@ -59,12 +59,11 @@ import {
   humanAccountIdentityOrFallback
 } from "../src/shared/account-display.ts";
 import { readFormDataWithLimit } from "../src/server/request-body.ts";
+import { fakeQuery } from "./helpers/fake-query.mjs";
 
 /**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
- * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
  * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
+ * @typedef {import("./helpers/fake-query.mjs").MockProductTransactionQuery} MockProductTransactionQuery
  */
 
 /** @type {import("../src/server/authorization.ts").AuthorizedHumanAccountContext} */
@@ -2407,29 +2406,6 @@ function detailQueryWithActions(actions) {
     [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
     []
   ]);
-}
-
-/**
- * @param {QueryResultRow[][]} rowsByCall
- * @returns {MockProductTransactionQuery}
- */
-function fakeQuery(rowsByCall) {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /**
-   * @param {TransactionContextStatement} statement
-   * @returns {Promise<import("pg").QueryResult<QueryResultRow>>}
-   */
-  const query = async (statement) => {
-    calls.push(statement);
-    const rows = rowsByCall[calls.length - 1] ?? [];
-    return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
-  };
-  const typed = /** @type {MockProductTransactionQuery} */ (
-    /** @type {unknown} */ (query)
-  );
-  typed.calls = calls;
-  return typed;
 }
 
 /**

@@ -1,28 +1,12 @@
-import {
-  apiErrorResponse,
-  apiRequestContext,
-  apiSuccessResponse
-} from "../../../../../../src/server/api-errors";
+import { respondToJsonApiRequest } from "../../../../../../src/server/api-route";
 import { handleRevokeDevicePollRequest } from "../../../../../../src/server/caller-credential-operations";
-import { readJsonBodyWithLimit } from "../../../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request, "/api/caller/revoke/device/poll");
-  const body = await readJsonBodyWithLimit(request);
-  if (!body.ok) {
-    return apiErrorResponse(context, body.error);
-  }
-
-  const result = await handleRevokeDevicePollRequest(
+  return respondToJsonApiRequest(
     request,
-    context,
-    body.value
+    "/api/caller/revoke/device/poll",
+    (context, body) => handleRevokeDevicePollRequest(request, context, body)
   );
-  if (!result.ok) {
-    return apiErrorResponse(context, result.error);
-  }
-
-  return apiSuccessResponse(context, result.data);
 }

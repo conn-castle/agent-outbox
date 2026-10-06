@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
-  exitCodeForHostedHealth,
-  hostedHealthSummary,
   readHostedHealthEnv,
   runHostedHealthChecks
 } from "../scripts/hosted-health.mjs";
+import { checksSummary, exitCodeForChecks } from "../scripts/hosted-checks.mjs";
 
 function baseEnv(overrides = {}) {
   return new Map(
@@ -44,6 +45,138 @@ function textPage(status = 200) {
     }
   };
 }
+
+for (const { label, respond, expected } of [
+  {
+    label: "a request failure",
+    /** @param {string} pathname */
+    respond: async (pathname) => {
+      if (pathname === "/api/runtime/log") {
+        throw new Error("boom");
+      }
+    },
+    expected: {
+      name: "logs",
+      status: "fail",
+      code: "request_failed",
+      message: "boom"
+    }
+  },
+  {
+    label: "an unexpected JSON response",
+    /** @param {string} pathname */
+    respond: async (pathname) =>
+      pathname === "/api/runtime/log" ? jsonResponse(500, {}) : undefined,
+    expected: {
+      name: "logs",
+      status: "fail",
+      code: "unexpected_response",
+      message: "/api/runtime/log returned an unexpected response",
+      status_code: 500
+    }
+  },
+  {
+    label: "a wrong nested error code",
+    /**
+     * @param {string} pathname
+     * @param {{ headers?: Record<string, string> }} init
+     */
+    respond: async (pathname, init) =>
+      pathname === "/api/runtime/caller-auth" && !init.headers?.Authorization
+        ? jsonResponse(401, { ok: false, error: { code: "other_code" } })
+        : undefined,
+    expected: {
+      name: "caller_api_rejects_missing_auth",
+      status: "fail",
+      code: "other_code",
+      message: "/api/runtime/caller-auth did not return missing_authorization",
+      status_code: 401
+    }
+  }
+]) {
+  test(`hosted health reports ${label}`, async () => {
+    const fake = healthFetch();
+    const checks = await runHostedHealthChecks(baseEnv(), {
+      fetchImpl: /** @type {any} */ (
+        async (
+          /** @type {string | URL} */ url,
+          /** @type {{ headers?: Record<string, string> }} */ init = {}
+        ) =>
+          (await respond(new URL(url).pathname, init)) ?? fake.fetch(url, init)
+      )
+    });
+    const actual = checks.find((entry) => entry.name === expected.name);
+    assert.deepEqual(actual, expected);
+    assert.deepEqual(Object.keys(actual ?? {}), Object.keys(expected));
+  });
+}
+
+test("hosted health rejects an invalid base URL", async () => {
+  await assert.rejects(
+    runHostedHealthChecks(baseEnv({ APP_BASE_URL: "not a url" }), {
+      fetchImpl: async () => assert.fail("fetch must not be called")
+    }),
+    { code: "ERR_INVALID_URL" }
+  );
+});
+
+test("hosted health CLI preserves env-file failures and summary output", async (t) => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "hosted-health-cli-"));
+  try {
+    const emptyPath = path.join(tempDir, "empty.env");
+    writeFileSync(emptyPath, "");
+    const summary = {
+      ok: false,
+      action_required: false,
+      checks: [
+        {
+          name: "configuration",
+          status: "fail",
+          code: "missing_configuration",
+          message:
+            "Missing required values: APP_BASE_URL, SMOKE_OR_CLEANUP_TOKEN"
+        }
+      ]
+    };
+    for (const [label, envPath, stdout, stderr] of [
+      [
+        "missing explicit file",
+        path.join(tempDir, "missing.env"),
+        "",
+        `Hosted health env file does not exist: ${path.join(tempDir, "missing.env")}\n`
+      ],
+      [
+        "empty explicit file",
+        emptyPath,
+        JSON.stringify(summary, null, 2) + "\n",
+        ""
+      ]
+    ]) {
+      await t.test(label, () => {
+        const result = spawnSync(
+          process.execPath,
+          [
+            fileURLToPath(
+              new URL("../scripts/hosted-health.mjs", import.meta.url)
+            )
+          ],
+          {
+            env: {
+              NODE_ENV: "test",
+              AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE: envPath
+            },
+            encoding: "utf8"
+          }
+        );
+        assert.equal(result.status, 1);
+        assert.equal(result.stdout, stdout);
+        assert.equal(result.stderr, stderr);
+      });
+    }
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
 
 function healthFetch() {
   const seenRequests =
@@ -139,7 +272,7 @@ test("hosted health fails loud when required env is missing", async () => {
       message: "Missing required values: APP_BASE_URL, SMOKE_OR_CLEANUP_TOKEN"
     }
   ]);
-  assert.equal(exitCodeForHostedHealth(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
 });
 
 test("hosted health reads explicit env file before runtime smoke fallback", () => {
@@ -179,9 +312,9 @@ test("hosted health returns action_required for unavailable safe evidence", asyn
   const checks = await runHostedHealthChecks(baseEnv(), {
     fetchImpl: /** @type {any} */ (fake.fetch)
   });
-  const summary = hostedHealthSummary(checks);
+  const summary = checksSummary(checks);
 
-  assert.equal(exitCodeForHostedHealth(checks), 2);
+  assert.equal(exitCodeForChecks(checks), 2);
   assert.equal(summary.ok, false);
   assert.equal(summary.action_required, true);
   assert.deepEqual(
@@ -210,8 +343,8 @@ test("hosted health passes when canaries and operator evidence pass", async () =
     { fetchImpl: /** @type {any} */ (fake.fetch) }
   );
 
-  assert.equal(exitCodeForHostedHealth(checks), 0);
-  assert.equal(hostedHealthSummary(checks).ok, true);
+  assert.equal(exitCodeForChecks(checks), 0);
+  assert.equal(checksSummary(checks).ok, true);
 });
 
 test("hosted health reports status when a JSON endpoint returns non-JSON", async () => {
@@ -240,7 +373,7 @@ test("hosted health reports status when a JSON endpoint returns non-JSON", async
       status_code: 502
     }
   );
-  assert.equal(exitCodeForHostedHealth(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
 });
 
 test("hosted health fails when the human review database query is not proven", async () => {
@@ -269,7 +402,7 @@ test("hosted health fails when the human review database query is not proven", a
     checks.find((entry) => entry.name === "database")?.status,
     "fail"
   );
-  assert.equal(exitCodeForHostedHealth(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
 });
 
 test("hosted health accepts the outgoing database canary contract during rollout", async () => {
@@ -334,7 +467,7 @@ test("hosted health fails when the runtime environment is not configured", async
     checks.find((entry) => entry.name === "runtime")?.status,
     "fail"
   );
-  assert.equal(exitCodeForHostedHealth(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
 });
 
 test("hosted health fails when the runtime canary omits authenticated environment posture", async () => {
@@ -349,7 +482,7 @@ test("hosted health fails when the runtime canary omits authenticated environmen
     checks.find((entry) => entry.name === "runtime")?.status,
     "fail"
   );
-  assert.equal(exitCodeForHostedHealth(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
 });
 
 test("hosted health requires production Sentry capture readiness", async () => {
@@ -370,7 +503,7 @@ test("hosted health requires production Sentry capture readiness", async () => {
     production.find((entry) => entry.name === "sentry")?.status,
     "fail"
   );
-  assert.equal(exitCodeForHostedHealth(production), 1);
+  assert.equal(exitCodeForChecks(production), 1);
 
   const fake = healthFetch();
   const development = await runHostedHealthChecks(baseEnv(), {
@@ -418,7 +551,7 @@ test("hosted health fails when the Sentry canary would emit a real event", async
   });
 
   assert.equal(checks.find((entry) => entry.name === "sentry")?.status, "fail");
-  assert.equal(exitCodeForHostedHealth(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
 });
 
 test("hosted health proves structured error correlation without capturing to Sentry", async () => {
@@ -471,7 +604,7 @@ for (const [label, response] of /** @type {const} */ ([
       checks.find((entry) => entry.name === "error_correlation")?.status,
       "fail"
     );
-    assert.equal(exitCodeForHostedHealth(checks), 1);
+    assert.equal(exitCodeForChecks(checks), 1);
   });
 }
 
@@ -502,5 +635,5 @@ test("hosted health fails when the database canary accepts a missing bearer", as
       ?.status,
     "fail"
   );
-  assert.equal(exitCodeForHostedHealth(checks), 1);
+  assert.equal(exitCodeForChecks(checks), 1);
 });

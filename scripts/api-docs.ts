@@ -434,7 +434,9 @@ function validateImplementedRoutes() {
           ? readFileSync(`${repositoryRoot}src/server/output-files.ts`, "utf8")
           : source;
       if (
-        !/Cache-Control["']?\s*[:=,]\s*["']no-store["']/.test(noStoreSource)
+        !/Cache-Control["']?\s*[:=,]\s*["']no-store["']|\bnoStore:\s*true\b/.test(
+          noStoreSource
+        )
       ) {
         throw new Error(
           `Public API route must send Cache-Control: no-store: ${sourcePath}.`

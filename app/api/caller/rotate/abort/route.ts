@@ -1,24 +1,12 @@
-import {
-  apiErrorResponse,
-  apiRequestContext,
-  apiSuccessResponse
-} from "../../../../../src/server/api-errors";
+import { respondToJsonApiRequest } from "../../../../../src/server/api-route";
 import { handleRotateAbortRequest } from "../../../../../src/server/caller-credential-operations";
-import { readJsonBodyWithLimit } from "../../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request, "/api/caller/rotate/abort");
-  const body = await readJsonBodyWithLimit(request);
-  if (!body.ok) {
-    return apiErrorResponse(context, body.error);
-  }
-
-  const result = await handleRotateAbortRequest(request, context, body.value);
-  if (!result.ok) {
-    return apiErrorResponse(context, result.error);
-  }
-
-  return apiSuccessResponse(context, result.data);
+  return respondToJsonApiRequest(
+    request,
+    "/api/caller/rotate/abort",
+    (context, body) => handleRotateAbortRequest(request, context, body)
+  );
 }

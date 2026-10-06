@@ -1,8 +1,14 @@
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { parseEnv } from "./dotenv.mjs";
+import { readOptionalEnvFile } from "./dotenv.mjs";
+import {
+  check,
+  fetchJsonCheck,
+  responseCode,
+  runChecksCli,
+  safeErrorMessage
+} from "./hosted-checks.mjs";
 import {
   RUNTIME_SMOKE_HEADERS,
   assertRuntimeCanaryEnvironment,
@@ -58,30 +64,11 @@ const OPERATOR_EVIDENCE = [
 export function readHostedHealthEnv(options = {}) {
   const env = options.env ?? process.env;
   const root = options.root ?? ROOT;
-  const explicitPath = env[ENV_FILE_NAME] ?? env[FALLBACK_ENV_FILE_NAME];
-  const envPath =
-    explicitPath && explicitPath.trim() !== ""
-      ? path.resolve(explicitPath)
-      : path.join(root, ".env");
-  if (!existsSync(envPath)) {
-    if (explicitPath) {
-      throw new Error(`Hosted health env file does not exist: ${envPath}`);
-    }
-    return new Map();
-  }
-
-  return parseEnv(readFileSync(envPath, "utf8"));
-}
-
-/**
- * @param {string} name
- * @param {"pass" | "fail" | "action_required"} status
- * @param {string} code
- * @param {string} message
- * @param {Record<string, unknown>} [details]
- */
-function check(name, status, code, message, details = {}) {
-  return { name, status, code, message, ...details };
+  return readOptionalEnvFile(
+    env[ENV_FILE_NAME] ?? env[FALLBACK_ENV_FILE_NAME],
+    root,
+    "Hosted health"
+  );
 }
 
 /**
@@ -266,46 +253,40 @@ async function pageCheck(fetchImpl, baseUrl, pathname, name, timeoutMs) {
  */
 async function jsonCheck(fetchImpl, baseUrl, pathname, name, options) {
   const url = new URL(pathname, baseUrl);
-  try {
-    const response = await fetchImpl(url, {
-      method: options.method,
-      headers: options.headers,
-      signal: AbortSignal.timeout(options.timeoutMs)
-    });
-    /** @type {Record<string, unknown>} */
-    let body;
-    try {
-      body = await response.json();
-    } catch {
+  return fetchJsonCheck(
+    name,
+    () =>
+      fetchImpl(url, {
+        method: options.method,
+        headers: options.headers,
+        signal: AbortSignal.timeout(options.timeoutMs)
+      }),
+    `${pathname} returned a non-JSON response`,
+    (response, body) => {
+      if (response.ok && body.ok === true) {
+        const invalid = validationFailure(options.validate, body);
+        if (invalid) {
+          return check(name, "fail", "unexpected_response", invalid, {
+            status_code: response.status
+          });
+        }
+        return check(
+          name,
+          "pass",
+          String(body.code ?? "ok"),
+          `${pathname} ok`,
+          { status_code: response.status }
+        );
+      }
       return check(
         name,
         "fail",
-        "invalid_json_response",
-        `${pathname} returned a non-JSON response`,
+        responseCode(body, "unexpected_response"),
+        `${pathname} returned an unexpected response`,
         { status_code: response.status }
       );
     }
-    if (response.ok && body.ok === true) {
-      const invalid = validationFailure(options.validate, body);
-      if (invalid) {
-        return check(name, "fail", "unexpected_response", invalid, {
-          status_code: response.status
-        });
-      }
-      return check(name, "pass", String(body.code ?? "ok"), `${pathname} ok`, {
-        status_code: response.status
-      });
-    }
-    return check(
-      name,
-      "fail",
-      responseCode(body, "unexpected_response"),
-      `${pathname} returned an unexpected response`,
-      { status_code: response.status }
-    );
-  } catch (error) {
-    return check(name, "fail", "request_failed", safeErrorMessage(error));
-  }
+  );
 }
 
 /**
@@ -331,45 +312,39 @@ async function errorCodeCheck(
   options
 ) {
   const url = new URL(pathname, baseUrl);
-  try {
-    const response = await fetchImpl(url, {
-      headers: options.headers,
-      signal: AbortSignal.timeout(options.timeoutMs)
-    });
-    /** @type {Record<string, unknown>} */
-    let body;
-    try {
-      body = await response.json();
-    } catch {
-      return check(
-        name,
-        "fail",
-        "invalid_json_response",
-        `${pathname} returned a non-JSON response`,
-        { status_code: response.status }
-      );
-    }
-    if (response.status === status && body.ok === false && body.code === code) {
-      const invalid = validationFailure(options.validate, body);
-      if (invalid) {
-        return check(name, "fail", "unexpected_response", invalid, {
+  return fetchJsonCheck(
+    name,
+    () =>
+      fetchImpl(url, {
+        headers: options.headers,
+        signal: AbortSignal.timeout(options.timeoutMs)
+      }),
+    `${pathname} returned a non-JSON response`,
+    (response, body) => {
+      if (
+        response.status === status &&
+        body.ok === false &&
+        body.code === code
+      ) {
+        const invalid = validationFailure(options.validate, body);
+        if (invalid) {
+          return check(name, "fail", "unexpected_response", invalid, {
+            status_code: response.status
+          });
+        }
+        return check(name, "pass", code, `${pathname} rejected as expected`, {
           status_code: response.status
         });
       }
-      return check(name, "pass", code, `${pathname} rejected as expected`, {
-        status_code: response.status
-      });
+      return check(
+        name,
+        "fail",
+        responseCode(body, "unexpected_response"),
+        `${pathname} did not return ${code}`,
+        { status_code: response.status }
+      );
     }
-    return check(
-      name,
-      "fail",
-      responseCode(body, "unexpected_response"),
-      `${pathname} did not return ${code}`,
-      { status_code: response.status }
-    );
-  } catch (error) {
-    return check(name, "fail", "request_failed", safeErrorMessage(error));
-  }
+  );
 }
 
 /**
@@ -410,68 +385,9 @@ function validationFailure(validate, body) {
   }
 }
 
-/**
- * @param {Record<string, unknown>} body
- * @param {string} fallback
- */
-function responseCode(body, fallback) {
-  const nestedError =
-    body.error && typeof body.error === "object"
-      ? /** @type {Record<string, unknown>} */ (body.error)
-      : {};
-  return String(body.code ?? nestedError.code ?? fallback);
-}
-
-/**
- * @param {unknown} error
- */
-function safeErrorMessage(error) {
-  return error instanceof Error ? error.message : "request failed";
-}
-
-/**
- * @param {Array<{ status: string }>} checks
- */
-export function exitCodeForHostedHealth(checks) {
-  if (checks.some((entry) => entry.status === "fail")) {
-    return 1;
-  }
-  if (checks.some((entry) => entry.status === "action_required")) {
-    return 2;
-  }
-  return 0;
-}
-
-/**
- * @param {Array<{ status: string }>} checks
- */
-export function hostedHealthSummary(checks) {
-  return {
-    ok: checks.every((entry) => entry.status === "pass"),
-    action_required: checks.some((entry) => entry.status === "action_required"),
-    checks
-  };
-}
-
-async function main() {
-  let env;
-  try {
-    env = readHostedHealthEnv();
-  } catch (error) {
-    console.error(safeErrorMessage(error));
-    process.exitCode = 1;
-    return;
-  }
-
-  const checks = await runHostedHealthChecks(env);
-  const summary = hostedHealthSummary(checks);
-  console.log(JSON.stringify(summary, null, 2));
-  process.exitCode = exitCodeForHostedHealth(checks);
-}
-
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  await main();
+  await runChecksCli(readHostedHealthEnv, runHostedHealthChecks);
 }
