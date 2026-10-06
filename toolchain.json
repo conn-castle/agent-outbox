@@ -75,7 +75,7 @@
   },
   "runtimePins": {
     "next": {
-      "version": "16.3.6",
+      "version": "16.3.8",
       "package": "next",
       "source": "npm view next version engines peerDependencies --json"
     },
@@ -90,7 +90,7 @@
       "source": "npm view react-dom version --json"
     },
     "clerkNextjs": {
-      "version": "7.9.7",
+      "version": "7.9.11",
       "package": "@clerk/nextjs",
       "source": "npm view @clerk/nextjs version engines peerDependencies --json"
     },
@@ -187,12 +187,12 @@
       "source": "corepack pnpm view @playwright/test version"
     },
     "sharp": {
-      "version": "0.35.4",
+      "version": "0.35.5",
       "package": "sharp",
       "source": "corepack pnpm view sharp version engines --json"
     },
     "cloudflareOpenNext": {
-      "version": "1.20.6",
+      "version": "1.20.8",
       "package": "@opennextjs/cloudflare",
       "source": "pnpm view @opennextjs/cloudflare version engines peerDependencies bin --json"
     },
@@ -209,7 +209,7 @@
   },
   "providerCli": {
     "cloudflareWrangler": {
-      "version": "4.141.0",
+      "version": "4.147.0",
       "package": "wrangler",
       "source": "pnpm view wrangler version engines --json",
       "authCheck": ["wrangler", "whoami", "--env-file", "/dev/null"]
