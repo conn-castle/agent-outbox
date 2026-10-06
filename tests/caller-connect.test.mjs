@@ -2439,6 +2439,53 @@ test("pending connect credentials cannot authenticate caller data-plane requests
   );
 });
 
+test("connect activate and abort IP denial stops before credential lookup and caller transaction", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
+    },
+    async () => {
+      const material = generateCallerApiKeyMaterial();
+      for (const handler of [
+        handleConnectActivateRequest,
+        handleConnectAbortRequest
+      ]) {
+        const query = fakeSavepointAwareQuery(() => [{ used_units: "31" }]);
+        const runner = fakeTransactionRunner([query]);
+        const result = await handler(
+          connectRequest("/pending", {
+            headers: { authorization: `Bearer ${material.plaintextApiKey}` }
+          }),
+          {
+            requestId: "req-pending-limit",
+            correlationId: "corr-pending-limit"
+          },
+          { setup_request_id: SETUP_REQUEST_ID },
+          { runProductTransaction: runner.runProductTransaction }
+        );
+        assert.equal(result.ok, false);
+        if (result.ok) assert.fail("expected pending connect IP denial");
+        assert.equal(result.error.status, 429);
+        assert.equal(result.error.code, "rate_limit_exceeded");
+        assert.ok(result.error.limit && "limitName" in result.error.limit);
+        assert.equal(
+          result.error.limit.limitName,
+          "caller_connect_activation_requests_per_ip_per_minute"
+        );
+        assert.equal(query.calls.length, 1);
+        assert.deepEqual(query.calls[0].values?.slice(0, 3), [
+          CONNECT_TEST_IP,
+          "caller_connect_activation_requests_per_ip_per_minute",
+          "minute"
+        ]);
+        assert.equal(runner.contexts.length, 1);
+        assert.equal(runner.contexts[0].authSurface, "control_plane");
+      }
+    }
+  );
+});
+
 test("connect activate is the only step that activates the pending credential and emits the caller_registered audit", async () => {
   await withProcessEnv(
     {
@@ -2615,6 +2662,10 @@ test("expired pending connect activate and abort requests fail and expire the pe
         assert.equal(runner.contexts[1]?.authSurface, "caller", action);
         // Verification self-expires the stale pending key before rejecting.
         assert.match(callerQuery.calls[2].sql, /status = 'expired'/);
+        assert.doesNotMatch(
+          callerQuery.calls[2].sql,
+          /pending_replacement_for_credential_id = null/
+        );
         assert.match(
           callerQuery.calls[2].sql,
           /pending_replacement_setup_request_id = null/
@@ -2862,4 +2913,266 @@ test("browser approval pages and actions reject a malformed setup_request_id bef
       testCase.name
     );
   }
+});
+
+test("connect pending handlers preserve validation, authentication, availability and failure reports", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
+    },
+    async () => {
+      const material = generateCallerApiKeyMaterial();
+      const context = {
+        requestId: "req-pending-contract",
+        correlationId: "corr-pending-contract"
+      };
+      const body = { setup_request_id: SETUP_REQUEST_ID };
+      const authorization = `Bearer ${material.plaintextApiKey}`;
+      const handlers = [
+        {
+          handler: handleConnectActivateRequest,
+          ipMessage:
+            "Trusted client IP is unavailable for caller connect activation.",
+          lookupOperation: "caller_connect_activate_lookup",
+          operation: "caller_connect_activate"
+        },
+        {
+          handler: handleConnectAbortRequest,
+          ipMessage:
+            "Trusted client IP is unavailable for caller connect abort.",
+          lookupOperation: "caller_connect_abort_lookup",
+          operation: "caller_connect_abort"
+        }
+      ];
+      for (const entry of handlers) {
+        const request = (headers = { authorization }) =>
+          connectRequest("/api/caller/connect/activate", { headers });
+        for (const invalidBody of [null, []]) {
+          assert.deepEqual(
+            await entry.handler(request(), context, invalidBody),
+            {
+              ok: false,
+              error: {
+                status: 422,
+                code: "validation_failed",
+                message: "Caller connect request failed validation.",
+                fields: [
+                  {
+                    path: "",
+                    code: "invalid_request",
+                    message: "Request body must be an object."
+                  }
+                ]
+              }
+            }
+          );
+        }
+        assert.deepEqual(
+          await entry.handler(request({ authorization: "" }), context, body),
+          {
+            ok: false,
+            error: {
+              status: 401,
+              code: "authentication_required",
+              message: "Pending connect bearer credential is required."
+            }
+          }
+        );
+        assert.deepEqual(
+          await entry.handler(
+            request({ authorization: "Bearer malformed" }),
+            context,
+            body
+          ),
+          {
+            ok: false,
+            error: {
+              status: 401,
+              code: "invalid_caller_credentials",
+              message:
+                "Pending connect credential is invalid or no longer usable."
+            }
+          }
+        );
+        assert.deepEqual(
+          await entry.handler(
+            connectRequest("/api/caller/connect/activate", {
+              headers: { authorization, "cf-connecting-ip": "" }
+            }),
+            context,
+            body
+          ),
+          {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message: entry.ipMessage
+            }
+          }
+        );
+        await withProcessEnv({ DATABASE_APP_ROLE_URL: undefined }, async () => {
+          assert.deepEqual(await entry.handler(request(), context, body), {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message: "Caller connect database configuration is unavailable."
+            }
+          });
+        });
+        for (const failAt of [1, 2]) {
+          const { controlQuery } = pendingConnectRunner(material);
+          let calls = 0;
+          /** @type {typeof import("../src/server/database.ts").runProductTransaction} */
+          const runProductTransaction = async (_url, _context, callback) => {
+            calls += 1;
+            if (calls === failAt)
+              throw new Error("injected transaction failure");
+            return callback(controlQuery);
+          };
+          /** @type {string[]} */
+          const lines = [];
+          const originalError = console.error;
+          let result;
+          try {
+            console.error = (line) => lines.push(line);
+            result = await entry.handler(request(), context, body, {
+              runProductTransaction
+            });
+          } finally {
+            console.error = originalError;
+          }
+          assert.equal(calls, failAt);
+          assert.deepEqual(result, {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message: "Caller connect is temporarily unavailable.",
+              errorId: context.correlationId,
+              reported: true
+            }
+          });
+          assert.equal(lines.length, 1);
+          const log = JSON.parse(lines[0]);
+          assert.equal(
+            log.operation,
+            failAt === 1 ? entry.lookupOperation : entry.operation
+          );
+          assert.equal(
+            log.message,
+            "Caller connect request failed unexpectedly."
+          );
+          assert.equal(log.error_id, context.correlationId);
+          assert.equal(log.request_id, context.requestId);
+          assert.equal(log.surface, "api");
+          assert.equal(log.status_code, 503);
+          assert.equal(log.account_id, failAt === 1 ? undefined : ACCOUNT_ID);
+          assert.equal(log.caller_id, failAt === 1 ? undefined : CALLER_ID);
+        }
+      }
+    }
+  );
+});
+
+test("connect parsers preserve ordered fields and the 512-character code limit", async () => {
+  await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
+    async () => {
+      const context = {
+        requestId: "req-parser-contract",
+        correlationId: "corr-parser-contract"
+      };
+      assert.deepEqual(
+        await handleConnectBrowserStartRequest(
+          connectRequest("/start"),
+          context,
+          {}
+        ),
+        {
+          ok: false,
+          error: {
+            status: 422,
+            code: "validation_failed",
+            message: "Caller connect request failed validation.",
+            fields: [
+              {
+                path: "local_caller_name",
+                code: "required",
+                message: "local_caller_name is required."
+              },
+              {
+                path: "display_name",
+                code: "required",
+                message: "display_name is required."
+              },
+              {
+                path: "callback_url",
+                code: "required",
+                message: "callback_url is required."
+              }
+            ]
+          }
+        }
+      );
+      const routes = [
+        {
+          handler: handleConnectDevicePollRequest,
+          field: "device_code",
+          ipMessage:
+            "Trusted client IP is unavailable for caller connect poll.",
+          tooLongMessage: "device_code must be at most 512 characters."
+        },
+        {
+          handler: handleConnectExchangeRequest,
+          field: "setup_code",
+          ipMessage:
+            "Trusted client IP is unavailable for caller connect exchange.",
+          tooLongMessage: "setup_code must be at most 512 characters."
+        }
+      ];
+      for (const route of routes) {
+        const request = connectRequest("/code", {
+          headers: { "cf-connecting-ip": "" }
+        });
+        for (const length of [200, 512]) {
+          assert.deepEqual(
+            await route.handler(request, context, {
+              [route.field]: "x".repeat(length)
+            }),
+            {
+              ok: false,
+              error: {
+                status: 503,
+                code: "temporary_unavailable",
+                message: route.ipMessage
+              }
+            }
+          );
+        }
+        assert.deepEqual(
+          await route.handler(request, context, {
+            [route.field]: "x".repeat(513)
+          }),
+          {
+            ok: false,
+            error: {
+              status: 422,
+              code: "validation_failed",
+              message: "Caller connect request failed validation.",
+              fields: [
+                {
+                  path: route.field,
+                  code: "too_long",
+                  message: route.tooLongMessage
+                }
+              ]
+            }
+          }
+        );
+      }
+    }
+  );
 });
