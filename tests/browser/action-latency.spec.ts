@@ -77,7 +77,7 @@ test("caller approval responds visibly within 20 ms", async ({
     data: {
       local_caller_name: `latency-${testInfo.project.name}`,
       display_name: "Latency Test Caller",
-      callback_url: "http://127.0.0.1:39010/caller/connect/callback"
+      callback_url: "http://127.0.0.1:31010/caller/connect/callback"
     }
   });
   const startPayload = await start.json();

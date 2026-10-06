@@ -131,7 +131,7 @@ test("browser approval succeeds through the fixture Clerk identity and live data
     data: {
       local_caller_name: connectCallerSlug(testInfo, "browser-approve"),
       display_name: "Browser Approved Caller",
-      callback_url: "http://127.0.0.1:39010/caller/connect/callback"
+      callback_url: "http://127.0.0.1:31010/caller/connect/callback"
     }
   });
   const startPayload = await start.json();
@@ -349,7 +349,7 @@ test("browser approval can cancel a pending setup request", async ({
     data: {
       local_caller_name: connectCallerSlug(testInfo, "browser-cancel"),
       display_name: "Browser Canceled Caller",
-      callback_url: "http://127.0.0.1:39010/caller/connect/callback"
+      callback_url: "http://127.0.0.1:31010/caller/connect/callback"
     }
   });
   const startPayload = await start.json();
@@ -431,7 +431,7 @@ test("rotate and revoke approval pages complete against live caller rows", async
     data: {
       caller_id: caller.callerId,
       local_caller_name: caller.localCallerName,
-      callback_url: "http://127.0.0.1:39010/caller/connect/callback"
+      callback_url: "http://127.0.0.1:31010/caller/connect/callback"
     }
   });
   const rotateStartPayload = await rotateStart.json();
@@ -614,7 +614,7 @@ test("rotate and revoke alternate approval variants and error pages render", asy
       data: {
         caller_id: caller.callerId,
         local_caller_name: caller.localCallerName,
-        callback_url: "http://127.0.0.1:39010/caller/connect/callback"
+        callback_url: "http://127.0.0.1:31010/caller/connect/callback"
       }
     }
   );
@@ -650,7 +650,7 @@ test("rotate and revoke alternate approval variants and error pages render", asy
       data: {
         caller_id: caller.callerId,
         local_caller_name: caller.localCallerName,
-        callback_url: "http://127.0.0.1:39010/caller/connect/callback"
+        callback_url: "http://127.0.0.1:31010/caller/connect/callback"
       }
     }
   );
@@ -687,7 +687,7 @@ test("rotate and revoke alternate approval variants and error pages render", asy
       data: {
         caller_id: caller.callerId,
         local_caller_name: caller.localCallerName,
-        callback_url: "http://127.0.0.1:39010/caller/connect/callback"
+        callback_url: "http://127.0.0.1:31010/caller/connect/callback"
       }
     }
   );
