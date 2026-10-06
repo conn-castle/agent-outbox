@@ -274,8 +274,11 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure, transactionQuery) {
       "../shared/system-contract.ts": { SYSTEM_CONTRACT },
       "./accounting.ts": {
         /** @param {Record<string, unknown>} input */
-        auditSafeLifecycleEvent(input) {
-          return { ...input, metadata: input.metadata ?? {} };
+        auditEventInsertStatement(input) {
+          return {
+            sql: "insert into public.agent_outbox_audit_events",
+            values: [input.eventType]
+          };
         }
       },
       "./api-errors.ts": { apiLimitMetadata: () => null },
@@ -451,7 +454,7 @@ function loadInputQueueModuleForTest(
 
   return /** @type {ReturnType<typeof loadInputQueueModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/input-queue.ts", {
-      "./accounting.ts": { async auditSafeLifecycleEvent() {} },
+      "./accounting.ts": { auditEventInsertStatement() {} },
       "./api-errors.ts": { apiTemporaryUnavailable, apiValidationFailed },
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
@@ -590,7 +593,7 @@ function loadOutputFilesModuleForTest(
     plaintextApiKey: material.plaintextApiKey,
     .../** @type {Pick<ReturnType<typeof loadOutputFilesModuleForTest>, "handleOutputFileDownloadRequest">} */ (
       loadCommonJsModuleForTest("src/server/output-files.ts", {
-        "./accounting.ts": { async auditSafeLifecycleEvent() {} },
+        "./accounting.ts": { auditEventInsertStatement() {} },
         "./api-errors.ts": {
           apiResponseHeaders,
           apiTemporaryUnavailable,

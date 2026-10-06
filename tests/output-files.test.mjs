@@ -109,7 +109,11 @@ test("output file download returns raw bytes and writes content-safe byte audit"
     path.fileId,
     "answered",
     "file_upload",
+    null,
     7,
+    null,
+    null,
+    null,
     "req-file-test",
     "corr-file-test",
     "e".repeat(64),
@@ -521,6 +525,6 @@ test("audit statement records byte count only, never raw file content", () => {
   );
 
   assert.equal(statement.values?.[0], "file_downloaded");
-  assert.equal(statement.values?.[8], 7);
+  assert.equal(statement.values?.[9], 7);
   assert.doesNotMatch(JSON.stringify(statement), /secret-name|secret bytes/);
 });

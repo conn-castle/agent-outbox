@@ -3,10 +3,7 @@ import { createHash } from "node:crypto";
 
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
-import {
-  auditSafeLifecycleEvent,
-  type AuditSafeLifecycleEvent
-} from "./accounting.ts";
+import { auditEventInsertStatement } from "./accounting.ts";
 import {
   accountLimitProfileForAccount,
   accountWriteLockStatement,
@@ -355,8 +352,8 @@ export async function createHumanAnswerInTransaction(
   await query(markInputAnsweredStatement(input.inputItemId, answeredAt));
 
   const expiresAt = outputExpiresAt(answeredAt);
-  const auditEvents: AuditSafeLifecycleEvent[] = [
-    auditSafeLifecycleEvent({
+  const auditStatements = [
+    auditEventInsertStatement({
       eventType: "input_answered",
       accountAuditId: targetInput.account_audit_id,
       callerAuditId: targetInput.caller_audit_id,
@@ -370,7 +367,7 @@ export async function createHumanAnswerInTransaction(
       callerItemIdHash: targetInput.caller_item_id_hash,
       metadata: { revision: targetInput.current_revision }
     }),
-    auditSafeLifecycleEvent({
+    auditEventInsertStatement({
       eventType: "output_created",
       accountAuditId: targetInput.account_audit_id,
       callerAuditId: targetInput.caller_audit_id,
@@ -386,8 +383,8 @@ export async function createHumanAnswerInTransaction(
     })
   ];
   if (uploadedFile) {
-    auditEvents.push(
-      auditSafeLifecycleEvent({
+    auditStatements.push(
+      auditEventInsertStatement({
         eventType: "file_uploaded",
         accountAuditId: targetInput.account_audit_id,
         callerAuditId: targetInput.caller_audit_id,
@@ -405,8 +402,8 @@ export async function createHumanAnswerInTransaction(
     );
   }
 
-  for (const event of auditEvents) {
-    await query(insertAuditEventStatement(event));
+  for (const statement of auditStatements) {
+    await query(statement);
   }
 
   return {
@@ -891,57 +888,6 @@ function createOutputFileStatement(input: {
       input.file.sizeBytes,
       input.file.sha256,
       input.file.bytes
-    ]
-  };
-}
-
-function insertAuditEventStatement(
-  event: AuditSafeLifecycleEvent
-): TransactionContextStatement {
-  return {
-    sql: `
-      insert into public.agent_outbox_audit_events(
-        event_type,
-        account_audit_id,
-        caller_audit_id,
-        input_item_id,
-        output_result_id,
-        output_file_id,
-        item_status,
-        response_kind,
-        non_file_bytes,
-        file_bytes,
-        quota_metric,
-        limit_name,
-        deletion_reason,
-        request_id,
-        correlation_id,
-        caller_item_id_hash,
-        metadata
-      )
-      values (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17::jsonb
-      )
-    `,
-    values: [
-      event.event_type,
-      event.account_audit_id,
-      event.caller_audit_id ?? null,
-      event.input_item_id ?? null,
-      event.output_result_id ?? null,
-      event.output_file_id ?? null,
-      event.item_status ?? null,
-      event.response_kind ?? null,
-      event.non_file_bytes ?? null,
-      event.file_bytes ?? null,
-      event.quota_metric ?? null,
-      event.limit_name ?? null,
-      event.deletion_reason ?? null,
-      event.request_id ?? null,
-      event.correlation_id ?? null,
-      event.caller_item_id_hash ?? null,
-      JSON.stringify(event.metadata)
     ]
   };
 }

@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 
 import {
-  auditSafeLifecycleEvent,
+  auditEventInsertStatement,
   type AuditSafeLifecycleEvent
 } from "./accounting.ts";
 import {
@@ -243,7 +243,7 @@ export function outputFileDownloadAuditStatement(
   row: OutputFileDownloadAuditRow,
   context: ApiRequestContext
 ): TransactionContextStatement {
-  const event = auditSafeLifecycleEvent({
+  return auditEventInsertStatement({
     eventType: "file_downloaded",
     accountAuditId: row.account_audit_id,
     callerAuditId: row.caller_audit_id,
@@ -258,42 +258,6 @@ export function outputFileDownloadAuditStatement(
     callerItemIdHash: row.caller_item_id_hash,
     metadata: {}
   });
-
-  return {
-    sql: `
-      insert into public.agent_outbox_audit_events(
-        event_type,
-        account_audit_id,
-        caller_audit_id,
-        input_item_id,
-        output_result_id,
-        output_file_id,
-        item_status,
-        response_kind,
-        file_bytes,
-        request_id,
-        correlation_id,
-        caller_item_id_hash,
-        metadata
-      )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
-    `,
-    values: [
-      event.event_type,
-      event.account_audit_id,
-      event.caller_audit_id ?? null,
-      event.input_item_id ?? null,
-      event.output_result_id ?? null,
-      event.output_file_id ?? null,
-      event.item_status ?? null,
-      event.response_kind ?? null,
-      event.file_bytes ?? null,
-      event.request_id ?? null,
-      event.correlation_id ?? null,
-      event.caller_item_id_hash ?? null,
-      JSON.stringify(event.metadata)
-    ]
-  };
 }
 
 export function outputFileDownloadHeaders(

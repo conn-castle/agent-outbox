@@ -1,3 +1,4 @@
+import type { TransactionContextStatement } from "./database.ts";
 import {
   getLimitDefinition,
   limitErrorMetadata,
@@ -167,6 +168,66 @@ export function auditSafeLifecycleEvent(
   }
 
   return event;
+}
+
+/**
+ * Builds, but does not execute, a lifecycle audit INSERT.
+ * Runs auditSafeLifecycleEvent first, so invalid byte counts throw before a
+ * statement is returned and metadata is filtered to the audit allowlist.
+ * Binds absent optional fields as SQL NULL and serializes filtered metadata
+ * as JSON; callers control transaction execution and audit-statement ordering.
+ */
+export function auditEventInsertStatement(
+  input: AuditSafeLifecycleInput
+): TransactionContextStatement {
+  const event = auditSafeLifecycleEvent(input);
+
+  return {
+    sql: `
+      insert into public.agent_outbox_audit_events(
+        event_type,
+        account_audit_id,
+        caller_audit_id,
+        input_item_id,
+        output_result_id,
+        output_file_id,
+        item_status,
+        response_kind,
+        non_file_bytes,
+        file_bytes,
+        quota_metric,
+        limit_name,
+        deletion_reason,
+        request_id,
+        correlation_id,
+        caller_item_id_hash,
+        metadata
+      )
+      values (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17::jsonb
+      )
+    `,
+    values: [
+      event.event_type,
+      event.account_audit_id,
+      event.caller_audit_id ?? null,
+      event.input_item_id ?? null,
+      event.output_result_id ?? null,
+      event.output_file_id ?? null,
+      event.item_status ?? null,
+      event.response_kind ?? null,
+      event.non_file_bytes ?? null,
+      event.file_bytes ?? null,
+      event.quota_metric ?? null,
+      event.limit_name ?? null,
+      event.deletion_reason ?? null,
+      event.request_id ?? null,
+      event.correlation_id ?? null,
+      event.caller_item_id_hash ?? null,
+      JSON.stringify(event.metadata)
+    ]
+  };
 }
 
 function auditSafeMetadata(
