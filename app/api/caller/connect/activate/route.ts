@@ -1,28 +1,12 @@
-import {
-  apiErrorResponse,
-  apiRequestContext,
-  apiSuccessResponse
-} from "../../../../../src/server/api-errors";
+import { respondToJsonApiRequest } from "../../../../../src/server/api-route";
 import { handleConnectActivateRequest } from "../../../../../src/server/caller-connect";
-import { readJsonBodyWithLimit } from "../../../../../src/server/request-body";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request, "/api/caller/connect/activate");
-  const body = await readJsonBodyWithLimit(request);
-  if (!body.ok) {
-    return apiErrorResponse(context, body.error);
-  }
-
-  const result = await handleConnectActivateRequest(
+  return respondToJsonApiRequest(
     request,
-    context,
-    body.value
+    "/api/caller/connect/activate",
+    (context, body) => handleConnectActivateRequest(request, context, body)
   );
-  if (!result.ok) {
-    return apiErrorResponse(context, result.error);
-  }
-
-  return apiSuccessResponse(context, result.data);
 }
