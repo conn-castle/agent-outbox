@@ -27,12 +27,12 @@ import {
   InputSubmissionSchema,
   publicSchemaFieldErrors
 } from "../src/shared/public-api-contract.ts";
+import { fakeQuery, queryResult } from "./helpers/fake-query.mjs";
 
 /**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
  * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
+ * @typedef {import("./helpers/fake-query.mjs").MockProductTransactionQuery} MockProductTransactionQuery
  */
 
 const { safeHref } = await tsImport(
@@ -99,37 +99,6 @@ function parseValidInput(input = baseInput()) {
   const result = parseInputSubmission(input, { limitProfile: "hosted-paid" });
   assert.equal(result.ok, true);
   return result.submission;
-}
-
-/**
- * @param {QueryResultRow[][]} rowsByCall
- * @returns {MockProductTransactionQuery}
- */
-function fakeQuery(rowsByCall) {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /**
-   * @param {TransactionContextStatement} statement
-   * @returns {Promise<import("pg").QueryResult<QueryResultRow>>}
-   */
-  const query = async (statement) => {
-    calls.push(statement);
-    const rows = rowsByCall[calls.length - 1] ?? [];
-    return queryResult(rows);
-  };
-  const typedQuery = /** @type {MockProductTransactionQuery} */ (
-    /** @type {unknown} */ (query)
-  );
-  typedQuery.calls = calls;
-  return typedQuery;
-}
-
-/**
- * @param {QueryResultRow[]} rows
- * @returns {import("pg").QueryResult<QueryResultRow>}
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 function pendingInputRow() {

@@ -29,6 +29,10 @@ import {
   preserveBodyErrorDuringTeardown
 } from "./helpers/database.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
+import {
+  fakeSavepointAwareQuery,
+  fakeTransactionRunner
+} from "./helpers/fake-query.mjs";
 
 const HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
 const ACCOUNT_ID = "00000000-0000-4000-8000-000000000001";
@@ -40,68 +44,8 @@ const PENDING_CREDENTIAL_ID = "20000000-0000-4000-8000-000000000402";
 const TEST_IP = "203.0.113.55";
 
 /**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
- * @typedef {import("../src/server/database.ts").ProductTransactionContext} ProductTransactionContext
- * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
+ * @typedef {import("./helpers/fake-query.mjs").MockProductTransactionQuery} MockProductTransactionQuery
  */
-
-/**
- * @param {(statement: TransactionContextStatement, callNumber: number) => import("pg").QueryResultRow[]} resolver
- * @returns {MockProductTransactionQuery}
- */
-function fakeQuery(resolver) {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /**
-   * @param {TransactionContextStatement} statement
-   * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
-   */
-  const query = async (statement) => {
-    // Savepoint control statements cannot be modeled by this fake. Only the
-    // live start-limit test below proves savepoint behavior.
-    if (
-      /^\s*(savepoint|release savepoint|rollback to savepoint) /.test(
-        statement.sql
-      )
-    ) {
-      return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
-    }
-    calls.push(statement);
-    const rows = resolver(statement, calls.length);
-    return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
-  };
-  const typed = /** @type {MockProductTransactionQuery} */ (
-    /** @type {unknown} */ (query)
-  );
-  typed.calls = calls;
-  return typed;
-}
-
-/**
- * @param {MockProductTransactionQuery[]} queries
- * @returns {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction, contexts: ProductTransactionContext[] }}
- */
-function fakeTransactionRunner(queries) {
-  const pendingQueries = [...queries];
-  /** @type {ProductTransactionContext[]} */
-  const contexts = [];
-  /** @type {typeof import("../src/server/database.ts").runProductTransaction} */
-  const runProductTransaction = async (
-    _connectionString,
-    context,
-    callback
-  ) => {
-    contexts.push(context);
-    const query = pendingQueries.shift();
-    if (!query) {
-      assert.fail("unexpected product transaction");
-    }
-    return await callback(query);
-  };
-
-  return { runProductTransaction, contexts };
-}
 
 /**
  * @param {string} sql
@@ -137,7 +81,7 @@ test("browser rotate start preserves Unicode text and creates a setup request af
       PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
     },
     async () => {
-      const query = fakeQuery((_statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -665,7 +609,7 @@ test("rotate and revoke browser pages and actions reject a malformed setup_reque
         SETUP_REQUEST_ID.slice(0, -1),
         `${SETUP_REQUEST_ID}'`
       ]) {
-        const query = fakeQuery(() => {
+        const query = fakeSavepointAwareQuery(() => {
           throw new Error("malformed setup_request_id must not reach SQL");
         });
         const result = await testCase.run(query, setupRequestId);
@@ -686,7 +630,7 @@ test("rotate and revoke browser pages and actions reject a malformed setup_reque
       }
 
       // An uppercase UUID is valid uuid input and must still be looked up.
-      const query = fakeQuery(() => []);
+      const query = fakeSavepointAwareQuery(() => []);
       const result = await testCase.run(query, uppercaseSetupRequestId);
       assert.equal(result.ok, false, testCase.name);
       if (result.ok) {
@@ -708,7 +652,7 @@ test("device revoke poll returns authorization_pending before approval and a dis
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
     },
     async () => {
-      const pendingQuery = fakeQuery((_statement, callNumber) => {
+      const pendingQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -743,23 +687,25 @@ test("device revoke poll returns authorization_pending before approval and a dis
       assert.equal(pending.error.status, 202);
       assert.equal(pending.error.code, "authorization_pending");
 
-      const approvedQuery = fakeQuery((_statement, callNumber) => {
-        if (callNumber === 1) {
-          return [{ used_units: "1" }];
+      const approvedQuery = fakeSavepointAwareQuery(
+        (_statement, callNumber) => {
+          if (callNumber === 1) {
+            return [{ used_units: "1" }];
+          }
+          if (callNumber === 2) {
+            return [
+              {
+                setup_request_id: SETUP_REQUEST_ID,
+                status: "approved",
+                setup_code_hash: null,
+                poll_interval_seconds: 5,
+                expires_at: "2026-07-02T00:10:00.000Z"
+              }
+            ];
+          }
+          return [];
         }
-        if (callNumber === 2) {
-          return [
-            {
-              setup_request_id: SETUP_REQUEST_ID,
-              status: "approved",
-              setup_code_hash: null,
-              poll_interval_seconds: 5,
-              expires_at: "2026-07-02T00:10:00.000Z"
-            }
-          ];
-        }
-        return [];
-      });
+      );
       const approvedRunner = fakeTransactionRunner([approvedQuery]);
       const approved = await handleRevokeDevicePollRequest(
         controlRequest("/api/caller/revoke/device/poll"),
@@ -800,7 +746,7 @@ test("rotate exchange creates only a pending replacement credential and does not
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
     },
     async () => {
-      const controlQuery = fakeQuery((_statement, callNumber) => {
+      const controlQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -814,7 +760,7 @@ test("rotate exchange creates only a pending replacement credential and does not
           }
         ];
       });
-      const humanQuery = fakeQuery((statement, callNumber) => {
+      const humanQuery = fakeSavepointAwareQuery((statement, callNumber) => {
         if (callNumber === 1 || callNumber === 3) {
           return [
             {
@@ -929,7 +875,7 @@ test("rotate exchange expires abandoned expired pending replacements before crea
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
     },
     async () => {
-      const controlQuery = fakeQuery((_statement, callNumber) => {
+      const controlQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -944,7 +890,7 @@ test("rotate exchange expires abandoned expired pending replacements before crea
         ];
       });
       let sawExpiredPendingCleanup = false;
-      const humanQuery = fakeQuery((statement, callNumber) => {
+      const humanQuery = fakeSavepointAwareQuery((statement, callNumber) => {
         if (callNumber === 1 || callNumber === 3) {
           return [
             {
@@ -1051,7 +997,7 @@ test("rotate exchange still rejects a live pending replacement after expired cle
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
     },
     async () => {
-      const controlQuery = fakeQuery((_statement, callNumber) => {
+      const controlQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -1065,7 +1011,7 @@ test("rotate exchange still rejects a live pending replacement after expired cle
           }
         ];
       });
-      const humanQuery = fakeQuery((statement, callNumber) => {
+      const humanQuery = fakeSavepointAwareQuery((statement, callNumber) => {
         if (callNumber === 1 || callNumber === 3) {
           return [
             {
@@ -1174,7 +1120,7 @@ test("rotate and revoke approvals use distinct account-scoped limit buckets", as
       ];
 
       for (const approval of approvals) {
-        const query = fakeQuery((_statement, callNumber) => {
+        const query = fakeSavepointAwareQuery((_statement, callNumber) => {
           if (callNumber === 1) {
             return [
               {
@@ -1238,7 +1184,7 @@ test("rotate and revoke approvals use distinct account-scoped limit buckets", as
 
 test("rotate and revoke denial rejects setup requests whose caller belongs to another account", async () => {
   for (const operation of /** @type {const} */ (["rotate", "revoke"])) {
-    const query = fakeQuery((statement, callNumber) => {
+    const query = fakeSavepointAwareQuery((statement, callNumber) => {
       assert.equal(callNumber, 1);
       assert.deepEqual(statement.values, [
         SETUP_REQUEST_ID,
@@ -1567,7 +1513,7 @@ test("revoke confirm revokes credentials without deleting caller history, queue 
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
     },
     async () => {
-      const controlQuery = fakeQuery((_statement, callNumber) => {
+      const controlQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -1581,7 +1527,7 @@ test("revoke confirm revokes credentials without deleting caller history, queue 
           }
         ];
       });
-      const humanQuery = fakeQuery((statement, callNumber) => {
+      const humanQuery = fakeSavepointAwareQuery((statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -1671,7 +1617,7 @@ function pendingRotateRunner(material, options = {}) {
   const pendingStatus = options.pendingStatus ?? "pending_activation";
   const pendingSecretDigest =
     options.pendingSecretDigest ?? material.secretDigest;
-  const controlQuery = fakeQuery((_statement, callNumber) => {
+  const controlQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
     if (callNumber === 1) {
       return [{ used_units: "1" }];
     }
@@ -1689,7 +1635,7 @@ function pendingRotateRunner(material, options = {}) {
       }
     ];
   });
-  const callerQuery = fakeQuery((_statement, callNumber) => {
+  const callerQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
     if (callNumber === 1) {
       return [
         {

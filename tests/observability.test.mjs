@@ -80,6 +80,7 @@ import {
   phase3DatabaseVerificationUrl
 } from "./helpers/database.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -882,14 +883,6 @@ function mockHumanAnswerQuery(calls, rowsByKind) {
   return /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
     /** @type {unknown} */ (query)
   );
-}
-
-/**
- * @param {Array<Record<string, unknown>>} rows
- * @returns {import("pg").QueryResult<Record<string, unknown>>}
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 /**

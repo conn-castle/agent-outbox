@@ -28,12 +28,12 @@ import {
   CANONICAL_TEST_IDENTITY as identity,
   canonicalRelationalFixture
 } from "./helpers/canonical-input.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 /**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
  * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
+ * @typedef {import("./helpers/fake-query.mjs").MockProductTransactionQuery} MockProductTransactionQuery
  */
 
 const context = {
@@ -155,11 +155,11 @@ function fakeQuery(rowsByCall, fixtures = defaultCanonicalFixtures) {
         )
       );
       const rows = canonicalRowsFor(statement.sql, inputItemIds, fixtures);
-      return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
+      return queryResult(rows);
     }
     const sequential = calls.filter((call) => !isCanonicalSql(call.sql));
     const rows = rowsByCall[sequential.length - 1] ?? [];
-    return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
+    return queryResult(rows);
   };
   const typed = /** @type {MockProductTransactionQuery} */ (
     /** @type {unknown} */ (query)

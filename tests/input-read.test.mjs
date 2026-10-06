@@ -45,12 +45,12 @@ import {
   richPublicInput,
   storedRowsFromSubmission
 } from "./helpers/canonical-input.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 /**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
  * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
+ * @typedef {import("./helpers/fake-query.mjs").MockProductTransactionQuery} MockProductTransactionQuery
  */
 
 const context = {
@@ -192,13 +192,6 @@ function fakeQuery(rowsByCall, canonical = {}) {
   );
   typed.calls = calls;
   return typed;
-}
-
-/**
- * @param {QueryResultRow[]} rows
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 function listRow(overrides = {}) {

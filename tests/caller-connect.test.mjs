@@ -39,6 +39,10 @@ import {
   teardownAttempt
 } from "./helpers/database.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
+import {
+  fakeSavepointAwareQuery,
+  fakeTransactionRunner
+} from "./helpers/fake-query.mjs";
 
 const HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
 const ACCOUNT_ID = "00000000-0000-4000-8000-000000000001";
@@ -507,67 +511,9 @@ test(
 );
 
 /**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
- * @typedef {import("../src/server/database.ts").ProductTransactionContext} ProductTransactionContext
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
+ * @typedef {import("./helpers/fake-query.mjs").MockProductTransactionQuery} MockProductTransactionQuery
  */
-
-/**
- * @param {(statement: import("../src/server/database.ts").TransactionContextStatement, callNumber: number) => import("pg").QueryResultRow[]} resolver
- */
-function fakeQuery(resolver) {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /**
-   * @param {TransactionContextStatement} statement
-   * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
-   */
-  const query = async (statement) => {
-    // Savepoint control statements cannot be modeled by this fake. The live
-    // insert-time duplicate test proves transaction recovery.
-    if (
-      /^\s*(savepoint|release savepoint|rollback to savepoint) /.test(
-        statement.sql
-      )
-    ) {
-      return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
-    }
-    calls.push(statement);
-    const rows = resolver(statement, calls.length);
-    return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
-  };
-  const typed = /** @type {MockProductTransactionQuery} */ (
-    /** @type {unknown} */ (query)
-  );
-  typed.calls = calls;
-  return typed;
-}
-
-/**
- * @param {MockProductTransactionQuery[]} queries
- * @returns {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction, contexts: ProductTransactionContext[] }}
- */
-function fakeTransactionRunner(queries) {
-  const pendingQueries = [...queries];
-  /** @type {ProductTransactionContext[]} */
-  const contexts = [];
-  /** @type {typeof import("../src/server/database.ts").runProductTransaction} */
-  const runProductTransaction = async (
-    _connectionString,
-    context,
-    callback
-  ) => {
-    contexts.push(context);
-    const query = pendingQueries.shift();
-    if (!query) {
-      assert.fail("unexpected product transaction");
-    }
-    return await callback(query);
-  };
-
-  return { runProductTransaction, contexts };
-}
 
 /**
  * @param {string} path
@@ -600,7 +546,7 @@ function pendingConnectRunner(material, options = {}) {
   const pendingStatus = options.pendingStatus ?? "pending_activation";
   const pendingSecretDigest =
     options.pendingSecretDigest ?? material.secretDigest;
-  const controlQuery = fakeQuery((_statement, callNumber) => {
+  const controlQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
     if (callNumber === 1) {
       return [{ used_units: "1" }];
     }
@@ -618,7 +564,7 @@ function pendingConnectRunner(material, options = {}) {
       }
     ];
   });
-  const callerQuery = fakeQuery((_statement, callNumber) => {
+  const callerQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
     // Call 1 is the caller credential lifecycle lock.
     if (callNumber === 2) {
       return [
@@ -652,7 +598,7 @@ test("browser connect start preserves Unicode text and returns approval metadata
     },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000101";
-      const query = fakeQuery((_statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -718,7 +664,7 @@ test("device connect start preserves Unicode text and stores only hashed device 
       PUBLIC_APP_BASE_URL: "https://app.agent-outbox.dev"
     },
     async () => {
-      const query = fakeQuery((_statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -832,7 +778,7 @@ test("connect start per-IP limiting blocks before setup insert", async () => {
       ];
 
       for (const testCase of cases) {
-        const query = fakeQuery(() => [{ used_units: "31" }]);
+        const query = fakeSavepointAwareQuery(() => [{ used_units: "31" }]);
         const runner = fakeTransactionRunner([query]);
 
         const result = await testCase.handler(
@@ -1119,7 +1065,7 @@ test("browser approval preview exposes only pending setup metadata", async () =>
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000031";
-      const query = fakeQuery(() => [
+      const query = fakeSavepointAwareQuery(() => [
         {
           setup_request_id: setupRequestId,
           operation: "connect",
@@ -1161,7 +1107,7 @@ test("terminal setup state is scoped to account and persisted status", async () 
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000041";
-      const query = fakeQuery(() => [
+      const query = fakeSavepointAwareQuery(() => [
         {
           setup_request_id: setupRequestId,
           operation: "connect",
@@ -1214,7 +1160,7 @@ test("device approval preview normalizes the user code and expires stale setup r
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000032";
-      const query = fakeQuery((_statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -1255,7 +1201,7 @@ test("device approval preview treats an exchanged request from the same account 
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000033";
-      const query = fakeQuery(() => [
+      const query = fakeSavepointAwareQuery(() => [
         {
           setup_request_id: setupRequestId,
           operation: "connect",
@@ -1298,7 +1244,7 @@ test("device approval preview does not expose another account's completed reques
   await withProcessEnv(
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
-      const query = fakeQuery(() => [
+      const query = fakeSavepointAwareQuery(() => [
         {
           setup_request_id: "10000000-0000-4000-8000-000000000034",
           operation: "connect",
@@ -1336,7 +1282,7 @@ test("denying a setup request binds the terminal state to the cancelling account
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000042";
-      const query = fakeQuery(() => [
+      const query = fakeSavepointAwareQuery(() => [
         {
           setup_request_id: setupRequestId
         }
@@ -1370,7 +1316,7 @@ test("connect denial refuses a setup request that is not a pending connect row",
     async () => {
       // A rotate/revoke setup request id submitted to the connect deny route
       // matches no connect row, so the guarded UPDATE returns zero rows.
-      const query = fakeQuery(() => []);
+      const query = fakeSavepointAwareQuery(() => []);
 
       const result = await denyConnectSetupRequest(query, {
         setupRequestId: "10000000-0000-4000-8000-000000000042",
@@ -1391,7 +1337,7 @@ test("browser approval binds the setup request to the approving account and call
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000001";
-      const query = fakeQuery((_statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -1493,7 +1439,7 @@ test("device approval binds the account and moves the request pending -> approve
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000009";
-      const query = fakeQuery((_statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -1585,7 +1531,7 @@ test("repeated device approval is idempotent before and after the CLI exchanges 
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000010";
       for (const status of ["approved", "exchanged"]) {
-        const query = fakeQuery(() => [
+        const query = fakeSavepointAwareQuery(() => [
           {
             setup_request_id: setupRequestId,
             operation: "connect",
@@ -1634,7 +1580,7 @@ test("repeated device approval cannot cross account boundaries", async () => {
   await withProcessEnv(
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
-      const query = fakeQuery(() => [
+      const query = fakeSavepointAwareQuery(() => [
         {
           setup_request_id: "10000000-0000-4000-8000-000000000011",
           operation: "connect",
@@ -1673,7 +1619,7 @@ test("browser approval rejects a duplicate caller name before caller creation", 
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000011";
-      const query = fakeQuery((_statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -1753,7 +1699,7 @@ test("device approval rejects a duplicate caller name before caller creation", a
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000012";
-      const query = fakeQuery((_statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -1822,7 +1768,7 @@ test("account-scoped connect approval abuse control blocks before caller creatio
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000004";
-      const query = fakeQuery((_statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -1883,7 +1829,7 @@ test("connect exchange mints only a pending credential without activating, revok
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000001";
-      const query = fakeQuery((statement, callNumber) => {
+      const query = fakeSavepointAwareQuery((statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -1996,7 +1942,7 @@ test("device poll returns authorization_pending with retry metadata before appro
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
     },
     async () => {
-      const controlQuery = fakeQuery((_statement, callNumber) => {
+      const controlQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -2055,7 +2001,7 @@ test("approved device poll returns the display-once pending caller credential", 
     },
     async () => {
       const setupRequestId = "10000000-0000-4000-8000-000000000021";
-      const controlQuery = fakeQuery((_statement, callNumber) => {
+      const controlQuery = fakeSavepointAwareQuery((_statement, callNumber) => {
         if (callNumber === 1) {
           return [{ used_units: "1" }];
         }
@@ -2073,7 +2019,7 @@ test("approved device poll returns the display-once pending caller credential", 
         }
         return [];
       });
-      const humanQuery = fakeQuery((statement, callNumber) => {
+      const humanQuery = fakeSavepointAwareQuery((statement, callNumber) => {
         if (callNumber === 1) {
           return [
             {
@@ -2187,24 +2133,26 @@ test("pending or denied setup-code exchange is rejected before credential mintin
     },
     async () => {
       for (const status of ["pending", "denied"]) {
-        const controlQuery = fakeQuery((_statement, callNumber) => {
-          if (callNumber === 1) {
-            return [{ used_units: "1" }];
+        const controlQuery = fakeSavepointAwareQuery(
+          (_statement, callNumber) => {
+            if (callNumber === 1) {
+              return [{ used_units: "1" }];
+            }
+            if (callNumber === 2) {
+              return [
+                {
+                  setup_request_id: "10000000-0000-4000-8000-000000000022",
+                  status,
+                  account_id: status === "denied" ? ACCOUNT_ID : null,
+                  approved_by_user_id: null,
+                  poll_interval_seconds: 5,
+                  expires_at: "2026-07-02T00:10:00.000Z"
+                }
+              ];
+            }
+            return [];
           }
-          if (callNumber === 2) {
-            return [
-              {
-                setup_request_id: "10000000-0000-4000-8000-000000000022",
-                status,
-                account_id: status === "denied" ? ACCOUNT_ID : null,
-                approved_by_user_id: null,
-                poll_interval_seconds: 5,
-                expires_at: "2026-07-02T00:10:00.000Z"
-              }
-            ];
-          }
-          return [];
-        });
+        );
         const runner = fakeTransactionRunner([controlQuery]);
 
         const result = await handleConnectExchangeRequest(
@@ -2256,7 +2204,7 @@ test("exchanged or expired connect codes cannot mint another credential", async 
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
     async () => {
       for (const status of ["exchanged", "approved"]) {
-        const query = fakeQuery((_statement, callNumber) => {
+        const query = fakeSavepointAwareQuery((_statement, callNumber) => {
           if (callNumber === 1) {
             return [
               {
@@ -2333,7 +2281,7 @@ test("per-IP connect control-plane abuse controls return retry metadata from the
   ];
 
   for (const { enforce, limitName } of cases) {
-    const query = fakeQuery(() => [{ used_units: "31" }]);
+    const query = fakeSavepointAwareQuery(() => [{ used_units: "31" }]);
 
     const result = await enforce(query, "203.0.113.9");
 
@@ -2369,7 +2317,9 @@ test("device poll per-IP abuse control blocks before setup lookup", async () => 
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
     },
     async () => {
-      const controlQuery = fakeQuery(() => [{ used_units: "31" }]);
+      const controlQuery = fakeSavepointAwareQuery(() => [
+        { used_units: "31" }
+      ]);
       const runner = fakeTransactionRunner([controlQuery]);
 
       const result = await handleConnectDevicePollRequest(
@@ -2413,7 +2363,9 @@ test("exchange per-IP abuse control blocks before setup lookup", async () => {
       DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
     },
     async () => {
-      const controlQuery = fakeQuery(() => [{ used_units: "31" }]);
+      const controlQuery = fakeSavepointAwareQuery(() => [
+        { used_units: "31" }
+      ]);
       const runner = fakeTransactionRunner([controlQuery]);
 
       const result = await handleConnectExchangeRequest(
@@ -2875,7 +2827,7 @@ test("browser approval pages and actions reject a malformed setup_request_id bef
       SETUP_REQUEST_ID.slice(0, -1),
       `${SETUP_REQUEST_ID}'`
     ]) {
-      const query = fakeQuery(() => {
+      const query = fakeSavepointAwareQuery(() => {
         throw new Error("malformed setup_request_id must not reach SQL");
       });
       const result = await testCase.run(query, setupRequestId);
@@ -2896,7 +2848,7 @@ test("browser approval pages and actions reject a malformed setup_request_id bef
     }
 
     // An uppercase UUID is valid uuid input and must still be looked up.
-    const query = fakeQuery(() => []);
+    const query = fakeSavepointAwareQuery(() => []);
     const result = await testCase.run(query, uppercaseSetupRequestId);
     assert.equal(result.ok, false, testCase.name);
     if (result.ok) {

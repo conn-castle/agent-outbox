@@ -27,6 +27,7 @@ import {
 } from "./helpers/database.mjs";
 import { parseValidSubmission } from "./helpers/canonical-input.mjs";
 import { guardedOutputFileDownloadForTest } from "./helpers/output-files.mjs";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
@@ -3177,14 +3178,6 @@ function mockQuery(calls, rowsByKind) {
   return /** @type {ProductTransactionQuery} */ (
     /** @type {unknown} */ (query)
   );
-}
-
-/**
- * @param {QueryResultRow[]} rows
- * @returns {import("pg").QueryResult<QueryResultRow>}
- */
-function queryResult(rows) {
-  return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
 }
 
 /**

@@ -15,13 +15,7 @@ import {
   preserveBodyErrorDuringTeardown,
   teardownAttempt
 } from "./helpers/database.mjs";
-
-/**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
- * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
- * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
- */
+import { fakeQuery } from "./helpers/fake-query.mjs";
 
 const { Client } = pg;
 const databaseTestsEnabled =
@@ -468,29 +462,6 @@ test(
     }
   }
 );
-
-/**
- * @param {QueryResultRow[][]} rowsByCall
- * @returns {MockProductTransactionQuery}
- */
-function fakeQuery(rowsByCall) {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /**
-   * @param {TransactionContextStatement} statement
-   * @returns {Promise<import("pg").QueryResult<QueryResultRow>>}
-   */
-  const query = async (statement) => {
-    calls.push(statement);
-    const rows = rowsByCall[calls.length - 1] ?? [];
-    return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
-  };
-  const typed = /** @type {MockProductTransactionQuery} */ (
-    /** @type {unknown} */ (query)
-  );
-  typed.calls = calls;
-  return typed;
-}
 
 /**
  * @param {Record<string, string | undefined>} previous

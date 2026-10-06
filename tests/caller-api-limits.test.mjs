@@ -10,41 +10,12 @@ import {
   incrementQuotaWindowStatement,
   quotaWindow
 } from "../src/server/caller-api-limits.ts";
-
-/**
- * @typedef {import("../src/server/database.ts").ProductTransactionQuery} ProductTransactionQuery
- * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
- * @typedef {import("pg").QueryResultRow} QueryResultRow
- * @typedef {ProductTransactionQuery & { calls: TransactionContextStatement[] }} MockProductTransactionQuery
- */
+import { fakeQuery } from "./helpers/fake-query.mjs";
 
 const identity = {
   accountId: "00000000-0000-4000-8000-000000000001",
   callerId: "00000000-0000-4000-8000-000000000002"
 };
-
-/**
- * @param {QueryResultRow[][]} rowsByCall
- * @returns {MockProductTransactionQuery}
- */
-function fakeQuery(rowsByCall) {
-  /** @type {TransactionContextStatement[]} */
-  const calls = [];
-  /**
-   * @param {TransactionContextStatement} statement
-   * @returns {Promise<import("pg").QueryResult<QueryResultRow>>}
-   */
-  const query = async (statement) => {
-    calls.push(statement);
-    const rows = rowsByCall[calls.length - 1] ?? [];
-    return { rows, rowCount: rows.length, command: "", oid: 0, fields: [] };
-  };
-  const typed = /** @type {MockProductTransactionQuery} */ (
-    /** @type {unknown} */ (query)
-  );
-  typed.calls = calls;
-  return typed;
-}
 
 test("caller request limits short-circuit active blocks without incrementing quota windows", async () => {
   const query = fakeQuery([
