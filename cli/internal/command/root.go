@@ -237,7 +237,7 @@ func loadConfig(flags *rootFlags, env foundation.Env) (foundation.Config, error)
 	return foundation.LoadConfig(path)
 }
 
-// resolveCommandConfigPath reports whether --config or AGENT_OUTBOX_CONFIG
+// resolveCommandConfigPath reports whether --config or AGENT_OUTBOX_CONFIG_PATH
 // chose the path; otherwise the CLI owns the default path.
 func resolveCommandConfigPath(flags *rootFlags, env foundation.Env) (string, bool, error) {
 	explicit := strings.TrimSpace(flags.config) != "" || strings.TrimSpace(env.Get(foundation.EnvConfigPath)) != ""
