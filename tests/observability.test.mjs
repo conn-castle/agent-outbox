@@ -3599,6 +3599,89 @@ test("client event endpoint drops streamed bodies exceeding the byte limit", asy
   assert.equal(logs[0].status_code, 204);
 });
 
+test("client event endpoint drops open-stream overflow without depending on source cancellation", async () => {
+  // The source stays open after the oversized chunk, so any cancellation of it
+  // would reach these failing or never-settling cancel callbacks.
+  for (const cancel of [
+    () => {
+      throw new Error("source cancel failed");
+    },
+    () => new Promise(() => {})
+  ]) {
+    const openInit = {
+      method: "POST",
+      headers: {
+        origin: "https://app.agent-outbox.dev",
+        "content-type": "application/json"
+      },
+      body: new ReadableStream({
+        pull(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              "x".repeat(CLIENT_EVENT_BODY_BYTE_LIMIT + 1)
+            )
+          );
+        },
+        cancel
+      }),
+      duplex: "half"
+    };
+    const request = new Request(
+      "https://app.agent-outbox.dev/api/client-events",
+      openInit
+    );
+
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let timer;
+    const logs = await captureStructuredLogs(async () => {
+      const result = await Promise.race([
+        handleClientEventsRequest(request),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("handler waited on source cancellation")),
+            1_000
+          );
+        })
+      ]);
+      assert.deepEqual(result, { accepted: 0, dropped: 1 });
+    });
+    clearTimeout(timer);
+
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].operation, "client_event.dropped");
+    assert.equal(logs[0].drop_reason, "body_too_large");
+  }
+});
+
+test("client event endpoint counts an aborted upload as one unlogged drop", async () => {
+  const abortedInit = {
+    method: "POST",
+    headers: {
+      origin: "https://app.agent-outbox.dev",
+      "content-type": "application/json"
+    },
+    body: new ReadableStream({
+      pull(controller) {
+        controller.error(new Error("client aborted upload"));
+      }
+    }),
+    duplex: "half"
+  };
+  const request = new Request(
+    "https://app.agent-outbox.dev/api/client-events",
+    abortedInit
+  );
+
+  const logs = await captureStructuredLogs(async () => {
+    assert.deepEqual(await handleClientEventsRequest(request), {
+      accepted: 0,
+      dropped: 1
+    });
+  });
+
+  assert.equal(logs.length, 0);
+});
+
 test("client event endpoint drops malformed batches with the matching drop reason", async () => {
   const cases = [
     {

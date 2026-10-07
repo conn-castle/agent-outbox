@@ -438,6 +438,60 @@ test("contact submissions reject bodies over the byte limit", async () => {
   }
 });
 
+test("contact submissions reject open-stream overflow without waiting on source cancellation", async () => {
+  const body = new TextEncoder().encode(
+    " ".repeat(CONTACT_BODY_BYTE_LIMIT + 1)
+  );
+  const openInit = {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "https://app.agent-outbox.dev"
+    },
+    body: new ReadableStream({
+      pull(controller) {
+        controller.enqueue(body);
+      },
+      cancel() {
+        return new Promise(() => {});
+      }
+    }),
+    duplex: "half"
+  };
+  const { dependencies, sent } = contactDependencies();
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timer;
+  const { result: response, logs } = await captureRuntimeLogs(() =>
+    Promise.race([
+      handleContactRequest(
+        new Request("https://app.agent-outbox.dev/api/contact", openInit),
+        dependencies
+      ),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("handler waited on source cancellation")),
+          1_000
+        );
+      })
+    ])
+  );
+  clearTimeout(timer);
+
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "invalid_request");
+  assert.equal(sent.length, 0);
+  assert.equal(logs.length, 0);
+});
+
+test("contact submissions propagate a request body that cannot be read", async () => {
+  const request = contactRequest();
+  request.body?.getReader();
+  const { dependencies, sent } = contactDependencies();
+
+  await assert.rejects(handleContactRequest(request, dependencies), TypeError);
+  assert.equal(sent.length, 0);
+});
+
 test("contact submissions reject cross-origin and malformed input", async () => {
   const crossOriginDependencies = contactDependencies();
   const crossOrigin = await handleContactRequest(
@@ -466,6 +520,23 @@ test("contact submissions reject cross-origin and malformed input", async () => 
       dependencies
     );
     assert.equal(response.status, 400);
+    assert.equal(sent.length, 0);
+  }
+
+  const template = contactRequest();
+  for (const [contentType, body] of [
+    ["text/plain", JSON.stringify(VALID_SUBMISSION)],
+    ["application/json", "{"]
+  ]) {
+    const headers = new Headers(template.headers);
+    headers.set("content-type", contentType);
+    const { dependencies, sent } = contactDependencies();
+    const response = await handleContactRequest(
+      new Request(template.url, { method: "POST", headers, body }),
+      dependencies
+    );
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, "invalid_request");
     assert.equal(sent.length, 0);
   }
 });
