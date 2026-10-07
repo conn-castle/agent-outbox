@@ -10,16 +10,10 @@ import {
   type CallerIdentity
 } from "./caller-api-auth.ts";
 import {
-  CanonicalInputIntegrityError,
-  canonicalInputLinkButtonsStatement,
-  canonicalInputActionsStatement,
-  canonicalInputOptionsStatement,
-  reconstructCanonicalInput,
-  type CanonicalActionRow,
+  CANONICAL_INPUT_ROOT_COLUMNS,
+  materializeCanonicalInputRoots,
   type CanonicalInput,
-  type CanonicalInputRootRow,
-  type CanonicalLinkButtonRow,
-  type CanonicalOptionRow
+  type CanonicalInputRootRow
 } from "./canonical-input.ts";
 import type {
   ProductTransactionQuery,
@@ -176,31 +170,16 @@ export async function readInputInTransaction(
     return notFoundError();
   }
 
-  const links = await query<CanonicalLinkButtonRow>(
-    canonicalInputLinkButtonsStatement(identity, [root.input_item_id])
+  const materialized = await materializeCanonicalInputRoots(
+    query,
+    identity,
+    [root.input_item_id],
+    [root]
   );
-  const actions = await query<CanonicalActionRow>(
-    canonicalInputActionsStatement(identity, [root.input_item_id])
-  );
-  const options = await query<CanonicalOptionRow>(
-    canonicalInputOptionsStatement(identity, [root.input_item_id])
-  );
-
-  const reconstructed = reconstructCanonicalInput({
-    root,
-    linkButtons: links.rows,
-    actions: actions.rows,
-    options: options.rows
-  });
-  if (!reconstructed.ok) {
-    throw new CanonicalInputIntegrityError({
-      inputItemId: root.input_item_id,
-      accountId: identity.accountId,
-      callerId: identity.callerId
-    });
-  }
-
-  return { ok: true, data: publicInputReadResult(reconstructed.input) };
+  return {
+    ok: true,
+    data: publicInputReadResult(materialized.get(root.input_item_id)!)
+  };
 }
 
 export function parseInputPageQuery(
@@ -301,28 +280,7 @@ export function liveInputForReadStatement(
 ): TransactionContextStatement {
   return {
     sql: `
-      select
-        i.input_item_id::text as input_item_id,
-        i.caller_item_id,
-        i.status,
-        i.current_revision,
-        i.priority,
-        i.row_type_display,
-        i.row_type_icon,
-        i.row_accent_color,
-        i.title_html,
-        i.subtitle_html,
-        i.corner_html,
-        i.card_time,
-        i.summary_html,
-        i.details_html,
-        i.card_visual_kind,
-        i.card_visual_payload,
-        i.skip_disabled,
-        i.normalized_content_fingerprint,
-        i.created_at,
-        i.updated_at,
-        i.answered_at
+      select${CANONICAL_INPUT_ROOT_COLUMNS}
       from public.agent_outbox_input_items i
       where i.account_id = $1
         and i.caller_id = $2
