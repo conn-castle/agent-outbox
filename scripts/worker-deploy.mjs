@@ -26,10 +26,7 @@ import {
   RELEASE_TAG_PATTERN,
   WORKER_NAME,
   WORKER_VERSION_ID,
-  WorkerVersionMatchError,
-  findExactWorkerVersion,
   isWorkerVersionId,
-  parseWorkerVersionMessage,
   serializeWorkerVersionMessage,
   validateActionsContext
 } from "./release/identity.mjs";
@@ -39,6 +36,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const systemContract = readSystemContract();
 const PRODUCTION_APP_BASE_URL = systemContract.hostedAppBaseUrl;
 const WRANGLER_CONFIG_PATH = path.join(ROOT, "wrangler.jsonc");
+const PRODUCTION_RELEASE_WORKFLOWS = [
+  "deploy-production.yml",
+  "reconcile-production-release.yml"
+];
 
 /**
  * @typedef {{ error?: Error, status: number | null, stdout?: unknown, stderr?: unknown }} CommandStatus
@@ -277,10 +278,7 @@ function productionAppUrlFailures(env) {
  */
 export function validateWorkerTrafficEnvironment(
   env,
-  allowedWorkflows = [
-    "deploy-production.yml",
-    "reconcile-production-release.yml"
-  ]
+  allowedWorkflows = PRODUCTION_RELEASE_WORKFLOWS
 ) {
   const failures = [];
   if (
@@ -353,23 +351,10 @@ export function publicVarBindings(env) {
 /**
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
  * @param {string} secretsFilePath
+ * @param {string} wranglerConfigPath
  * @returns {string[]}
  */
-export function buildWranglerVersionsUploadArgs(env, secretsFilePath) {
-  return buildWranglerVersionsUploadArgsWithConfig(
-    env,
-    secretsFilePath,
-    undefined
-  );
-}
-
-/**
- * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
- * @param {string} secretsFilePath
- * @param {string | undefined} wranglerConfigPath
- * @returns {string[]}
- */
-export function buildWranglerVersionsUploadArgsWithConfig(
+export function buildWranglerVersionsUploadArgs(
   env,
   secretsFilePath,
   wranglerConfigPath
@@ -379,7 +364,8 @@ export function buildWranglerVersionsUploadArgsWithConfig(
     "wrangler",
     "versions",
     "upload",
-    ...(wranglerConfigPath ? ["--config", wranglerConfigPath] : []),
+    "--config",
+    wranglerConfigPath,
     "--env-file",
     "/dev/null",
     "--secrets-file",
@@ -467,14 +453,6 @@ export function buildPromoteCandidateArgs(candidateVersionId) {
   return buildWranglerVersionsDeployArgs(
     [{ versionId: candidateVersionId, percentage: 100 }],
     `Promote candidate ${candidateVersionId} to 100%`
-  );
-}
-
-/** @param {string} priorVersionId */
-export function buildRestorePriorArgs(priorVersionId) {
-  return buildWranglerVersionsDeployArgs(
-    [{ versionId: priorVersionId, percentage: 100 }],
-    `Restore prior ${priorVersionId} to 100%`
   );
 }
 
@@ -640,17 +618,26 @@ function selectTempBase(env, tempBase) {
 
 /**
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
- * @param {{ tempBase?: string }} [options]
+ * @param {string | undefined} tempBase
+ * @param {string} directoryPrefix
+ * @param {string} fileName
+ * @param {() => string} content
  * @returns {{ path: string, cleanup: () => void }}
  */
-export function writeSecretsFile(env, options = {}) {
+function writeOwnerOnlyTempFile(
+  env,
+  tempBase,
+  directoryPrefix,
+  fileName,
+  content
+) {
   const directory = mkdtempSync(
-    path.join(selectTempBase(env, options.tempBase), "agent-outbox-worker-")
+    path.join(selectTempBase(env, tempBase), directoryPrefix)
   );
-  const secretsFilePath = path.join(directory, "worker-secrets.json");
+  const filePath = path.join(directory, fileName);
 
   try {
-    writeFileSync(secretsFilePath, secretsFileContent(env), {
+    writeFileSync(filePath, content(), {
       encoding: "utf8",
       mode: 0o600
     });
@@ -660,48 +647,7 @@ export function writeSecretsFile(env, options = {}) {
   }
 
   return {
-    path: secretsFilePath,
-    cleanup: () => {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  };
-}
-
-/**
- * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
- * @param {{ tempBase?: string }} [options]
- * @returns {{ path: string, cleanup: () => void }}
- */
-export function writeWranglerConfigFile(env, options = {}) {
-  const hyperdriveId = env[HYPERDRIVE_ID_ENV_NAME];
-  if (typeof hyperdriveId !== "string") {
-    throw new Error(`${HYPERDRIVE_ID_ENV_NAME} is required`);
-  }
-
-  const directory = mkdtempSync(
-    path.join(selectTempBase(env, options.tempBase), "agent-outbox-wrangler-")
-  );
-  const configFilePath = path.join(directory, "wrangler.jsonc");
-
-  try {
-    writeFileSync(
-      configFilePath,
-      wranglerConfigWithHyperdrive(
-        readFileSync(WRANGLER_CONFIG_PATH, "utf8"),
-        hyperdriveId
-      ),
-      {
-        encoding: "utf8",
-        mode: 0o600
-      }
-    );
-  } catch (error) {
-    rmSync(directory, { force: true, recursive: true });
-    throw error;
-  }
-
-  return {
-    path: configFilePath,
+    path: filePath,
     cleanup: () => {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -777,14 +723,32 @@ export function runWorkerVersionUpload(options = {}) {
     spawnSyncImpl
   );
 
-  const secretsFile = writeSecretsFile(env, { tempBase: options.tempBase });
+  const secretsFile = writeOwnerOnlyTempFile(
+    env,
+    options.tempBase,
+    "agent-outbox-worker-",
+    "worker-secrets.json",
+    () => secretsFileContent(env)
+  );
   /** @type {{ path: string, cleanup: () => void } | null} */
   let wranglerConfigFile = null;
   try {
-    wranglerConfigFile = writeWranglerConfigFile(env, {
-      tempBase: options.tempBase
-    });
-    const wranglerUploadArgs = buildWranglerVersionsUploadArgsWithConfig(
+    const hyperdriveId = env[HYPERDRIVE_ID_ENV_NAME];
+    if (typeof hyperdriveId !== "string") {
+      throw new Error(`${HYPERDRIVE_ID_ENV_NAME} is required`);
+    }
+    wranglerConfigFile = writeOwnerOnlyTempFile(
+      env,
+      options.tempBase,
+      "agent-outbox-wrangler-",
+      "wrangler.jsonc",
+      () =>
+        wranglerConfigWithHyperdrive(
+          readFileSync(WRANGLER_CONFIG_PATH, "utf8"),
+          hyperdriveId
+        )
+    );
+    const wranglerUploadArgs = buildWranglerVersionsUploadArgs(
       env,
       secretsFile.path,
       wranglerConfigFile.path
@@ -826,10 +790,7 @@ export function runWranglerVersionsDeploy(args, options = {}) {
   const env = options.env ?? process.env;
   const failures = validateWorkerTrafficEnvironment(
     env,
-    options.allowedWorkflows ?? [
-      "deploy-production.yml",
-      "reconcile-production-release.yml"
-    ]
+    options.allowedWorkflows ?? PRODUCTION_RELEASE_WORKFLOWS
   );
   if (failures.length > 0) {
     throw new Error(failures.join("\n"));
