@@ -2229,6 +2229,12 @@ test("rotate/revoke approved-code handlers preserve availability and transaction
             }
           );
         });
+        // failAt 1 throws before the lookup transaction callback, so neither
+        // the IP-limit query nor the lookup query runs. failAt 2 runs the first
+        // transaction: its first query returns the IP-limit result and its
+        // second returns the approved lookup row. The exchange transaction
+        // then fails on its first query. The fake runner does not exercise
+        // real PostgreSQL row locks or rollback.
         for (const failAt of [1, 2]) {
           const controlQuery = fakeSavepointAwareQuery(
             (_statement, callNumber) =>

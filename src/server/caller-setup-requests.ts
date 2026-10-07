@@ -1,4 +1,4 @@
-/** Setup-request helpers and pending-credential transaction pipeline shared by caller connect and rotate/revoke flows. */
+/** Setup-request helpers, approved-code exchange, and pending-credential finalization shared by caller connect and rotate/revoke flows. */
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
@@ -612,10 +612,27 @@ function invalidPendingCredentialError(
  * Runs an approved setup-code exchange request: validates setup_code or
  * device_code, then requires a trusted client IP and hashes the code (hashing
  * first when hashBeforeIp is set, so hash-secret errors take precedence), then
- * requires DATABASE_APP_ROLE_URL. A control-plane transaction applies the flow's IP
- * limit and resolves the approving account and user; the exchange callback then
- * runs in a human-scoped transaction. Each step returns the first failure
- * unchanged, using the flow's messages and operation names.
+ * requires DATABASE_APP_ROLE_URL. Connect sets hashBeforeIp, so a missing or
+ * too-short hash secret throws even when the trusted IP is unavailable.
+ * Rotate and revoke leave hashBeforeIp unset: the IP check comes first, so
+ * those hash-secret failures throw only after a trusted IP is present.
+ * setupCodeDigest runs exactly once when hashing is reached. The early digest
+ * is reused after the IP check without hashing again. Hash-secret exceptions
+ * propagate outside both transaction wrappers; they are thrown, not returned
+ * or converted into the flow's reported temporary-unavailable 503.
+ *
+ * Lookup and exchange use separate transactions. The control-plane transaction
+ * applies the flow's IP limit, then runs the lookup callback to resolve the
+ * approving account and user. Only after it succeeds does the human-scoped
+ * transaction run the exchange callback. The exchange callback locks and
+ * revalidates the setup row; this helper does not lock between transactions.
+ * Each step returns the first SetupResult failure unchanged. Transaction and
+ * callback throws become the wrapper's reported temporary-unavailable 503,
+ * using the flow's messages and operation names.
+ *
+ * exchangeMessages, when set, replaces messages only for the exchange
+ * transaction. Lookup keeps messages. Connect passes this override; rotate
+ * and revoke do not.
  */
 export async function handleApprovedSetupCodeRequest<TData>(input: {
   request: Request;

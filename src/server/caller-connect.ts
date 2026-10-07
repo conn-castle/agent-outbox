@@ -878,6 +878,17 @@ function createDeviceSetupRequestStatement(input: {
   };
 }
 
+/**
+ * Looks up the setup row without locking. Expiry precedes status checks:
+ * an expired pending or approved row is marked expired, and any expired row
+ * returns invalid or expired before pending or used responses.
+ * Only a pending device row returns 202 authorization_pending, with the row's
+ * poll_interval_seconds as retryAfterSeconds. A pending browser row does not
+ * take that branch. An approved row requires account_id and approved_by_user_id;
+ * either missing identity returns the temporary-unavailable 503.
+ * Returns only the approval identities. The later exchange transaction must
+ * lock and revalidate the row.
+ */
 async function connectSetupExchangeContext(
   query: ProductTransactionQuery,
   flow: "browser" | "device",
@@ -1306,6 +1317,14 @@ function terminalSetupStateStatement(input: {
   };
 }
 
+/**
+ * Selects one of two fixed SQL texts by flow: browser uses setup_code_hash
+ * and the flow literal 'browser'; device uses device_code_hash and 'device'.
+ * These identifiers and flow literals are source literals, not request text.
+ * The only bound value is the code digest ($1). Both statements restrict
+ * operation to 'connect' and flow to the selected fixed literal.
+ * The statement does not lock (no FOR UPDATE).
+ */
 function setupExchangeContextByCodeHashStatement(
   flow: "browser" | "device",
   codeHash: string
