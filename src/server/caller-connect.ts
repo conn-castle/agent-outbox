@@ -229,6 +229,10 @@ const CALLER_ALREADY_EXISTS_MESSAGE =
 const CALLER_ALREADY_EXISTS_FIELD_MESSAGE =
   "A caller with this name already exists for this account.";
 
+/**
+ * Preserves the connect browser start signature and delegates to the shared
+ * browser start handler with operation "connect" and the connect messages.
+ */
 export async function handleConnectBrowserStartRequest(
   request: Request,
   context: ApiRequestContext,
@@ -245,6 +249,10 @@ export async function handleConnectBrowserStartRequest(
   });
 }
 
+/**
+ * Preserves the connect device start signature and delegates to the shared
+ * device start handler with operation "connect" and the connect messages.
+ */
 export async function handleConnectDeviceStartRequest(
   request: Request,
   context: ApiRequestContext,

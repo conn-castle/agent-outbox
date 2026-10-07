@@ -222,6 +222,9 @@ export function isUniqueViolation(error: unknown) {
   return "code" in error && (error as { code?: unknown }).code === "23505";
 }
 
+/**
+ * Returns true only for an object whose code is exactly SQLSTATE "23503".
+ */
 function isForeignKeyViolation(error: unknown) {
   if (!error || typeof error !== "object") {
     return false;
@@ -336,6 +339,14 @@ type SetupStartInput = {
   options: CallerFlowRequestOptions;
 };
 
+/**
+ * Rejects non-plain-object bodies immediately. Otherwise validates and trims
+ * caller_id for rotate/revoke, local_caller_name, connect-only display_name,
+ * then browser-only callback_url, collecting field errors in that order.
+ * Rotate/revoke reuse local_caller_name as displayName. Success returns
+ * callerId, localCallerName, displayName and callbackUrl, with null callerId
+ * for connect and null callbackUrl for device flows.
+ */
 function parseSetupStartBody(
   messages: CallerFlowMessages,
   operation: SetupOperation,
@@ -378,6 +389,12 @@ function parseSetupStartBody(
   };
 }
 
+/**
+ * Builds one insert into public.agent_outbox_caller_setup_requests for the
+ * operation, flow, names, callback URL, device/user code hashes, caller ID,
+ * expiry and poll interval. Null hashes and caller ID are bound as SQL NULL;
+ * the statement returns setup_request_id as text.
+ */
 function createSetupRequestStatement(input: {
   operation: SetupOperation;
   flow: "browser" | "device";

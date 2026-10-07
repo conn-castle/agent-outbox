@@ -265,6 +265,11 @@ export type CredentialOperationTerminalSetupData = {
   } | null;
 };
 
+/**
+ * Preserves the rotate browser start signature and delegates to the shared
+ * browser start handler with operation "rotate" and the credential operation
+ * messages.
+ */
 export async function handleRotateBrowserStartRequest(
   request: Request,
   context: ApiRequestContext,
@@ -281,6 +286,11 @@ export async function handleRotateBrowserStartRequest(
   });
 }
 
+/**
+ * Preserves the rotate device start signature and delegates to the shared
+ * device start handler with operation "rotate" and the credential operation
+ * messages.
+ */
 export async function handleRotateDeviceStartRequest(
   request: Request,
   context: ApiRequestContext,
@@ -395,6 +405,11 @@ export async function handleRotateAbortRequest(
   });
 }
 
+/**
+ * Preserves the revoke browser start signature and delegates to the shared
+ * browser start handler with operation "revoke" and the credential operation
+ * messages.
+ */
 export async function handleRevokeBrowserStartRequest(
   request: Request,
   context: ApiRequestContext,
@@ -411,6 +426,11 @@ export async function handleRevokeBrowserStartRequest(
   });
 }
 
+/**
+ * Preserves the revoke device start signature and delegates to the shared
+ * device start handler with operation "revoke" and the credential operation
+ * messages.
+ */
 export async function handleRevokeDeviceStartRequest(
   request: Request,
   context: ApiRequestContext,

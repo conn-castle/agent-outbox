@@ -60,6 +60,9 @@ const MESSAGES = {
 };
 
 /**
+ * Builds a valid setup-start body with the fields required by the operation
+ * and flow.
+ *
  * @param {"connect" | "rotate" | "revoke"} operation
  * @param {"browser" | "device"} flow
  */
@@ -75,6 +78,9 @@ function validBody(operation, flow) {
 }
 
 /**
+ * Builds a POST request for the operation and flow, omitting the trusted IP
+ * header when ipAddress is null.
+ *
  * @param {"connect" | "rotate" | "revoke"} operation
  * @param {"browser" | "device"} flow
  * @param {string | null} [ipAddress]
@@ -181,6 +187,9 @@ async function withEntropyFailure(failing, fault, callback) {
 }
 
 /**
+ * Captures console.error output as parsed JSON records during the callback
+ * and restores console.error even if the callback throws.
+ *
  * @param {() => Promise<unknown>} callback
  * @returns {Promise<Array<Record<string, unknown>>>}
  */
