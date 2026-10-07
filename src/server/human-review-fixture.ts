@@ -7,7 +7,7 @@ import {
 import type { StatusResult } from "./status.ts";
 import type { HumanAccountBannerData } from "./human-review.ts";
 import type { HumanAccountIdentityDisplay } from "../shared/account-display.ts";
-import { htmlTagStrippedText, htmlToPlainText } from "../shared/html-text.ts";
+import { htmlToPlainText } from "../shared/html-text.ts";
 import {
   browserFixtureCoreReviewDetails,
   fixtureUuid,
@@ -22,6 +22,7 @@ import {
 } from "../shared/human-review-sort.ts";
 import {
   humanReviewMatchesFacets,
+  humanReviewMatchesSearch,
   humanReviewViewFromRecord,
   isDefaultHumanReviewOrdering
 } from "../shared/human-review-view.ts";
@@ -105,31 +106,16 @@ export function browserFixtureReviewPage(
       view.page > 1 ||
       view.search.toLowerCase().includes("beyond one hundred")
   };
-  const terms = view.search.toLowerCase();
-  // Same visible text as production search and `htmlTagStrippedText`: tags
-  // become spaces and JavaScript whitespace runs collapse.
-  const visibleText = (html: string) => htmlTagStrippedText(html);
   const resolvedItems = options.resolvedItems ?? {};
-  const resolvedIds = new Set(
-    [
-      options.resolvedItemId,
-      ...Object.keys(resolvedItems).filter((id) => !resolvedItems[id].undone)
-    ].filter((id): id is string => Boolean(id))
-  );
+  const resolvedIds = fixtureResolvedIds(options);
   const filtered = browserFixtureReviewRows(effectiveOptions).filter((row) => {
     const resolved = resolvedIds.has(row.inputItemId);
     const effectiveStatus = resolved ? "answered" : row.status;
-    if (effectiveStatus !== view.status) return false;
-    if (!humanReviewMatchesFacets(row, view)) return false;
-    if (!terms) return true;
-    return [
-      visibleText(row.titleHtml),
-      visibleText(row.subtitleHtml),
-      visibleText(row.summaryHtml),
-      row.callerItemId,
-      row.rowType.display,
-      row.caller.displayName
-    ].some((field) => field.toLowerCase().includes(terms));
+    return (
+      effectiveStatus === view.status &&
+      humanReviewMatchesFacets(row, view) &&
+      humanReviewMatchesSearch(row, view.search)
+    );
   });
   if (!browserFixtureUsesDesignData() || !isDefaultHumanReviewOrdering(view)) {
     filtered.sort((left, right) => compareHumanReviewRows(left, right, view));
@@ -154,13 +140,7 @@ export function browserFixtureReviewTypeOptions(
   view: Pick<HumanReviewView, "status">,
   options: BrowserFixtureReviewOptions = {}
 ) {
-  const resolvedItems = options.resolvedItems ?? {};
-  const resolvedIds = new Set(
-    [
-      options.resolvedItemId,
-      ...Object.keys(resolvedItems).filter((id) => !resolvedItems[id].undone)
-    ].filter((id): id is string => Boolean(id))
-  );
+  const resolvedIds = fixtureResolvedIds(options);
   return [
     ...new Set(
       browserFixtureReviewRows(options)
@@ -173,6 +153,16 @@ export function browserFixtureReviewTypeOptions(
         .map((row) => row.rowType.display)
     )
   ].sort(compareHumanReviewTypeNames);
+}
+
+function fixtureResolvedIds(options: BrowserFixtureReviewOptions) {
+  const resolvedItems = options.resolvedItems ?? {};
+  return new Set(
+    [
+      options.resolvedItemId,
+      ...Object.keys(resolvedItems).filter((id) => !resolvedItems[id].undone)
+    ].filter((id): id is string => Boolean(id))
+  );
 }
 
 export function browserFixtureReviewDetail(
@@ -511,11 +501,12 @@ function fixtureCoverage(detail: HumanReviewDetail) {
   for (const action of detail.actions) {
     coverage.add(action.popupKind.replaceAll("_", " "));
     if (action.popupKind === "date_picker") {
-      const payload = recordFixtureValue(action.popupPayload);
-      coverage.add(payload.mode === "datetime" ? "date and time" : "date");
+      coverage.add(
+        action.popupPayload.mode === "datetime" ? "date and time" : "date"
+      );
     }
     if (action.popupKind === "free_text") {
-      const payload = recordFixtureValue(action.popupPayload);
+      const payload = action.popupPayload;
       coverage.add(
         payload.multiline === true ? "multiline text" : "single-line text"
       );
@@ -531,10 +522,4 @@ function fixtureCoverage(detail: HumanReviewDetail) {
     );
   }
   return [...coverage];
-}
-
-function recordFixtureValue(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
 }

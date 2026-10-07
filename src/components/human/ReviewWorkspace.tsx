@@ -57,6 +57,7 @@ import {
   defaultHumanReviewSortDirection,
   humanReviewHref,
   humanReviewMatchesFacets,
+  humanReviewMatchesSearch,
   humanReviewViewFromSearchParams,
   isDefaultHumanReviewOrdering,
   writeHumanReviewView,
@@ -69,7 +70,7 @@ import {
   compareHumanReviewRows,
   compareHumanReviewTypeNames
 } from "../../shared/human-review-sort";
-import { htmlTagStrippedText, htmlToPlainText } from "../../shared/html-text";
+import { htmlToPlainText } from "../../shared/html-text";
 import { AccountBanner } from "./AccountBanner";
 import {
   LastAnswerUndoForm,
@@ -2252,19 +2253,6 @@ function removeIds(ids: Set<string>, removals: Set<string>) {
   return next;
 }
 
-function matchesReviewSearch(row: HumanReviewListRow, search: string) {
-  const term = search.trim().toLowerCase();
-  if (!term) return true;
-  return [
-    htmlTagStrippedText(row.titleHtml),
-    htmlTagStrippedText(row.subtitleHtml),
-    htmlTagStrippedText(row.summaryHtml),
-    row.callerItemId,
-    row.rowType.display,
-    row.caller.displayName
-  ].some((value) => value.toLowerCase().includes(term));
-}
-
 function humanReviewRowMatchesView(
   row: HumanReviewListRow,
   view: HumanReviewView
@@ -2272,7 +2260,7 @@ function humanReviewRowMatchesView(
   return (
     view.status === "pending" &&
     humanReviewMatchesFacets(row, view) &&
-    matchesReviewSearch(row, view.search)
+    humanReviewMatchesSearch(row, view.search.trim())
   );
 }
 
