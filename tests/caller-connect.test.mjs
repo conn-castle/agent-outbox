@@ -2174,6 +2174,7 @@ test("pending or denied setup-code exchange is rejected before credential mintin
           status
         );
         assert.equal(runner.contexts.length, 1, status);
+        assert.equal(controlQuery.calls.length, 2, status);
         assert.equal(runner.contexts[0]?.authSurface, "control_plane", status);
         assert.deepEqual(controlQuery.calls[0].values?.slice(0, 2), [
           CONNECT_TEST_IP,
@@ -3071,6 +3072,327 @@ test("connect pending handlers preserve validation, authentication, availability
           assert.equal(log.status_code, 503);
           assert.equal(log.account_id, failAt === 1 ? undefined : ACCOUNT_ID);
           assert.equal(log.caller_id, failAt === 1 ? undefined : CALLER_ID);
+        }
+      }
+    }
+  );
+});
+
+test("connect approved-code handlers preserve availability and transaction failure contracts", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
+    },
+    async () => {
+      const context = {
+        requestId: "req-approved-contract",
+        correlationId: "corr-approved-contract"
+      };
+      const now = new Date("2026-07-02T00:00:00.000Z");
+      const handlers = [
+        {
+          handler: handleConnectExchangeRequest,
+          field: "setup_code",
+          flow: "browser",
+          ipMessage:
+            "Trusted client IP is unavailable for caller connect exchange.",
+          lookupOperation: "caller_connect_exchange_lookup",
+          exchangeOperation: "caller_connect_exchange"
+        },
+        {
+          handler: handleConnectDevicePollRequest,
+          field: "device_code",
+          flow: "device",
+          ipMessage:
+            "Trusted client IP is unavailable for caller connect poll.",
+          lookupOperation: "caller_connect_device_poll",
+          exchangeOperation: "caller_connect_exchange"
+        }
+      ];
+      for (const entry of handlers) {
+        const body = { [entry.field]: "approved_code" };
+        const request = (headers = {}) => connectRequest("/code", { headers });
+        assert.deepEqual(
+          await entry.handler(
+            request({ "cf-connecting-ip": "" }),
+            context,
+            body,
+            { now }
+          ),
+          {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message: entry.ipMessage
+            }
+          }
+        );
+        // Connect hashes the code before the trusted-IP check, so hash-secret
+        // configuration errors still surface when the IP is unavailable.
+        for (const [secret, errorName] of [
+          [undefined, "MissingServerEnvironmentError"],
+          ["too-short", "InsecureServerEnvironmentError"]
+        ]) {
+          await withProcessEnv({ CALLER_KEY_HASH_SECRET: secret }, async () => {
+            await assert.rejects(
+              entry.handler(
+                request({ "cf-connecting-ip": "" }),
+                context,
+                body,
+                {
+                  now
+                }
+              ),
+              { name: errorName }
+            );
+          });
+        }
+        await withProcessEnv({ DATABASE_APP_ROLE_URL: undefined }, async () => {
+          assert.deepEqual(
+            await entry.handler(request(), context, body, { now }),
+            {
+              ok: false,
+              error: {
+                status: 503,
+                code: "temporary_unavailable",
+                message: "Caller connect database configuration is unavailable."
+              }
+            }
+          );
+        });
+        for (const failAt of [1, 2]) {
+          const controlQuery = fakeSavepointAwareQuery(
+            (_statement, callNumber) =>
+              callNumber === 1
+                ? [{ used_units: "1" }]
+                : [
+                    {
+                      setup_request_id: SETUP_REQUEST_ID,
+                      status: "approved",
+                      account_id: ACCOUNT_ID,
+                      approved_by_user_id: USER_ID,
+                      poll_interval_seconds: 5,
+                      expires_at: "2026-07-02T00:10:00.000Z"
+                    }
+                  ]
+          );
+          const humanQuery = fakeSavepointAwareQuery(() => {
+            throw new Error("injected exchange query failure");
+          });
+          const runner = fakeTransactionRunner([controlQuery, humanQuery]);
+          let calls = 0;
+          /** @type {typeof import("../src/server/database.ts").runProductTransaction} */
+          const runProductTransaction = async (
+            url,
+            transactionContext,
+            callback
+          ) => {
+            calls += 1;
+            if (failAt === 1)
+              throw new Error("injected lookup transaction failure");
+            return runner.runProductTransaction(
+              url,
+              transactionContext,
+              callback
+            );
+          };
+          /** @type {string[]} */
+          const lines = [];
+          const originalError = console.error;
+          let result;
+          try {
+            console.error = (line) => lines.push(line);
+            result = await entry.handler(request(), context, body, {
+              now,
+              runProductTransaction
+            });
+          } finally {
+            console.error = originalError;
+          }
+          assert.equal(calls, failAt);
+          assert.deepEqual(result, {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message:
+                failAt === 1
+                  ? "Caller connect is temporarily unavailable."
+                  : "Caller connect exchange is temporarily unavailable.",
+              errorId: context.correlationId,
+              reported: true
+            }
+          });
+          assert.equal(lines.length, 1);
+          const log = JSON.parse(lines[0]);
+          assert.equal(
+            log.operation,
+            failAt === 1 ? entry.lookupOperation : entry.exchangeOperation
+          );
+          assert.equal(
+            log.message,
+            failAt === 1
+              ? "Caller connect request failed unexpectedly."
+              : "Caller connect exchange failed unexpectedly."
+          );
+          assert.equal(log.error_id, context.correlationId);
+          assert.equal(log.request_id, context.requestId);
+          assert.equal(log.surface, "api");
+          assert.equal(log.status_code, 503);
+          assert.equal(log.account_id, failAt === 1 ? undefined : ACCOUNT_ID);
+          assert.equal(log.caller_id, undefined);
+          if (failAt === 2) {
+            assert.equal(controlQuery.calls.length, 2);
+            assert.deepEqual(runner.contexts[0], {
+              requestId: context.requestId,
+              authSurface: "control_plane"
+            });
+            assert.deepEqual(runner.contexts[1], {
+              requestId: context.requestId,
+              authSurface: "human",
+              accountId: ACCOUNT_ID,
+              userId: USER_ID
+            });
+            const lookup = controlQuery.calls[1];
+            assert.doesNotMatch(lookup.sql, /for update/i);
+            assert.equal(humanQuery.calls.length, 1);
+            const exchange = humanQuery.calls[0];
+            assert.match(exchange.sql, /for update/i);
+            assert.match(
+              lookup.sql,
+              entry.flow === "browser"
+                ? /setup_code_hash = \$1/
+                : /device_code_hash = \$1/
+            );
+            assert.match(lookup.sql, /operation = 'connect'/);
+            assert.match(lookup.sql, new RegExp(`flow = '${entry.flow}'`));
+            assert.match(
+              exchange.sql,
+              entry.flow === "browser"
+                ? /setup\.setup_code_hash = \$1/
+                : /setup\.device_code_hash = \$1/
+            );
+            assert.match(exchange.sql, /setup\.operation = 'connect'/);
+            assert.match(
+              exchange.sql,
+              new RegExp(`setup\\.flow = '${entry.flow}'`)
+            );
+            assert.deepEqual(exchange.values, lookup.values);
+          }
+        }
+      }
+    }
+  );
+});
+
+test("connect approved-code lookup outcomes stop after one transaction", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
+    },
+    async () => {
+      const now = new Date("2026-07-02T00:00:00.000Z");
+      const approvedRow = {
+        setup_request_id: SETUP_REQUEST_ID,
+        status: "approved",
+        account_id: ACCOUNT_ID,
+        approved_by_user_id: USER_ID,
+        poll_interval_seconds: 5,
+        expires_at: "2026-07-02T00:10:00.000Z"
+      };
+      const cases = [
+        {
+          name: "no row",
+          rows: [],
+          expired: false,
+          status: 400,
+          message: "invalid or expired."
+        },
+        ...["pending", "approved"].map((status) => ({
+          name: `expired ${status}`,
+          rows: [
+            { ...approvedRow, status, expires_at: "2026-07-01T23:59:59.000Z" }
+          ],
+          expired: true,
+          status: 400,
+          message: "invalid or expired."
+        })),
+        {
+          name: "exchanged",
+          rows: [{ ...approvedRow, status: "exchanged" }],
+          expired: false,
+          status: 400,
+          message: "invalid or already used."
+        },
+        ...["account_id", "approved_by_user_id"].map((field) => ({
+          name: `missing ${field}`,
+          rows: [{ ...approvedRow, [field]: null }],
+          expired: false,
+          status: 503,
+          message: "Caller connect approval is temporarily unavailable."
+        }))
+      ];
+      for (const entry of [
+        {
+          handler: handleConnectExchangeRequest,
+          field: "setup_code",
+          noun: "Setup"
+        },
+        {
+          handler: handleConnectDevicePollRequest,
+          field: "device_code",
+          noun: "Device"
+        }
+      ]) {
+        for (const testCase of cases) {
+          const query = fakeSavepointAwareQuery((_statement, callNumber) =>
+            callNumber === 1
+              ? [{ used_units: "1" }]
+              : callNumber === 2
+                ? testCase.rows
+                : []
+          );
+          const runner = fakeTransactionRunner([query]);
+          const result = await entry.handler(
+            connectRequest("/code"),
+            {
+              requestId: "req-lookup-contract",
+              correlationId: "corr-lookup-contract"
+            },
+            { [entry.field]: "lookup_code" },
+            { now, runProductTransaction: runner.runProductTransaction }
+          );
+          assert.deepEqual(
+            result,
+            {
+              ok: false,
+              error: {
+                status: testCase.status,
+                code:
+                  testCase.status === 400
+                    ? "invalid_request"
+                    : "temporary_unavailable",
+                message:
+                  testCase.status === 400
+                    ? `${entry.noun} code is ${testCase.message}`
+                    : testCase.message
+              }
+            },
+            `${entry.noun}: ${testCase.name}`
+          );
+          assert.equal(runner.contexts.length, 1);
+          assert.equal(query.calls.length, testCase.expired ? 3 : 2);
+          if (testCase.expired) {
+            assert.match(
+              query.calls[2].sql,
+              /update public\.agent_outbox_caller_setup_requests/
+            );
+            assert.match(query.calls[2].sql, /set\s+status = 'expired'/);
+            assert.deepEqual(query.calls[2].values, [SETUP_REQUEST_ID]);
+          }
         }
       }
     }
