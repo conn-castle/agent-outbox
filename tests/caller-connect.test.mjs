@@ -23,7 +23,14 @@ import {
   handleConnectDevicePollRequest,
   handleConnectExchangeRequest
 } from "../src/server/caller-connect.ts";
-import { handleRevokeConfirmRequest } from "../src/server/caller-credential-operations.ts";
+import {
+  handleRevokeConfirmRequest,
+  handleRevokeDevicePollRequest,
+  handleRotateAbortRequest,
+  handleRotateActivateRequest,
+  handleRotateDevicePollRequest,
+  handleRotateExchangeRequest
+} from "../src/server/caller-credential-operations.ts";
 import {
   getSetupRequestTerminalState,
   setupCodeDigest
@@ -3512,6 +3519,298 @@ test("connect parsers preserve ordered fields and the 512-character code limit",
               ]
             }
           }
+        );
+      }
+    }
+  );
+});
+
+// Expected errors follow the caller control-plane contracts in docs/spec/http-api.md
+// and the field-error shape in docs/spec/errors.md.
+const CONNECT_VALIDATION = "Caller connect request failed validation.";
+const OPERATION_VALIDATION =
+  "Caller credential operation request failed validation.";
+
+/** @param {string} message @param {string} path @param {string} code @param {string} fieldMessage */
+function validationFailure(message, path, code, fieldMessage) {
+  return {
+    ok: false,
+    error: {
+      status: 422,
+      code: "validation_failed",
+      message,
+      fields: [{ path, code, message: fieldMessage }]
+    }
+  };
+}
+
+const CODE_BODY_HANDLERS = [
+  {
+    name: "connect poll",
+    handler: handleConnectDevicePollRequest,
+    field: "device_code",
+    validation: CONNECT_VALIDATION,
+    ipMessage: "Trusted client IP is unavailable for caller connect poll."
+  },
+  {
+    name: "connect exchange",
+    handler: handleConnectExchangeRequest,
+    field: "setup_code",
+    validation: CONNECT_VALIDATION,
+    ipMessage: "Trusted client IP is unavailable for caller connect exchange."
+  },
+  {
+    name: "rotate poll",
+    handler: handleRotateDevicePollRequest,
+    field: "device_code",
+    validation: OPERATION_VALIDATION,
+    ipMessage: "Trusted client IP is unavailable for caller rotate poll."
+  },
+  {
+    name: "rotate exchange",
+    handler: handleRotateExchangeRequest,
+    field: "setup_code",
+    validation: OPERATION_VALIDATION,
+    ipMessage: "Trusted client IP is unavailable for caller rotate exchange."
+  },
+  {
+    name: "revoke poll",
+    handler: handleRevokeDevicePollRequest,
+    field: "device_code",
+    validation: OPERATION_VALIDATION,
+    ipMessage: "Trusted client IP is unavailable for caller revoke poll."
+  },
+  {
+    name: "revoke confirm",
+    handler: handleRevokeConfirmRequest,
+    field: "setup_code",
+    validation: OPERATION_VALIDATION,
+    ipMessage:
+      "Trusted client IP is unavailable for caller revoke confirmation."
+  }
+];
+
+const SETUP_REQUEST_ID_HANDLERS = [
+  {
+    name: "connect activate",
+    handler: handleConnectActivateRequest,
+    validation: CONNECT_VALIDATION,
+    bearerMessage: "Pending connect bearer credential is required."
+  },
+  {
+    name: "connect abort",
+    handler: handleConnectAbortRequest,
+    validation: CONNECT_VALIDATION,
+    bearerMessage: "Pending connect bearer credential is required."
+  },
+  {
+    name: "rotate activate",
+    handler: handleRotateActivateRequest,
+    validation: OPERATION_VALIDATION,
+    bearerMessage: "Pending replacement bearer credential is required."
+  },
+  {
+    name: "rotate abort",
+    handler: handleRotateAbortRequest,
+    validation: OPERATION_VALIDATION,
+    bearerMessage: "Pending replacement bearer credential is required."
+  }
+];
+
+test("setup code handlers reject non-object bodies and missing codes, and accept trimmed codes", async () => {
+  await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
+    async () => {
+      const context = {
+        requestId: "req-body-contract",
+        correlationId: "corr-body-contract"
+      };
+      for (const route of CODE_BODY_HANDLERS) {
+        for (const body of [null, [], "text"]) {
+          assert.deepEqual(
+            await route.handler(connectRequest("/code"), context, body),
+            validationFailure(
+              route.validation,
+              "",
+              "invalid_request",
+              "Request body must be an object."
+            ),
+            route.name
+          );
+        }
+        for (const body of [
+          {},
+          { [route.field]: "   " },
+          { [route.field]: 7 }
+        ]) {
+          assert.deepEqual(
+            await route.handler(connectRequest("/code"), context, body),
+            validationFailure(
+              route.validation,
+              route.field,
+              "required",
+              `${route.field} is required.`
+            ),
+            route.name
+          );
+        }
+        // A padded code passes validation and reaches the trusted-IP check.
+        assert.deepEqual(
+          await route.handler(
+            connectRequest("/code", { headers: { "cf-connecting-ip": "" } }),
+            context,
+            { [route.field]: "  code_x  " }
+          ),
+          {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message: route.ipMessage
+            }
+          },
+          route.name
+        );
+      }
+    }
+  );
+});
+
+test("setup_request_id handlers reject non-object bodies and malformed IDs before requiring the bearer", async () => {
+  await withProcessEnv(
+    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
+    async () => {
+      const context = {
+        requestId: "req-body-contract",
+        correlationId: "corr-body-contract"
+      };
+      for (const route of SETUP_REQUEST_ID_HANDLERS) {
+        for (const body of [null, [], "text"]) {
+          assert.deepEqual(
+            await route.handler(connectRequest("/pending"), context, body),
+            validationFailure(
+              route.validation,
+              "",
+              "invalid_request",
+              "Request body must be an object."
+            ),
+            route.name
+          );
+        }
+        assert.deepEqual(
+          await route.handler(connectRequest("/pending"), context, {
+            setup_request_id: "not-a-uuid"
+          }),
+          validationFailure(
+            route.validation,
+            "setup_request_id",
+            "invalid_uuid",
+            "setup_request_id must be a UUID-formatted string."
+          ),
+          route.name
+        );
+        assert.deepEqual(
+          await route.handler(connectRequest("/pending"), context, {
+            setup_request_id: SETUP_REQUEST_ID
+          }),
+          {
+            ok: false,
+            error: {
+              status: 401,
+              code: "authentication_required",
+              message: route.bearerMessage
+            }
+          },
+          route.name
+        );
+      }
+    }
+  );
+});
+
+test("setup poll transaction-open failures report the exact unscoped log", async (t) => {
+  const log = t.mock.method(console, "error", () => {});
+  const polls = [
+    {
+      operation: "connect",
+      handler: handleConnectDevicePollRequest,
+      temporarilyUnavailable: "Caller connect is temporarily unavailable.",
+      unexpectedFailure: "Caller connect request failed unexpectedly."
+    },
+    {
+      operation: "rotate",
+      handler: handleRotateDevicePollRequest,
+      temporarilyUnavailable:
+        "Caller credential operation is temporarily unavailable.",
+      unexpectedFailure: "Caller credential operation failed unexpectedly."
+    },
+    {
+      operation: "revoke",
+      handler: handleRevokeDevicePollRequest,
+      temporarilyUnavailable:
+        "Caller credential operation is temporarily unavailable.",
+      unexpectedFailure: "Caller credential operation failed unexpectedly."
+    }
+  ];
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db",
+      APP_ENV: undefined,
+      SENTRY_RELEASE: undefined,
+      GITHUB_SHA: undefined
+    },
+    async () => {
+      const context = {
+        requestId: "req-poll-open",
+        correlationId: "corr-poll-open"
+      };
+      for (const poll of polls) {
+        log.mock.resetCalls();
+        let calls = 0;
+        assert.deepEqual(
+          await poll.handler(
+            connectRequest(`/api/caller/${poll.operation}/device/poll`),
+            context,
+            { device_code: "dev_x" },
+            {
+              runProductTransaction: async () => {
+                calls += 1;
+                throw new Error("injected open failure");
+              }
+            }
+          ),
+          {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message: poll.temporarilyUnavailable,
+              errorId: context.correlationId,
+              reported: true
+            }
+          }
+        );
+        assert.equal(calls, 1);
+        assert.deepEqual(
+          log.mock.calls.map(({ arguments: args }) => args),
+          [
+            [
+              JSON.stringify({
+                environment: null,
+                release: null,
+                surface: "api",
+                status_code: 503,
+                operation: `caller_${poll.operation}_device_poll`,
+                message: poll.unexpectedFailure,
+                request_id: context.requestId,
+                level: "error",
+                error_id: context.correlationId,
+                error_name: "Error",
+                sentry_captured: false
+              })
+            ]
+          ]
         );
       }
     }

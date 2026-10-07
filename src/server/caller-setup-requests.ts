@@ -582,35 +582,22 @@ function parseSetupStartBody(
   displayName: string;
   callbackUrl: string | null;
 }> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return apiValidationFailed(messages.validationFailed, [
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const callerId =
-    operation !== "connect"
-      ? requiredUuidText(body, "caller_id", fields)
-      : null;
-  const localCallerName = requiredText(body, "local_caller_name", fields);
-  const displayName =
-    operation === "connect"
-      ? requiredText(body, "display_name", fields)
-      : localCallerName;
-  const callbackUrl =
-    flow === "browser"
-      ? requiredCallbackUrl(body, "callback_url", fields)
-      : null;
-
-  if (fields.length > 0) {
-    return apiValidationFailed(messages.validationFailed, fields);
-  }
-
-  return {
-    ok: true,
-    data: { callerId, localCallerName, displayName, callbackUrl }
-  };
+  return parseRecordBody(messages, body, (record, fields) => {
+    const callerId =
+      operation !== "connect"
+        ? requiredUuidText(record, "caller_id", fields)
+        : null;
+    const localCallerName = requiredText(record, "local_caller_name", fields);
+    const displayName =
+      operation === "connect"
+        ? requiredText(record, "display_name", fields)
+        : localCallerName;
+    const callbackUrl =
+      flow === "browser"
+        ? requiredCallbackUrl(record, "callback_url", fields)
+        : null;
+    return { callerId, localCallerName, displayName, callbackUrl };
+  });
 }
 
 /**
@@ -706,20 +693,12 @@ async function handleSetupStartRequest<
   const codes = createCodes();
   const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
 
-  return withControlPlaneTransaction(
+  return withIpLimitedControlPlaneTransaction(
     messages,
     context,
     `caller_${operation}_${flow}_start`,
+    { ipAddress, kind: `caller_${operation}_start` },
     async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        `caller_${operation}_start`
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
       const insert = () =>
         query<{ setup_request_id: string }>(
           createSetupRequestStatement({
@@ -839,87 +818,46 @@ export type PendingCredentialBearer = {
 } & CallerApiKeyDisplayMetadata;
 
 /**
- * Reads device_code from a plain object, trims it, and requires nonempty,
- * storable text of at most 512 UTF-16 code units. Invalid input returns a
- * 422 validation failure with the flow's message and field errors.
- * This validates request text only; the caller must verify the device token.
+ * Rejects non-plain-object bodies with a 422 validation failure, then lets
+ * read collect field errors. Any field error returns the flow's 422 validation
+ * failure; otherwise read's value is the parsed data. This validates request
+ * shape only; callers still verify any token it reads.
  */
-export function parseDevicePollBody(
+export function parseRecordBody<TData>(
   messages: CallerFlowMessages,
-  body: unknown
-): SetupResult<{ deviceCode: string }> {
-  const fields: ApiFieldError[] = [];
+  body: unknown,
+  read: (record: Record<string, unknown>, fields: ApiFieldError[]) => TData
+): SetupResult<TData> {
   if (!isPlainRecord(body)) {
     return apiValidationFailed(messages.validationFailed, [
       fieldError("", "invalid_request", "Request body must be an object.")
     ]);
   }
 
-  const deviceCode = requiredText(body, "device_code", fields, 512);
-
+  const fields: ApiFieldError[] = [];
+  const data = read(body, fields);
   if (fields.length > 0) {
     return apiValidationFailed(messages.validationFailed, fields);
   }
 
-  return { ok: true, data: { deviceCode } };
+  return { ok: true, data };
 }
 
 /**
- * Reads setup_code from a plain object, trims it, and requires nonempty,
- * storable text of at most 512 UTF-16 code units. Invalid input returns a
- * 422 validation failure with the flow's message and field errors.
- * This validates request text only; the caller must verify the setup token.
+ * Requires DATABASE_APP_ROLE_URL, then opens a control-plane transaction that
+ * applies the flow's IP limit before running the callback. A limit failure is
+ * returned unchanged; otherwise callback results, including failures, are
+ * returned unchanged. Missing database configuration returns the flow's
+ * database-unavailable 503; thrown failures follow withFlowTransaction.
  */
-function parseSetupCodeBody(
-  messages: CallerFlowMessages,
-  body: unknown
-): SetupResult<{ setupCode: string }> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return apiValidationFailed(messages.validationFailed, [
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const setupCode = requiredText(body, "setup_code", fields, 512);
-
-  if (fields.length > 0) {
-    return apiValidationFailed(messages.validationFailed, fields);
-  }
-
-  return { ok: true, data: { setupCode } };
-}
-
-function parseSetupRequestIdBody(
-  messages: CallerFlowMessages,
-  body: unknown
-): SetupResult<{ setupRequestId: string }> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return apiValidationFailed(messages.validationFailed, [
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const setupRequestId = requiredUuidText(body, "setup_request_id", fields);
-  if (fields.length > 0) {
-    return apiValidationFailed(messages.validationFailed, fields);
-  }
-  return { ok: true, data: { setupRequestId } };
-}
-
-/**
- * Requires DATABASE_APP_ROLE_URL, then runs the callback with control-plane
- * context and the request ID using the injected or default transaction runner.
- * Returns callback results, including failures, unchanged. Missing database
- * configuration returns the flow's database-unavailable 503; thrown transaction
- * or callback failures are reported with operation and request context and
- * return the flow's temporary-unavailable 503 with the correlation ID.
- */
-export async function withControlPlaneTransaction<TData>(
+export async function withIpLimitedControlPlaneTransaction<TData>(
   messages: CallerFlowMessages,
   context: ApiRequestContext,
   operation: string,
+  ipLimit: {
+    ipAddress: string;
+    kind: Parameters<typeof enforceIpControlPlaneLimit>[2];
+  },
   callback: (query: ProductTransactionQuery) => Promise<SetupResult<TData>>,
   options: CallerFlowRequestOptions = {}
 ): Promise<SetupResult<TData>> {
@@ -928,51 +866,40 @@ export async function withControlPlaneTransaction<TData>(
     return apiTemporaryUnavailable(messages.databaseUnavailable);
   }
 
-  const runTransaction = options.runProductTransaction ?? runProductTransaction;
-  try {
-    return await runTransaction(
-      connectionString,
-      {
-        requestId: context.requestId,
-        authSurface: "control_plane"
-      },
-      callback
-    );
-  } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
-      operation,
-      message: messages.unexpectedFailure,
-      request_id: context.requestId
-    });
-    return apiTemporaryUnavailable(messages.temporarilyUnavailable, {
-      errorId: context.correlationId,
-      reported: true
-    });
-  }
+  return withFlowTransaction(
+    messages,
+    connectionString,
+    context,
+    { authSurface: "control_plane" },
+    operation,
+    async (query) => {
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipLimit.ipAddress,
+        ipLimit.kind
+      );
+      return limit.ok ? callback(query) : limit;
+    },
+    options
+  );
 }
 
 /**
- * Runs the callback using the supplied connection string and scope plus the
- * request ID, through the injected or default transaction runner. The caller
- * supplies the connection string; this wrapper does not check configuration.
- * Returns callback results, including failures, unchanged. Thrown transaction
- * or callback failures are reported with operation, request, and account/caller
- * context and return the flow's temporary-unavailable 503 with the correlation ID.
+ * Runs the callback with the supplied connection string, scope and request ID
+ * through the injected or default transaction runner; this wrapper does not
+ * check configuration. Returns callback results, including failures,
+ * unchanged. Thrown transaction or callback failures are reported with
+ * operation, request, and any account/caller context and return the flow's
+ * temporary-unavailable 503 with the correlation ID.
  */
-async function withScopedProductTransaction<TData>(
+async function withFlowTransaction<TData>(
   messages: CallerFlowMessages,
   connectionString: string,
   context: ApiRequestContext,
-  scopedContext: Omit<ProductTransactionContext, "requestId">,
+  scope: Omit<ProductTransactionContext, "requestId">,
   operation: string,
   callback: (query: ProductTransactionQuery) => Promise<SetupResult<TData>>,
-  options: CallerFlowRequestOptions = {}
+  options: CallerFlowRequestOptions
 ): Promise<SetupResult<TData>> {
   const runTransaction = options.runProductTransaction ?? runProductTransaction;
   try {
@@ -980,7 +907,7 @@ async function withScopedProductTransaction<TData>(
       connectionString,
       {
         requestId: context.requestId,
-        ...scopedContext
+        ...scope
       },
       callback
     );
@@ -995,8 +922,8 @@ async function withScopedProductTransaction<TData>(
       operation,
       message: messages.unexpectedFailure,
       request_id: context.requestId,
-      account_id: scopedContext.accountId,
-      caller_id: scopedContext.callerId
+      account_id: scope.accountId,
+      caller_id: scope.callerId
     });
     return apiTemporaryUnavailable(messages.temporarilyUnavailable, {
       errorId: context.correlationId,
@@ -1178,16 +1105,14 @@ export async function handleApprovedSetupCodeRequest<TData>(input: {
   ) => Promise<SetupResult<TData>>;
 }): Promise<SetupResult<TData>> {
   const { request, context, body, options, messages } = input;
-  const parsed =
-    input.codeField === "setup_code"
-      ? parseSetupCodeBody(messages, body)
-      : parseDevicePollBody(messages, body);
+  const parsed = parseRecordBody(messages, body, (record, fields) =>
+    requiredText(record, input.codeField, fields, 512)
+  );
   if (!parsed.ok) {
     return parsed;
   }
 
-  const code =
-    "setupCode" in parsed.data ? parsed.data.setupCode : parsed.data.deviceCode;
+  const code = parsed.data;
   const earlyCodeHash = input.hashBeforeIp ? setupCodeDigest(code) : undefined;
   const ipAddress = trustedClientIpAddress(request);
   if (!ipAddress) {
@@ -1200,22 +1125,12 @@ export async function handleApprovedSetupCodeRequest<TData>(input: {
     return apiTemporaryUnavailable(messages.databaseUnavailable);
   }
 
-  const lookupResult = await withControlPlaneTransaction(
+  const lookupResult = await withIpLimitedControlPlaneTransaction(
     messages,
     context,
     input.lookupOperation,
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        input.limitKind
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      return input.lookup(query, codeHash);
-    },
+    { ipAddress, kind: input.limitKind },
+    (query) => input.lookup(query, codeHash),
     options
   );
 
@@ -1223,7 +1138,7 @@ export async function handleApprovedSetupCodeRequest<TData>(input: {
     return lookupResult;
   }
 
-  return withScopedProductTransaction(
+  return withFlowTransaction(
     input.exchangeMessages ?? messages,
     connectionString,
     context,
@@ -1267,7 +1182,9 @@ export async function handlePendingCredentialFinalizeRequest<TData>(input: {
   ) => Promise<SetupResult<TData>>;
 }): Promise<SetupResult<TData>> {
   const { request, context, body, options, messages } = input;
-  const parsed = parseSetupRequestIdBody(messages, body);
+  const parsed = parseRecordBody(messages, body, (record, fields) =>
+    requiredUuidText(record, "setup_request_id", fields)
+  );
   if (!parsed.ok) {
     return parsed;
   }
@@ -1290,22 +1207,12 @@ export async function handlePendingCredentialFinalizeRequest<TData>(input: {
     return apiTemporaryUnavailable(messages.databaseUnavailable);
   }
 
-  const lookupResult = await withControlPlaneTransaction(
+  const lookupResult = await withIpLimitedControlPlaneTransaction(
     messages,
     context,
     input.lookupOperation,
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        input.limitKind
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      return lookupPendingCredential(query, messages, pendingCredential.data);
-    },
+    { ipAddress, kind: input.limitKind },
+    (query) => lookupPendingCredential(query, messages, pendingCredential.data),
     options
   );
 
@@ -1313,7 +1220,7 @@ export async function handlePendingCredentialFinalizeRequest<TData>(input: {
     return lookupResult;
   }
 
-  return withScopedProductTransaction(
+  return withFlowTransaction(
     messages,
     connectionString,
     context,
@@ -1326,7 +1233,7 @@ export async function handlePendingCredentialFinalizeRequest<TData>(input: {
     (query) =>
       input.finalize(query, {
         ...lookupResult.data,
-        setupRequestId: parsed.data.setupRequestId,
+        setupRequestId: parsed.data,
         pendingCredential: pendingCredential.data
       }),
     options

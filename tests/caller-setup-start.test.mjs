@@ -515,3 +515,74 @@ test("browser start success returns the setup row's approval URL", async () => {
     );
   }
 });
+
+test("setup start transaction-open failures report the exact unscoped log", async (t) => {
+  const log = t.mock.method(console, "error", () => {});
+  for (const operation of /** @type {const} */ ([
+    "connect",
+    "rotate",
+    "revoke"
+  ])) {
+    for (const flow of /** @type {const} */ (["browser", "device"])) {
+      let calls = 0;
+      log.mock.resetCalls();
+      await withProcessEnv(
+        {
+          ...VALID_ENV,
+          APP_ENV: undefined,
+          SENTRY_RELEASE: undefined,
+          GITHUB_SHA: undefined
+        },
+        async () => {
+          assert.deepEqual(
+            await START_HANDLERS[operation][flow](
+              startRequest(operation, flow),
+              CONTEXT,
+              validBody(operation, flow),
+              {
+                runProductTransaction: async () => {
+                  calls += 1;
+                  throw new Error("injected open failure");
+                }
+              }
+            ),
+            {
+              ok: false,
+              error: {
+                status: 503,
+                code: "temporary_unavailable",
+                message: MESSAGES[operation].temporarilyUnavailable,
+                errorId: CONTEXT.correlationId,
+                reported: true
+              }
+            }
+          );
+        }
+      );
+      assert.equal(calls, 1);
+      assert.deepEqual(
+        log.mock.calls.map(({ arguments: args }) => args),
+        [
+          [
+            JSON.stringify({
+              environment: null,
+              release: null,
+              surface: "api",
+              status_code: 503,
+              operation: `caller_${operation}_${flow}_start`,
+              message:
+                operation === "connect"
+                  ? "Caller connect request failed unexpectedly."
+                  : "Caller credential operation failed unexpectedly.",
+              request_id: CONTEXT.requestId,
+              level: "error",
+              error_id: CONTEXT.correlationId,
+              error_name: "Error",
+              sentry_captured: false
+            })
+          ]
+        ]
+      );
+    }
+  }
+});
