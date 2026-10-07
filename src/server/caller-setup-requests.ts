@@ -90,6 +90,10 @@ type TerminalSetupStateRow = {
   caller_display_name: string | null;
 };
 
+/**
+ * Rejects malformed IDs before querying. Lookup is scoped to the account,
+ * operation, and a non-empty list of accepted terminal statuses.
+ */
 export async function getSetupRequestTerminalState(
   query: ProductTransactionQuery,
   input: {
@@ -173,6 +177,10 @@ function terminalSetupStateStatement(input: {
   };
 }
 
+/**
+ * Marks expired pending or approved requests before checking pending status;
+ * expiry errors take precedence over non-pending errors.
+ */
 export async function ensurePendingSetupApproval(
   query: ProductTransactionQuery,
   target: {
@@ -199,6 +207,9 @@ export async function ensurePendingSetupApproval(
   return { ok: true, data: null };
 }
 
+/**
+ * Null callerId and setupCodeHash preserve their stored values on approval.
+ */
 export function approveSetupRequestStatement(input: {
   setupRequestId: string;
   accountId: string;
@@ -230,6 +241,10 @@ export function approveSetupRequestStatement(input: {
   };
 }
 
+/**
+ * Rejects malformed IDs before executing the supplied denial statement.
+ * The caller's statement defines the operation and account scope.
+ */
 export async function denySetupRequest(
   query: ProductTransactionQuery,
   input: {
@@ -442,6 +457,9 @@ export function setupRequestExpired(
   return new Date(row.expires_at).getTime() <= now.getTime();
 }
 
+/**
+ * Uses 32 random bytes encoded as base64url after the setup_ prefix.
+ */
 export function generateSetupCode(): string {
   return `setup_${randomBytes(SETUP_TOKEN_BYTES).toString("base64url")}`;
 }
