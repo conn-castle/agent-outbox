@@ -103,18 +103,14 @@ export async function enforceAccountRequestLimits(
   profile: LimitProfileSelector,
   operationKind: LimitOperationKind
 ): Promise<CallerLimitGuardResult> {
-  const activeBlock = await activeLimitBlock(
+  const blocked = await activeLimitBlockError(
     query,
     identity,
     profile,
     operationKind
   );
-  if (activeBlock) {
-    return limitBlockedError(
-      profile,
-      activeBlock,
-      callerIdFromIdentity(identity)
-    );
+  if (blocked) {
+    return blocked;
   }
 
   const requestWindows = fixedWindowLimits(profile, operationKind, "requests");
@@ -222,18 +218,14 @@ export async function enforceAcceptedInputSubmissionLimits(
     nonFilePayloadByteDelta: number;
   }
 ): Promise<CallerLimitGuardResult> {
-  const activeBlock = await activeLimitBlock(
+  const blocked = await activeLimitBlockError(
     query,
     identity,
     profile,
     "input_submission"
   );
-  if (activeBlock) {
-    return limitBlockedError(
-      profile,
-      activeBlock,
-      callerIdFromIdentity(identity)
-    );
+  if (blocked) {
+    return blocked;
   }
 
   const concurrency = await acquireConcurrencySlot(
@@ -252,7 +244,8 @@ export async function enforceAcceptedInputSubmissionLimits(
     query,
     identity,
     profile,
-    "input_submission"
+    "input_submission",
+    fixedWindows(profile, "input_submission", "submissions")
   );
   if (!fixedWindowResult.ok) {
     return fixedWindowResult;
@@ -294,26 +287,25 @@ export async function enforceHumanFileUploadLimits(
     };
   }
 
-  const activeBlock = await activeLimitBlock(
+  const blocked = await activeLimitBlockError(
     query,
     identity,
     profile,
     "file_upload"
   );
-  if (activeBlock) {
-    return limitBlockedError(
-      profile,
-      activeBlock,
-      callerIdFromIdentity(identity)
-    );
+  if (blocked) {
+    return blocked;
   }
 
   const enabled = limitStatusMetadata(profile, "file_upload_enabled");
   if (enabled.setting.mode !== "enabled" || enabled.setting.value !== 1) {
-    return limitError(profile, identity, "file_upload", "file_upload_enabled", {
-      usedUnits: 1,
-      limitResetsAt: null
-    });
+    return limitError(
+      profile,
+      identity,
+      "file_upload",
+      "file_upload_enabled",
+      1
+    );
   }
 
   const perFile = limitStatusMetadata(profile, "uploaded_bytes_per_file");
@@ -326,10 +318,7 @@ export async function enforceHumanFileUploadLimits(
       identity,
       "file_upload",
       "uploaded_bytes_per_file",
-      {
-        usedUnits: fileByteDelta,
-        limitResetsAt: null
-      }
+      fileByteDelta
     );
   }
 
@@ -548,20 +537,19 @@ export function concurrencySlotStatement(input: {
   };
 }
 
-async function activeLimitBlock(
+async function activeLimitBlockError(
   query: ProductTransactionQuery,
   identity: AccountLimitIdentity,
   profile: LimitProfileSelector,
   operationKind: LimitOperationKind
-) {
+): Promise<CallerLimitGuardResult | null> {
   const result = await query<ActiveLimitBlockRow>(
     activeLimitBlockStatement(identity, operationKind)
   );
-  return (
-    result.rows
-      .map(activeLimitBlockFromRow)
-      .find((block) => activeLimitBlockAppliesToProfile(profile, block)) ?? null
-  );
+  const block = result.rows
+    .map(activeLimitBlockFromRow)
+    .find((candidate) => activeLimitBlockAppliesToProfile(profile, candidate));
+  return block ? limitBlockedError(profile, block, identity) : null;
 }
 
 async function acquireConcurrencySlot(
@@ -590,25 +578,23 @@ async function acquireConcurrencySlot(
     return { ok: true };
   }
 
-  return limitError(profile, identity, operationKind, limit.limitName, {
-    usedUnits: limit.setting.value + 1,
-    limitResetsAt: null
-  });
+  return limitError(
+    profile,
+    identity,
+    operationKind,
+    limit.limitName,
+    limit.setting.value + 1
+  );
 }
 
 async function checkFixedWindowLimits(
   query: ProductTransactionQuery,
-  identity: CallerLimitIdentity,
+  identity: AccountLimitIdentity,
   profile: LimitProfileSelector,
-  operationKind: LimitOperationKind
+  operationKind: LimitOperationKind,
+  windows: ReturnType<typeof fixedWindows>
 ): Promise<CallerLimitGuardResult> {
-  const now = new Date();
-  for (const limit of fixedWindowLimits(
-    profile,
-    operationKind,
-    "submissions"
-  )) {
-    const window = quotaWindow(limit, now);
+  for (const { limit, window } of windows) {
     const result = await query<QuotaWindowRow>(
       quotaWindowUsageStatement({
         identity,
@@ -643,38 +629,18 @@ async function incrementFixedWindowLimits(
   operationKind: LimitOperationKind,
   unit: "requests" | "submissions"
 ): Promise<CallerLimitGuardResult> {
-  const now = new Date();
-  const windows = fixedWindowLimits(profile, operationKind, unit).map(
-    (limit) => ({
-      limit,
-      window: quotaWindow(limit, now)
-    })
-  );
+  const windows = fixedWindows(profile, operationKind, unit);
 
   if (unit === "requests" && windows.length > 1) {
-    for (const { limit, window } of windows) {
-      const result = await query<QuotaWindowRow>(
-        quotaWindowUsageStatement({
-          identity,
-          limitName: limit.limitName,
-          windowKind: window.windowKind,
-          windowStartUtc: window.windowStartUtc
-        })
-      );
-      const usedUnits = nonNegativeInteger(result.rows[0]?.used_units ?? 0);
-      if (usedUnits + 1 > limit.setting.value) {
-        return persistAndReturnLimitError(
-          query,
-          identity,
-          profile,
-          operationKind,
-          {
-            limitName: limit.limitName,
-            usedUnits: usedUnits + 1,
-            limitResetsAt: window.windowEndUtc
-          }
-        );
-      }
+    const checked = await checkFixedWindowLimits(
+      query,
+      identity,
+      profile,
+      operationKind,
+      windows
+    );
+    if (!checked.ok) {
+      return checked;
     }
   }
 
@@ -790,7 +756,7 @@ async function persistAndReturnLimitError(
     limitResetsAt: input.limitResetsAt ? new Date(input.limitResetsAt) : null
   });
   await query(upsertActiveLimitBlockStatement(block));
-  return limitBlockedError(profile, block, callerIdFromIdentity(identity));
+  return limitBlockedError(profile, block, identity);
 }
 
 function fixedWindowLimits(
@@ -799,8 +765,20 @@ function fixedWindowLimits(
   unit: "requests" | "submissions"
 ) {
   return limitForOperation(profile, operationKind, unit).filter(
-    (limit) => limit.windowKind && limit.setting.mode === "enabled"
+    (limit) => limit.windowKind
   ) as FixedWindowLimit[];
+}
+
+function fixedWindows(
+  profile: LimitProfileSelector,
+  operationKind: LimitOperationKind,
+  unit: "requests" | "submissions"
+) {
+  const now = new Date();
+  return fixedWindowLimits(profile, operationKind, unit).map((limit) => ({
+    limit,
+    window: quotaWindow(limit, now)
+  }));
 }
 
 function limitForOperation(
@@ -841,8 +819,9 @@ export function quotaWindow(
 function limitBlockedError(
   profile: LimitProfileSelector,
   block: ActiveLimitBlockMetadata,
-  callerId?: string
+  identity: AccountLimitIdentity
 ): CallerLimitGuardResult {
+  const callerId = callerIdFromIdentity(identity);
   const error = limitErrorMetadata(profile, block.limit_name, {
     usedUnits: block.used_units,
     limitResetsAt: block.limit_resets_at
@@ -874,35 +853,17 @@ function limitError(
   identity: AccountLimitIdentity,
   operationKind: LimitOperationKind,
   limitName: LimitName,
-  input: {
-    usedUnits: number;
-    limitResetsAt: string | null;
-  }
+  usedUnits: number
 ): CallerLimitGuardResult {
   const block = activeLimitBlockMetadata({
     selector: profile,
     accountId: identity.accountId,
     operationKind,
     limitName,
-    usedUnits: input.usedUnits,
-    limitResetsAt: input.limitResetsAt ? new Date(input.limitResetsAt) : null
+    usedUnits,
+    limitResetsAt: null
   });
-  const error = limitErrorMetadata(profile, limitName, {
-    usedUnits: input.usedUnits,
-    limitResetsAt: input.limitResetsAt ? new Date(input.limitResetsAt) : null
-  });
-  const callerId = callerIdFromIdentity(identity);
-
-  return {
-    ok: false,
-    error: {
-      status: error.status,
-      code: error.code,
-      message: error.limitReason,
-      limit: block,
-      log: callerId ? { callerId } : undefined
-    }
-  };
+  return limitBlockedError(profile, block, identity);
 }
 
 function activeLimitBlockFromRow(

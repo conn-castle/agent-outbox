@@ -77,7 +77,11 @@ test("caller request limits lock and persist an active block when a quota window
   assert.match(query.calls[3].sql, /agent_outbox_account_limit_blocks/);
 });
 
-test("caller request limits do not debit an earlier window when a later window overflows", async () => {
+test("caller request limits do not debit an earlier window when a later window overflows", async (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-06-30T12:34:56.789Z")
+  });
   const query = fakeQuery([
     [],
     [],
@@ -93,14 +97,27 @@ test("caller request limits do not debit an earlier window when a later window o
     "output_check_read"
   );
 
-  assert.equal(result.ok, false);
-  assert.equal(result.error.code, "rate_limit_exceeded");
-  assert.equal(
-    result.error.limit && "limit_name" in result.error.limit
-      ? result.error.limit.limit_name
-      : null,
-    "output_check_read_requests_per_account_per_minute"
-  );
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 429,
+      code: "rate_limit_exceeded",
+      message: "Output check/read requests are temporarily rate limited.",
+      limit: {
+        account_id: identity.accountId,
+        operation_kind: "output_check_read",
+        limit_name: "output_check_read_requests_per_account_per_minute",
+        limit_reason_code: "output_check_read_rate_limited",
+        limit_reason:
+          "Output check/read requests are temporarily rate limited.",
+        limit_resets_at: "2026-06-30T12:35:00.000Z",
+        used_units: 121,
+        limit_units: 120
+      },
+      log: { callerId: identity.callerId }
+    }
+  });
+  assert.equal(query.calls.length, 5);
   assert.match(query.calls[1].sql, /for update/);
   assert.match(query.calls[2].sql, /select used_units/);
   assert.match(query.calls[3].sql, /select used_units/);
@@ -614,7 +631,7 @@ test("accepted input submission limits pre-check quota windows once before incre
   assert.equal(quotaIncrements.length, 3);
 });
 
-test("human file upload limits use file enablement concurrency and overall storage", async () => {
+test("hosted-free file uploads return the full upgrade error", async () => {
   const freeQuery = fakeQuery([[]]);
   const freeResult = await enforceHumanFileUploadLimits(
     freeQuery,
@@ -623,15 +640,29 @@ test("human file upload limits use file enablement concurrency and overall stora
     1
   );
 
-  assert.equal(freeResult.ok, false);
-  assert.equal(freeResult.error.code, "upgrade_required");
-  assert.equal(
-    freeResult.error.limit && "limit_name" in freeResult.error.limit
-      ? freeResult.error.limit.limit_name
-      : null,
-    "file_upload_enabled"
-  );
+  assert.deepEqual(freeResult, {
+    ok: false,
+    error: {
+      status: 402,
+      code: "upgrade_required",
+      message: "File uploads require a paid hosted account.",
+      limit: {
+        account_id: identity.accountId,
+        operation_kind: "file_upload",
+        limit_name: "file_upload_enabled",
+        limit_reason_code: "file_upload_upgrade_required",
+        limit_reason: "File uploads require a paid hosted account.",
+        limit_resets_at: null,
+        used_units: 1,
+        limit_units: null
+      },
+      log: { callerId: identity.callerId }
+    }
+  });
+  assert.equal(freeQuery.calls.length, 1);
+});
 
+test("human file upload limits enforce concurrency and overall storage", async () => {
   const storageQuery = fakeQuery([
     [],
     [{ acquired: true }],
@@ -666,6 +697,255 @@ test("human file upload limits use file enablement concurrency and overall stora
   );
   assert.match(storageQuery.calls[2].sql, /for update/);
   assert.match(storageQuery.calls[4].sql, /agent_outbox_account_limit_blocks/);
+});
+
+test("hosted-paid file uploads return the full per-file overflow error", async () => {
+  const query = fakeQuery([[]]);
+  const result = await enforceHumanFileUploadLimits(
+    query,
+    identity,
+    "hosted-paid",
+    10 ** 12
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 413,
+      code: "request_too_large",
+      message: "Uploaded file exceeds the raw byte ceiling.",
+      limit: {
+        account_id: identity.accountId,
+        operation_kind: "file_upload",
+        limit_name: "uploaded_bytes_per_file",
+        limit_reason_code: "uploaded_file_too_large",
+        limit_reason: "Uploaded file exceeds the raw byte ceiling.",
+        limit_resets_at: null,
+        used_units: 10 ** 12,
+        limit_units: 32_000_000
+      },
+      log: { callerId: identity.callerId }
+    }
+  });
+  assert.equal(query.calls.length, 1);
+});
+
+test("file uploads return the full error when no concurrency slot is available", async () => {
+  const query = fakeQuery([[], []]);
+  const result = await enforceHumanFileUploadLimits(
+    query,
+    identity,
+    "hosted-paid",
+    10
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 429,
+      code: "rate_limit_exceeded",
+      message: "Too many concurrent file-upload requests are in progress.",
+      limit: {
+        account_id: identity.accountId,
+        operation_kind: "file_upload",
+        limit_name: "concurrent_file_uploading_requests_per_account",
+        limit_reason_code: "concurrent_file_upload_limit_exceeded",
+        limit_reason:
+          "Too many concurrent file-upload requests are in progress.",
+        limit_resets_at: null,
+        used_units: 6,
+        limit_units: 5
+      },
+      log: { callerId: identity.callerId }
+    }
+  });
+  assert.equal(query.calls.length, 2);
+});
+
+test("input submissions return the full error when no concurrency slot is available", async () => {
+  const query = fakeQuery([[], []]);
+  const result = await enforceAcceptedInputSubmissionLimits(
+    query,
+    identity,
+    "hosted-free",
+    { queuedItemDelta: 1, nonFilePayloadByteDelta: 1 }
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 429,
+      code: "rate_limit_exceeded",
+      message: "Too many concurrent account write requests are in progress.",
+      limit: {
+        account_id: identity.accountId,
+        operation_kind: "input_submission",
+        limit_name: "concurrent_write_requests_per_account",
+        limit_reason_code: "concurrent_write_limit_exceeded",
+        limit_reason:
+          "Too many concurrent account write requests are in progress.",
+        limit_resets_at: null,
+        used_units: 21,
+        limit_units: 20
+      },
+      log: { callerId: identity.callerId }
+    }
+  });
+  assert.equal(query.calls.length, 2);
+});
+
+test("input submissions short-circuit active blocks with the full normalized error", async () => {
+  const query = fakeQuery([
+    [
+      {
+        account_id: identity.accountId,
+        operation_kind: "input_submission",
+        limit_name: "input_submissions_per_day",
+        limit_reason_code: "legacy_code",
+        limit_reason: "Legacy persisted reason.",
+        limit_resets_at: "2999-01-01T00:00:00.000Z",
+        used_units: "1001",
+        limit_units: "1"
+      }
+    ]
+  ]);
+  const result = await enforceAcceptedInputSubmissionLimits(
+    query,
+    identity,
+    "hosted-free",
+    { queuedItemDelta: 1, nonFilePayloadByteDelta: 1 }
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 429,
+      code: "quota_limit_exceeded",
+      message:
+        "Daily input submission limit reached; wait for the next UTC day or upgrade.",
+      limit: {
+        account_id: identity.accountId,
+        operation_kind: "input_submission",
+        limit_name: "input_submissions_per_day",
+        limit_reason_code: "daily_input_submission_quota_exceeded",
+        limit_reason:
+          "Daily input submission limit reached; wait for the next UTC day or upgrade.",
+        limit_resets_at: "2999-01-01T00:00:00.000Z",
+        used_units: 1001,
+        limit_units: 1000
+      },
+      log: { callerId: identity.callerId }
+    }
+  });
+  assert.equal(query.calls.length, 1);
+});
+
+test("input submission preflight persists a full window overflow error without debiting quota", async (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: new Date("2026-06-30T12:34:56.789Z")
+  });
+  const query = fakeQuery([
+    [],
+    [{ acquired: true }],
+    [],
+    [{ used_units: "5000" }],
+    []
+  ]);
+  const result = await enforceAcceptedInputSubmissionLimits(
+    query,
+    identity,
+    "hosted-free",
+    { queuedItemDelta: 1, nonFilePayloadByteDelta: 1 }
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 429,
+      code: "quota_limit_exceeded",
+      message:
+        "Monthly input submission limit reached; wait for the next UTC calendar month or upgrade.",
+      limit: {
+        account_id: identity.accountId,
+        operation_kind: "input_submission",
+        limit_name: "input_submissions_per_calendar_month",
+        limit_reason_code: "monthly_input_submission_quota_exceeded",
+        limit_reason:
+          "Monthly input submission limit reached; wait for the next UTC calendar month or upgrade.",
+        limit_resets_at: "2026-07-01T00:00:00.000Z",
+        used_units: 5001,
+        limit_units: 5000
+      },
+      log: { callerId: identity.callerId }
+    }
+  });
+  assert.equal(query.calls.length, 5);
+  assert.match(
+    query.calls[4].sql,
+    /insert into public.agent_outbox_account_limit_blocks/
+  );
+  assert.deepEqual(query.calls[4].values, [
+    identity.accountId,
+    "input_submission",
+    "input_submissions_per_calendar_month",
+    "monthly_input_submission_quota_exceeded",
+    "Monthly input submission limit reached; wait for the next UTC calendar month or upgrade.",
+    "2026-07-01T00:00:00.000Z",
+    5001,
+    5000
+  ]);
+  assert.equal(
+    query.calls.some((call) =>
+      call.sql.includes("insert into public.agent_outbox_account_quota_windows")
+    ),
+    false
+  );
+});
+
+test("account-only request identities return the full active-block error without caller logging", async () => {
+  const query = fakeQuery([
+    [
+      {
+        account_id: identity.accountId,
+        operation_kind: "output_check_read",
+        limit_name: "output_check_read_requests_per_account_per_minute",
+        limit_reason_code: "legacy_code",
+        limit_reason: "Legacy persisted reason.",
+        limit_resets_at: "2999-01-01T00:00:00.000Z",
+        used_units: "121",
+        limit_units: "999"
+      }
+    ]
+  ]);
+  const result = await enforceAccountRequestLimits(
+    query,
+    { accountId: identity.accountId },
+    "hosted-free",
+    "output_check_read"
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      status: 429,
+      code: "rate_limit_exceeded",
+      message: "Output check/read requests are temporarily rate limited.",
+      limit: {
+        account_id: identity.accountId,
+        operation_kind: "output_check_read",
+        limit_name: "output_check_read_requests_per_account_per_minute",
+        limit_reason_code: "output_check_read_rate_limited",
+        limit_reason:
+          "Output check/read requests are temporarily rate limited.",
+        limit_resets_at: "2999-01-01T00:00:00.000Z",
+        used_units: 121,
+        limit_units: 120
+      },
+      log: undefined
+    }
+  });
+  assert.equal(query.calls.length, 1);
 });
 
 test("quota statement builders scope rows to account metric and window", () => {
