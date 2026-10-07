@@ -2,10 +2,7 @@ import {
   apiTemporaryUnavailable,
   type ApiRequestContext
 } from "./api-errors.ts";
-import {
-  enforceAccountOperationLimits,
-  enforceIpControlPlaneLimit
-} from "./caller-api-limits.ts";
+import { enforceAccountOperationLimits } from "./caller-api-limits.ts";
 import {
   generateCallerApiKeyMaterial,
   type DisplayOnceCallerApiKeyMaterial
@@ -33,12 +30,13 @@ import {
   markSetupRequestExpiredStatement,
   normalizeUserCode,
   notFoundError,
-  parseDevicePollBody,
+  parseRecordBody,
+  requiredText,
   setupCodeDigest,
   setupRequestExpired,
   setupRequestNotFoundMessage,
   verifyPendingCredential,
-  withControlPlaneTransaction,
+  withIpLimitedControlPlaneTransaction,
   type CallerFlowMessages,
   type CallerFlowRequestOptions as RequestOptions,
   type PendingCredentialBearer,
@@ -60,7 +58,6 @@ const MESSAGES: CallerFlowMessages = {
 };
 
 type CredentialOperation = "rotate" | "revoke";
-type SetupFlow = "browser" | "device";
 
 type OperationResult<TData> = SetupResult<TData>;
 
@@ -642,7 +639,9 @@ async function handleOperationDevicePollRequest(
   body: unknown,
   options: RequestOptions
 ): Promise<OperationResult<DeviceSetupCodeData>> {
-  const parsed = parseDevicePollBody(MESSAGES, body);
+  const parsed = parseRecordBody(MESSAGES, body, (record, fields) =>
+    requiredText(record, "device_code", fields, 512)
+  );
   if (!parsed.ok) {
     return parsed;
   }
@@ -653,22 +652,14 @@ async function handleOperationDevicePollRequest(
       `Trusted client IP is unavailable for caller ${operation} poll.`
     );
   }
-  const deviceCodeHash = setupCodeDigest(parsed.data.deviceCode);
+  const deviceCodeHash = setupCodeDigest(parsed.data);
 
-  return withControlPlaneTransaction(
+  return withIpLimitedControlPlaneTransaction(
     MESSAGES,
     context,
     `caller_${operation}_device_poll`,
+    { ipAddress, kind: `caller_${operation}_poll` },
     async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        `caller_${operation}_poll`
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
       const lookup = await query<DevicePollTargetRow>(
         devicePollTargetStatement(operation, deviceCodeHash)
       );
