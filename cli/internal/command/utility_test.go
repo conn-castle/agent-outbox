@@ -328,6 +328,133 @@ func TestDoctorReturnsSecretStoreExitForSelectedCallerSecretFailure(t *testing.T
 	}
 }
 
+func TestDoctorFailsForWhitespaceOnlyStoredCredential(t *testing.T) {
+	configPath := writeDataPlaneCommandConfig(t, "https://app.example")
+	stdout, stderr, code := executeUtilityCommand(t, []string{"--config", configPath, "--json", "doctor"}, utilityCommandOptions{
+		secretStore: &dataPlaneSecretStore{keys: map[string]string{"caller_123": " \t\n "}},
+	})
+	if code != foundation.ExitSecretStore {
+		t.Fatalf("exit code = %d, want 74; stderr: %s", code, stderr)
+	}
+	payload := decodeCommandJSON(t, stdout)
+	if payload["ok"] != false {
+		t.Fatalf("doctor should report ok=false: %s", stdout)
+	}
+	check := doctorChecksByName(t, payload)["secret_store"]
+	if check["status"] != "fail" || check["message"] != "Local caller credential is empty; run agent-outbox caller rotate --caller <caller>." {
+		t.Fatalf("unexpected secret_store check: %#v", check)
+	}
+	details, ok := check["details"].(map[string]any)
+	if !ok || len(details) != 3 || details["code"] != "secret_store_error" || details["caller"] != "steward-email" || details["caller_id"] != "caller_123" {
+		t.Fatalf("unexpected secret_store details: %#v", check["details"])
+	}
+}
+
+func TestDoctorUsesEnvironmentCredentialWithoutReadingFileStore(t *testing.T) {
+	const credential = "aob_live_key_123_environmentsecret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+credential {
+			t.Errorf("authorization = %q, want environment credential", got)
+		}
+		_, _ = io.WriteString(w, `{"ok":true,"data":{"status":"active"}}`)
+	}))
+	defer server.Close()
+
+	configPath := writeDataPlaneCommandConfig(t, server.URL)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Execute(context.Background(), Options{
+		Args:        []string{"--config", configPath, "--json", "doctor"},
+		Stdout:      &stdout,
+		Stderr:      &stderr,
+		Env:         foundation.Env{foundation.EnvAPIKey: credential},
+		SecretStore: &dataPlaneSecretStore{err: foundation.NewSecretStoreError("file store should not be read")},
+	})
+	if code != foundation.ExitSuccess || stderr.Len() != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr.String())
+	}
+	check := doctorChecksByName(t, decodeCommandJSON(t, stdout.String()))["secret_store"]
+	if check["status"] != "pass" || check["message"] != "Selected caller credential loaded from AGENT_OUTBOX_API_KEY." {
+		t.Fatalf("unexpected secret_store check: %#v", check)
+	}
+	details, ok := check["details"].(map[string]any)
+	if !ok || details["source"] != "environment" {
+		t.Fatalf("unexpected secret_store details: %#v", check["details"])
+	}
+}
+
+func TestSecretLoaderErrorExitCodesSurviveDoctorAndDataPlaneCommands(t *testing.T) {
+	overridden := foundation.NewSecretStoreError("injected loader failure")
+	overridden.ExitCode = foundation.ExitTemporary
+	cases := []struct {
+		name          string
+		err           error
+		doctor        bool
+		wantExit      int
+		wantCode      foundation.ErrorCode
+		wantMessage   string
+		wantCheckCode foundation.ErrorCode
+	}{
+		{"doctor empty code", foundation.NewAppError("", "injected loader failure"), true, foundation.ExitGeneral, foundation.CodeInternalError, "Agent Outbox doctor found a failing check: secret_store.", foundation.CodeInternalError},
+		{"doctor wrapped empty code", fmt.Errorf("loader context: %w", foundation.NewAppError("", "injected loader failure")), true, foundation.ExitGeneral, foundation.CodeInternalError, "Agent Outbox doctor found a failing check: secret_store.", foundation.CodeInternalError},
+		{"doctor exit override", overridden, true, foundation.ExitTemporary, foundation.CodeSecretStore, "Agent Outbox doctor found a failing check: secret_store.", foundation.CodeSecretStore},
+		{"account status exit override", overridden, false, foundation.ExitTemporary, foundation.CodeSecretStore, "injected loader failure", ""},
+	}
+	for _, tc := range cases {
+		for _, jsonMode := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/json=%t", tc.name, jsonMode), func(t *testing.T) {
+				args := []string{"--config", writeDataPlaneCommandConfig(t, "https://app.example")}
+				if jsonMode {
+					args = append(args, "--json")
+				}
+				if tc.doctor {
+					args = append(args, "doctor")
+				} else {
+					args = append(args, "account", "status")
+				}
+				stdout, stderr, code := executeUtilityCommand(t, args, utilityCommandOptions{secretStore: &dataPlaneSecretStore{err: tc.err}})
+				if code != tc.wantExit {
+					t.Fatalf("exit code = %d, want %d; stderr: %s", code, tc.wantExit, stderr)
+				}
+				if jsonMode {
+					var envelope struct {
+						OK    bool `json:"ok"`
+						Error struct {
+							Code    string `json:"code"`
+							Message string `json:"message"`
+						} `json:"error"`
+					}
+					if err := json.Unmarshal([]byte(stderr), &envelope); err != nil {
+						t.Fatalf("decode stderr envelope: %v; stderr: %s", err, stderr)
+					}
+					if envelope.OK || envelope.Error.Code != string(tc.wantCode) || envelope.Error.Message != tc.wantMessage {
+						t.Fatalf("unexpected stderr envelope: %s", stderr)
+					}
+				} else if want := string(tc.wantCode) + ": " + tc.wantMessage + "\n"; stderr != want {
+					t.Fatalf("stderr = %q, want %q", stderr, want)
+				}
+				if !tc.doctor {
+					if stdout != "" {
+						t.Fatalf("stdout should be empty: %s", stdout)
+					}
+					return
+				}
+				if !jsonMode {
+					if !strings.Contains(stdout, "injected loader failure") {
+						t.Fatalf("doctor output missing secret_store failure: %s", stdout)
+					}
+					return
+				}
+				check := doctorChecksByName(t, decodeCommandJSON(t, stdout))["secret_store"]
+				details, ok := check["details"].(map[string]any)
+				if check["status"] != "fail" || check["message"] != "injected loader failure" || !ok || len(details) != 3 || details["code"] != string(tc.wantCheckCode) || details["caller"] != "steward-email" || details["caller_id"] != "caller_123" {
+					t.Fatalf("unexpected secret_store check: %#v", check)
+				}
+			})
+		}
+	}
+}
+
 func TestDoctorFailsForMissingExplicitConfigButStillReportsChecks(t *testing.T) {
 	missingPath := filepath.Join(t.TempDir(), "missing.json")
 	stdout, stderr, code := executeUtilityCommand(t, []string{"--config", missingPath, "--json", "doctor"}, utilityCommandOptions{})

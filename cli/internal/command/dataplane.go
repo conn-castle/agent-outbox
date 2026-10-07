@@ -124,9 +124,25 @@ func addDataPlaneCommands(caller *cobra.Command, input *cobra.Command, output *c
 
 	input.AddCommand(inputJSONFileCommand("send", "Submit a new input item", "/api/input/send", opts, flags))
 	input.AddCommand(inputJSONFileCommand("replace", "Replace a pending input item", "/api/input/replace", opts, flags))
-	input.AddCommand(inputDeleteCommand(opts, flags))
+	input.AddCommand(inputItemCommand(opts, flags, "delete", "Delete a pending input item", "/api/input/delete", true, commandHelpSpec{
+		Purpose:     "Delete a pending input item for the selected caller through POST /api/input/delete.",
+		Arguments:   "<caller_item_id> is the caller-owned id of the pending input item to delete.",
+		Flags:       "--json prints the API response in the shared success envelope. Global --caller, --config, --base-url, and --no-color are available.",
+		Environment: globalEnvironmentHelp(),
+		Examples:    "agent-outbox input delete email:thread_123\nagent-outbox input delete email:thread_123 --json",
+		ExitCodes:   "0 success. 64 usage. 66 not found. 73 input not pending. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
+		RelatedDocs: "docs/spec/input-schema.md#input-semantics, docs/spec/http-api.md#input-queue, docs/spec/errors.md, and agent-outbox docs input.",
+	}))
 	input.AddCommand(inputListCommand(opts, flags))
-	input.AddCommand(inputReadCommand(opts, flags))
+	input.AddCommand(inputItemCommand(opts, flags, "read", "Read one live canonical input", "/api/input/read", false, commandHelpSpec{
+		Purpose:     "Read one live retained input, including its canonical accepted raw_input, through POST /api/input/read.",
+		Arguments:   "<caller_item_id> is the caller-owned id of a live pending or answered-but-unacknowledged input.",
+		Flags:       "--json prints the API response in the shared success envelope. Global --caller, --config, --base-url, and --no-color are available.",
+		Environment: globalEnvironmentHelp(),
+		Examples:    "agent-outbox input read email:thread_123\nagent-outbox input read email:thread_123 --json",
+		ExitCodes:   "0 success. 64 usage. 66 not found. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
+		RelatedDocs: "docs/spec/input-schema.md#live-input-reads, docs/spec/http-api.md#input-queue, docs/spec/errors.md, and agent-outbox docs input.",
+	}))
 
 	output.AddCommand(outputCheckCommand(opts, flags))
 	output.AddCommand(outputReadCommand(opts, flags))
@@ -152,11 +168,9 @@ func statusCommand(scope string, opts Options, flags *rootFlags) *cobra.Command 
 	short := "Show selected " + scope + " status"
 	apiPath := "/api/" + scope + "/status"
 	cmd := &cobra.Command{
-		Use:           "status",
-		Short:         short,
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "status",
+		Short: short,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return requestRaw(cmd.Context(), opts, flags, http.MethodGet, apiPath, nil, false)
 		},
@@ -196,11 +210,9 @@ func requestRaw(ctx context.Context, opts Options, flags *rootFlags, method stri
 func inputJSONFileCommand(use string, short string, apiPath string, opts Options, flags *rootFlags) *cobra.Command {
 	var filePath string
 	cmd := &cobra.Command{
-		Use:           use + " --file <input.json>",
-		Short:         short,
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   use + " --file <input.json>",
+		Short: short,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			body, err := readInputSubmissionFile(filePath)
 			if err != nil {
@@ -222,41 +234,29 @@ func inputJSONFileCommand(use string, short string, apiPath string, opts Options
 	return cmd
 }
 
-func inputDeleteCommand(opts Options, flags *rootFlags) *cobra.Command {
+func inputItemCommand(opts Options, flags *rootFlags, use string, short string, apiPath string, write bool, help commandHelpSpec) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "delete <caller_item_id>",
-		Short:         "Delete a pending input item",
-		Args:          exactArgs(1),
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   use + " <caller_item_id>",
+		Short: short,
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			callerItemID := args[0]
 			if callerItemID == "" {
 				return foundation.NewUsageError("caller_item_id is required.")
 			}
-			return requestRaw(cmd.Context(), opts, flags, http.MethodPost, "/api/input/delete", map[string]string{"caller_item_id": callerItemID}, true)
+			return requestRaw(cmd.Context(), opts, flags, http.MethodPost, apiPath, map[string]string{"caller_item_id": callerItemID}, write)
 		},
 	}
-	documentCommand(cmd, commandHelpSpec{
-		Purpose:     "Delete a pending input item for the selected caller through POST /api/input/delete.",
-		Arguments:   "<caller_item_id> is the caller-owned id of the pending input item to delete.",
-		Flags:       "--json prints the API response in the shared success envelope. Global --caller, --config, --base-url, and --no-color are available.",
-		Environment: globalEnvironmentHelp(),
-		Examples:    "agent-outbox input delete email:thread_123\nagent-outbox input delete email:thread_123 --json",
-		ExitCodes:   "0 success. 64 usage. 66 not found. 73 input not pending. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
-		RelatedDocs: "docs/spec/input-schema.md#input-semantics, docs/spec/http-api.md#input-queue, docs/spec/errors.md, and agent-outbox docs input.",
-	})
+	documentCommand(cmd, help)
 	return cmd
 }
 
 func inputListCommand(opts Options, flags *rootFlags) *cobra.Command {
 	page := pageFlags{PageSize: foundation.SystemContractOutputPageDefaultLimit}
 	cmd := &cobra.Command{
-		Use:           "list",
-		Short:         "List live input metadata",
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "list",
+		Short: "List live input metadata",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return listPages(cmd.Context(), opts, flags, inputListPages, page)
 		},
@@ -274,41 +274,12 @@ func inputListCommand(opts Options, flags *rootFlags) *cobra.Command {
 	return cmd
 }
 
-func inputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:           "read <caller_item_id>",
-		Short:         "Read one live canonical input",
-		Args:          exactArgs(1),
-		SilenceErrors: true,
-		SilenceUsage:  true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			callerItemID := args[0]
-			if callerItemID == "" {
-				return foundation.NewUsageError("caller_item_id is required.")
-			}
-			return requestRaw(cmd.Context(), opts, flags, http.MethodPost, "/api/input/read", map[string]string{"caller_item_id": callerItemID}, false)
-		},
-	}
-	documentCommand(cmd, commandHelpSpec{
-		Purpose:     "Read one live retained input, including its canonical accepted raw_input, through POST /api/input/read.",
-		Arguments:   "<caller_item_id> is the caller-owned id of a live pending or answered-but-unacknowledged input.",
-		Flags:       "--json prints the API response in the shared success envelope. Global --caller, --config, --base-url, and --no-color are available.",
-		Environment: globalEnvironmentHelp(),
-		Examples:    "agent-outbox input read email:thread_123\nagent-outbox input read email:thread_123 --json",
-		ExitCodes:   "0 success. 64 usage. 66 not found. 74 secret store. 75 rate/quota/temporary failure. 77 permission. 78 config or caller selection.",
-		RelatedDocs: "docs/spec/input-schema.md#live-input-reads, docs/spec/http-api.md#input-queue, docs/spec/errors.md, and agent-outbox docs input.",
-	})
-	return cmd
-}
-
 func outputCheckCommand(opts Options, flags *rootFlags) *cobra.Command {
 	page := pageFlags{PageSize: foundation.SystemContractOutputPageDefaultLimit}
 	cmd := &cobra.Command{
-		Use:           "check",
-		Short:         "Check ready output without marking it read",
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "check",
+		Short: "Check ready output without marking it read",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return listPages(cmd.Context(), opts, flags, outputCheckPages, page)
 		},
@@ -330,10 +301,8 @@ func outputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 	page := pageFlags{PageSize: foundation.SystemContractOutputPageDefaultLimit}
 	readAll := false
 	cmd := &cobra.Command{
-		Use:           "read <output_result_id>",
-		Short:         "Read output payloads and mark returned results read",
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "read <output_result_id>",
+		Short: "Read output payloads and mark returned results read",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if readAll {
 				if len(args) != 0 {
@@ -370,11 +339,9 @@ func outputReadCommand(opts Options, flags *rootFlags) *cobra.Command {
 func outputFileGetCommand(opts Options, flags *rootFlags) *cobra.Command {
 	fileFlags := fileGetFlags{}
 	cmd := &cobra.Command{
-		Use:           "get <output_result_id> <file_id>",
-		Short:         "Download raw output file bytes",
-		Args:          exactArgs(2),
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "get <output_result_id> <file_id>",
+		Short: "Download raw output file bytes",
+		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateFileGetFlags(fileFlags, flags.json); err != nil {
 				return err
@@ -423,11 +390,9 @@ func outputFileGetCommand(opts Options, flags *rootFlags) *cobra.Command {
 
 func outputAckCommand(opts Options, flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "ack <output_result_id>",
-		Short:         "Acknowledge durably handled output",
-		Args:          exactArgs(1),
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "ack <output_result_id>",
+		Short: "Acknowledge durably handled output",
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return requestRaw(cmd.Context(), opts, flags, http.MethodPost, "/api/output/"+url.PathEscape(args[0])+"/ack", nil, true)
 		},
@@ -460,28 +425,33 @@ func runtimeForCommand(opts Options, flags *rootFlags) (*apiRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	caller, err := selectCallerWithID(flags, opts.Env, runtime.Config)
+	caller, err := selectCallerWithID(flags.caller, opts.Env, runtime.Config)
 	if err != nil {
 		return nil, err
 	}
-	bearer, bearerFromEnvironment, err := environmentCallerCredential(opts.Env, caller)
+	bearer, _, err := loadCallerBearer(opts, runtime.ConfigPath, runtime.ConfigPathOwned, caller)
 	if err != nil {
 		return nil, err
-	}
-	if !bearerFromEnvironment {
-		store, err := secretStoreForCommand(opts, runtime.ConfigPath, runtime.ConfigPathOwned)
-		if err != nil {
-			return nil, err
-		}
-		bearer, err = store.LoadCallerKey(caller.CallerID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if strings.TrimSpace(bearer) == "" {
-		return nil, foundation.NewSecretStoreError("Local caller credential is empty; run agent-outbox caller rotate --caller <caller>.")
 	}
 	return &apiRuntime{Client: runtime.Client, Bearer: bearer}, nil
+}
+
+func loadCallerBearer(opts Options, configPath string, configPathOwned bool, caller foundation.CallerConfig) (string, bool, error) {
+	if bearer, found, err := environmentCallerCredential(opts.Env, caller); err != nil || found {
+		return bearer, found, err
+	}
+	store, err := secretStoreForCommand(opts, configPath, configPathOwned)
+	if err != nil {
+		return "", false, err
+	}
+	bearer, err := store.LoadCallerKey(caller.CallerID)
+	if err != nil {
+		return "", false, err
+	}
+	if strings.TrimSpace(bearer) == "" {
+		return "", false, foundation.NewSecretStoreError("Local caller credential is empty; run agent-outbox caller rotate --caller <caller>.")
+	}
+	return bearer, false, nil
 }
 
 func environmentCallerCredential(env foundation.Env, caller foundation.CallerConfig) (string, bool, error) {

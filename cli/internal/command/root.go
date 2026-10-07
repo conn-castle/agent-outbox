@@ -141,9 +141,9 @@ func NewRootCommand(opts Options, flags *rootFlags) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&flags.noColor, "no-color", false, "disable terminal color")
 
 	caller := parentCommand("caller", "Manage local caller configuration")
-	input := callerRequiredParentCommand("input", "Submit and inspect input items")
-	output := callerRequiredParentCommand("output", "Read and acknowledge output results")
-	account := callerRequiredParentCommand("account", "Inspect the selected account")
+	input := requireCaller(parentCommand("input", "Submit and inspect input items"))
+	output := requireCaller(parentCommand("output", "Read and acknowledge output results"))
+	account := requireCaller(parentCommand("account", "Inspect the selected account"))
 	documentCommand(caller, commandHelpSpec{
 		Purpose:     "Manage local caller setup, status, rotation, revocation, and disconnect state.",
 		Arguments:   "Use a caller subcommand. Caller names are local labels stored in the Agent Outbox config.",
@@ -212,7 +212,7 @@ func NewRootCommand(opts Options, flags *rootFlags) *cobra.Command {
 }
 
 func validateCommandContext(cmd *cobra.Command, flags *rootFlags, env foundation.Env) error {
-	if commandBypassesRootPreflight(cmd) {
+	if hasInheritedAnnotation(cmd, bypassRootPreflightAnnotation) {
 		return nil
 	}
 	cfg, err := loadConfig(flags, env)
@@ -222,7 +222,7 @@ func validateCommandContext(cmd *cobra.Command, flags *rootFlags, env foundation
 	if _, err = foundation.ResolveBaseURL(flags.baseURL, env, cfg); err != nil {
 		return err
 	}
-	if commandRequiresCaller(cmd) {
+	if hasInheritedAnnotation(cmd, requiresCallerAnnotation) {
 		_, err = foundation.SelectCaller(flags.caller, env, cfg)
 		return err
 	}
@@ -257,8 +257,8 @@ func resolveCommandConfigPath(flags *rootFlags, env foundation.Env) (string, boo
 }
 
 // selectCallerWithID selects the command's local caller and requires its hosted caller_id.
-func selectCallerWithID(flags *rootFlags, env foundation.Env, cfg foundation.Config) (foundation.CallerConfig, error) {
-	selected, err := foundation.SelectCaller(flags.caller, env, cfg)
+func selectCallerWithID(name string, env foundation.Env, cfg foundation.Config) (foundation.CallerConfig, error) {
+	selected, err := foundation.SelectCaller(name, env, cfg)
 	if err != nil {
 		return foundation.CallerConfig{}, err
 	}
@@ -285,19 +285,13 @@ func newAPIClient(opts Options, baseURL string) foundation.APIClient {
 
 func parentCommand(use string, short string) *cobra.Command {
 	return &cobra.Command{
-		Use:           use,
-		Short:         short,
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   use,
+		Short: short,
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}
-}
-
-func callerRequiredParentCommand(use string, short string) *cobra.Command {
-	return requireCaller(parentCommand(use, short))
 }
 
 func requireCaller(cmd *cobra.Command) *cobra.Command {
@@ -310,18 +304,9 @@ func bypassRootPreflight(cmd *cobra.Command) *cobra.Command {
 	return cmd
 }
 
-func commandRequiresCaller(cmd *cobra.Command) bool {
+func hasInheritedAnnotation(cmd *cobra.Command, key string) bool {
 	for current := cmd; current != nil; current = current.Parent() {
-		if current.Annotations[requiresCallerAnnotation] == "true" {
-			return true
-		}
-	}
-	return false
-}
-
-func commandBypassesRootPreflight(cmd *cobra.Command) bool {
-	for current := cmd; current != nil; current = current.Parent() {
-		if current.Annotations[bypassRootPreflightAnnotation] == "true" {
+		if current.Annotations[key] == "true" {
 			return true
 		}
 	}

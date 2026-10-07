@@ -1450,6 +1450,28 @@ func TestAccountStatusUsesExistingLocalBearerCredential(t *testing.T) {
 	}
 }
 
+func TestDataPlaneFailsForWhitespaceOnlyStoredCredential(t *testing.T) {
+	configPath := writeDataPlaneCommandConfig(t, "https://app.example")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Execute(context.Background(), Options{
+		Args:        []string{"--config", configPath, "account", "status"},
+		Stdout:      &stdout,
+		Stderr:      &stderr,
+		Env:         foundation.Env{},
+		SecretStore: &dataPlaneSecretStore{keys: map[string]string{"caller_123": " \t\n "}},
+	})
+	if code != foundation.ExitSecretStore {
+		t.Fatalf("exit code = %d, want 74; stderr: %s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout should be empty: %s", stdout.String())
+	}
+	if got, want := stderr.String(), "secret_store_error: Local caller credential is empty; run agent-outbox caller rotate --caller <caller>.\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
 func TestDataPlaneUsesEnvironmentCredentialWithoutReadingFileStore(t *testing.T) {
 	const envCredential = "aob_live_key_123_environmentsecret"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
