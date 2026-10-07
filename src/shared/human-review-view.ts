@@ -1,3 +1,4 @@
+import { htmlTagStrippedText } from "./html-text.ts";
 import type { QueuePriority } from "./input-schema-rules.ts";
 
 export const HUMAN_REVIEW_VIEW_PARAM_KEYS = [
@@ -140,6 +141,32 @@ export function humanReviewMatchesFacets(
     (view.priorities.length === 0 || view.priorities.includes(row.priority)) &&
     (view.types.length === 0 || view.types.includes(row.rowType.display))
   );
+}
+
+// In-memory mirror of the production review search in `human-review.ts`:
+// same fields, same case-insensitive substring match over visible text. The
+// term is matched as given; callers that need trimming trim it first.
+export function humanReviewMatchesSearch(
+  row: {
+    titleHtml: string;
+    subtitleHtml: string;
+    summaryHtml: string;
+    callerItemId: string;
+    rowType: { display: string };
+    caller: { displayName: string };
+  },
+  search: string
+) {
+  const term = search.toLowerCase();
+  if (!term) return true;
+  return [
+    htmlTagStrippedText(row.titleHtml),
+    htmlTagStrippedText(row.subtitleHtml),
+    htmlTagStrippedText(row.summaryHtml),
+    row.callerItemId,
+    row.rowType.display,
+    row.caller.displayName
+  ].some((value) => value.toLowerCase().includes(term));
 }
 
 function parseHumanReviewView(

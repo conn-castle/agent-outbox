@@ -90,7 +90,9 @@ export function detailFromNormalizedSubmission(
 }
 
 function fixtureAction(action: NormalizedInputAction): HumanReviewAction {
-  const base = {
+  // Normalized input keeps popupKind and popupPayload in separate fields, so
+  // TypeScript cannot narrow them to the persisted popup union.
+  return {
     displayOrder: action.displayOrder,
     display: action.display,
     icon: action.icon,
@@ -99,57 +101,10 @@ function fixtureAction(action: NormalizedInputAction): HumanReviewAction {
     tone: action.tone,
     style: action.style,
     answerable: true,
-    options: action.options.map((option) => ({ ...option }))
-  };
-  switch (action.popupKind) {
-    case "none":
-      return { ...base, popupKind: "none", popupPayload: {} };
-    case "free_text":
-      return {
-        ...base,
-        popupKind: "free_text",
-        popupPayload: action.popupPayload as Extract<
-          HumanReviewAction,
-          { popupKind: "free_text" }
-        >["popupPayload"]
-      };
-    case "single_select":
-      return {
-        ...base,
-        popupKind: "single_select",
-        popupPayload: action.popupPayload as Extract<
-          HumanReviewAction,
-          { popupKind: "single_select" }
-        >["popupPayload"]
-      };
-    case "multi_select":
-      return {
-        ...base,
-        popupKind: "multi_select",
-        popupPayload: action.popupPayload as Extract<
-          HumanReviewAction,
-          { popupKind: "multi_select" }
-        >["popupPayload"]
-      };
-    case "date_picker":
-      return {
-        ...base,
-        popupKind: "date_picker",
-        popupPayload: action.popupPayload as Extract<
-          HumanReviewAction,
-          { popupKind: "date_picker" }
-        >["popupPayload"]
-      };
-    case "file_upload":
-      return {
-        ...base,
-        popupKind: "file_upload",
-        popupPayload: action.popupPayload as Extract<
-          HumanReviewAction,
-          { popupKind: "file_upload" }
-        >["popupPayload"]
-      };
-  }
+    options: action.options.map((option) => ({ ...option })),
+    popupKind: action.popupKind,
+    popupPayload: action.popupKind === "none" ? {} : action.popupPayload
+  } as HumanReviewAction;
 }
 
 function designUuid(seed: string) {

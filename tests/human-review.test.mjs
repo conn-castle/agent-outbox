@@ -1043,6 +1043,29 @@ test("browser fixture search collapses the same visible text as production", () 
   );
 });
 
+test("browser fixture search matches a direct term as given while parsed views trim it", () => {
+  const padded = "  fixture-page-005  ";
+  const direct = browserFixtureReviewPage(
+    { ...defaultHumanReviewView, search: padded },
+    { includePaginationRows: true }
+  );
+  assert.deepEqual(direct.rows, []);
+  const blank = browserFixtureReviewPage(
+    { ...defaultHumanReviewView, search: "   " },
+    { includePaginationRows: true }
+  );
+  assert.deepEqual(blank.rows, []);
+
+  const parsed = browserFixtureReviewPage(
+    humanReviewViewFromRecord({ search: padded }),
+    { includePaginationRows: true }
+  );
+  assert.deepEqual(
+    parsed.rows.map((row) => row.callerItemId),
+    ["fixture-page-005"]
+  );
+});
+
 test("browser fixture applies compound type then priority ordering", () => {
   const rows = browserFixtureReviewPage({
     ...defaultHumanReviewView,
