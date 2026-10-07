@@ -713,6 +713,64 @@ func TestAPIClientDownloadClassifiesDestinationWriteFailureAsLocalIO(t *testing.
 	}
 }
 
+// TestAPIClientDownloadRejectsUnusableErrorResponses guards returned metadata
+// updates when a decoded error envelope fails validation, while requiring both
+// error-body cases to leave the destination untouched.
+func TestAPIClientDownloadRejectsUnusableErrorResponses(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body              string
+		wantMessage       string
+		wantRequestID     string
+		wantCorrelationID string
+	}{
+		"non-JSON body": {
+			body:          "<html>bad gateway</html>",
+			wantMessage:   "Agent Outbox API returned a non-JSON file-download error response.",
+			wantRequestID: "req_header",
+		},
+		"unknown error code": {
+			body:              `{"ok":false,"request_id":"req_body","correlation_id":"corr_body","error":{"code":"not_a_code","message":"Nope."}}`,
+			wantMessage:       "Agent Outbox API error response does not contain a usable public error code and message.",
+			wantRequestID:     "req_body",
+			wantCorrelationID: "corr_body",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("X-Request-ID", "req_header")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+
+			dst := &countingWriter{}
+			meta, err := (APIClient{BaseURL: server.URL}).Download(context.Background(), "/api/output/out_1/files/file_1", "bearer-fixture", dst)
+			appErr, ok := err.(*AppError)
+			if !ok {
+				t.Fatalf("error type = %T, want *AppError", err)
+			}
+			if meta.HTTPStatus != http.StatusBadGateway || meta.RequestID != tc.wantRequestID || meta.CorrelationID != tc.wantCorrelationID {
+				t.Fatalf("response meta = %d/%q/%q, want %d/%q/%q", meta.HTTPStatus, meta.RequestID, meta.CorrelationID, http.StatusBadGateway, tc.wantRequestID, tc.wantCorrelationID)
+			}
+			if appErr.Code != CodeAPIResponseInvalid || appErr.Message != tc.wantMessage {
+				t.Fatalf("error = %q %q, want %q %q", appErr.Code, appErr.Message, CodeAPIResponseInvalid, tc.wantMessage)
+			}
+			if appErr.HTTPStatus != http.StatusBadGateway || appErr.RequestID != tc.wantRequestID {
+				t.Fatalf("error status/request id = %d/%q, want %d/%q", appErr.HTTPStatus, appErr.RequestID, http.StatusBadGateway, tc.wantRequestID)
+			}
+			if appErr.UpstreamErrorCode != "" || appErr.WriteOutcome != "" {
+				t.Fatalf("upstream code/write outcome = %q/%q, want omitted", appErr.UpstreamErrorCode, appErr.WriteOutcome)
+			}
+			if dst.bytes != 0 {
+				t.Fatalf("destination bytes = %d, want 0", dst.bytes)
+			}
+		})
+	}
+}
+
+// TestKnownAPIErrorCodesHaveExpectedHTTPStatuses keeps an explicit contract
+// table so recognized-code status expectations do not come from the mapping
+// under test.
 func TestKnownAPIErrorCodesHaveExpectedHTTPStatuses(t *testing.T) {
 	want := map[ErrorCode]int{
 		CodeInvalidRequest: http.StatusBadRequest, CodeInvalidJSON: http.StatusBadRequest,
@@ -735,9 +793,6 @@ func TestKnownAPIErrorCodesHaveExpectedHTTPStatuses(t *testing.T) {
 		t.Fatalf("status contract covers %d codes, want 27", len(want))
 	}
 	for code, status := range want {
-		if !knownAPIErrorCode(code) {
-			t.Errorf("knownAPIErrorCode(%q) = false", code)
-		}
 		if got := expectedHTTPStatus(code); got != status {
 			t.Errorf("expectedHTTPStatus(%q) = %d, want %d", code, got, status)
 		}

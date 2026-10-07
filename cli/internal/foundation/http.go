@@ -102,163 +102,59 @@ func (c APIClient) DoWrite(ctx context.Context, method string, apiPath string, b
 	return c.do(ctx, method, apiPath, bearerToken, body, out, writeRequest)
 }
 
+// do serves Do and DoWrite with Accept: application/json and closes the response
+// body. Metadata is nil on build or transport failures and remains available
+// when response decoding or validation fails.
 func (c APIClient) do(ctx context.Context, method string, apiPath string, bearerToken string, body any, out any, kind requestKind) (*APIResponse, error) {
-	base, err := normalizeBaseURL(c.BaseURL)
+	resp, responseMeta, err := c.send(ctx, method, apiPath, bearerToken, "application/json", body, kind)
 	if err != nil {
 		return nil, err
-	}
-	endpoint, err := joinBaseAndPath(base, apiPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var reader io.Reader
-	if raw, ok := body.(json.RawMessage); ok {
-		// Pre-encoded bodies are sent byte-for-byte; json.Marshal would compact
-		// and HTML-escape them, changing the size the caller already checked.
-		reader = bytes.NewReader(raw)
-	} else if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return nil, WrapConfigError("Could not encode API request JSON.", err)
-		}
-		reader = bytes.NewReader(data)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
-	if err != nil {
-		return nil, WrapConfigError("Could not build API request.", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	requestID := c.requestID()
-	req.Header.Set("X-Request-ID", requestID)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if bearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+bearerToken)
-	}
-
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return nil, requestFailure(&APIResponse{RequestID: requestID}, kind, err)
 	}
 	defer resp.Body.Close()
 
-	responseMeta := &APIResponse{
-		RequestID:         firstSafeDiagnosticID(resp.Header.Get("X-Request-ID"), requestID),
-		CorrelationID:     firstSafeDiagnosticID(resp.Header.Get("X-Correlation-ID")),
-		RetryAfterSeconds: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now()),
-		HTTPStatus:        resp.StatusCode,
-	}
-
-	data, oversized, err := readBodyWithLimit(resp.Body, maxJSONResponseBytes)
-	if err != nil {
-		return responseMeta, responseFailure(CodeAPIUnavailable, "Could not read Agent Outbox API response.", responseMeta, kind, err)
-	}
-	if oversized {
-		return responseMeta, responseFailure(CodeAPIResponseInvalid, "Agent Outbox API response exceeded the maximum size.", responseMeta, kind, nil)
-	}
-
-	var envelope apiEnvelope
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		return responseMeta, responseFailure(CodeAPIResponseInvalid, "Agent Outbox API returned a non-JSON response.", responseMeta, kind, err)
-	}
-	if safeDiagnosticID(envelope.RequestID) {
-		responseMeta.RequestID = envelope.RequestID
-	}
-	if safeDiagnosticID(envelope.CorrelationID) {
-		responseMeta.CorrelationID = envelope.CorrelationID
-	}
-
-	if err := validateEnvelope(&envelope, resp.StatusCode); err != nil {
-		return responseMeta, invalidEnvelopeFailure(&envelope, responseMeta, kind, err.Error())
-	}
-
-	if !*envelope.OK {
-		appErr := appErrorFromEnvelope(&envelope, responseMeta, kind)
+	envelope, appErr := decodeEnvelope(resp.Body, responseMeta, kind, "Agent Outbox API returned a non-JSON response.")
+	if appErr != nil {
 		return responseMeta, appErr
+	}
+	if !*envelope.OK {
+		return responseMeta, appErrorFromEnvelope(envelope, responseMeta, kind)
 	}
 	if _, ok := out.(*json.RawMessage); ok && !isNonEmptyJSONObject(envelope.Data) {
-		appErr := responseFailure(CodeAPIResponseInvalid, "Agent Outbox API response data is not a nonempty JSON object.", responseMeta, kind, nil)
-		if kind == writeRequest {
-			appErr.WriteOutcome = "accepted"
-		}
-		return responseMeta, appErr
+		return responseMeta, acceptedResponseFailure("Agent Outbox API response data is not a nonempty JSON object.", responseMeta, kind, nil)
 	}
 	if out != nil && len(envelope.Data) > 0 {
 		if err := json.Unmarshal(envelope.Data, out); err != nil {
-			appErr := responseFailure(CodeAPIResponseInvalid, "Could not decode Agent Outbox API response data.", responseMeta, kind, err)
-			if kind == writeRequest {
-				appErr.WriteOutcome = "accepted"
-			}
-			return responseMeta, appErr
+			return responseMeta, acceptedResponseFailure("Could not decode Agent Outbox API response data.", responseMeta, kind, err)
 		}
 	}
 	return responseMeta, nil
 }
 
+// Download fetches raw file bytes with Accept: */* and closes the response body.
+// Build or transport failures return nil metadata; decoded error-envelope IDs
+// update the returned metadata even when validation fails. Successful responses
+// are staged within the file-size limit before bytes are copied to dst.
 func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken string, dst io.Writer) (*DownloadResponse, error) {
-	base, err := normalizeBaseURL(c.BaseURL)
+	resp, responseMeta, err := c.send(ctx, http.MethodGet, apiPath, bearerToken, "*/*", nil, readRequest)
 	if err != nil {
 		return nil, err
-	}
-	endpoint, err := joinBaseAndPath(base, apiPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, WrapConfigError("Could not build API request.", err)
-	}
-	req.Header.Set("Accept", "*/*")
-	requestID := c.requestID()
-	req.Header.Set("X-Request-ID", requestID)
-	if bearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+bearerToken)
-	}
-
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return nil, requestFailure(&APIResponse{RequestID: requestID}, readRequest, err)
 	}
 	defer resp.Body.Close()
 
-	responseMeta := APIResponse{
-		RequestID:         firstSafeDiagnosticID(resp.Header.Get("X-Request-ID"), requestID),
-		CorrelationID:     firstSafeDiagnosticID(resp.Header.Get("X-Correlation-ID")),
-		RetryAfterSeconds: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now()),
-		HTTPStatus:        resp.StatusCode,
-	}
 	downloadMeta := &DownloadResponse{
-		APIResponse:   responseMeta,
+		APIResponse:   *responseMeta,
 		ContentType:   resp.Header.Get("Content-Type"),
 		ContentLength: resp.ContentLength,
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		data, oversized, readErr := readBodyWithLimit(resp.Body, maxJSONResponseBytes)
-		if readErr != nil {
-			return downloadMeta, responseFailure(CodeAPIUnavailable, "Could not read Agent Outbox API response.", &downloadMeta.APIResponse, readRequest, readErr)
+		envelope, appErr := decodeEnvelope(resp.Body, &downloadMeta.APIResponse, readRequest, "Agent Outbox API returned a non-JSON file-download error response.")
+		if appErr != nil {
+			return downloadMeta, appErr
 		}
-		if oversized {
-			return downloadMeta, responseFailure(CodeAPIResponseInvalid, "Agent Outbox API response exceeded the maximum size.", &downloadMeta.APIResponse, readRequest, nil)
-		}
-		var envelope apiEnvelope
-		if err := json.Unmarshal(data, &envelope); err != nil {
-			return downloadMeta, responseFailure(CodeAPIResponseInvalid, "Agent Outbox API returned a non-JSON file-download error response.", &downloadMeta.APIResponse, readRequest, err)
-		}
-		if safeDiagnosticID(envelope.RequestID) {
-			downloadMeta.RequestID = envelope.RequestID
-		}
-		if safeDiagnosticID(envelope.CorrelationID) {
-			downloadMeta.CorrelationID = envelope.CorrelationID
-		}
-		if err := validateEnvelope(&envelope, resp.StatusCode); err != nil {
-			return downloadMeta, invalidEnvelopeFailure(&envelope, &downloadMeta.APIResponse, readRequest, err.Error())
-		}
-		return downloadMeta, appErrorFromEnvelope(&envelope, &downloadMeta.APIResponse, readRequest)
+		// validateEnvelope rejects success envelopes on non-2xx statuses, so a
+		// decoded envelope here is always a valid error envelope.
+		return downloadMeta, appErrorFromEnvelope(envelope, &downloadMeta.APIResponse, readRequest)
 	}
 
 	if resp.ContentLength > maxOutputFileDownloadBytes {
@@ -291,6 +187,89 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 		return downloadMeta, responseFailure(CodeLocalIO, "Could not write output file bytes.", &downloadMeta.APIResponse, readRequest, err)
 	}
 	return downloadMeta, nil
+}
+
+// send builds and performs one request using accept, sending json.RawMessage
+// bodies unchanged and JSON-encoding other non-nil bodies. Content-Type is set
+// only for a non-nil body. On success it returns header-derived metadata and a
+// response whose body the caller must close. Build or transport failures return
+// nil response and metadata; transport errors retain the generated request ID.
+func (c APIClient) send(ctx context.Context, method string, apiPath string, bearerToken string, accept string, body any, kind requestKind) (*http.Response, *APIResponse, error) {
+	base, err := normalizeBaseURL(c.BaseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	endpoint, err := joinBaseAndPath(base, apiPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var reader io.Reader
+	if raw, ok := body.(json.RawMessage); ok {
+		// Pre-encoded bodies are sent byte-for-byte; json.Marshal would compact
+		// and HTML-escape them, changing the size the caller already checked.
+		reader = bytes.NewReader(raw)
+	} else if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, nil, WrapConfigError("Could not encode API request JSON.", err)
+		}
+		reader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		return nil, nil, WrapConfigError("Could not build API request.", err)
+	}
+	req.Header.Set("Accept", accept)
+	requestID := c.requestID()
+	req.Header.Set("X-Request-ID", requestID)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
+
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, nil, requestFailure(&APIResponse{RequestID: requestID}, kind, err)
+	}
+	return resp, &APIResponse{
+		RequestID:         firstSafeDiagnosticID(resp.Header.Get("X-Request-ID"), requestID),
+		CorrelationID:     firstSafeDiagnosticID(resp.Header.Get("X-Correlation-ID")),
+		RetryAfterSeconds: retryAfterSeconds(resp.Header.Get("Retry-After"), time.Now()),
+		HTTPStatus:        resp.StatusCode,
+	}, nil
+}
+
+// decodeEnvelope reads a bounded JSON envelope and validates it against
+// meta.HTTPStatus. After JSON decoding, safe body IDs update meta before
+// validation, so they survive validation failures. Read, size, and JSON errors
+// take precedence over envelope validation; the caller closes the body.
+func decodeEnvelope(body io.Reader, meta *APIResponse, kind requestKind, nonJSONMessage string) (*apiEnvelope, *AppError) {
+	data, oversized, err := readBodyWithLimit(body, maxJSONResponseBytes)
+	if err != nil {
+		return nil, responseFailure(CodeAPIUnavailable, "Could not read Agent Outbox API response.", meta, kind, err)
+	}
+	if oversized {
+		return nil, responseFailure(CodeAPIResponseInvalid, "Agent Outbox API response exceeded the maximum size.", meta, kind, nil)
+	}
+
+	var envelope apiEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, responseFailure(CodeAPIResponseInvalid, nonJSONMessage, meta, kind, err)
+	}
+	if safeDiagnosticID(envelope.RequestID) {
+		meta.RequestID = envelope.RequestID
+	}
+	if safeDiagnosticID(envelope.CorrelationID) {
+		meta.CorrelationID = envelope.CorrelationID
+	}
+	if err := validateEnvelope(&envelope, meta.HTTPStatus); err != nil {
+		return nil, invalidEnvelopeFailure(&envelope, meta, kind, err.Error())
+	}
+	return &envelope, nil
 }
 
 // httpClient returns the configured client with the CLI redirect safety policy
@@ -460,6 +439,9 @@ func appErrorFromEnvelope(envelope *apiEnvelope, meta *APIResponse, kind request
 	}
 }
 
+// validateEnvelope returns the first envelope-contract violation. Success
+// requires a 2xx status and non-null data; errors require safe diagnostic IDs,
+// a recognized public code, and its matching HTTP status.
 func validateEnvelope(envelope *apiEnvelope, status int) error {
 	if envelope.OK == nil {
 		return errors.New("Agent Outbox API response is missing the required ok field.")
@@ -485,7 +467,7 @@ func validateEnvelope(envelope *apiEnvelope, status int) error {
 	if len(envelope.Data) > 0 {
 		return errors.New("Agent Outbox API error response unexpectedly contains data.")
 	}
-	if !knownAPIErrorCode(envelope.Error.Code) || strings.TrimSpace(envelope.Error.Message) == "" {
+	if expectedHTTPStatus(envelope.Error.Code) == 0 || strings.TrimSpace(envelope.Error.Message) == "" {
 		return errors.New("Agent Outbox API error response does not contain a usable public error code and message.")
 	}
 	if envelope.Error.RetryAfterSeconds != nil && *envelope.Error.RetryAfterSeconds < 0 {
@@ -500,6 +482,8 @@ func validateEnvelope(envelope *apiEnvelope, status int) error {
 	return nil
 }
 
+// expectedHTTPStatus returns the public API status for code, or zero when code
+// is unrecognized. Envelope validation also uses this mapping to recognize codes.
 func expectedHTTPStatus(code ErrorCode) int {
 	switch code {
 	case CodeInvalidRequest, CodeInvalidJSON:
@@ -532,23 +516,6 @@ func expectedHTTPStatus(code ErrorCode) int {
 	}
 }
 
-func knownAPIErrorCode(code ErrorCode) bool {
-	switch code {
-	case CodeInvalidRequest, CodeInvalidJSON, CodeRequestTooLarge, CodeValidationFailed,
-		CodeUnsupportedIcon, CodeUnsafeHTML, CodeUnsafeColor, CodeInvalidActionResponse,
-		CodeUpgradeRequired, CodeAuthenticationRequired, CodeInvalidCallerCredentials,
-		CodeAuthorizationFailed, CodeNotFound, CodeCallerAlreadyExists,
-		CodePendingContentConflict, CodeAnsweredUnacknowledged, CodeInputNotPending,
-		CodeStaleInputRevision, CodeOutputAlreadyRead, CodeRateLimitExceeded,
-		CodeQuotaLimitExceeded, CodeStorageLimitExceeded, CodeRetentionLimitExceeded,
-		CodeBillingGraceExpired, CodeAuthorizationPending,
-		CodeTemporaryUnavailable, CodeInternalError:
-		return true
-	default:
-		return false
-	}
-}
-
 func responseFailure(code ErrorCode, message string, meta *APIResponse, kind requestKind, cause error) *AppError {
 	return &AppError{
 		Code:              code,
@@ -569,15 +536,26 @@ func NewAPIResponseInvalidError(message string, meta *APIResponse) *AppError {
 	return responseFailure(CodeAPIResponseInvalid, message, meta, readRequest, nil)
 }
 
+// acceptedResponseFailure reports unusable data after a validated success
+// envelope. Write errors report accepted; read errors omit the write outcome.
+func acceptedResponseFailure(message string, meta *APIResponse, kind requestKind, cause error) *AppError {
+	appErr := responseFailure(CodeAPIResponseInvalid, message, meta, kind, cause)
+	appErr.WriteOutcome = writeOutcome(kind, "accepted")
+	return appErr
+}
+
+// invalidEnvelopeFailure keeps response-invalid classification while retaining
+// safe partial error diagnostics. Writes with a 2xx status and ok:true report
+// accepted; other writes remain unknown, and reads omit the write outcome.
 func invalidEnvelopeFailure(envelope *apiEnvelope, meta *APIResponse, kind requestKind, message string) *AppError {
 	appErr := responseFailure(CodeAPIResponseInvalid, message, meta, kind, nil)
-	if kind == writeRequest && envelope.OK != nil && *envelope.OK && meta.HTTPStatus >= 200 && meta.HTTPStatus < 300 {
-		appErr.WriteOutcome = "accepted"
+	if envelope.OK != nil && *envelope.OK && meta.HTTPStatus >= 200 && meta.HTTPStatus < 300 {
+		appErr.WriteOutcome = writeOutcome(kind, "accepted")
 	}
 	if envelope.Error == nil {
 		return appErr
 	}
-	if knownAPIErrorCode(envelope.Error.Code) && strings.TrimSpace(envelope.Error.Message) != "" {
+	if expectedHTTPStatus(envelope.Error.Code) != 0 && strings.TrimSpace(envelope.Error.Message) != "" {
 		appErr.UpstreamErrorCode = envelope.Error.Code
 	}
 	if safeDiagnosticID(envelope.Error.ErrorID) {
@@ -606,6 +584,8 @@ func safePartialLimitMetadata(limit *LimitMetadata) *LimitMetadata {
 	return result
 }
 
+// writeOutcome keeps read errors free of write outcomes, even when response
+// handling classifies a failure as accepted or unknown.
 func writeOutcome(kind requestKind, outcome string) string {
 	if kind == writeRequest {
 		return outcome
