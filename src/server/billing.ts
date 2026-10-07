@@ -4,8 +4,9 @@ import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
 import {
   apiTemporaryUnavailable,
-  type ApiErrorInput,
-  type ApiRequestContext
+  isJsonRecord,
+  type ApiRequestContext,
+  type ApiResult
 } from "./api-errors.ts";
 import {
   runProductTransaction,
@@ -62,9 +63,6 @@ type AccountUpdateRow = {
   account_id: string | null;
 };
 
-export type BillingResult<TData> =
-  { ok: true; data: TData } | { ok: false; error: ApiErrorInput };
-
 export type BillingCheckoutData = {
   url: string;
 };
@@ -112,7 +110,7 @@ export function requiredBillingConfiguration(
 
 export function billingRuntimeConfig(
   surface: "checkout" | "portal" | "webhook" | "all" = "all"
-): BillingResult<BillingConfig> {
+): ApiResult<BillingConfig> {
   const missing =
     surface === "all"
       ? [
@@ -162,7 +160,7 @@ export function billingRuntimeConfig(
 
 export async function checkoutIntervalFromRequest(
   request: Request
-): Promise<BillingResult<BillingInterval>> {
+): Promise<ApiResult<BillingInterval>> {
   const body = await readJsonBodyWithLimit(request);
   if (!body.ok) {
     return body;
@@ -171,10 +169,8 @@ export async function checkoutIntervalFromRequest(
   return checkoutIntervalFromBody(body.value);
 }
 
-function checkoutIntervalFromBody(
-  body: unknown
-): BillingResult<BillingInterval> {
-  if (!isStripeRecord(body)) {
+function checkoutIntervalFromBody(body: unknown): ApiResult<BillingInterval> {
+  if (!isJsonRecord(body)) {
     return invalidBillingRequest(
       'Checkout request body must be a JSON object with interval "monthly" or "yearly".'
     );
@@ -190,20 +186,17 @@ export async function createCheckoutSessionForAccount(input: {
   context?: ApiRequestContext;
   config?: BillingConfig;
   stripe?: StripeClient;
-}): Promise<BillingResult<BillingCheckoutData>> {
+}): Promise<ApiResult<BillingCheckoutData>> {
   const intervalResult = checkoutIntervalFromValue(input.interval);
   if (!intervalResult.ok) {
     return intervalResult;
   }
 
-  const configResult = input.config
-    ? { ok: true as const, data: input.config }
-    : billingRuntimeConfig("checkout");
-  if (!configResult.ok) {
-    return configResult;
+  const runtime = billingRuntime("checkout", input);
+  if (!runtime.ok) {
+    return runtime;
   }
-  const config = configResult.data;
-  const stripe = input.stripe ?? stripeClient(config);
+  const { config, stripe } = runtime.data;
   const account = input.account;
   if (account.tier === "self_hosted") {
     return invalidBillingRequest("Self-hosted accounts do not use Stripe.");
@@ -252,15 +245,12 @@ export async function createBillingPortalSessionForAccount(input: {
   context?: ApiRequestContext;
   config?: BillingConfig;
   stripe?: StripeClient;
-}): Promise<BillingResult<BillingPortalData>> {
-  const configResult = input.config
-    ? { ok: true as const, data: input.config }
-    : billingRuntimeConfig("portal");
-  if (!configResult.ok) {
-    return configResult;
+}): Promise<ApiResult<BillingPortalData>> {
+  const runtime = billingRuntime("portal", input);
+  if (!runtime.ok) {
+    return runtime;
   }
-  const config = configResult.data;
-  const stripe = input.stripe ?? stripeClient(config);
+  const { config, stripe } = runtime.data;
   const account = input.account;
 
   if (!account.stripe_customer_id) {
@@ -300,15 +290,12 @@ export async function handleStripeWebhookRequest(
     now?: Date;
     runTransaction?: BillingTransactionRunner;
   }
-): Promise<BillingResult<BillingWebhookData>> {
-  const configResult = input.config
-    ? { ok: true as const, data: input.config }
-    : billingRuntimeConfig("webhook");
-  if (!configResult.ok) {
-    return configResult;
+): Promise<ApiResult<BillingWebhookData>> {
+  const runtime = billingRuntime("webhook", input);
+  if (!runtime.ok) {
+    return runtime;
   }
-  const config = configResult.data;
-  const stripe = input.stripe ?? stripeClient(config);
+  const { config, stripe } = runtime.data;
   const signature = request.headers.get("stripe-signature");
   if (!signature) {
     emitStripeWebhookWarning(context, {
@@ -365,21 +352,13 @@ export async function handleStripeWebhookRequest(
       (query) => processStripeEventInTransaction(query, event, input.now)
     );
   } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      request_id: context.requestId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
+    return billingRuntimeFailure(error, {
+      context,
+      requestId: context.requestId,
       operation: "stripe_webhook_processing",
-      message: "Stripe webhook processing failed unexpectedly."
+      message: "Stripe webhook processing failed unexpectedly.",
+      responseMessage: "Stripe webhook processing is temporarily unavailable."
     });
-    return apiTemporaryUnavailable(
-      "Stripe webhook processing is temporarily unavailable.",
-      { errorId: context.correlationId, reported: true }
-    );
   }
 
   if (outcome.status === "unapplied") {
@@ -548,28 +527,7 @@ export function checkoutCompletedAccountUpdateStatement(input: {
   eventCreatedAt: Date | null;
   eventReceiptOrder: string | null;
 }): TransactionContextStatement {
-  const orderingValues: string[] = [];
-  if (input.eventCreatedAt !== null && input.eventReceiptOrder !== null) {
-    orderingValues.push(
-      input.eventCreatedAt.toISOString(),
-      input.eventReceiptOrder
-    );
-  }
-  const orderingEnabled = orderingValues.length > 0;
-  const orderingAssignment = orderingEnabled
-    ? `stripe_last_event_created_at = $7,
-        stripe_last_event_receipt_order = $8,`
-    : "";
-  const orderingPredicate = orderingEnabled
-    ? `and (
-          stripe_last_event_created_at is null
-          or stripe_last_event_created_at < $7
-          or (
-            stripe_last_event_created_at = $7
-            and stripe_last_event_receipt_order <= $8
-          )
-        )`
-    : "";
+  const ordering = stripeEventOrderingClause(input, 7);
   return accountUpdateWithMatchStatement(
     {
       sql: `
@@ -583,10 +541,10 @@ export function checkoutCompletedAccountUpdateStatement(input: {
         stripe_price_id = coalesce($4, stripe_price_id),
         stripe_subscription_status = coalesce($5, stripe_subscription_status),
         stripe_current_period_end = $6,
-        ${orderingAssignment}
+        ${ordering.assignment}
         updated_at = now()
       where ${CHECKOUT_ACCOUNT_MATCH_PREDICATE}
-        ${orderingPredicate}
+        ${ordering.predicate}
       returning account_id::text as account_id
     `,
       values: [
@@ -596,11 +554,35 @@ export function checkoutCompletedAccountUpdateStatement(input: {
         input.priceId,
         input.subscriptionStatus,
         nullableTimestampValue(input.currentPeriodEnd),
-        ...orderingValues
+        ...ordering.values
       ]
     },
     CHECKOUT_ACCOUNT_MATCH_PREDICATE
   );
+}
+
+function stripeEventOrderingClause(
+  input: { eventCreatedAt: Date | null; eventReceiptOrder: string | null },
+  createdAtParam: number
+) {
+  if (input.eventCreatedAt === null || input.eventReceiptOrder === null) {
+    return { values: [], assignment: "", predicate: "" };
+  }
+  const createdAt = `$${createdAtParam}`;
+  const receiptOrder = `$${createdAtParam + 1}`;
+  return {
+    values: [input.eventCreatedAt.toISOString(), input.eventReceiptOrder],
+    assignment: `stripe_last_event_created_at = ${createdAt},
+        stripe_last_event_receipt_order = ${receiptOrder},`,
+    predicate: `and (
+          stripe_last_event_created_at is null
+          or stripe_last_event_created_at < ${createdAt}
+          or (
+            stripe_last_event_created_at = ${createdAt}
+            and stripe_last_event_receipt_order <= ${receiptOrder}
+          )
+        )`
+  };
 }
 
 export function subscriptionBillingUpdateStatement(input: {
@@ -615,28 +597,7 @@ export function subscriptionBillingUpdateStatement(input: {
   eventCreatedAt: Date | null;
   eventReceiptOrder: string | null;
 }): TransactionContextStatement {
-  const orderingValues: string[] = [];
-  if (input.eventCreatedAt !== null && input.eventReceiptOrder !== null) {
-    orderingValues.push(
-      input.eventCreatedAt.toISOString(),
-      input.eventReceiptOrder
-    );
-  }
-  const orderingEnabled = orderingValues.length > 0;
-  const orderingAssignment = orderingEnabled
-    ? `stripe_last_event_created_at = $9,
-        stripe_last_event_receipt_order = $10,`
-    : "";
-  const orderingPredicate = orderingEnabled
-    ? `and (
-          stripe_last_event_created_at is null
-          or stripe_last_event_created_at < $9
-          or (
-            stripe_last_event_created_at = $9
-            and stripe_last_event_receipt_order <= $10
-          )
-        )`
-    : "";
+  const ordering = stripeEventOrderingClause(input, 9);
   return accountUpdateWithMatchStatement(
     {
       sql: `
@@ -653,10 +614,10 @@ export function subscriptionBillingUpdateStatement(input: {
         stripe_price_id = coalesce($3, stripe_price_id),
         stripe_subscription_status = $4,
         stripe_current_period_end = $7,
-        ${orderingAssignment}
+        ${ordering.assignment}
         updated_at = now()
       where ${subscriptionAccountMatchPredicate(8)}
-        ${orderingPredicate}
+        ${ordering.predicate}
       returning account_id::text as account_id
     `,
       values: [
@@ -668,7 +629,7 @@ export function subscriptionBillingUpdateStatement(input: {
         nullableTimestampValue(input.graceEndsAt),
         nullableTimestampValue(input.currentPeriodEnd),
         input.accountId,
-        ...orderingValues
+        ...ordering.values
       ]
     },
     subscriptionAccountMatchPredicate(8)
@@ -719,7 +680,7 @@ async function applyCheckoutCompleted(
   eventCreatedAt: Date,
   eventReceiptOrder: string | null
 ): Promise<StripeEventOutcome> {
-  if (!isStripeRecord(session)) {
+  if (!isJsonRecord(session)) {
     return { status: "unapplied", reason: "invalid_object", accountId: null };
   }
   const accountId =
@@ -756,7 +717,7 @@ async function applySubscriptionEvent(
   eventReceiptOrder: string | null,
   now: Date
 ): Promise<StripeEventOutcome> {
-  if (!isStripeRecord(object)) {
+  if (!isJsonRecord(object)) {
     return { status: "unapplied", reason: "invalid_object", accountId: null };
   }
   const subscriptionId = stringValue(object.id);
@@ -802,7 +763,7 @@ async function applyInvoicePaymentFailed(
   eventReceiptOrder: string | null,
   now: Date
 ): Promise<StripeEventOutcome> {
-  if (!isStripeRecord(object)) {
+  if (!isJsonRecord(object)) {
     return { status: "unapplied", reason: "invalid_object", accountId: null };
   }
   const subscriptionId = invoiceSubscriptionId(object);
@@ -878,6 +839,23 @@ function billingTransitionForSubscription(
   return { billingStatus: "grace", graceEndsAt: graceEndsAt(now) };
 }
 
+function billingRuntime(
+  surface: "checkout" | "portal" | "webhook",
+  input: { config?: BillingConfig; stripe?: StripeClient }
+): ApiResult<{ config: BillingConfig; stripe: StripeClient }> {
+  const configResult = input.config
+    ? { ok: true as const, data: input.config }
+    : billingRuntimeConfig(surface);
+  if (!configResult.ok) {
+    return configResult;
+  }
+  const config = configResult.data;
+  return {
+    ok: true,
+    data: { config, stripe: input.stripe ?? stripeClient(config) }
+  };
+}
+
 function stripeClient(config: BillingConfig): StripeClient {
   return new Stripe(config.secretKey, {
     httpClient: Stripe.createFetchHttpClient(),
@@ -890,7 +868,7 @@ function hasLiveBillingState(status: BillingStatus) {
   return status === "active" || status === "grace" || status === "past_due";
 }
 
-function invalidBillingRequest(message: string): BillingResult<never> {
+function invalidBillingRequest(message: string): ApiResult<never> {
   return {
     ok: false,
     error: {
@@ -901,9 +879,7 @@ function invalidBillingRequest(message: string): BillingResult<never> {
   };
 }
 
-function checkoutIntervalFromValue(
-  value: unknown
-): BillingResult<BillingInterval> {
+function checkoutIntervalFromValue(value: unknown): ApiResult<BillingInterval> {
   if (value === "monthly" || value === "yearly") {
     return { ok: true, data: value };
   }
@@ -923,7 +899,7 @@ export function billingRuntimeFailure(
     message: string;
     responseMessage: string;
   }
-): BillingResult<never> {
+): ApiResult<never> {
   const errorId = input.context?.correlationId ?? input.requestId;
   reportRuntimeFailure(error, {
     errorId,
@@ -948,7 +924,7 @@ function stripeId(value: unknown): string | null {
   if (typeof value === "string") {
     return value;
   }
-  if (isStripeRecord(value)) {
+  if (isJsonRecord(value)) {
     return stringValue(value.id);
   }
   return null;
@@ -956,15 +932,15 @@ function stripeId(value: unknown): string | null {
 
 function subscriptionPriceId(subscription: Record<string, unknown>) {
   const items = recordValue(subscription, "items");
-  if (!isStripeRecord(items) || !Array.isArray(items.data)) {
+  if (!isJsonRecord(items) || !Array.isArray(items.data)) {
     return null;
   }
   const firstItem = items.data[0];
-  if (!isStripeRecord(firstItem)) {
+  if (!isJsonRecord(firstItem)) {
     return null;
   }
   const price = recordValue(firstItem, "price");
-  if (!isStripeRecord(price)) {
+  if (!isJsonRecord(price)) {
     return null;
   }
   return stringValue(price.id);
@@ -983,7 +959,7 @@ function subscriptionCurrentPeriodEnd(
     return subscriptionPeriodEnd;
   }
   const items = recordValue(subscription, "items");
-  if (!isStripeRecord(items) || !Array.isArray(items.data)) {
+  if (!isJsonRecord(items) || !Array.isArray(items.data)) {
     return null;
   }
   let earliest: Date | null = null;
@@ -1012,11 +988,7 @@ function invoiceSubscriptionId(invoice: Record<string, unknown>) {
 }
 
 function recordValue(record: unknown, key: string): unknown {
-  return isStripeRecord(record) ? record[key] : undefined;
-}
-
-function isStripeRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isJsonRecord(record) ? record[key] : undefined;
 }
 
 function stringValue(value: unknown): string | null {

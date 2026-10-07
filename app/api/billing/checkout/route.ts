@@ -1,8 +1,4 @@
-import {
-  apiErrorResponse,
-  apiRequestContext,
-  apiSuccessResponse
-} from "../../../../src/server/api-errors";
+import { respondToApiRequest } from "../../../../src/server/api-route";
 import {
   checkoutIntervalFromRequest,
   createCheckoutSessionForAccount
@@ -12,27 +8,26 @@ import { billingHumanSession } from "../../../../src/server/billing-session";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const context = apiRequestContext(request, "/api/billing/checkout");
-  const sessionResult = await billingHumanSession(context, "checkout");
-  if (!sessionResult.ok) {
-    return apiErrorResponse(context, sessionResult.error);
-  }
+  return respondToApiRequest(
+    request,
+    "/api/billing/checkout",
+    async (context) => {
+      const session = await billingHumanSession(context, "checkout");
+      if (!session.ok) {
+        return session;
+      }
 
-  const intervalResult = await checkoutIntervalFromRequest(request);
-  if (!intervalResult.ok) {
-    return apiErrorResponse(context, intervalResult.error);
-  }
+      const interval = await checkoutIntervalFromRequest(request);
+      if (!interval.ok) {
+        return interval;
+      }
 
-  const result = await createCheckoutSessionForAccount({
-    account: sessionResult.data.account,
-    requestId: context.requestId,
-    interval: intervalResult.data,
-    context
-  });
-
-  if (!result.ok) {
-    return apiErrorResponse(context, result.error);
-  }
-
-  return apiSuccessResponse(context, result.data);
+      return createCheckoutSessionForAccount({
+        account: session.data.account,
+        requestId: context.requestId,
+        interval: interval.data,
+        context
+      });
+    }
+  );
 }

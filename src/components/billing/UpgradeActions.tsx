@@ -26,30 +26,19 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
     };
   }
 
-  async function startCheckout(interval: BillingInterval) {
-    const settle = schedulePending(interval);
+  async function startBilling(action: BillingAction) {
+    const settle = schedulePending(action);
     try {
-      const response = await fetch("/api/billing/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interval })
-      });
-      await handleBillingResponse(response);
-    } catch (caught) {
-      settle();
-      setPending(null);
-      setError(
-        caught instanceof Error ? caught.message : "Billing action failed."
+      const response = await fetch(
+        action === "portal" ? "/api/billing/portal" : "/api/billing/checkout",
+        action === "portal"
+          ? { method: "POST" }
+          : {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ interval: action })
+            }
       );
-    }
-  }
-
-  async function startPortal() {
-    const settle = schedulePending("portal");
-    try {
-      const response = await fetch("/api/billing/portal", {
-        method: "POST"
-      });
       await handleBillingResponse(response);
     } catch (caught) {
       settle();
@@ -89,7 +78,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
         <button
           className="billing-option"
           type="button"
-          onClick={() => void startCheckout("monthly")}
+          onClick={() => void startBilling("monthly")}
           disabled={pending !== null}
           data-immediate-action-label="Starting..."
           aria-label={
@@ -115,7 +104,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
         <button
           className="billing-option featured"
           type="button"
-          onClick={() => void startCheckout("yearly")}
+          onClick={() => void startBilling("yearly")}
           disabled={pending !== null}
           data-immediate-action-label="Starting..."
           aria-label={
@@ -150,7 +139,7 @@ export function UpgradeActions({ canOpenPortal }: { canOpenPortal: boolean }) {
           <button
             className="button secondary"
             type="button"
-            onClick={() => void startPortal()}
+            onClick={() => void startBilling("portal")}
             disabled={pending !== null}
             data-immediate-action-label="Opening..."
           >
