@@ -372,7 +372,7 @@ for (const { label, env = [], override, rejection } of [
         : undefined,
     rejection: {
       message:
-        /^https:\/\/app\.agent-outbox\.dev\/api\/runtime\/error returned 200\n/,
+        /^https:\/\/app\.agent-outbox\.dev\/api\/runtime\/error returned 200(?:\n|$)/,
       actual: 200,
       expected: 500,
       operator: "strictEqual"
@@ -387,7 +387,7 @@ for (const { label, env = [], override, rejection } of [
         : undefined,
     rejection: {
       message:
-        /^\/api\/runtime\/error did not return the structured error canary\n/,
+        /^\/api\/runtime\/error did not return the structured error canary(?:\n|$)/,
       actual: "other_code",
       expected: "structured_error_canary",
       operator: "strictEqual"
@@ -430,7 +430,7 @@ for (const { label, env = [], override, rejection } of [
         : undefined,
     rejection: {
       message:
-        /^https:\/\/app\.agent-outbox\.dev\/api\/runtime\/caller-auth returned 200\n/,
+        /^https:\/\/app\.agent-outbox\.dev\/api\/runtime\/caller-auth returned 200(?:\n|$)/,
       actual: 200,
       expected: 401,
       operator: "strictEqual"
@@ -445,7 +445,7 @@ for (const { label, env = [], override, rejection } of [
         : undefined,
     rejection: {
       message:
-        /^https:\/\/app\.agent-outbox\.dev\/api\/runtime\/caller-auth returned code=wrong_code\n/,
+        /^https:\/\/app\.agent-outbox\.dev\/api\/runtime\/caller-auth returned code=wrong_code(?:\n|$)/,
       actual: "wrong_code",
       expected: "missing_authorization",
       operator: "strictEqual"
@@ -460,7 +460,7 @@ for (const { label, env = [], override, rejection } of [
         : undefined,
     rejection: {
       message:
-        /^https:\/\/app\.agent-outbox\.dev\/api\/runtime\/canary returned ok=false\n/,
+        /^https:\/\/app\.agent-outbox\.dev\/api\/runtime\/canary returned ok=false(?:\n|$)/,
       actual: false,
       expected: true,
       operator: "strictEqual"
@@ -478,7 +478,7 @@ for (const { label, env = [], override, rejection } of [
         : undefined,
     rejection: {
       message:
-        /^\/api\/runtime\/canary did not report the expected deployed release\n/,
+        /^\/api\/runtime\/canary did not report the expected deployed release(?:\n|$)/,
       actual: "previous-sha",
       expected: "expected-sha",
       operator: "strictEqual"
@@ -500,7 +500,7 @@ for (const { label, env = [], override, rejection } of [
         : undefined,
     rejection: {
       message:
-        /^\/api\/runtime\/database did not prove the human review query\n/,
+        /^\/api\/runtime\/database did not prove the human review query(?:\n|$)/,
       expected: true,
       operator: "strictEqual"
     }
