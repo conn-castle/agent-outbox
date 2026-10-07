@@ -1,5 +1,4 @@
-import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import { readOptionalEnvFile } from "./dotenv.mjs";
 import {
@@ -9,15 +8,9 @@ import {
   runChecksCli,
   safeErrorMessage
 } from "./hosted-checks.mjs";
-import {
-  RUNTIME_SMOKE_HEADERS,
-  assertRuntimeCanaryEnvironment,
-  assertRuntimeDatabaseCanary,
-  assertRuntimeErrorCanary,
-  assertRuntimeSentryCanary
-} from "./runtime-smoke.mjs";
+import { ROOT } from "./repo-root.mjs";
+import { runtimeProbes } from "./runtime-smoke.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENV_FILE_NAME = "AGENT_OUTBOX_HOSTED_HEALTH_ENV_FILE";
 const FALLBACK_ENV_FILE_NAME = "AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -95,115 +88,14 @@ export async function runHostedHealthChecks(env, options = {}) {
     ];
   }
 
-  const authHeaders = { Authorization: `Bearer ${token}` };
   const checks = [];
-  /** @type {unknown} */
-  let runtimeAppEnv;
-
-  checks.push(
-    await pageCheck(fetchImpl, baseUrl, "/sign-in", "app", timeoutMs)
-  );
-  checks.push(
-    await pageCheck(fetchImpl, baseUrl, "/sign-out", "auth", timeoutMs)
-  );
-  checks.push(
-    await pageCheck(fetchImpl, baseUrl, "/human", "human_queue", timeoutMs)
-  );
-  checks.push(
-    await jsonCheck(fetchImpl, baseUrl, "/api/runtime/canary", "runtime", {
-      headers: authHeaders,
-      timeoutMs,
-      validate: (body) => {
-        runtimeAppEnv = body.environment?.appEnv;
-        assertRuntimeCanaryEnvironment(body, undefined);
-      }
-    })
-  );
-  checks.push(
-    await errorCodeCheck(
-      fetchImpl,
-      baseUrl,
-      "/api/runtime/caller-auth",
-      "caller_api_rejects_missing_auth",
-      401,
-      "missing_authorization",
-      { timeoutMs }
-    )
-  );
-  checks.push(
-    await errorCodeCheck(
-      fetchImpl,
-      baseUrl,
-      "/api/runtime/caller-auth",
-      "caller_api_rejects_invalid_auth",
-      403,
-      "invalid_bearer_token",
-      { headers: { Authorization: "Bearer invalid" }, timeoutMs }
-    )
-  );
-  checks.push(
-    await jsonCheck(
-      fetchImpl,
-      baseUrl,
-      "/api/runtime/caller-auth",
-      "caller_api_accepts_smoke_auth",
-      { headers: authHeaders, timeoutMs }
-    )
-  );
-  checks.push(
-    await errorCodeCheck(
-      fetchImpl,
-      baseUrl,
-      "/api/runtime/database",
-      "database_rejects_missing_auth",
-      401,
-      "missing_authorization",
-      { timeoutMs }
-    )
-  );
-  checks.push(
-    await jsonCheck(fetchImpl, baseUrl, "/api/runtime/database", "database", {
-      headers: authHeaders,
-      timeoutMs,
-      validate: (body) => assertRuntimeDatabaseCanary(body)
-    })
-  );
-  checks.push(
-    await jsonCheck(fetchImpl, baseUrl, "/api/runtime/log", "logs", {
-      headers: authHeaders,
-      timeoutMs
-    })
-  );
-  checks.push(
-    await jsonCheck(fetchImpl, baseUrl, "/api/runtime/scheduled", "cleanup", {
-      method: "POST",
-      headers: authHeaders,
-      timeoutMs
-    })
-  );
-  checks.push(
-    await jsonCheck(fetchImpl, baseUrl, "/api/runtime/sentry", "sentry", {
-      method: "POST",
-      headers: { ...RUNTIME_SMOKE_HEADERS, ...authHeaders },
-      timeoutMs,
-      validate: (body) => assertRuntimeSentryCanary(body, runtimeAppEnv)
-    })
-  );
-  checks.push(
-    await errorCodeCheck(
-      fetchImpl,
-      baseUrl,
-      "/api/runtime/error",
-      "error_correlation",
-      500,
-      "structured_error_canary",
-      {
-        headers: { ...RUNTIME_SMOKE_HEADERS, ...authHeaders },
-        timeoutMs,
-        validate: assertRuntimeErrorCanary
-      }
-    )
-  );
+  for (const probe of runtimeProbes({
+    token,
+    invalidToken: "invalid",
+    requireErrorCanaryEnvelope: true
+  })) {
+    checks.push(await probeCheck(fetchImpl, baseUrl, probe, timeoutMs));
+  }
 
   for (const evidence of OPERATOR_EVIDENCE) {
     checks.push(evidenceCheck(env, evidence));
@@ -213,136 +105,95 @@ export async function runHostedHealthChecks(env, options = {}) {
 }
 
 /**
+ * Sends one probe and reports its outcome as a named check.
+ *
  * @param {typeof fetch} fetchImpl
  * @param {string} baseUrl
- * @param {string} pathname
- * @param {string} name
+ * @param {import("./runtime-smoke.mjs").RuntimeProbe} probe
  * @param {number} timeoutMs
  */
-async function pageCheck(fetchImpl, baseUrl, pathname, name, timeoutMs) {
+async function probeCheck(fetchImpl, baseUrl, probe, timeoutMs) {
+  const { name, path: pathname, expect } = probe;
   const url = new URL(pathname, baseUrl);
-  try {
-    const response = await fetchImpl(url, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-    if (response.status >= 200 && response.status < 400) {
-      return check(name, "pass", "reachable", `${pathname} is reachable`, {
-        status_code: response.status
+
+  if (expect === "page") {
+    try {
+      const response = await fetchImpl(url, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(timeoutMs)
       });
-    }
-    return check(name, "fail", "unexpected_status", `${pathname} failed`, {
-      status_code: response.status
-    });
-  } catch (error) {
-    return check(name, "fail", "request_failed", safeErrorMessage(error));
-  }
-}
-
-/**
- * @param {typeof fetch} fetchImpl
- * @param {string} baseUrl
- * @param {string} pathname
- * @param {string} name
- * @param {{
- *   method?: string,
- *   headers?: Record<string, string>,
- *   timeoutMs: number,
- *   validate?: (body: Record<string, any>) => void
- * }} options
- */
-async function jsonCheck(fetchImpl, baseUrl, pathname, name, options) {
-  const url = new URL(pathname, baseUrl);
-  return fetchJsonCheck(
-    name,
-    () =>
-      fetchImpl(url, {
-        method: options.method,
-        headers: options.headers,
-        signal: AbortSignal.timeout(options.timeoutMs)
-      }),
-    `${pathname} returned a non-JSON response`,
-    (response, body) => {
-      if (response.ok && body.ok === true) {
-        const invalid = validationFailure(options.validate, body);
-        if (invalid) {
-          return check(name, "fail", "unexpected_response", invalid, {
-            status_code: response.status
-          });
-        }
-        return check(
-          name,
-          "pass",
-          String(body.code ?? "ok"),
-          `${pathname} ok`,
-          { status_code: response.status }
-        );
-      }
-      return check(
-        name,
-        "fail",
-        responseCode(body, "unexpected_response"),
-        `${pathname} returned an unexpected response`,
-        { status_code: response.status }
-      );
-    }
-  );
-}
-
-/**
- * @param {typeof fetch} fetchImpl
- * @param {string} baseUrl
- * @param {string} pathname
- * @param {string} name
- * @param {number} status
- * @param {string} code
- * @param {{
- *   headers?: Record<string, string>,
- *   timeoutMs: number,
- *   validate?: (body: Record<string, any>) => void
- * }} options
- */
-async function errorCodeCheck(
-  fetchImpl,
-  baseUrl,
-  pathname,
-  name,
-  status,
-  code,
-  options
-) {
-  const url = new URL(pathname, baseUrl);
-  return fetchJsonCheck(
-    name,
-    () =>
-      fetchImpl(url, {
-        headers: options.headers,
-        signal: AbortSignal.timeout(options.timeoutMs)
-      }),
-    `${pathname} returned a non-JSON response`,
-    (response, body) => {
-      if (
-        response.status === status &&
-        body.ok === false &&
-        body.code === code
-      ) {
-        const invalid = validationFailure(options.validate, body);
-        if (invalid) {
-          return check(name, "fail", "unexpected_response", invalid, {
-            status_code: response.status
-          });
-        }
-        return check(name, "pass", code, `${pathname} rejected as expected`, {
+      if (response.status >= 200 && response.status < 400) {
+        return check(name, "pass", "reachable", `${pathname} is reachable`, {
           status_code: response.status
         });
       }
-      return check(
-        name,
-        "fail",
-        responseCode(body, "unexpected_response"),
-        `${pathname} did not return ${code}`,
-        { status_code: response.status }
-      );
+      return check(name, "fail", "unexpected_status", `${pathname} failed`, {
+        status_code: response.status
+      });
+    } catch (error) {
+      return check(name, "fail", "request_failed", safeErrorMessage(error));
+    }
+  }
+
+  return fetchJsonCheck(
+    name,
+    () =>
+      fetchImpl(
+        url,
+        expect === "ok"
+          ? {
+              method: probe.method,
+              headers: probe.headers,
+              signal: AbortSignal.timeout(timeoutMs)
+            }
+          : { headers: probe.headers, signal: AbortSignal.timeout(timeoutMs) }
+      ),
+    `${pathname} returned a non-JSON response`,
+    (response, body) => {
+      const details = { status_code: response.status };
+      const matched =
+        expect === "ok"
+          ? response.ok && body.ok === true
+          : response.status === expect.status &&
+            (expect.code === undefined ||
+              (body.ok === false && body.code === expect.code));
+      if (!matched) {
+        return check(
+          name,
+          "fail",
+          responseCode(body, "unexpected_response"),
+          expect === "ok"
+            ? `${pathname} returned an unexpected response`
+            : `${pathname} did not return ${expect.code ?? expect.status}`,
+          details
+        );
+      }
+      try {
+        probe.validate?.(body);
+      } catch (error) {
+        return check(
+          name,
+          "fail",
+          "unexpected_response",
+          safeErrorMessage(error),
+          details
+        );
+      }
+      return expect === "ok"
+        ? check(
+            name,
+            "pass",
+            String(body.code ?? "ok"),
+            `${pathname} ok`,
+            details
+          )
+        : check(
+            name,
+            "pass",
+            expect.code ?? String(body.code),
+            `${pathname} rejected as expected`,
+            details
+          );
     }
   );
 }
@@ -367,22 +218,6 @@ function evidenceCheck(env, evidence) {
     evidence.code,
     evidence.message
   );
-}
-
-/**
- * Runs a shared runtime-smoke assertion and returns its message when it fails.
- *
- * @param {((body: Record<string, any>) => void) | undefined} validate
- * @param {Record<string, unknown>} body
- * @returns {string | null}
- */
-function validationFailure(validate, body) {
-  try {
-    validate?.(body);
-    return null;
-  } catch (error) {
-    return safeErrorMessage(error);
-  }
 }
 
 if (
