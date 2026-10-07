@@ -11,32 +11,23 @@ import {
   type LimitProfileSelector
 } from "./limits.ts";
 import {
+  CARD_VISUAL_KINDS,
+  POPUP_KINDS,
+  QUEUE_PRIORITIES,
+  isOneOf,
   isHttpUrl,
   isSupportedColor,
   SUPPORTED_ACTION_STYLES,
   SUPPORTED_ACTION_TONES,
   SUPPORTED_COLORS,
-  SUPPORTED_LUCIDE_ICON_NAMES
+  SUPPORTED_LUCIDE_ICON_NAMES,
+  type ActionStyle,
+  type ActionTone,
+  type PopupKind,
+  type QueuePriority
 } from "../shared/input-schema-rules.ts";
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
-import {
-  InputDeleteSchema,
-  InputSubmissionSchema,
-  publicInputDeleteShapeMatches,
-  publicInputSubmissionShapeMatches,
-  publicSchemaFieldErrors
-} from "../shared/public-api-contract.ts";
-
-export type QueuePriority = "low" | "normal" | "high" | "urgent";
-export type PopupKind =
-  | "none"
-  | "free_text"
-  | "single_select"
-  | "multi_select"
-  | "date_picker"
-  | "file_upload";
-export type ActionTone = (typeof SUPPORTED_ACTION_TONES)[number];
-export type ActionStyle = (typeof SUPPORTED_ACTION_STYLES)[number];
+import { publicSchemaMismatch } from "../shared/public-api-contract.ts";
 
 export type NormalizedInputSubmission = {
   callerItemId: string;
@@ -169,20 +160,6 @@ export type InputSubmissionParseResult =
 export type InputDeleteParseResult =
   { ok: true; callerItemId: string } | { ok: false; error: ApiErrorInput };
 
-export const QUEUE_PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
-export const CARD_VISUAL_KINDS = new Set([
-  "numeric_bar",
-  "pill",
-  "progress_ring"
-]);
-export const POPUP_KINDS = new Set([
-  "none",
-  "free_text",
-  "single_select",
-  "multi_select",
-  "date_picker",
-  "file_upload"
-]);
 const MAX_LINK_BUTTONS = 32;
 const MAX_ACTIONS = 32;
 const MAX_SELECT_OPTIONS = 64;
@@ -192,10 +169,6 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const UTC_DATETIME_PATTERN =
   /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/;
 export { isSupportedColor, SUPPORTED_COLORS, SUPPORTED_LUCIDE_ICON_NAMES };
-
-const SUPPORTED_LUCIDE_ICONS = new Set<string>(SUPPORTED_LUCIDE_ICON_NAMES);
-export const ACTION_TONES = new Set<string>(SUPPORTED_ACTION_TONES);
-export const ACTION_STYLES = new Set<string>(SUPPORTED_ACTION_STYLES);
 
 const ALLOWED_HTML_ELEMENTS = new Set([
   "p",
@@ -251,17 +224,13 @@ export function parseInputDeleteBody(value: unknown): InputDeleteParseResult {
     return { ok: false, error: validationError(fields) };
   }
 
-  if (!publicInputDeleteShapeMatches(value)) {
-    return {
-      ok: false,
-      error: validationError(
-        publicSchemaFieldErrors(
-          InputDeleteSchema,
-          value,
-          "Request does not match the public input-delete contract."
-        )
-      )
-    };
+  const mismatch = publicSchemaMismatch(
+    "InputDelete",
+    value,
+    "Request does not match the public input-delete contract."
+  );
+  if (mismatch) {
+    return { ok: false, error: validationError(mismatch) };
   }
 
   return { ok: true, callerItemId };
@@ -299,7 +268,7 @@ export function parseInputSubmission(
     QUEUE_PRIORITIES,
     fields,
     "priority"
-  ) as QueuePriority;
+  );
   const rowType = parseRowType(value.row_type, fields, "row_type");
   const rowAccentColor = optionalColor(
     value.row_accent_color,
@@ -326,21 +295,17 @@ export function parseInputSubmission(
     (action) => action.popupKind === "file_upload"
   );
 
-  if (fields.length > 0) {
+  if (fields.length > 0 || priority === null) {
     return { ok: false, error: validationError(fields) };
   }
 
-  if (!publicInputSubmissionShapeMatches(value)) {
-    return {
-      ok: false,
-      error: validationError(
-        publicSchemaFieldErrors(
-          InputSubmissionSchema,
-          value,
-          "Request does not match the public input-submission contract."
-        )
-      )
-    };
+  const mismatch = publicSchemaMismatch(
+    "InputSubmission",
+    value,
+    "Request does not match the public input-submission contract."
+  );
+  if (mismatch) {
+    return { ok: false, error: validationError(mismatch) };
   }
 
   if (
@@ -661,16 +626,25 @@ function parseActionAppearance(
   }
 
   const tone = hasTone
-    ? requiredEnum(value, "tone", ACTION_TONES, fields, `${path}.tone`)
+    ? requiredEnum(
+        value,
+        "tone",
+        SUPPORTED_ACTION_TONES,
+        fields,
+        `${path}.tone`
+      )
     : null;
   const style = hasStyle
-    ? requiredEnum(value, "style", ACTION_STYLES, fields, `${path}.style`)
+    ? requiredEnum(
+        value,
+        "style",
+        SUPPORTED_ACTION_STYLES,
+        fields,
+        `${path}.style`
+      )
     : null;
 
-  return {
-    tone: tone ? (tone as ActionTone) : null,
-    style: style ? (style as ActionStyle) : null
-  };
+  return { tone, style };
 }
 
 function parsePopup(value: unknown, fields: ApiFieldError[], path: string) {
@@ -885,10 +859,10 @@ function parseDatePickerPopup(
   const mode = requiredEnum(
     value,
     "mode",
-    new Set(["date", "datetime"]),
+    ["date", "datetime"] as const,
     fields,
     `${path}.mode`
-  ) as "date" | "datetime";
+  );
   const displayTimezone = optionalString(
     value.display_timezone,
     fields,
@@ -930,16 +904,23 @@ function parseDatePickerPopup(
     );
   }
 
+  const label = requiredString(value, "label", fields, `${path}.label`);
+  const placeholder = optionalString(
+    value.placeholder,
+    fields,
+    `${path}.placeholder`
+  );
+  if (mode === null) {
+    const payload: Record<string, never> = {};
+    return { kind: "none" as const, payload, options: [] };
+  }
+
   return {
     kind: "date_picker" as const,
     payload: {
-      label: requiredString(value, "label", fields, `${path}.label`),
+      label,
       mode,
-      placeholder: optionalString(
-        value.placeholder,
-        fields,
-        `${path}.placeholder`
-      ),
+      placeholder,
       display_timezone: displayTimezone,
       min_value: minValue,
       max_value: maxValue
@@ -1202,31 +1183,31 @@ function optionalBoolean(
   return requiredBoolean(source, key, fields, path);
 }
 
-function requiredEnum(
+function requiredEnum<const T extends string>(
   source: Record<string, unknown>,
   key: string,
-  values: Set<string>,
+  values: readonly T[],
   fields: ApiFieldError[],
   path: string
-) {
+): T | null {
   const value = source[key];
-  if (typeof value !== "string" || !values.has(value)) {
+  if (!isOneOf(values, value)) {
     fields.push(
       fieldError(path, "invalid_enum", `${path} has an unsupported value.`)
     );
-    return "";
+    return null;
   }
   return value;
 }
 
-function optionalEnum(
+function optionalEnum<const T extends string>(
   source: Record<string, unknown>,
   key: string,
-  fallback: string,
-  values: Set<string>,
+  fallback: T,
+  values: readonly T[],
   fields: ApiFieldError[],
   path: string
-) {
+): T | null {
   if (!(key in source) || source[key] == null) {
     return fallback;
   }
@@ -1308,7 +1289,7 @@ function validateIcon(
   if (value == null && optional) {
     return null;
   }
-  if (typeof value !== "string" || !SUPPORTED_LUCIDE_ICONS.has(value)) {
+  if (!isOneOf(SUPPORTED_LUCIDE_ICON_NAMES, value)) {
     fields.push(
       fieldError(
         path,
@@ -1537,7 +1518,7 @@ function optionalColor(value: unknown, fields: ApiFieldError[], path: string) {
 
 function optionalDatePickerValue(
   value: unknown,
-  mode: "date" | "datetime",
+  mode: "date" | "datetime" | null,
   fields: ApiFieldError[],
   path: string
 ) {
@@ -1615,7 +1596,7 @@ export function compareUtcDateTimeValues(left: string, right: string) {
 function compareDatePickerValues(
   left: string,
   right: string,
-  mode: "date" | "datetime"
+  mode: "date" | "datetime" | null
 ) {
   if (mode === "date") {
     return left.localeCompare(right);

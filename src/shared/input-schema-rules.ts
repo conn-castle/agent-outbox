@@ -1,3 +1,31 @@
+export const QUEUE_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+
+export const POPUP_KINDS = [
+  "none",
+  "free_text",
+  "single_select",
+  "multi_select",
+  "date_picker",
+  "file_upload"
+] as const;
+
+export const CARD_VISUAL_KINDS = [
+  "numeric_bar",
+  "pill",
+  "progress_ring"
+] as const;
+
+export type QueuePriority = (typeof QUEUE_PRIORITIES)[number];
+export type PopupKind = (typeof POPUP_KINDS)[number];
+
+export function isOneOf<const T extends string>(
+  values: readonly T[],
+  value: unknown
+): value is T {
+  const strings: readonly string[] = values;
+  return typeof value === "string" && strings.includes(value);
+}
+
 export const SUPPORTED_LUCIDE_ICON_NAMES = [
   "archive",
   "at-sign",
@@ -31,6 +59,9 @@ export const SUPPORTED_ACTION_TONES = [
 ] as const;
 
 export const SUPPORTED_ACTION_STYLES = ["solid", "outline", "ghost"] as const;
+
+export type ActionTone = (typeof SUPPORTED_ACTION_TONES)[number];
+export type ActionStyle = (typeof SUPPORTED_ACTION_STYLES)[number];
 
 export const SUPPORTED_COLORS = [
   "red",

@@ -32,8 +32,6 @@ import {
 } from "../src/server/input-schema.ts";
 import {
   PUBLIC_API_EXAMPLES,
-  publicCanonicalRawInputShapeMatches,
-  publicInputSubmissionShapeMatches,
   publicSchemaMatches
 } from "../src/shared/public-api-contract.ts";
 import {
@@ -232,9 +230,12 @@ test("canonical reconstruction restores nested variants, defaults, and public sh
   assert.equal(result.input.status, "pending");
   assert.equal(result.input.revision, 1);
   assert.equal(result.input.answered_at, null);
-  assert.equal(publicInputSubmissionShapeMatches(result.input.raw_input), true);
   assert.equal(
-    publicCanonicalRawInputShapeMatches(result.input.raw_input),
+    publicSchemaMatches("InputSubmission", result.input.raw_input),
+    true
+  );
+  assert.equal(
+    publicSchemaMatches("CanonicalRawInput", result.input.raw_input),
     true
   );
   assert.equal("extra_unknown_property" in result.input.raw_input, false);
@@ -425,6 +426,49 @@ test("fingerprint mismatch and public-schema failure are temporary_unavailable",
   assert.equal(schemaFailure.error.status, 503);
 });
 
+test("canonical input fails closed on unknown stored enum values", () => {
+  const submission = parseValid();
+  const [action] = submission.actions;
+  /** @type {Record<string, any>} */
+  const invalidSubmissions = {
+    priority: { ...submission, priority: "critical" },
+    "card visual kind": {
+      ...submission,
+      cardVisual: { ...submission.cardVisual, kind: "gauge" }
+    },
+    "popup kind": { ...submission, actions: [{ ...action, popupKind: "x" }] },
+    "action tone": { ...submission, actions: [{ ...action, tone: "x" }] },
+    "action style": { ...submission, actions: [{ ...action, style: "x" }] }
+  };
+  for (const [label, invalid] of Object.entries(invalidSubmissions)) {
+    // Re-fingerprint the invalid content so the 503 comes from stored-value
+    // validation, not from a fingerprint mismatch.
+    const fingerprint = sha256Hex(
+      stableStringify(canonicalFormsFromSubmission(invalid).fingerprintForm)
+    );
+    const stored = storedRowsFromSubmission(inputOneId, invalid, {
+      normalized_content_fingerprint: fingerprint
+    });
+    assert.deepEqual(
+      reconstructCanonicalInput({
+        root: stored.root,
+        linkButtons: stored.links,
+        actions: stored.actions,
+        options: stored.options
+      }),
+      {
+        ok: false,
+        error: {
+          status: 503,
+          code: "temporary_unavailable",
+          message: "Canonical input is temporarily unavailable."
+        }
+      },
+      label
+    );
+  }
+});
+
 test("input list returns caller-scoped metadata in stable indexed keyset order", async () => {
   const query = fakeQuery([
     [
@@ -516,9 +560,12 @@ test("input read returns canonical raw_input for the authenticated caller only",
   assert.equal(result.data.caller_item_id, submission.callerItemId);
   assert.equal(result.data.status, "answered");
   assert.equal(result.data.answered_at, "2026-06-30T12:02:00.000Z");
-  assert.equal(publicInputSubmissionShapeMatches(result.data.raw_input), true);
   assert.equal(
-    publicCanonicalRawInputShapeMatches(result.data.raw_input),
+    publicSchemaMatches("InputSubmission", result.data.raw_input),
+    true
+  );
+  assert.equal(
+    publicSchemaMatches("CanonicalRawInput", result.data.raw_input),
     true
   );
   assert.equal(JSON.stringify(result.data).includes(inputOneId), false);

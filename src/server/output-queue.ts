@@ -38,11 +38,7 @@ import {
   parsePageRequest,
   type PageRequest
 } from "./pagination.ts";
-import {
-  OutputReadAllRequestSchema,
-  publicOutputReadAllShapeMatches,
-  publicSchemaFieldErrors
-} from "../shared/public-api-contract.ts";
+import { publicSchemaMismatch } from "../shared/public-api-contract.ts";
 
 const OUTPUT_VALIDATION_MESSAGE = "Output queue request failed validation.";
 
@@ -492,15 +488,14 @@ export function parseOutputReadAllBody(
     OUTPUT_VALIDATION_MESSAGE
   );
   if (!parsed.ok) return parsed;
-  if (publicOutputReadAllShapeMatches(body)) return parsed;
-
-  return validationFailed(
-    publicSchemaFieldErrors(
-      OutputReadAllRequestSchema,
-      body,
-      "Request does not match the public read-all contract."
-    )
+  const mismatch = publicSchemaMismatch(
+    "OutputReadAllRequest",
+    body,
+    "Request does not match the public read-all contract."
   );
+  if (mismatch) return validationFailed(mismatch);
+
+  return parsed;
 }
 
 export function outputReadyCountStatement(

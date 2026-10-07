@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-07 date-picker-invalid-mode-throws: Invalid date_picker mode with min and max values throws instead of returning 422
+    Priority: Medium. Area: Input validation
+    Description: In `parseDatePickerPopup` (`src/server/input-schema.ts`), an unsupported `mode` combined with string `min_value` and `max_value` reaches `compareDatePickerValues`, which falls through to `compareUtcDateTimeValues` and throws "UTC datetime values must be validated before compare", so the send/replace request fails with an exception instead of a field-level validation error.
+    Next step: Add a public-boundary test through `parseInputSubmission` for this input, then make the range comparison run only for a valid mode.
+
 - Issue 2026-10-07 human-action-duration-zero: Human answer/undo transaction failure reports log near-zero durations
     Priority: Low. Area: Observability / Human review
     Description: `runHumanActionMutation` in `app/human/actions.ts` calls `humanAnswerTransactionFailure` without `startedAtMs` and `humanAnswerUndoTransactionFailure` (which always starts its clock internally), so their `duration_ms` measures only the reporter call, not the failed transaction.

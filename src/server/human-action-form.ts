@@ -1,5 +1,10 @@
 import type { HumanActionResponse } from "./human-answer.ts";
-import { isStorableString, type PopupKind } from "./input-schema.ts";
+import { isStorableString } from "./input-schema.ts";
+import {
+  isOneOf,
+  POPUP_KINDS,
+  type PopupKind
+} from "../shared/input-schema-rules.ts";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -208,17 +213,7 @@ function responseFromForm(
 
 function popupKindField(formData: FormData): PopupKind | null {
   const value = stringField(formData, "popupKind");
-  if (
-    value === "none" ||
-    value === "free_text" ||
-    value === "single_select" ||
-    value === "multi_select" ||
-    value === "date_picker" ||
-    value === "file_upload"
-  ) {
-    return value;
-  }
-  return null;
+  return isOneOf(POPUP_KINDS, value) ? value : null;
 }
 
 function stringField(formData: FormData, key: string) {
