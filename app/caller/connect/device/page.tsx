@@ -1,17 +1,15 @@
-import { redirect, unstable_rethrow } from "next/navigation";
+import { redirect } from "next/navigation";
 
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectDeviceApprovalPreview } from "../../../../src/server/caller-connect";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
-import type { HumanAccountSession } from "../../../../src/server/human-session";
 import { previewDeviceConnect } from "../../approval-actions";
 import { CALLER_CONNECT_FIXTURE_USER_ID_PARAM } from "../../../../src/server/caller-connect-clerk-fixture";
 import {
   firstParam,
   fixtureClerkUserIdParam,
-  reportCallerApprovalFailure,
   requiredCallerConnectSessionConfiguration,
-  runCallerConnectHumanTransaction
+  runCallerApprovalPageTransaction
 } from "../session";
 import { ConnectErrorPage, ConnectPageShell, DeviceCodeEntryCard } from "../ui";
 import { DeviceApprovalView } from "../views";
@@ -52,68 +50,46 @@ export default async function CallerConnectDevicePage({
     );
   }
 
-  const requestId = createCorrelationId("caller_connect_device_page_req");
-  let session: HumanAccountSession | undefined;
-  let preview: Awaited<ReturnType<typeof getConnectDeviceApprovalPreview>>;
-  const previewStartedAtMs = Date.now();
-  try {
-    const transaction = await runCallerConnectHumanTransaction(
-      {
-        requestId,
-        fixtureClerkUserId,
-        route: "/caller/connect/device",
-        method: "GET"
-      },
-      (query, humanSession) => {
-        session = humanSession;
-        return getConnectDeviceApprovalPreview(query, {
-          userCode,
-          accountId: humanSession.accountId
-        });
-      }
-    );
-    if (!transaction.ok) {
-      return (
-        <ConnectErrorPage
-          title="We couldn't load this request"
-          description="The device connection request could not be verified."
-          error={transaction}
-        />
-      );
-    }
-    session = transaction.session;
-    preview = transaction.data;
-  } catch (error) {
-    unstable_rethrow(error);
-    reportCallerApprovalFailure(error, {
-      requestId,
+  const page = await runCallerApprovalPageTransaction(
+    {
+      requestId: createCorrelationId("caller_connect_device_page_req"),
+      fixtureClerkUserId,
       route: "/caller/connect/device",
-      method: "GET",
       operation: "caller_connect_device_approval_preview",
-      session,
-      startedAtMs: previewStartedAtMs
-    });
-    preview = {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Caller connect approval is temporarily unavailable."
-      }
-    };
+      unavailableMessage: "Caller connect approval is temporarily unavailable.",
+      missingSessionMessage:
+        "Human session is required after device approval setup."
+    },
+    (query, session) =>
+      getConnectDeviceApprovalPreview(query, {
+        userCode,
+        accountId: session.accountId
+      })
+  );
+  if (!page.ok) {
+    return (
+      <ConnectErrorPage
+        title="We couldn't load this request"
+        description="The device connection request could not be verified."
+        error={page.error}
+      />
+    );
+  }
+  if (!page.data.ok) {
+    return (
+      <ConnectErrorPage
+        title="We couldn't load this request"
+        description="The device connection request could not be verified."
+        error={page.data.error}
+      />
+    );
   }
 
-  if (!session) {
-    throw new Error("Human session is required after device approval setup.");
-  }
-
-  if (
-    preview.ok &&
-    (preview.data.status === "approved" || preview.data.status === "exchanged")
-  ) {
+  const preview = page.data.data;
+  if (preview.status === "approved" || preview.status === "exchanged") {
     const query = new URLSearchParams({
       flow: "device",
-      setup_request_id: preview.data.setup_request_id
+      setup_request_id: preview.setup_request_id
     });
     if (fixtureClerkUserId) {
       query.set(CALLER_CONNECT_FIXTURE_USER_ID_PARAM, fixtureClerkUserId);
@@ -121,18 +97,12 @@ export default async function CallerConnectDevicePage({
     redirect(`/caller/connect/success?${query.toString()}`);
   }
 
-  return preview.ok ? (
+  return (
     <DeviceApprovalView
-      preview={preview.data}
-      session={session}
+      preview={preview}
+      session={page.session}
       fixtureClerkUserId={fixtureClerkUserId}
       userCode={userCode}
-    />
-  ) : (
-    <ConnectErrorPage
-      title="We couldn't load this request"
-      description="The device connection request could not be verified."
-      error={preview.error}
     />
   );
 }

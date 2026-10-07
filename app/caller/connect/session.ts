@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
+import { unstable_rethrow } from "next/navigation";
 
 import {
   CALLER_CONNECT_FIXTURE_USER_ID_HEADER,
@@ -7,10 +8,6 @@ import {
   callerConnectClerkFixtureEnabled,
   callerConnectFixtureClerkUserId
 } from "../../../src/server/caller-connect-clerk-fixture";
-import {
-  getSetupRequestTerminalState,
-  type SetupTerminalStatus
-} from "../../../src/server/caller-setup-requests";
 import { createCorrelationId } from "../../../src/server/correlation";
 import {
   type ProductTransactionQuery,
@@ -119,47 +116,114 @@ export function reportCallerApprovalFailure(
   });
 }
 
-export async function connectTerminalSetupState(
+type CallerApprovalPageInput = {
+  requestId: string;
+  fixtureClerkUserId?: string | null;
+  route: string;
+  operation: string;
+  unavailableMessage: string;
+};
+
+type CallerApprovalPageResult<TResult> =
+  | { ok: true; session: HumanAccountSession; data: TResult }
+  | { ok: false; error: { status: number; code: string; message: string } };
+
+type CallerApprovalPageCallback<TResult> = (
   query: ProductTransactionQuery,
-  input: {
-    session: HumanAccountSession;
-    requestId: string;
-    setupRequestId: string;
-    statuses: readonly [SetupTerminalStatus, ...SetupTerminalStatus[]];
-    route: string;
-    method: string;
-    operation: string;
-    unavailableMessage: string;
-  }
-) {
+  session: HumanAccountSession
+) => Promise<TResult>;
+
+// Recovers any unexpected page failure as a 503 page error. Pages that cannot
+// render without a session pass missingSessionMessage to throw that message
+// after reporting failures that happen before one exists.
+export async function runCallerApprovalPageTransaction<TResult>(
+  input: CallerApprovalPageInput & { missingSessionMessage?: string },
+  callback: CallerApprovalPageCallback<TResult>
+): Promise<CallerApprovalPageResult<TResult>> {
   const startedAtMs = Date.now();
+  let activeSession: HumanAccountSession | undefined;
   try {
-    return await withSavepoint(query, "caller_connect_terminal_state", () =>
-      getSetupRequestTerminalState(query, {
-        operation: "connect",
-        setupRequestId: input.setupRequestId,
-        accountId: input.session.accountId,
-        statuses: input.statuses
-      })
-    );
-  } catch (error) {
-    reportCallerApprovalFailure(error, {
-      requestId: input.requestId,
-      route: input.route,
-      method: input.method,
-      operation: input.operation,
-      session: input.session,
-      startedAtMs
+    return await runCallerApprovalTransaction(input, (query, session) => {
+      activeSession = session;
+      return callback(query, session);
     });
-    return {
-      ok: false as const,
-      error: {
-        status: 503 as const,
-        code: "temporary_unavailable" as const,
-        message: input.unavailableMessage
-      }
-    };
+  } catch (error) {
+    unstable_rethrow(error);
+    reportCallerApprovalPageFailure(error, input, activeSession, startedAtMs);
+    if (!activeSession && input.missingSessionMessage) {
+      throw new Error(input.missingSessionMessage);
+    }
+    return callerApprovalPageUnavailable(input);
   }
+}
+
+// Recovers only callback failures, inside a savepoint, as a 503 result in the
+// page data so the account bootstrap still commits. Session and transaction
+// failures propagate to the route boundary.
+export async function runCallerApprovalTerminalTransaction<TResult>(
+  input: CallerApprovalPageInput,
+  callback: CallerApprovalPageCallback<TResult>
+): Promise<
+  CallerApprovalPageResult<
+    TResult | ReturnType<typeof callerApprovalPageUnavailable>
+  >
+> {
+  return runCallerApprovalTransaction(input, async (query, session) => {
+    const startedAtMs = Date.now();
+    try {
+      return await withSavepoint(query, "caller_connect_terminal_state", () =>
+        callback(query, session)
+      );
+    } catch (error) {
+      reportCallerApprovalPageFailure(error, input, session, startedAtMs);
+      return callerApprovalPageUnavailable(input);
+    }
+  });
+}
+
+async function runCallerApprovalTransaction<TResult>(
+  input: CallerApprovalPageInput,
+  callback: CallerApprovalPageCallback<TResult>
+): Promise<CallerApprovalPageResult<TResult>> {
+  const transaction = await runCallerConnectHumanTransaction(
+    {
+      requestId: input.requestId,
+      fixtureClerkUserId: input.fixtureClerkUserId,
+      route: input.route,
+      method: "GET"
+    },
+    callback
+  );
+  return transaction.ok
+    ? { ok: true, session: transaction.session, data: transaction.data }
+    : { ok: false, error: transaction };
+}
+
+function reportCallerApprovalPageFailure(
+  error: unknown,
+  input: CallerApprovalPageInput,
+  session: HumanAccountSession | undefined,
+  startedAtMs: number
+) {
+  reportCallerApprovalFailure(error, {
+    requestId: input.requestId,
+    route: input.route,
+    method: "GET",
+    operation: input.operation,
+    session,
+    startedAtMs
+  });
+}
+
+function callerApprovalPageUnavailable(input: CallerApprovalPageInput) {
+  return {
+    ok: false as const,
+    error: {
+      status: 503 as const,
+      code: "temporary_unavailable" as const,
+      message: input.unavailableMessage
+    }
+  };
 }
 
 export function firstParam(value: string | string[] | undefined) {

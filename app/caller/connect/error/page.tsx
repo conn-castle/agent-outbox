@@ -1,12 +1,12 @@
+import { getSetupRequestTerminalState } from "../../../../src/server/caller-setup-requests";
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import {
-  connectTerminalSetupState,
   firstParam,
   fixtureClerkUserIdParam,
   requiredCallerConnectSessionConfiguration,
   resolveCallerConnectHumanSession,
-  runCallerConnectHumanTransaction
+  runCallerApprovalTerminalTransaction
 } from "../session";
 import { ConnectErrorPage } from "../ui";
 import { ConnectionDeclinedView } from "../views";
@@ -39,44 +39,37 @@ export default async function CallerConnectErrorPage({
 
   const requestId = createCorrelationId("caller_connect_error_page_req");
   if (code === "setup_denied" && setupRequestId) {
-    const transaction = await runCallerConnectHumanTransaction(
+    const page = await runCallerApprovalTerminalTransaction(
       {
         requestId,
         fixtureClerkUserId,
         route: "/caller/connect/error",
-        method: "GET"
+        operation: "caller_connect_terminal_denied",
+        unavailableMessage: "Caller connect error is temporarily unavailable."
       },
-      (query, humanSession) =>
-        connectTerminalSetupState(query, {
-          session: humanSession,
-          requestId,
+      (query, session) =>
+        getSetupRequestTerminalState(query, {
+          operation: "connect",
           setupRequestId,
-          statuses: ["denied"],
-          route: "/caller/connect/error",
-          method: "GET",
-          operation: "caller_connect_terminal_denied",
-          unavailableMessage: "Caller connect error is temporarily unavailable."
+          accountId: session.accountId,
+          statuses: ["denied"]
         })
     );
 
-    if (!transaction.ok) {
+    if (!page.ok) {
       return (
         <ConnectErrorPage
           title="We couldn't confirm the result"
           description="The declined request could not be loaded."
           tone="canceled"
-          error={transaction}
+          error={page.error}
         />
       );
     }
 
-    const terminalState = transaction.data;
-    if (terminalState.ok) {
+    if (page.data.ok) {
       return (
-        <ConnectionDeclinedView
-          setup={terminalState.data}
-          session={transaction.session}
-        />
+        <ConnectionDeclinedView setup={page.data.data} session={page.session} />
       );
     }
 
@@ -85,7 +78,7 @@ export default async function CallerConnectErrorPage({
         title="We couldn't confirm the result"
         description="The declined request could not be verified."
         tone="canceled"
-        error={terminalState.error}
+        error={page.data.error}
       />
     );
   }
