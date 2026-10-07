@@ -78,62 +78,28 @@ export function SafeHtml({
   );
 }
 
-export function HumanIcon({
-  name,
-  className
-}: {
-  name: string | null;
-  className?: string;
-}) {
+export function HumanIcon({ name }: { name: string | null }) {
   if (!name) {
     return null;
   }
   const Icon = supportedIconNames.has(name)
     ? iconMap[name as SupportedLucideIconName]
     : File;
-  return <Icon className={className ?? "human-icon"} aria-hidden="true" />;
+  return <Icon className="human-icon" aria-hidden="true" />;
 }
 
-export function LinkButtons({
-  links,
-  variant = "buttons"
-}: {
-  links: HumanReviewLinkButton[];
-  variant?: "buttons" | "context";
-}) {
+export function LinkButtons({ links }: { links: HumanReviewLinkButton[] }) {
   if (links.length === 0) {
     return null;
   }
 
-  if (variant === "context") {
-    return (
-      <span className="context-links" aria-label="Context links">
-        {links.map((link) => {
-          const href = safeHref(link.url);
-          return href ? (
-            <a
-              key={`${link.displayOrder}-${link.url}`}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <HumanIcon name={link.icon} />
-              <span>{link.display}</span>
-            </a>
-          ) : null;
-        })}
-      </span>
-    );
-  }
-
   return (
-    <div className="link-buttons" aria-label="Context links">
+    <span className="context-links" aria-label="Context links">
       {links.map((link) => {
         const href = safeHref(link.url);
         return href ? (
           <a
             key={`${link.displayOrder}-${link.url}`}
-            className="secondary-button"
             href={href}
             target="_blank"
             rel="noreferrer"
@@ -143,7 +109,7 @@ export function LinkButtons({
           </a>
         ) : null;
       })}
-    </div>
+    </span>
   );
 }
 
@@ -159,68 +125,15 @@ export function CardVisual({
   }
 
   if (visual.kind === "numeric_bar") {
-    const metrics = numericVisualMetrics(visual.payload);
-    const unitSuffix = visualUnitSuffix(metrics.display, metrics.unit);
-    return (
-      <div className="card-visual numeric-bar">
-        <div className="visual-meta">
-          <span>{metrics.label}</span>
-          <strong>
-            {metrics.display}
-            {unitSuffix ? (
-              <span
-                className={`visual-unit${
-                  unitSuffix === "%" ? " visual-unit-percent" : ""
-                }`}
-              >
-                {unitSuffix}
-              </span>
-            ) : null}
-          </strong>
-        </div>
-        <div className="bar-track" aria-hidden="true">
-          <span className="bar-fill" style={{ width: `${metrics.percent}%` }} />
-        </div>
-      </div>
-    );
+    return <NumericBar metrics={numericVisualMetrics(visual.payload)} />;
   }
 
   if (visual.kind === "progress_ring") {
     const metrics = numericVisualMetrics(visual.payload);
-    const unitSuffix = visualUnitSuffix(metrics.display, metrics.unit);
     const color = visual.payload.color;
     const paletteColor = color ? resolveSupportedColor(color) : null;
     if (compact) {
-      return (
-        <div className="card-visual numeric-bar">
-          <div className="visual-meta">
-            <span>{metrics.label}</span>
-            <strong>
-              {metrics.display}
-              {unitSuffix ? (
-                <span
-                  className={`visual-unit${
-                    unitSuffix === "%" ? " visual-unit-percent" : ""
-                  }`}
-                >
-                  {unitSuffix}
-                </span>
-              ) : null}
-            </strong>
-          </div>
-          <div className="bar-track" aria-hidden="true">
-            <span
-              className="bar-fill"
-              style={
-                {
-                  width: `${metrics.percent}%`,
-                  "--bar-color": paletteColor ?? undefined
-                } as CSSProperties
-              }
-            />
-          </div>
-        </div>
-      );
+      return <NumericBar metrics={metrics} color={paletteColor} />;
     }
     return (
       <div className="card-visual progress-ring">
@@ -230,27 +143,13 @@ export function CardVisual({
             {
               "--ring-progress": `${metrics.percent}%`,
               "--ring-color": paletteColor ?? undefined
-            } as React.CSSProperties
+            } as CSSProperties
           }
           aria-hidden="true"
         >
           <span className="ring-value">{Math.round(metrics.percent)}%</span>
         </span>
-        <div className="visual-meta">
-          <span>{metrics.label}</span>
-          <strong>
-            {metrics.display}
-            {unitSuffix ? (
-              <span
-                className={`visual-unit${
-                  unitSuffix === "%" ? " visual-unit-percent" : ""
-                }`}
-              >
-                {unitSuffix}
-              </span>
-            ) : null}
-          </strong>
-        </div>
+        <VisualMeta metrics={metrics} />
       </div>
     );
   }
@@ -281,6 +180,54 @@ export function CardVisual({
   }
 
   return null;
+}
+
+type NumericVisualMetrics = ReturnType<typeof numericVisualMetrics>;
+
+function NumericBar({
+  metrics,
+  color = null
+}: {
+  metrics: NumericVisualMetrics;
+  color?: string | null;
+}) {
+  return (
+    <div className="card-visual numeric-bar">
+      <VisualMeta metrics={metrics} />
+      <div className="bar-track" aria-hidden="true">
+        <span
+          className="bar-fill"
+          style={
+            {
+              width: `${metrics.percent}%`,
+              "--bar-color": color ?? undefined
+            } as CSSProperties
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function VisualMeta({ metrics }: { metrics: NumericVisualMetrics }) {
+  const unitSuffix = visualUnitSuffix(metrics.display, metrics.unit);
+  return (
+    <div className="visual-meta">
+      <span>{metrics.label}</span>
+      <strong>
+        {metrics.display}
+        {unitSuffix ? (
+          <span
+            className={`visual-unit${
+              unitSuffix === "%" ? " visual-unit-percent" : ""
+            }`}
+          >
+            {unitSuffix}
+          </span>
+        ) : null}
+      </strong>
+    </div>
+  );
 }
 
 function numericVisualMetrics(

@@ -11,7 +11,10 @@ import Link from "next/link";
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 
-import type { HumanReviewListRow } from "../../server/human-review.ts";
+import type {
+  HumanReviewBulkAction,
+  HumanReviewListRow
+} from "../../server/human-review.ts";
 import {
   humanReviewHref,
   humanReviewCardHref,
@@ -91,6 +94,35 @@ export function ReviewList({
           row.status === "pending"
             ? row.bulkActions.filter((action) => action.overflow)
             : [];
+        const renderAction = (
+          action: HumanReviewBulkAction,
+          overflow: boolean,
+          handleMutation: OnHumanMutation
+        ) => {
+          const className = overflow
+            ? "row-overflow-item"
+            : actionAppearanceClass("inline-action-button", action);
+          return action.popupKind !== "none" ? (
+            <Link
+              key={action.value}
+              className={className}
+              href={humanReviewHref(view, row.inputItemId, action.value)}
+              onNavigate={() => onDetailNavigate(row.inputItemId, title)}
+              title={overflow ? undefined : action.display}
+            >
+              <HumanIcon name={action.icon} />
+              <span>{action.display}</span>
+            </Link>
+          ) : (
+            <InlineQuickAction
+              key={action.value}
+              row={row}
+              action={action}
+              className={className}
+              onMutation={handleMutation}
+            />
+          );
+        };
         return (
           <OptimisticReviewRow key={row.inputItemId} onMutation={onMutation}>
             {(handleMutation) => (
@@ -217,31 +249,7 @@ export function ReviewList({
                                 )}
                               />
                               {overflowActions.map((action) =>
-                                action.popupKind !== "none" ? (
-                                  <Link
-                                    key={action.value}
-                                    className="row-overflow-item"
-                                    href={humanReviewHref(
-                                      view,
-                                      row.inputItemId,
-                                      action.value
-                                    )}
-                                    onNavigate={() =>
-                                      onDetailNavigate(row.inputItemId, title)
-                                    }
-                                  >
-                                    <HumanIcon name={action.icon} />
-                                    <span>{action.display}</span>
-                                  </Link>
-                                ) : (
-                                  <InlineQuickAction
-                                    key={action.value}
-                                    row={row}
-                                    action={action}
-                                    className="row-overflow-item"
-                                    onMutation={handleMutation}
-                                  />
-                                )
+                                renderAction(action, true, handleMutation)
                               )}
                             </div>
                           </details>
@@ -310,31 +318,7 @@ export function ReviewList({
                         {row.bulkActions
                           .filter((action) => !action.overflow)
                           .map((action) =>
-                            action.popupKind !== "none" ? (
-                              <Link
-                                key={action.value}
-                                className={quickActionClass(action)}
-                                href={humanReviewHref(
-                                  view,
-                                  row.inputItemId,
-                                  action.value
-                                )}
-                                onNavigate={() =>
-                                  onDetailNavigate(row.inputItemId, title)
-                                }
-                                title={action.display}
-                              >
-                                <HumanIcon name={action.icon} />
-                                <span>{action.display}</span>
-                              </Link>
-                            ) : (
-                              <InlineQuickAction
-                                key={action.value}
-                                row={row}
-                                action={action}
-                                onMutation={handleMutation}
-                              />
-                            )
+                            renderAction(action, false, handleMutation)
                           )}
                       </div>
                     ) : null
@@ -484,10 +468,6 @@ function OptimisticReviewRow({
     onMutation(submission);
   };
   return children(handleMutation);
-}
-
-function quickActionClass(action: HumanReviewListRow["bulkActions"][number]) {
-  return actionAppearanceClass("inline-action-button", action);
 }
 
 function htmlWithoutAnchors(html: string) {

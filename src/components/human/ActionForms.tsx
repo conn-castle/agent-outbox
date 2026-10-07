@@ -6,7 +6,8 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type MouseEventHandler
+  type MouseEventHandler,
+  type ReactNode
 } from "react";
 import { useFormStatus } from "react-dom";
 import { useSearchParams } from "next/navigation";
@@ -145,34 +146,23 @@ export function InlineQuickAction({
 }: {
   row: HumanReviewListRow;
   action: HumanReviewBulkAction;
-  className?: string;
+  className: string;
   onMutation: OnHumanMutation;
 }) {
-  const formAction = useProgressiveFormAction(submitHumanAnswer);
   return (
-    <form
+    <AnswerForm
       className="inline-action-form"
-      action={formAction}
-      {...humanMutationFormProps("answer", [row.inputItemId], onMutation)}
+      target={row}
+      action={action}
+      onMutation={onMutation}
     >
-      <ViewStateFields />
-      <HumanAnswerFields
-        target={row}
-        actionValue={action.value}
-        popupKind="none"
-        actionLabel={action.display}
-        noticeSubject={htmlToPlainText(row.titleHtml)}
-        returnToQueue
-      />
       <SubmitButton
-        className={
-          className ?? actionAppearanceClass("inline-action-button", action)
-        }
+        className={className}
         icon={action.icon}
         label={action.display}
         {...humanMutationButtonProps("answer", [row.inputItemId], onMutation)}
       />
-    </form>
+    </AnswerForm>
   );
 }
 
@@ -180,18 +170,15 @@ export function ActionTrigger({
   detail,
   action,
   variant,
-  active,
   onActivate,
   onMutation
 }: {
   detail: HumanReviewDetail;
   action: HumanReviewAction;
   variant: "primary" | "overflow";
-  active: boolean;
   onActivate: () => void;
   onMutation: OnHumanMutation;
 }) {
-  const formAction = useProgressiveFormAction(submitHumanAnswer);
   const baseClass =
     variant === "primary" ? "action-button" : "secondary-button";
   const className = actionAppearanceClass(baseClass, action);
@@ -212,10 +199,10 @@ export function ActionTrigger({
   if (action.popupKind !== "none") {
     return (
       <button
-        className={`${className} action-trigger${active ? " active" : ""}`}
+        className={`${className} action-trigger`}
         type="button"
         title={action.display}
-        aria-expanded={active}
+        aria-expanded={false}
         onClick={onActivate}
       >
         <HumanIcon name={action.icon} />
@@ -225,26 +212,18 @@ export function ActionTrigger({
   }
 
   return (
-    <form
+    <AnswerForm
       className="action-form"
-      action={formAction}
-      {...humanMutationFormProps("answer", [detail.inputItemId], onMutation)}
+      target={detail}
+      action={action}
+      onMutation={onMutation}
     >
-      <ViewStateFields />
-      <HumanAnswerFields
-        target={detail}
-        actionValue={action.value}
-        popupKind={action.popupKind}
-        actionLabel={action.display}
-        noticeSubject={htmlToPlainText(detail.titleHtml)}
-        returnToQueue
-      />
       <SubmitButton
         className={className}
         icon={action.icon}
         label={action.display}
       />
-    </form>
+    </AnswerForm>
   );
 }
 
@@ -271,22 +250,13 @@ export function ActionComposer({
     setResponseValid(minimumSelection === null || minimumSelection === 0);
   }, [action.value, minimumSelection]);
 
-  const formAction = useProgressiveFormAction(submitHumanAnswer);
   return (
-    <form
+    <AnswerForm
       className="action-composer"
-      action={formAction}
-      {...humanMutationFormProps("answer", [detail.inputItemId], onMutation)}
+      target={detail}
+      action={action}
+      onMutation={onMutation}
     >
-      <ViewStateFields />
-      <HumanAnswerFields
-        target={detail}
-        actionValue={action.value}
-        popupKind={action.popupKind}
-        actionLabel={action.display}
-        noticeSubject={htmlToPlainText(detail.titleHtml)}
-        returnToQueue
-      />
       <header>
         <div>
           <span>Complete action</span>
@@ -318,7 +288,7 @@ export function ActionComposer({
           disabled={!responseValid}
         />
       </footer>
-    </form>
+    </AnswerForm>
   );
 }
 
@@ -367,7 +337,6 @@ export function UndoAnswerForm({
 
 export function LastAnswerUndoForm({
   undo,
-  actionLabel,
   disabled = false,
   onMutation
 }: {
@@ -375,12 +344,13 @@ export function LastAnswerUndoForm({
     inputItemId: string;
     callerId: string;
     outputResultId: string;
+    actionLabel: string | null;
   };
-  actionLabel: string | null;
   disabled?: boolean;
   onMutation: OnHumanMutation;
 }) {
   const formAction = useProgressiveFormAction(undoHumanAnswer);
+  const { actionLabel } = undo;
   const label = actionLabel ? `Undo “${actionLabel}”` : "Undo last answer";
   return (
     <form className="last-undo-form" action={formAction} noValidate>
@@ -463,23 +433,30 @@ function ActionResponseFields({
   }
 }
 
-function HumanAnswerFields({
+function AnswerForm({
+  className,
   target,
-  actionValue,
-  popupKind,
-  actionLabel,
-  noticeSubject,
-  returnToQueue = false
+  action,
+  onMutation,
+  children
 }: {
-  target: Pick<HumanReviewDetail, "inputItemId" | "caller" | "currentRevision">;
-  actionValue: string;
-  popupKind: HumanReviewAction["popupKind"];
-  actionLabel: string;
-  noticeSubject: string;
-  returnToQueue?: boolean;
+  className: string;
+  target: Pick<
+    HumanReviewListRow,
+    "inputItemId" | "caller" | "currentRevision" | "titleHtml"
+  >;
+  action: Pick<HumanReviewBulkAction, "value" | "popupKind" | "display">;
+  onMutation: OnHumanMutation;
+  children: ReactNode;
 }) {
+  const formAction = useProgressiveFormAction(submitHumanAnswer);
   return (
-    <>
+    <form
+      className={className}
+      action={formAction}
+      {...humanMutationFormProps("answer", [target.inputItemId], onMutation)}
+    >
+      <ViewStateFields />
       <input type="hidden" name="inputItemId" value={target.inputItemId} />
       <input type="hidden" name="callerId" value={target.caller.callerId} />
       <input
@@ -487,14 +464,17 @@ function HumanAnswerFields({
         name="expectedRevision"
         value={target.currentRevision}
       />
-      <input type="hidden" name="actionValue" value={actionValue} />
-      <input type="hidden" name="popupKind" value={popupKind} />
-      <input type="hidden" name="noticeAction" value={actionLabel} />
-      <input type="hidden" name="noticeSubject" value={noticeSubject} />
-      {returnToQueue ? (
-        <input type="hidden" name="returnToQueue" value="1" />
-      ) : null}
-    </>
+      <input type="hidden" name="actionValue" value={action.value} />
+      <input type="hidden" name="popupKind" value={action.popupKind} />
+      <input type="hidden" name="noticeAction" value={action.display} />
+      <input
+        type="hidden"
+        name="noticeSubject"
+        value={htmlToPlainText(target.titleHtml)}
+      />
+      <input type="hidden" name="returnToQueue" value="1" />
+      {children}
+    </form>
   );
 }
 

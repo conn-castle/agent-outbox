@@ -21,7 +21,10 @@ import {
   X
 } from "lucide-react";
 
-import type { HumanReviewDetail as HumanReviewDetailDto } from "../../server/human-review.ts";
+import type {
+  HumanReviewAction,
+  HumanReviewDetail as HumanReviewDetailDto
+} from "../../server/human-review.ts";
 import {
   ActionComposer,
   ActionTrigger,
@@ -143,6 +146,20 @@ export function ReviewDetail({
   const showActions = detail.status === "pending" && detail.actions.length > 0;
   const activeAction = detail.actions.find(
     (action) => action.value === activeActionValue
+  );
+  // Triggers render only while no action is active.
+  const renderTrigger = (
+    action: HumanReviewAction,
+    variant: "primary" | "overflow"
+  ) => (
+    <ActionTrigger
+      key={action.value}
+      detail={detail}
+      action={action}
+      variant={variant}
+      onActivate={() => setActiveActionValue(action.value)}
+      onMutation={onMutation}
+    />
   );
   const timestamps = [
     { label: "Card time", value: detail.cardTime, Icon: Clock },
@@ -289,7 +306,7 @@ export function ReviewDetail({
                 <span className="detail-revision">
                   Rev {detail.currentRevision}
                 </span>
-                <LinkButtons links={detail.linkButtons} variant="context" />
+                <LinkButtons links={detail.linkButtons} />
                 {detail.output ? (
                   <span>
                     Answered {detail.output.actionDisplay}
@@ -352,38 +369,13 @@ export function ReviewDetail({
               ) : !activeAction ? (
                 <div className="action-triggers">
                   <div className="primary-actions" aria-label="Primary actions">
-                    {primaryActions.map((action) => (
-                      <ActionTrigger
-                        key={action.value}
-                        detail={detail}
-                        action={action}
-                        variant="primary"
-                        active={activeActionValue === action.value}
-                        onActivate={() =>
-                          setActiveActionValue((current) =>
-                            current === action.value ? null : action.value
-                          )
-                        }
-                        onMutation={onMutation}
-                      />
-                    ))}
+                    {primaryActions.map((action) =>
+                      renderTrigger(action, "primary")
+                    )}
                   </div>
                   {secondaryActions.length === 1 ? (
                     <div className="secondary-direct">
-                      <ActionTrigger
-                        detail={detail}
-                        action={secondaryActions[0]}
-                        variant="overflow"
-                        active={activeActionValue === secondaryActions[0].value}
-                        onActivate={() =>
-                          setActiveActionValue((current) =>
-                            current === secondaryActions[0].value
-                              ? null
-                              : secondaryActions[0].value
-                          )
-                        }
-                        onMutation={onMutation}
-                      />
+                      {renderTrigger(secondaryActions[0], "overflow")}
                     </div>
                   ) : secondaryActions.length > 1 ? (
                     <div className="response-support">
@@ -396,21 +388,9 @@ export function ReviewDetail({
                           className="secondary-actions-grid"
                           aria-label="More actions"
                         >
-                          {secondaryActions.map((action) => (
-                            <ActionTrigger
-                              key={action.value}
-                              detail={detail}
-                              action={action}
-                              variant="overflow"
-                              active={activeActionValue === action.value}
-                              onActivate={() =>
-                                setActiveActionValue((current) =>
-                                  current === action.value ? null : action.value
-                                )
-                              }
-                              onMutation={onMutation}
-                            />
-                          ))}
+                          {secondaryActions.map((action) =>
+                            renderTrigger(action, "overflow")
+                          )}
                         </div>
                       </details>
                     </div>

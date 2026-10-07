@@ -698,7 +698,6 @@ test("authenticated review workspace renders content actions and preserves contr
   await expect(
     detail.locator(".detail-meta").getByRole("link", { name: "Open context" })
   ).toHaveAttribute("href", "https://example.com/context/steward-brief-101");
-  await expect(detail.locator(".link-buttons")).toHaveCount(0);
   const closeBox = await detail
     .getByRole("button", { name: "Close detail" })
     .boundingBox();
