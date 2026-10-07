@@ -398,6 +398,7 @@ func TestSecretLoaderErrorExitCodesSurviveDoctorAndDataPlaneCommands(t *testing.
 		{"doctor empty code", foundation.NewAppError("", "injected loader failure"), true, foundation.ExitGeneral, foundation.CodeInternalError, "Agent Outbox doctor found a failing check: secret_store.", foundation.CodeInternalError},
 		{"doctor wrapped empty code", fmt.Errorf("loader context: %w", foundation.NewAppError("", "injected loader failure")), true, foundation.ExitGeneral, foundation.CodeInternalError, "Agent Outbox doctor found a failing check: secret_store.", foundation.CodeInternalError},
 		{"doctor exit override", overridden, true, foundation.ExitTemporary, foundation.CodeSecretStore, "Agent Outbox doctor found a failing check: secret_store.", foundation.CodeSecretStore},
+		{"account status empty code", foundation.NewAppError("", "injected loader failure"), false, foundation.ExitGeneral, "", "injected loader failure", ""},
 		{"account status exit override", overridden, false, foundation.ExitTemporary, foundation.CodeSecretStore, "injected loader failure", ""},
 	}
 	for _, tc := range cases {
@@ -417,18 +418,9 @@ func TestSecretLoaderErrorExitCodesSurviveDoctorAndDataPlaneCommands(t *testing.
 					t.Fatalf("exit code = %d, want %d; stderr: %s", code, tc.wantExit, stderr)
 				}
 				if jsonMode {
-					var envelope struct {
-						OK    bool `json:"ok"`
-						Error struct {
-							Code    string `json:"code"`
-							Message string `json:"message"`
-						} `json:"error"`
-					}
-					if err := json.Unmarshal([]byte(stderr), &envelope); err != nil {
-						t.Fatalf("decode stderr envelope: %v; stderr: %s", err, stderr)
-					}
-					if envelope.OK || envelope.Error.Code != string(tc.wantCode) || envelope.Error.Message != tc.wantMessage {
-						t.Fatalf("unexpected stderr envelope: %s", stderr)
+					want := fmt.Sprintf("{\"error\":{\"code\":%q,\"message\":%q},\"ok\":false}\n", tc.wantCode, tc.wantMessage)
+					if stderr != want {
+						t.Fatalf("stderr = %q, want %q", stderr, want)
 					}
 				} else if want := string(tc.wantCode) + ": " + tc.wantMessage + "\n"; stderr != want {
 					t.Fatalf("stderr = %q, want %q", stderr, want)
