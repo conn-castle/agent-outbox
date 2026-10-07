@@ -593,7 +593,21 @@ for (const [label, response] of /** @type {const} */ ([
       body: { ok: false, code: "structured_error_canary", error_id: "req_x" }
     }
   ],
-  ["is not deployed", { status: 404, body: { ok: false, code: "not_found" } }]
+  ["is not deployed", { status: 404, body: { ok: false, code: "not_found" } }],
+  [
+    "omits ok=false",
+    {
+      status: 500,
+      body: { code: "structured_error_canary", error_id: "err_test" }
+    }
+  ],
+  [
+    "reports ok=true",
+    {
+      status: 500,
+      body: { ok: true, code: "structured_error_canary", error_id: "err_test" }
+    }
+  ]
 ])) {
   test(`hosted health fails when the error correlation canary ${label}`, async () => {
     const checks = await runHostedHealthChecks(baseEnv(), {
@@ -636,4 +650,146 @@ test("hosted health fails when the database canary accepts a missing bearer", as
     "fail"
   );
   assert.equal(exitCodeForChecks(checks), 1);
+});
+
+test("hosted health sends its own invalid bearer to the caller API", async () => {
+  const fake = healthFetch();
+  await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: /** @type {any} */ (fake.fetch)
+  });
+
+  assert.deepEqual(
+    fake.seenRequests
+      .filter((request) => request.pathname === "/api/runtime/caller-auth")
+      .map((request) => request.headers.Authorization),
+    [undefined, "Bearer invalid", "Bearer secret-smoke-token"]
+  );
+});
+
+/**
+ * Responds like the healthy fake after `delayMs`, unless the request aborts.
+ *
+ * @param {number} delayMs
+ */
+function delayedHealthFetch(delayMs) {
+  const fake = healthFetch();
+  return /** @type {any} */ (
+    (
+      /** @type {string | URL} */ url,
+      /** @type {{ headers?: Record<string, string>, signal?: AbortSignal }} */ init = {}
+    ) =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve(fake.fetch(url, init)), delayMs);
+        init.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(init.signal?.reason);
+        });
+      })
+  );
+}
+
+test("hosted health applies a custom request timeout to every live probe", async () => {
+  const checks = await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: delayedHealthFetch(1_000),
+    timeoutMs: 1
+  });
+  const liveChecks = checks.slice(0, 13);
+
+  assert.equal(liveChecks.length, 13);
+  for (const entry of liveChecks) {
+    assert.deepEqual(
+      { status: entry.status, code: entry.code },
+      { status: "fail", code: "request_failed" },
+      entry.name
+    );
+    assert.match(String(entry.message), /aborted due to timeout/);
+  }
+});
+
+for (const timeoutMs of [undefined, null]) {
+  test(`hosted health defaults the request timeout when timeoutMs is ${timeoutMs}`, async () => {
+    const checks = await runHostedHealthChecks(baseEnv(), {
+      fetchImpl: delayedHealthFetch(50),
+      timeoutMs: /** @type {any} */ (timeoutMs)
+    });
+
+    assert.deepEqual(
+      checks.slice(0, 13).filter((entry) => entry.status !== "pass"),
+      []
+    );
+  });
+}
+
+test("hosted health sends each probe its baseline request options", async () => {
+  /** @type {Array<{ pathname: string, init: Record<string, unknown> }>} */
+  const calls = [];
+  const fake = healthFetch();
+  await runHostedHealthChecks(baseEnv(), {
+    fetchImpl: /** @type {any} */ (
+      async (
+        /** @type {string | URL} */ url,
+        /** @type {Record<string, any>} */ init = {}
+      ) => {
+        calls.push({ pathname: new URL(url).pathname, init: { ...init } });
+        return fake.fetch(url, init);
+      }
+    )
+  });
+
+  const auth = { Authorization: "Bearer secret-smoke-token" };
+  const marked = { "x-agent-outbox-runtime-smoke": "1", ...auth };
+  assert.deepEqual(
+    calls.map(({ pathname, init }) => {
+      assert.ok(init.signal instanceof AbortSignal, pathname);
+      const { signal, ...rest } = init;
+      return [pathname, Reflect.ownKeys(init), rest];
+    }),
+    [
+      ["/sign-in", ["redirect", "signal"], { redirect: "manual" }],
+      ["/sign-out", ["redirect", "signal"], { redirect: "manual" }],
+      ["/human", ["redirect", "signal"], { redirect: "manual" }],
+      [
+        "/api/runtime/canary",
+        ["method", "headers", "signal"],
+        { method: undefined, headers: auth }
+      ],
+      [
+        "/api/runtime/caller-auth",
+        ["headers", "signal"],
+        { headers: undefined }
+      ],
+      [
+        "/api/runtime/caller-auth",
+        ["headers", "signal"],
+        { headers: { Authorization: "Bearer invalid" } }
+      ],
+      [
+        "/api/runtime/caller-auth",
+        ["method", "headers", "signal"],
+        { method: undefined, headers: auth }
+      ],
+      ["/api/runtime/database", ["headers", "signal"], { headers: undefined }],
+      [
+        "/api/runtime/database",
+        ["method", "headers", "signal"],
+        { method: undefined, headers: auth }
+      ],
+      [
+        "/api/runtime/log",
+        ["method", "headers", "signal"],
+        { method: undefined, headers: auth }
+      ],
+      [
+        "/api/runtime/scheduled",
+        ["method", "headers", "signal"],
+        { method: "POST", headers: auth }
+      ],
+      [
+        "/api/runtime/sentry",
+        ["method", "headers", "signal"],
+        { method: "POST", headers: marked }
+      ],
+      ["/api/runtime/error", ["headers", "signal"], { headers: marked }]
+    ]
+  );
 });

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
-import { parseEnv } from "./dotenv.mjs";
+import { readOptionalEnvFile } from "./dotenv.mjs";
 import { WORKER_NAME, WORKER_VERSION_ID } from "./release/identity.mjs";
+import { ROOT } from "./repo-root.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PROCESS_ENV_MODE_NAME = "AGENT_OUTBOX_RUNTIME_SMOKE_USE_PROCESS_ENV";
 const EXPECTED_RELEASE_ENV_NAME = "AGENT_OUTBOX_EXPECTED_RELEASE";
 export const WORKER_VERSION_OVERRIDE_ENV_NAME =
@@ -103,18 +103,12 @@ export function readRuntimeSmokeEnv(options = {}) {
     return values;
   }
   const explicitPath = env.AGENT_OUTBOX_RUNTIME_SMOKE_ENV_FILE;
-  const envPath =
-    explicitPath && explicitPath.trim() !== ""
-      ? path.resolve(explicitPath)
-      : path.join(root, ".env");
-  if (!existsSync(envPath)) {
-    if (explicitPath) {
-      throw new Error(`Runtime smoke env file does not exist: ${envPath}`);
-    }
+  // An absent default .env means no operator inputs, so process overrides
+  // alone must not produce a partial configuration.
+  if (!explicitPath && !existsSync(path.join(root, ".env"))) {
     return new Map();
   }
-
-  const values = parseEnv(readFileSync(envPath, "utf8"));
+  const values = readOptionalEnvFile(explicitPath, root, "Runtime smoke");
   const processOverride = env[WORKER_VERSION_OVERRIDE_ENV_NAME];
   if (typeof processOverride === "string" && processOverride !== "") {
     values.set(WORKER_VERSION_OVERRIDE_ENV_NAME, processOverride);
@@ -124,102 +118,6 @@ export function readRuntimeSmokeEnv(options = {}) {
     values.set(EXPECTED_RELEASE_ENV_NAME, processExpected);
   }
   return values;
-}
-
-/**
- * @param {RuntimeSmokeFetch} fetchImpl
- * @param {Map<string, string>} env
- * @param {URL} url
- * @param {RequestInit} [init]
- */
-async function expectCanaryOk(fetchImpl, env, url, init = {}) {
-  const response = await fetchImpl(url, {
-    ...init,
-    headers: runtimeSmokeRequestHeaders(
-      env,
-      /** @type {Record<string, string>} */ (init.headers ?? {})
-    ),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-  });
-  assert.equal(response.ok, true, `${url} returned ${response.status}`);
-  const body = await response.json();
-  assert.equal(body.ok, true, `${url} returned ok=${String(body.ok)}`);
-  return body;
-}
-
-/**
- * @param {RuntimeSmokeFetch} fetchImpl
- * @param {Map<string, string>} env
- * @param {URL} url
- * @param {number} expectedStatus
- * @param {RequestInit} [init]
- */
-async function expectJsonStatus(
-  fetchImpl,
-  env,
-  url,
-  expectedStatus,
-  init = {}
-) {
-  const response = await fetchImpl(url, {
-    ...init,
-    headers: runtimeSmokeRequestHeaders(
-      env,
-      /** @type {Record<string, string>} */ (init.headers ?? {})
-    ),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-  });
-  assert.equal(
-    response.status,
-    expectedStatus,
-    `${url} returned ${response.status}`
-  );
-  return response.json();
-}
-
-/**
- * @param {RuntimeSmokeFetch} fetchImpl
- * @param {Map<string, string>} env
- * @param {URL} url
- * @param {number} expectedStatus
- * @param {string} expectedCode
- * @param {RequestInit} [init]
- */
-async function expectErrorCode(
-  fetchImpl,
-  env,
-  url,
-  expectedStatus,
-  expectedCode,
-  init = {}
-) {
-  const body = await expectJsonStatus(
-    fetchImpl,
-    env,
-    url,
-    expectedStatus,
-    init
-  );
-  assert.equal(body.ok, false, `${url} returned ok=${String(body.ok)}`);
-  assert.equal(body.code, expectedCode, `${url} returned code=${body.code}`);
-  return body;
-}
-
-/**
- * @param {RuntimeSmokeFetch} fetchImpl
- * @param {Map<string, string>} env
- * @param {URL} url
- */
-async function expectReachablePage(fetchImpl, env, url) {
-  const response = await fetchImpl(url, {
-    redirect: "manual",
-    headers: runtimeSmokeRequestHeaders(env),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-  });
-  assert.ok(
-    response.status >= 200 && response.status < 400,
-    `${url} returned ${response.status}`
-  );
 }
 
 /**
@@ -323,6 +221,164 @@ export function missingRuntimeSmokeEnvNames(env) {
 }
 
 /**
+ * @typedef {{
+ *   name: string,
+ *   path: string,
+ *   method?: string,
+ *   headers?: Record<string, string>,
+ *   expect: "page" | "ok" | { status: number, code?: string },
+ *   validate?: (body: Record<string, any>) => void
+ * }} RuntimeProbe
+ */
+
+/**
+ * The ordered live probes shared by runtime smoke and hosted health. An
+ * `expect.code` requires the `{ ok: false, code }` error envelope; without it
+ * only the status is required before `validate` runs.
+ *
+ * @param {{
+ *   token: string,
+ *   invalidToken: string,
+ *   expectedRelease?: string,
+ *   requireHumanReviewQuery?: boolean,
+ *   requireErrorCanaryEnvelope?: boolean
+ * }} options
+ * @returns {RuntimeProbe[]}
+ */
+export function runtimeProbes({
+  token,
+  invalidToken,
+  expectedRelease,
+  requireHumanReviewQuery = false,
+  requireErrorCanaryEnvelope = false
+}) {
+  const authHeaders = { Authorization: `Bearer ${token}` };
+  const smokeAuthHeaders = { ...RUNTIME_SMOKE_HEADERS, ...authHeaders };
+  /** @type {unknown} */
+  let runtimeAppEnv;
+  return [
+    { name: "app", path: "/sign-in", expect: "page" },
+    { name: "auth", path: "/sign-out", expect: "page" },
+    { name: "human_queue", path: "/human", expect: "page" },
+    {
+      name: "runtime",
+      path: "/api/runtime/canary",
+      headers: authHeaders,
+      expect: "ok",
+      validate: (body) => {
+        runtimeAppEnv = body.environment?.appEnv;
+        assertRuntimeCanaryEnvironment(body, expectedRelease);
+      }
+    },
+    {
+      name: "caller_api_rejects_missing_auth",
+      path: "/api/runtime/caller-auth",
+      expect: { status: 401, code: "missing_authorization" }
+    },
+    {
+      name: "caller_api_rejects_invalid_auth",
+      path: "/api/runtime/caller-auth",
+      headers: { Authorization: `Bearer ${invalidToken}` },
+      expect: { status: 403, code: "invalid_bearer_token" }
+    },
+    {
+      name: "caller_api_accepts_smoke_auth",
+      path: "/api/runtime/caller-auth",
+      headers: authHeaders,
+      expect: "ok"
+    },
+    {
+      name: "database_rejects_missing_auth",
+      path: "/api/runtime/database",
+      expect: { status: 401, code: "missing_authorization" }
+    },
+    {
+      name: "database",
+      path: "/api/runtime/database",
+      headers: authHeaders,
+      expect: "ok",
+      validate: (body) =>
+        assertRuntimeDatabaseCanary(body, { requireHumanReviewQuery })
+    },
+    {
+      name: "logs",
+      path: "/api/runtime/log",
+      headers: authHeaders,
+      expect: "ok"
+    },
+    {
+      name: "cleanup",
+      path: "/api/runtime/scheduled",
+      method: "POST",
+      headers: authHeaders,
+      expect: "ok"
+    },
+    {
+      name: "sentry",
+      path: "/api/runtime/sentry",
+      method: "POST",
+      headers: smokeAuthHeaders,
+      expect: "ok",
+      validate: (body) => assertRuntimeSentryCanary(body, runtimeAppEnv)
+    },
+    {
+      name: "error_correlation",
+      path: "/api/runtime/error",
+      headers: smokeAuthHeaders,
+      expect: requireErrorCanaryEnvelope
+        ? { status: 500, code: "structured_error_canary" }
+        : { status: 500 },
+      validate: assertRuntimeErrorCanary
+    }
+  ];
+}
+
+/**
+ * Sends one probe and throws the first failed request, parse, or assertion.
+ *
+ * @param {RuntimeSmokeFetch} fetchImpl
+ * @param {Map<string, string>} env
+ * @param {string} baseUrl
+ * @param {RuntimeProbe} probe
+ */
+async function assertRuntimeProbe(fetchImpl, env, baseUrl, probe) {
+  const url = new URL(probe.path, baseUrl);
+  const { expect } = probe;
+  const headers = runtimeSmokeRequestHeaders(env, probe.headers);
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const response = await fetchImpl(
+    url,
+    expect === "page"
+      ? { redirect: "manual", headers, signal }
+      : { ...(probe.method ? { method: probe.method } : {}), headers, signal }
+  );
+  if (expect === "page") {
+    assert.ok(
+      response.status >= 200 && response.status < 400,
+      `${url} returned ${response.status}`
+    );
+    return;
+  }
+  if (expect === "ok") {
+    assert.equal(response.ok, true, `${url} returned ${response.status}`);
+  } else {
+    assert.equal(
+      response.status,
+      expect.status,
+      `${url} returned ${response.status}`
+    );
+  }
+  const body = await response.json();
+  if (expect === "ok") {
+    assert.equal(body.ok, true, `${url} returned ok=${String(body.ok)}`);
+  } else if (expect.code !== undefined) {
+    assert.equal(body.ok, false, `${url} returned ok=${String(body.ok)}`);
+    assert.equal(body.code, expect.code, `${url} returned code=${body.code}`);
+  }
+  probe.validate?.(body);
+}
+
+/**
  * @param {Map<string, string>} env
  * @param {{ fetchImpl?: RuntimeSmokeFetch }} [options]
  */
@@ -339,8 +395,7 @@ export async function runRuntimeSmokeChecks(env, options = {}) {
     return { ok: false, missing };
   }
 
-  const baseUrl = env.get("APP_BASE_URL");
-  const token = env.get("SMOKE_OR_CLEANUP_TOKEN");
+  const baseUrl = /** @type {string} */ (env.get("APP_BASE_URL"));
   const expectedRelease = env.get(EXPECTED_RELEASE_ENV_NAME);
   const override = env.get(WORKER_VERSION_OVERRIDE_ENV_NAME);
   if (override) {
@@ -351,125 +406,24 @@ export async function runRuntimeSmokeChecks(env, options = {}) {
       );
     }
   }
-  const smokeAuth = { Authorization: `Bearer ${token}` };
-
-  /**
-   * @param {string} label
-   */
-  async function proveCandidateRelease(label) {
-    const runtimeCanary = await expectCanaryOk(
-      fetchImpl,
-      env,
-      new URL("/api/runtime/canary", baseUrl),
-      { headers: smokeAuth }
-    );
-    assertRuntimeCanaryEnvironment(runtimeCanary, expectedRelease);
-    if (!runtimeCanary.environment?.release) {
-      throw new Error(
-        `runtime canary ${label} did not prove a deployed release SHA`
-      );
-    }
-    return runtimeCanary;
-  }
-
-  if (override) {
-    await proveCandidateRelease("before probes");
-  }
-
-  await expectReachablePage(fetchImpl, env, new URL("/sign-in", baseUrl));
-  await expectReachablePage(fetchImpl, env, new URL("/sign-out", baseUrl));
-  await expectReachablePage(fetchImpl, env, new URL("/human", baseUrl));
-  const runtimeCanary = override
-    ? await proveCandidateRelease("during probes")
-    : await expectCanaryOk(
-        fetchImpl,
-        env,
-        new URL("/api/runtime/canary", baseUrl),
-        { headers: smokeAuth }
-      );
-  if (!override) {
-    assertRuntimeCanaryEnvironment(runtimeCanary, expectedRelease);
-  }
-  const runtimeAppEnv = runtimeCanary.environment?.appEnv;
-  await expectErrorCode(
-    fetchImpl,
-    env,
-    new URL("/api/runtime/caller-auth", baseUrl),
-    401,
-    "missing_authorization"
-  );
-  await expectErrorCode(
-    fetchImpl,
-    env,
-    new URL("/api/runtime/caller-auth", baseUrl),
-    403,
-    "invalid_bearer_token",
-    { headers: { Authorization: "Bearer wrong-token" } }
-  );
-  await expectCanaryOk(
-    fetchImpl,
-    env,
-    new URL("/api/runtime/caller-auth", baseUrl),
-    { headers: smokeAuth }
-  );
-  await expectErrorCode(
-    fetchImpl,
-    env,
-    new URL("/api/runtime/database", baseUrl),
-    401,
-    "missing_authorization"
-  );
-  const databaseCanary = await expectCanaryOk(
-    fetchImpl,
-    env,
-    new URL("/api/runtime/database", baseUrl),
-    { headers: smokeAuth }
-  );
-  assertRuntimeDatabaseCanary(databaseCanary, {
+  const probes = runtimeProbes({
+    token: /** @type {string} */ (env.get("SMOKE_OR_CLEANUP_TOKEN")),
+    invalidToken: "wrong-token",
+    expectedRelease,
     requireHumanReviewQuery:
       env.get(REQUIRE_HUMAN_REVIEW_QUERY_ENV_NAME) === "1"
   });
-  await expectCanaryOk(fetchImpl, env, new URL("/api/runtime/log", baseUrl), {
-    headers: smokeAuth
-  });
-  await expectCanaryOk(
-    fetchImpl,
-    env,
-    new URL("/api/runtime/scheduled", baseUrl),
-    {
-      method: "POST",
-      headers: smokeAuth
-    }
+  // A version override must prove the candidate release before and after the
+  // probes so no probe result can come from a different Worker version.
+  const runtimeCanary = /** @type {RuntimeProbe} */ (
+    probes.find((probe) => probe.name === "runtime")
   );
-  const sentryCanary = await expectCanaryOk(
-    fetchImpl,
-    env,
-    new URL("/api/runtime/sentry", baseUrl),
-    {
-      method: "POST",
-      headers: {
-        ...RUNTIME_SMOKE_HEADERS,
-        ...smokeAuth
-      }
-    }
-  );
-  assertRuntimeSentryCanary(sentryCanary, runtimeAppEnv);
-  const errorCanary = await expectJsonStatus(
-    fetchImpl,
-    env,
-    new URL("/api/runtime/error", baseUrl),
-    500,
-    {
-      headers: {
-        ...RUNTIME_SMOKE_HEADERS,
-        ...smokeAuth
-      }
-    }
-  );
-  assertRuntimeErrorCanary(errorCanary);
+  const sequence = override
+    ? [runtimeCanary, ...probes, runtimeCanary]
+    : probes;
 
-  if (override) {
-    await proveCandidateRelease("after probes");
+  for (const probe of sequence) {
+    await assertRuntimeProbe(fetchImpl, env, baseUrl, probe);
   }
 
   console.log("Runtime smoke canaries passed.");
