@@ -27,11 +27,9 @@ type versionPayload struct {
 
 func versionCommand(opts Options, flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "version",
-		Short:         "Print Agent Outbox CLI version metadata",
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "version",
+		Short: "Print Agent Outbox CLI version metadata",
+		Args:  noArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if flags.json {
 				return renderJSON(opts.Stdout, versionData())

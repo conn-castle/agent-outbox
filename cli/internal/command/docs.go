@@ -121,11 +121,9 @@ var terminalDocs = []docsTopic{
 
 func docsCommand(opts Options, flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "docs [topic]",
-		Short:         "Print built-in Agent Outbox terminal documentation",
-		Args:          cobra.MaximumNArgs(1),
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "docs [topic]",
+		Short: "Print built-in Agent Outbox terminal documentation",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return renderDocsIndex(opts, flags)

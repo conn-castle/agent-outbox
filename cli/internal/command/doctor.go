@@ -42,14 +42,13 @@ type doctorPayload struct {
 
 func doctorCommand(opts Options, flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "doctor",
-		Short:         "Run local Agent Outbox CLI diagnostics",
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "doctor",
+		Short: "Run local Agent Outbox CLI diagnostics",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			checks := runDoctor(cmd.Context(), opts, flags)
-			payload := doctorPayload{OK: doctorChecksOK(checks), Checks: checks}
+			failed := firstFailedDoctorCheck(checks)
+			payload := doctorPayload{OK: failed == nil, Checks: checks}
 			if flags.json {
 				if err := renderJSON(opts.Stdout, payload); err != nil {
 					return err
@@ -57,7 +56,7 @@ func doctorCommand(opts Options, flags *rootFlags) *cobra.Command {
 			} else if err := renderDoctorHuman(opts.Stdout, checks); err != nil {
 				return err
 			}
-			if failed := firstFailedDoctorCheck(checks); failed != nil {
+			if failed != nil {
 				return &foundation.AppError{
 					Code:     failed.code,
 					Message:  "Agent Outbox doctor found a failing check: " + failed.Name + ".",
@@ -193,21 +192,12 @@ func doctorSecretStoreCheck(opts Options, configPath string, configPathOwned boo
 	if !callerOK {
 		return "", false, warnCheck("secret_store", "Skipped because no single local caller was selected.", nil)
 	}
-	if bearer, found, err := environmentCallerCredential(opts.Env, caller); err != nil {
+	bearer, fromEnvironment, err := loadCallerBearer(opts, configPath, configPathOwned, caller)
+	if err != nil {
 		return "", false, appErrorCheck("secret_store", err, map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
-	} else if found {
+	}
+	if fromEnvironment {
 		return bearer, true, passCheck("secret_store", "Selected caller credential loaded from AGENT_OUTBOX_API_KEY.", map[string]any{"caller": caller.Name, "caller_id": caller.CallerID, "source": "environment"})
-	}
-	store, err := secretStoreForCommand(opts, configPath, configPathOwned)
-	if err != nil {
-		return "", false, appErrorCheck("secret_store", err, map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
-	}
-	bearer, err := store.LoadCallerKey(caller.CallerID)
-	if err != nil {
-		return "", false, appErrorCheck("secret_store", err, map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
-	}
-	if strings.TrimSpace(bearer) == "" {
-		return "", false, failCheck("secret_store", "Local caller credential is empty; run agent-outbox caller rotate --caller <caller>.", foundation.CodeSecretStore, foundation.ExitSecretStore, map[string]any{"caller": caller.Name, "caller_id": caller.CallerID})
 	}
 	return bearer, true, passCheck("secret_store", "Selected caller credential loaded from the owner-only credentials file.", map[string]any{"caller": caller.Name, "caller_id": caller.CallerID, "source": "credentials_file"})
 }
@@ -291,10 +281,6 @@ func addResponseMetaDetails(details map[string]any, requestID string, correlatio
 	if strings.TrimSpace(correlationID) != "" {
 		details["correlation_id"] = correlationID
 	}
-}
-
-func doctorChecksOK(checks []doctorCheck) bool {
-	return firstFailedDoctorCheck(checks) == nil
 }
 
 func firstFailedDoctorCheck(checks []doctorCheck) *doctorCheck {

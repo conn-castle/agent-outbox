@@ -19,11 +19,9 @@ type upgradePayload struct {
 
 func upgradeCommand(opts Options, flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "upgrade",
-		Short:         "Open the hosted Agent Outbox upgrade page",
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "upgrade",
+		Short: "Open the hosted Agent Outbox upgrade page",
+		Args:  noArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			upgradeURL, err := resolveUpgradeURL(flags, opts.Env)
 			if err != nil {

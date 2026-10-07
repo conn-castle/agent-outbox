@@ -127,11 +127,9 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 	deviceCode := false
 	browser := false
 	cmd := &cobra.Command{
-		Use:           "connect <caller>",
-		Short:         "Connect a local caller through human approval",
-		Args:          exactArgs(1),
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "connect <caller>",
+		Short: "Connect a local caller through human approval",
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			localName, err := normalizeLocalCallerName(args[0])
 			if err != nil {
@@ -184,11 +182,9 @@ func callerConnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 
 func callerListCommand(opts Options, flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "list",
-		Short:         "List locally configured callers",
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "list",
+		Short: "List locally configured callers",
+		Args:  noArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			cfg, err := loadConfig(flags, opts.Env)
 			if err != nil {
@@ -226,11 +222,9 @@ func callerRotateCommand(opts Options, flags *rootFlags) *cobra.Command {
 	deviceCode := false
 	browser := false
 	cmd := &cobra.Command{
-		Use:           "rotate",
-		Short:         "Rotate a local caller credential through human approval",
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "rotate",
+		Short: "Rotate a local caller credential through human approval",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			useDeviceCode, err := approvalUsesDeviceCode(opts, deviceCode, browser)
 			if err != nil {
@@ -240,7 +234,7 @@ func callerRotateCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			selected, err := selectCallerWithID(flags, opts.Env, runtime.Config)
+			selected, err := selectCallerWithID(flags.caller, opts.Env, runtime.Config)
 			if err != nil {
 				return err
 			}
@@ -279,11 +273,9 @@ func callerRevokeCommand(opts Options, flags *rootFlags) *cobra.Command {
 	deviceCode := false
 	browser := false
 	cmd := &cobra.Command{
-		Use:           "revoke <caller>",
-		Short:         "Revoke a caller credential through human approval",
-		Args:          exactArgs(1),
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "revoke <caller>",
+		Short: "Revoke a caller credential through human approval",
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			useDeviceCode, err := approvalUsesDeviceCode(opts, deviceCode, browser)
 			if err != nil {
@@ -319,11 +311,9 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 	deviceCode := false
 	browser := false
 	cmd := &cobra.Command{
-		Use:           "disconnect",
-		Short:         "Remove local caller state",
-		Args:          noArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
+		Use:   "disconnect",
+		Short: "Remove local caller state",
+		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if (deviceCode || browser) && !revoke {
 				return foundation.NewUsageError("caller disconnect --device-code and --browser require --revoke.")
@@ -340,7 +330,7 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			selected, err := selectCallerWithID(flags, opts.Env, runtime.Config)
+			selected, err := selectCallerWithID(flags.caller, opts.Env, runtime.Config)
 			if err != nil {
 				return err
 			}
@@ -350,7 +340,7 @@ func callerDisconnectCommand(opts Options, flags *rootFlags) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				selected, err = selectCallerWithID(flags, opts.Env, runtime.Config)
+				selected, err = selectCallerWithID(flags.caller, opts.Env, runtime.Config)
 				if err != nil {
 					return err
 				}
@@ -453,11 +443,8 @@ func namedControlRuntime(opts Options, flags *rootFlags, name string) (*controlP
 		return nil, foundation.CallerConfig{}, err
 	}
 	// revoke <caller> deliberately ignores --caller and AGENT_OUTBOX_CALLER.
-	selected, err := foundation.SelectCaller(name, nil, runtime.Config)
+	selected, err := selectCallerWithID(name, nil, runtime.Config)
 	if err != nil {
-		return nil, foundation.CallerConfig{}, err
-	}
-	if err := requireCallerID(selected); err != nil {
 		return nil, foundation.CallerConfig{}, err
 	}
 	return runtime, selected, nil
