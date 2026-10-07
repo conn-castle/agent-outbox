@@ -8,6 +8,7 @@ import {
 } from "../shared/client-events-contract.ts";
 import { createCorrelationId } from "./correlation.ts";
 import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
+import { readJsonRequestBody } from "./request-body.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
 export type ClientEventProcessResult = {
@@ -113,9 +114,15 @@ export async function handleClientEventsRequest(
       return { accepted: 0, dropped: 0 };
     }
 
-    const body = await readClientEventBody(request);
+    const body = await readJsonRequestBody(
+      request,
+      CLIENT_EVENT_BODY_BYTE_LIMIT
+    );
     if (!body.ok) {
-      emitClientEventDrop(context, body.reason);
+      // An unreadable (aborted) upload is an unlogged drop.
+      if (body.reason !== "unreadable") {
+        emitClientEventDrop(context, body.reason);
+      }
       return { accepted: 0, dropped: 1 };
     }
 
@@ -141,71 +148,6 @@ export async function handleClientEventsRequest(
   } catch {
     return { accepted: 0, dropped: 1 };
   }
-}
-
-async function readClientEventBody(request: Request): Promise<
-  | { ok: true; value: unknown }
-  | {
-      ok: false;
-      reason:
-        | "content_type"
-        | "declared_body_too_large"
-        | "body_too_large"
-        | "invalid_json";
-    }
-> {
-  const contentType = request.headers.get("content-type") ?? "";
-  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  if (mediaType !== "application/json") {
-    return { ok: false, reason: "content_type" };
-  }
-
-  const declaredLength = Number(request.headers.get("content-length") ?? "");
-  if (
-    Number.isFinite(declaredLength) &&
-    declaredLength > CLIENT_EVENT_BODY_BYTE_LIMIT
-  ) {
-    return { ok: false, reason: "declared_body_too_large" };
-  }
-
-  const body = await readBodyTextWithLimit(request);
-  if (!body.ok) {
-    return { ok: false, reason: "body_too_large" };
-  }
-
-  try {
-    return { ok: true, value: JSON.parse(body.text) };
-  } catch {
-    return { ok: false, reason: "invalid_json" };
-  }
-}
-
-async function readBodyTextWithLimit(
-  request: Request
-): Promise<{ ok: true; text: string } | { ok: false }> {
-  if (!request.body) {
-    return { ok: true, text: "" };
-  }
-
-  const reader = request.body.getReader();
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  let text = "";
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    bytes += value.byteLength;
-    if (bytes > CLIENT_EVENT_BODY_BYTE_LIMIT) {
-      return { ok: false };
-    }
-    text += decoder.decode(value, { stream: true });
-  }
-
-  text += decoder.decode();
-  return { ok: true, text };
 }
 
 function parseClientEventBatch(

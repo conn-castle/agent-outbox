@@ -73,6 +73,65 @@ export async function readJsonBodyWithLimit(
   }
 }
 
+export type JsonRequestBodyResult =
+  | { ok: true; value: unknown }
+  | {
+      ok: false;
+      reason:
+        | "content_type"
+        | "declared_body_too_large"
+        | "body_too_large"
+        | "unreadable"
+        | "invalid_json";
+    };
+
+/**
+ * Reads an `application/json` body within byteLimit and parses it after lenient
+ * UTF-8 decoding. A missing body is invalid JSON. Streamed overflow returns
+ * without cancelling the source, so the result never waits on cancellation.
+ * Source-read failures (such as an aborted upload) return unreadable; failing to
+ * acquire the body reader throws.
+ */
+export async function readJsonRequestBody(
+  request: Request,
+  byteLimit: number
+): Promise<JsonRequestBodyResult> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.split(";")[0]?.trim().toLowerCase() !== "application/json") {
+    return { ok: false, reason: "content_type" };
+  }
+
+  const declaredLength = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declaredLength) && declaredLength > byteLimit) {
+    return { ok: false, reason: "declared_body_too_large" };
+  }
+
+  let text = "";
+  if (request.body) {
+    const reader = request.body.getReader();
+    const decoder = new TextDecoder();
+    let bytes = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > byteLimit) return { ok: false, reason: "body_too_large" };
+        text += decoder.decode(value, { stream: true });
+      }
+      text += decoder.decode();
+    } catch {
+      return { ok: false, reason: "unreadable" };
+    }
+  }
+
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    return { ok: false, reason: "invalid_json" };
+  }
+}
+
 type RawRequestBodyResult =
   { ok: true; bytes: number; buffer: Buffer } | { ok: false };
 

@@ -1,5 +1,6 @@
 import { apiRequestContext, type ApiRequestContext } from "./api-errors.ts";
 import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
+import { readJsonRequestBody } from "./request-body.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
 export const CONTACT_DESTINATION = "contact@agent-outbox.dev";
@@ -175,47 +176,6 @@ function parseContactSubmission(value: unknown): ContactParseResult {
   };
 }
 
-async function readJsonBody(request: Request) {
-  const contentType = request.headers.get("content-type") ?? "";
-  if (contentType.split(";")[0]?.trim().toLowerCase() !== "application/json") {
-    return null;
-  }
-
-  const declaredLength = Number(request.headers.get("content-length") ?? "");
-  if (
-    Number.isFinite(declaredLength) &&
-    declaredLength > CONTACT_BODY_BYTE_LIMIT
-  ) {
-    return null;
-  }
-
-  if (!request.body) {
-    return null;
-  }
-
-  const reader = request.body.getReader();
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  let text = "";
-
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > CONTACT_BODY_BYTE_LIMIT) return null;
-      text += decoder.decode(value, { stream: true });
-    }
-    text += decoder.decode();
-
-    return JSON.parse(text) as unknown;
-  } catch {
-    // An aborted or truncated upload is an unreadable client body, not a
-    // delivery failure.
-    return null;
-  }
-}
-
 function requestOriginIsValid(request: Request) {
   const origin = request.headers.get("origin");
   return origin !== null && origin === new URL(request.url).origin;
@@ -276,7 +236,10 @@ export async function handleContactRequest(
     );
   }
 
-  const parsed = parseContactSubmission(await readJsonBody(request));
+  // An aborted or truncated upload is an unreadable client body, not a
+  // delivery failure, so every body failure is invalid input.
+  const body = await readJsonRequestBody(request, CONTACT_BODY_BYTE_LIMIT);
+  const parsed = parseContactSubmission(body.ok ? body.value : null);
   if (!parsed.ok) {
     return jsonResponse(
       { ok: false, code: "invalid_request", message: parsed.message },
