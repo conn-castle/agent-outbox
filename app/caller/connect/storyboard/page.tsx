@@ -1,11 +1,11 @@
-import { ArrowLeft, ExternalLink } from "lucide-react";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { StoryboardShell } from "../../../../src/components/StoryboardShell";
 import type { ConnectApprovalPreviewData } from "../../../../src/server/caller-connect";
 import type { SetupTerminalStateData } from "../../../../src/server/caller-setup-requests";
 import { humanBrowserFixtureEnabled } from "../../../../src/server/human-review-fixture-gate";
 import type { HumanAccountSession } from "../../../../src/server/human-session";
+import { firstSearchParam } from "../../../../src/shared/human-review-view";
 import {
   BrowserApprovalView,
   ConnectionDeclinedView,
@@ -44,30 +44,6 @@ const scenarios = [
 
 type ScenarioKey = (typeof scenarios)[number]["key"];
 
-const viewports = [
-  {
-    key: "desktop",
-    label: "Desktop",
-    dimensions: "1440 × 900",
-    width: 1440,
-    height: 900
-  },
-  {
-    key: "tablet",
-    label: "Tablet",
-    dimensions: "834 × 1112",
-    width: 834,
-    height: 1112
-  },
-  {
-    key: "phone",
-    label: "Phone",
-    dimensions: "390 × 844",
-    width: 390,
-    height: 844
-  }
-] as const;
-
 const session: HumanAccountSession = {
   surface: "human",
   accountId: "storyboard-account",
@@ -83,10 +59,6 @@ const session: HumanAccountSession = {
   provisionedAccount: false
 };
 
-function firstParam(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] : value;
-}
-
 function selectedScenario(value: string | undefined) {
   return scenarios.find((scenario) => scenario.key === value) ?? scenarios[0];
 }
@@ -99,118 +71,29 @@ export default async function CallerConnectStoryboardPage({
   if (!humanBrowserFixtureEnabled()) notFound();
 
   const params = await searchParams;
-  const selected = selectedScenario(firstParam(params?.scenario));
-  if (firstParam(params?.mode) === "preview") {
+  const selected = selectedScenario(firstSearchParam(params?.scenario));
+  if (firstSearchParam(params?.mode) === "preview") {
     return <ScenarioPreview scenario={selected.key} />;
   }
-  const previewHref = scenarioHref(selected.key, true);
 
   return (
-    <main className="review-storyboard">
-      <header className="storyboard-header">
-        <div className="storyboard-brand product-wordmark">
-          <img src="/agent-outbox-mark.svg" alt="" width="34" height="34" />
-          <span>
-            Agent <b>Outbox</b>
-          </span>
-          <i>Caller connect storyboard</i>
-        </div>
-        <div className="storyboard-header-actions">
-          <Link href="/human">
-            <ArrowLeft aria-hidden="true" /> Back to queue
-          </Link>
-          <a href={previewHref} target="_blank" rel="noreferrer">
-            Open live viewport <ExternalLink aria-hidden="true" />
-          </a>
-        </div>
-      </header>
-
-      <div className="storyboard-layout">
-        <nav className="storyboard-index" aria-label="Caller connect scenarios">
-          <div className="storyboard-index-intro">
-            <span>Coverage catalog</span>
-            <strong>{scenarios.length} connection scenarios</strong>
-            <p>
-              Choose a state, then inspect the real shared UI at each exact
-              width.
-            </p>
-          </div>
-          <ol>
-            {scenarios.map((scenario, index) => (
-              <li key={scenario.key}>
-                <Link
-                  className={
-                    scenario.key === selected.key ? "selected" : undefined
-                  }
-                  href={scenarioHref(scenario.key)}
-                  aria-current={
-                    scenario.key === selected.key ? "page" : undefined
-                  }
-                >
-                  <span>{String(index + 1).padStart(2, "0")}</span>
-                  <strong>{scenario.label}</strong>
-                </Link>
-              </li>
-            ))}
-          </ol>
-        </nav>
-
-        <section className="storyboard-stage" aria-labelledby="story-title">
-          <div className="storyboard-stage-header">
-            <div>
-              <p>{selected.label}</p>
-              <h1 id="story-title">{selected.title}</h1>
-              <span>
-                Real caller-connect view · deterministic fixture state
-              </span>
-            </div>
-          </div>
-
-          <div className="storyboard-meta-row">
-            <div className="storyboard-coverage" aria-label="Covered states">
-              {selected.coverage.map((coverage) => (
-                <span key={coverage}>{coverage}</span>
-              ))}
-            </div>
-            <nav className="storyboard-width-nav" aria-label="Jump to width">
-              {viewports.map((viewport) => (
-                <a href={`#viewport-${viewport.key}`} key={viewport.key}>
-                  {viewport.label} <span>{viewport.width}</span>
-                </a>
-              ))}
-            </nav>
-          </div>
-
-          <div className="storyboard-frames" aria-label="Responsive previews">
-            {viewports.map((viewport) => (
-              <article
-                className="storyboard-frame"
-                key={viewport.key}
-                id={`viewport-${viewport.key}`}
-              >
-                <header>
-                  <div>
-                    <span>{viewport.label}</span>
-                    <small>{viewport.dimensions} · exact CSS pixels</small>
-                  </div>
-                  <a href={previewHref} target="_blank" rel="noreferrer">
-                    Open separately <ExternalLink aria-hidden="true" />
-                  </a>
-                </header>
-                <div className="storyboard-viewport">
-                  <iframe
-                    src={previewHref}
-                    title={`${selected.label} at ${viewport.label} width`}
-                    width={viewport.width}
-                    height={viewport.height}
-                  />
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      </div>
-    </main>
+    <StoryboardShell
+      label="Caller connect storyboard"
+      previewHref={scenarioHref(selected.key, true)}
+      indexLabel="Caller connect scenarios"
+      countLabel={`${scenarios.length} connection scenarios`}
+      intro="Choose a state, then inspect the real shared UI at each exact width."
+      scenarios={scenarios.map((scenario) => ({
+        key: scenario.key,
+        href: scenarioHref(scenario.key),
+        label: scenario.label,
+        selected: scenario.key === selected.key
+      }))}
+      eyebrow={selected.label}
+      title={selected.title}
+      subtitle="Real caller-connect view · deterministic fixture state"
+      coverage={selected.coverage}
+    />
   );
 }
 

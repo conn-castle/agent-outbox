@@ -3369,3 +3369,22 @@ test("fixture storyboard catalogs every use case at desktop tablet and phone wid
     /search=email%3Adraft%3Ameridian-renewal/
   );
 });
+
+test("fixture row-layout storyboard renders the row anatomy diagnostic", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "The storyboard itself is verified once on desktop.");
+
+  await page.goto("/human/storyboard?mode=layout");
+  await expect(
+    page.getByRole("heading", { name: "Review row slots" })
+  ).toBeVisible();
+  await expect(page.getByText("Row anatomy", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Back to queue/ })
+  ).toHaveAttribute("href", "/human");
+  await expect(
+    page.getByRole("link", { name: /Open live viewport/ })
+  ).toHaveCount(0);
+});

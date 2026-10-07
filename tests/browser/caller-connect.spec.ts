@@ -718,6 +718,53 @@ test("rotate and revoke alternate approval variants and error pages render", asy
   );
 });
 
+test("fixture storyboard catalogs every connection state at desktop tablet and phone widths", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "The storyboard itself is verified once on desktop.");
+
+  await page.goto("/caller/connect/storyboard");
+  await expect(
+    page.getByRole("heading", { name: "Allow a caller connection" })
+  ).toBeVisible();
+  await expect(page.getByText("4 connection scenarios")).toBeVisible();
+  for (const label of [
+    "Browser approval",
+    "Device approval",
+    "Connection success",
+    "Connection declined"
+  ]) {
+    await expect(
+      page.getByRole("link", { name: new RegExp(label) })
+    ).toBeVisible();
+  }
+  await expect(
+    page.getByRole("link", { name: /Open live viewport/ })
+  ).toHaveAttribute("href", /mode=preview/);
+
+  const frames = page.locator(".storyboard-viewport iframe");
+  await expect(frames).toHaveCount(3);
+  await expect(frames.nth(0)).toHaveAttribute("width", "1440");
+  await expect(frames.nth(1)).toHaveAttribute("width", "834");
+  await expect(frames.nth(2)).toHaveAttribute("width", "390");
+  await expect(frames.nth(0)).toHaveAttribute(
+    "src",
+    /scenario=browser&mode=preview/
+  );
+  await expect(
+    frames.nth(0).contentFrame().getByText("Allow Agent Outbox CLI to connect?")
+  ).toBeVisible();
+
+  await page.getByRole("link", { name: /Device approval/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Verify a terminal code" })
+  ).toBeVisible();
+  await expect(
+    frames.nth(0).contentFrame().getByText("Does this code match?")
+  ).toBeVisible();
+});
+
 async function connectCallerThroughDevice(
   page: import("@playwright/test").Page,
   request: import("@playwright/test").APIRequestContext,
