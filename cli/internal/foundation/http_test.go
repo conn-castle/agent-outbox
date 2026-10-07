@@ -713,6 +713,9 @@ func TestAPIClientDownloadClassifiesDestinationWriteFailureAsLocalIO(t *testing.
 	}
 }
 
+// TestAPIClientDownloadRejectsUnusableErrorResponses guards returned metadata
+// updates when a decoded error envelope fails validation, while requiring both
+// error-body cases to leave the destination untouched.
 func TestAPIClientDownloadRejectsUnusableErrorResponses(t *testing.T) {
 	for name, tc := range map[string]struct {
 		body              string
@@ -765,6 +768,9 @@ func TestAPIClientDownloadRejectsUnusableErrorResponses(t *testing.T) {
 	}
 }
 
+// TestKnownAPIErrorCodesHaveExpectedHTTPStatuses keeps an explicit contract
+// table so recognized-code status expectations do not come from the mapping
+// under test.
 func TestKnownAPIErrorCodesHaveExpectedHTTPStatuses(t *testing.T) {
 	want := map[ErrorCode]int{
 		CodeInvalidRequest: http.StatusBadRequest, CodeInvalidJSON: http.StatusBadRequest,

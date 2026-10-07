@@ -28,6 +28,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-06 copilot-review-project-context: Hosted review lacks a committed project-guidance entry point
+    Priority: Low. Area: Review tooling
+    Description: Canonical project instructions are tracked under `.agent-layer/instructions`, but generated `AGENTS.md` and `.github/copilot-instructions.md` are gitignored and no committed Copilot review instruction file or review skill exposes them through GitHub's documented paths; repository MCP settings and actual review-context use are unverified.
+    Next step: Identify the minimum review context needed and verify a supported integration against available review-session evidence without duplicating canonical rules.
+    Notes: Deferred from PR208 Copilot review https://github.com/conn-castle/agent-outbox/pull/208#pullrequestreview-5435689404.
+
 - Issue 2026-10-04 stripe-duplicate-subscriptions: One account can hold several live Stripe subscriptions
     Priority: Medium. Area: Billing
     Description: Checkout (`src/server/billing.ts`) is refused only when the account is already live, so completing two Checkout sessions opened while free creates two subscriptions (and, with no stored customer, two Stripe customers). Subscription webhooks match by subscription id, customer id, or metadata account id and overwrite the stored subscription, so the account follows whichever subscription last emitted an event; cancelling one can start downgrade grace and paid-data cleanup while the other keeps charging, and the Billing Portal shows only the stored customer.

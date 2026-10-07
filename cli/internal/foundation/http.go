@@ -130,9 +130,10 @@ func (c APIClient) do(ctx context.Context, method string, apiPath string, bearer
 	return responseMeta, nil
 }
 
-// Download uses Accept: */* and closes the response body. Metadata is nil on
-// build or transport failures. Decoded download error envelopes contribute safe
-// diagnostic IDs to the returned metadata even when envelope validation fails.
+// Download fetches raw file bytes with Accept: */* and closes the response body.
+// Build or transport failures return nil metadata; decoded error-envelope IDs
+// update the returned metadata even when validation fails. Successful responses
+// are staged within the file-size limit before bytes are copied to dst.
 func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken string, dst io.Writer) (*DownloadResponse, error) {
 	resp, responseMeta, err := c.send(ctx, http.MethodGet, apiPath, bearerToken, "*/*", nil, readRequest)
 	if err != nil {
@@ -188,9 +189,11 @@ func (c APIClient) Download(ctx context.Context, apiPath string, bearerToken str
 	return downloadMeta, nil
 }
 
-// send builds and performs one API request and returns the response with its
-// header-derived metadata. The caller owns closing the response body. Build
-// and transport failures return no metadata.
+// send builds and performs one request using accept, sending json.RawMessage
+// bodies unchanged and JSON-encoding other non-nil bodies. Content-Type is set
+// only for a non-nil body. On success it returns header-derived metadata and a
+// response whose body the caller must close. Build or transport failures return
+// nil response and metadata; transport errors retain the generated request ID.
 func (c APIClient) send(ctx context.Context, method string, apiPath string, bearerToken string, accept string, body any, kind requestKind) (*http.Response, *APIResponse, error) {
 	base, err := normalizeBaseURL(c.BaseURL)
 	if err != nil {
@@ -240,8 +243,10 @@ func (c APIClient) send(ctx context.Context, method string, apiPath string, bear
 	}, nil
 }
 
-// decodeEnvelope reads a bounded JSON envelope, adopts its safe diagnostic IDs
-// into meta, and validates it against the HTTP status in meta.
+// decodeEnvelope reads a bounded JSON envelope and validates it against
+// meta.HTTPStatus. After JSON decoding, safe body IDs update meta before
+// validation, so they survive validation failures. Read, size, and JSON errors
+// take precedence over envelope validation; the caller closes the body.
 func decodeEnvelope(body io.Reader, meta *APIResponse, kind requestKind, nonJSONMessage string) (*apiEnvelope, *AppError) {
 	data, oversized, err := readBodyWithLimit(body, maxJSONResponseBytes)
 	if err != nil {
@@ -434,6 +439,9 @@ func appErrorFromEnvelope(envelope *apiEnvelope, meta *APIResponse, kind request
 	}
 }
 
+// validateEnvelope returns the first envelope-contract violation. Success
+// requires a 2xx status and non-null data; errors require safe diagnostic IDs,
+// a recognized public code, and its matching HTTP status.
 func validateEnvelope(envelope *apiEnvelope, status int) error {
 	if envelope.OK == nil {
 		return errors.New("Agent Outbox API response is missing the required ok field.")
@@ -474,6 +482,8 @@ func validateEnvelope(envelope *apiEnvelope, status int) error {
 	return nil
 }
 
+// expectedHTTPStatus returns the public API status for code, or zero when code
+// is unrecognized. Envelope validation also uses this mapping to recognize codes.
 func expectedHTTPStatus(code ErrorCode) int {
 	switch code {
 	case CodeInvalidRequest, CodeInvalidJSON:
@@ -526,14 +536,17 @@ func NewAPIResponseInvalidError(message string, meta *APIResponse) *AppError {
 	return responseFailure(CodeAPIResponseInvalid, message, meta, readRequest, nil)
 }
 
-// acceptedResponseFailure reports an invalid success response whose write the
-// server already accepted, so callers never retry a completed mutation.
+// acceptedResponseFailure reports unusable data after a validated success
+// envelope. Write errors report accepted; read errors omit the write outcome.
 func acceptedResponseFailure(message string, meta *APIResponse, kind requestKind, cause error) *AppError {
 	appErr := responseFailure(CodeAPIResponseInvalid, message, meta, kind, cause)
 	appErr.WriteOutcome = writeOutcome(kind, "accepted")
 	return appErr
 }
 
+// invalidEnvelopeFailure keeps response-invalid classification while retaining
+// safe partial error diagnostics. Writes with a 2xx status and ok:true report
+// accepted; other writes remain unknown, and reads omit the write outcome.
 func invalidEnvelopeFailure(envelope *apiEnvelope, meta *APIResponse, kind requestKind, message string) *AppError {
 	appErr := responseFailure(CodeAPIResponseInvalid, message, meta, kind, nil)
 	if envelope.OK != nil && *envelope.OK && meta.HTTPStatus >= 200 && meta.HTTPStatus < 300 {
