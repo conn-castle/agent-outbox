@@ -1,10 +1,11 @@
 "use client";
 
-import type {
-  HumanMutationFailure,
-  HumanMutationOperation,
-  HumanMutationResult
-} from "../../shared/human-mutation";
+import {
+  isHumanMutationOperation,
+  type HumanMutationFailure,
+  type HumanMutationOperation,
+  type HumanMutationResult
+} from "../../shared/human-mutation.ts";
 import type { HumanReviewListRow } from "../../server/human-review";
 
 export const HUMAN_MUTATION_SCOPE = "human-review";
@@ -62,9 +63,7 @@ export function isHumanOptimisticMutation(
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const mutation = value as Partial<HumanOptimisticMutation>;
   return (
-    (mutation.operation === "answer" ||
-      mutation.operation === "bulk-answer" ||
-      mutation.operation === "undo") &&
+    isHumanMutationOperation(mutation.operation) &&
     Array.isArray(mutation.inputItemIds) &&
     mutation.inputItemIds.every((id) => typeof id === "string") &&
     Array.isArray(mutation.rowSnapshots) &&
@@ -80,9 +79,7 @@ export function isHumanMutationResult(
   const inputItemIds = result.inputItemIds;
   const base =
     typeof result.ok === "boolean" &&
-    (result.operation === "answer" ||
-      result.operation === "bulk-answer" ||
-      result.operation === "undo") &&
+    isHumanMutationOperation(result.operation) &&
     typeof result.message === "string" &&
     Array.isArray(inputItemIds) &&
     inputItemIds.every((id) => typeof id === "string");

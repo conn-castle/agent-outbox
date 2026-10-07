@@ -8,7 +8,8 @@ import {
 } from "../src/server/human-action-form.ts";
 import { validatedResponsePayload } from "../src/server/human-answer.ts";
 import * as requestBody from "../src/server/request-body.ts";
-import { humanMutationTransportFailureResponse } from "../src/server/human-mutation-response.ts";
+import * as humanMutationResponse from "../src/server/human-mutation-response.ts";
+import * as humanMutation from "../src/shared/human-mutation.ts";
 import { SYSTEM_CONTRACT } from "../src/shared/system-contract.ts";
 import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 
@@ -127,9 +128,8 @@ function routeHarness() {
       humanBrowserFixtureEnabled: () => state.fixture
     },
     "../../../src/server/request-body": requestBody,
-    "../../../src/server/human-mutation-response": {
-      humanMutationTransportFailureResponse
-    },
+    "../../../src/server/human-mutation-response": humanMutationResponse,
+    "../../../src/shared/human-mutation": humanMutation,
     "../../../src/server/sentry": {
       /** @param {unknown} error @param {Record<string, unknown>} metadata */
       reportRuntimeFailure(error, metadata) {
@@ -199,6 +199,27 @@ function request(body, headers = {}) {
   );
 }
 
+/**
+ * @param {Response} response
+ * @param {number} status
+ * @param {string} code
+ * @param {string} message
+ */
+async function assertMutationFailure(response, status, code, message) {
+  assert.equal(response.status, status);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(
+    await response.text(),
+    JSON.stringify({
+      ok: false,
+      operation: "answer",
+      code,
+      message,
+      inputItemIds: []
+    })
+  );
+}
+
 for (const operation of ["answer", "bulk-answer", "undo"]) {
   test(`POST preserves ordinary ${operation} multipart dispatch and response envelope`, async () => {
     const { POST, state } = routeHarness();
@@ -230,7 +251,12 @@ test("POST preserves origin and authentication gates before consuming a body", a
     for (const headers of [{ origin: "https://other.test" }, { origin: "" }]) {
       const { POST, state } = routeHarness();
       const req = request(ordinaryForm(operation), headers);
-      assert.equal((await POST(req)).status, 403);
+      await assertMutationFailure(
+        await POST(req),
+        403,
+        "invalid_request",
+        "Refresh the page and try again."
+      );
       assert.equal(req.bodyUsed, false);
       assert.equal(state.authCalls, 0);
       assert.equal(state.reports.length, 0);
@@ -238,9 +264,12 @@ test("POST preserves origin and authentication gates before consuming a body", a
     const { POST, state } = routeHarness();
     state.userId = null;
     const req = request(ordinaryForm(operation));
-    const response = await POST(req);
-    assert.equal(response.status, 401);
-    assert.equal((await response.json()).code, "authentication_required");
+    await assertMutationFailure(
+      await POST(req),
+      401,
+      "authentication_required",
+      "Your session expired. Sign in again, then retry the action."
+    );
     assert.equal(req.bodyUsed, false);
     assert.equal(state.answers.length, 0);
     assert.equal(state.reports.length, 0);
@@ -410,7 +439,12 @@ test("POST rejects known native malformed bodies and invalid operations without 
   const { POST, state } = routeHarness();
   const form = ordinaryForm("answer");
   form.set("_operation", "unknown");
-  assert.equal((await POST(request(form))).status, 400);
+  await assertMutationFailure(
+    await POST(request(form)),
+    400,
+    "invalid_request",
+    "Action failed: invalid request."
+  );
   assert.equal(state.reports.length, 0);
   assert.equal(state.answers.length, 0);
 });
