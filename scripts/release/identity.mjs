@@ -54,6 +54,20 @@ export function isFullGitSha(value) {
 }
 
 /**
+ * @param {unknown} canary
+ * @returns {string | null}
+ */
+export function configuredRuntimeRelease(canary) {
+  const environment =
+    /** @type {{ environment?: { configured?: unknown, release?: unknown } } | null | undefined} */ (
+      canary
+    )?.environment;
+  return environment?.configured === true && isFullGitSha(environment.release)
+    ? /** @type {string} */ (environment.release)
+    : null;
+}
+
+/**
  * @param {unknown} value
  * @returns {boolean}
  */

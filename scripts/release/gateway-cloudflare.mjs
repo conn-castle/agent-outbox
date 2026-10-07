@@ -26,7 +26,6 @@ import {
  * @typedef {object} CloudflareGateway
  * @property {() => WorkerDeploymentStatus | Promise<WorkerDeploymentStatus>} deploymentStatus
  * @property {() => unknown | Promise<unknown>} [listVersions]
- * @property {(versionId: string) => unknown | Promise<unknown>} [viewVersion]
  * @property {(env: NodeJS.ProcessEnv | Record<string, string | undefined>) =>
  *   ({ versionId: string } | Promise<{ versionId: string }>)} uploadVersion
  * @property {(placements: { versionId: string, percentage: number }[], message?: string) =>
@@ -38,9 +37,6 @@ import {
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
  */
 function wranglerJson(args, env) {
-  if (env == null) {
-    throw new Error("wranglerJson requires an explicit environment");
-  }
   const failures = validateWorkerTrafficEnvironment(env);
   if (failures.length > 0) {
     throw new Error(failures.join("\n"));
@@ -158,13 +154,7 @@ export function createCloudflareGateway(env) {
     deployVersions: (placements, message) => {
       runWranglerVersionsDeploy(
         buildWranglerVersionsDeployArgs(placements, message),
-        {
-          env,
-          allowedWorkflows: [
-            "deploy-production.yml",
-            "reconcile-production-release.yml"
-          ]
-        }
+        { env }
       );
     }
   };

@@ -16,6 +16,7 @@ import {
   FULL_GIT_SHA,
   PublicationStateUnknownError,
   ReleaseHoldError,
+  configuredRuntimeRelease,
   isWorkerVersionId
 } from "./identity.mjs";
 import {
@@ -196,11 +197,12 @@ export async function deriveReleaseIdentities(orchestrator, input) {
     classification.kind === "published_tag_pending"
   ) {
     const release = classifiedRelease(classification);
+    const marker = parseOwnershipMarker(release.body);
     const derived = {
       kind: classification.kind,
       tagCommit,
       releaseId: release.id,
-      runId: parseOwnershipMarker(release.body)?.runId ?? null,
+      runId: marker?.runId ?? null,
       candidateSha:
         tagCommit ||
         input.claimed?.candidateSha ||
@@ -213,30 +215,15 @@ export async function deriveReleaseIdentities(orchestrator, input) {
       priorVersionId: null,
       candidateVersionId: null,
       state: /** @type {const} */ ("published"),
-      marker: parseOwnershipMarker(release.body),
+      marker,
       release,
       classification,
       releases
     };
-    assertClaimedIdentities(
-      { ...derived, runId: derived.runId ?? "" },
-      {
-        ...input.claimed,
-        runId: undefined,
-        priorSha: undefined,
-        priorVersionId: undefined,
-        candidateVersionId: undefined
-      }
-    );
-    if (
-      input.claimed?.candidateSha &&
-      derived.candidateSha &&
-      input.claimed.candidateSha !== derived.candidateSha
-    ) {
-      throw new ReleaseHoldError(
-        "claimed candidateSha does not match derived GitHub/Cloudflare state"
-      );
-    }
+    assertClaimedIdentities(derived, {
+      candidateSha: input.claimed?.candidateSha,
+      releaseId: input.claimed?.releaseId
+    });
     return derived;
   }
 
@@ -344,15 +331,11 @@ export async function persistOwnedDraftIdentities(orchestrator, input) {
 }
 
 /**
+ * The caller has already proven priorSha is a full SHA.
  * @param {ReleaseOrchestrator} orchestrator
  * @param {string} priorSha
  */
 async function provePriorRuntimeRestored(orchestrator, priorSha) {
-  if (!FULL_GIT_SHA.test(priorSha)) {
-    throw new ReleaseHoldError(
-      "prior runtime SHA is unknown; refusing draft cleanup"
-    );
-  }
   if (!orchestrator.runtimeCanary) {
     throw new Error("runtime canary is required to prove restored prior SHA");
   }
@@ -812,13 +795,7 @@ export async function runReleasePublication(orchestrator, input) {
       const currentMarker = parseOwnershipMarker(ownedRelease.body);
       const body = serializeOwnershipMarker(
         {
-          ...(currentMarker ?? {
-            repository: input.repository,
-            runId: input.runId,
-            candidateSha: input.expectedSha,
-            releaseTag: input.releaseTag,
-            state: "prepared"
-          }),
+          ...(currentMarker ?? {}),
           repository: input.repository,
           runId: input.runId,
           candidateSha: input.expectedSha,
@@ -1028,16 +1005,9 @@ export async function runReconciliation(orchestrator, input) {
   if (!liveConfigured && needsObservedPrior && orchestrator.runtimeCanary) {
     try {
       const canary = await orchestrator.runtimeCanary();
-      const environment =
-        /** @type {{ environment?: { configured?: unknown, release?: unknown } }} */ (
-          canary
-        ).environment;
-      if (
-        environment?.configured === true &&
-        typeof environment.release === "string" &&
-        FULL_GIT_SHA.test(environment.release)
-      ) {
-        liveSha = environment.release;
+      const observed = configuredRuntimeRelease(canary);
+      if (observed !== null) {
+        liveSha = observed;
         liveConfigured = true;
       }
     } catch {

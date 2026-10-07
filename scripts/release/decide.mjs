@@ -1,6 +1,7 @@
 import {
   FULL_GIT_SHA,
   WORKER_VERSION_ID,
+  configuredRuntimeRelease,
   isWorkerVersionId
 } from "./identity.mjs";
 import { markerMatchesRun, parseOwnershipMarker } from "./marker.mjs";
@@ -50,16 +51,8 @@ export function selectRollbackTarget(deploymentStatus, runtimeCanary) {
     );
   }
 
-  const canary =
-    /** @type {{ environment?: { configured?: unknown, release?: unknown } }} */ (
-      runtimeCanary
-    );
-  const rollbackRelease = canary?.environment?.release;
-  if (
-    canary?.environment?.configured !== true ||
-    typeof rollbackRelease !== "string" ||
-    !FULL_GIT_SHA.test(rollbackRelease)
-  ) {
+  const rollbackRelease = configuredRuntimeRelease(runtimeCanary);
+  if (rollbackRelease === null) {
     throw new Error("rollback requires a configured live release SHA");
   }
 
@@ -358,14 +351,10 @@ export function decideReconciliation(snapshot) {
       mutate: false
     };
   }
-  if (classification.kind === "published_tag_pending") {
-    return {
-      action: "retry-publish",
-      releaseId: classifiedRelease(classification).id,
-      mutate: "publish-only"
-    };
-  }
-  if (classification.kind === "owned_publishing") {
+  if (
+    classification.kind === "published_tag_pending" ||
+    classification.kind === "owned_publishing"
+  ) {
     return {
       action: "retry-publish",
       releaseId: classifiedRelease(classification).id,
@@ -416,16 +405,10 @@ export function decideReconciliation(snapshot) {
       ? snapshot.priorVersionId
       : "") || traffic.uniqueHundredPercentVersionId;
   if (
-    (traffic.onlyCandidate || traffic.liveIsCandidate || traffic.staged) &&
-    !isWorkerVersionId(snapshot.priorVersionId ?? "")
+    ((traffic.onlyCandidate || traffic.liveIsCandidate || traffic.staged) &&
+      !isWorkerVersionId(snapshot.priorVersionId ?? "")) ||
+    !isWorkerVersionId(priorVersionId)
   ) {
-    return {
-      action: "hold",
-      reason: "prior Worker version is unknown; refusing draft cleanup",
-      mutate: false
-    };
-  }
-  if (!isWorkerVersionId(priorVersionId)) {
     return {
       action: "hold",
       reason: "prior Worker version is unknown; refusing draft cleanup",

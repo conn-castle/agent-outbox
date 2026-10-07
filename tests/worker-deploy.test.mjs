@@ -26,10 +26,8 @@ import {
   REQUIRED_SECRET_NAMES as WORKER_DEPLOY_SECRET_NAMES,
   assertWorkerTriggersUnchanged,
   buildPromoteCandidateArgs,
-  buildRestorePriorArgs,
   buildStagedVersionDeployArgs,
   buildWranglerVersionsUploadArgs,
-  buildWranglerVersionsUploadArgsWithConfig,
   parseUploadedWorkerVersionId,
   runWorkerVersionUpload,
   validateWorkerDeployEnvironment,
@@ -118,7 +116,7 @@ test("route and cron drift blocks the application release", () => {
   );
 });
 
-test("staged, promote, and restore commands are non-interactive exact-id placements", () => {
+test("staged and promote commands are non-interactive exact-id placements", () => {
   assert.deepEqual(
     buildStagedVersionDeployArgs(PRIOR_VERSION, CANDIDATE_VERSION).slice(0, 8),
     [
@@ -135,14 +133,6 @@ test("staged, promote, and restore commands are non-interactive exact-id placeme
   assert.equal(
     buildPromoteCandidateArgs(CANDIDATE_VERSION).includes("--yes"),
     true
-  );
-  assert.deepEqual(buildRestorePriorArgs(PRIOR_VERSION).slice(4, 6), [
-    `${PRIOR_VERSION}@100%`,
-    "--name"
-  ]);
-  assert.equal(
-    buildRestorePriorArgs(PRIOR_VERSION).includes(`${CANDIDATE_VERSION}@0%`),
-    false
   );
 });
 
@@ -445,7 +435,8 @@ test("worker build subprocess gets Sentry upload config, never the deploy subpro
   // ...nor become a Worker runtime --var binding.
   const varBindings = buildWranglerVersionsUploadArgs(
     env,
-    "/tmp/secrets"
+    "/tmp/secrets",
+    "/tmp/wrangler.jsonc"
   ).flatMap((arg, index, args) => (arg === "--var" ? [args[index + 1]] : []));
   for (const name of sentryUploadNames) {
     assert.equal(
@@ -479,7 +470,7 @@ test("worker deploy wrapper requires production config and rejects a retired ana
     ]
   );
 
-  const withoutAnalytics = buildWranglerVersionsUploadArgsWithConfig(
+  const withoutAnalytics = buildWranglerVersionsUploadArgs(
     workerDeployEnv(),
     "/tmp/worker-secrets.json",
     "/tmp/wrangler.jsonc"
@@ -502,7 +493,8 @@ test("worker deploy wrapper requires production config and rejects a retired ana
     workerDeployEnv({
       NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "analytics-token"
     }),
-    "/tmp/worker-secrets.json"
+    "/tmp/worker-secrets.json",
+    "/tmp/wrangler.jsonc"
   );
   assert.equal(
     withRetiredAnalyticsToken.includes(
