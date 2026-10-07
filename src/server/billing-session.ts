@@ -1,7 +1,8 @@
 import {
   apiTemporaryUnavailable,
   type ApiErrorInput,
-  type ApiRequestContext
+  type ApiRequestContext,
+  type ApiResult
 } from "./api-errors.ts";
 import {
   billingAccountStatement,
@@ -20,9 +21,7 @@ type BillingHumanSessionData = {
   account: BillingAccount;
 };
 
-type BillingHumanSessionResult =
-  | { ok: true; data: BillingHumanSessionData }
-  | { ok: false; error: ApiErrorInput };
+type BillingHumanSessionResult = ApiResult<BillingHumanSessionData>;
 
 type RunHumanAccountTransaction = typeof runHumanAccountTransaction;
 

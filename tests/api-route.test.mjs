@@ -496,3 +496,44 @@ for (const action of ["read", "ack"]) {
     assert.equal(response.headers.get("X-Request-ID"), "route_wiring_test");
   });
 }
+
+test("billing routes return the 503 envelope when the database URL is missing", async () => {
+  const previous = process.env.DATABASE_APP_ROLE_URL;
+  delete process.env.DATABASE_APP_ROLE_URL;
+  try {
+    for (const route of ["checkout", "portal", "webhook"]) {
+      const { POST } = await tsImport(
+        `../app/api/billing/${route}/route.ts`,
+        import.meta.url
+      );
+      const response = await POST(
+        new Request(`https://example.com/api/billing/${route}`, {
+          method: "POST",
+          headers: { "X-Request-ID": `billing_${route}_route_test` }
+        })
+      );
+
+      assert.equal(response.status, 503, route);
+      assert.equal(
+        response.headers.get("X-Request-ID"),
+        `billing_${route}_route_test`
+      );
+      const payload = await response.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.request_id, `billing_${route}_route_test`);
+      assert.equal(payload.error.code, "temporary_unavailable");
+      assert.match(
+        payload.error.message,
+        route === "webhook"
+          ? /^Billing database configuration is unavailable\.$/
+          : /^Billing route configuration is missing required variable names: .*DATABASE_APP_ROLE_URL\.$/
+      );
+    }
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previous;
+    }
+  }
+});
