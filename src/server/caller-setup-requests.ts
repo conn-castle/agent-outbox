@@ -1,5 +1,10 @@
-/** Setup-request helpers, approved-code exchange, and pending-credential finalization shared by caller connect and rotate/revoke flows. */
-import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
+/** Setup-request start, helpers, approved-code exchange, and pending-credential finalization shared by caller connect and rotate/revoke flows. */
+import {
+  createHmac,
+  randomBytes,
+  randomInt,
+  timingSafeEqual
+} from "node:crypto";
 
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
@@ -20,6 +25,7 @@ import {
 } from "./caller-auth.ts";
 import {
   runProductTransaction,
+  withSavepoint,
   type ProductTransactionContext,
   type ProductTransactionQuery,
   type TransactionContextStatement
@@ -47,6 +53,8 @@ export const UUID_PATTERN =
 
 export type SetupResult<TData> =
   { ok: true; data: TData } | { ok: false; error: ApiErrorInput };
+
+export type SetupOperation = "connect" | "rotate" | "revoke";
 
 export type SetupRequestStatus =
   "pending" | "approved" | "exchanged" | "expired" | "denied";
@@ -214,6 +222,17 @@ export function isUniqueViolation(error: unknown) {
   return "code" in error && (error as { code?: unknown }).code === "23505";
 }
 
+/**
+ * Returns true only for an object whose code is exactly SQLSTATE "23503".
+ */
+function isForeignKeyViolation(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  return "code" in error && (error as { code?: unknown }).code === "23503";
+}
+
 export function setupRequestExpired(
   row: { expires_at: string | Date },
   now: Date
@@ -310,6 +329,284 @@ export type CallerFlowRequestOptions = {
   now?: Date;
   runProductTransaction?: typeof runProductTransaction;
 };
+
+type SetupStartInput = {
+  operation: SetupOperation;
+  messages: CallerFlowMessages;
+  request: Request;
+  context: ApiRequestContext;
+  body: unknown;
+  options: CallerFlowRequestOptions;
+};
+
+/**
+ * Rejects non-plain-object bodies immediately. Otherwise validates and trims
+ * caller_id for rotate/revoke, local_caller_name, connect-only display_name,
+ * then browser-only callback_url, collecting field errors in that order.
+ * Rotate/revoke reuse local_caller_name as displayName. Success returns
+ * callerId, localCallerName, displayName and callbackUrl, with null callerId
+ * for connect and null callbackUrl for device flows.
+ */
+function parseSetupStartBody(
+  messages: CallerFlowMessages,
+  operation: SetupOperation,
+  flow: "browser" | "device",
+  body: unknown
+): SetupResult<{
+  callerId: string | null;
+  localCallerName: string;
+  displayName: string;
+  callbackUrl: string | null;
+}> {
+  const fields: ApiFieldError[] = [];
+  if (!isPlainRecord(body)) {
+    return apiValidationFailed(messages.validationFailed, [
+      fieldError("", "invalid_request", "Request body must be an object.")
+    ]);
+  }
+
+  const callerId =
+    operation !== "connect"
+      ? requiredUuidText(body, "caller_id", fields)
+      : null;
+  const localCallerName = requiredText(body, "local_caller_name", fields);
+  const displayName =
+    operation === "connect"
+      ? requiredText(body, "display_name", fields)
+      : localCallerName;
+  const callbackUrl =
+    flow === "browser"
+      ? requiredCallbackUrl(body, "callback_url", fields)
+      : null;
+
+  if (fields.length > 0) {
+    return apiValidationFailed(messages.validationFailed, fields);
+  }
+
+  return {
+    ok: true,
+    data: { callerId, localCallerName, displayName, callbackUrl }
+  };
+}
+
+/**
+ * Builds one insert into public.agent_outbox_caller_setup_requests for the
+ * operation, flow, names, callback URL, device/user code hashes, caller ID,
+ * expiry and poll interval. Null hashes and caller ID are bound as SQL NULL;
+ * the statement returns setup_request_id as text.
+ */
+function createSetupRequestStatement(input: {
+  operation: SetupOperation;
+  flow: "browser" | "device";
+  localCallerName: string;
+  displayName: string;
+  callbackUrl: string | null;
+  deviceCodeHash: string | null;
+  userCodeHash: string | null;
+  callerId: string | null;
+  expiresAt: Date;
+}): TransactionContextStatement {
+  return {
+    sql: `
+      insert into public.agent_outbox_caller_setup_requests (
+        operation,
+        flow,
+        local_caller_name,
+        display_name,
+        callback_url,
+        device_code_hash,
+        user_code_hash,
+        caller_id,
+        expires_at,
+        poll_interval_seconds
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::timestamptz, $10)
+      returning setup_request_id::text as setup_request_id
+    `,
+    values: [
+      input.operation,
+      input.flow,
+      input.localCallerName,
+      input.displayName,
+      input.callbackUrl,
+      input.deviceCodeHash,
+      input.userCodeHash,
+      input.callerId,
+      input.expiresAt.toISOString(),
+      DEVICE_POLL_INTERVAL_SECONDS
+    ]
+  };
+}
+
+type DeviceCodes = { deviceCode: string; userCode: string };
+
+/**
+ * Validates the body, public base URL and trusted client IP, then creates any
+ * device codes and the expiry before the control-plane transaction applies the
+ * IP limit and inserts the setup row. Connect inserts directly; rotate and
+ * revoke insert inside a savepoint so an unknown target caller returns 400
+ * without discarding the limit increment.
+ */
+async function handleSetupStartRequest<
+  TCodes extends DeviceCodes | null,
+  TData
+>(
+  input: SetupStartInput,
+  flow: "browser" | "device",
+  createCodes: () => TCodes,
+  response: (
+    row: { setup_request_id: string },
+    baseUrl: string,
+    expiresAt: Date,
+    codes: TCodes
+  ) => TData
+): Promise<SetupResult<TData>> {
+  const { operation, messages, request, context, body, options } = input;
+  const parsed = parseSetupStartBody(messages, operation, flow, body);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const baseUrl = publicAppBaseUrl();
+  if (!baseUrl.ok) {
+    return baseUrl;
+  }
+
+  const ipAddress = trustedClientIpAddress(request);
+  if (!ipAddress) {
+    return apiTemporaryUnavailable(
+      `Trusted client IP is unavailable for caller ${operation} start.`
+    );
+  }
+
+  const codes = createCodes();
+  const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
+
+  return withControlPlaneTransaction(
+    messages,
+    context,
+    `caller_${operation}_${flow}_start`,
+    async (query) => {
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        `caller_${operation}_start`
+      );
+      if (!limit.ok) {
+        return limit;
+      }
+
+      const insert = () =>
+        query<{ setup_request_id: string }>(
+          createSetupRequestStatement({
+            operation,
+            flow,
+            ...parsed.data,
+            deviceCodeHash: codes ? setupCodeDigest(codes.deviceCode) : null,
+            userCodeHash: codes
+              ? setupCodeDigest(normalizeUserCode(codes.userCode))
+              : null,
+            expiresAt
+          })
+        );
+
+      let result: { rows: { setup_request_id: string }[] };
+      if (operation === "connect") {
+        result = await insert();
+      } else {
+        try {
+          result = await withSavepoint(query, "caller_setup_request", insert);
+        } catch (error) {
+          if (isForeignKeyViolation(error)) {
+            return invalidRequestError(
+              `Caller ${operation} target was not found.`
+            );
+          }
+          throw error;
+        }
+      }
+
+      return {
+        ok: true,
+        data: response(result.rows[0], baseUrl.data, expiresAt, codes)
+      };
+    },
+    options
+  );
+}
+
+/**
+ * Starts a browser setup request and returns the approval URL, request ID and
+ * expiry.
+ */
+export async function handleSetupBrowserStartRequest(
+  input: SetupStartInput
+): Promise<
+  SetupResult<{
+    approval_url: string;
+    setup_request_id: string;
+    expires_at: string;
+  }>
+> {
+  return handleSetupStartRequest(
+    input,
+    "browser",
+    () => null,
+    ({ setup_request_id: setupRequestId }, baseUrl, expiresAt) => {
+      const approvalUrl = new URL(
+        `/caller/${input.operation}/approve`,
+        baseUrl
+      );
+      approvalUrl.searchParams.set("setup_request_id", setupRequestId);
+
+      return {
+        approval_url: approvalUrl.toString(),
+        setup_request_id: setupRequestId,
+        expires_at: expiresAt.toISOString()
+      };
+    }
+  );
+}
+
+/**
+ * Starts a device setup request, storing only code hashes, and returns the
+ * codes, verification URLs, expiry and poll interval.
+ */
+export async function handleSetupDeviceStartRequest(
+  input: SetupStartInput
+): Promise<
+  SetupResult<{
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    verification_uri_complete: string;
+    expires_at: string;
+    poll_interval_seconds: number;
+  }>
+> {
+  return handleSetupStartRequest(
+    input,
+    "device",
+    () => ({
+      deviceCode: `dev_${randomBytes(DEVICE_TOKEN_BYTES).toString("base64url")}`,
+      userCode: generateUserCode()
+    }),
+    (_row, baseUrl, expiresAt, { deviceCode, userCode }) => {
+      const verificationUri = new URL(
+        `/caller/${input.operation}/device`,
+        baseUrl
+      ).toString();
+      return {
+        device_code: deviceCode,
+        user_code: userCode,
+        verification_uri: verificationUri,
+        verification_uri_complete: `${verificationUri}?user_code=${encodeURIComponent(userCode)}`,
+        expires_at: expiresAt.toISOString(),
+        poll_interval_seconds: DEVICE_POLL_INTERVAL_SECONDS
+      };
+    }
+  );
+}
 
 export type PendingCredentialBearer = {
   apiKey: string;

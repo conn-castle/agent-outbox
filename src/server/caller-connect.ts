@@ -2,14 +2,9 @@ import { randomBytes } from "node:crypto";
 
 import {
   apiTemporaryUnavailable,
-  apiValidationFailed,
-  type ApiFieldError,
   type ApiRequestContext
 } from "./api-errors.ts";
-import {
-  enforceAccountOperationLimits,
-  enforceIpControlPlaneLimit
-} from "./caller-api-limits.ts";
+import { enforceAccountOperationLimits } from "./caller-api-limits.ts";
 import {
   generateCallerApiKeyMaterial,
   type DisplayOnceCallerApiKeyMaterial
@@ -20,38 +15,29 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import {
-  DEVICE_POLL_INTERVAL_SECONDS,
-  DEVICE_TOKEN_BYTES,
   SETUP_TOKEN_BYTES,
   UUID_PATTERN,
   callerCredentialLifecycleLockStatement,
-  fieldError,
-  generateUserCode,
   handleApprovedSetupCodeRequest,
   handlePendingCredentialFinalizeRequest,
+  handleSetupBrowserStartRequest,
+  handleSetupDeviceStartRequest,
   invalidRequestError,
   invalidSetupRequestError,
-  isPlainRecord,
   isUniqueViolation,
   markSetupRequestExchangedStatement,
   markSetupRequestExpiredStatement,
   normalizeUserCode,
   notFoundError,
-  publicAppBaseUrl,
-  requiredCallbackUrl,
-  requiredText,
   setupCodeDigest,
   setupRequestExpired,
-  setupRequestExpiresAt,
   verifyPendingCredential,
-  withControlPlaneTransaction,
   type CallerFlowMessages,
   type CallerFlowRequestOptions as ConnectRequestOptions,
   type PendingCredentialBearer,
   type SetupRequestStatus,
   type SetupResult
 } from "./caller-setup-requests.ts";
-import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
 const MESSAGES: CallerFlowMessages = {
   bearerRequired: "Pending connect bearer credential is required.",
@@ -70,17 +56,6 @@ const EXCHANGE_MESSAGES: CallerFlowMessages = {
 };
 
 type ConnectResult<TData> = SetupResult<TData>;
-
-type BrowserStartBody = {
-  localCallerName: string;
-  displayName: string;
-  callbackUrl: string;
-};
-
-type DeviceStartBody = {
-  localCallerName: string;
-  displayName: string;
-};
 
 type SetupRequestIdRow = {
   setup_request_id: string;
@@ -254,153 +229,44 @@ const CALLER_ALREADY_EXISTS_MESSAGE =
 const CALLER_ALREADY_EXISTS_FIELD_MESSAGE =
   "A caller with this name already exists for this account.";
 
+/**
+ * Preserves the connect browser start signature and delegates to the shared
+ * browser start handler with operation "connect" and the connect messages.
+ */
 export async function handleConnectBrowserStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
   options: ConnectRequestOptions = {}
-): Promise<
-  ConnectResult<{
-    approval_url: string;
-    setup_request_id: string;
-    expires_at: string;
-  }>
-> {
-  const parsed = parseBrowserStartBody(body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  const baseUrl = publicAppBaseUrl();
-  if (!baseUrl.ok) {
-    return baseUrl;
-  }
-
-  const ipAddress = trustedClientIpAddress(request);
-  if (!ipAddress) {
-    return apiTemporaryUnavailable(
-      "Trusted client IP is unavailable for caller connect start."
-    );
-  }
-
-  const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
-
-  return withControlPlaneTransaction(
-    MESSAGES,
+) {
+  return handleSetupBrowserStartRequest({
+    operation: "connect",
+    messages: MESSAGES,
+    request,
     context,
-    "caller_connect_browser_start",
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        "caller_connect_start"
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      const result = await query<SetupRequestIdRow>(
-        createBrowserSetupRequestStatement({
-          ...parsed.data,
-          expiresAt
-        })
-      );
-      const setupRequestId = result.rows[0].setup_request_id;
-      const approvalUrl = new URL("/caller/connect/approve", baseUrl.data);
-      approvalUrl.searchParams.set("setup_request_id", setupRequestId);
-
-      return {
-        ok: true,
-        data: {
-          approval_url: approvalUrl.toString(),
-          setup_request_id: setupRequestId,
-          expires_at: expiresAt.toISOString()
-        }
-      };
-    },
+    body,
     options
-  );
+  });
 }
 
+/**
+ * Preserves the connect device start signature and delegates to the shared
+ * device start handler with operation "connect" and the connect messages.
+ */
 export async function handleConnectDeviceStartRequest(
   request: Request,
   context: ApiRequestContext,
   body: unknown,
   options: ConnectRequestOptions = {}
-): Promise<
-  ConnectResult<{
-    device_code: string;
-    user_code: string;
-    verification_uri: string;
-    verification_uri_complete: string;
-    expires_at: string;
-    poll_interval_seconds: number;
-  }>
-> {
-  const parsed = parseDeviceStartBody(body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  const baseUrl = publicAppBaseUrl();
-  if (!baseUrl.ok) {
-    return baseUrl;
-  }
-
-  const ipAddress = trustedClientIpAddress(request);
-  if (!ipAddress) {
-    return apiTemporaryUnavailable(
-      "Trusted client IP is unavailable for caller connect start."
-    );
-  }
-
-  const deviceCode = `dev_${randomBytes(DEVICE_TOKEN_BYTES).toString("base64url")}`;
-  const userCode = generateUserCode();
-  const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
-
-  return withControlPlaneTransaction(
-    MESSAGES,
+) {
+  return handleSetupDeviceStartRequest({
+    operation: "connect",
+    messages: MESSAGES,
+    request,
     context,
-    "caller_connect_device_start",
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        "caller_connect_start"
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      await query(
-        createDeviceSetupRequestStatement({
-          ...parsed.data,
-          deviceCodeHash: setupCodeDigest(deviceCode),
-          userCodeHash: setupCodeDigest(normalizeUserCode(userCode)),
-          expiresAt
-        })
-      );
-
-      const verificationUri = new URL(
-        "/caller/connect/device",
-        baseUrl.data
-      ).toString();
-      return {
-        ok: true,
-        data: {
-          device_code: deviceCode,
-          user_code: userCode,
-          verification_uri: verificationUri,
-          verification_uri_complete: `${verificationUri}?user_code=${encodeURIComponent(
-            userCode
-          )}`,
-          expires_at: expiresAt.toISOString(),
-          poll_interval_seconds: DEVICE_POLL_INTERVAL_SECONDS
-        }
-      };
-    },
+    body,
     options
-  );
+  });
 }
 
 export async function handleConnectDevicePollRequest(
@@ -813,68 +679,6 @@ export async function denyConnectSetupRequest(
       setup_request_id: result.rows[0].setup_request_id,
       denied: true
     }
-  };
-}
-
-function createBrowserSetupRequestStatement(input: {
-  localCallerName: string;
-  displayName: string;
-  callbackUrl: string;
-  expiresAt: Date;
-}): TransactionContextStatement {
-  return {
-    sql: `
-      insert into public.agent_outbox_caller_setup_requests (
-        operation,
-        flow,
-        local_caller_name,
-        display_name,
-        callback_url,
-        expires_at,
-        poll_interval_seconds
-      )
-      values ('connect', 'browser', $1, $2, $3, $4::timestamptz, $5)
-      returning setup_request_id::text as setup_request_id
-    `,
-    values: [
-      input.localCallerName,
-      input.displayName,
-      input.callbackUrl,
-      input.expiresAt.toISOString(),
-      DEVICE_POLL_INTERVAL_SECONDS
-    ]
-  };
-}
-
-function createDeviceSetupRequestStatement(input: {
-  localCallerName: string;
-  displayName: string;
-  deviceCodeHash: string;
-  userCodeHash: string;
-  expiresAt: Date;
-}): TransactionContextStatement {
-  return {
-    sql: `
-      insert into public.agent_outbox_caller_setup_requests (
-        operation,
-        flow,
-        local_caller_name,
-        display_name,
-        device_code_hash,
-        user_code_hash,
-        expires_at,
-        poll_interval_seconds
-      )
-      values ('connect', 'device', $1, $2, $3, $4, $5::timestamptz, $6)
-    `,
-    values: [
-      input.localCallerName,
-      input.displayName,
-      input.deviceCodeHash,
-      input.userCodeHash,
-      input.expiresAt.toISOString(),
-      DEVICE_POLL_INTERVAL_SECONDS
-    ]
   };
 }
 
@@ -1637,56 +1441,6 @@ function insertCallerRegisteredAuditStatement(input: {
       where account.account_id = $1
     `,
     values: [input.accountId, input.callerId, input.requestId]
-  };
-}
-
-function parseBrowserStartBody(body: unknown): ConnectResult<BrowserStartBody> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return apiValidationFailed(MESSAGES.validationFailed, [
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const localCallerName = requiredText(body, "local_caller_name", fields);
-  const displayName = requiredText(body, "display_name", fields);
-  const callbackUrl = requiredCallbackUrl(body, "callback_url", fields);
-
-  if (fields.length > 0) {
-    return apiValidationFailed(MESSAGES.validationFailed, fields);
-  }
-
-  return {
-    ok: true,
-    data: {
-      localCallerName,
-      displayName,
-      callbackUrl
-    }
-  };
-}
-
-function parseDeviceStartBody(body: unknown): ConnectResult<DeviceStartBody> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return apiValidationFailed(MESSAGES.validationFailed, [
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const localCallerName = requiredText(body, "local_caller_name", fields);
-  const displayName = requiredText(body, "display_name", fields);
-
-  if (fields.length > 0) {
-    return apiValidationFailed(MESSAGES.validationFailed, fields);
-  }
-
-  return {
-    ok: true,
-    data: {
-      localCallerName,
-      displayName
-    }
   };
 }
 
