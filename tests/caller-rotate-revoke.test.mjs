@@ -11,7 +11,6 @@ import {
   approveCredentialOperationDeviceSetupRequest,
   denyCredentialOperationSetupRequest,
   getCredentialOperationBrowserApprovalPreview,
-  getCredentialOperationTerminalSetupState,
   handleRevokeConfirmRequest,
   handleRevokeBrowserStartRequest,
   handleRevokeDeviceStartRequest,
@@ -23,6 +22,7 @@ import {
   handleRotateDeviceStartRequest,
   handleRotateExchangeRequest
 } from "../src/server/caller-credential-operations.ts";
+import { getSetupRequestTerminalState } from "../src/server/caller-setup-requests.ts";
 import {
   DATABASE_POLICY_VERIFICATION_SKIP,
   phase3DatabaseVerificationUrl,
@@ -577,7 +577,7 @@ test("rotate and revoke browser pages and actions reject a malformed setup_reque
       {
         name: `${operation} terminal state`,
         run: (query, setupRequestId) =>
-          getCredentialOperationTerminalSetupState(query, {
+          getSetupRequestTerminalState(query, {
             operation,
             setupRequestId,
             accountId: ACCOUNT_ID,
@@ -1168,6 +1168,21 @@ test("rotate and revoke approvals use distinct account-scoped limit buckets", as
           ACCOUNT_ID,
           approval.limitName
         ]);
+        assert.match(
+          query.calls[4].sql,
+          /update public\.agent_outbox_caller_setup_requests/
+        );
+        assert.deepEqual(query.calls[4].values?.slice(0, 4), [
+          SETUP_REQUEST_ID,
+          ACCOUNT_ID,
+          null,
+          USER_ID
+        ]);
+        if (approval.operation === "rotate") {
+          assert.match(String(query.calls[4].values?.[4]), /^[a-f0-9]{64}$/);
+        } else {
+          assert.equal(query.calls[4].values?.[4], null);
+        }
         if (approval.operation === "revoke") {
           assert.match(
             query.calls[0].sql,

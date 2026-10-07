@@ -1,10 +1,8 @@
 import Link from "next/link";
 
 import { ActionSubmitButton } from "../../../src/components/actions/ActionSubmitButton";
-import type {
-  ConnectApprovalPreviewData,
-  ConnectTerminalSetupData
-} from "../../../src/server/caller-connect";
+import type { ConnectApprovalPreviewData } from "../../../src/server/caller-connect";
+import type { SetupTerminalStateData } from "../../../src/server/caller-setup-requests";
 import type { HumanAccountSession } from "../../../src/server/human-session";
 import {
   approveBrowserConnect,
@@ -171,7 +169,7 @@ export function ConnectionSuccessView({
   setup,
   session
 }: {
-  setup: ConnectTerminalSetupData;
+  setup: SetupTerminalStateData;
   session: HumanAccountSession;
 }) {
   const callerDisplayName = setup.caller?.display_name ?? setup.display_name;
@@ -203,7 +201,7 @@ export function ConnectionDeclinedView({
   setup,
   session
 }: {
-  setup: ConnectTerminalSetupData;
+  setup: SetupTerminalStateData;
   session: HumanAccountSession;
 }) {
   const callerDisplayName = setup.caller?.display_name ?? setup.display_name;

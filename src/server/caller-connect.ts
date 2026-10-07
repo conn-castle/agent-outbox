@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-
 import {
   apiTemporaryUnavailable,
   type ApiRequestContext
@@ -15,9 +13,12 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import {
-  SETUP_TOKEN_BYTES,
   UUID_PATTERN,
+  approveSetupRequestStatement,
   callerCredentialLifecycleLockStatement,
+  denySetupRequest,
+  ensurePendingSetupApproval,
+  generateSetupCode,
   handleApprovedSetupCodeRequest,
   handlePendingCredentialFinalizeRequest,
   handleSetupBrowserStartRequest,
@@ -31,6 +32,7 @@ import {
   notFoundError,
   setupCodeDigest,
   setupRequestExpired,
+  setupRequestNotFoundMessage,
   verifyPendingCredential,
   type CallerFlowMessages,
   type CallerFlowRequestOptions as ConnectRequestOptions,
@@ -56,10 +58,6 @@ const EXCHANGE_MESSAGES: CallerFlowMessages = {
 };
 
 type ConnectResult<TData> = SetupResult<TData>;
-
-type SetupRequestIdRow = {
-  setup_request_id: string;
-};
 
 type SetupApprovalTargetRow = {
   setup_request_id: string;
@@ -100,18 +98,6 @@ type SetupExchangeTargetRow = {
   account_tier: "hosted_free" | "hosted_paid" | "self_hosted" | null;
 };
 
-type SetupTerminalStateRow = {
-  setup_request_id: string;
-  operation: "connect";
-  flow: "browser" | "device";
-  status: SetupTerminalStatus;
-  local_caller_name: string;
-  display_name: string;
-  caller_id: string | null;
-  caller_slug: string | null;
-  caller_display_name: string | null;
-};
-
 type CallerRow = {
   caller_id: string;
   caller_slug: string | null;
@@ -139,11 +125,6 @@ type PendingConnectCredentialRow = {
   account_id: string;
   caller_id: string;
 };
-
-type SetupTerminalStatus = Extract<
-  SetupRequestStatus,
-  "approved" | "exchanged" | "denied"
->;
 
 export type ConnectCredentialResponseData = {
   setup_request_id: string;
@@ -208,20 +189,6 @@ export type ConnectApprovalPreviewData = {
   display_name: string;
   callback_url: string | null;
   expires_at: string;
-};
-
-export type ConnectTerminalSetupData = {
-  setup_request_id: string;
-  operation: "connect";
-  flow: "browser" | "device";
-  status: SetupTerminalStatus;
-  local_caller_name: string;
-  display_name: string;
-  caller: {
-    caller_id: string;
-    caller_slug: string | null;
-    display_name: string;
-  } | null;
 };
 
 const CALLER_ALREADY_EXISTS_MESSAGE =
@@ -429,47 +396,6 @@ export async function getConnectDeviceApprovalPreview(
   return connectApprovalPreviewFromTarget(query, target, input.now);
 }
 
-export async function getConnectTerminalSetupState(
-  query: ProductTransactionQuery,
-  input: {
-    setupRequestId: string;
-    accountId: string;
-    statuses: readonly SetupTerminalStatus[];
-  }
-): Promise<ConnectResult<ConnectTerminalSetupData>> {
-  if (!UUID_PATTERN.test(input.setupRequestId)) {
-    return invalidSetupRequestError();
-  }
-
-  const result = await query<SetupTerminalStateRow>(
-    terminalSetupStateStatement(input)
-  );
-  const row = result.rows[0];
-  if (!row) {
-    return notFoundError("Caller connect setup request was not found.");
-  }
-
-  return {
-    ok: true,
-    data: {
-      setup_request_id: row.setup_request_id,
-      operation: row.operation,
-      flow: row.flow,
-      status: row.status,
-      local_caller_name: row.local_caller_name,
-      display_name: row.display_name,
-      caller:
-        row.caller_id && row.caller_display_name
-          ? {
-              caller_id: row.caller_id,
-              caller_slug: row.caller_slug,
-              display_name: row.caller_display_name
-            }
-          : null
-    }
-  };
-}
-
 export async function approveConnectBrowserSetupRequest(
   query: ProductTransactionQuery,
   input: {
@@ -488,10 +414,10 @@ export async function approveConnectBrowserSetupRequest(
   );
   const target = targetResult.rows[0];
   if (!target) {
-    return notFoundError("Caller connect setup request was not found.");
+    return notFoundError(setupRequestNotFoundMessage("connect"));
   }
 
-  const available = await ensurePendingApprovalTarget(query, target, input.now);
+  const available = await ensurePendingSetupApproval(query, target, input.now);
   if (!available.ok) {
     return available;
   }
@@ -531,9 +457,9 @@ export async function approveConnectBrowserSetupRequest(
   }
   const caller = callerResult.data;
 
-  const setupCode = `setup_${randomBytes(SETUP_TOKEN_BYTES).toString("base64url")}`;
+  const setupCode = generateSetupCode();
   await query(
-    approveBrowserSetupRequestStatement({
+    approveSetupRequestStatement({
       setupRequestId: target.setup_request_id,
       accountId: input.accountId,
       callerId: caller.caller_id,
@@ -573,7 +499,7 @@ export async function approveConnectDeviceSetupRequest(
   );
   const target = targetResult.rows[0];
   if (!target) {
-    return notFoundError("Caller connect setup request was not found.");
+    return notFoundError(setupRequestNotFoundMessage("connect"));
   }
 
   if (target.status === "approved" || target.status === "exchanged") {
@@ -600,7 +526,7 @@ export async function approveConnectDeviceSetupRequest(
     };
   }
 
-  const available = await ensurePendingApprovalTarget(query, target, input.now);
+  const available = await ensurePendingSetupApproval(query, target, input.now);
   if (!available.ok) {
     return available;
   }
@@ -635,11 +561,12 @@ export async function approveConnectDeviceSetupRequest(
   const caller = callerResult.data;
 
   await query(
-    approveDeviceSetupRequestStatement({
+    approveSetupRequestStatement({
       setupRequestId: target.setup_request_id,
       accountId: input.accountId,
       callerId: caller.caller_id,
-      userId: input.userId
+      userId: input.userId,
+      setupCodeHash: null
     })
   );
 
@@ -663,23 +590,11 @@ export async function denyConnectSetupRequest(
     accountId: string;
   }
 ): Promise<ConnectResult<{ setup_request_id: string; denied: true }>> {
-  if (!UUID_PATTERN.test(input.setupRequestId)) {
-    return invalidSetupRequestError();
-  }
-
-  const result = await query<SetupRequestIdRow>(
-    denySetupRequestStatement(input)
-  );
-  if (!result.rows[0]) {
-    return notFoundError("Caller connect setup request was not found.");
-  }
-  return {
-    ok: true,
-    data: {
-      setup_request_id: result.rows[0].setup_request_id,
-      denied: true
-    }
-  };
+  return denySetupRequest(query, {
+    operation: "connect",
+    setupRequestId: input.setupRequestId,
+    statement: denySetupRequestStatement(input)
+  });
 }
 
 /**
@@ -747,10 +662,10 @@ async function connectApprovalPreviewFromTarget(
   now: Date = new Date()
 ): Promise<ConnectResult<ConnectApprovalPreviewData>> {
   if (!target) {
-    return notFoundError("Caller connect setup request was not found.");
+    return notFoundError(setupRequestNotFoundMessage("connect"));
   }
 
-  const available = await ensurePendingApprovalTarget(query, target, now);
+  const available = await ensurePendingSetupApproval(query, target, now);
   if (!available.ok) {
     return available;
   }
@@ -950,25 +865,6 @@ async function abortConnectPendingCredential(
   };
 }
 
-async function ensurePendingApprovalTarget(
-  query: ProductTransactionQuery,
-  target: SetupApprovalTargetRow,
-  now: Date = new Date()
-): Promise<ConnectResult<null>> {
-  if (setupRequestExpired(target, now)) {
-    await query(markSetupRequestExpiredStatement(target.setup_request_id));
-    return invalidRequestError("Caller connect setup request is expired.");
-  }
-
-  if (target.status !== "pending") {
-    return invalidRequestError(
-      "Caller connect setup request is not pending approval."
-    );
-  }
-
-  return { ok: true, data: null };
-}
-
 async function ensureConnectCallerSlugAvailable(
   query: ProductTransactionQuery,
   accountId: string,
@@ -1086,41 +982,6 @@ function deviceApprovalTargetStatement(
   };
 }
 
-function terminalSetupStateStatement(input: {
-  setupRequestId: string;
-  accountId: string;
-  statuses: readonly SetupTerminalStatus[];
-}): TransactionContextStatement {
-  const statusPlaceholders = input.statuses
-    .map((_, index) => `$${index + 3}`)
-    .join(", ");
-
-  return {
-    sql: `
-      select
-        setup.setup_request_id::text as setup_request_id,
-        setup.operation,
-        setup.flow,
-        setup.status,
-        setup.local_caller_name,
-        setup.display_name,
-        caller.caller_id::text as caller_id,
-        caller.caller_slug,
-        caller.display_name as caller_display_name
-      from public.agent_outbox_caller_setup_requests setup
-      left join public.agent_outbox_callers caller
-        on caller.account_id = setup.account_id
-       and caller.caller_id = setup.caller_id
-      where setup.setup_request_id = $1
-        and setup.account_id = $2
-        and setup.operation = 'connect'
-        and setup.status in (${statusPlaceholders})
-      limit 1
-    `,
-    values: [input.setupRequestId, input.accountId, ...input.statuses]
-  };
-}
-
 /**
  * Selects one of two fixed SQL texts by flow: browser uses setup_code_hash
  * and the flow literal 'browser'; device uses device_code_hash and 'device'.
@@ -1234,65 +1095,6 @@ function insertConnectCallerStatement(input: {
         display_name
     `,
     values: [input.accountId, input.displayName, input.localCallerName]
-  };
-}
-
-function approveBrowserSetupRequestStatement(input: {
-  setupRequestId: string;
-  accountId: string;
-  callerId: string;
-  userId: string;
-  setupCodeHash: string;
-}): TransactionContextStatement {
-  return {
-    sql: `
-      update public.agent_outbox_caller_setup_requests
-      set
-        account_id = $2,
-        caller_id = $3,
-        approved_by_user_id = $4,
-        setup_code_hash = $5,
-        status = 'approved',
-        approved_at = now(),
-        updated_at = now()
-      where setup_request_id = $1
-        and status = 'pending'
-    `,
-    values: [
-      input.setupRequestId,
-      input.accountId,
-      input.callerId,
-      input.userId,
-      input.setupCodeHash
-    ]
-  };
-}
-
-function approveDeviceSetupRequestStatement(input: {
-  setupRequestId: string;
-  accountId: string;
-  callerId: string;
-  userId: string;
-}): TransactionContextStatement {
-  return {
-    sql: `
-      update public.agent_outbox_caller_setup_requests
-      set
-        account_id = $2,
-        caller_id = $3,
-        approved_by_user_id = $4,
-        status = 'approved',
-        approved_at = now(),
-        updated_at = now()
-      where setup_request_id = $1
-        and status = 'pending'
-    `,
-    values: [
-      input.setupRequestId,
-      input.accountId,
-      input.callerId,
-      input.userId
-    ]
   };
 }
 
