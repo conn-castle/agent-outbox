@@ -449,6 +449,21 @@ test("POST rejects known native malformed bodies and invalid operations without 
   assert.equal(state.answers.length, 0);
 });
 
+test("POST rejects an unknown popupKind without storing an answer", async () => {
+  const { POST, state } = routeHarness();
+  const form = ordinaryForm("answer");
+  form.set("popupKind", "unknown");
+  await assertMutationFailure(
+    await POST(request(form)),
+    400,
+    "invalid_request",
+    "Invalid action"
+  );
+  assert.deepEqual(state.answers, [{ ok: false }]);
+  assert.equal(state.stored.length, 0);
+  assert.equal(state.reports.length, 0);
+});
+
 test(
   "POST rejects declared and finite streamed overflow, including understated length",
   { timeout: 15_000 },

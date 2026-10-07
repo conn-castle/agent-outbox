@@ -1,4 +1,7 @@
-import type { ActionStyle, ActionTone } from "../../server/input-schema.ts";
+import type {
+  ActionStyle,
+  ActionTone
+} from "../../shared/input-schema-rules.ts";
 
 export function actionAppearanceClass(
   baseClass: string,

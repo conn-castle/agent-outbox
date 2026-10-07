@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-07 date-picker-invalid-mode-throws: Invalid date_picker mode with min and max values throws instead of returning 422
+    Priority: Medium. Area: Input validation
+    Description: In `parseDatePickerPopup` (`src/server/input-schema.ts`), an unsupported `mode` combined with string `min_value` and `max_value` reaches `compareDatePickerValues`, which falls through to `compareUtcDateTimeValues` and throws "UTC datetime values must be validated before compare", so the send/replace request fails with an exception instead of a field-level validation error.
+    Next step: Add a public-boundary test through `parseInputSubmission` for this input, then make the range comparison run only for a valid mode.
+
 - Issue 2026-10-07 human-action-duration-zero: Human answer/undo transaction failure reports log near-zero durations
     Priority: Low. Area: Observability / Human review
     Description: `runHumanActionMutation` in `app/human/actions.ts` calls `humanAnswerTransactionFailure` without `startedAtMs` and `humanAnswerUndoTransactionFailure` (which always starts its clock internally), so their `duration_ms` measures only the reporter call, not the failed transaction.
@@ -37,7 +42,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Low. Area: Review tooling
     Description: Canonical project instructions are tracked under `.agent-layer/instructions`, but generated `AGENTS.md` and `.github/copilot-instructions.md` are gitignored and no committed Copilot review instruction file or review skill exposes them through GitHub's documented paths; repository MCP settings and actual review-context use are unverified.
     Next step: Identify the minimum review context needed and verify a supported integration against available review-session evidence without duplicating canonical rules.
-    Notes: Deferred from PR208 Copilot review https://github.com/conn-castle/agent-outbox/pull/208#pullrequestreview-5435689404.
+    Notes: Deferred from PR208 Copilot review https://github.com/conn-castle/agent-outbox/pull/208#pullrequestreview-5435689404 and PR217 Copilot review https://github.com/conn-castle/agent-outbox/pull/217#pullrequestreview-5441007257.
 
 - Issue 2026-10-04 stripe-duplicate-subscriptions: One account can hold several live Stripe subscriptions
     Priority: Medium. Area: Billing

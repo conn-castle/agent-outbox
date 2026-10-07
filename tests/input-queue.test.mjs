@@ -23,10 +23,7 @@ import {
   isHttpUrl,
   SUPPORTED_COLORS
 } from "../src/shared/input-schema-rules.ts";
-import {
-  InputSubmissionSchema,
-  publicSchemaFieldErrors
-} from "../src/shared/public-api-contract.ts";
+import { publicSchemaMismatch } from "../src/shared/public-api-contract.ts";
 import { fakeQuery, queryResult } from "./helpers/fake-query.mjs";
 
 /**
@@ -246,11 +243,12 @@ test("input parser treats JSON null optional fields as omitted defaults", () => 
 });
 
 test("input contract mismatches report the offending field path", () => {
-  const fields = publicSchemaFieldErrors(
-    InputSubmissionSchema,
+  const fields = publicSchemaMismatch(
+    "InputSubmission",
     baseInput({ priority: 1 }),
     "Request does not match the public input-submission contract."
   );
+  assert.ok(fields);
   assert.ok(
     fields.some(
       (field) => field.path === "priority" && field.code === "contract_mismatch"
@@ -260,6 +258,27 @@ test("input contract mismatches report the offending field path", () => {
     fields.some((field) => field.path === ""),
     false
   );
+  assert.equal(
+    publicSchemaMismatch(
+      "InputSubmission",
+      baseInput(),
+      "Request does not match the public input-submission contract."
+    ),
+    null
+  );
+});
+
+test("input parser rejects an out-of-set priority with one field error", () => {
+  const result = parseInputSubmission(baseInput({ priority: "critical" }));
+  assert.equal(result.ok, false);
+  if (result.ok) assert.fail("expected invalid priority");
+  assert.deepEqual(result.error.fields, [
+    {
+      path: "priority",
+      code: "invalid_enum",
+      message: "priority has an unsupported value."
+    }
+  ]);
 });
 
 test("input parser accepts fixed action appearances and rejects incomplete or unknown values", () => {

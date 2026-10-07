@@ -12,10 +12,10 @@ import type { TransactionContextStatement } from "./database.ts";
 import type {
   ActionStyle,
   ActionTone,
-  NormalizedCardVisual,
   PopupKind,
   QueuePriority
-} from "./input-schema.ts";
+} from "../shared/input-schema-rules.ts";
+import type { NormalizedCardVisual } from "./input-schema.ts";
 import {
   accountStatusInTransaction,
   type AccountStatusData,

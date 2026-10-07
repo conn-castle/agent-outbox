@@ -3,6 +3,7 @@ import Value from "typebox/value";
 
 import type { ApiErrorCode } from "./api-error-contract.ts";
 import {
+  QUEUE_PRIORITIES,
   SUPPORTED_ACTION_STYLES,
   SUPPORTED_ACTION_TONES,
   SUPPORTED_COLORS,
@@ -173,20 +174,20 @@ const closedObject = <TProperties extends Parameters<typeof Type.Object>[0]>(
   options: Parameters<typeof Type.Object>[1] = {}
 ) => Type.Object(properties, { ...options, additionalProperties: false });
 
-export const ProtocolValueSchema = Type.String({
+const ProtocolValueSchema = Type.String({
   pattern: protocolValuePattern,
   description:
     "A caller-owned stable value used for programmatic branching. Keep it separate from display text."
 });
 
-export const IconSchema = Type.String({
+const IconSchema = Type.String({
   $id: "Icon",
   enum: [...SUPPORTED_LUCIDE_ICON_NAMES],
   description:
     "A supported Lucide icon name. Arbitrary SVG and HTML are rejected."
 });
 
-export const PopupOptionSchema = openObject({
+const PopupOptionSchema = openObject({
   display: Type.String({ minLength: 1 }),
   value: ProtocolValueSchema,
   icon: Type.Optional(nullable(IconSchema))
@@ -251,7 +252,7 @@ const FileUploadPopupSchema = openObject(
   { $id: "FileUploadPopup" }
 );
 
-export const ActionPopupSchema = Type.Union(
+const ActionPopupSchema = Type.Union(
   [
     NonePopupSchema,
     FreeTextPopupSchema,
@@ -267,7 +268,7 @@ export const ActionPopupSchema = Type.Union(
   }
 );
 
-export const InputActionSchema = openObject(
+const InputActionSchema = openObject(
   {
     display: Type.String({ minLength: 1 }),
     icon: IconSchema,
@@ -295,7 +296,7 @@ export const InputActionSchema = openObject(
   }
 );
 
-export const LinkButtonSchema = openObject({
+const LinkButtonSchema = openObject({
   display: Type.String({ minLength: 1 }),
   icon: IconSchema,
   url: Type.String({ minLength: 1 })
@@ -310,7 +311,7 @@ const NumericVisualFields = {
   max_value: Type.Number()
 };
 
-export const CardVisualSchema = Type.Union(
+const CardVisualSchema = Type.Union(
   [
     openObject({ kind: Type.Literal("numeric_bar"), ...NumericVisualFields }),
     openObject({
@@ -338,14 +339,11 @@ export const CardVisualSchema = Type.Union(
   { discriminator: { propertyName: "kind" } }
 );
 
-const InputPrioritySchema = Type.Union([
-  Type.Literal("low"),
-  Type.Literal("normal"),
-  Type.Literal("high"),
-  Type.Literal("urgent")
-]);
+const InputPrioritySchema = Type.Union(
+  QUEUE_PRIORITIES.map((priority) => Type.Literal(priority))
+);
 
-export const InputSubmissionSchema = openObject(
+const InputSubmissionSchema = openObject(
   {
     caller_item_id: Type.String({
       minLength: 1,
@@ -394,7 +392,7 @@ export const InputSubmissionSchema = openObject(
   }
 );
 
-export const CanonicalRawInputSchema = closedObject(
+const CanonicalRawInputSchema = closedObject(
   {
     caller_item_id: Type.String({ minLength: 1 }),
     priority: InputPrioritySchema,
@@ -427,17 +425,17 @@ export const CanonicalRawInputSchema = closedObject(
   }
 );
 
-export const InputDeleteSchema = openObject(
+const InputDeleteSchema = openObject(
   { caller_item_id: Type.String({ minLength: 1 }) },
   { $id: "InputDelete", title: "Delete pending input" }
 );
 
-export const InputReadRequestSchema = openObject(
+const InputReadRequestSchema = openObject(
   { caller_item_id: Type.String({ minLength: 1 }) },
   { $id: "InputReadRequest", title: "Read live input" }
 );
 
-export const OutputReadAllRequestSchema = openObject(
+const OutputReadAllRequestSchema = openObject(
   {
     limit: Type.Optional(
       nullable(
@@ -469,7 +467,7 @@ const DateTimeResponseSchema = closedObject({
   display_timezone: nullable(Type.String())
 });
 
-export const ActionResponseSchema = Type.Union(
+const ActionResponseSchema = Type.Union(
   [
     closedObject({
       kind: Type.Literal("none"),
@@ -511,7 +509,7 @@ export const ActionResponseSchema = Type.Union(
   }
 );
 
-export const OutputResultSchema = closedObject(
+const OutputResultSchema = closedObject(
   {
     output_result_id: Type.String({ minLength: 1 }),
     caller_id: Type.String({ minLength: 1 }),
@@ -525,7 +523,7 @@ export const OutputResultSchema = closedObject(
   { $id: "OutputResult", title: "Output result" }
 );
 
-export const OutputCheckPageSchema = closedObject(
+const OutputCheckPageSchema = closedObject(
   {
     items: Type.Array(
       closedObject({
@@ -547,7 +545,7 @@ export const OutputCheckPageSchema = closedObject(
   { $id: "OutputCheckPage", title: "Output readiness page" }
 );
 
-export const OutputReadPageSchema = closedObject(
+const OutputReadPageSchema = closedObject(
   {
     items: Type.Array(OutputResultSchema),
     unavailable_outputs: Type.Array(
@@ -658,7 +656,7 @@ const InputLiveMetadataFields = {
 
 const InputListItemSchema = closedObject(InputLiveMetadataFields);
 
-export const InputListPageSchema = closedObject(
+const InputListPageSchema = closedObject(
   {
     items: Type.Array(InputListItemSchema),
     has_more: Type.Boolean(),
@@ -669,7 +667,7 @@ export const InputListPageSchema = closedObject(
   { $id: "InputListPage", title: "Input list page" }
 );
 
-export const InputReadResultSchema = closedObject(
+const InputReadResultSchema = closedObject(
   {
     ...InputLiveMetadataFields,
     raw_input: CanonicalRawInputSchema
@@ -683,7 +681,7 @@ const OutputAckResultSchema = closedObject({
   already_acknowledged: Type.Boolean()
 });
 
-export const ErrorEnvelopeSchema = closedObject(
+const ErrorEnvelopeSchema = closedObject(
   {
     ok: Type.Literal(false),
     request_id: Type.String({ minLength: 1 }),
@@ -865,7 +863,7 @@ export const PUBLIC_API_EXAMPLES = {
   }
 } as const;
 
-export type PublicApiOperation = Readonly<{
+type PublicApiOperation = Readonly<{
   id: string;
   method: "get" | "post";
   path: string;
@@ -1163,7 +1161,7 @@ function jsonPointerToFieldPath(pointer: string | undefined): string {
     }, "");
 }
 
-export function publicSchemaFieldErrors(
+function publicSchemaFieldErrors(
   schema: TSchema,
   value: unknown,
   fallbackMessage: string
@@ -1188,31 +1186,25 @@ export function publicSchemaFieldErrors(
   }));
 }
 
-export function publicInputSubmissionShapeMatches(value: unknown): boolean {
-  return Value.Check(InputSubmissionSchema, value);
-}
-
-export function publicCanonicalRawInputShapeMatches(value: unknown): boolean {
-  return Value.Check(CanonicalRawInputSchema, value);
-}
-
-export function publicInputDeleteShapeMatches(value: unknown): boolean {
-  return Value.Check(InputDeleteSchema, value);
-}
-
-export function publicInputReadShapeMatches(value: unknown): boolean {
-  return Value.Check(InputReadRequestSchema, value);
-}
-
-export function publicOutputReadAllShapeMatches(value: unknown): boolean {
-  return Value.Check(OutputReadAllRequestSchema, value);
-}
-
 export function publicSchemaMatches(
   schemaName: keyof typeof PUBLIC_API_SCHEMAS,
   value: unknown
 ): boolean {
   return Value.Check(PUBLIC_API_SCHEMAS[schemaName], value);
+}
+
+export function publicSchemaMismatch(
+  schemaName: keyof typeof PUBLIC_API_SCHEMAS,
+  value: unknown,
+  fallbackMessage: string
+): Array<{ path: string; code: "contract_mismatch"; message: string }> | null {
+  return publicSchemaMatches(schemaName, value)
+    ? null
+    : publicSchemaFieldErrors(
+        PUBLIC_API_SCHEMAS[schemaName],
+        value,
+        fallbackMessage
+      );
 }
 
 export function validatePublicApiContract() {

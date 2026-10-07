@@ -11,24 +11,23 @@ import type {
   TransactionContextStatement
 } from "./database.ts";
 import {
-  ACTION_STYLES,
-  ACTION_TONES,
-  CARD_VISUAL_KINDS,
-  POPUP_KINDS,
-  QUEUE_PRIORITIES,
   canonicalInputForms,
   sha256Hex,
   stableStringify,
-  type ActionStyle,
-  type ActionTone,
   type CanonicalInputParts,
   type NormalizedCardVisual,
   type NormalizedPopupOption,
-  type NormalizedPopupPayload,
-  type PopupKind,
-  type QueuePriority
+  type NormalizedPopupPayload
 } from "./input-schema.ts";
-import { publicCanonicalRawInputShapeMatches } from "../shared/public-api-contract.ts";
+import {
+  CARD_VISUAL_KINDS,
+  POPUP_KINDS,
+  QUEUE_PRIORITIES,
+  SUPPORTED_ACTION_STYLES,
+  SUPPORTED_ACTION_TONES,
+  isOneOf
+} from "../shared/input-schema-rules.ts";
+import { publicSchemaMatches } from "../shared/public-api-contract.ts";
 import { durationSinceMs } from "./logging.ts";
 import { reportRuntimeFailure } from "./sentry.ts";
 
@@ -176,7 +175,7 @@ export function reconstructCanonicalInput(args: {
   if (fingerprint !== args.root.normalized_content_fingerprint) {
     return apiTemporaryUnavailable(CANONICAL_INPUT_UNAVAILABLE_MESSAGE);
   }
-  if (!publicCanonicalRawInputShapeMatches(rawInput)) {
+  if (!publicSchemaMatches("CanonicalRawInput", rawInput)) {
     return apiTemporaryUnavailable(CANONICAL_INPUT_UNAVAILABLE_MESSAGE);
   }
 
@@ -414,7 +413,7 @@ function canonicalPartsFromRows(args: {
     !nonEmptyString(root.subtitle_html) ||
     !nonEmptyString(root.summary_html) ||
     (root.status !== "pending" && root.status !== "answered") ||
-    !QUEUE_PRIORITIES.has(root.priority) ||
+    !isOneOf(QUEUE_PRIORITIES, root.priority) ||
     !Number.isSafeInteger(root.current_revision) ||
     root.current_revision < 1 ||
     typeof root.skip_disabled !== "boolean" ||
@@ -467,7 +466,7 @@ function canonicalPartsFromRows(args: {
 
   return {
     callerItemId: root.caller_item_id,
-    priority: root.priority as QueuePriority,
+    priority: root.priority,
     rowType: {
       display: root.row_type_display,
       icon: root.row_type_icon
@@ -495,15 +494,17 @@ function actionFromStored(
     !nonEmptyString(action.icon) ||
     !nonEmptyString(action.action_value) ||
     typeof action.overflow !== "boolean" ||
-    !POPUP_KINDS.has(action.popup_kind) ||
+    !isOneOf(POPUP_KINDS, action.popup_kind) ||
     !isJsonRecord(action.popup_payload)
   ) {
     return null;
   }
   if (
     (action.action_tone == null) !== (action.action_style == null) ||
-    (action.action_tone != null && !ACTION_TONES.has(action.action_tone)) ||
-    (action.action_style != null && !ACTION_STYLES.has(action.action_style))
+    (action.action_tone != null &&
+      !isOneOf(SUPPORTED_ACTION_TONES, action.action_tone)) ||
+    (action.action_style != null &&
+      !isOneOf(SUPPORTED_ACTION_STYLES, action.action_style))
   ) {
     return null;
   }
@@ -532,9 +533,9 @@ function actionFromStored(
     icon: action.icon,
     value: action.action_value,
     overflow: action.overflow,
-    tone: action.action_tone as ActionTone | null,
-    style: action.action_style as ActionStyle | null,
-    popupKind: action.popup_kind as PopupKind,
+    tone: action.action_tone,
+    style: action.action_style,
+    popupKind: action.popup_kind,
     popupPayload: action.popup_payload as NormalizedPopupPayload,
     options
   };
@@ -547,7 +548,7 @@ function cardVisualFromStored(
   if (kind == null) {
     return null;
   }
-  if (!CARD_VISUAL_KINDS.has(kind) || !isJsonRecord(payload)) {
+  if (!isOneOf(CARD_VISUAL_KINDS, kind) || !isJsonRecord(payload)) {
     return undefined;
   }
   return { kind, payload } as NormalizedCardVisual;

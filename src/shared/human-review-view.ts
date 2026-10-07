@@ -1,4 +1,4 @@
-import type { QueuePriority } from "../server/input-schema.ts";
+import type { QueuePriority } from "./input-schema-rules.ts";
 
 export const HUMAN_REVIEW_VIEW_PARAM_KEYS = [
   "search",

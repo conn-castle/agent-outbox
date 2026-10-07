@@ -30,11 +30,7 @@ import {
   parsePageRequest,
   type PageRequest
 } from "./pagination.ts";
-import {
-  InputReadRequestSchema,
-  publicInputReadShapeMatches,
-  publicSchemaFieldErrors
-} from "../shared/public-api-contract.ts";
+import { publicSchemaMismatch } from "../shared/public-api-contract.ts";
 
 export const INPUT_READ_LIMIT_OPERATION_KIND = "output_check_read";
 export const INPUT_LIST_OPERATION = "input_list";
@@ -226,17 +222,14 @@ export function parseInputReadBody(
     return validationFailed([unstorableStringError("caller_item_id")]);
   }
 
-  if (publicInputReadShapeMatches(body)) {
-    return { ok: true, callerItemId: body.caller_item_id };
-  }
-
-  return validationFailed(
-    publicSchemaFieldErrors(
-      InputReadRequestSchema,
-      body,
-      "Request does not match the public input-read contract."
-    )
+  const mismatch = publicSchemaMismatch(
+    "InputReadRequest",
+    body,
+    "Request does not match the public input-read contract."
   );
+  if (mismatch) return validationFailed(mismatch);
+
+  return { ok: true, callerItemId: body.caller_item_id };
 }
 
 export function inputListPageStatement(
