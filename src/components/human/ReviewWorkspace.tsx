@@ -1165,7 +1165,6 @@ export function ReviewWorkspace({
           {lastUndo ? (
             <LastAnswerUndoForm
               undo={lastUndo}
-              actionLabel={lastUndo.actionLabel}
               disabled={lockedIds.has(lastUndo.inputItemId)}
               onMutation={(submission) => {
                 enqueueHumanMutation(

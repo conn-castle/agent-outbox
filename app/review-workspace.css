@@ -3476,13 +3476,6 @@ body:has(.shell > .human-workspace) {
   font-size: var(--queue-type-label);
 }
 
-.human-workspace .link-buttons {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
-  gap: 0.45rem;
-  margin-top: 1rem;
-}
-
 .human-workspace .answered-state {
   display: flex;
   align-items: center;
@@ -3537,7 +3530,6 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .detail-subtitle,
 .human-workspace .detail-body,
-.human-workspace .link-buttons .secondary-button,
 .human-workspace .action-button,
 .human-workspace .secondary-button,
 .human-workspace .secondary-actions > summary,
