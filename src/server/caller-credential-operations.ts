@@ -27,6 +27,7 @@ import {
   callerCredentialLifecycleLockStatement,
   fieldError,
   generateUserCode,
+  handleApprovedSetupCodeRequest,
   handlePendingCredentialFinalizeRequest,
   invalidRequestError,
   invalidSetupRequestError,
@@ -37,7 +38,6 @@ import {
   normalizeUserCode,
   notFoundError,
   parseDevicePollBody,
-  parseSetupCodeBody,
   publicAppBaseUrl,
   requiredCallbackUrl,
   requiredText,
@@ -47,7 +47,6 @@ import {
   setupRequestExpiresAt,
   verifyPendingCredential,
   withControlPlaneTransaction,
-  withScopedProductTransaction,
   type CallerFlowMessages,
   type CallerFlowRequestOptions as RequestOptions,
   type PendingCredentialBearer,
@@ -338,69 +337,31 @@ export async function handleRotateExchangeRequest(
   body: unknown,
   options: RequestOptions = {}
 ): Promise<OperationResult<RotateExchangeResponseData>> {
-  const parsed = parseSetupCodeBody(MESSAGES, body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  const ipAddress = trustedClientIpAddress(request);
-  if (!ipAddress) {
-    return apiTemporaryUnavailable(
-      "Trusted client IP is unavailable for caller rotate exchange."
-    );
-  }
-
-  const setupCodeHash = setupCodeDigest(parsed.data.setupCode);
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
-  }
-
-  const contextResult = await withControlPlaneTransaction(
-    MESSAGES,
+  return handleApprovedSetupCodeRequest({
+    request,
     context,
-    "caller_rotate_exchange_lookup",
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        "caller_rotate_exchange"
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      return setupExchangeContext(query, {
+    body,
+    options,
+    messages: MESSAGES,
+    codeField: "setup_code",
+    ipUnavailableMessage:
+      "Trusted client IP is unavailable for caller rotate exchange.",
+    limitKind: "caller_rotate_exchange",
+    lookupOperation: "caller_rotate_exchange_lookup",
+    exchangeOperation: "caller_rotate_exchange",
+    lookup: (query, codeHash) =>
+      setupExchangeContext(query, {
         operation: "rotate",
-        setupCodeHash,
+        setupCodeHash: codeHash,
         now: options.now,
         invalidMessage: "Caller rotate code is invalid or expired."
-      });
-    },
-    options
-  );
-
-  if (!contextResult.ok) {
-    return contextResult;
-  }
-
-  return withScopedProductTransaction(
-    MESSAGES,
-    connectionString,
-    context,
-    {
-      authSurface: "human",
-      accountId: contextResult.data.accountId,
-      userId: contextResult.data.userId
-    },
-    "caller_rotate_exchange",
-    (query) =>
-      exchangeRotateSetupRequest(query, setupCodeHash, {
+      }),
+    exchange: (query, codeHash) =>
+      exchangeRotateSetupRequest(query, codeHash, {
         requestId: context.requestId,
         now: options.now
-      }),
-    options
-  );
+      })
+  });
 }
 
 export async function handleRotateActivateRequest(
@@ -504,69 +465,31 @@ export async function handleRevokeConfirmRequest(
   body: unknown,
   options: RequestOptions = {}
 ): Promise<OperationResult<RevokeConfirmResponseData>> {
-  const parsed = parseSetupCodeBody(MESSAGES, body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  const ipAddress = trustedClientIpAddress(request);
-  if (!ipAddress) {
-    return apiTemporaryUnavailable(
-      "Trusted client IP is unavailable for caller revoke confirmation."
-    );
-  }
-
-  const setupCodeHash = setupCodeDigest(parsed.data.setupCode);
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
-  }
-
-  const contextResult = await withControlPlaneTransaction(
-    MESSAGES,
+  return handleApprovedSetupCodeRequest({
+    request,
     context,
-    "caller_revoke_confirm_lookup",
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        "caller_revoke_confirm"
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      return setupExchangeContext(query, {
+    body,
+    options,
+    messages: MESSAGES,
+    codeField: "setup_code",
+    ipUnavailableMessage:
+      "Trusted client IP is unavailable for caller revoke confirmation.",
+    limitKind: "caller_revoke_confirm",
+    lookupOperation: "caller_revoke_confirm_lookup",
+    exchangeOperation: "caller_revoke_confirm",
+    lookup: (query, codeHash) =>
+      setupExchangeContext(query, {
         operation: "revoke",
-        setupCodeHash,
+        setupCodeHash: codeHash,
         now: options.now,
         invalidMessage: "Caller revoke code is invalid or expired."
-      });
-    },
-    options
-  );
-
-  if (!contextResult.ok) {
-    return contextResult;
-  }
-
-  return withScopedProductTransaction(
-    MESSAGES,
-    connectionString,
-    context,
-    {
-      authSurface: "human",
-      accountId: contextResult.data.accountId,
-      userId: contextResult.data.userId
-    },
-    "caller_revoke_confirm",
-    (query) =>
-      confirmRevokeSetupRequest(query, setupCodeHash, {
+      }),
+    exchange: (query, codeHash) =>
+      confirmRevokeSetupRequest(query, codeHash, {
         requestId: context.requestId,
         now: options.now
-      }),
-    options
-  );
+      })
+  });
 }
 
 export async function getCredentialOperationBrowserApprovalPreview(

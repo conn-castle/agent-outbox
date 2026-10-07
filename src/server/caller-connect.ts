@@ -15,7 +15,6 @@ import {
   type DisplayOnceCallerApiKeyMaterial
 } from "./caller-auth.ts";
 import {
-  runProductTransaction,
   withSavepoint,
   type ProductTransactionQuery,
   type TransactionContextStatement
@@ -28,6 +27,7 @@ import {
   callerCredentialLifecycleLockStatement,
   fieldError,
   generateUserCode,
+  handleApprovedSetupCodeRequest,
   handlePendingCredentialFinalizeRequest,
   invalidRequestError,
   invalidSetupRequestError,
@@ -37,8 +37,6 @@ import {
   markSetupRequestExpiredStatement,
   normalizeUserCode,
   notFoundError,
-  parseDevicePollBody,
-  parseSetupCodeBody,
   publicAppBaseUrl,
   requiredCallbackUrl,
   requiredText,
@@ -53,8 +51,6 @@ import {
   type SetupRequestStatus,
   type SetupResult
 } from "./caller-setup-requests.ts";
-import { durationSinceMs } from "./logging.ts";
-import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
 const MESSAGES: CallerFlowMessages = {
@@ -65,6 +61,12 @@ const MESSAGES: CallerFlowMessages = {
   databaseUnavailable: "Caller connect database configuration is unavailable.",
   unexpectedFailure: "Caller connect request failed unexpectedly.",
   temporarilyUnavailable: "Caller connect is temporarily unavailable."
+};
+
+const EXCHANGE_MESSAGES: CallerFlowMessages = {
+  ...MESSAGES,
+  unexpectedFailure: "Caller connect exchange failed unexpectedly.",
+  temporarilyUnavailable: "Caller connect exchange is temporarily unavailable."
 };
 
 type ConnectResult<TData> = SetupResult<TData>;
@@ -407,99 +409,32 @@ export async function handleConnectDevicePollRequest(
   body: unknown,
   options: ConnectRequestOptions = {}
 ): Promise<ConnectResult<ConnectCredentialResponseData>> {
-  const parsed = parseDevicePollBody(MESSAGES, body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  const deviceCodeHash = setupCodeDigest(parsed.data.deviceCode);
-  const ipAddress = trustedClientIpAddress(request);
-  if (!ipAddress) {
-    return apiTemporaryUnavailable(
-      "Trusted client IP is unavailable for caller connect poll."
-    );
-  }
-
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
-  }
-
-  const contextResult = await withControlPlaneTransaction(
-    MESSAGES,
+  return handleApprovedSetupCodeRequest({
+    request,
     context,
-    "caller_connect_device_poll",
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
+    body,
+    options,
+    messages: MESSAGES,
+    exchangeMessages: EXCHANGE_MESSAGES,
+    hashBeforeIp: true,
+    codeField: "device_code",
+    ipUnavailableMessage:
+      "Trusted client IP is unavailable for caller connect poll.",
+    limitKind: "caller_connect_poll",
+    lookupOperation: "caller_connect_device_poll",
+    exchangeOperation: "caller_connect_exchange",
+    lookup: (query, codeHash) =>
+      connectSetupExchangeContext(query, "device", codeHash, options.now),
+    exchange: (query, codeHash) =>
+      exchangeApprovedConnectSetupRequest(
         query,
-        ipAddress,
-        "caller_connect_poll"
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      const lookup = await query<SetupExchangeContextRow>(
-        setupExchangeContextByDeviceCodeHashStatement(deviceCodeHash)
-      );
-      const row = lookup.rows[0];
-      if (!row) {
-        return invalidRequestError("Device code is invalid or expired.");
-      }
-
-      if (setupRequestExpired(row, options.now ?? new Date())) {
-        await query(markSetupRequestExpiredStatement(row.setup_request_id));
-        return invalidRequestError("Device code is invalid or expired.");
-      }
-
-      if (row.status === "pending") {
-        return {
-          ok: false,
-          error: {
-            status: 202,
-            code: "authorization_pending",
-            message: "Caller connect approval is pending.",
-            retryAfterSeconds: row.poll_interval_seconds
-          }
-        };
-      }
-
-      if (row.status !== "approved") {
-        return invalidRequestError("Device code is invalid or already used.");
-      }
-
-      if (!row.account_id || !row.approved_by_user_id) {
-        return apiTemporaryUnavailable(
-          "Caller connect approval is temporarily unavailable."
-        );
-      }
-
-      return {
-        ok: true,
-        data: {
-          accountId: row.account_id,
-          userId: row.approved_by_user_id
+        { flow: "device", codeHash },
+        {
+          requestId: context.requestId,
+          now: options.now
         }
-      };
-    },
-    options
-  );
-
-  if (!contextResult.ok) {
-    return contextResult;
-  }
-
-  return exchangeConnectSetupWithHumanContext(
-    connectionString,
-    context,
-    {
-      accountId: contextResult.data.accountId,
-      userId: contextResult.data.userId,
-      flow: "device",
-      codeHash: deviceCodeHash
-    },
-    options
-  );
+      )
+  });
 }
 
 export async function handleConnectExchangeRequest(
@@ -508,84 +443,32 @@ export async function handleConnectExchangeRequest(
   body: unknown,
   options: ConnectRequestOptions = {}
 ): Promise<ConnectResult<ConnectCredentialResponseData>> {
-  const parsed = parseSetupCodeBody(MESSAGES, body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  const setupCodeHash = setupCodeDigest(parsed.data.setupCode);
-  const ipAddress = trustedClientIpAddress(request);
-  if (!ipAddress) {
-    return apiTemporaryUnavailable(
-      "Trusted client IP is unavailable for caller connect exchange."
-    );
-  }
-
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return apiTemporaryUnavailable(MESSAGES.databaseUnavailable);
-  }
-
-  const contextResult = await withControlPlaneTransaction(
-    MESSAGES,
+  return handleApprovedSetupCodeRequest({
+    request,
     context,
-    "caller_connect_exchange_lookup",
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
+    body,
+    options,
+    messages: MESSAGES,
+    exchangeMessages: EXCHANGE_MESSAGES,
+    hashBeforeIp: true,
+    codeField: "setup_code",
+    ipUnavailableMessage:
+      "Trusted client IP is unavailable for caller connect exchange.",
+    limitKind: "caller_connect_exchange",
+    lookupOperation: "caller_connect_exchange_lookup",
+    exchangeOperation: "caller_connect_exchange",
+    lookup: (query, codeHash) =>
+      connectSetupExchangeContext(query, "browser", codeHash, options.now),
+    exchange: (query, codeHash) =>
+      exchangeApprovedConnectSetupRequest(
         query,
-        ipAddress,
-        "caller_connect_exchange"
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      const lookup = await query<SetupExchangeContextRow>(
-        setupExchangeContextBySetupCodeHashStatement(setupCodeHash)
-      );
-      const row = lookup.rows[0];
-      if (!row) {
-        return invalidRequestError("Setup code is invalid or expired.");
-      }
-      if (setupRequestExpired(row, options.now ?? new Date())) {
-        await query(markSetupRequestExpiredStatement(row.setup_request_id));
-        return invalidRequestError("Setup code is invalid or expired.");
-      }
-      if (row.status !== "approved") {
-        return invalidRequestError("Setup code is invalid or already used.");
-      }
-      if (!row.account_id || !row.approved_by_user_id) {
-        return apiTemporaryUnavailable(
-          "Caller connect approval is temporarily unavailable."
-        );
-      }
-
-      return {
-        ok: true,
-        data: {
-          accountId: row.account_id,
-          userId: row.approved_by_user_id
+        { flow: "browser", codeHash },
+        {
+          requestId: context.requestId,
+          now: options.now
         }
-      };
-    },
-    options
-  );
-
-  if (!contextResult.ok) {
-    return contextResult;
-  }
-
-  return exchangeConnectSetupWithHumanContext(
-    connectionString,
-    context,
-    {
-      accountId: contextResult.data.accountId,
-      userId: contextResult.data.userId,
-      flow: "browser",
-      codeHash: setupCodeHash
-    },
-    options
-  );
+      )
+  });
 }
 
 export async function handleConnectActivateRequest(
@@ -995,59 +878,63 @@ function createDeviceSetupRequestStatement(input: {
   };
 }
 
-async function exchangeConnectSetupWithHumanContext(
-  connectionString: string,
-  context: ApiRequestContext,
-  input: {
-    accountId: string;
-    userId: string;
-    flow: "browser" | "device";
-    codeHash: string;
-  },
-  options: ConnectRequestOptions = {}
-): Promise<ConnectResult<ConnectCredentialResponseData>> {
-  const runTransaction = options.runProductTransaction ?? runProductTransaction;
-  try {
-    return await runTransaction(
-      connectionString,
-      {
-        requestId: context.requestId,
-        authSurface: "human",
-        accountId: input.accountId,
-        userId: input.userId
-      },
-      async (query) => {
-        return exchangeApprovedConnectSetupRequest(
-          query,
-          {
-            flow: input.flow,
-            codeHash: input.codeHash
-          },
-          {
-            requestId: context.requestId,
-            now: options.now
-          }
-        );
+/**
+ * Looks up the setup row without locking. Expiry precedes status checks:
+ * an expired pending or approved row is marked expired, and any expired row
+ * returns invalid or expired before pending or used responses.
+ * Only a pending device row returns 202 authorization_pending, with the row's
+ * poll_interval_seconds as retryAfterSeconds. A pending browser row does not
+ * take that branch. An approved row requires account_id and approved_by_user_id;
+ * either missing identity returns the temporary-unavailable 503.
+ * Returns only the approval identities. The later exchange transaction must
+ * lock and revalidate the row.
+ */
+async function connectSetupExchangeContext(
+  query: ProductTransactionQuery,
+  flow: "browser" | "device",
+  codeHash: string,
+  now?: Date
+): Promise<ConnectResult<{ accountId: string; userId: string }>> {
+  const lookup = await query<SetupExchangeContextRow>(
+    setupExchangeContextByCodeHashStatement(flow, codeHash)
+  );
+  const row = lookup.rows[0];
+  const codeName = flow === "browser" ? "Setup code" : "Device code";
+  if (!row) {
+    return invalidRequestError(`${codeName} is invalid or expired.`);
+  }
+
+  if (setupRequestExpired(row, now ?? new Date())) {
+    await query(markSetupRequestExpiredStatement(row.setup_request_id));
+    return invalidRequestError(`${codeName} is invalid or expired.`);
+  }
+
+  if (flow === "device" && row.status === "pending") {
+    return {
+      ok: false,
+      error: {
+        status: 202,
+        code: "authorization_pending",
+        message: "Caller connect approval is pending.",
+        retryAfterSeconds: row.poll_interval_seconds
       }
-    );
-  } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
-      operation: "caller_connect_exchange",
-      message: "Caller connect exchange failed unexpectedly.",
-      request_id: context.requestId,
-      account_id: input.accountId
-    });
+    };
+  }
+
+  if (row.status !== "approved") {
+    return invalidRequestError(`${codeName} is invalid or already used.`);
+  }
+
+  if (!row.account_id || !row.approved_by_user_id) {
     return apiTemporaryUnavailable(
-      "Caller connect exchange is temporarily unavailable.",
-      { errorId: context.correlationId, reported: true }
+      "Caller connect approval is temporarily unavailable."
     );
   }
+
+  return {
+    ok: true,
+    data: { accountId: row.account_id, userId: row.approved_by_user_id }
+  };
 }
 
 async function connectApprovalPreviewFromTarget(
@@ -1430,9 +1317,21 @@ function terminalSetupStateStatement(input: {
   };
 }
 
-function setupExchangeContextBySetupCodeHashStatement(
-  setupCodeHash: string
+/**
+ * Selects one of two fixed SQL texts by flow: browser uses setup_code_hash
+ * and the flow literal 'browser'; device uses device_code_hash and 'device'.
+ * These identifiers and flow literals are source literals, not request text.
+ * The only bound value is the code digest ($1). Both statements restrict
+ * operation to 'connect' and flow to the selected fixed literal.
+ * The statement does not lock (no FOR UPDATE).
+ */
+function setupExchangeContextByCodeHashStatement(
+  flow: "browser" | "device",
+  codeHash: string
 ): TransactionContextStatement {
+  const codeColumn =
+    flow === "browser" ? "setup_code_hash" : "device_code_hash";
+  const flowLiteral = flow === "browser" ? "'browser'" : "'device'";
   return {
     sql: `
       select
@@ -1443,34 +1342,12 @@ function setupExchangeContextBySetupCodeHashStatement(
         poll_interval_seconds,
         expires_at
       from public.agent_outbox_caller_setup_requests
-      where setup_code_hash = $1
+      where ${codeColumn} = $1
         and operation = 'connect'
-        and flow = 'browser'
+        and flow = ${flowLiteral}
       limit 1
     `,
-    values: [setupCodeHash]
-  };
-}
-
-function setupExchangeContextByDeviceCodeHashStatement(
-  deviceCodeHash: string
-): TransactionContextStatement {
-  return {
-    sql: `
-      select
-        setup_request_id::text as setup_request_id,
-        status,
-        account_id::text as account_id,
-        approved_by_user_id::text as approved_by_user_id,
-        poll_interval_seconds,
-        expires_at
-      from public.agent_outbox_caller_setup_requests
-      where device_code_hash = $1
-        and operation = 'connect'
-        and flow = 'device'
-      limit 1
-    `,
-    values: [deviceCodeHash]
+    values: [codeHash]
   };
 }
 

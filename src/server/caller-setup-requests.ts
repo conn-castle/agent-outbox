@@ -1,4 +1,4 @@
-/** Setup-request helpers and pending-credential transaction pipeline shared by caller connect and rotate/revoke flows. */
+/** Setup-request helpers, approved-code exchange, and pending-credential finalization shared by caller connect and rotate/revoke flows. */
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
@@ -349,7 +349,7 @@ export function parseDevicePollBody(
  * 422 validation failure with the flow's message and field errors.
  * This validates request text only; the caller must verify the setup token.
  */
-export function parseSetupCodeBody(
+function parseSetupCodeBody(
   messages: CallerFlowMessages,
   body: unknown
 ): SetupResult<{ setupCode: string }> {
@@ -444,7 +444,7 @@ export async function withControlPlaneTransaction<TData>(
  * or callback failures are reported with operation, request, and account/caller
  * context and return the flow's temporary-unavailable 503 with the correlation ID.
  */
-export async function withScopedProductTransaction<TData>(
+async function withScopedProductTransaction<TData>(
   messages: CallerFlowMessages,
   connectionString: string,
   context: ApiRequestContext,
@@ -606,6 +606,115 @@ function invalidPendingCredentialError(
       message: messages.invalidCredential
     }
   };
+}
+
+/**
+ * Runs an approved setup-code exchange request: validates setup_code or
+ * device_code, then requires a trusted client IP and hashes the code (hashing
+ * first when hashBeforeIp is set, so hash-secret errors take precedence), then
+ * requires DATABASE_APP_ROLE_URL. Connect sets hashBeforeIp, so a missing or
+ * too-short hash secret throws even when the trusted IP is unavailable.
+ * Rotate and revoke leave hashBeforeIp unset: the IP check comes first, so
+ * those hash-secret failures throw only after a trusted IP is present.
+ * setupCodeDigest runs exactly once when hashing is reached. The early digest
+ * is reused after the IP check without hashing again. Hash-secret exceptions
+ * propagate outside both transaction wrappers; they are thrown, not returned
+ * or converted into the flow's reported temporary-unavailable 503.
+ *
+ * Lookup and exchange use separate transactions. The control-plane transaction
+ * applies the flow's IP limit, then runs the lookup callback to resolve the
+ * approving account and user. Only after it succeeds does the human-scoped
+ * transaction run the exchange callback. The exchange callback locks and
+ * revalidates the setup row; this helper does not lock between transactions.
+ * Each step returns the first SetupResult failure unchanged. Transaction and
+ * callback throws become the wrapper's reported temporary-unavailable 503,
+ * using the flow's messages and operation names.
+ *
+ * exchangeMessages, when set, replaces messages only for the exchange
+ * transaction. Lookup keeps messages. Connect passes this override; rotate
+ * and revoke do not.
+ */
+export async function handleApprovedSetupCodeRequest<TData>(input: {
+  request: Request;
+  context: ApiRequestContext;
+  body: unknown;
+  options: CallerFlowRequestOptions;
+  messages: CallerFlowMessages;
+  codeField: "setup_code" | "device_code";
+  ipUnavailableMessage: string;
+  limitKind: Parameters<typeof enforceIpControlPlaneLimit>[2];
+  lookupOperation: string;
+  exchangeOperation: string;
+  exchangeMessages?: CallerFlowMessages;
+  hashBeforeIp?: boolean;
+  lookup: (
+    query: ProductTransactionQuery,
+    codeHash: string
+  ) => Promise<SetupResult<{ accountId: string; userId: string }>>;
+  exchange: (
+    query: ProductTransactionQuery,
+    codeHash: string
+  ) => Promise<SetupResult<TData>>;
+}): Promise<SetupResult<TData>> {
+  const { request, context, body, options, messages } = input;
+  const parsed =
+    input.codeField === "setup_code"
+      ? parseSetupCodeBody(messages, body)
+      : parseDevicePollBody(messages, body);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const code =
+    "setupCode" in parsed.data ? parsed.data.setupCode : parsed.data.deviceCode;
+  const earlyCodeHash = input.hashBeforeIp ? setupCodeDigest(code) : undefined;
+  const ipAddress = trustedClientIpAddress(request);
+  if (!ipAddress) {
+    return apiTemporaryUnavailable(input.ipUnavailableMessage);
+  }
+
+  const codeHash = earlyCodeHash ?? setupCodeDigest(code);
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    return apiTemporaryUnavailable(messages.databaseUnavailable);
+  }
+
+  const lookupResult = await withControlPlaneTransaction(
+    messages,
+    context,
+    input.lookupOperation,
+    async (query) => {
+      const limit = await enforceIpControlPlaneLimit(
+        query,
+        ipAddress,
+        input.limitKind
+      );
+      if (!limit.ok) {
+        return limit;
+      }
+
+      return input.lookup(query, codeHash);
+    },
+    options
+  );
+
+  if (!lookupResult.ok) {
+    return lookupResult;
+  }
+
+  return withScopedProductTransaction(
+    input.exchangeMessages ?? messages,
+    connectionString,
+    context,
+    {
+      authSurface: "human",
+      accountId: lookupResult.data.accountId,
+      userId: lookupResult.data.userId
+    },
+    input.exchangeOperation,
+    (query) => input.exchange(query, codeHash),
+    options
+  );
 }
 
 /**

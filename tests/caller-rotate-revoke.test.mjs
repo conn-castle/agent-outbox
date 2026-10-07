@@ -2144,6 +2144,207 @@ test("rotate pending handlers preserve validation, authentication, availability 
   );
 });
 
+test("rotate/revoke approved-code handlers preserve availability and transaction failure contracts", async () => {
+  await withProcessEnv(
+    {
+      CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE,
+      DATABASE_APP_ROLE_URL: "postgresql://agent_outbox_app:test@example/db"
+    },
+    async () => {
+      const context = {
+        requestId: "req-approved-contract",
+        correlationId: "corr-approved-contract"
+      };
+      const now = new Date("2026-07-02T00:00:00.000Z");
+      const handlers = [
+        {
+          handler: handleRotateExchangeRequest,
+          field: "setup_code",
+          operation: "rotate",
+          ipMessage:
+            "Trusted client IP is unavailable for caller rotate exchange.",
+          lookupOperation: "caller_rotate_exchange_lookup",
+          exchangeOperation: "caller_rotate_exchange"
+        },
+        {
+          handler: handleRevokeConfirmRequest,
+          field: "setup_code",
+          operation: "revoke",
+          ipMessage:
+            "Trusted client IP is unavailable for caller revoke confirmation.",
+          lookupOperation: "caller_revoke_confirm_lookup",
+          exchangeOperation: "caller_revoke_confirm"
+        }
+      ];
+      for (const entry of handlers) {
+        const body = { [entry.field]: "approved_code" };
+        const request = (headers = {}) => controlRequest("/code", { headers });
+        // The trusted-IP check runs before the code is hashed, so a missing
+        // hash secret cannot mask the IP-unavailable response.
+        await withProcessEnv(
+          { CALLER_KEY_HASH_SECRET: undefined },
+          async () => {
+            assert.deepEqual(
+              await entry.handler(
+                request({ "cf-connecting-ip": "" }),
+                context,
+                body,
+                { now }
+              ),
+              {
+                ok: false,
+                error: {
+                  status: 503,
+                  code: "temporary_unavailable",
+                  message: entry.ipMessage
+                }
+              }
+            );
+          }
+        );
+        // With a trusted IP, hash-secret configuration errors still propagate
+        // instead of becoming a reported transaction 503.
+        for (const [secret, errorName] of [
+          [undefined, "MissingServerEnvironmentError"],
+          ["too-short", "InsecureServerEnvironmentError"]
+        ]) {
+          await withProcessEnv({ CALLER_KEY_HASH_SECRET: secret }, async () => {
+            await assert.rejects(
+              entry.handler(request(), context, body, { now }),
+              { name: errorName }
+            );
+          });
+        }
+        await withProcessEnv({ DATABASE_APP_ROLE_URL: undefined }, async () => {
+          assert.deepEqual(
+            await entry.handler(request(), context, body, { now }),
+            {
+              ok: false,
+              error: {
+                status: 503,
+                code: "temporary_unavailable",
+                message:
+                  "Caller credential operation database configuration is unavailable."
+              }
+            }
+          );
+        });
+        // failAt 1 throws before the lookup transaction callback, so neither
+        // the IP-limit query nor the lookup query runs. failAt 2 runs the first
+        // transaction: its first query returns the IP-limit result and its
+        // second returns the approved lookup row. The exchange transaction
+        // then fails on its first query. The fake runner does not exercise
+        // real PostgreSQL row locks or rollback.
+        for (const failAt of [1, 2]) {
+          const controlQuery = fakeSavepointAwareQuery(
+            (_statement, callNumber) =>
+              callNumber === 1
+                ? [{ used_units: "1" }]
+                : [
+                    {
+                      setup_request_id: SETUP_REQUEST_ID,
+                      status: "approved",
+                      account_id: ACCOUNT_ID,
+                      approved_by_user_id: USER_ID,
+                      poll_interval_seconds: 5,
+                      expires_at: "2026-07-02T00:10:00.000Z"
+                    }
+                  ]
+          );
+          const humanQuery = fakeSavepointAwareQuery(() => {
+            throw new Error("injected exchange query failure");
+          });
+          const runner = fakeTransactionRunner([controlQuery, humanQuery]);
+          let calls = 0;
+          /** @type {typeof import("../src/server/database.ts").runProductTransaction} */
+          const runProductTransaction = async (
+            url,
+            transactionContext,
+            callback
+          ) => {
+            calls += 1;
+            if (failAt === 1)
+              throw new Error("injected lookup transaction failure");
+            return runner.runProductTransaction(
+              url,
+              transactionContext,
+              callback
+            );
+          };
+          /** @type {string[]} */
+          const lines = [];
+          const originalError = console.error;
+          let result;
+          try {
+            console.error = (line) => lines.push(line);
+            result = await entry.handler(request(), context, body, {
+              now,
+              runProductTransaction
+            });
+          } finally {
+            console.error = originalError;
+          }
+          assert.equal(calls, failAt);
+          assert.deepEqual(result, {
+            ok: false,
+            error: {
+              status: 503,
+              code: "temporary_unavailable",
+              message:
+                "Caller credential operation is temporarily unavailable.",
+              errorId: context.correlationId,
+              reported: true
+            }
+          });
+          assert.equal(lines.length, 1);
+          const log = JSON.parse(lines[0]);
+          assert.equal(
+            log.operation,
+            failAt === 1 ? entry.lookupOperation : entry.exchangeOperation
+          );
+          assert.equal(
+            log.message,
+            "Caller credential operation failed unexpectedly."
+          );
+          assert.equal(log.error_id, context.correlationId);
+          assert.equal(log.request_id, context.requestId);
+          assert.equal(log.surface, "api");
+          assert.equal(log.status_code, 503);
+          assert.equal(log.account_id, failAt === 1 ? undefined : ACCOUNT_ID);
+          assert.equal(log.caller_id, undefined);
+          if (failAt === 2) {
+            assert.equal(controlQuery.calls.length, 2);
+            assert.deepEqual(runner.contexts[0], {
+              requestId: context.requestId,
+              authSurface: "control_plane"
+            });
+            assert.deepEqual(runner.contexts[1], {
+              requestId: context.requestId,
+              authSurface: "human",
+              accountId: ACCOUNT_ID,
+              userId: USER_ID
+            });
+            const lookup = controlQuery.calls[1];
+            assert.doesNotMatch(lookup.sql, /for update/i);
+            assert.equal(humanQuery.calls.length, 1);
+            const exchange = humanQuery.calls[0];
+            assert.match(exchange.sql, /for update/i);
+            assert.match(lookup.sql, /setup_code_hash = \$1/);
+            assert.match(lookup.sql, /operation = \$2/);
+            assert.equal(lookup.values?.[1], entry.operation);
+            assert.match(exchange.sql, /setup_code_hash = \$1/);
+            assert.match(
+              exchange.sql,
+              new RegExp(`operation = '${entry.operation}'`)
+            );
+            assert.deepEqual(exchange.values, [lookup.values?.[0]]);
+          }
+        }
+      }
+    }
+  );
+});
+
 test("rotate parsers preserve ordered fields and the 512-character code limit", async () => {
   await withProcessEnv(
     { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
