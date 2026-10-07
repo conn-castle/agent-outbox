@@ -640,11 +640,15 @@ test("browser connect start preserves Unicode text and returns approval metadata
         query.calls[1].sql,
         /insert into public\.agent_outbox_caller_setup_requests/
       );
-      assert.match(query.calls[1].sql, /values \('connect', 'browser'/);
       assert.deepEqual(query.calls[1].values, [
+        "connect",
+        "browser",
         "café-邮件-🚀",
         "Cafe\u0301 邮件 🚀",
         "http://127.0.0.1:49152/邮件/🚀",
+        null,
+        null,
+        null,
         "2026-07-02T00:10:00.000Z",
         5
       ]);
@@ -716,22 +720,25 @@ test("device connect start preserves Unicode text and stores only hashed device 
         query.calls[1].sql,
         /insert into public\.agent_outbox_caller_setup_requests/
       );
-      assert.match(query.calls[1].sql, /values \('connect', 'device'/);
-      assert.deepEqual(query.calls[1].values?.slice(0, 2), [
+      assert.deepEqual(query.calls[1].values?.slice(0, 5), [
+        "connect",
+        "device",
         "café-邮件-🚀",
-        "Cafe\u0301 邮件 🚀"
+        "Cafe\u0301 邮件 🚀",
+        null
       ]);
       assert.equal(
-        query.calls[1].values?.[2],
+        query.calls[1].values?.[5],
         setupCodeDigest(result.data.device_code)
       );
       assert.equal(
-        query.calls[1].values?.[3],
+        query.calls[1].values?.[6],
         setupCodeDigest(result.data.user_code.replace(/[\s-]+/g, ""))
       );
-      assert.match(String(query.calls[1].values?.[2]), /^[a-f0-9]{64}$/);
-      assert.match(String(query.calls[1].values?.[3]), /^[a-f0-9]{64}$/);
-      assert.deepEqual(query.calls[1].values?.slice(4), [
+      assert.match(String(query.calls[1].values?.[5]), /^[a-f0-9]{64}$/);
+      assert.match(String(query.calls[1].values?.[6]), /^[a-f0-9]{64}$/);
+      assert.deepEqual(query.calls[1].values?.slice(7), [
+        null,
         "2026-07-02T00:10:00.000Z",
         5
       ]);

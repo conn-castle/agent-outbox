@@ -122,12 +122,15 @@ test("browser rotate start preserves Unicode text and creates a setup request af
         TEST_IP,
         "caller_rotate_start_requests_per_ip_per_minute"
       ]);
-      assert.match(query.calls[1].sql, /values \(\$1, 'browser'/);
       assert.deepEqual(query.calls[1].values, [
         "rotate",
-        CALLER_ID,
+        "browser",
+        "cafe\u0301-邮件-🚀",
         "cafe\u0301-邮件-🚀",
         "http://127.0.0.1:49152/邮件/🚀",
+        null,
+        null,
+        CALLER_ID,
         "2026-07-02T00:10:00.000Z",
         5
       ]);

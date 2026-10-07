@@ -2,8 +2,6 @@ import { randomBytes } from "node:crypto";
 
 import {
   apiTemporaryUnavailable,
-  apiValidationFailed,
-  type ApiFieldError,
   type ApiRequestContext
 } from "./api-errors.ts";
 import {
@@ -20,31 +18,23 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import {
-  DEVICE_POLL_INTERVAL_SECONDS,
-  DEVICE_TOKEN_BYTES,
   SETUP_TOKEN_BYTES,
   UUID_PATTERN,
   callerCredentialLifecycleLockStatement,
-  fieldError,
-  generateUserCode,
   handleApprovedSetupCodeRequest,
   handlePendingCredentialFinalizeRequest,
+  handleSetupBrowserStartRequest,
+  handleSetupDeviceStartRequest,
   invalidRequestError,
   invalidSetupRequestError,
-  isPlainRecord,
   isUniqueViolation,
   markSetupRequestExchangedStatement,
   markSetupRequestExpiredStatement,
   normalizeUserCode,
   notFoundError,
   parseDevicePollBody,
-  publicAppBaseUrl,
-  requiredCallbackUrl,
-  requiredText,
-  requiredUuidText,
   setupCodeDigest,
   setupRequestExpired,
-  setupRequestExpiresAt,
   verifyPendingCredential,
   withControlPlaneTransaction,
   type CallerFlowMessages,
@@ -79,17 +69,6 @@ type NonEmptyTerminalStatusList = readonly [
 ];
 
 type OperationResult<TData> = SetupResult<TData>;
-
-type BrowserStartBody = {
-  callerId: string;
-  localCallerName: string;
-  callbackUrl: string;
-};
-
-type DeviceStartBody = {
-  callerId: string;
-  localCallerName: string;
-};
 
 type SetupRequestIdRow = {
   setup_request_id: string;
@@ -292,13 +271,14 @@ export async function handleRotateBrowserStartRequest(
   body: unknown,
   options: RequestOptions = {}
 ) {
-  return handleOperationBrowserStartRequest(
-    "rotate",
+  return handleSetupBrowserStartRequest({
+    operation: "rotate",
+    messages: MESSAGES,
     request,
     context,
     body,
     options
-  );
+  });
 }
 
 export async function handleRotateDeviceStartRequest(
@@ -307,13 +287,14 @@ export async function handleRotateDeviceStartRequest(
   body: unknown,
   options: RequestOptions = {}
 ) {
-  return handleOperationDeviceStartRequest(
-    "rotate",
+  return handleSetupDeviceStartRequest({
+    operation: "rotate",
+    messages: MESSAGES,
     request,
     context,
     body,
     options
-  );
+  });
 }
 
 export async function handleRotateDevicePollRequest(
@@ -420,13 +401,14 @@ export async function handleRevokeBrowserStartRequest(
   body: unknown,
   options: RequestOptions = {}
 ) {
-  return handleOperationBrowserStartRequest(
-    "revoke",
+  return handleSetupBrowserStartRequest({
+    operation: "revoke",
+    messages: MESSAGES,
     request,
     context,
     body,
     options
-  );
+  });
 }
 
 export async function handleRevokeDeviceStartRequest(
@@ -435,13 +417,14 @@ export async function handleRevokeDeviceStartRequest(
   body: unknown,
   options: RequestOptions = {}
 ) {
-  return handleOperationDeviceStartRequest(
-    "revoke",
+  return handleSetupDeviceStartRequest({
+    operation: "revoke",
+    messages: MESSAGES,
     request,
     context,
     body,
     options
-  );
+  });
 }
 
 export async function handleRevokeDevicePollRequest(
@@ -727,182 +710,6 @@ export async function getCredentialOperationTerminalSetupState(
           : null
     }
   };
-}
-
-async function handleOperationBrowserStartRequest(
-  operation: CredentialOperation,
-  request: Request,
-  context: ApiRequestContext,
-  body: unknown,
-  options: RequestOptions
-): Promise<
-  OperationResult<{
-    approval_url: string;
-    setup_request_id: string;
-    expires_at: string;
-  }>
-> {
-  const parsed = parseBrowserStartBody(body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  const baseUrl = publicAppBaseUrl();
-  if (!baseUrl.ok) {
-    return baseUrl;
-  }
-
-  const ipAddress = trustedClientIpAddress(request);
-  if (!ipAddress) {
-    return apiTemporaryUnavailable(
-      `Trusted client IP is unavailable for caller ${operation} start.`
-    );
-  }
-
-  const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
-
-  return withControlPlaneTransaction(
-    MESSAGES,
-    context,
-    `caller_${operation}_browser_start`,
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        `caller_${operation}_start`
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      let result: { rows: SetupRequestIdRow[] };
-      try {
-        result = await withSavepoint(query, "caller_setup_request", () =>
-          query<SetupRequestIdRow>(
-            createBrowserSetupRequestStatement(operation, {
-              ...parsed.data,
-              expiresAt
-            })
-          )
-        );
-      } catch (error) {
-        if (isForeignKeyViolation(error)) {
-          return invalidRequestError(
-            `Caller ${operation} target was not found.`
-          );
-        }
-        throw error;
-      }
-      const setup = result.rows[0];
-
-      const approvalUrl = new URL(`/caller/${operation}/approve`, baseUrl.data);
-      approvalUrl.searchParams.set("setup_request_id", setup.setup_request_id);
-
-      return {
-        ok: true,
-        data: {
-          approval_url: approvalUrl.toString(),
-          setup_request_id: setup.setup_request_id,
-          expires_at: expiresAt.toISOString()
-        }
-      };
-    },
-    options
-  );
-}
-
-async function handleOperationDeviceStartRequest(
-  operation: CredentialOperation,
-  request: Request,
-  context: ApiRequestContext,
-  body: unknown,
-  options: RequestOptions
-): Promise<
-  OperationResult<{
-    device_code: string;
-    user_code: string;
-    verification_uri: string;
-    verification_uri_complete: string;
-    expires_at: string;
-    poll_interval_seconds: number;
-  }>
-> {
-  const parsed = parseDeviceStartBody(body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-
-  const baseUrl = publicAppBaseUrl();
-  if (!baseUrl.ok) {
-    return baseUrl;
-  }
-
-  const ipAddress = trustedClientIpAddress(request);
-  if (!ipAddress) {
-    return apiTemporaryUnavailable(
-      `Trusted client IP is unavailable for caller ${operation} start.`
-    );
-  }
-
-  const deviceCode = `dev_${randomBytes(DEVICE_TOKEN_BYTES).toString(
-    "base64url"
-  )}`;
-  const userCode = generateUserCode();
-  const expiresAt = setupRequestExpiresAt(options.now ?? new Date());
-
-  return withControlPlaneTransaction(
-    MESSAGES,
-    context,
-    `caller_${operation}_device_start`,
-    async (query) => {
-      const limit = await enforceIpControlPlaneLimit(
-        query,
-        ipAddress,
-        `caller_${operation}_start`
-      );
-      if (!limit.ok) {
-        return limit;
-      }
-
-      try {
-        await withSavepoint(query, "caller_setup_request", () =>
-          query<SetupRequestIdRow>(
-            createDeviceSetupRequestStatement(operation, {
-              ...parsed.data,
-              deviceCodeHash: setupCodeDigest(deviceCode),
-              userCodeHash: setupCodeDigest(normalizeUserCode(userCode)),
-              expiresAt
-            })
-          )
-        );
-      } catch (error) {
-        if (isForeignKeyViolation(error)) {
-          return invalidRequestError(
-            `Caller ${operation} target was not found.`
-          );
-        }
-        throw error;
-      }
-      const verificationUri = new URL(
-        `/caller/${operation}/device`,
-        baseUrl.data
-      ).toString();
-      return {
-        ok: true,
-        data: {
-          device_code: deviceCode,
-          user_code: userCode,
-          verification_uri: verificationUri,
-          verification_uri_complete: `${verificationUri}?user_code=${encodeURIComponent(
-            userCode
-          )}`,
-          expires_at: expiresAt.toISOString(),
-          poll_interval_seconds: DEVICE_POLL_INTERVAL_SECONDS
-        }
-      };
-    },
-    options
-  );
 }
 
 async function handleOperationDevicePollRequest(
@@ -1414,74 +1221,6 @@ async function ensurePendingApprovalTarget(
   }
 
   return { ok: true, data: null };
-}
-
-function createBrowserSetupRequestStatement(
-  operation: CredentialOperation,
-  input: BrowserStartBody & { expiresAt: Date }
-): TransactionContextStatement {
-  return {
-    sql: `
-      insert into public.agent_outbox_caller_setup_requests (
-        operation,
-        flow,
-        local_caller_name,
-        display_name,
-        callback_url,
-        caller_id,
-        expires_at,
-        poll_interval_seconds
-      )
-      values ($1, 'browser', $3, $3, $4, $2, $5::timestamptz, $6)
-      returning
-        setup_request_id::text as setup_request_id
-    `,
-    values: [
-      operation,
-      input.callerId,
-      input.localCallerName,
-      input.callbackUrl,
-      input.expiresAt.toISOString(),
-      DEVICE_POLL_INTERVAL_SECONDS
-    ]
-  };
-}
-
-function createDeviceSetupRequestStatement(
-  operation: CredentialOperation,
-  input: DeviceStartBody & {
-    deviceCodeHash: string;
-    userCodeHash: string;
-    expiresAt: Date;
-  }
-): TransactionContextStatement {
-  return {
-    sql: `
-      insert into public.agent_outbox_caller_setup_requests (
-        operation,
-        flow,
-        local_caller_name,
-        display_name,
-        device_code_hash,
-        user_code_hash,
-        caller_id,
-        expires_at,
-        poll_interval_seconds
-      )
-      values ($1, 'device', $3, $3, $4, $5, $2, $6::timestamptz, $7)
-      returning
-        setup_request_id::text as setup_request_id
-    `,
-    values: [
-      operation,
-      input.callerId,
-      input.localCallerName,
-      input.deviceCodeHash,
-      input.userCodeHash,
-      input.expiresAt.toISOString(),
-      DEVICE_POLL_INTERVAL_SECONDS
-    ]
-  };
 }
 
 function approvalTargetBySetupRequestIdStatement(input: {
@@ -2068,45 +1807,6 @@ function insertCallerCredentialAuditStatement(input: {
   };
 }
 
-function parseBrowserStartBody(
-  body: unknown
-): OperationResult<BrowserStartBody> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return apiValidationFailed(MESSAGES.validationFailed, [
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const callerId = requiredUuidText(body, "caller_id", fields);
-  const localCallerName = requiredText(body, "local_caller_name", fields);
-  const callbackUrl = requiredCallbackUrl(body, "callback_url", fields);
-
-  if (fields.length > 0) {
-    return apiValidationFailed(MESSAGES.validationFailed, fields);
-  }
-
-  return { ok: true, data: { callerId, localCallerName, callbackUrl } };
-}
-
-function parseDeviceStartBody(body: unknown): OperationResult<DeviceStartBody> {
-  const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(body)) {
-    return apiValidationFailed(MESSAGES.validationFailed, [
-      fieldError("", "invalid_request", "Request body must be an object.")
-    ]);
-  }
-
-  const callerId = requiredUuidText(body, "caller_id", fields);
-  const localCallerName = requiredText(body, "local_caller_name", fields);
-
-  if (fields.length > 0) {
-    return apiValidationFailed(MESSAGES.validationFailed, fields);
-  }
-
-  return { ok: true, data: { callerId, localCallerName } };
-}
-
 function approvalCaller(target: ApprovalTargetRow) {
   return {
     caller_id: target.caller_id,
@@ -2117,12 +1817,4 @@ function approvalCaller(target: ApprovalTargetRow) {
 
 function operationLabel(operation: CredentialOperation) {
   return `Caller ${operation}`;
-}
-
-function isForeignKeyViolation(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  return "code" in error && (error as { code?: unknown }).code === "23503";
 }
