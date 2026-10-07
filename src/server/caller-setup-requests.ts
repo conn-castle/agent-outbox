@@ -1,4 +1,4 @@
-/** Setup-request start, helpers, approved-code exchange, and pending-credential finalization shared by caller connect and rotate/revoke flows. */
+/** Setup-request start, helpers, approval decisions, terminal state, approved-code exchange, and pending-credential finalization shared by caller connect and rotate/revoke flows. */
 import {
   createHmac,
   randomBytes,
@@ -41,7 +41,7 @@ const SETUP_CODE_EXPIRES_IN_SECONDS =
 export const DEVICE_POLL_INTERVAL_SECONDS =
   SYSTEM_CONTRACT.defaultDevicePollIntervalSeconds;
 const TOKEN_HASH_ALGORITHM = "sha256";
-export const SETUP_TOKEN_BYTES = 32;
+const SETUP_TOKEN_BYTES = 32;
 export const DEVICE_TOKEN_BYTES = 32;
 const USER_CODE_GROUP_LENGTH = 4;
 const USER_CODE_GROUPS = 2;
@@ -58,6 +58,223 @@ export type SetupOperation = "connect" | "rotate" | "revoke";
 
 export type SetupRequestStatus =
   "pending" | "approved" | "exchanged" | "expired" | "denied";
+
+export type SetupTerminalStatus = Extract<
+  SetupRequestStatus,
+  "approved" | "exchanged" | "denied"
+>;
+
+export type SetupTerminalStateData = {
+  setup_request_id: string;
+  operation: SetupOperation;
+  flow: "browser" | "device";
+  status: SetupTerminalStatus;
+  local_caller_name: string;
+  display_name: string;
+  caller: {
+    caller_id: string;
+    caller_slug: string | null;
+    display_name: string;
+  } | null;
+};
+
+type TerminalSetupStateRow = {
+  setup_request_id: string;
+  operation: SetupOperation;
+  flow: "browser" | "device";
+  status: SetupTerminalStatus;
+  local_caller_name: string;
+  display_name: string;
+  caller_id: string | null;
+  caller_slug: string | null;
+  caller_display_name: string | null;
+};
+
+/**
+ * Rejects malformed IDs before querying. Lookup is scoped to the account,
+ * operation, and a non-empty list of accepted terminal statuses.
+ */
+export async function getSetupRequestTerminalState(
+  query: ProductTransactionQuery,
+  input: {
+    operation: SetupOperation;
+    setupRequestId: string;
+    accountId: string;
+    statuses: readonly [SetupTerminalStatus, ...SetupTerminalStatus[]];
+  }
+): Promise<SetupResult<SetupTerminalStateData>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
+  const result = await query<TerminalSetupStateRow>(
+    terminalSetupStateStatement(input)
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return notFoundError(setupRequestNotFoundMessage(input.operation));
+  }
+
+  return {
+    ok: true,
+    data: {
+      setup_request_id: row.setup_request_id,
+      operation: row.operation,
+      flow: row.flow,
+      status: row.status,
+      local_caller_name: row.local_caller_name,
+      display_name: row.display_name,
+      caller:
+        row.caller_id && row.caller_display_name
+          ? {
+              caller_id: row.caller_id,
+              caller_slug: row.caller_slug,
+              display_name: row.caller_display_name
+            }
+          : null
+    }
+  };
+}
+
+function terminalSetupStateStatement(input: {
+  operation: SetupOperation;
+  setupRequestId: string;
+  accountId: string;
+  statuses: readonly [SetupTerminalStatus, ...SetupTerminalStatus[]];
+}): TransactionContextStatement {
+  const statusPlaceholders = input.statuses
+    .map((_, index) => `$${index + 4}`)
+    .join(", ");
+
+  return {
+    sql: `
+      select
+        setup.setup_request_id::text as setup_request_id,
+        setup.operation,
+        setup.flow,
+        setup.status,
+        setup.local_caller_name,
+        setup.display_name,
+        caller.caller_id::text as caller_id,
+        caller.caller_slug,
+        caller.display_name as caller_display_name
+      from public.agent_outbox_caller_setup_requests setup
+      left join public.agent_outbox_callers caller
+        on caller.account_id = setup.account_id
+       and caller.caller_id = setup.caller_id
+      where setup.setup_request_id = $1
+        and setup.account_id = $2
+        and setup.operation = $3
+        and setup.status in (${statusPlaceholders})
+      limit 1
+    `,
+    values: [
+      input.setupRequestId,
+      input.accountId,
+      input.operation,
+      ...input.statuses
+    ]
+  };
+}
+
+/**
+ * Marks expired pending or approved requests before checking pending status;
+ * expiry errors take precedence over non-pending errors.
+ */
+export async function ensurePendingSetupApproval(
+  query: ProductTransactionQuery,
+  target: {
+    setup_request_id: string;
+    operation: SetupOperation;
+    status: SetupRequestStatus;
+    expires_at: string | Date;
+  },
+  now: Date = new Date()
+): Promise<SetupResult<null>> {
+  if (setupRequestExpired(target, now)) {
+    await query(markSetupRequestExpiredStatement(target.setup_request_id));
+    return invalidRequestError(
+      `Caller ${target.operation} setup request is expired.`
+    );
+  }
+
+  if (target.status !== "pending") {
+    return invalidRequestError(
+      `Caller ${target.operation} setup request is not pending approval.`
+    );
+  }
+
+  return { ok: true, data: null };
+}
+
+/**
+ * Null callerId and setupCodeHash preserve their stored values on approval.
+ */
+export function approveSetupRequestStatement(input: {
+  setupRequestId: string;
+  accountId: string;
+  callerId: string | null;
+  userId: string;
+  setupCodeHash: string | null;
+}): TransactionContextStatement {
+  return {
+    sql: `
+      update public.agent_outbox_caller_setup_requests
+      set
+        account_id = $2,
+        caller_id = coalesce($3::uuid, caller_id),
+        approved_by_user_id = $4,
+        setup_code_hash = coalesce($5, setup_code_hash),
+        status = 'approved',
+        approved_at = now(),
+        updated_at = now()
+      where setup_request_id = $1
+        and status = 'pending'
+    `,
+    values: [
+      input.setupRequestId,
+      input.accountId,
+      input.callerId,
+      input.userId,
+      input.setupCodeHash
+    ]
+  };
+}
+
+/**
+ * Rejects malformed IDs before executing the supplied denial statement.
+ * The caller's statement defines the operation and account scope.
+ */
+export async function denySetupRequest(
+  query: ProductTransactionQuery,
+  input: {
+    operation: SetupOperation;
+    setupRequestId: string;
+    statement: TransactionContextStatement;
+  }
+): Promise<SetupResult<{ setup_request_id: string; denied: true }>> {
+  if (!UUID_PATTERN.test(input.setupRequestId)) {
+    return invalidSetupRequestError();
+  }
+
+  const result = await query<{ setup_request_id: string }>(input.statement);
+  if (!result.rows[0]) {
+    return notFoundError(setupRequestNotFoundMessage(input.operation));
+  }
+  return {
+    ok: true,
+    data: {
+      setup_request_id: result.rows[0].setup_request_id,
+      denied: true
+    }
+  };
+}
+
+export function setupRequestNotFoundMessage(operation: SetupOperation): string {
+  return operation === "connect"
+    ? "Caller connect setup request was not found."
+    : `Caller ${operation} request was not found.`;
+}
 
 export function requiredText(
   record: Record<string, unknown>,
@@ -238,6 +455,13 @@ export function setupRequestExpired(
   now: Date
 ) {
   return new Date(row.expires_at).getTime() <= now.getTime();
+}
+
+/**
+ * Uses 32 random bytes encoded as base64url after the setup_ prefix.
+ */
+export function generateSetupCode(): string {
+  return `setup_${randomBytes(SETUP_TOKEN_BYTES).toString("base64url")}`;
 }
 
 export function generateUserCode() {

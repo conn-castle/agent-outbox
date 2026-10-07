@@ -4,9 +4,9 @@ import { unstable_rethrow } from "next/navigation";
 import { ActionSubmitButton } from "../../src/components/actions/ActionSubmitButton";
 import {
   getCredentialOperationBrowserApprovalPreview,
-  getCredentialOperationDeviceApprovalPreview,
-  getCredentialOperationTerminalSetupState
+  getCredentialOperationDeviceApprovalPreview
 } from "../../src/server/caller-credential-operations";
+import { getSetupRequestTerminalState } from "../../src/server/caller-setup-requests";
 import { createCorrelationId } from "../../src/server/correlation";
 import type { ProductTransactionQuery } from "../../src/server/database";
 import type { HumanAccountSession } from "../../src/server/human-session";
@@ -317,7 +317,7 @@ export async function CredentialOperationSuccessPage({
     },
     "status",
     (query, session) =>
-      getCredentialOperationTerminalSetupState(query, {
+      getSetupRequestTerminalState(query, {
         operation,
         setupRequestId,
         accountId: session.accountId,
@@ -419,7 +419,7 @@ export async function CredentialOperationErrorPage({
       },
       "status",
       (query, session) =>
-        getCredentialOperationTerminalSetupState(query, {
+        getSetupRequestTerminalState(query, {
           operation,
           setupRequestId,
           accountId: session.accountId,

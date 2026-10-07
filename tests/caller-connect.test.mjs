@@ -16,7 +16,6 @@ import {
   exchangeApprovedConnectSetupRequest,
   getConnectBrowserApprovalPreview,
   getConnectDeviceApprovalPreview,
-  getConnectTerminalSetupState,
   handleConnectAbortRequest,
   handleConnectActivateRequest,
   handleConnectBrowserStartRequest,
@@ -25,7 +24,10 @@ import {
   handleConnectExchangeRequest
 } from "../src/server/caller-connect.ts";
 import { handleRevokeConfirmRequest } from "../src/server/caller-credential-operations.ts";
-import { setupCodeDigest } from "../src/server/caller-setup-requests.ts";
+import {
+  getSetupRequestTerminalState,
+  setupCodeDigest
+} from "../src/server/caller-setup-requests.ts";
 import { runProductTransaction } from "../src/server/database.ts";
 import {
   assertMigrationOwnerCanSetAppRole,
@@ -1124,7 +1126,8 @@ test("terminal setup state is scoped to account and persisted status", async () 
         }
       ]);
 
-      const result = await getConnectTerminalSetupState(query, {
+      const result = await getSetupRequestTerminalState(query, {
+        operation: "connect",
         setupRequestId,
         accountId: ACCOUNT_ID,
         statuses: ["approved", "exchanged"]
@@ -1147,10 +1150,11 @@ test("terminal setup state is scoped to account and persisted status", async () 
         }
       });
       assert.match(query.calls[0].sql, /setup\.account_id = \$2/);
-      assert.match(query.calls[0].sql, /setup\.status in \(\$3, \$4\)/);
+      assert.match(query.calls[0].sql, /setup\.status in \(\$4, \$5\)/);
       assert.deepEqual(query.calls[0].values, [
         setupRequestId,
         ACCOUNT_ID,
+        "connect",
         "approved",
         "exchanged"
       ]);
@@ -1522,7 +1526,8 @@ test("device approval binds the account and moves the request pending -> approve
         setupRequestId,
         ACCOUNT_ID,
         CALLER_ID,
-        USER_ID
+        USER_ID,
+        null
       ]);
     }
   );
@@ -2855,7 +2860,8 @@ test("browser approval pages and actions reject a malformed setup_request_id bef
     {
       name: "terminal state",
       run: (query, setupRequestId) =>
-        getConnectTerminalSetupState(query, {
+        getSetupRequestTerminalState(query, {
+          operation: "connect",
           setupRequestId,
           accountId: ACCOUNT_ID,
           statuses: ["denied"]

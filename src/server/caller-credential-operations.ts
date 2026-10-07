@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-
 import {
   apiTemporaryUnavailable,
   type ApiRequestContext
@@ -18,9 +16,12 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import {
-  SETUP_TOKEN_BYTES,
   UUID_PATTERN,
+  approveSetupRequestStatement,
   callerCredentialLifecycleLockStatement,
+  denySetupRequest,
+  ensurePendingSetupApproval,
+  generateSetupCode,
   handleApprovedSetupCodeRequest,
   handlePendingCredentialFinalizeRequest,
   handleSetupBrowserStartRequest,
@@ -35,6 +36,7 @@ import {
   parseDevicePollBody,
   setupCodeDigest,
   setupRequestExpired,
+  setupRequestNotFoundMessage,
   verifyPendingCredential,
   withControlPlaneTransaction,
   type CallerFlowMessages,
@@ -59,20 +61,8 @@ const MESSAGES: CallerFlowMessages = {
 
 type CredentialOperation = "rotate" | "revoke";
 type SetupFlow = "browser" | "device";
-type SetupTerminalStatus = Extract<
-  SetupRequestStatus,
-  "approved" | "exchanged" | "denied"
->;
-type NonEmptyTerminalStatusList = readonly [
-  SetupTerminalStatus,
-  ...SetupTerminalStatus[]
-];
 
 type OperationResult<TData> = SetupResult<TData>;
-
-type SetupRequestIdRow = {
-  setup_request_id: string;
-};
 
 type ApprovalTargetRow = {
   setup_request_id: string;
@@ -158,18 +148,6 @@ type KeyIdRow = {
   key_id: string;
 };
 
-type TerminalSetupStateRow = {
-  setup_request_id: string;
-  operation: CredentialOperation;
-  flow: SetupFlow;
-  status: SetupTerminalStatus;
-  local_caller_name: string;
-  display_name: string;
-  caller_id: string | null;
-  caller_slug: string | null;
-  caller_display_name: string | null;
-};
-
 export type CredentialOperationApprovalPreviewData = {
   setup_request_id: string;
   operation: CredentialOperation;
@@ -249,20 +227,6 @@ export type RevokeConfirmResponseData = {
   caller_id: string;
   revoked_key_ids: string[];
   revoked_at: string;
-};
-
-export type CredentialOperationTerminalSetupData = {
-  setup_request_id: string;
-  operation: CredentialOperation;
-  flow: SetupFlow;
-  status: SetupTerminalStatus;
-  local_caller_name: string;
-  display_name: string;
-  caller: {
-    caller_id: string;
-    caller_slug: string | null;
-    display_name: string;
-  } | null;
 };
 
 /**
@@ -552,9 +516,7 @@ export async function approveCredentialOperationBrowserSetupRequest(
   );
   const target = result.rows[0];
   if (!target) {
-    return notFoundError(
-      `${operationLabel(input.operation)} request was not found.`
-    );
+    return notFoundError(setupRequestNotFoundMessage(input.operation));
   }
 
   const available = await ensurePendingApprovalTarget(query, target, input.now);
@@ -564,7 +526,7 @@ export async function approveCredentialOperationBrowserSetupRequest(
 
   if (!target.callback_url) {
     return apiTemporaryUnavailable(
-      `${operationLabel(input.operation)} request is temporarily unavailable.`
+      `Caller ${input.operation} request is temporarily unavailable.`
     );
   }
 
@@ -578,13 +540,12 @@ export async function approveCredentialOperationBrowserSetupRequest(
     return limit;
   }
 
-  const setupCode = `setup_${randomBytes(SETUP_TOKEN_BYTES).toString(
-    "base64url"
-  )}`;
+  const setupCode = generateSetupCode();
   await query(
-    approveBrowserSetupRequestStatement({
+    approveSetupRequestStatement({
       setupRequestId: target.setup_request_id,
       accountId: input.accountId,
+      callerId: null,
       userId: input.userId,
       setupCodeHash: setupCodeDigest(setupCode)
     })
@@ -621,9 +582,7 @@ export async function approveCredentialOperationDeviceSetupRequest(
   );
   const target = result.rows[0];
   if (!target) {
-    return notFoundError(
-      `${operationLabel(input.operation)} request was not found.`
-    );
+    return notFoundError(setupRequestNotFoundMessage(input.operation));
   }
 
   const available = await ensurePendingApprovalTarget(query, target, input.now);
@@ -642,10 +601,12 @@ export async function approveCredentialOperationDeviceSetupRequest(
   }
 
   await query(
-    approveDeviceSetupRequestStatement({
+    approveSetupRequestStatement({
       setupRequestId: target.setup_request_id,
       accountId: input.accountId,
-      userId: input.userId
+      callerId: null,
+      userId: input.userId,
+      setupCodeHash: null
     })
   );
 
@@ -667,69 +628,11 @@ export async function denyCredentialOperationSetupRequest(
     accountId: string;
   }
 ): Promise<OperationResult<{ setup_request_id: string; denied: true }>> {
-  if (!UUID_PATTERN.test(input.setupRequestId)) {
-    return invalidSetupRequestError();
-  }
-
-  const result = await query<SetupRequestIdRow>(
-    denySetupRequestStatement(input)
-  );
-  if (!result.rows[0]) {
-    return notFoundError(
-      `${operationLabel(input.operation)} request was not found.`
-    );
-  }
-  return {
-    ok: true,
-    data: {
-      setup_request_id: result.rows[0].setup_request_id,
-      denied: true
-    }
-  };
-}
-
-export async function getCredentialOperationTerminalSetupState(
-  query: ProductTransactionQuery,
-  input: {
-    operation: CredentialOperation;
-    setupRequestId: string;
-    accountId: string;
-    statuses: NonEmptyTerminalStatusList;
-  }
-): Promise<OperationResult<CredentialOperationTerminalSetupData>> {
-  if (!UUID_PATTERN.test(input.setupRequestId)) {
-    return invalidSetupRequestError();
-  }
-
-  const result = await query<TerminalSetupStateRow>(
-    terminalSetupStateStatement(input)
-  );
-  const row = result.rows[0];
-  if (!row) {
-    return notFoundError(
-      `${operationLabel(input.operation)} request was not found.`
-    );
-  }
-
-  return {
-    ok: true,
-    data: {
-      setup_request_id: row.setup_request_id,
-      operation: row.operation,
-      flow: row.flow,
-      status: row.status,
-      local_caller_name: row.local_caller_name,
-      display_name: row.display_name,
-      caller:
-        row.caller_id && row.caller_display_name
-          ? {
-              caller_id: row.caller_id,
-              caller_slug: row.caller_slug,
-              display_name: row.caller_display_name
-            }
-          : null
-    }
-  };
+  return denySetupRequest(query, {
+    operation: input.operation,
+    setupRequestId: input.setupRequestId,
+    statement: denySetupRequestStatement(input)
+  });
 }
 
 async function handleOperationDevicePollRequest(
@@ -795,9 +698,7 @@ async function handleOperationDevicePollRequest(
         return invalidRequestError("Device code is invalid or already used.");
       }
 
-      const setupCode = `setup_${randomBytes(SETUP_TOKEN_BYTES).toString(
-        "base64url"
-      )}`;
+      const setupCode = generateSetupCode();
       await query(
         storeSetupCodeStatement({
           setupRequestId: row.setup_request_id,
@@ -1223,17 +1124,9 @@ async function ensurePendingApprovalTarget(
   target: ApprovalTargetRow,
   now: Date = new Date()
 ): Promise<OperationResult<null>> {
-  if (setupRequestExpired(target, now)) {
-    await query(markSetupRequestExpiredStatement(target.setup_request_id));
-    return invalidRequestError(
-      `Caller ${target.operation} setup request is expired.`
-    );
-  }
-
-  if (target.status !== "pending") {
-    return invalidRequestError(
-      `Caller ${target.operation} setup request is not pending approval.`
-    );
+  const available = await ensurePendingSetupApproval(query, target, now);
+  if (!available.ok) {
+    return available;
   }
 
   if (target.operation === "rotate" && !target.active_credential_id) {
@@ -1546,55 +1439,6 @@ function insertPendingReplacementCredentialStatement(input: {
   };
 }
 
-function approveBrowserSetupRequestStatement(input: {
-  setupRequestId: string;
-  accountId: string;
-  userId: string;
-  setupCodeHash: string;
-}): TransactionContextStatement {
-  return {
-    sql: `
-      update public.agent_outbox_caller_setup_requests
-      set
-        account_id = $2,
-        approved_by_user_id = $3,
-        setup_code_hash = $4,
-        status = 'approved',
-        approved_at = now(),
-        updated_at = now()
-      where setup_request_id = $1
-        and status = 'pending'
-    `,
-    values: [
-      input.setupRequestId,
-      input.accountId,
-      input.userId,
-      input.setupCodeHash
-    ]
-  };
-}
-
-function approveDeviceSetupRequestStatement(input: {
-  setupRequestId: string;
-  accountId: string;
-  userId: string;
-}): TransactionContextStatement {
-  return {
-    sql: `
-      update public.agent_outbox_caller_setup_requests
-      set
-        account_id = $2,
-        approved_by_user_id = $3,
-        status = 'approved',
-        approved_at = now(),
-        updated_at = now()
-      where setup_request_id = $1
-        and status = 'pending'
-    `,
-    values: [input.setupRequestId, input.accountId, input.userId]
-  };
-}
-
 function storeSetupCodeStatement(input: {
   setupRequestId: string;
   setupCodeHash: string;
@@ -1757,47 +1601,6 @@ function expireExpiredPendingReplacementCredentialsForCallerStatement(input: {
   };
 }
 
-function terminalSetupStateStatement(input: {
-  operation: CredentialOperation;
-  setupRequestId: string;
-  accountId: string;
-  statuses: NonEmptyTerminalStatusList;
-}): TransactionContextStatement {
-  const statusPlaceholders = input.statuses
-    .map((_, index) => `$${index + 4}`)
-    .join(", ");
-
-  return {
-    sql: `
-      select
-        setup.setup_request_id::text as setup_request_id,
-        setup.operation,
-        setup.flow,
-        setup.status,
-        setup.local_caller_name,
-        setup.display_name,
-        caller.caller_id::text as caller_id,
-        caller.caller_slug,
-        caller.display_name as caller_display_name
-      from public.agent_outbox_caller_setup_requests setup
-      left join public.agent_outbox_callers caller
-        on caller.account_id = setup.account_id
-       and caller.caller_id = setup.caller_id
-      where setup.setup_request_id = $1
-        and setup.account_id = $2
-        and setup.operation = $3
-        and setup.status in (${statusPlaceholders})
-      limit 1
-    `,
-    values: [
-      input.setupRequestId,
-      input.accountId,
-      input.operation,
-      ...input.statuses
-    ]
-  };
-}
-
 function insertCallerCredentialAuditStatement(input: {
   accountId: string;
   callerId: string;
@@ -1833,8 +1636,4 @@ function approvalCaller(target: ApprovalTargetRow) {
     caller_slug: target.caller_slug,
     display_name: target.caller_display_name
   };
-}
-
-function operationLabel(operation: CredentialOperation) {
-  return `Caller ${operation}`;
 }

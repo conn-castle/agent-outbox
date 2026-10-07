@@ -1,13 +1,16 @@
 import { auth } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 
-import { getConnectTerminalSetupState } from "../../../src/server/caller-connect";
 import {
   CALLER_CONNECT_FIXTURE_USER_ID_HEADER,
   CALLER_CONNECT_FIXTURE_USER_ID_PARAM,
   callerConnectClerkFixtureEnabled,
   callerConnectFixtureClerkUserId
 } from "../../../src/server/caller-connect-clerk-fixture";
+import {
+  getSetupRequestTerminalState,
+  type SetupTerminalStatus
+} from "../../../src/server/caller-setup-requests";
 import { createCorrelationId } from "../../../src/server/correlation";
 import {
   type ProductTransactionQuery,
@@ -116,15 +119,13 @@ export function reportCallerApprovalFailure(
   });
 }
 
-type ConnectTerminalStatus = "approved" | "exchanged" | "denied";
-
 export async function connectTerminalSetupState(
   query: ProductTransactionQuery,
   input: {
     session: HumanAccountSession;
     requestId: string;
     setupRequestId: string;
-    statuses: readonly ConnectTerminalStatus[];
+    statuses: readonly [SetupTerminalStatus, ...SetupTerminalStatus[]];
     route: string;
     method: string;
     operation: string;
@@ -134,7 +135,8 @@ export async function connectTerminalSetupState(
   const startedAtMs = Date.now();
   try {
     return await withSavepoint(query, "caller_connect_terminal_state", () =>
-      getConnectTerminalSetupState(query, {
+      getSetupRequestTerminalState(query, {
+        operation: "connect",
         setupRequestId: input.setupRequestId,
         accountId: input.session.accountId,
         statuses: input.statuses

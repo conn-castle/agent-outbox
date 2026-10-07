@@ -69,7 +69,7 @@ import {
   runProductTransaction,
   withSavepoint
 } from "../src/server/database.ts";
-import { getConnectTerminalSetupState } from "../src/server/caller-connect.ts";
+import { getSetupRequestTerminalState } from "../src/server/caller-setup-requests.ts";
 import {
   DATABASE_POLICY_VERIFICATION_SKIP,
   phase3DatabaseVerificationUrl
@@ -1771,9 +1771,9 @@ test("caller approval failure reporter emits structured log and Sentry context",
       loadCommonJsModuleForTest("app/caller/connect/session.ts", {
         "@clerk/nextjs/server": { auth: {} },
         "next/headers": { headers: async () => new Headers() },
-        "../../../src/server/caller-connect": {
-          async getConnectTerminalSetupState() {
-            throw new Error("getConnectTerminalSetupState should not run.");
+        "../../../src/server/caller-setup-requests": {
+          async getSetupRequestTerminalState() {
+            throw new Error("getSetupRequestTerminalState should not run.");
           }
         },
         "../../../src/server/caller-connect-clerk-fixture": {
@@ -1967,9 +1967,9 @@ test("connect terminal setup state reports transaction exceptions", async () => 
       loadCommonJsModuleForTest("app/caller/connect/session.ts", {
         "@clerk/nextjs/server": { auth: {} },
         "next/headers": { headers: async () => new Headers() },
-        "../../../src/server/caller-connect": {
-          async getConnectTerminalSetupState() {
-            throw new Error("getConnectTerminalSetupState should not run.");
+        "../../../src/server/caller-setup-requests": {
+          async getSetupRequestTerminalState() {
+            throw new Error("getSetupRequestTerminalState should not run.");
           }
         },
         "../../../src/server/caller-connect-clerk-fixture": {
@@ -2076,8 +2076,8 @@ test(
         loadCommonJsModuleForTest("app/caller/connect/session.ts", {
           "@clerk/nextjs/server": { auth: {} },
           "next/headers": { headers: async () => new Headers() },
-          "../../../src/server/caller-connect": {
-            getConnectTerminalSetupState
+          "../../../src/server/caller-setup-requests": {
+            getSetupRequestTerminalState
           },
           "../../../src/server/caller-connect-clerk-fixture": {
             CALLER_CONNECT_FIXTURE_USER_ID_HEADER: "x-fixture-user",

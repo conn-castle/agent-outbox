@@ -2,10 +2,8 @@ import { ArrowLeft, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import type {
-  ConnectApprovalPreviewData,
-  ConnectTerminalSetupData
-} from "../../../../src/server/caller-connect";
+import type { ConnectApprovalPreviewData } from "../../../../src/server/caller-connect";
+import type { SetupTerminalStateData } from "../../../../src/server/caller-setup-requests";
 import { humanBrowserFixtureEnabled } from "../../../../src/server/human-review-fixture-gate";
 import type { HumanAccountSession } from "../../../../src/server/human-session";
 import {
@@ -251,7 +249,7 @@ function ScenarioPreview({ scenario }: { scenario: ScenarioKey }) {
     );
   }
 
-  const setup: ConnectTerminalSetupData = {
+  const setup: SetupTerminalStateData = {
     setup_request_id: `storyboard-${scenario}-request`,
     operation: "connect",
     flow: "device",
