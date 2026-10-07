@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-07 human-action-duration-zero: Human answer/undo transaction failure reports log near-zero durations
+    Priority: Low. Area: Observability / Human review
+    Description: `runHumanActionMutation` in `app/human/actions.ts` calls `humanAnswerTransactionFailure` without `startedAtMs` and `humanAnswerUndoTransactionFailure` (which always starts its clock internally), so their `duration_ms` measures only the reporter call, not the failed transaction.
+    Next step: Capture the start time before the transaction and pass it to both reporters.
+
 - Issue 2026-10-06 copilot-review-project-context: Hosted review lacks a committed project-guidance entry point
     Priority: Low. Area: Review tooling
     Description: Canonical project instructions are tracked under `.agent-layer/instructions`, but generated `AGENTS.md` and `.github/copilot-instructions.md` are gitignored and no committed Copilot review instruction file or review skill exposes them through GitHub's documented paths; repository MCP settings and actual review-context use are unverified.

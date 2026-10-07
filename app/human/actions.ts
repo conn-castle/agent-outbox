@@ -12,6 +12,7 @@ import {
   humanAnswerUndoTransactionFailure,
   undoHumanAnswerBeforeReadInTransaction,
   type CreateHumanAnswerInput,
+  type HumanAnswerFailure,
   type PreReadUndoInput
 } from "../../src/server/human-answer";
 import {
@@ -29,6 +30,9 @@ import {
 } from "../../src/server/human-session";
 import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../src/shared/human-review-view";
 import type {
+  HumanAnswerMutationSuccess,
+  HumanBulkMutationSuccess,
+  HumanUndoMutationSuccess,
   HumanMutationFailure,
   HumanMutationResult
 } from "../../src/shared/human-mutation";
@@ -67,79 +71,38 @@ export async function executeHumanAnswerMutation(
       }
     ]);
     revalidatePath(humanPath);
-    return {
-      ok: true,
-      operation: "answer",
-      message: "Done.",
-      inputItemIds: [parsed.inputItemId],
-      undo: {
-        inputItemId: parsed.inputItemId,
-        callerId: parsed.callerId,
-        outputResultId: "00000000-0000-4000-8000-000000009999"
-      }
-    };
+    return answerSuccess(
+      parsed.inputItemId,
+      parsed.callerId,
+      "00000000-0000-4000-8000-000000009999"
+    );
   }
 
-  let answerInput: CreateHumanAnswerInput | null = null;
-  let transaction;
-  try {
-    transaction = await runHumanActionTransaction(
+  const result = await runHumanActionMutation({
+    requestId,
+    buildInput: (session): CreateHumanAnswerInput => ({
+      accountId: session.accountId,
+      callerId: parsed.callerId,
+      humanUserId: session.userId,
       requestId,
-      (query, session) => {
-        answerInput = {
-          accountId: session.accountId,
-          callerId: parsed.callerId,
-          humanUserId: session.userId,
-          requestId,
-          correlationId: createCorrelationId("human_answer"),
-          inputItemId: parsed.inputItemId,
-          expectedRevision: parsed.expectedRevision,
-          actionValue: parsed.actionValue,
-          response: parsed.response,
-          feedback: parsed.feedback
-        };
-        return createHumanAnswerInTransaction(query, answerInput);
-      }
-    );
-  } catch (error) {
-    if (!answerInput) {
-      throw error;
-    }
-    humanAnswerTransactionFailure(error, answerInput);
-    return humanMutationFailure(
-      "answer",
-      [parsed.inputItemId],
-      "temporary_unavailable",
-      "Human answer is temporarily unavailable.",
-      requestId,
-      failedActionKind
-    );
-  }
-  if (!transaction.ok) {
-    return humanMutationFailure(
-      "answer",
-      [parsed.inputItemId],
-      transaction.code,
-      transaction.message,
-      requestId,
-      failedActionKind
-    );
-  }
-  const result = transaction.data;
+      correlationId: createCorrelationId("human_answer"),
+      inputItemId: parsed.inputItemId,
+      expectedRevision: parsed.expectedRevision,
+      actionValue: parsed.actionValue,
+      response: parsed.response,
+      feedback: parsed.feedback
+    }),
+    run: createHumanAnswerInTransaction,
+    reportFailure: humanAnswerTransactionFailure
+  });
 
   if (result.ok) {
     revalidatePath(humanPath);
-    return {
-      ok: true,
-      operation: "answer",
-      message: "Done.",
-      inputItemIds: [result.inputItemId],
-      undo: {
-        inputItemId: result.inputItemId,
-        callerId: parsed.callerId,
-        outputResultId: result.outputResultId
-      }
-    };
+    return answerSuccess(
+      result.inputItemId,
+      parsed.callerId,
+      result.outputResultId
+    );
   }
   return humanMutationFailure(
     "answer",
@@ -180,15 +143,7 @@ export async function executeBulkHumanAnswersMutation(
       }))
     );
     revalidatePath(humanPath);
-    return {
-      ok: true,
-      operation: "bulk-answer",
-      message: `Bulk action complete: ${parsed.items.length} answered, 0 failed.`,
-      inputItemIds,
-      answered: parsed.items.length,
-      answeredInputItemIds: inputItemIds,
-      failed: 0
-    };
+    return bulkSuccess(inputItemIds, inputItemIds, 0);
   }
 
   const context = await humanActionContext();
@@ -238,15 +193,7 @@ export async function executeBulkHumanAnswersMutation(
     emitHumanActionFailure(requestId);
   }
   revalidatePath(humanPath);
-  return {
-    ok: true,
-    operation: "bulk-answer",
-    message: `Bulk action complete: ${answered} answered, ${failed} failed.`,
-    inputItemIds,
-    answered,
-    answeredInputItemIds,
-    failed
-  };
+  return bulkSuccess(inputItemIds, answeredInputItemIds, failed);
 }
 
 export async function executeUndoHumanAnswerMutation(
@@ -269,63 +216,26 @@ export async function executeUndoHumanAnswerMutation(
       await import("../../src/server/human-review-fixture-state");
     await restoreFixtureResolvedItem(parsed.inputItemId);
     revalidatePath(humanPath);
-    return {
-      ok: true,
-      operation: "undo",
-      message: "Undone.",
-      inputItemIds: [parsed.inputItemId]
-    };
+    return undoSuccess(parsed.inputItemId);
   }
 
-  let undoInput: PreReadUndoInput | null = null;
-  let transaction;
-  try {
-    transaction = await runHumanActionTransaction(
+  const result = await runHumanActionMutation({
+    requestId,
+    buildInput: (session): PreReadUndoInput => ({
+      accountId: session.accountId,
+      callerId: parsed.callerId,
+      humanUserId: session.userId,
       requestId,
-      (query, session) => {
-        undoInput = {
-          accountId: session.accountId,
-          callerId: parsed.callerId,
-          humanUserId: session.userId,
-          requestId,
-          correlationId: createCorrelationId("human_undo"),
-          outputResultId: parsed.outputResultId
-        };
-        return undoHumanAnswerBeforeReadInTransaction(query, undoInput);
-      }
-    );
-  } catch (error) {
-    if (!undoInput) {
-      throw error;
-    }
-    humanAnswerUndoTransactionFailure(error, undoInput);
-    return humanMutationFailure(
-      "undo",
-      [parsed.inputItemId],
-      "temporary_unavailable",
-      "Human answer undo is temporarily unavailable.",
-      requestId
-    );
-  }
-  if (!transaction.ok) {
-    return humanMutationFailure(
-      "undo",
-      [parsed.inputItemId],
-      transaction.code,
-      transaction.message,
-      requestId
-    );
-  }
-  const result = transaction.data;
+      correlationId: createCorrelationId("human_undo"),
+      outputResultId: parsed.outputResultId
+    }),
+    run: undoHumanAnswerBeforeReadInTransaction,
+    reportFailure: humanAnswerUndoTransactionFailure
+  });
 
   if (result.ok) {
     revalidatePath(humanPath);
-    return {
-      ok: true,
-      operation: "undo",
-      message: "Undone.",
-      inputItemIds: [parsed.inputItemId]
-    };
+    return undoSuccess(parsed.inputItemId);
   }
   return humanMutationFailure(
     "undo",
@@ -390,23 +300,84 @@ async function humanActionContext() {
   };
 }
 
-async function runHumanActionTransaction<TResult>(
-  requestId: string,
-  callback: (
+async function runHumanActionMutation<TInput, TSuccess extends { ok: true }>({
+  requestId,
+  buildInput,
+  run,
+  reportFailure
+}: {
+  requestId: string;
+  buildInput: (session: HumanAccountSession) => TInput;
+  run: (
     query: ProductTransactionQuery,
-    session: HumanAccountSession
-  ) => Promise<TResult>
-) {
-  const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
-  return runHumanAccountTransaction(
-    {
-      clerkUserId: session.userId,
-      requestId,
-      route: "/human",
-      method: "POST"
-    },
-    callback
-  );
+    input: TInput
+  ) => Promise<TSuccess | HumanAnswerFailure>;
+  reportFailure: (error: unknown, input: TInput) => HumanAnswerFailure;
+}): Promise<TSuccess | Pick<HumanMutationFailure, "ok" | "code" | "message">> {
+  const clerkSession = await auth.protect({ unauthenticatedUrl: "/sign-in" });
+  let input: TInput | null = null;
+  try {
+    const transaction = await runHumanAccountTransaction(
+      {
+        clerkUserId: clerkSession.userId,
+        requestId,
+        route: "/human",
+        method: "POST"
+      },
+      (query, accountSession) => {
+        input = buildInput(accountSession);
+        return run(query, input);
+      }
+    );
+    return transaction.ok
+      ? transaction.data
+      : { ok: false, code: transaction.code, message: transaction.message };
+  } catch (error) {
+    if (input === null) {
+      throw error;
+    }
+    return reportFailure(error, input);
+  }
+}
+
+function answerSuccess(
+  inputItemId: string,
+  callerId: string,
+  outputResultId: string
+): HumanAnswerMutationSuccess {
+  return {
+    ok: true,
+    operation: "answer",
+    message: "Done.",
+    inputItemIds: [inputItemId],
+    undo: { inputItemId, callerId, outputResultId }
+  };
+}
+
+function undoSuccess(inputItemId: string): HumanUndoMutationSuccess {
+  return {
+    ok: true,
+    operation: "undo",
+    message: "Undone.",
+    inputItemIds: [inputItemId]
+  };
+}
+
+function bulkSuccess(
+  inputItemIds: string[],
+  answeredInputItemIds: string[],
+  failed: number
+): HumanBulkMutationSuccess {
+  const answered = answeredInputItemIds.length;
+  return {
+    ok: true,
+    operation: "bulk-answer",
+    message: `Bulk action complete: ${answered} answered, ${failed} failed.`,
+    inputItemIds,
+    answered,
+    answeredInputItemIds,
+    failed
+  };
 }
 
 function returnsToQueue(formData: FormData) {

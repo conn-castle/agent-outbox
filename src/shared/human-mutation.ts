@@ -1,4 +1,12 @@
-export type HumanMutationOperation = "answer" | "bulk-answer" | "undo";
+const HUMAN_MUTATION_OPERATIONS = ["answer", "bulk-answer", "undo"] as const;
+
+export type HumanMutationOperation = (typeof HUMAN_MUTATION_OPERATIONS)[number];
+
+export function isHumanMutationOperation(
+  value: unknown
+): value is HumanMutationOperation {
+  return HUMAN_MUTATION_OPERATIONS.some((operation) => operation === value);
+}
 
 export type HumanMutationFailure = {
   ok: false;

@@ -435,7 +435,7 @@ export function humanAnswerTransactionFailure(
   error: unknown,
   input: CreateHumanAnswerInput,
   startedAtMs = Date.now()
-): HumanAnswerResult {
+): HumanAnswerFailure {
   reportRuntimeFailure(error, {
     errorId: input.correlationId,
     request_id: input.requestId,
@@ -460,7 +460,7 @@ export function humanAnswerTransactionFailure(
 export function humanAnswerUndoTransactionFailure(
   error: unknown,
   input: PreReadUndoInput
-): PreReadUndoResult {
+): HumanAnswerFailure {
   const startedAtMs = Date.now();
   reportRuntimeFailure(error, {
     errorId: input.correlationId,

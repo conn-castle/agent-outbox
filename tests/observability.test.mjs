@@ -1373,8 +1373,12 @@ test("human review server actions emit failure telemetry only on failure paths",
           async undoHumanAnswerBeforeReadInTransaction() {
             throw new Error("unused: transaction runner is stubbed");
           },
-          humanAnswerTransactionFailure() {},
-          humanAnswerUndoTransactionFailure() {}
+          humanAnswerTransactionFailure() {
+            throw new Error("unused: transaction runner is stubbed");
+          },
+          humanAnswerUndoTransactionFailure() {
+            throw new Error("unused: transaction runner is stubbed");
+          }
         },
         "../../src/server/human-session": {
           async resolveHumanAccountSession() {
@@ -1543,6 +1547,180 @@ test("human review server actions emit failure telemetry only on failure paths",
       delete process.env.DATABASE_APP_ROLE_URL;
     } else {
       process.env.DATABASE_APP_ROLE_URL = previousAppRoleUrl;
+    }
+  }
+});
+
+test("human review server actions report transaction throws and propagate pre-input throws", async (t) => {
+  const inputItemId = "00000000-0000-4000-8000-000000000711";
+  const callerId = "00000000-0000-4000-8000-000000000712";
+  const outputResultId = "00000000-0000-4000-8000-000000000713";
+  const session = {
+    accountId: "00000000-0000-4000-8000-000000000701",
+    userId: "00000000-0000-4000-8000-000000000702"
+  };
+  for (const operation of ["answer", "file_upload", "undo"]) {
+    for (const failureStage of ["transaction", "auth", "session"]) {
+      await t.test(`${operation}: ${failureStage} throws`, async () => {
+        const failure = new Error(`${failureStage} failed`);
+        /** @type {Array<{ name: string, producer?: string }>} */
+        const emitted = [];
+        /** @type {Array<{ operation: string, error: unknown, input: Record<string, unknown> }>} */
+        const reports = [];
+        /** @type {string[]} */
+        const redirects = [];
+        /** @param {string} operation @param {unknown} error @param {Record<string, unknown>} input */
+        function reportFailure(operation, error, input) {
+          reports.push({ operation, error, input });
+          return {
+            ok: false,
+            code: "temporary_unavailable",
+            message: `${operation} reporter failure`
+          };
+        }
+        const actions =
+          /** @type {typeof import("../app/human/actions.ts")} */ (
+            loadCommonJsModuleForTest("app/human/actions.ts", {
+              "@clerk/nextjs/server": {
+                auth: {
+                  /** @param {{ unauthenticatedUrl: string }} options */
+                  async protect(options) {
+                    assert.equal(options.unauthenticatedUrl, "/sign-in");
+                    if (failureStage === "auth") throw failure;
+                    return { userId: "clerk-user-observability" };
+                  }
+                }
+              },
+              "next/navigation": {
+                /** @param {string} path */
+                redirect(path) {
+                  redirects.push(path);
+                  throw Object.assign(new Error("redirect"), { path });
+                }
+              },
+              "next/cache": { revalidatePath() {} },
+              "../../src/server/correlation": {
+                /** @param {string} prefix */
+                createCorrelationId: (prefix) => `${prefix}_test`
+              },
+              "../../src/server/client-events": {
+                /** @param {{ name: string }} event @param {{ producer?: string }} context */
+                emitClientEventLog(event, context) {
+                  emitted.push({
+                    name: event.name,
+                    producer: context.producer
+                  });
+                }
+              },
+              "../../src/server/human-review-fixture": {
+                humanBrowserFixtureEnabled: () => false
+              },
+              "../../src/server/human-action-form": {
+                parseBulkHumanAnswersForm,
+                parseHumanAnswerForm,
+                parseUndoHumanAnswerForm
+              },
+              "../../src/server/human-answer": {
+                async createHumanAnswerInTransaction() {
+                  throw failure;
+                },
+                async undoHumanAnswerBeforeReadInTransaction() {
+                  throw failure;
+                },
+                /** @param {unknown} error @param {Record<string, unknown>} input */
+                humanAnswerTransactionFailure: (error, input) =>
+                  reportFailure("answer", error, input),
+                /** @param {unknown} error @param {Record<string, unknown>} input */
+                humanAnswerUndoTransactionFailure: (error, input) =>
+                  reportFailure("undo", error, input)
+              },
+              "../../src/server/human-session": {
+                /** @param {unknown} _input @param {(query: unknown, session: unknown) => Promise<unknown>} callback */
+                async runHumanAccountTransaction(_input, callback) {
+                  if (failureStage === "session") throw failure;
+                  return {
+                    ok: true,
+                    data: await callback(async () => queryResult([]), session)
+                  };
+                }
+              },
+              "../../src/shared/human-review-view": {
+                HUMAN_REVIEW_VIEW_PARAM_KEYS
+              }
+            })
+          );
+        const form = new FormData();
+        form.set("inputItemId", inputItemId);
+        form.set("callerId", callerId);
+        if (operation === "undo") {
+          form.set("outputResultId", outputResultId);
+        } else {
+          form.set("expectedRevision", "1");
+          form.set("actionValue", "approve");
+          form.set(
+            "popupKind",
+            operation === "file_upload" ? "file_upload" : "none"
+          );
+          if (operation === "file_upload") {
+            form.set("response.file", new File(["evidence"], "evidence.txt"));
+          }
+        }
+        const submit = () =>
+          operation === "undo"
+            ? actions.undoHumanAnswer(form)
+            : actions.submitHumanAnswer(form);
+        if (failureStage !== "transaction") {
+          await assert.rejects(submit, (error) => error === failure);
+          assert.deepEqual(reports, []);
+          assert.deepEqual(emitted, []);
+          assert.deepEqual(redirects, []);
+          return;
+        }
+        await assert.rejects(submit, /redirect/);
+        assert.deepEqual(redirects, [
+          `/human?item=${inputItemId}&error=temporary_unavailable${
+            operation === "file_upload" ? "&failedActionKind=file_upload" : ""
+          }`
+        ]);
+        assert.deepEqual(emitted, [
+          {
+            name:
+              operation === "file_upload"
+                ? "file_upload_failed"
+                : "human_action_failed",
+            producer: "server_action"
+          }
+        ]);
+        assert.equal(reports.length, 1);
+        assert.equal(reports[0]?.error, failure);
+        assert.equal(
+          reports[0]?.operation,
+          operation === "undo" ? "undo" : "answer"
+        );
+        assert.equal(reports[0]?.input.accountId, session.accountId);
+        assert.equal(reports[0]?.input.humanUserId, session.userId);
+        assert.equal(reports[0]?.input.callerId, callerId);
+        if (operation === "undo") {
+          assert.equal(reports[0]?.input.outputResultId, outputResultId);
+        } else {
+          assert.equal(reports[0]?.input.inputItemId, inputItemId);
+        }
+
+        const reporterOperation = operation === "undo" ? "undo" : "answer";
+        const result = await (operation === "undo"
+          ? actions.executeUndoHumanAnswerMutation(form)
+          : actions.executeHumanAnswerMutation(form));
+        assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+          ok: false,
+          operation: reporterOperation,
+          code: "temporary_unavailable",
+          message: `${reporterOperation} reporter failure`,
+          inputItemIds: [inputItemId],
+          ...(operation === "file_upload"
+            ? { failedActionKind: "file_upload" }
+            : {})
+        });
+      });
     }
   }
 });

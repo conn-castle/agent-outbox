@@ -5,13 +5,17 @@ import {
   executeHumanAnswerMutation,
   executeUndoHumanAnswerMutation
 } from "../actions";
-import type {
-  HumanMutationOperation,
-  HumanMutationResult
+import {
+  isHumanMutationOperation,
+  type HumanMutationOperation
 } from "../../../src/shared/human-mutation";
 import { createCorrelationId } from "../../../src/server/correlation";
 import { humanBrowserFixtureEnabled } from "../../../src/server/human-review-fixture-gate";
-import { humanMutationTransportFailureResponse } from "../../../src/server/human-mutation-response";
+import {
+  humanMutationFailureResponse,
+  humanMutationResponse,
+  humanMutationTransportFailureResponse
+} from "../../../src/server/human-mutation-response";
 import {
   HUMAN_MUTATION_REQUEST_BODY_BYTE_LIMIT,
   readFormDataWithLimit
@@ -22,14 +26,9 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   if (!requestIsSameOrigin(request)) {
-    return mutationResponse(
-      {
-        ok: false,
-        operation: "answer",
-        code: "invalid_request",
-        message: "Refresh the page and try again.",
-        inputItemIds: []
-      },
+    return humanMutationFailureResponse(
+      "invalid_request",
+      "Refresh the page and try again.",
       403
     );
   }
@@ -40,15 +39,9 @@ export async function POST(request: Request) {
     if (!humanBrowserFixtureEnabled()) {
       const session = await auth();
       if (!session.userId) {
-        return mutationResponse(
-          {
-            ok: false,
-            operation: "answer",
-            code: "authentication_required",
-            message:
-              "Your session expired. Sign in again, then retry the action.",
-            inputItemIds: []
-          },
+        return humanMutationFailureResponse(
+          "authentication_required",
+          "Your session expired. Sign in again, then retry the action.",
           401
         );
       }
@@ -67,7 +60,7 @@ export async function POST(request: Request) {
     if (!isHumanMutationOperation(operation)) return invalidRequestResponse();
 
     const result = await executeMutation(operation, formData);
-    return mutationResponse(
+    return humanMutationResponse(
       result,
       result.ok ? 200 : failureStatus(result.code)
     );
@@ -116,12 +109,6 @@ function executeMutation(
   }
 }
 
-function isHumanMutationOperation(
-  value: FormDataEntryValue | null
-): value is HumanMutationOperation {
-  return value === "answer" || value === "bulk-answer" || value === "undo";
-}
-
 function failureStatus(code: string) {
   if (code === "invalid_request") return 400;
   if (code === "temporary_unavailable" || code.includes("configuration")) {
@@ -131,21 +118,9 @@ function failureStatus(code: string) {
 }
 
 function invalidRequestResponse() {
-  return mutationResponse(
-    {
-      ok: false,
-      operation: "answer",
-      code: "invalid_request",
-      message: "Action failed: invalid request.",
-      inputItemIds: []
-    },
+  return humanMutationFailureResponse(
+    "invalid_request",
+    "Action failed: invalid request.",
     400
   );
-}
-
-function mutationResponse(result: HumanMutationResult, status: number) {
-  return Response.json(result, {
-    status,
-    headers: { "Cache-Control": "no-store" }
-  });
 }
