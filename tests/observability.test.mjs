@@ -65,15 +65,7 @@ import {
   sentryCaptureEnabled,
   sentryRuntimeInitOptions
 } from "../src/server/sentry.ts";
-import {
-  runProductTransaction,
-  withSavepoint
-} from "../src/server/database.ts";
-import { getSetupRequestTerminalState } from "../src/server/caller-setup-requests.ts";
-import {
-  DATABASE_POLICY_VERIFICATION_SKIP,
-  phase3DatabaseVerificationUrl
-} from "./helpers/database.mjs";
+import { withSavepoint } from "../src/server/database.ts";
 import { withProcessEnv } from "./helpers/process-env.mjs";
 import { queryResult } from "./helpers/fake-query.mjs";
 import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
@@ -1766,40 +1758,11 @@ test("caller approval failure reporter emits structured log and Sentry context",
     }
   };
   const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
-  const sessionModule =
-    /** @type {{ reportCallerApprovalFailure(error: unknown, input: Record<string, unknown>): ReturnType<RuntimeFailureReporterForTest> }} */ (
-      loadCommonJsModuleForTest("app/caller/connect/session.ts", {
-        "@clerk/nextjs/server": { auth: {} },
-        "next/headers": { headers: async () => new Headers() },
-        "../../../src/server/caller-setup-requests": {
-          async getSetupRequestTerminalState() {
-            throw new Error("getSetupRequestTerminalState should not run.");
-          }
-        },
-        "../../../src/server/caller-connect-clerk-fixture": {
-          CALLER_CONNECT_FIXTURE_USER_ID_HEADER: "x-fixture-user",
-          CALLER_CONNECT_FIXTURE_USER_ID_PARAM: "fixture_clerk_user_id",
-          callerConnectClerkFixtureEnabled: () => false,
-          callerConnectFixtureClerkUserId: () => null
-        },
-        "../../../src/server/correlation": {
-          createCorrelationId: () => "caller_approval_report"
-        },
-        "../../../src/server/database": {
-          async runProductTransaction() {
-            throw new Error("runProductTransaction should not run.");
-          }
-        },
-        "../../../src/server/human-session": {
-          requiredHumanSessionConfiguration: () => [],
-          async resolveHumanAccountSession() {
-            throw new Error("resolveHumanAccountSession should not run.");
-          }
-        },
-        "../../../src/server/logging": { durationSinceMs, emitRuntimeLog },
-        "../../../src/server/sentry": { reportRuntimeFailure }
-      })
-    );
+  const sessionModule = loadCallerApprovalSessionModuleForTest({
+    events: [],
+    reports: [],
+    forwardReport: reportRuntimeFailure
+  });
 
   const logs = await withProcessEnv(
     {
@@ -1921,215 +1884,378 @@ test("runtime failures set a Sentry fingerprint from safe discriminators", async
   );
 });
 
-test("connect terminal setup state reports transaction exceptions", async () => {
-  /** @type {Array<Record<string, unknown>>} */
-  const tagSnapshots = [];
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      /** @type {Record<string, unknown>} */
-      const tags = {};
-      callback({
-        setTag(name, value) {
-          tags[name] = value;
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-      tagSnapshots.push(tags);
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(
-        /** @type {{ name?: string, message?: string, stack?: string }} */ (
-          error
-        )
-      );
+test("caller approval page transaction recovers unexpected failures as a 503 page error", async () => {
+  /** @type {CallerApprovalSessionTestState} */
+  const state = { events: [], reports: [] };
+  const sessionModule = loadCallerApprovalSessionModuleForTest(state);
+  const pageInput = {
+    requestId: "req-connect-approve",
+    route: "/caller/connect/approve",
+    operation: "caller_connect_browser_approval_preview",
+    unavailableMessage: "Caller connect approval is temporarily unavailable."
+  };
+  const unavailable = {
+    ok: false,
+    error: {
+      status: 503,
+      code: "temporary_unavailable",
+      message: "Caller connect approval is temporarily unavailable."
     }
   };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
-  const sessionModule =
-    /** @type {{ connectTerminalSetupState(query: import("../src/server/database.ts").ProductTransactionQuery, input: Record<string, unknown>): Promise<{ ok: boolean, error?: { status: number, code: string, message: string } }> }} */ (
-      loadCommonJsModuleForTest("app/caller/connect/session.ts", {
-        "@clerk/nextjs/server": { auth: {} },
-        "next/headers": { headers: async () => new Headers() },
-        "../../../src/server/caller-setup-requests": {
-          async getSetupRequestTerminalState() {
-            throw new Error("getSetupRequestTerminalState should not run.");
-          }
-        },
-        "../../../src/server/caller-connect-clerk-fixture": {
-          CALLER_CONNECT_FIXTURE_USER_ID_HEADER: "x-fixture-user",
-          CALLER_CONNECT_FIXTURE_USER_ID_PARAM: "fixture_clerk_user_id",
-          callerConnectClerkFixtureEnabled: () => false,
-          callerConnectFixtureClerkUserId: () => null
-        },
-        "../../../src/server/correlation": {
-          createCorrelationId: () => "caller_terminal_report"
-        },
-        "../../../src/server/database": { withSavepoint },
-        "../../../src/server/human-session": {
-          requiredHumanSessionConfiguration: () => [],
-          async resolveHumanAccountSession() {
-            throw new Error("resolveHumanAccountSession should not run.");
-          },
-          async runHumanAccountTransaction() {
-            throw new Error("runHumanAccountTransaction should not run.");
-          }
-        },
-        "../../../src/server/logging": { durationSinceMs, emitRuntimeLog },
-        "../../../src/server/sentry": { reportRuntimeFailure }
-      })
-    );
 
-  const logs = await withProcessEnv(
+  const callbackFailure = new Error("approval preview failed");
+  const result = await sessionModule.runCallerApprovalPageTransaction(
+    pageInput,
+    async () => {
+      throw callbackFailure;
+    }
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), unavailable);
+  assert.deepEqual(state.events, [
+    "begin",
+    "rollback",
+    "report caller_connect_browser_approval_preview"
+  ]);
+  assert.equal(state.reports[0].error, callbackFailure);
+  assert.deepEqual(
     {
-      APP_ENV: "production",
-      DATABASE_APP_ROLE_URL: "postgresql://connect-terminal-test",
-      SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0",
-      SENTRY_RELEASE: "agent-outbox@2026.07.07",
-      CI: undefined,
-      NODE_ENV: "production"
+      request_id: state.reports[0].context.request_id,
+      route: state.reports[0].context.route,
+      method: state.reports[0].context.method,
+      status_code: state.reports[0].context.status_code,
+      account_id: state.reports[0].context.account_id
     },
-    () =>
-      captureStructuredLogs(async () => {
-        const result = await sessionModule.connectTerminalSetupState(
-          /** @type {any} */ (
-            async () => {
-              throw new Error("raw connect terminal database secret");
-            }
-          ),
-          {
-            session: {
-              accountId: "00000000-0000-4000-8000-000000000621",
-              userId: "user_connect_terminal"
-            },
-            requestId: "req-connect-terminal",
-            setupRequestId: "setup-connect-terminal",
-            statuses: ["approved", "exchanged"],
-            route: "/caller/connect/success",
-            method: "GET",
-            operation: "caller_connect_terminal_success",
-            unavailableMessage:
-              "Caller connect success is temporarily unavailable."
-          }
-        );
-
-        assert.equal(result.ok, false);
-        assert.equal(result.error?.status, 503);
-        assert.equal(result.error?.code, "temporary_unavailable");
-      })
+    {
+      request_id: "req-connect-approve",
+      route: "/caller/connect/approve",
+      method: "GET",
+      status_code: 503,
+      account_id: CALLER_APPROVAL_TEST_SESSION.accountId
+    }
   );
 
-  assert.equal(logs.length, 1);
-  assert.equal(logs[0].error_id, "caller_terminal_report");
-  assert.equal(logs[0].request_id, "req-connect-terminal");
-  assert.equal(logs[0].route, "/caller/connect/success");
-  assert.equal(logs[0].method, "GET");
-  assert.equal(logs[0].operation, "caller_connect_terminal_success");
-  assert.equal(logs[0].account_id, "00000000-0000-4000-8000-000000000621");
-  assert.equal(tagSnapshots[0].error_id, "caller_terminal_report");
-  assert.equal(tagSnapshots[0].route, "/caller/connect/success");
-  assert.equal(sentryContexts.length, 1);
-  assert.equal(capturedExceptions.length, 1);
-  assert.equal(capturedExceptions[0].message, "Agent Outbox runtime failure");
-  assert.equal(
-    JSON.stringify(logs).includes("raw connect terminal database secret"),
-    false
-  );
-  assert.equal(
-    JSON.stringify(capturedExceptions).includes(
-      "raw connect terminal database secret"
+  // Next control-flow errors, such as the Clerk sign-in redirect, must not be
+  // swallowed into a 503 page.
+  const { redirect } = require("next/navigation");
+  await assert.rejects(
+    sessionModule.runCallerApprovalPageTransaction(pageInput, async () =>
+      redirect("/sign-in")
     ),
-    false
+    (error) =>
+      String(/** @type {{ digest?: unknown }} */ (error).digest).startsWith(
+        "NEXT_REDIRECT"
+      )
   );
+  assert.equal(state.reports.length, 1);
+
+  // A failure before any session exists is reported once. Pages that cannot
+  // render without a session then throw their own error; the others render
+  // the 503.
+  state.reports.length = 0;
+  const headersFailure = new Error("headers unavailable");
+  state.headersFailure = headersFailure;
+  await assert.rejects(
+    sessionModule.runCallerApprovalPageTransaction(
+      {
+        ...pageInput,
+        missingSessionMessage:
+          "Human session is required after caller approval setup."
+      },
+      async () => {
+        throw new Error("callback should not run without a session.");
+      }
+    ),
+    (error) =>
+      error !== headersFailure &&
+      /** @type {Error} */ (error).message ===
+        "Human session is required after caller approval setup."
+  );
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        await sessionModule.runCallerApprovalPageTransaction(
+          pageInput,
+          async () => {
+            throw new Error("callback should not run without a session.");
+          }
+        )
+      )
+    ),
+    unavailable
+  );
+  assert.equal(state.reports.length, 2);
+  for (const report of state.reports) {
+    assert.equal(report.error, headersFailure);
+    assert.equal(
+      report.context.operation,
+      "caller_connect_browser_approval_preview"
+    );
+    assert.equal(report.context.status_code, 503);
+    assert.equal(report.context.account_id, undefined);
+  }
+
+  // A sign-in redirect before any session exists still reaches Next instead
+  // of the missing-session error.
+  state.reports.length = 0;
+  try {
+    redirect("/sign-in");
+  } catch (error) {
+    state.headersFailure = /** @type {Error} */ (error);
+  }
+  await assert.rejects(
+    sessionModule.runCallerApprovalPageTransaction(
+      {
+        ...pageInput,
+        missingSessionMessage:
+          "Human session is required after caller approval setup."
+      },
+      async () => {
+        throw new Error("callback should not run without a session.");
+      }
+    ),
+    (error) =>
+      String(/** @type {{ digest?: unknown }} */ (error).digest).startsWith(
+        "NEXT_REDIRECT"
+      )
+  );
+  assert.equal(state.reports.length, 0);
+  state.headersFailure = undefined;
+
+  // Session failures resolved before the callback keep their own status and
+  // message instead of becoming the page's 503.
+  state.reports.length = 0;
+  state.sessionFailure = {
+    ok: false,
+    status: 401,
+    code: "authentication_required",
+    message: "A Clerk user is required to load the human review queue."
+  };
+  const unauthenticated = await sessionModule.runCallerApprovalPageTransaction(
+    pageInput,
+    async () => {
+      throw new Error("callback should not run without a session.");
+    }
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(unauthenticated)), {
+    ok: false,
+    error: state.sessionFailure
+  });
+  assert.equal(state.reports.length, 0);
 });
 
-test(
-  "caller connect terminal state failure still returns its 503 from a live transaction",
-  {
-    skip: phase3DatabaseVerificationUrl()
-      ? false
-      : DATABASE_POLICY_VERIFICATION_SKIP
-  },
-  async () => {
-    const databaseUrl = phase3DatabaseVerificationUrl();
-    assert.ok(databaseUrl);
-    /** @type {unknown[]} */
-    const reportedErrors = [];
-    const sessionModule =
-      /** @type {{ connectTerminalSetupState(query: import("../src/server/database.ts").ProductTransactionQuery, input: Record<string, unknown>): Promise<{ ok: boolean, error?: { status: number, code: string, message: string } }> }} */ (
-        loadCommonJsModuleForTest("app/caller/connect/session.ts", {
-          "@clerk/nextjs/server": { auth: {} },
-          "next/headers": { headers: async () => new Headers() },
-          "../../../src/server/caller-setup-requests": {
-            getSetupRequestTerminalState
-          },
-          "../../../src/server/caller-connect-clerk-fixture": {
-            CALLER_CONNECT_FIXTURE_USER_ID_HEADER: "x-fixture-user",
-            CALLER_CONNECT_FIXTURE_USER_ID_PARAM: "fixture_clerk_user_id",
-            callerConnectClerkFixtureEnabled: () => false,
-            callerConnectFixtureClerkUserId: () => null
-          },
-          "../../../src/server/correlation": {
-            createCorrelationId: () => "caller_terminal_live"
-          },
-          "../../../src/server/database": { withSavepoint },
-          "../../../src/server/human-session": {},
-          "../../../src/server/logging": { durationSinceMs },
-          "../../../src/server/sentry": {
-            /** @param {unknown} error */
-            reportRuntimeFailure(error) {
-              reportedErrors.push(error);
-            }
-          }
-        })
-      );
+test("caller approval terminal transaction recovers lookup failures in a savepoint before commit", async () => {
+  /** @type {CallerApprovalSessionTestState} */
+  const state = { events: [], reports: [] };
+  const sessionModule = loadCallerApprovalSessionModuleForTest(state);
+  const pageInput = {
+    requestId: "req-connect-terminal",
+    route: "/caller/connect/success",
+    operation: "caller_connect_terminal_success",
+    unavailableMessage: "Caller connect success is temporarily unavailable."
+  };
+  const lookupFailure = new Error("terminal lookup failed");
+  const failingLookup = async () => {
+    throw lookupFailure;
+  };
 
-    // A non-UUID account id makes the terminal-state select itself fail.
-    const result = await runProductTransaction(
-      databaseUrl,
-      { requestId: "req-connect-terminal-live", authSurface: "human" },
-      (query) =>
-        sessionModule.connectTerminalSetupState(query, {
-          session: { accountId: "not-a-uuid", userId: "user_terminal_live" },
-          requestId: "req-connect-terminal-live",
-          setupRequestId: crypto.randomUUID(),
-          statuses: ["approved", "exchanged"],
-          route: "/caller/connect/success",
-          method: "GET",
-          operation: "caller_connect_terminal_success",
-          unavailableMessage:
-            "Caller connect success is temporarily unavailable."
-        })
-    );
-
-    // The module runs in its own VM context, so compare plain JSON values.
-    assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+  const recovered = await sessionModule.runCallerApprovalTerminalTransaction(
+    pageInput,
+    failingLookup
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(recovered)), {
+    ok: true,
+    session: CALLER_APPROVAL_TEST_SESSION,
+    data: {
       ok: false,
       error: {
         status: 503,
         code: "temporary_unavailable",
         message: "Caller connect success is temporarily unavailable."
       }
-    });
-    assert.equal(reportedErrors.length, 1);
-  }
-);
+    }
+  });
+  // The failure is reported inside the transaction, and the savepoint keeps
+  // the account bootstrap committable.
+  assert.deepEqual(state.events, [
+    "begin",
+    "savepoint caller_connect_terminal_state",
+    "rollback to savepoint caller_connect_terminal_state",
+    "release savepoint caller_connect_terminal_state",
+    "report caller_connect_terminal_success",
+    "commit"
+  ]);
+  assert.equal(state.reports[0].error, lookupFailure);
+  assert.equal(
+    state.reports[0].context.account_id,
+    CALLER_APPROVAL_TEST_SESSION.accountId
+  );
+
+  state.events.length = 0;
+  const found = await sessionModule.runCallerApprovalTerminalTransaction(
+    pageInput,
+    async () => ({ ok: true, data: { setup_request_id: "setup-found" } })
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(found)).data, {
+    ok: true,
+    data: { setup_request_id: "setup-found" }
+  });
+  assert.deepEqual(state.events, [
+    "begin",
+    "savepoint caller_connect_terminal_state",
+    "release savepoint caller_connect_terminal_state",
+    "commit"
+  ]);
+
+  // A commit failure after a recovered lookup still reaches the route
+  // boundary unchanged, after the lookup report.
+  state.events.length = 0;
+  state.reports.length = 0;
+  const commitFailure = new Error("commit failed");
+  state.commitFailure = commitFailure;
+  await assert.rejects(
+    sessionModule.runCallerApprovalTerminalTransaction(
+      pageInput,
+      failingLookup
+    ),
+    (error) => error === commitFailure
+  );
+  assert.deepEqual(state.events.slice(-2), [
+    "report caller_connect_terminal_success",
+    "commit failed"
+  ]);
+  assert.equal(state.reports.length, 1);
+  state.commitFailure = undefined;
+
+  // Failures outside the lookup propagate unreported.
+  state.events.length = 0;
+  state.reports.length = 0;
+  const headersFailure = new Error("headers unavailable");
+  state.headersFailure = headersFailure;
+  await assert.rejects(
+    sessionModule.runCallerApprovalTerminalTransaction(
+      pageInput,
+      failingLookup
+    ),
+    (error) => error === headersFailure
+  );
+  assert.deepEqual(state.events, []);
+  assert.equal(state.reports.length, 0);
+  state.headersFailure = undefined;
+
+  state.sessionFailure = {
+    ok: false,
+    status: 401,
+    code: "authentication_required",
+    message: "A Clerk user is required to load the human review queue."
+  };
+  const unauthenticated =
+    await sessionModule.runCallerApprovalTerminalTransaction(
+      pageInput,
+      failingLookup
+    );
+  assert.deepEqual(JSON.parse(JSON.stringify(unauthenticated)), {
+    ok: false,
+    error: state.sessionFailure
+  });
+});
+
+const CALLER_APPROVAL_TEST_SESSION = {
+  accountId: "00000000-0000-4000-8000-000000000621",
+  userId: "user_connect_terminal"
+};
+
+/**
+ * @typedef {{
+ *   events: string[],
+ *   reports: Array<{ error: unknown, context: Record<string, unknown> }>,
+ *   headersFailure?: Error,
+ *   sessionFailure?: Record<string, unknown>,
+ *   commitFailure?: Error,
+ *   forwardReport?: (error: unknown, context: Record<string, unknown>) => unknown
+ * }} CallerApprovalSessionTestState
+ */
+
+/**
+ * Loads the caller approval session module with a scripted human account
+ * transaction. `state.events` records the transaction, savepoint SQL and
+ * reports in order; `headersFailure`, `sessionFailure` and `commitFailure`
+ * inject failures before the session, instead of it, and at commit.
+ * `forwardReport` also passes each report to a real reporter.
+ *
+ * @param {CallerApprovalSessionTestState} state
+ * @returns {{
+ *   reportCallerApprovalFailure(error: unknown, input: Record<string, unknown>): ReturnType<RuntimeFailureReporterForTest>,
+ *   runCallerApprovalPageTransaction(input: Record<string, unknown>, callback: () => Promise<unknown>): Promise<unknown>,
+ *   runCallerApprovalTerminalTransaction(input: Record<string, unknown>, callback: () => Promise<unknown>): Promise<unknown>
+ * }}
+ */
+function loadCallerApprovalSessionModuleForTest(state) {
+  /** @param {{ sql: string }} statement */
+  const query = async (statement) => {
+    state.events.push(statement.sql);
+    return queryResult([]);
+  };
+  return /** @type {any} */ (
+    loadCommonJsModuleForTest("app/caller/connect/session.ts", {
+      "@clerk/nextjs/server": { auth: {} },
+      "next/headers": {
+        async headers() {
+          if (state.headersFailure) throw state.headersFailure;
+          return new Headers();
+        }
+      },
+      "../../../src/server/caller-connect-clerk-fixture": {
+        CALLER_CONNECT_FIXTURE_USER_ID_HEADER: "x-fixture-user",
+        CALLER_CONNECT_FIXTURE_USER_ID_PARAM: "fixture_clerk_user_id",
+        callerConnectClerkFixtureEnabled: () => false,
+        callerConnectFixtureClerkUserId: () => "user_fixture_terminal"
+      },
+      "../../../src/server/correlation": {
+        createCorrelationId: () => "caller_approval_report"
+      },
+      "../../../src/server/database": { withSavepoint },
+      "../../../src/server/human-session": {
+        requiredHumanSessionConfiguration: () => [],
+        async resolveHumanAccountSession() {
+          throw new Error("resolveHumanAccountSession should not run.");
+        },
+        /**
+         * @param {unknown} _input
+         * @param {(query: unknown, session: unknown) => Promise<unknown>} callback
+         */
+        async runHumanAccountTransaction(_input, callback) {
+          if (state.sessionFailure) return state.sessionFailure;
+          state.events.push("begin");
+          let data;
+          try {
+            data = await callback(query, CALLER_APPROVAL_TEST_SESSION);
+          } catch (error) {
+            state.events.push("rollback");
+            throw error;
+          }
+          if (state.commitFailure) {
+            state.events.push("commit failed");
+            throw state.commitFailure;
+          }
+          state.events.push("commit");
+          return { ok: true, session: CALLER_APPROVAL_TEST_SESSION, data };
+        }
+      },
+      "../../../src/server/logging": { durationSinceMs, emitRuntimeLog },
+      "../../../src/server/sentry": {
+        /**
+         * @param {unknown} error
+         * @param {Record<string, unknown>} context
+         */
+        reportRuntimeFailure(error, context) {
+          state.events.push(`report ${context.operation}`);
+          state.reports.push({ error, context });
+          return state.forwardReport?.(error, context);
+        }
+      }
+    })
+  );
+}
 
 test("billing webhook signature failures log correlation without body or secret content", async () => {
   const stripe = /** @type {any} */ ({

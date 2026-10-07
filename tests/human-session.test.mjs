@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import pg from "pg";
 import test from "node:test";
 
+import { getSetupRequestTerminalState } from "../src/server/caller-setup-requests.ts";
+import * as database from "../src/server/database.ts";
+import * as humanSession from "../src/server/human-session.ts";
+import * as logging from "../src/server/logging.ts";
 import {
   bootstrapClerkHumanInTransaction,
   humanAccountContextStatement,
@@ -16,6 +21,7 @@ import {
   teardownAttempt
 } from "./helpers/database.mjs";
 import { fakeQuery } from "./helpers/fake-query.mjs";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 
 const { Client } = pg;
 const databaseTestsEnabled =
@@ -458,6 +464,138 @@ test(
         bodyError,
         () => cleanupHumanSessionDatabaseTest(client, { accountIds, userIds }),
         "Human session database test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "caller approval terminal page recovers a lookup statement error and commits account provisioning",
+  {
+    skip: databaseUrl
+      ? false
+      : "set AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 and DATABASE_MIGRATION_URL to run database bootstrap verification"
+  },
+  async () => {
+    const client = await connectedDatabaseClient();
+    const clerkUserId = `db-caller-terminal-${crypto.randomUUID()}`;
+    const previousEnv = {
+      DATABASE_APP_ROLE_URL: process.env.DATABASE_APP_ROLE_URL
+    };
+    /** @type {string[]} */
+    const logLines = [];
+    const previousLog = console.log;
+    /** @type {Array<{ error: unknown, context: Record<string, unknown> }>} */
+    const reports = [];
+    /** @type {string[]} */
+    const accountIds = [];
+    /** @type {string[]} */
+    const userIds = [];
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await assertMigrationOwnerCanSetAppRole(client);
+      process.env.DATABASE_APP_ROLE_URL = databaseUrl;
+      const sessionModule =
+        /** @type {{ runCallerApprovalTerminalTransaction: (input: Record<string, unknown>, callback: (query: import("../src/server/database.ts").ProductTransactionQuery) => Promise<unknown>) => Promise<any> }} */ (
+          loadModuleForTest("app/caller/connect/session.ts", {
+            stubs: {
+              "@clerk/nextjs/server": { auth: {} },
+              "next/headers": { headers: async () => new Headers() },
+              "../../../src/server/caller-connect-clerk-fixture": {
+                CALLER_CONNECT_FIXTURE_USER_ID_HEADER: "x-fixture-user",
+                CALLER_CONNECT_FIXTURE_USER_ID_PARAM: "fixture_clerk_user_id",
+                callerConnectClerkFixtureEnabled: () => true,
+                callerConnectFixtureClerkUserId: () => clerkUserId
+              },
+              "../../../src/server/correlation": {
+                createCorrelationId: () => "caller_terminal_live"
+              },
+              "../../../src/server/database": database,
+              "../../../src/server/human-session": humanSession,
+              "../../../src/server/logging": logging,
+              "../../../src/server/sentry": {
+                /**
+                 * @param {unknown} error
+                 * @param {Record<string, unknown>} context
+                 */
+                reportRuntimeFailure(error, context) {
+                  reports.push({ error, context });
+                }
+              }
+            },
+            globals: { AggregateError, Error, Headers, process },
+            fallbackRequire: createRequire(import.meta.url)
+          })
+        );
+      console.log = (line) => {
+        logLines.push(String(line));
+      };
+
+      // A non-UUID account id makes the real terminal-state select fail with
+      // a statement error inside the live transaction.
+      const result = await sessionModule.runCallerApprovalTerminalTransaction(
+        {
+          requestId: "req-caller-terminal-live",
+          route: "/caller/connect/success",
+          operation: "caller_connect_terminal_success",
+          unavailableMessage:
+            "Caller connect success is temporarily unavailable."
+        },
+        (query) =>
+          getSetupRequestTerminalState(query, {
+            operation: "connect",
+            setupRequestId: crypto.randomUUID(),
+            accountId: "not-a-uuid",
+            statuses: ["approved", "exchanged"]
+          })
+      );
+      console.log = previousLog;
+      if (result.ok) {
+        accountIds.push(result.session.accountId);
+        userIds.push(result.session.userId);
+      }
+
+      assert.equal(result.ok, true);
+      assert.equal(result.session.provisionedAccount, true);
+      assert.deepEqual(JSON.parse(JSON.stringify(result.data)), {
+        ok: false,
+        error: {
+          status: 503,
+          code: "temporary_unavailable",
+          message: "Caller connect success is temporarily unavailable."
+        }
+      });
+      assert.equal(reports.length, 1);
+      assert.equal(
+        /** @type {{ code?: string }} */ (reports[0].error).code,
+        "22P02"
+      );
+      assert.equal(reports[0].context.account_id, result.session.accountId);
+      assert.deepEqual(
+        logLines.map((line) => JSON.parse(line).operation),
+        ["human_account_provisioned"]
+      );
+
+      // The savepoint kept the transaction committable, so the first-time
+      // account provisioning persisted despite the recovered lookup error.
+      const persisted = await queryAsAppRole(
+        client,
+        { accountId: result.session.accountId, userId: result.session.userId },
+        `select count(*)::int as membership_count from public.agent_outbox_account_members where user_id = $1 and account_id = $2`,
+        [result.session.userId, result.session.accountId]
+      );
+      assert.equal(persisted.rows[0].membership_count, 1);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      console.log = previousLog;
+      restoreEnv(previousEnv);
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        () => cleanupHumanSessionDatabaseTest(client, { accountIds, userIds }),
+        "Caller terminal database test and teardown both failed."
       );
     }
   }

@@ -1,12 +1,12 @@
+import { getSetupRequestTerminalState } from "../../../../src/server/caller-setup-requests";
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
 import {
-  connectTerminalSetupState,
   firstParam,
   fixtureClerkUserIdParam,
   requiredCallerConnectSessionConfiguration,
   resolveCallerConnectHumanSession,
-  runCallerConnectHumanTransaction
+  runCallerApprovalTerminalTransaction
 } from "../session";
 import { ConnectErrorPage, MISSING_SETUP_REQUEST_ERROR } from "../ui";
 import { ConnectionSuccessView } from "../views";
@@ -59,51 +59,43 @@ export default async function CallerConnectSuccessPage({
     );
   }
 
-  const transaction = await runCallerConnectHumanTransaction(
+  const page = await runCallerApprovalTerminalTransaction(
     {
       requestId,
       fixtureClerkUserId,
       route: "/caller/connect/success",
-      method: "GET"
+      operation: "caller_connect_terminal_success",
+      unavailableMessage: "Caller connect success is temporarily unavailable."
     },
-    (query, humanSession) =>
-      connectTerminalSetupState(query, {
-        session: humanSession,
-        requestId,
+    (query, session) =>
+      getSetupRequestTerminalState(query, {
+        operation: "connect",
         setupRequestId,
-        statuses: ["approved", "exchanged"],
-        route: "/caller/connect/success",
-        method: "GET",
-        operation: "caller_connect_terminal_success",
-        unavailableMessage: "Caller connect success is temporarily unavailable."
+        accountId: session.accountId,
+        statuses: ["approved", "exchanged"]
       })
   );
-  if (!transaction.ok) {
+  if (!page.ok) {
     return (
       <ConnectErrorPage
         title="We couldn't confirm this connection"
         description="The completed request could not be loaded."
-        error={transaction}
+        error={page.error}
       />
     );
   }
 
-  const setupState = transaction.data;
-
-  if (!setupState.ok) {
+  if (!page.data.ok) {
     return (
       <ConnectErrorPage
         title="We couldn't confirm this connection"
         description="The completed request could not be verified."
-        error={setupState.error}
+        error={page.data.error}
       />
     );
   }
 
   return (
-    <ConnectionSuccessView
-      setup={setupState.data}
-      session={transaction.session}
-    />
+    <ConnectionSuccessView setup={page.data.data} session={page.session} />
   );
 }
