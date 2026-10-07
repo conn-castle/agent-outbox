@@ -42,7 +42,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Low. Area: Review tooling
     Description: Canonical project instructions are tracked under `.agent-layer/instructions`, but generated `AGENTS.md` and `.github/copilot-instructions.md` are gitignored and no committed Copilot review instruction file or review skill exposes them through GitHub's documented paths; repository MCP settings and actual review-context use are unverified.
     Next step: Identify the minimum review context needed and verify a supported integration against available review-session evidence without duplicating canonical rules.
-    Notes: Deferred from PR208 Copilot review https://github.com/conn-castle/agent-outbox/pull/208#pullrequestreview-5435689404.
+    Notes: Deferred from PR208 Copilot review https://github.com/conn-castle/agent-outbox/pull/208#pullrequestreview-5435689404 and PR217 Copilot review https://github.com/conn-castle/agent-outbox/pull/217#pullrequestreview-5441007257.
 
 - Issue 2026-10-04 stripe-duplicate-subscriptions: One account can hold several live Stripe subscriptions
     Priority: Medium. Area: Billing
