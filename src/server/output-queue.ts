@@ -30,10 +30,7 @@ import {
   callerOutputLockStatement,
   safeContentType
 } from "./output-files.ts";
-import {
-  CanonicalInputIntegrityError,
-  materializeCanonicalInputsByItemId
-} from "./canonical-input.ts";
+import { materializeCanonicalInputsByItemId } from "./canonical-input.ts";
 import {
   encodePageCursor,
   invalidPageLimitField,
@@ -312,17 +309,16 @@ export async function readOutputResultInTransaction(
     return output;
   }
 
-  const rawInputs = await canonicalRawInputsForOutputRows(query, identity, [
-    row
+  const inputs = await materializeCanonicalInputsByItemId(query, identity, [
+    row.input_item_id
   ]);
-  const rawInput = requiredRawInput(rawInputs, row.input_item_id, identity);
 
   await query(markOutputResultsReadStatement(identity, [row.output_result_id]));
   return {
     ok: true,
     data: {
       ...output.data,
-      raw_input: rawInput
+      raw_input: inputs.get(row.input_item_id)!.raw_input
     }
   };
 }
@@ -369,14 +365,14 @@ export async function readAllOutputPageInTransaction(
     eligible.push({ row, data: output.data });
   }
 
-  const rawInputs = await canonicalRawInputsForOutputRows(
+  const inputs = await materializeCanonicalInputsByItemId(
     query,
     identity,
-    eligible.map(({ row }) => row)
+    eligible.map(({ row }) => row.input_item_id)
   );
   const items: AgentOutboxOutputResult[] = eligible.map(({ row, data }) => ({
     ...data,
-    raw_input: requiredRawInput(rawInputs, row.input_item_id, identity)
+    raw_input: inputs.get(row.input_item_id)!.raw_input
   }));
 
   const returnedOutputResultIds = items.map((item) => item.output_result_id);
@@ -691,39 +687,6 @@ async function outputFileMetadataByResultId(
     filesByOutputId.set(row.output_result_id, rows);
   }
   return filesByOutputId;
-}
-
-async function canonicalRawInputsForOutputRows(
-  query: ProductTransactionQuery,
-  identity: CallerIdentity,
-  rows: readonly OutputRow[]
-): Promise<Map<string, Record<string, unknown>>> {
-  const materialized = await materializeCanonicalInputsByItemId(
-    query,
-    identity,
-    rows.map((row) => row.input_item_id)
-  );
-  const byInputItemId = new Map<string, Record<string, unknown>>();
-  for (const [inputItemId, input] of materialized) {
-    byInputItemId.set(inputItemId, input.raw_input);
-  }
-  return byInputItemId;
-}
-
-function requiredRawInput(
-  rawInputs: Map<string, Record<string, unknown>>,
-  inputItemId: string,
-  identity: CallerIdentity
-) {
-  const rawInput = rawInputs.get(inputItemId);
-  if (!rawInput) {
-    throw new CanonicalInputIntegrityError({
-      inputItemId,
-      accountId: identity.accountId,
-      callerId: identity.callerId
-    });
-  }
-  return rawInput;
 }
 
 function outputResultFromRow(

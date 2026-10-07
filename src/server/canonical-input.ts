@@ -211,40 +211,49 @@ export async function materializeCanonicalInputsByItemId(
   const roots = await query<CanonicalInputRootRow>(
     canonicalInputRootsStatement(identity, uniqueIds)
   );
+  return materializeCanonicalInputRoots(query, identity, uniqueIds, roots.rows);
+}
+
+/**
+ * Loads child rows for already-fetched, caller-scoped roots and reconstructs
+ * each requested input, throwing CanonicalInputIntegrityError for any id
+ * without a valid root.
+ */
+export async function materializeCanonicalInputRoots(
+  query: ProductTransactionQuery,
+  identity: CallerIdentity,
+  inputItemIds: readonly string[],
+  roots: readonly CanonicalInputRootRow[]
+): Promise<Map<string, CanonicalInput>> {
   const links = await query<CanonicalLinkButtonRow>(
-    canonicalInputLinkButtonsStatement(identity, uniqueIds)
+    canonicalInputLinkButtonsStatement(identity, inputItemIds)
   );
   const actions = await query<CanonicalActionRow>(
-    canonicalInputActionsStatement(identity, uniqueIds)
+    canonicalInputActionsStatement(identity, inputItemIds)
   );
   const options = await query<CanonicalOptionRow>(
-    canonicalInputOptionsStatement(identity, uniqueIds)
+    canonicalInputOptionsStatement(identity, inputItemIds)
   );
 
   const rootsByInputId = new Map(
-    roots.rows.map((root) => [root.input_item_id, root])
+    roots.map((root) => [root.input_item_id, root])
   );
   const linksByInputId = groupBy(links.rows, (row) => row.input_item_id);
   const actionsByInputId = groupBy(actions.rows, (row) => row.input_item_id);
   const optionsByInputId = groupBy(options.rows, (row) => row.input_item_id);
   const byInputItemId = new Map<string, CanonicalInput>();
 
-  for (const inputItemId of uniqueIds) {
+  for (const inputItemId of inputItemIds) {
     const root = rootsByInputId.get(inputItemId);
-    if (!root) {
-      throw new CanonicalInputIntegrityError({
-        inputItemId,
-        accountId: identity.accountId,
-        callerId: identity.callerId
+    const reconstructed =
+      root &&
+      reconstructCanonicalInput({
+        root,
+        linkButtons: linksByInputId.get(inputItemId) ?? [],
+        actions: actionsByInputId.get(inputItemId) ?? [],
+        options: optionsByInputId.get(inputItemId) ?? []
       });
-    }
-    const reconstructed = reconstructCanonicalInput({
-      root,
-      linkButtons: linksByInputId.get(inputItemId) ?? [],
-      actions: actionsByInputId.get(inputItemId) ?? [],
-      options: optionsByInputId.get(inputItemId) ?? []
-    });
-    if (!reconstructed.ok) {
+    if (!reconstructed?.ok) {
       throw new CanonicalInputIntegrityError({
         inputItemId,
         accountId: identity.accountId,
@@ -257,14 +266,8 @@ export async function materializeCanonicalInputsByItemId(
   return byInputItemId;
 }
 
-export function canonicalInputRootsStatement(
-  identity: CallerIdentity,
-  inputItemIds: readonly string[]
-): TransactionContextStatement {
-  const placeholders = inputItemIds.map((_, index) => `$${index + 3}`);
-  return {
-    sql: `
-      select
+/** Selects every column reconstructCanonicalInput reads from an input root. */
+export const CANONICAL_INPUT_ROOT_COLUMNS = `
         i.input_item_id::text as input_item_id,
         i.caller_item_id,
         i.status,
@@ -285,13 +288,20 @@ export function canonicalInputRootsStatement(
         i.normalized_content_fingerprint,
         i.created_at,
         i.updated_at,
-        i.answered_at
+        i.answered_at`;
+
+export function canonicalInputRootsStatement(
+  identity: CallerIdentity,
+  inputItemIds: readonly string[]
+): TransactionContextStatement {
+  const scope = callerInputItemsScope(identity, inputItemIds);
+  return {
+    sql: `
+      select${CANONICAL_INPUT_ROOT_COLUMNS}
       from public.agent_outbox_input_items i
-      where i.account_id = $1
-        and i.caller_id = $2
-        and i.input_item_id in (${placeholders.join(", ")})
+      where ${scope.where}
     `,
-    values: [identity.accountId, identity.callerId, ...inputItemIds]
+    values: scope.values
   };
 }
 
@@ -299,7 +309,7 @@ export function canonicalInputLinkButtonsStatement(
   identity: CallerIdentity,
   inputItemIds: readonly string[]
 ): TransactionContextStatement {
-  const placeholders = inputItemIds.map((_, index) => `$${index + 3}`);
+  const scope = callerInputItemsScope(identity, inputItemIds);
   return {
     sql: `
       select
@@ -311,12 +321,10 @@ export function canonicalInputLinkButtonsStatement(
       from public.agent_outbox_input_link_buttons button
       join public.agent_outbox_input_items i
         on i.input_item_id = button.input_item_id
-      where i.account_id = $1
-        and i.caller_id = $2
-        and i.input_item_id in (${placeholders.join(", ")})
+      where ${scope.where}
       order by button.input_item_id, button.display_order, button.input_link_button_id
     `,
-    values: [identity.accountId, identity.callerId, ...inputItemIds]
+    values: scope.values
   };
 }
 
@@ -324,7 +332,7 @@ export function canonicalInputActionsStatement(
   identity: CallerIdentity,
   inputItemIds: readonly string[]
 ): TransactionContextStatement {
-  const placeholders = inputItemIds.map((_, index) => `$${index + 3}`);
+  const scope = callerInputItemsScope(identity, inputItemIds);
   return {
     sql: `
       select
@@ -342,12 +350,10 @@ export function canonicalInputActionsStatement(
       from public.agent_outbox_input_actions action
       join public.agent_outbox_input_items i
         on i.input_item_id = action.input_item_id
-      where i.account_id = $1
-        and i.caller_id = $2
-        and i.input_item_id in (${placeholders.join(", ")})
+      where ${scope.where}
       order by action.input_item_id, action.display_order, action.input_action_id
     `,
-    values: [identity.accountId, identity.callerId, ...inputItemIds]
+    values: scope.values
   };
 }
 
@@ -355,7 +361,7 @@ export function canonicalInputOptionsStatement(
   identity: CallerIdentity,
   inputItemIds: readonly string[]
 ): TransactionContextStatement {
-  const placeholders = inputItemIds.map((_, index) => `$${index + 3}`);
+  const scope = callerInputItemsScope(identity, inputItemIds);
   return {
     sql: `
       select
@@ -370,14 +376,25 @@ export function canonicalInputOptionsStatement(
         on action.input_action_id = option.input_action_id
       join public.agent_outbox_input_items i
         on i.input_item_id = action.input_item_id
-      where i.account_id = $1
-        and i.caller_id = $2
-        and i.input_item_id in (${placeholders.join(", ")})
+      where ${scope.where}
       order by
         action.input_action_id,
         option.display_order,
         option.input_action_popup_option_id
     `,
+    values: scope.values
+  };
+}
+
+function callerInputItemsScope(
+  identity: CallerIdentity,
+  inputItemIds: readonly string[]
+) {
+  const placeholders = inputItemIds.map((_, index) => `$${index + 3}`);
+  return {
+    where: `i.account_id = $1
+        and i.caller_id = $2
+        and i.input_item_id in (${placeholders.join(", ")})`,
     values: [identity.accountId, identity.callerId, ...inputItemIds]
   };
 }
@@ -533,31 +550,7 @@ function cardVisualFromStored(
   if (!CARD_VISUAL_KINDS.has(kind) || !isJsonRecord(payload)) {
     return undefined;
   }
-  if (kind === "numeric_bar") {
-    return {
-      kind: "numeric_bar",
-      payload: payload as Extract<
-        NormalizedCardVisual,
-        { kind: "numeric_bar" }
-      >["payload"]
-    };
-  }
-  if (kind === "pill") {
-    return {
-      kind: "pill",
-      payload: payload as Extract<
-        NormalizedCardVisual,
-        { kind: "pill" }
-      >["payload"]
-    };
-  }
-  return {
-    kind: "progress_ring",
-    payload: payload as Extract<
-      NormalizedCardVisual,
-      { kind: "progress_ring" }
-    >["payload"]
-  };
+  return { kind, payload } as NormalizedCardVisual;
 }
 
 function uniqueStrings(values: readonly string[]) {
