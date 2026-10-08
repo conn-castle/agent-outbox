@@ -157,6 +157,37 @@ export function FixtureIdentity({ value }: { value?: string | null }) {
   ) : null;
 }
 
+export function DecisionForm({
+  action,
+  field,
+  value,
+  fixtureClerkUserId,
+  secondary = false,
+  pendingChildren,
+  children
+}: {
+  action: FormAction;
+  field: "setupRequestId" | "userCode";
+  value: string;
+  fixtureClerkUserId?: string | null;
+  secondary?: boolean;
+  pendingChildren: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <form action={action}>
+      <input type="hidden" name={field} value={value} />
+      <FixtureIdentity value={fixtureClerkUserId} />
+      <ActionSubmitButton
+        className={secondary ? "button secondary" : "button"}
+        pendingChildren={pendingChildren}
+      >
+        {children}
+      </ActionSubmitButton>
+    </form>
+  );
+}
+
 export function DeviceCodeEntryCard({
   formId,
   action,

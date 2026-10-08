@@ -1,15 +1,11 @@
-import { unstable_rethrow } from "next/navigation";
-
 import { createCorrelationId } from "../../../../src/server/correlation";
 import { getConnectBrowserApprovalPreview } from "../../../../src/server/caller-connect";
 import { MissingConfigurationPanel } from "../../../../src/server/ui";
-import type { HumanAccountSession } from "../../../../src/server/human-session";
 import {
   firstParam,
   fixtureClerkUserIdParam,
-  reportCallerApprovalFailure,
   requiredCallerConnectSessionConfiguration,
-  runCallerConnectHumanTransaction
+  runCallerPageTransaction
 } from "../session";
 import { ConnectErrorPage, MISSING_SETUP_REQUEST_ERROR } from "../ui";
 import { BrowserApprovalView } from "../views";
@@ -45,69 +41,34 @@ export default async function CallerConnectApprovePage({
     );
   }
 
-  const requestId = createCorrelationId("caller_connect_approve_page_req");
-  let session: HumanAccountSession | undefined;
-  let preview: Awaited<ReturnType<typeof getConnectBrowserApprovalPreview>>;
-  const previewStartedAtMs = Date.now();
-  try {
-    const transaction = await runCallerConnectHumanTransaction(
-      {
-        requestId,
-        fixtureClerkUserId,
-        route: "/caller/connect/approve",
-        method: "GET"
-      },
-      (query, humanSession) => {
-        session = humanSession;
-        return getConnectBrowserApprovalPreview(query, { setupRequestId });
-      }
-    );
-    if (!transaction.ok) {
-      return (
-        <ConnectErrorPage
-          title="We couldn't load this request"
-          description="The connection request could not be verified."
-          error={transaction}
-        />
-      );
-    }
-    session = transaction.session;
-    preview = transaction.data;
-  } catch (error) {
-    unstable_rethrow(error);
-    reportCallerApprovalFailure(error, {
-      requestId,
+  const page = await runCallerPageTransaction(
+    {
+      requestId: createCorrelationId("caller_connect_approve_page_req"),
+      fixtureClerkUserId,
       route: "/caller/connect/approve",
-      method: "GET",
       operation: "caller_connect_browser_approval_preview",
-      session,
-      startedAtMs: previewStartedAtMs
-    });
-    preview = {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Caller connect approval is temporarily unavailable."
-      }
-    };
+      unavailableMessage: "Caller connect approval is temporarily unavailable.",
+      missingSessionMessage:
+        "Human session is required after caller approval setup."
+    },
+    (query) => getConnectBrowserApprovalPreview(query, { setupRequestId })
+  );
+  const errorCopy = {
+    title: "We couldn't load this request",
+    description: "The connection request could not be verified."
+  };
+  if (!page.ok) {
+    return <ConnectErrorPage {...errorCopy} error={page.error} />;
+  }
+  if (!page.data.ok) {
+    return <ConnectErrorPage {...errorCopy} error={page.data.error} />;
   }
 
-  if (!session) {
-    throw new Error("Human session is required after caller approval setup.");
-  }
-
-  return preview.ok ? (
+  return (
     <BrowserApprovalView
-      preview={preview.data}
-      session={session}
+      preview={page.data.data}
+      session={page.session}
       fixtureClerkUserId={fixtureClerkUserId}
-    />
-  ) : (
-    <ConnectErrorPage
-      title="We couldn't load this request"
-      description="The connection request could not be verified."
-      error={preview.error}
     />
   );
 }

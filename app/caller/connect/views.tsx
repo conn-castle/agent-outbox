@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-import { ActionSubmitButton } from "../../../src/components/actions/ActionSubmitButton";
 import type { ConnectApprovalPreviewData } from "../../../src/server/caller-connect";
 import type { SetupTerminalStateData } from "../../../src/server/caller-setup-requests";
 import type { HumanAccountSession } from "../../../src/server/human-session";
@@ -15,7 +14,7 @@ import {
   ConnectActions,
   ConnectFlowCard,
   ConnectPageShell,
-  FixtureIdentity,
+  DecisionForm,
   OutcomeSummary
 } from "./ui";
 
@@ -46,34 +45,25 @@ export function BrowserApprovalView({
         <ConnectActions>
           {interactive ? (
             <>
-              <form action={approveBrowserConnect}>
-                <input
-                  type="hidden"
-                  name="setupRequestId"
-                  value={preview.setup_request_id}
-                />
-                <FixtureIdentity value={fixtureClerkUserId} />
-                <ActionSubmitButton
-                  className="button"
-                  pendingChildren="Approving…"
-                >
-                  Approve connection
-                </ActionSubmitButton>
-              </form>
-              <form action={denyBrowserConnect}>
-                <input
-                  type="hidden"
-                  name="setupRequestId"
-                  value={preview.setup_request_id}
-                />
-                <FixtureIdentity value={fixtureClerkUserId} />
-                <ActionSubmitButton
-                  className="button secondary"
-                  pendingChildren="Declining…"
-                >
-                  Decline
-                </ActionSubmitButton>
-              </form>
+              <DecisionForm
+                action={approveBrowserConnect}
+                field="setupRequestId"
+                value={preview.setup_request_id}
+                fixtureClerkUserId={fixtureClerkUserId}
+                pendingChildren="Approving…"
+              >
+                Approve connection
+              </DecisionForm>
+              <DecisionForm
+                action={denyBrowserConnect}
+                field="setupRequestId"
+                value={preview.setup_request_id}
+                fixtureClerkUserId={fixtureClerkUserId}
+                secondary
+                pendingChildren="Declining…"
+              >
+                Decline
+              </DecisionForm>
             </>
           ) : (
             <>
@@ -123,30 +113,25 @@ export function DeviceApprovalView({
           <ConnectActions>
             {interactive ? (
               <>
-                <form action={approveDeviceConnect}>
-                  <input type="hidden" name="userCode" value={userCode} />
-                  <FixtureIdentity value={fixtureClerkUserId} />
-                  <ActionSubmitButton
-                    className="button"
-                    pendingChildren="Connecting…"
-                  >
-                    Confirm and connect
-                  </ActionSubmitButton>
-                </form>
-                <form action={denyDeviceConnect}>
-                  <input
-                    type="hidden"
-                    name="setupRequestId"
-                    value={preview.setup_request_id}
-                  />
-                  <FixtureIdentity value={fixtureClerkUserId} />
-                  <ActionSubmitButton
-                    className="button secondary"
-                    pendingChildren="Declining…"
-                  >
-                    Decline
-                  </ActionSubmitButton>
-                </form>
+                <DecisionForm
+                  action={approveDeviceConnect}
+                  field="userCode"
+                  value={userCode}
+                  fixtureClerkUserId={fixtureClerkUserId}
+                  pendingChildren="Connecting…"
+                >
+                  Confirm and connect
+                </DecisionForm>
+                <DecisionForm
+                  action={denyDeviceConnect}
+                  field="setupRequestId"
+                  value={preview.setup_request_id}
+                  fixtureClerkUserId={fixtureClerkUserId}
+                  secondary
+                  pendingChildren="Declining…"
+                >
+                  Decline
+                </DecisionForm>
               </>
             ) : (
               <>

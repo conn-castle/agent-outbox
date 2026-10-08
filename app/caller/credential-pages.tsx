@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { unstable_rethrow } from "next/navigation";
 
 import { ActionSubmitButton } from "../../src/components/actions/ActionSubmitButton";
 import {
@@ -8,16 +7,13 @@ import {
 } from "../../src/server/caller-credential-operations";
 import { getSetupRequestTerminalState } from "../../src/server/caller-setup-requests";
 import { createCorrelationId } from "../../src/server/correlation";
-import type { ProductTransactionQuery } from "../../src/server/database";
-import type { HumanAccountSession } from "../../src/server/human-session";
 import { MissingConfigurationPanel } from "../../src/server/ui";
 import {
   firstParam,
   fixtureClerkUserIdParam,
-  reportCallerApprovalFailure,
   requiredCallerConnectSessionConfiguration,
   resolveCallerConnectHumanSession,
-  runCallerConnectHumanTransaction
+  runCallerPageTransaction
 } from "./connect/session";
 import {
   AccountSummary,
@@ -26,6 +22,7 @@ import {
   ConnectErrorPage,
   ConnectErrorPanel,
   ConnectPageShell,
+  DecisionForm,
   DeviceCodeEntryCard,
   FixtureIdentity,
   type FormAction,
@@ -71,16 +68,14 @@ export async function CredentialOperationApprovePage({
   }
 
   const requestId = createCorrelationId(`caller_${operation}_approve_page_req`);
-  const page = await credentialPageTransaction(
-    operation,
-    fixtureClerkUserId,
+  const page = await runCallerPageTransaction(
     {
       requestId,
+      fixtureClerkUserId,
       route: `/caller/${operation}/approve`,
-      method: "GET",
-      operation: `caller_${operation}_browser_approval_preview`
+      operation: `caller_${operation}_browser_approval_preview`,
+      unavailableMessage: `Caller ${operation} approval is temporarily unavailable.`
     },
-    "approval",
     (query, session) =>
       getCredentialOperationBrowserApprovalPreview(query, {
         operation,
@@ -108,34 +103,25 @@ export async function CredentialOperationApprovePage({
                 : "Approving lets the CLI exchange a setup code to revoke hosted keys for this caller."}
             </p>
             <ConnectActions>
-              <form action={approveAction}>
-                <input
-                  type="hidden"
-                  name="setupRequestId"
-                  value={preview.data.setup_request_id}
-                />
-                <FixtureIdentity value={fixtureClerkUserId} />
-                <ActionSubmitButton
-                  className="button"
-                  pendingChildren="Approving…"
-                >
-                  {approveButton(operation)}
-                </ActionSubmitButton>
-              </form>
-              <form action={denyAction}>
-                <input
-                  type="hidden"
-                  name="setupRequestId"
-                  value={preview.data.setup_request_id}
-                />
-                <FixtureIdentity value={fixtureClerkUserId} />
-                <ActionSubmitButton
-                  className="button secondary"
-                  pendingChildren="Cancelling…"
-                >
-                  Cancel
-                </ActionSubmitButton>
-              </form>
+              <DecisionForm
+                action={approveAction}
+                field="setupRequestId"
+                value={preview.data.setup_request_id}
+                fixtureClerkUserId={fixtureClerkUserId}
+                pendingChildren="Approving…"
+              >
+                {approveButton(operation)}
+              </DecisionForm>
+              <DecisionForm
+                action={denyAction}
+                field="setupRequestId"
+                value={preview.data.setup_request_id}
+                fixtureClerkUserId={fixtureClerkUserId}
+                secondary
+                pendingChildren="Cancelling…"
+              >
+                Cancel
+              </DecisionForm>
             </ConnectActions>
           </section>
         </>
@@ -187,16 +173,14 @@ export async function CredentialOperationDevicePage({
   }
 
   const requestId = createCorrelationId(`caller_${operation}_device_page_req`);
-  const page = await credentialPageTransaction(
-    operation,
-    fixtureClerkUserId,
+  const page = await runCallerPageTransaction(
     {
       requestId,
+      fixtureClerkUserId,
       route: `/caller/${operation}/device`,
-      method: "GET",
-      operation: `caller_${operation}_device_approval_preview`
+      operation: `caller_${operation}_device_approval_preview`,
+      unavailableMessage: `Caller ${operation} approval is temporarily unavailable.`
     },
-    "approval",
     (query, session) =>
       getCredentialOperationDeviceApprovalPreview(query, {
         operation,
@@ -239,20 +223,16 @@ export async function CredentialOperationDevicePage({
                   {approveButton(operation)}
                 </ActionSubmitButton>
               </form>
-              <form action={denyAction}>
-                <input
-                  type="hidden"
-                  name="setupRequestId"
-                  value={preview.data.setup_request_id}
-                />
-                <FixtureIdentity value={fixtureClerkUserId} />
-                <ActionSubmitButton
-                  className="button secondary"
-                  pendingChildren="Cancelling…"
-                >
-                  Cancel
-                </ActionSubmitButton>
-              </form>
+              <DecisionForm
+                action={denyAction}
+                field="setupRequestId"
+                value={preview.data.setup_request_id}
+                fixtureClerkUserId={fixtureClerkUserId}
+                secondary
+                pendingChildren="Cancelling…"
+              >
+                Cancel
+              </DecisionForm>
             </ConnectActions>
           </section>
         </>
@@ -306,16 +286,14 @@ export async function CredentialOperationSuccessPage({
     );
   }
 
-  const page = await credentialPageTransaction(
-    operation,
-    fixtureClerkUserId,
+  const page = await runCallerPageTransaction(
     {
       requestId,
+      fixtureClerkUserId,
       route: `/caller/${operation}/success`,
-      method: "GET",
-      operation: `caller_${operation}_terminal_success`
+      operation: `caller_${operation}_terminal_success`,
+      unavailableMessage: `Caller ${operation} status is temporarily unavailable.`
     },
-    "status",
     (query, session) =>
       getSetupRequestTerminalState(query, {
         operation,
@@ -408,16 +386,14 @@ export async function CredentialOperationErrorPage({
 
   const requestId = createCorrelationId(`caller_${operation}_error_page_req`);
   if (code === "setup_denied" && setupRequestId) {
-    const page = await credentialPageTransaction(
-      operation,
-      fixtureClerkUserId,
+    const page = await runCallerPageTransaction(
       {
         requestId,
+        fixtureClerkUserId,
         route: `/caller/${operation}/error`,
-        method: "GET",
-        operation: `caller_${operation}_terminal_denied`
+        operation: `caller_${operation}_terminal_denied`,
+        unavailableMessage: `Caller ${operation} status is temporarily unavailable.`
       },
-      "status",
       (query, session) =>
         getSetupRequestTerminalState(query, {
           operation,
@@ -503,79 +479,6 @@ export async function CredentialOperationErrorPage({
       error={{ status, code, message }}
     />
   );
-}
-
-async function credentialPageTransaction<TResult>(
-  operation: CredentialOperation,
-  fixtureClerkUserId: string | undefined,
-  reportContext: {
-    requestId: string;
-    route: string;
-    method: string;
-    operation: string;
-  },
-  errorNoun: string,
-  callback: (
-    query: ProductTransactionQuery,
-    session: HumanAccountSession
-  ) => Promise<TResult>
-): Promise<
-  | { ok: true; session: HumanAccountSession; data: TResult }
-  | { ok: false; error: { status: number; code: string; message: string } }
-> {
-  const startedAtMs = Date.now();
-  let activeSession: HumanAccountSession | undefined;
-  try {
-    const transaction = await runCallerConnectHumanTransaction(
-      {
-        requestId: reportContext.requestId,
-        fixtureClerkUserId,
-        route: reportContext.route,
-        method: reportContext.method
-      },
-      (query, session) => {
-        activeSession = session;
-        return callback(query, session);
-      }
-    );
-    if (!transaction.ok) {
-      return { ok: false, error: transaction };
-    }
-    return {
-      ok: true,
-      session: transaction.session,
-      data: transaction.data
-    };
-  } catch (error) {
-    unstable_rethrow(error);
-    reportCallerApprovalFailure(error, {
-      session: activeSession,
-      ...reportContext,
-      startedAtMs
-    });
-    return temporaryPageError(operation, errorNoun);
-  }
-}
-
-function temporaryPageError(
-  operation: CredentialOperation,
-  noun: string
-): {
-  ok: false;
-  error: {
-    status: 503;
-    code: "temporary_unavailable";
-    message: string;
-  };
-} {
-  return {
-    ok: false,
-    error: {
-      status: 503,
-      code: "temporary_unavailable",
-      message: `Caller ${operation} ${noun} is temporarily unavailable.`
-    }
-  };
 }
 
 function operationLabel(operation: CredentialOperation) {
