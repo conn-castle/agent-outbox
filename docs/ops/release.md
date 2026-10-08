@@ -30,10 +30,10 @@ Runtime fixture flags cannot enable fixtures in a normal production build.
 
 Browser verification uses one Playwright worker to limit browser memory
 pressure. This does not impose a hard memory cap on the build or server. Failed
-tests retain traces, screenshots, and error context under `test-results/`; CI
-and Release Check upload these as `ci-browser-failures` and
-`release-check-browser-failures` artifacts for seven days. Inspect the original
-failure artifact before rerunning a failed gate.
+tests retain traces, screenshots, and error context under `test-results/`;
+Release Check uploads these as the `release-check-browser-failures` artifact for
+seven days. Inspect the original failure artifact before rerunning a failed
+gate.
 
 Commit a new stable `package.json` version such as `0.1.0` in the release pull
 request. Version `0.0.0`, prerelease versions, reused tags, uncommitted
@@ -146,26 +146,44 @@ for the release window.
 
 ## CI Gates
 
-The current pull-request CI gate names are:
+`.github/workflows/release-check.yml` is the single verification workflow for
+pull requests, pushes to `main`, manual dispatch, and production certification.
+It defines five checks, each once:
 
 - `make check`
 - `make go-check`
-- `make browser`
-- `make migration-replay`
-- `Policy gates`
-
-The release-check workflow also exposes:
-
 - `make release-check`
 - `make browser`
 - `make migration-replay`
 
-Do not require a status check in branch protection until a fresh or recent
-workflow run confirms the exact check name is green for the current tree.
-`release-check.yml` also runs on pull requests by design. Its browser and
-migration jobs intentionally overlap ordinary CI: this repository prioritizes
-independent automated certification and early release-specific feedback over
-minimizing runner consumption.
+The separate `Policy gates` check completes the required PR checks. Do not
+require a status check in branch protection until a fresh or recent workflow run
+confirms the exact check name is green for the current tree.
+
+The `make release-check` job needs the `check` and `go-check` jobs, then runs
+`make package-check marketing-verify`. Those targets together equal the
+canonical Makefile `release-check` prerequisites; standalone local
+`make release-check` still runs them all. A first-step prerequisite-result guard
+makes this job fail when a needed job failed or was skipped, instead of
+reporting a skipped required check as successful. Production certification
+retains all suites, including migration replay followed by the database
+verification suite.
+
+Release Check cancels superseded PR runs in a group per PR number. Its literal
+workflow-specific prefix avoids caller-context collisions, and every non-PR run
+gets a run-unique group: pushes to `main`, manual runs, and production
+certification are never cancelled or replaced by concurrency. GitHub does not
+guarantee group ordering, so a delayed older PR run can cancel a newer head's
+run; that head's cancelled required checks fail closed and require a rerun.
+Re-running jobs from an older PR run joins the same PR group and cancels the
+in-progress run for the current head; this also fails closed and requires a
+rerun of the current head. Consolidation and cancellation save compute, without
+claiming a critical-path latency reduction.
+
+Policy gates intentionally has no concurrency group. It evaluates approval
+labels from its own triggering-event payload, and unordered cancellation could
+leave an older label event's evaluation in place of a newer label-removal
+evaluation.
 
 `.github/workflows/policy-gates.yml` is a separate required PR workflow, not a
 second merge phase. It fails when a pull request exceeds the megachange cap
@@ -201,8 +219,10 @@ delete them.
 1. Validate the dispatch is the exact current `main` SHA, resolve the stable
    version from `package.json`, and require public-repository plus Homebrew tap
    access.
-2. Rerun the reusable release gate on that SHA: `make release-check`, browser
-   tests, and migration replay/database policy checks.
+2. Rerun the five-job reusable certification workflow on that SHA: `make check`,
+   `make go-check`, `make release-check` (package and marketing verification),
+   `make browser`, and `make migration-replay` followed by database
+   verification.
 3. Create or verify an ephemeral local `v<package.json version>` tag on the
    exact candidate, build the four macOS/Linux archives and `checksums.txt` with
    pinned GoReleaser, render `Casks/agent-outbox.rb` from those checksums

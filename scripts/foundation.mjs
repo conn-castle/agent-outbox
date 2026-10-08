@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,9 @@ import {
   validateDatabaseTestCommand,
   validateMigrationReplayWorkflow,
   validatePolicyGatesWorkflow,
+  validateRequiredPullRequestChecks,
+  validateReleaseCheckJob,
+  validateWorkflowConcurrency,
   validateWorkflowGoChecks,
   validateWorkflowVersionPins
 } from "./foundation/ci-workflows.mjs";
@@ -312,6 +315,14 @@ function smoke() {
   }
   assertNoFailures(validateMigrationReplayWorkflow(workflows));
   assertNoFailures(validatePolicyGatesWorkflow(workflows));
+  const allWorkflows = readPathContents(
+    readdirSync(path.join(ROOT, ".github/workflows"))
+      .filter((name) => /\.ya?ml$/.test(name))
+      .map((name) => `.github/workflows/${name}`)
+  );
+  assertNoFailures(validateRequiredPullRequestChecks(allWorkflows));
+  assertNoFailures(validateReleaseCheckJob(workflows, readText("Makefile")));
+  assertNoFailures(validateWorkflowConcurrency(workflows));
 
   assertNoFailures(validateRuntimeProofScope(readRuntimeProofSourceContents()));
 

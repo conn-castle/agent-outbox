@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync, readdirSync } from "node:fs";
 
 import {
   assertNoForbiddenWorkflowCommands,
   validateDatabaseTestCommand,
   validateMigrationReplayWorkflow,
   validatePolicyGatesWorkflow,
+  validateRequiredPullRequestChecks,
+  validateReleaseCheckJob,
+  validateWorkflowConcurrency,
   validateWorkflowGoChecks,
   validateWorkflowVersionPins
 } from "../scripts/foundation/ci-workflows.mjs";
@@ -60,7 +64,6 @@ jobs:
 
   assert.deepEqual(
     validateMigrationReplayWorkflow({
-      ".github/workflows/ci.yml": validWorkflow,
       ".github/workflows/release-check.yml": validWorkflow
     }),
     []
@@ -76,8 +79,7 @@ jobs:
     .replace("    env:", "    env: # job environment");
   assert.deepEqual(
     validateMigrationReplayWorkflow({
-      ".github/workflows/ci.yml": commentedWorkflow,
-      ".github/workflows/release-check.yml": validWorkflow
+      ".github/workflows/release-check.yml": commentedWorkflow
     }),
     []
   );
@@ -97,26 +99,24 @@ jobs:
     );
   assert.deepEqual(
     validateMigrationReplayWorkflow({
-      ".github/workflows/ci.yml": stepScopedDatabaseEnvironment,
-      ".github/workflows/release-check.yml": validWorkflow
+      ".github/workflows/release-check.yml": stepScopedDatabaseEnvironment
     }),
     []
   );
 
   assert.deepEqual(
     validateMigrationReplayWorkflow({
-      ".github/workflows/ci.yml": "steps: []",
-      ".github/workflows/release-check.yml": validWorkflow
+      ".github/workflows/release-check.yml": "steps: []"
     }),
     [
-      ".github/workflows/ci.yml must include a migration-replay job",
-      ".github/workflows/ci.yml must include a Postgres 17 service in the migration-replay job",
-      ".github/workflows/ci.yml must include make migration-replay in the named replay step",
-      ".github/workflows/ci.yml must include make test-database in the named database verification step",
-      ".github/workflows/ci.yml must include AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification",
-      ".github/workflows/ci.yml must include DATABASE_MIGRATION_URL for database verification",
-      ".github/workflows/ci.yml must include FLYWAY_DOCKER_NETWORK=host in the migration-replay job",
-      ".github/workflows/ci.yml must include database verification after migration replay"
+      ".github/workflows/release-check.yml must include a migration-replay job",
+      ".github/workflows/release-check.yml must include a Postgres 17 service in the migration-replay job",
+      ".github/workflows/release-check.yml must include make migration-replay in the named replay step",
+      ".github/workflows/release-check.yml must include make test-database in the named database verification step",
+      ".github/workflows/release-check.yml must include AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification",
+      ".github/workflows/release-check.yml must include DATABASE_MIGRATION_URL for database verification",
+      ".github/workflows/release-check.yml must include FLYWAY_DOCKER_NETWORK=host in the migration-replay job",
+      ".github/workflows/release-check.yml must include database verification after migration replay"
     ]
   );
 
@@ -232,12 +232,11 @@ jobs:
   ];
   for (const [description, workflow, expectedFailure] of invalidWorkflows) {
     const failures = validateMigrationReplayWorkflow({
-      ".github/workflows/ci.yml": workflow,
-      ".github/workflows/release-check.yml": validWorkflow
+      ".github/workflows/release-check.yml": workflow
     });
     assert.ok(
       failures.includes(
-        `.github/workflows/ci.yml must include ${expectedFailure}`
+        `.github/workflows/release-check.yml must include ${expectedFailure}`
       ),
       description
     );
@@ -455,11 +454,11 @@ test("validateWorkflowVersionPins rejects CI Node drift", () => {
       runtimeDevTools: {},
       providerCli: {}
     },
-    { ".github/workflows/ci.yml": "node-version: 26.1.0" }
+    { ".github/workflows/release-check.yml": "node-version: 26.1.0" }
   );
 
   assert.deepEqual(failures, [
-    ".github/workflows/ci.yml node-version 26.1.0 must match toolchain.json 24.18.0"
+    ".github/workflows/release-check.yml node-version 26.1.0 must match toolchain.json 24.18.0"
   ]);
 });
 test("validateWorkflowGoChecks requires Go gate jobs in CI workflows", () => {
@@ -476,79 +475,412 @@ test("validateWorkflowGoChecks requires Go gate jobs in CI workflows", () => {
     runtimeDevTools: {},
     providerCli: {}
   };
-  const validCiWorkflow = `
+  const validReleaseWorkflow = `
       - uses: actions/setup-go@v6
         with:
           go-version-file: cli/go.mod
           cache-dependency-path: cli/go.sum
       - run: make go-check
   `;
-  const validReleaseWorkflow = `
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: cli/go.mod
-          cache-dependency-path: cli/go.sum
-      - run: make release-check
-  `;
 
   assert.deepEqual(
     validateWorkflowGoChecks(toolchain, {
-      ".github/workflows/ci.yml": validCiWorkflow,
       ".github/workflows/release-check.yml": validReleaseWorkflow
     }),
     []
   );
   assert.deepEqual(
     validateWorkflowGoChecks(toolchain, {
-      ".github/workflows/ci.yml": "jobs: {}",
-      ".github/workflows/release-check.yml": validReleaseWorkflow
-    }),
-    [
-      ".github/workflows/ci.yml must include Go gate token: uses: actions/setup-go@v6",
-      ".github/workflows/ci.yml must include Go gate token: go-version-file: cli/go.mod",
-      ".github/workflows/ci.yml must include Go gate token: cache-dependency-path: cli/go.sum",
-      ".github/workflows/ci.yml must include Go gate token: run: make go-check"
-    ]
-  );
-  // A job merely named `make go-check` (no run step) must fail: the gate no
-  // longer executes even though the token string is present.
-  const ciWorkflowNamedButNotRun = `
-      name: make go-check
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: cli/go.mod
-          cache-dependency-path: cli/go.sum
-  `;
-  assert.deepEqual(
-    validateWorkflowGoChecks(toolchain, {
-      ".github/workflows/ci.yml": ciWorkflowNamedButNotRun,
-      ".github/workflows/release-check.yml": validReleaseWorkflow
-    }),
-    [".github/workflows/ci.yml must include Go gate token: run: make go-check"]
-  );
-  assert.deepEqual(
-    validateWorkflowGoChecks(toolchain, {
-      ".github/workflows/ci.yml": validCiWorkflow,
-      ".github/workflows/release-check.yml": validCiWorkflow
-    }),
-    [
-      ".github/workflows/release-check.yml must include Go gate token: run: make release-check"
-    ]
-  );
-  assert.deepEqual(
-    validateWorkflowGoChecks(toolchain, {
-      ".github/workflows/ci.yml": validCiWorkflow,
       ".github/workflows/release-check.yml": "jobs: {}"
     }),
     [
       ".github/workflows/release-check.yml must include Go gate token: uses: actions/setup-go@v6",
       ".github/workflows/release-check.yml must include Go gate token: go-version-file: cli/go.mod",
       ".github/workflows/release-check.yml must include Go gate token: cache-dependency-path: cli/go.sum",
-      ".github/workflows/release-check.yml must include Go gate token: run: make release-check"
+      ".github/workflows/release-check.yml must include Go gate token: run: make go-check"
+    ]
+  );
+  assert.deepEqual(
+    validateWorkflowGoChecks(toolchain, {
+      ".github/workflows/release-check.yml": validReleaseWorkflow.replace(
+        "run: make go-check",
+        "name: make go-check"
+      )
+    }),
+    [
+      ".github/workflows/release-check.yml must include Go gate token: run: make go-check"
     ]
   );
   assert.deepEqual(
     validateWorkflowGoChecks({ ...toolchain, goTooling: {} }, {}),
     ["toolchain.json goTooling.githubActionsSetupGo.version is required"]
+  );
+});
+
+const RELEASE_PATH = ".github/workflows/release-check.yml";
+const POLICY_PATH = ".github/workflows/policy-gates.yml";
+const MAKEFILE_FIXTURE =
+  "release-check: check go-check package-check marketing-verify\n";
+const RELEASE_JOB_FIXTURE = `jobs:
+  check:
+    steps:
+      - name: Dependencies
+        run: make setup
+      - name: Check
+        run: make check
+  go-check:
+    steps:
+      - name: Go
+        run: make go-check
+  release-check:
+    name: make release-check
+    needs: [check, go-check]
+    if: \${{ !cancelled() }}
+    steps:
+      - name: Require successful prerequisites
+        env:
+          NEEDS_JSON: \${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          if ! jq -e 'all(.[]; .result == "success")' <<<"$NEEDS_JSON" >/dev/null; then
+            exit 1
+          fi
+      - name: Dependencies
+        run: make setup
+      - name: Release
+        run: make package-check marketing-verify
+`;
+const CONCURRENCY_FIXTURE = `concurrency:
+  group: release-check-\${{ (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: \${{ github.event_name == 'pull_request' }}
+`;
+const REQUIRED_CHECKS_FIXTURE = {
+  [RELEASE_PATH]: `on:
+  pull_request:
+jobs:
+  check:
+    name: make check
+  go-check:
+    name: make go-check
+  release-check:
+    name: make release-check
+  browser:
+    name: make browser
+  migration-replay:
+    name: make migration-replay
+`,
+  [POLICY_PATH]: `on:
+  pull_request:
+jobs:
+  policy-gates:
+    name: Policy gates
+`
+};
+
+test("required PR checks each have one definition in a PR workflow", () => {
+  assert.deepEqual(
+    validateRequiredPullRequestChecks(REQUIRED_CHECKS_FIXTURE),
+    []
+  );
+  const duplicate = `on:
+  pull_request:
+jobs:
+  browser:
+    name: make browser
+`;
+  for (const path of [
+    ".github/workflows/extra.yml",
+    ".github/workflows/unregistered.yaml"
+  ]) {
+    for (const name of [
+      "make browser",
+      '"make browser"',
+      "'make browser'",
+      "make browser # x"
+    ]) {
+      const failures = validateRequiredPullRequestChecks({
+        ...REQUIRED_CHECKS_FIXTURE,
+        [path]: duplicate.replace("name: make browser", `name: ${name}`)
+      });
+      assert.ok(
+        failures.some(
+          (failure) =>
+            failure.includes("make browser") &&
+            failure.includes("found 2") &&
+            failure.includes(path)
+        ),
+        `${path}: ${name}`
+      );
+    }
+  }
+  assert.ok(
+    validateRequiredPullRequestChecks({
+      ...REQUIRED_CHECKS_FIXTURE,
+      [RELEASE_PATH]: REQUIRED_CHECKS_FIXTURE[RELEASE_PATH].replace(
+        "    name: make browser\n",
+        ""
+      )
+    }).some(
+      (failure) =>
+        failure.includes("make browser") && failure.includes("found 0")
+    )
+  );
+  assert.ok(
+    validateRequiredPullRequestChecks({
+      ...REQUIRED_CHECKS_FIXTURE,
+      [RELEASE_PATH]: REQUIRED_CHECKS_FIXTURE[RELEASE_PATH].replace(
+        "  pull_request:",
+        "  workflow_dispatch:"
+      )
+    }).some((failure) => failure.includes("must run on pull_request"))
+  );
+  // Workflow/step names must not count as job check definitions.
+  assert.ok(
+    validateRequiredPullRequestChecks({
+      ...REQUIRED_CHECKS_FIXTURE,
+      [POLICY_PATH]:
+        "name: Policy gates\non:\n  pull_request:\njobs:\n  policy:\n    steps:\n      - name: Policy gates\n"
+    }).some(
+      (failure) =>
+        failure.includes("Policy gates") && failure.includes("found 0")
+    )
+  );
+});
+
+test("release-check derives all prerequisites once and accepts setup steps", () => {
+  assert.deepEqual(
+    validateReleaseCheckJob(
+      { [RELEASE_PATH]: RELEASE_JOB_FIXTURE },
+      MAKEFILE_FIXTURE
+    ),
+    []
+  );
+  assert.deepEqual(
+    validateReleaseCheckJob(
+      {
+        [RELEASE_PATH]: RELEASE_JOB_FIXTURE.replace(
+          "package-check marketing-verify",
+          "package-check marketing-verify additional-check"
+        )
+      },
+      "release-check: check go-check package-check marketing-verify additional-check\n"
+    ),
+    []
+  );
+});
+
+const INVALID_RELEASE_JOBS = [
+  [
+    "missing needs",
+    "    needs: [check, go-check]\n",
+    "",
+    "needed prerequisite jobs"
+  ],
+  [
+    "missing cancellation condition",
+    "    if: \${{ !cancelled() }}\n",
+    "",
+    "job-level if"
+  ],
+  [
+    "missing guard",
+    "Require successful prerequisites",
+    "Unrelated step",
+    "prerequisite-result guard"
+  ],
+  [
+    "conditional guard",
+    "      - name: Require successful prerequisites",
+    "      - name: Require successful prerequisites\n        if: ${{ false }}",
+    "prerequisite-result guard"
+  ],
+  [
+    "guard accepting any successful prerequisite",
+    "all(.[];",
+    "any(.[];",
+    "prerequisite-result guard"
+  ],
+  [
+    "guard after setup",
+    "      - name: Require successful prerequisites",
+    "      - name: Early setup\n        run: make setup\n      - name: Require successful prerequisites",
+    "prerequisite-result guard"
+  ],
+  [
+    "guard without failure",
+    "            exit 1",
+    "          echo failed",
+    "prerequisite-result guard"
+  ],
+  [
+    "nested release-check repetition",
+    "make package-check marketing-verify",
+    "make release-check",
+    "must equal Makefile"
+  ],
+  [
+    "missing marketing verification",
+    "make package-check marketing-verify",
+    "make package-check",
+    "must equal Makefile"
+  ],
+  [
+    "repeated check",
+    "make package-check marketing-verify",
+    "make check package-check marketing-verify",
+    "must not repeat"
+  ],
+  [
+    "continue-on-error",
+    "    name: make release-check",
+    "    continue-on-error: true\n    name: make release-check",
+    "continue-on-error"
+  ],
+  [
+    "conditional release verification",
+    "        run: make package-check",
+    "        if: success()\n        run: make package-check",
+    "must not condition"
+  ],
+  [
+    "conditional needed verification",
+    "        run: make check",
+    "        if: success()\n        run: make check",
+    "must not condition"
+  ],
+  [
+    "conditional needed job",
+    "  check:\n",
+    "  check:\n    if: success()\n",
+    "must not have a job-level if"
+  ],
+  [
+    "needed job runs two targets",
+    "make go-check",
+    "make go-check check",
+    "exactly one non-setup"
+  ],
+  [
+    "extra release verification step",
+    "        run: make package-check marketing-verify",
+    "        run: make package-check marketing-verify\n      - name: Again\n        run: make package-check",
+    "exactly one make step"
+  ]
+];
+for (const [description, from, to, expected] of INVALID_RELEASE_JOBS) {
+  test(`release-check rejects ${description}`, () => {
+    const failures = validateReleaseCheckJob(
+      { [RELEASE_PATH]: RELEASE_JOB_FIXTURE.replace(from, to) },
+      MAKEFILE_FIXTURE
+    );
+    assert.ok(
+      failures.some((failure) => failure.includes(expected)),
+      failures.join("\n")
+    );
+  });
+}
+
+test("workflow concurrency accepts the PR-only run-unique group and comments", () => {
+  assert.deepEqual(
+    validateWorkflowConcurrency({ [RELEASE_PATH]: CONCURRENCY_FIXTURE }),
+    []
+  );
+  assert.deepEqual(
+    validateWorkflowConcurrency({
+      [RELEASE_PATH]: CONCURRENCY_FIXTURE.replace(
+        "  group:",
+        "  # Literal workflow prefix.\n  group:"
+      )
+    }),
+    []
+  );
+});
+
+const INVALID_CONCURRENCY = [
+  [
+    "caller workflow prefix",
+    CONCURRENCY_FIXTURE.replace("release-check-", "\${{ github.workflow }}-")
+  ],
+  [
+    "unconditional cancellation",
+    CONCURRENCY_FIXTURE.replace(
+      "cancel-in-progress: \${{ github.event_name == 'pull_request' }}",
+      "cancel-in-progress: true"
+    )
+  ],
+  ["missing group", CONCURRENCY_FIXTURE.replace(/^  group:.*\n/m, "")],
+  ["queued runs", `${CONCURRENCY_FIXTURE}  queue: max\n`],
+  [
+    "extra job group",
+    `${CONCURRENCY_FIXTURE}jobs:\n  other:\n    concurrency:\n      group: production-deploy\n`
+  ],
+  [
+    "extra group without concurrency",
+    `${CONCURRENCY_FIXTURE}jobs:\n  other:\n    group: production-deploy\n`
+  ],
+  ["missing concurrency", "jobs:\n"],
+  [
+    "job-level concurrency",
+    CONCURRENCY_FIXTURE.split("\n")
+      .map((line) => `    ${line}`)
+      .join("\n")
+  ]
+];
+for (const [description, workflow] of INVALID_CONCURRENCY) {
+  test(`workflow concurrency rejects ${description}`, () => {
+    assert.notDeepEqual(
+      validateWorkflowConcurrency({ [RELEASE_PATH]: workflow }),
+      []
+    );
+  });
+}
+
+test("Policy gates rejects concurrency at workflow or job level", () => {
+  const policy = readFileSync(
+    new URL(`../${POLICY_PATH}`, import.meta.url),
+    "utf8"
+  );
+  for (const content of [
+    CONCURRENCY_FIXTURE + policy,
+    policy.replace(
+      "    steps:",
+      "    concurrency:\n      group: policy\n    steps:"
+    )
+  ]) {
+    assert.ok(
+      validatePolicyGatesWorkflow({ [POLICY_PATH]: content }).includes(
+        `${POLICY_PATH} must not declare concurrency`
+      )
+    );
+  }
+});
+
+test("repository workflow files satisfy verification and policy contracts", () => {
+  const directory = new URL("../.github/workflows/", import.meta.url);
+  const workflows = Object.fromEntries(
+    readdirSync(directory)
+      .filter((name) => /\.ya?ml$/.test(name))
+      .map((name) => [
+        `.github/workflows/${name}`,
+        readFileSync(new URL(name, directory), "utf8")
+      ])
+  );
+  const makefile = readFileSync(
+    new URL("../Makefile", import.meta.url),
+    "utf8"
+  );
+  const toolchain = JSON.parse(
+    readFileSync(new URL("../toolchain.json", import.meta.url), "utf8")
+  );
+  assert.deepEqual(
+    [
+      ...validateRequiredPullRequestChecks(workflows),
+      ...validateReleaseCheckJob(workflows, makefile),
+      ...validateWorkflowConcurrency(workflows),
+      ...validateMigrationReplayWorkflow(workflows),
+      ...validateWorkflowGoChecks(toolchain, workflows),
+      ...validatePolicyGatesWorkflow(workflows)
+    ],
+    []
   );
 });

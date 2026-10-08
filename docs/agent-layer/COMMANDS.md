@@ -345,7 +345,7 @@ make go-check
 
 Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Runs a
 non-mutating Go format check, `go vet`, Go unit tests, and the binary build to
-`dist/agent-outbox`. CI and release-check workflows run this as a sibling gate;
+`dist/agent-outbox`. The release-check workflow runs this as a sibling gate;
 the credential-free Node `make check` remains separate.
 
 - Validate CLI package artifacts without publishing
@@ -386,7 +386,8 @@ make release-check
 
 Run from: repo root Prerequisites: `make setup` has completed and Go `1.26.4`
 must be available. Notes: Canonical non-publishing release/package verification
-gate. It runs `make check`, `make go-check`, and `make package-check`. It must
+gate. It runs `make check`, `make go-check`, `make package-check`, and
+`make marketing-verify`. It must
 not deploy, publish, tag, upload packages, mutate provider state, or require
 private provider credentials.
 
@@ -677,20 +678,26 @@ print configured values.
 
 ## CI
 
-- GitHub Actions CI gate
+- GitHub Actions release-check gate
 
 ```bash
 make setup
 make check
+make go-check
+make package-check marketing-verify
+make browser
+make migration-replay
+make test-database
 ```
 
 Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
-`24.18.0` before running commands. Notes: `.github/workflows/ci.yml` runs these
-commands with read-only repository permissions and no provider credentials by
-default. The same workflow also installs Playwright Chromium and runs a
-separate `make browser` job, plus a separate `make migration-replay` job against
-a raw `postgres:17` service followed by the canonical serialized database
-verification suite.
+`24.18.0` and Go `1.26.4`, installs Playwright Chromium for browser tests, and
+provides a raw `postgres:17` service for migration replay and database verification.
+Notes: `.github/workflows/release-check.yml` serves PRs, pushes to `main`, manual
+dispatch, and production certification with read-only repository permissions.
+The five jobs run each verification lane once; `make release-check` waits for
+check/go-check and runs only package/marketing verification after its prerequisite
+result guard succeeds. See `docs/ops/release.md` for CI gates and concurrency.
 
 - GitHub Actions Policy gates
 
@@ -706,19 +713,3 @@ the PR diff for megachange, destructive migrations, and public legal-policy
 changes. Human-only labels `megachange-approved`,
 `migration-destructive-approved`, and `legal-policy-approved` are the only
 overrides. `make test` also runs the fixture self-checks.
-
-- GitHub Actions release-check gate
-
-```bash
-make setup
-make release-check
-```
-
-Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
-`24.18.0` and Go `1.26.4` before running commands. Notes:
-`.github/workflows/release-check.yml` runs these commands with read-only
-repository permissions. The workflow is verification-only and has no deployment
-or package publication step. The same workflow also installs Playwright
-Chromium and runs a separate `make browser` job, plus `make migration-replay`
-against a raw `postgres:17` service followed by the canonical serialized
-database verification suite.

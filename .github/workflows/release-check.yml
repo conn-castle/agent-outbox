@@ -1,19 +1,78 @@
 name: Release Check
 
 on:
-  workflow_call:
   pull_request:
+  push:
+    branches:
+      - main
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Cancel superseded PR runs; give every non-PR run its own group.
+# Use a literal prefix because called workflows inherit the caller's github context.
+concurrency:
+  # prettier-ignore
+  group: release-check-${{ (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  check:
+    name: make check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.0
+
+      - name: Set up dependencies
+        run: make setup
+
+      - name: Run verification gate
+        run: make check
+
+  go-check:
+    name: make go-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - name: Run Go CLI verification gate
+        run: make go-check
+
   release-check:
     name: make release-check
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    needs: [check, go-check]
+    if: ${{ !cancelled() }}
     steps:
+      - name: Require successful prerequisites
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          if ! jq -e 'all(.[]; .result == "success")' <<<"$NEEDS_JSON" >/dev/null; then
+            echo "::error::make release-check requires successful make check and make go-check jobs in this run."
+            jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS_JSON" >&2
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v7
 
@@ -31,8 +90,8 @@ jobs:
       - name: Set up dependencies
         run: make setup
 
-      - name: Run release verification gate
-        run: make release-check
+      - name: Run release-only verification
+        run: make package-check marketing-verify
 
   browser:
     name: make browser

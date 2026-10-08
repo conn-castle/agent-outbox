@@ -1,6 +1,6 @@
 name: Policy gates
 
-# Independent of ordinary CI so applying a human-only approval label retriggers
+# Independent of Release Check so applying a human-only approval label retriggers
 # these checks without skipping or replacing make check / browser / replay runs.
 on:
   pull_request:
