@@ -59,6 +59,14 @@ export type InputQueueSuccess =
 export type InputQueueResult =
   { ok: true; data: InputQueueSuccess } | { ok: false; error: ApiErrorInput };
 
+// The HTTP response omits the internal `operation` discriminant; the route
+// already names the operation. Distributes over the union so each variant
+// keeps its own fields.
+type WithoutOperation<T> = T extends unknown ? Omit<T, "operation"> : never;
+type InputQueueResponse =
+  | { ok: true; data: WithoutOperation<InputQueueSuccess> }
+  | { ok: false; error: ApiErrorInput };
+
 type ExistingInputRow = {
   input_item_id: string;
   status: "pending" | "answered";
@@ -120,7 +128,7 @@ export async function handleInputQueueRequest(
   context: ApiRequestContext,
   operation: InputQueueOperation,
   jsonBody: unknown
-): Promise<InputQueueResult> {
+): Promise<InputQueueResponse> {
   if (operation === "delete") {
     const parsed = parseInputDeleteBody(jsonBody);
     if (!parsed.ok) {
@@ -155,7 +163,11 @@ export async function handleInputQueueRequest(
     if (!transaction.authenticated) {
       return { ok: false, error: transaction.failure.clientError };
     }
-    return transaction.data;
+    if (!transaction.data.ok) {
+      return transaction.data;
+    }
+    const { operation: _operation, ...data } = transaction.data.data;
+    return { ok: true, data };
   } catch (error) {
     // This marker escapes the exact INSERT and is returned only after the
     // transaction helper has rolled back. Failed rollback/cleanup replaces or
@@ -487,7 +499,7 @@ export async function deleteInputItem(
   };
 }
 
-export function existingInputStatement(
+function existingInputStatement(
   identity: CallerIdentity,
   callerItemId: string
 ): TransactionContextStatement {
@@ -564,11 +576,17 @@ export function insertInputItemStatement(
       on conflict (caller_id, caller_item_id) do nothing
       returning input_item_id, current_revision
     `,
-    values: inputItemValues(identity, submission)
+    values: [
+      identity.accountId,
+      identity.callerId,
+      submission.callerItemId,
+      submission.callerItemIdHash,
+      ...inputContentValues(submission)
+    ]
   };
 }
 
-export function updateInputItemStatement(
+function updateInputItemStatement(
   inputItemId: string,
   submission: NormalizedInputSubmission
 ): TransactionContextStatement {
@@ -596,28 +614,11 @@ export function updateInputItemStatement(
       where input_item_id = $1
       returning current_revision
     `,
-    values: [
-      inputItemId,
-      submission.priority,
-      submission.rowType.display,
-      submission.rowType.icon,
-      submission.rowAccentColor,
-      submission.titleHtml,
-      submission.subtitleHtml,
-      submission.cornerHtml,
-      submission.summaryHtml,
-      submission.detailsHtml,
-      submission.cardVisual?.kind ?? null,
-      JSON.stringify(submission.cardVisual?.payload ?? {}),
-      submission.skipDisabled,
-      submission.normalizedContentFingerprint,
-      submission.nonFilePayloadBytes,
-      submission.cardTime
-    ]
+    values: [inputItemId, ...inputContentValues(submission)]
   };
 }
 
-export function insertLinkButtonStatement(
+function insertLinkButtonStatement(
   inputItemId: string,
   button: NormalizedInputSubmission["linkButtons"][number]
 ): TransactionContextStatement {
@@ -642,7 +643,7 @@ export function insertLinkButtonStatement(
   };
 }
 
-export function insertActionStatement(
+function insertActionStatement(
   inputItemId: string,
   action: NormalizedInputAction
 ): TransactionContextStatement {
@@ -678,7 +679,7 @@ export function insertActionStatement(
   };
 }
 
-export function insertPopupOptionStatement(
+function insertPopupOptionStatement(
   inputActionId: string,
   option: NormalizedPopupOption
 ): TransactionContextStatement {
@@ -703,7 +704,7 @@ export function insertPopupOptionStatement(
   };
 }
 
-export function deleteLinkButtonsStatement(
+function deleteLinkButtonsStatement(
   inputItemId: string
 ): TransactionContextStatement {
   return {
@@ -712,7 +713,7 @@ export function deleteLinkButtonsStatement(
   };
 }
 
-export function deleteActionsStatement(
+function deleteActionsStatement(
   inputItemId: string
 ): TransactionContextStatement {
   return {
@@ -721,7 +722,7 @@ export function deleteActionsStatement(
   };
 }
 
-export function deleteInputItemStatement(
+function deleteInputItemStatement(
   inputItemId: string
 ): TransactionContextStatement {
   return {
@@ -838,15 +839,9 @@ async function auditContext(
   };
 }
 
-function inputItemValues(
-  identity: CallerIdentity,
-  submission: NormalizedInputSubmission
-) {
+// Shared by insert ($5..$19) and replace ($2..$16), in column order.
+function inputContentValues(submission: NormalizedInputSubmission) {
   return [
-    identity.accountId,
-    identity.callerId,
-    submission.callerItemId,
-    submission.callerItemIdHash,
     submission.priority,
     submission.rowType.display,
     submission.rowType.icon,
