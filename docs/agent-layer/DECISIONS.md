@@ -106,11 +106,6 @@ Record otherwise-lost rationale that materially constrains future work. Current 
     Reason: A new database-gated root test must automatically receive migrated-Postgres coverage; one Make target keeps the local and workflow boundary identical.
     Tradeoffs: Migration-replay jobs repeat credential-free coverage and run new root tests serially, but cannot silently omit database-gated tests or drift from the canonical command.
 
-- Decision 2026-08-12 retain-pr-release-certification: Retain independent release certification on pull requests
-    Decision: Keep both ordinary CI and the release-check workflow running on pull requests, including their intentionally duplicated browser and migration-replay lanes.
-    Reason: Development is fully agentic and relies on automated process rather than routine human code inspection, so catching packaging, workflow, and provider-parity regressions before merge is more important than minimizing CI consumption.
-    Tradeoffs: Pull requests consume additional runner time and repeat several gates, but gain independent certification and earlier release-specific feedback rather than discovering those failures during a production release.
-
 - Decision 2026-08-14 perimeter-source-license: Permit internal commercial use while prohibiting competing products
     Decision: License Agent Outbox source under PolyForm Perimeter License 1.0.1, allowing internal use and modification, including commercial internal operations, while prohibiting providing others a product that competes with Agent Outbox, including a competing hosted service.
     Reason: Nick selected this boundary so individuals and companies can adapt Agent Outbox for their own operations without enabling competing products or hosted services.
@@ -155,3 +150,8 @@ Record otherwise-lost rationale that materially constrains future work. Current 
     Decision: Deploy card-time compatibility support before enabling non-null submissions in a later release. Once non-null records exist, rollback must target the compatibility release or newer.
     Reason: Earlier code cannot verify fingerprints containing card_time. Null values stay omitted from fingerprints to preserve historical hashes while canonical responses return explicit null.
     Tradeoffs: Two releases preserve readable input/output records during rollback without a feature flag. The compatibility release rejects non-null submissions and clears stored card_time on full replacement.
+
+- Decision 2026-10-08 single-verification-workflow: Share verification across PRs, main, and production certification
+    Decision: Use one workflow so every verification lane runs once and production certification is exercised before merge.
+    Reason: Fully agentic development still needs packaging, workflow, and provider-parity regressions caught before merge; consolidating the certification workflow preserves that feedback while reducing duplicate runner work.
+    Tradeoffs: The make release-check job waits on check/go-check, and pushes to main now also run package and marketing verification.

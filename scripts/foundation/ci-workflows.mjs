@@ -2,18 +2,18 @@ import {
   workflowJobContent,
   workflowMappingBlockContent,
   workflowNamedStepContent,
+  workflowStepBlocks,
+  parseWorkflowStepTuple,
   workflowRunStepIncludes
 } from "../workflow-yaml.mjs";
 
 /** @typedef {import("./toolchain.mjs").PackageJson} PackageJson */
 /** @typedef {import("./toolchain.mjs").Toolchain} Toolchain */
 
-export const CI_WORKFLOW_PATH = ".github/workflows/ci.yml";
 export const RELEASE_CHECK_WORKFLOW_PATH =
   ".github/workflows/release-check.yml";
 export const POLICY_GATES_WORKFLOW_PATH = ".github/workflows/policy-gates.yml";
 export const CI_WORKFLOW_PATHS = [
-  CI_WORKFLOW_PATH,
   RELEASE_CHECK_WORKFLOW_PATH,
   POLICY_GATES_WORKFLOW_PATH
 ];
@@ -83,7 +83,7 @@ export function validateWorkflowVersionPins(toolchain, workflowContentsByPath) {
 export function validateMigrationReplayWorkflow(workflowContentsByPath) {
   const failures = [];
 
-  for (const workflowPath of [CI_WORKFLOW_PATH, RELEASE_CHECK_WORKFLOW_PATH]) {
+  for (const workflowPath of [RELEASE_CHECK_WORKFLOW_PATH]) {
     const content = workflowContentsByPath[workflowPath] ?? "";
     const migrationReplayJob = workflowJobContent(content, "migration-replay");
     const services = workflowMappingBlockContent(
@@ -287,6 +287,10 @@ export function validatePolicyGatesWorkflow(workflowContentsByPath) {
     failures.push(`${workflowPath} must not run on push`);
   }
 
+  if (/^\s*concurrency:/m.test(content)) {
+    failures.push(`${workflowPath} must not declare concurrency`);
+  }
+
   for (const label of HUMAN_ONLY_APPROVAL_LABELS) {
     if (content.includes(`--add-label ${label}`)) {
       failures.push(
@@ -364,13 +368,9 @@ export function validateWorkflowGoChecks(toolchain, workflowContentsByPath) {
     ];
   }
 
-  // release-check.yml runs the Go gate transitively through `make
-  // release-check`; validateGoReleaserTooling asserts that Makefile chain.
-  // Match the `run:` step form, not the bare token, so the check cannot pass on
-  // a workflow that only names the job `make go-check` but no longer runs it.
+  // Match a run step so a job name alone cannot satisfy the Go gate.
   const gateTokenByWorkflowPath = {
-    [CI_WORKFLOW_PATH]: "run: make go-check",
-    [RELEASE_CHECK_WORKFLOW_PATH]: "run: make release-check"
+    [RELEASE_CHECK_WORKFLOW_PATH]: "run: make go-check"
   };
   for (const [workflowPath, gateToken] of Object.entries(
     gateTokenByWorkflowPath
@@ -390,5 +390,223 @@ export function validateWorkflowGoChecks(toolchain, workflowContentsByPath) {
     }
   }
 
+  return failures;
+}
+
+export const REQUIRED_PULL_REQUEST_CHECKS = [
+  "make check",
+  "make go-check",
+  "make browser",
+  "make migration-replay",
+  "make release-check",
+  "Policy gates"
+];
+
+/**
+ * @param {Record<string, string>} workflowContentsByPath All workflow files.
+ * @returns {string[]}
+ */
+export function validateRequiredPullRequestChecks(workflowContentsByPath) {
+  const failures = [];
+  for (const requiredName of REQUIRED_PULL_REQUEST_CHECKS) {
+    const definitions = [];
+    for (const [workflowPath, content] of Object.entries(
+      workflowContentsByPath
+    )) {
+      const jobs = workflowMappingBlockContent(content, "jobs", 0);
+      for (const match of jobs.matchAll(/^    name:[ \t]*(.+?)[ \t]*$/gm)) {
+        const name = match[1]
+          .replace(/\s+#.*$/, "")
+          .replace(/^(['"])(.*)\1$/, "$2");
+        if (name === requiredName) {
+          definitions.push({ workflowPath, content });
+        }
+      }
+    }
+    if (definitions.length !== 1) {
+      failures.push(
+        `Required pull request check ${requiredName} must be defined exactly once; found ${definitions.length}${definitions.length ? ` in ${definitions.map(({ workflowPath }) => workflowPath).join(", ")}` : ""}`
+      );
+    }
+    for (const { workflowPath, content } of definitions) {
+      const events = workflowMappingBlockContent(content, "on", 0);
+      if (!/^  pull_request:[ \t]*(?:#.*)?$/m.test(events)) {
+        failures.push(
+          `${workflowPath} defining ${requiredName} must run on pull_request`
+        );
+      }
+    }
+  }
+  return failures;
+}
+
+/**
+ * @param {string} job
+ * @returns {import("../workflow-yaml.mjs").WorkflowStepTuple[]}
+ */
+function makeVerificationSteps(job) {
+  return workflowStepBlocks(job)
+    .map((lines) => parseWorkflowStepTuple(lines))
+    .filter(
+      ({ command }) => command?.startsWith("make ") && command !== "make setup"
+    );
+}
+
+/**
+ * @param {Record<string, string>} workflowContentsByPath
+ * @param {string} makefileContent
+ * @returns {string[]}
+ */
+export function validateReleaseCheckJob(
+  workflowContentsByPath,
+  makefileContent
+) {
+  const failures = [];
+  const workflowPath = RELEASE_CHECK_WORKFLOW_PATH;
+  const content = workflowContentsByPath[workflowPath] ?? "";
+  const job = workflowJobContent(content, "release-check");
+  const prerequisiteList = makefileContent.match(
+    /^release-check:[ \t]*([^\n\r]+)$/m
+  )?.[1];
+  if (!prerequisiteList) {
+    return ["Makefile must declare release-check prerequisites"];
+  }
+  const prerequisites = prerequisiteList.trim().split(/\s+/);
+  const needs =
+    job
+      .match(/^    needs:[ \t]*\[([^\]]+)\][ \t]*$/m)?.[1]
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean) ?? [];
+  const guard = workflowNamedStepContent(
+    job,
+    "Require successful prerequisites"
+  );
+  const firstMakeIndex = job.search(/^\s*(?:- )?run:[ \t]*make /m);
+  const requirements = [
+    [
+      "the make release-check job name",
+      /^    name: make release-check[ \t]*$/m.test(job)
+    ],
+    ["needed prerequisite jobs", needs.length > 0],
+    [
+      "job-level if: ${{ !cancelled() }}",
+      /^    if: \$\{\{ !cancelled\(\) \}\}[ \t]*$/m.test(job)
+    ],
+    [
+      "a failing prerequisite-result guard before any make step",
+      parseWorkflowStepTuple(guard.split(/\r?\n/)).condition === null &&
+        guard.includes("toJSON(needs)") &&
+        guard.includes('all(.[]; .result == "success")') &&
+        /^[ \t]+exit 1[ \t]*$/m.test(guard) &&
+        firstMakeIndex > job.indexOf(guard) &&
+        guard !== ""
+    ]
+  ];
+  for (const [description, present] of requirements) {
+    if (!present) {
+      failures.push(`${workflowPath} must include ${description}`);
+    }
+  }
+  if (/^\s*(?:- )?continue-on-error:/m.test(content)) {
+    failures.push(`${workflowPath} must not declare continue-on-error`);
+  }
+  const releaseSteps = makeVerificationSteps(job);
+  if (releaseSteps.length !== 1) {
+    failures.push(
+      `${workflowPath} release-check must run verification targets in exactly one make step`
+    );
+  }
+  /** @param {import("../workflow-yaml.mjs").WorkflowStepTuple[]} steps */
+  const makeTargets = (steps) =>
+    steps.flatMap(({ command }) => (command ?? "").split(/\s+/).slice(1));
+  const releaseTargets = makeTargets(releaseSteps);
+  const neededTargets = needs.flatMap((needed) => {
+    const neededJob = workflowJobContent(content, needed);
+    const steps = makeVerificationSteps(neededJob);
+    if (/^    if:/m.test(neededJob)) {
+      failures.push(
+        `${workflowPath} needed job ${needed} must not have a job-level if`
+      );
+    }
+    if (
+      steps.length !== 1 ||
+      !/^make [A-Za-z0-9_-]+$/.test(steps[0]?.command ?? "")
+    ) {
+      failures.push(
+        `${workflowPath} needed job ${needed} must run exactly one non-setup make target`
+      );
+    }
+    if (steps.some(({ condition }) => condition !== null)) {
+      failures.push(
+        `${workflowPath} needed job ${needed} must not condition its verification step`
+      );
+    }
+    return makeTargets(steps);
+  });
+  if (releaseSteps.some(({ condition }) => condition !== null)) {
+    failures.push(
+      `${workflowPath} release-check must not condition its verification step`
+    );
+  }
+  if (
+    releaseTargets.some((target) => neededTargets.includes(target)) ||
+    new Set(releaseTargets).size !== releaseTargets.length
+  ) {
+    failures.push(
+      `${workflowPath} release-check must not repeat prerequisite targets`
+    );
+  }
+  const targets = new Set([...releaseTargets, ...neededTargets]);
+  if (
+    targets.size !== new Set(prerequisites).size ||
+    prerequisites.some((target) => !targets.has(target))
+  ) {
+    failures.push(
+      `${workflowPath} release-check and needed-job targets must equal Makefile release-check prerequisites: ${prerequisites.join(" ")}`
+    );
+  }
+  return failures;
+}
+
+/**
+ * @param {Record<string, string>} workflowContentsByPath
+ * @returns {string[]}
+ */
+export function validateWorkflowConcurrency(workflowContentsByPath) {
+  const failures = [];
+  const workflowPath = RELEASE_CHECK_WORKFLOW_PATH;
+  const content = workflowContentsByPath[workflowPath] ?? "";
+  const lines = content
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"));
+  const declarations = lines.filter((line) => /^\s*concurrency:/.test(line));
+  if (declarations.length !== 1 || declarations[0] !== "concurrency:") {
+    failures.push(
+      `${workflowPath} must declare exactly one top-level concurrency block`
+    );
+  }
+  const block = workflowMappingBlockContent(content, "concurrency", 0)
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"));
+  const expected = [
+    "concurrency:",
+    "  group: release-check-${{ (github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)) || format('run-{0}', github.run_id) }}",
+    "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}"
+  ];
+  if (block.join("\n") !== expected.join("\n")) {
+    failures.push(
+      `${workflowPath} concurrency must use the literal release-check prefix, PR-number or run-unique group, and PR-only cancellation`
+    );
+  }
+  if (
+    lines.filter((line) => /^\s*group:/.test(line)).length !== 1 ||
+    lines.some((line) => /^\s*queue:/.test(line)) ||
+    block.join("\n").includes("github.workflow")
+  ) {
+    failures.push(
+      `${workflowPath} must not declare extra groups, queue, or github.workflow concurrency`
+    );
+  }
   return failures;
 }
