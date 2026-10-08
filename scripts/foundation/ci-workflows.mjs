@@ -485,12 +485,14 @@ export function validateCiCertificationWorkflow(
   // target's parts run as separate jobs. Make allows blank and comment-only
   // lines between the target and its recipe.
   const releaseTarget = makefileContent.match(/^release-check:([^\n]*)\n/m);
-  const nextMakefileLine = releaseTarget
-    ? makefileContent
-        .slice(releaseTarget.index + releaseTarget[0].length)
-        .split(/\r?\n/)
-        .find((line) => line.trim() !== "" && !/^ *#/.test(line))
-    : undefined;
+  const matchIndex = releaseTarget?.index;
+  const nextMakefileLine =
+    releaseTarget && matchIndex !== undefined
+      ? makefileContent
+          .slice(matchIndex + releaseTarget[0].length)
+          .split(/\r?\n/)
+          .find((line) => line.trim() !== "" && !/^ *#/.test(line))
+      : undefined;
   if (
     releaseTarget?.[1].trim().split(/\s+/).join(" ") !==
       "check go-check package-check marketing-verify" ||
