@@ -345,7 +345,7 @@ make go-check
 
 Run from: repo root Prerequisites: Go `1.26.4` must be available. Notes: Runs a
 non-mutating Go format check, `go vet`, Go unit tests, and the binary build to
-`dist/agent-outbox`. CI and release-check workflows run this as a sibling gate;
+`dist/agent-outbox`. The CI workflow runs this as a sibling gate;
 the credential-free Node `make check` remains separate.
 
 - Validate CLI package artifacts without publishing
@@ -384,11 +384,12 @@ itself performs no remote mutation.
 make release-check
 ```
 
-Run from: repo root Prerequisites: `make setup` has completed and Go `1.26.4`
-must be available. Notes: Canonical non-publishing release/package verification
-gate. It runs `make check`, `make go-check`, and `make package-check`. It must
-not deploy, publish, tag, upload packages, mutate provider state, or require
-private provider credentials.
+Run from: repo root Prerequisites: `make setup` has completed, Go `1.26.4`
+must be available, and Docker must be running for `marketing-verify`. Notes:
+Canonical non-publishing release/package verification gate. Its full chain is
+`check go-check package-check marketing-verify`. It must not deploy, publish,
+tag, upload packages, mutate provider state, or require private provider
+credentials.
 
 ## Cloudflare Platform
 
@@ -626,7 +627,7 @@ AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 DATABASE_MIGRATION_URL='postgresql://postgr
 
 Run from: repo root Prerequisites: `make setup` has completed and Flyway
 migrations have been applied to a disposable target database. Notes: This is the
-canonical command used after migration replay in CI and release-check. It
+canonical command used after migration replay in the CI workflow. It
 serially discovers every root `tests/*.test.mjs` file, so new database-gated
 tests are included automatically. It uses the same spec log, stderr sidecar,
 and short summary as `make test`. `--test-concurrency=1` is forwarded to
@@ -711,14 +712,17 @@ overrides. `make test` also runs the fixture self-checks.
 
 ```bash
 make setup
-make release-check
+make package-check marketing-verify
 ```
 
 Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
 `24.18.0` and Go `1.26.4` before running commands. Notes:
-`.github/workflows/release-check.yml` runs these commands with read-only
-repository permissions. The workflow is verification-only and has no deployment
-or package publication step. The same workflow also installs Playwright
+The `make release-check` job in `.github/workflows/ci.yml` runs these commands
+with read-only repository permissions beside `make check` and `make go-check`.
+Together they cover the full local `make release-check` chain:
+`check go-check package-check marketing-verify`. The workflow is verification-only
+and has no deployment or package publication step. It also installs Playwright
 Chromium and runs a separate `make browser` job, plus `make migration-replay`
-against a raw `postgres:17` service followed by the canonical serialized
-database verification suite.
+against a raw `postgres:17` service followed by the canonical serialized database
+verification suite. Production certification calls this same workflow through
+`workflow_call` on the exact release SHA.

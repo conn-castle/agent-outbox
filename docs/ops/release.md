@@ -31,9 +31,8 @@ Runtime fixture flags cannot enable fixtures in a normal production build.
 Browser verification uses one Playwright worker to limit browser memory
 pressure. This does not impose a hard memory cap on the build or server. Failed
 tests retain traces, screenshots, and error context under `test-results/`; CI
-and Release Check upload these as `ci-browser-failures` and
-`release-check-browser-failures` artifacts for seven days. Inspect the original
-failure artifact before rerunning a failed gate.
+uploads these as `ci-browser-failures` artifacts for seven days. Inspect the
+original failure artifact before rerunning a failed gate.
 
 Commit a new stable `package.json` version such as `0.1.0` in the release pull
 request. Version `0.0.0`, prerelease versions, reused tags, uncommitted
@@ -146,26 +145,24 @@ for the release window.
 
 ## CI Gates
 
-The current pull-request CI gate names are:
+The CI workflow produces these required pull-request contexts:
 
 - `make check`
 - `make go-check`
 - `make browser`
 - `make migration-replay`
-- `Policy gates`
-
-The release-check workflow also exposes:
-
 - `make release-check`
-- `make browser`
-- `make migration-replay`
+
+The `make release-check` job runs the release-only remainder,
+`make package-check marketing-verify`; `make check` and `make go-check` run as
+sibling jobs. `Policy gates` comes from its own workflow.
 
 Do not require a status check in branch protection until a fresh or recent
-workflow run confirms the exact check name is green for the current tree.
-`release-check.yml` also runs on pull requests by design. Its browser and
-migration jobs intentionally overlap ordinary CI: this repository prioritizes
-independent automated certification and early release-specific feedback over
-minimizing runner consumption.
+workflow run confirms the exact check name is green for the current tree. PRs
+and production certification run the same CI workflow, each gate once per head.
+A newer PR commit cancels that PR's superseded CI and Policy gates runs; a label
+event also supersedes the previous Policy gates run. Non-PR runs are never
+cancelled.
 
 `.github/workflows/policy-gates.yml` is a separate required PR workflow, not a
 second merge phase. It fails when a pull request exceeds the megachange cap
@@ -174,7 +171,15 @@ destructive Flyway SQL, or changes the published Privacy Policy, Terms of
 Service, or shared legal identity, unless a human applies the matching
 human-only label through the GitHub web interface: `megachange-approved`,
 `migration-destructive-approved`, or `legal-policy-approved`. Agents must never
-apply those labels. Applying a label retriggers only Policy gates.
+apply those labels. Applying or removing a label retriggers only Policy gates.
+
+Immediately before policy evaluation, the workflow reads the PR's current labels
+through GitHub's paginated labels API using `pull-requests: read`; it does not
+use the triggering event's label snapshot. Reruns fetch again. Authentication,
+API, pagination, and malformed-response errors fail the job before label outputs
+are published. Concurrency does not guarantee event dispatch order. Labels can
+change during pagination or between the fetch and job completion, so this read
+is not an atomic snapshot and a successful check is not merge authorization.
 
 ## Production Deploy
 
@@ -201,8 +206,9 @@ delete them.
 1. Validate the dispatch is the exact current `main` SHA, resolve the stable
    version from `package.json`, and require public-repository plus Homebrew tap
    access.
-2. Rerun the reusable release gate on that SHA: `make release-check`, browser
-   tests, and migration replay/database policy checks.
+2. Rerun the CI workflow on that SHA through `workflow_call`: `make check`,
+   `make go-check`, browser, migration replay/database suite, and the
+   release-only `make package-check marketing-verify`.
 3. Create or verify an ephemeral local `v<package.json version>` tag on the
    exact candidate, build the four macOS/Linux archives and `checksums.txt` with
    pinned GoReleaser, render `Casks/agent-outbox.rb` from those checksums

@@ -2,12 +2,24 @@ name: CI
 
 on:
   pull_request:
+  workflow_call:
+  workflow_dispatch:
   push:
     branches:
       - main
 
 permissions:
   contents: read
+
+# A newer commit on a pull request cancels that PR's superseded CI run.
+# Every other run (push to main, manual dispatch, production certification via
+# workflow_call, where github.workflow is the caller's name) gets its own
+# run-ID group, so it never cancels or replaces another run.
+concurrency:
+  group:
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id
+    }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -113,3 +125,31 @@ jobs:
 
       - name: Run database verification suite
         run: make test-database
+
+  release-check:
+    name: make release-check
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - name: Set up dependencies
+        run: make setup
+
+      # make release-check is check go-check package-check marketing-verify.
+      # check and go-check run as sibling jobs; this context runs the remainder.
+      - name: Run release-only gates
+        run: make package-check marketing-verify

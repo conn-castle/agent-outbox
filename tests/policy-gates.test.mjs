@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -399,6 +400,20 @@ test("policy-gates workflow retriggers on labels and never applies them", () => 
     /scripts\/policy-gates\/migration-discipline-scan\.mjs/
   );
   assert.match(workflow, /scripts\/policy-gates\/legal-policy-gate\.mjs/);
+  assert.doesNotMatch(workflow, /github\.event\.pull_request\.labels/);
+  assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+  assert.match(
+    workflow,
+    /PR_NUMBER: \$\{\{ github\.event\.pull_request\.number \}\}/
+  );
+  assert.ok(
+    workflow.indexOf("Self-validate policy fixtures") <
+      workflow.indexOf("Resolve label state")
+  );
+  assert.ok(
+    workflow.indexOf("Resolve label state") <
+      workflow.indexOf("Evaluate megachange cap")
+  );
   assert.doesNotMatch(
     workflow,
     /--add-label\s+(megachange-approved|migration-destructive-approved|legal-policy-approved)/
@@ -407,6 +422,210 @@ test("policy-gates workflow retriggers on labels and never applies them", () => 
     workflow,
     /gh\s+pr\s+edit.*(?:megachange-approved|migration-destructive-approved|legal-policy-approved)/
   );
+});
+
+// Run the deployed resolver itself with offline command responses. No GitHub or
+// git writes are involved; each invocation owns its fixtures and output file.
+function resolveCurrentLabels({
+  eventLabels = [],
+  stdout = "[[]]",
+  status = 0,
+  stderr = "",
+  token = "offline-token"
+} = {}) {
+  const workflow = readFileSync(
+    path.join(ROOT, ".github/workflows/policy-gates.yml"),
+    "utf8"
+  );
+  const step = workflow.match(
+    /      - name: Resolve label state\n([\s\S]*?)(?=      - name:|$)/
+  )?.[1];
+  assert.ok(step, "Missing label resolver step");
+  const script = step
+    .match(/        run: \|\n([\s\S]*)/)?.[1]
+    .replace(/^          /gm, "");
+  assert.ok(script, "Missing label resolver shell block");
+  // Retain fixtures under the repository temporary-artifact rules.
+  const scratchRoot = path.join(
+    ROOT,
+    ".agent-layer/tmp/policy-gates-label-tests"
+  );
+  mkdirSync(scratchRoot, { recursive: true });
+  const scratch = mkdtempSync(path.join(scratchRoot, "labels-"));
+  const fakeGh = path.join(scratch, "gh");
+  const argsFile = path.join(scratch, "args.txt");
+  const outputFile = path.join(scratch, "output.txt");
+  const eventFile = path.join(scratch, "event.json");
+  writeFileSync(
+    fakeGh,
+    `#!/bin/sh
+printf '%s\\n' "$@" > "$FAKE_GH_ARGS"
+printf '%s' "$FAKE_GH_STDOUT"
+printf '%s' "$FAKE_GH_STDERR" >&2
+exit "$FAKE_GH_STATUS"
+`
+  );
+  chmodSync(fakeGh, 0o700);
+  writeFileSync(outputFile, "");
+  writeFileSync(
+    eventFile,
+    JSON.stringify({ pull_request: { number: 117, labels: eventLabels } })
+  );
+  const result = spawnSync("bash", ["-c", script], {
+    cwd: scratch,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${scratch}${path.delimiter}${process.env.PATH}`,
+      GH_TOKEN: token,
+      GITHUB_REPOSITORY: "conn-castle/agent-outbox",
+      PR_NUMBER: "117",
+      GITHUB_OUTPUT: outputFile,
+      GITHUB_EVENT_PATH: eventFile,
+      PR_LABELS_JSON: JSON.stringify(eventLabels),
+      FAKE_GH_ARGS: argsFile,
+      FAKE_GH_STDOUT: stdout,
+      FAKE_GH_STDERR: stderr,
+      FAKE_GH_STATUS: String(status)
+    }
+  });
+  if (token) {
+    assert.deepEqual(readFileSync(argsFile, "utf8").trimEnd().split("\n"), [
+      "api",
+      "--method",
+      "GET",
+      "--paginate",
+      "--slurp",
+      "-H",
+      "Accept: application/vnd.github+json",
+      "repos/conn-castle/agent-outbox/issues/117/labels?per_page=100"
+    ]);
+  }
+  return { ...result, outputs: readFileSync(outputFile, "utf8"), scratch };
+}
+
+const HUMAN_LABELS = [
+  "megachange-approved",
+  "migration-destructive-approved",
+  "legal-policy-approved"
+].map((name) => ({ name }));
+
+function expectedLabelOutputs(megachange, migration, legal) {
+  return `megachange_label_present=${megachange}\nmigration_label_present=${migration}\nlegal_policy_label_present=${legal}\n`;
+}
+
+test("current PR labels reject stale labeled events after removal", () => {
+  const result = resolveCurrentLabels({
+    eventLabels: HUMAN_LABELS,
+    stdout: "[[]]"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.outputs, expectedLabelOutputs(false, false, false));
+  const paths = path.join(result.scratch, "paths.txt");
+  writeFileSync(paths, "app/privacy-policy/page.tsx\n");
+  const flags = result.outputs.includes("legal_policy_label_present=true\n")
+    ? ["--label-present"]
+    : [];
+  const gate = runNode([
+    "scripts/policy-gates/legal-policy-gate.mjs",
+    "--paths-file",
+    paths,
+    ...flags
+  ]);
+  assert.equal(gate.status, 1, gate.stderr || gate.stdout);
+});
+
+test("current PR labels use later pages despite a stale unlabeled event", () => {
+  const pages = [
+    Array.from({ length: 100 }, (_, i) => ({ name: `ordinary-${i}` })),
+    HUMAN_LABELS
+  ];
+  const result = resolveCurrentLabels({ stdout: JSON.stringify(pages) });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.outputs, expectedLabelOutputs(true, true, true));
+  const paths = path.join(result.scratch, "paths.txt");
+  writeFileSync(paths, "app/privacy-policy/page.tsx\n");
+  const flags = result.outputs.includes("legal_policy_label_present=true\n")
+    ? ["--label-present"]
+    : [];
+  const gate = runNode([
+    "scripts/policy-gates/legal-policy-gate.mjs",
+    "--paths-file",
+    paths,
+    ...flags
+  ]);
+  assert.equal(gate.status, 0, gate.stderr || gate.stdout);
+});
+
+test("current PR labels refetch on retries and observe independent removals", () => {
+  const responses = [
+    { labels: HUMAN_LABELS, expected: [true, true, true] },
+    { labels: [HUMAN_LABELS[1]], expected: [false, true, false] },
+    { labels: [], expected: [false, false, false] }
+  ];
+  for (const { labels, expected } of responses) {
+    const result = resolveCurrentLabels({
+      eventLabels: HUMAN_LABELS,
+      stdout: JSON.stringify([labels])
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.outputs, expectedLabelOutputs(...expected));
+  }
+});
+
+test("current PR labels fail closed on API, auth, pagination and malformed responses", async (t) => {
+  const partial = JSON.stringify([HUMAN_LABELS]);
+  const cases = [
+    { name: "missing token", token: "" },
+    {
+      name: "authentication rejected",
+      status: 1,
+      stderr: "HTTP 401: Bad credentials"
+    },
+    {
+      name: "read permission denied",
+      status: 1,
+      stderr: "HTTP 403: Resource not accessible"
+    },
+    { name: "API unavailable", status: 1, stderr: "HTTP 503: unavailable" },
+    {
+      name: "later page fails after labels arrived",
+      stdout: partial,
+      status: 1,
+      stderr: "HTTP 502 on page 2"
+    },
+    { name: "empty response", stdout: "" },
+    { name: "invalid JSON", stdout: "[[" },
+    { name: "no pages", stdout: "[]" },
+    { name: "API error object", stdout: '{"message":"Not Found"}' },
+    {
+      name: "non-array later page",
+      stdout: JSON.stringify([HUMAN_LABELS, { message: "error" }])
+    },
+    { name: "null label", stdout: "[[null]]" },
+    { name: "missing name", stdout: "[[{}]]" },
+    { name: "non-string name", stdout: '[[{"name":true}]]' },
+    { name: "empty name", stdout: '[[{"name":""}]]' },
+    { name: "multiple JSON documents", stdout: `${partial}\n[[]]` }
+  ];
+  for (const { name, ...response } of cases) {
+    await t.test(name, () => {
+      const result = resolveCurrentLabels({
+        eventLabels: HUMAN_LABELS,
+        ...response
+      });
+      assert.notEqual(result.status, 0);
+      assert.equal(
+        result.outputs,
+        "",
+        "No label outputs may survive a failed fetch"
+      );
+      assert.match(result.stderr, /failing closed/);
+    });
+  }
+  const recovered = resolveCurrentLabels({ eventLabels: HUMAN_LABELS });
+  assert.equal(recovered.status, 0, recovered.stderr);
+  assert.equal(recovered.outputs, expectedLabelOutputs(false, false, false));
 });
 
 test("collect-changed-files parses name-status and numstat including renames", () => {
