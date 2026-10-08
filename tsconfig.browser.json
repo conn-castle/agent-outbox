@@ -12,6 +12,7 @@
     "next.config.ts",
     "middleware.ts",
     "scripts/**/*.mjs",
+    "scripts/**/*.ts",
     "sentry.edge.config.ts",
     "sentry.server.config.ts",
     "src/**/*.ts",

@@ -23,7 +23,10 @@ import {
   isHttpUrl,
   SUPPORTED_COLORS
 } from "../src/shared/input-schema-rules.ts";
-import { publicSchemaMismatch } from "../src/shared/public-api-contract.ts";
+import {
+  PUBLIC_API_EXAMPLES,
+  publicSchemaMismatch
+} from "../src/shared/public-api-contract.ts";
 import { fakeQuery, queryResult } from "./helpers/fake-query.mjs";
 
 /**
@@ -265,6 +268,88 @@ test("input contract mismatches report the offending field path", () => {
       "Request does not match the public input-submission contract."
     ),
     null
+  );
+});
+
+/**
+ * Verifies root and nested field paths and the last message for repeated errors
+ * on the same field.
+ */
+test("contract mismatches report the last error per field path, including nested array paths", () => {
+  /** @type {any} */
+  const input = structuredClone(PUBLIC_API_EXAMPLES.inputSubmission);
+  input.actions[0].value = "has spaces";
+  input.row_type.icon = "not-an-icon";
+  input.row_accent_color = "bogus";
+  delete input.title;
+  assert.deepEqual(
+    publicSchemaMismatch("InputSubmission", input, "unused fallback"),
+    [
+      {
+        path: "",
+        code: "contract_mismatch",
+        message: "must have required properties title"
+      },
+      {
+        path: "row_type.icon",
+        code: "contract_mismatch",
+        message: "must be equal to one of the allowed values"
+      },
+      {
+        path: "row_accent_color",
+        code: "contract_mismatch",
+        message: "must match a schema in anyOf"
+      },
+      {
+        path: "actions[0].value",
+        code: "contract_mismatch",
+        message: 'must match pattern "^[A-Za-z0-9._:-]{1,128}$"'
+      }
+    ]
+  );
+});
+
+/**
+ * Verifies that a non-object request reports the validator's root message.
+ */
+test("contract mismatch for a non-object body reports one root field", () => {
+  assert.deepEqual(
+    publicSchemaMismatch("InputDelete", "not an object", "unused fallback"),
+    [{ path: "", code: "contract_mismatch", message: "must be object" }]
+  );
+});
+
+/**
+ * Verifies that page schemas reject invalid limits, negative counts, and empty
+ * continuation cursors at their corresponding field paths.
+ */
+test("cursor page contracts enforce page limits, counts, and cursors", () => {
+  /** @type {any} */
+  const check = structuredClone(PUBLIC_API_EXAMPLES.checkSuccess);
+  check.data.page_limit = 0;
+  check.data.returned_count = -1;
+  assert.deepEqual(
+    publicSchemaMismatch("OutputCheckResponse", check, "unused fallback")
+      ?.map((field) => field.path)
+      .sort(),
+    ["data.page_limit", "data.returned_count"]
+  );
+  /** @type {any} */
+  const list = structuredClone(PUBLIC_API_EXAMPLES.listInputsSuccess);
+  list.data.next_cursor = "";
+  assert.deepEqual(
+    publicSchemaMismatch("InputListResponse", list, "unused fallback")?.map(
+      (field) => field.path
+    ),
+    ["data.next_cursor"]
+  );
+  assert.deepEqual(
+    publicSchemaMismatch(
+      "OutputReadAllRequest",
+      { limit: 0 },
+      "unused fallback"
+    )?.map((field) => field.path),
+    ["limit"]
   );
 });
 
