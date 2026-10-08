@@ -1,9 +1,7 @@
 import { Buffer } from "node:buffer";
 
-import {
-  auditEventInsertStatement,
-  type AuditSafeLifecycleEvent
-} from "./accounting.ts";
+import type { PopupKind } from "../shared/input-schema-rules.ts";
+import { auditEventInsertStatement } from "./accounting.ts";
 import {
   apiResponseHeaders,
   apiTemporaryUnavailable,
@@ -42,7 +40,7 @@ type OutputFileDownloadRow = {
   account_audit_id: string;
   caller_audit_id: string;
   caller_item_id_hash: string;
-  response_kind: AuditSafeLifecycleEvent["response_kind"];
+  response_kind: PopupKind;
   filename: string;
   mime_type: string | null;
   size_bytes: string | number;
