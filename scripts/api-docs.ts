@@ -27,15 +27,16 @@ const bundleOutputPath = new URL(
   import.meta.url
 );
 const openApiOutputPath = repositoryUrl(OPENAPI_DOCUMENT.sourcePath);
-const referencePage = API_DOC_PAGES.find((page) => page.generated);
-if (!referencePage) {
+const manifestReferencePage = API_DOC_PAGES.find((page) => page.generated);
+if (!manifestReferencePage) {
   throw new Error("API documentation manifest has no generated reference.");
 }
+const referencePage = manifestReferencePage;
 const referenceOutputPath = repositoryUrl(referencePage.sourcePath);
 
 type JsonObject = Record<string, unknown>;
 
-export function publicOpenApiDocument() {
+function publicOpenApiDocument() {
   validatePublicApiContract();
   validateImplementedRoutes();
   const paths: JsonObject = {};
@@ -51,28 +52,25 @@ export function publicOpenApiDocument() {
         ...operation.behavior.map((item) => `- ${item}`)
       ].join("\n"),
       security: [{ callerBearer: [] }],
-      responses: operationResponses(operation.id)
+      responses: operationResponses(operation)
     };
 
-    const parameters: JsonObject[] = [];
-    for (const parameter of operation.pathParameters ?? []) {
-      parameters.push({
-        name: parameter.name,
+    const parameters = [
+      ...(operation.pathParameters ?? []).map(({ name, description }) => ({
+        name,
         in: "path",
         required: true,
-        description: parameter.description,
+        description,
         schema: { type: "string", minLength: 1 }
-      });
-    }
-    for (const parameter of operation.query ?? []) {
-      parameters.push({
-        name: parameter.name,
+      })),
+      ...(operation.query ?? []).map(({ name, description, schema }) => ({
+        name,
         in: "query",
         required: false,
-        description: parameter.description,
-        schema: openApiSchema(parameter.schema)
-      });
-    }
+        description,
+        schema: openApiSchema(schema)
+      }))
+    ];
     if (parameters.length > 0) operationObject.parameters = parameters;
 
     if (operation.requestSchema) {
@@ -144,7 +142,7 @@ export function publicOpenApiDocument() {
   return document;
 }
 
-export async function generatedApiDocsText() {
+async function generatedApiDocsText() {
   const openapi = publicOpenApiDocument();
   const documents = [
     ...API_DOC_PAGES.filter((page) => !page.generated).map(
@@ -194,7 +192,7 @@ export async function generatedApiDocsText() {
   )}\n`;
 }
 
-export async function generatedOpenApiText() {
+async function generatedOpenApiText() {
   return format(`${stableJson(publicOpenApiDocument())}\n`, {
     parser: "json",
     filepath: fileURLToPath(openApiOutputPath)
@@ -212,43 +210,10 @@ async function generatedReferenceText(
   });
 }
 
-export async function generateApiDocs() {
-  writeFileSync(bundleOutputPath, await generatedApiDocsText(), "utf8");
-  writeFileSync(openApiOutputPath, await generatedOpenApiText(), "utf8");
-  writeFileSync(
-    referenceOutputPath,
-    await generatedReferenceText(publicOpenApiDocument()),
-    "utf8"
-  );
-}
-
-export async function checkApiDocs() {
-  checkGeneratedFile(
-    bundleOutputPath,
-    await generatedApiDocsText(),
-    "Generated API documentation bundle"
-  );
-  checkGeneratedFile(
-    referenceOutputPath,
-    await generatedReferenceText(publicOpenApiDocument()),
-    "Generated API reference"
-  );
-  checkGeneratedFile(
-    openApiOutputPath,
-    await generatedOpenApiText(),
-    "Generated OpenAPI document"
-  );
-}
-
-function operationResponses(operationId: string) {
-  const operation = PUBLIC_API_OPERATIONS.find(
-    (candidate) => candidate.id === operationId
-  );
-  if (!operation)
-    throw new Error(`Unknown public API operation: ${operationId}`);
+function operationResponses(operation: (typeof PUBLIC_API_OPERATIONS)[number]) {
   if (operation.id !== "downloadOutputFile" && !operation.responseSchema) {
     throw new Error(
-      `Public API operation has no success schema: ${operationId}`
+      `Public API operation has no success schema: ${operation.id}`
     );
   }
 
@@ -527,29 +492,21 @@ function renderReferenceMarkdown(
       for (const behavior of operation.behavior) lines.push(`- ${behavior}`);
       if (operation.behavior.length > 0) lines.push("");
 
-      if (operation.pathParameters?.length) {
+      for (const [heading, parameters] of [
+        ["Path parameters", operation.pathParameters],
+        ["Query parameters", operation.query]
+      ] as const) {
+        if (!parameters?.length) continue;
         lines.push(
-          "Path parameters:",
+          `${heading}:`,
           "",
           "| Name | Meaning |",
-          "| --- | --- |"
+          "| --- | --- |",
+          ...parameters.map(
+            ({ name, description }) => `| \`${name}\` | ${description} |`
+          ),
+          ""
         );
-        for (const parameter of operation.pathParameters) {
-          lines.push(`| \`${parameter.name}\` | ${parameter.description} |`);
-        }
-        lines.push("");
-      }
-      if (operation.query?.length) {
-        lines.push(
-          "Query parameters:",
-          "",
-          "| Name | Meaning |",
-          "| --- | --- |"
-        );
-        for (const parameter of operation.query) {
-          lines.push(`| \`${parameter.name}\` | ${parameter.description} |`);
-        }
-        lines.push("");
       }
       if (operation.requestSchema) {
         lines.push(
@@ -558,12 +515,7 @@ function renderReferenceMarkdown(
         );
       }
       if (operation.exampleKey) {
-        lines.push(
-          "```json",
-          JSON.stringify(PUBLIC_API_EXAMPLES[operation.exampleKey], null, 2),
-          "```",
-          ""
-        );
+        lines.push(...jsonFence(PUBLIC_API_EXAMPLES[operation.exampleKey]));
       }
       lines.push(
         operation.id === "downloadOutputFile"
@@ -575,14 +527,7 @@ function renderReferenceMarkdown(
       );
       if (operation.responseExampleKey) {
         lines.push(
-          "```json",
-          JSON.stringify(
-            PUBLIC_API_EXAMPLES[operation.responseExampleKey],
-            null,
-            2
-          ),
-          "```",
-          ""
+          ...jsonFence(PUBLIC_API_EXAMPLES[operation.responseExampleKey])
         );
       }
     }
@@ -616,6 +561,10 @@ function renderReferenceMarkdown(
   }
 
   return normalizedSource(lines.join("\n"));
+}
+
+function jsonFence(value: unknown) {
+  return ["```json", JSON.stringify(value, null, 2), "```", ""];
 }
 
 function checkGeneratedFile(path: URL, expected: string, label: string) {
@@ -653,15 +602,34 @@ function escapeHtml(value: string) {
 
 async function main() {
   const command = process.argv[2];
+  if (command !== "generate" && command !== "check") {
+    throw new Error("Usage: tsx scripts/api-docs.ts <generate|check>");
+  }
   if (command === "generate") {
-    await generateApiDocs();
-    return;
+    writeFileSync(bundleOutputPath, await generatedApiDocsText(), "utf8");
+    writeFileSync(openApiOutputPath, await generatedOpenApiText(), "utf8");
+    writeFileSync(
+      referenceOutputPath,
+      await generatedReferenceText(publicOpenApiDocument()),
+      "utf8"
+    );
+  } else {
+    checkGeneratedFile(
+      bundleOutputPath,
+      await generatedApiDocsText(),
+      "Generated API documentation bundle"
+    );
+    checkGeneratedFile(
+      referenceOutputPath,
+      await generatedReferenceText(publicOpenApiDocument()),
+      "Generated API reference"
+    );
+    checkGeneratedFile(
+      openApiOutputPath,
+      await generatedOpenApiText(),
+      "Generated OpenAPI document"
+    );
   }
-  if (command === "check") {
-    await checkApiDocs();
-    return;
-  }
-  throw new Error("Usage: tsx scripts/api-docs.ts <generate|check>");
 }
 
 if (

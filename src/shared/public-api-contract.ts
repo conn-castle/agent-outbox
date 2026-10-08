@@ -302,6 +302,16 @@ const LinkButtonSchema = openObject({
   url: Type.String({ minLength: 1 })
 });
 
+const PaletteColorSchema = Type.String({
+  enum: [...SUPPORTED_COLORS],
+  description: "A named color from the Agent Outbox product palette."
+});
+
+const RowTypeSchema = openObject({
+  display: Type.String({ minLength: 1 }),
+  icon: IconSchema
+});
+
 const NumericVisualFields = {
   label: Type.String({ minLength: 1 }),
   value: Type.Number(),
@@ -317,23 +327,13 @@ const CardVisualSchema = Type.Union(
     openObject({
       kind: Type.Literal("progress_ring"),
       ...NumericVisualFields,
-      color: Type.Optional(
-        nullable(
-          Type.String({
-            enum: [...SUPPORTED_COLORS],
-            description: "A named color from the Agent Outbox product palette."
-          })
-        )
-      )
+      color: Type.Optional(nullable(PaletteColorSchema))
     }),
     openObject({
       kind: Type.Literal("pill"),
       text: Type.String({ minLength: 1 }),
       icon: Type.Optional(nullable(IconSchema)),
-      color: Type.String({
-        enum: [...SUPPORTED_COLORS],
-        description: "A named color from the Agent Outbox product palette."
-      })
+      color: PaletteColorSchema
     })
   ],
   { discriminator: { propertyName: "kind" } }
@@ -351,18 +351,8 @@ const InputSubmissionSchema = openObject(
         "Caller-owned stable logical item id. Input send returns 422 validation_failed if the id cannot fit the item uniqueness index."
     }),
     priority: Type.Optional(nullable(InputPrioritySchema)),
-    row_type: openObject({
-      display: Type.String({ minLength: 1 }),
-      icon: IconSchema
-    }),
-    row_accent_color: Type.Optional(
-      nullable(
-        Type.String({
-          enum: [...SUPPORTED_COLORS],
-          description: "A named color from the Agent Outbox product palette."
-        })
-      )
-    ),
+    row_type: RowTypeSchema,
+    row_accent_color: Type.Optional(nullable(PaletteColorSchema)),
     title: Type.String({ minLength: 1 }),
     subtitle: Type.String({ minLength: 1 }),
     corner: Type.Optional(nullable(Type.String())),
@@ -396,16 +386,8 @@ const CanonicalRawInputSchema = closedObject(
   {
     caller_item_id: Type.String({ minLength: 1 }),
     priority: InputPrioritySchema,
-    row_type: openObject({
-      display: Type.String({ minLength: 1 }),
-      icon: IconSchema
-    }),
-    row_accent_color: nullable(
-      Type.String({
-        enum: [...SUPPORTED_COLORS],
-        description: "A named color from the Agent Outbox product palette."
-      })
-    ),
+    row_type: RowTypeSchema,
+    row_accent_color: nullable(PaletteColorSchema),
     title: Type.String({ minLength: 1 }),
     subtitle: Type.String({ minLength: 1 }),
     corner: nullable(Type.String()),
@@ -435,17 +417,22 @@ const InputReadRequestSchema = openObject(
   { $id: "InputReadRequest", title: "Read live input" }
 );
 
+const PageLimitSchema = Type.Integer({
+  minimum: 1,
+  maximum: SYSTEM_CONTRACT.outputPageMaxLimit,
+  default: SYSTEM_CONTRACT.outputPageDefaultLimit
+});
+
+const CursorPageFields = {
+  has_more: Type.Boolean(),
+  next_cursor: nullable(Type.String({ minLength: 1 })),
+  returned_count: Type.Integer({ minimum: 0 }),
+  page_limit: Type.Integer({ minimum: 1 })
+};
+
 const OutputReadAllRequestSchema = openObject(
   {
-    limit: Type.Optional(
-      nullable(
-        Type.Integer({
-          minimum: 1,
-          maximum: SYSTEM_CONTRACT.outputPageMaxLimit,
-          default: SYSTEM_CONTRACT.outputPageDefaultLimit
-        })
-      )
-    ),
+    limit: Type.Optional(nullable(PageLimitSchema)),
     cursor: Type.Optional(nullable(Type.String({ minLength: 1 })))
   },
   { $id: "OutputReadAllRequest", title: "Read-all page request" }
@@ -537,10 +524,7 @@ const OutputCheckPageSchema = closedObject(
       description:
         "Total live results awaiting acknowledgement, including results already read."
     }),
-    has_more: Type.Boolean(),
-    next_cursor: nullable(Type.String({ minLength: 1 })),
-    returned_count: Type.Integer({ minimum: 0 }),
-    page_limit: Type.Integer({ minimum: 1 })
+    ...CursorPageFields
   },
   { $id: "OutputCheckPage", title: "Output readiness page" }
 );
@@ -558,10 +542,7 @@ const OutputReadPageSchema = closedObject(
       })
     ),
     unavailable_count: Type.Integer({ minimum: 0 }),
-    has_more: Type.Boolean(),
-    next_cursor: nullable(Type.String({ minLength: 1 })),
-    returned_count: Type.Integer({ minimum: 0 }),
-    page_limit: Type.Integer({ minimum: 1 })
+    ...CursorPageFields
   },
   { $id: "OutputReadPage", title: "Output result page" }
 );
@@ -659,10 +640,7 @@ const InputListItemSchema = closedObject(InputLiveMetadataFields);
 const InputListPageSchema = closedObject(
   {
     items: Type.Array(InputListItemSchema),
-    has_more: Type.Boolean(),
-    next_cursor: nullable(Type.String({ minLength: 1 })),
-    returned_count: Type.Integer({ minimum: 0 }),
-    page_limit: Type.Integer({ minimum: 1 })
+    ...CursorPageFields
   },
   { $id: "InputListPage", title: "Input list page" }
 );
@@ -863,6 +841,19 @@ export const PUBLIC_API_EXAMPLES = {
   }
 } as const;
 
+const PAGE_QUERY_PARAMETERS = [
+  {
+    name: "limit",
+    description: `Page size from 1 to ${SYSTEM_CONTRACT.outputPageMaxLimit}. Defaults to ${SYSTEM_CONTRACT.outputPageDefaultLimit}.`,
+    schema: PageLimitSchema
+  },
+  {
+    name: "cursor",
+    description: "Opaque next_cursor from the preceding page.",
+    schema: Type.String({ minLength: 1 })
+  }
+] as const;
+
 type PublicApiOperation = Readonly<{
   id: string;
   method: "get" | "post";
@@ -889,7 +880,7 @@ type PublicApiOperation = Readonly<{
   responseExampleKey?: keyof typeof PUBLIC_API_EXAMPLES;
 }>;
 
-export const PUBLIC_API_OPERATIONS = [
+export const PUBLIC_API_OPERATIONS: readonly PublicApiOperation[] = [
   {
     id: "sendInput",
     method: "post",
@@ -960,22 +951,7 @@ export const PUBLIC_API_OPERATIONS = [
     responseSchema: "InputListResponse",
     errorStatuses: [400, 401, 422, 429, 503],
     responseExampleKey: "listInputsSuccess",
-    query: [
-      {
-        name: "limit",
-        description: `Page size from 1 to ${SYSTEM_CONTRACT.outputPageMaxLimit}. Defaults to ${SYSTEM_CONTRACT.outputPageDefaultLimit}.`,
-        schema: Type.Integer({
-          minimum: 1,
-          maximum: SYSTEM_CONTRACT.outputPageMaxLimit,
-          default: SYSTEM_CONTRACT.outputPageDefaultLimit
-        })
-      },
-      {
-        name: "cursor",
-        description: "Opaque next_cursor from the preceding page.",
-        schema: Type.String({ minLength: 1 })
-      }
-    ]
+    query: PAGE_QUERY_PARAMETERS
   },
   {
     id: "readInput",
@@ -1013,22 +989,7 @@ export const PUBLIC_API_OPERATIONS = [
     responseSchema: "OutputCheckResponse",
     errorStatuses: [400, 401, 422, 429, 503],
     responseExampleKey: "checkSuccess",
-    query: [
-      {
-        name: "limit",
-        description: `Page size from 1 to ${SYSTEM_CONTRACT.outputPageMaxLimit}. Defaults to ${SYSTEM_CONTRACT.outputPageDefaultLimit}.`,
-        schema: Type.Integer({
-          minimum: 1,
-          maximum: SYSTEM_CONTRACT.outputPageMaxLimit,
-          default: SYSTEM_CONTRACT.outputPageDefaultLimit
-        })
-      },
-      {
-        name: "cursor",
-        description: "Opaque next_cursor from the preceding page.",
-        schema: Type.String({ minLength: 1 })
-      }
-    ]
+    query: PAGE_QUERY_PARAMETERS
   },
   {
     id: "readOutput",
@@ -1143,7 +1104,7 @@ export const PUBLIC_API_OPERATIONS = [
     responseSchema: "AccountStatusResponse",
     errorStatuses: [401, 429, 503]
   }
-] as const satisfies readonly PublicApiOperation[];
+];
 
 function jsonPointerToFieldPath(pointer: string | undefined): string {
   if (!pointer) {
@@ -1161,31 +1122,6 @@ function jsonPointerToFieldPath(pointer: string | undefined): string {
     }, "");
 }
 
-function publicSchemaFieldErrors(
-  schema: TSchema,
-  value: unknown,
-  fallbackMessage: string
-): Array<{ path: string; code: "contract_mismatch"; message: string }> {
-  const byPath = new Map<string, string>();
-  for (const error of Value.Errors(schema, value)) {
-    byPath.set(jsonPointerToFieldPath(error.instancePath), error.message);
-  }
-  if (byPath.size === 0) {
-    return [
-      {
-        path: "",
-        code: "contract_mismatch",
-        message: fallbackMessage
-      }
-    ];
-  }
-  return [...byPath.entries()].map(([path, message]) => ({
-    path,
-    code: "contract_mismatch",
-    message
-  }));
-}
-
 export function publicSchemaMatches(
   schemaName: keyof typeof PUBLIC_API_SCHEMAS,
   value: unknown
@@ -1198,20 +1134,25 @@ export function publicSchemaMismatch(
   value: unknown,
   fallbackMessage: string
 ): Array<{ path: string; code: "contract_mismatch"; message: string }> | null {
-  return publicSchemaMatches(schemaName, value)
-    ? null
-    : publicSchemaFieldErrors(
-        PUBLIC_API_SCHEMAS[schemaName],
-        value,
-        fallbackMessage
-      );
+  const schema = PUBLIC_API_SCHEMAS[schemaName];
+  if (Value.Check(schema, value)) return null;
+  const byPath = new Map<string, string>();
+  for (const error of Value.Errors(schema, value)) {
+    byPath.set(jsonPointerToFieldPath(error.instancePath), error.message);
+  }
+  const entries = byPath.size > 0 ? [...byPath] : [["", fallbackMessage]];
+  return entries.map(([path, message]) => ({
+    path,
+    code: "contract_mismatch",
+    message
+  }));
 }
 
 export function validatePublicApiContract() {
   const operationIds = new Set<string>();
   const routeKeys = new Set<string>();
 
-  for (const operation of PUBLIC_API_OPERATIONS as readonly PublicApiOperation[]) {
+  for (const operation of PUBLIC_API_OPERATIONS) {
     if (operationIds.has(operation.id)) {
       throw new Error(`Duplicate public API operation id: ${operation.id}`);
     }
@@ -1223,29 +1164,23 @@ export function validatePublicApiContract() {
     }
     routeKeys.add(routeKey);
 
-    if (
-      operation.exampleKey &&
-      operation.requestSchema &&
-      !publicSchemaMatches(
-        operation.requestSchema,
-        PUBLIC_API_EXAMPLES[operation.exampleKey]
-      )
-    ) {
-      throw new Error(
-        `Public API example ${operation.exampleKey} does not match ${operation.requestSchema}.`
-      );
-    }
-    if (
-      operation.responseExampleKey &&
-      operation.responseSchema &&
-      !publicSchemaMatches(
-        operation.responseSchema,
-        PUBLIC_API_EXAMPLES[operation.responseExampleKey]
-      )
-    ) {
-      throw new Error(
-        `Public API response example ${operation.responseExampleKey} does not match ${operation.responseSchema}.`
-      );
+    for (const [label, exampleKey, schemaName] of [
+      ["example", operation.exampleKey, operation.requestSchema],
+      [
+        "response example",
+        operation.responseExampleKey,
+        operation.responseSchema
+      ]
+    ] as const) {
+      if (
+        exampleKey &&
+        schemaName &&
+        !publicSchemaMatches(schemaName, PUBLIC_API_EXAMPLES[exampleKey])
+      ) {
+        throw new Error(
+          `Public API ${label} ${exampleKey} does not match ${schemaName}.`
+        );
+      }
     }
   }
 }
