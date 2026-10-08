@@ -153,7 +153,11 @@ function readImplementedHttpRouteContents() {
   );
 }
 
-/** @param {string[]} failures */
+/**
+ * Throws an AssertionError containing the ordered failures when any are present.
+ *
+ * @param {string[]} failures
+ */
 function assertNoFailures(failures) {
   assert.deepEqual(failures, [], failures.join("\n"));
 }
@@ -169,6 +173,9 @@ function checkRequiredFiles() {
   );
 }
 
+/**
+ * Asserts that required Makefile targets and the database test command exist.
+ */
 function checkMakefileSurface() {
   const makefile = readText("Makefile");
   const targets = [
@@ -235,6 +242,10 @@ function checkLockfileState() {
   );
 }
 
+/**
+ * Validates required files, build commands, and toolchain pins, stopping at the
+ * first failed assertion.
+ */
 function build() {
   checkRequiredFiles();
   checkMakefileSurface();
@@ -264,6 +275,10 @@ function build() {
   console.log("Build consistency checks passed.");
 }
 
+/**
+ * Validates repository structure, workflows, and runtime contracts without
+ * provider credentials, stopping at the first failed assertion.
+ */
 function smoke() {
   checkRequiredFiles();
 
@@ -314,6 +329,10 @@ function smoke() {
   console.log("Structural smoke checks passed.");
 }
 
+/**
+ * Reports tool versions, required environment values, and provider access in
+ * check order, setting exit code 1 if any check fails.
+ */
 function doctor() {
   const toolchain = /** @type {Toolchain} */ (readJson("toolchain.json"));
   const checks = [];
