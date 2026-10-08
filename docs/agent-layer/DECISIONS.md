@@ -102,14 +102,14 @@ Record otherwise-lost rationale that materially constrains future work. Current 
     Tradeoffs: Local migration/database tests require a privileged disposable connection matching CI, but runtime credentials cannot bypass Row-Level Security and tests fail loudly when the roles are conflated.
 
 - Decision 2026-08-12 database-parity-runs-full-root-suite: Discover every root test file in database parity checks
-    Decision: The canonical `make test-database` command runs every `tests/*.test.mjs` file serially in local, CI, and release-check database environments.
+    Decision: The canonical `make test-database` command runs every `tests/*.test.mjs` file serially in local and CI/certification database environments.
     Reason: A new database-gated root test must automatically receive migrated-Postgres coverage; one Make target keeps the local and workflow boundary identical.
     Tradeoffs: Migration-replay jobs repeat credential-free coverage and run new root tests serially, but cannot silently omit database-gated tests or drift from the canonical command.
 
-- Decision 2026-08-12 retain-pr-release-certification: Retain independent release certification on pull requests
-    Decision: Keep both ordinary CI and the release-check workflow running on pull requests, including their intentionally duplicated browser and migration-replay lanes.
-    Reason: Development is fully agentic and relies on automated process rather than routine human code inspection, so catching packaging, workflow, and provider-parity regressions before merge is more important than minimizing CI consumption.
-    Tradeoffs: Pull requests consume additional runner time and repeat several gates, but gain independent certification and earlier release-specific feedback rather than discovering those failures during a production release.
+- Decision 2026-10-08 single-ci-certification-workflow: Share CI definitions with production certification
+    Decision: PRs, main pushes, and production certification use one CI workflow. Each gate runs once per PR head; superseded PR runs are cancelled with workflow-specific groups.
+    Reason: The user requested less duplicate compute while keeping PRs exercising the exact certification job definitions.
+    Tradeoffs: `make release-check` is no longer a single job invocation in CI; its parts run as parallel jobs. Cancelled superseded runs are expected noise.
 
 - Decision 2026-08-14 perimeter-source-license: Permit internal commercial use while prohibiting competing products
     Decision: License Agent Outbox source under PolyForm Perimeter License 1.0.1, allowing internal use and modification, including commercial internal operations, while prohibiting providing others a product that competes with Agent Outbox, including a competing hosted service.

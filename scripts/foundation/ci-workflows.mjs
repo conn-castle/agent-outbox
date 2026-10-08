@@ -2,21 +2,16 @@ import {
   workflowJobContent,
   workflowMappingBlockContent,
   workflowNamedStepContent,
-  workflowRunStepIncludes
+  workflowRunStepIncludes,
+  workflowStepBlocks
 } from "../workflow-yaml.mjs";
 
 /** @typedef {import("./toolchain.mjs").PackageJson} PackageJson */
 /** @typedef {import("./toolchain.mjs").Toolchain} Toolchain */
 
 export const CI_WORKFLOW_PATH = ".github/workflows/ci.yml";
-export const RELEASE_CHECK_WORKFLOW_PATH =
-  ".github/workflows/release-check.yml";
 export const POLICY_GATES_WORKFLOW_PATH = ".github/workflows/policy-gates.yml";
-export const CI_WORKFLOW_PATHS = [
-  CI_WORKFLOW_PATH,
-  RELEASE_CHECK_WORKFLOW_PATH,
-  POLICY_GATES_WORKFLOW_PATH
-];
+export const CI_WORKFLOW_PATHS = [CI_WORKFLOW_PATH, POLICY_GATES_WORKFLOW_PATH];
 
 const FORBIDDEN_WORKFLOW_TOKENS = [
   "wrangler deploy",
@@ -83,86 +78,81 @@ export function validateWorkflowVersionPins(toolchain, workflowContentsByPath) {
 export function validateMigrationReplayWorkflow(workflowContentsByPath) {
   const failures = [];
 
-  for (const workflowPath of [CI_WORKFLOW_PATH, RELEASE_CHECK_WORKFLOW_PATH]) {
-    const content = workflowContentsByPath[workflowPath] ?? "";
-    const migrationReplayJob = workflowJobContent(content, "migration-replay");
-    const services = workflowMappingBlockContent(
-      migrationReplayJob,
-      "services",
-      4
-    );
-    const postgresService = workflowMappingBlockContent(
-      services,
-      "postgres",
-      6
-    );
-    const migrationStep = workflowNamedStepContent(
-      migrationReplayJob,
-      "Replay migrations from scratch"
-    );
-    const databaseStep = workflowNamedStepContent(
-      migrationReplayJob,
-      "Run database verification suite"
-    );
-    const jobEnvironment = workflowMappingBlockContent(
-      migrationReplayJob,
-      "env",
-      4
-    );
-    const databaseEnvironment = workflowMappingBlockContent(
-      databaseStep,
-      "env",
-      8
-    );
-    /** @param {RegExp} pattern */
-    const hasJobEnvironment = (pattern) => pattern.test(jobEnvironment);
-    /** @param {RegExp} pattern */
-    const hasStepEnvironment = (pattern) => pattern.test(databaseEnvironment);
-    const requirements = [
-      ["a migration-replay job", migrationReplayJob !== ""],
-      [
-        "a Postgres 17 service in the migration-replay job",
-        /^        image:\s*postgres:17\s*$/m.test(postgresService)
-      ],
-      [
-        "make migration-replay in the named replay step",
-        workflowRunStepIncludes(migrationStep, "make migration-replay")
-      ],
-      [
-        "make test-database in the named database verification step",
-        workflowRunStepIncludes(databaseStep, "make test-database")
-      ],
-      [
-        "AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification",
-        hasJobEnvironment(
-          /^      AGENT_OUTBOX_ENABLE_DATABASE_TESTS:\s*["']?1["']?\s*$/m
-        ) ||
-          hasStepEnvironment(
-            /^          AGENT_OUTBOX_ENABLE_DATABASE_TESTS:\s*["']?1["']?\s*$/m
-          )
-      ],
-      [
-        "DATABASE_MIGRATION_URL for database verification",
-        hasJobEnvironment(/^      DATABASE_MIGRATION_URL:\s*\S+\s*$/m) ||
-          hasStepEnvironment(/^          DATABASE_MIGRATION_URL:\s*\S+\s*$/m)
-      ],
-      [
-        "FLYWAY_DOCKER_NETWORK=host in the migration-replay job",
-        /^      FLYWAY_DOCKER_NETWORK:\s*host\s*$/m.test(jobEnvironment)
-      ],
-      [
-        "database verification after migration replay",
-        migrationStep !== "" &&
-          databaseStep !== "" &&
-          migrationReplayJob.indexOf(databaseStep) >
-            migrationReplayJob.indexOf(migrationStep)
-      ]
-    ];
+  const workflowPath = CI_WORKFLOW_PATH;
+  const content = workflowContentsByPath[workflowPath] ?? "";
+  const migrationReplayJob = workflowJobContent(content, "migration-replay");
+  const services = workflowMappingBlockContent(
+    migrationReplayJob,
+    "services",
+    4
+  );
+  const postgresService = workflowMappingBlockContent(services, "postgres", 6);
+  const migrationStep = workflowNamedStepContent(
+    migrationReplayJob,
+    "Replay migrations from scratch"
+  );
+  const databaseStep = workflowNamedStepContent(
+    migrationReplayJob,
+    "Run database verification suite"
+  );
+  const jobEnvironment = workflowMappingBlockContent(
+    migrationReplayJob,
+    "env",
+    4
+  );
+  const databaseEnvironment = workflowMappingBlockContent(
+    databaseStep,
+    "env",
+    8
+  );
+  /** @param {RegExp} pattern */
+  const hasJobEnvironment = (pattern) => pattern.test(jobEnvironment);
+  /** @param {RegExp} pattern */
+  const hasStepEnvironment = (pattern) => pattern.test(databaseEnvironment);
+  const requirements = [
+    ["a migration-replay job", migrationReplayJob !== ""],
+    [
+      "a Postgres 17 service in the migration-replay job",
+      /^        image:\s*postgres:17\s*$/m.test(postgresService)
+    ],
+    [
+      "make migration-replay in the named replay step",
+      workflowRunStepIncludes(migrationStep, "make migration-replay")
+    ],
+    [
+      "make test-database in the named database verification step",
+      workflowRunStepIncludes(databaseStep, "make test-database")
+    ],
+    [
+      "AGENT_OUTBOX_ENABLE_DATABASE_TESTS=1 for database verification",
+      hasJobEnvironment(
+        /^      AGENT_OUTBOX_ENABLE_DATABASE_TESTS:\s*["']?1["']?\s*$/m
+      ) ||
+        hasStepEnvironment(
+          /^          AGENT_OUTBOX_ENABLE_DATABASE_TESTS:\s*["']?1["']?\s*$/m
+        )
+    ],
+    [
+      "DATABASE_MIGRATION_URL for database verification",
+      hasJobEnvironment(/^      DATABASE_MIGRATION_URL:\s*\S+\s*$/m) ||
+        hasStepEnvironment(/^          DATABASE_MIGRATION_URL:\s*\S+\s*$/m)
+    ],
+    [
+      "FLYWAY_DOCKER_NETWORK=host in the migration-replay job",
+      /^      FLYWAY_DOCKER_NETWORK:\s*host\s*$/m.test(jobEnvironment)
+    ],
+    [
+      "database verification after migration replay",
+      migrationStep !== "" &&
+        databaseStep !== "" &&
+        migrationReplayJob.indexOf(databaseStep) >
+          migrationReplayJob.indexOf(migrationStep)
+    ]
+  ];
 
-    for (const [description, present] of requirements) {
-      if (!present) {
-        failures.push(`${workflowPath} must include ${description}`);
-      }
+  for (const [description, present] of requirements) {
+    if (!present) {
+      failures.push(`${workflowPath} must include ${description}`);
     }
   }
 
@@ -351,44 +341,199 @@ export function validateDatabaseTestCommand(packageJson, makefileContent) {
 }
 
 /**
- * @param {Toolchain} toolchain
  * @param {Record<string, string>} workflowContentsByPath
+ * @param {string} makefileContent
+ * @param {Toolchain} toolchain
  * @returns {string[]}
  */
-export function validateWorkflowGoChecks(toolchain, workflowContentsByPath) {
+export function validateCiCertificationWorkflow(
+  workflowContentsByPath,
+  makefileContent,
+  toolchain
+) {
   const failures = [];
-  const setupGoVersion = toolchain.goTooling?.githubActionsSetupGo?.version;
-  if (!setupGoVersion) {
-    return [
-      "toolchain.json goTooling.githubActionsSetupGo.version is required"
-    ];
+  const workflowPath = CI_WORKFLOW_PATH;
+  const content = workflowContentsByPath[workflowPath] ?? "";
+  const triggers = workflowMappingBlockContent(content, "on", 0);
+  for (const trigger of [
+    "pull_request",
+    "push",
+    "workflow_call",
+    "workflow_dispatch"
+  ]) {
+    if (!new RegExp(`^  ${trigger}:\\s*$`, "m").test(triggers)) {
+      failures.push(`${workflowPath} must include ${trigger} trigger`);
+    }
+  }
+  const push = workflowMappingBlockContent(triggers, "push", 2);
+  const branches = workflowMappingBlockContent(push, "branches", 4);
+  if (!/^      - main\s*$/m.test(branches)) {
+    failures.push(`${workflowPath} must include push to main`);
   }
 
-  // release-check.yml runs the Go gate transitively through `make
-  // release-check`; validateGoReleaserTooling asserts that Makefile chain.
-  // Match the `run:` step form, not the bare token, so the check cannot pass on
-  // a workflow that only names the job `make go-check` but no longer runs it.
-  const gateTokenByWorkflowPath = {
-    [CI_WORKFLOW_PATH]: "run: make go-check",
-    [RELEASE_CHECK_WORKFLOW_PATH]: "run: make release-check"
+  const goVersion = toolchain.goTooling?.githubActionsSetupGo?.version;
+  if (!goVersion) {
+    failures.push(
+      "toolchain.json goTooling.githubActionsSetupGo.version is required"
+    );
+  }
+
+  // CI splits make release-check across sibling jobs and a release-only remainder.
+  const commandsByJob = {
+    check: ["make check"],
+    "go-check": ["make go-check"],
+    browser: ["make browser"],
+    "migration-replay": ["make migration-replay", "make test-database"],
+    "release-check": ["make package-check marketing-verify", "make setup"]
   };
-  for (const [workflowPath, gateToken] of Object.entries(
-    gateTokenByWorkflowPath
-  )) {
-    const content = workflowContentsByPath[workflowPath] ?? "";
-    for (const requiredToken of [
-      `uses: actions/setup-go@${setupGoVersion}`,
-      "go-version-file: cli/go.mod",
-      "cache-dependency-path: cli/go.sum",
-      gateToken
-    ]) {
-      if (!content.includes(requiredToken)) {
+  for (const [jobId, commands] of Object.entries(commandsByJob)) {
+    const job = workflowJobContent(content, jobId);
+    if (
+      !job
+        .split(/\r?\n/)
+        .some((line) => line.trimEnd() === `    name: make ${jobId}`)
+    ) {
+      failures.push(`${workflowPath} ${jobId} job must be named make ${jobId}`);
+    }
+    const conditions = job
+      .split(/\r?\n/)
+      .filter((line) => /^    if:/.test(line));
+    if (jobId === "release-check") {
+      if (
+        conditions.length !== 1 ||
+        conditions[0].trim() !== "if: github.event_name != 'push'"
+      ) {
         failures.push(
-          `${workflowPath} must include Go gate token: ${requiredToken}`
+          `${workflowPath} release-check job must use if: github.event_name != 'push'`
+        );
+      }
+    } else if (conditions.length !== 0) {
+      failures.push(
+        `${workflowPath} ${jobId} job must not have a job-level if`
+      );
+    }
+    if (/^    continue-on-error:/m.test(job)) {
+      failures.push(
+        `${workflowPath} ${jobId} job must not use continue-on-error`
+      );
+    }
+    const steps = workflowStepBlocks(job).map((lines) => lines.join("\n"));
+    for (const command of commands) {
+      const gateSteps = steps.filter((step) =>
+        workflowRunStepIncludes(step, command)
+      );
+      if (gateSteps.length === 0) {
+        failures.push(
+          `${workflowPath} ${jobId} job must run ${command} in a step`
+        );
+      }
+      for (const step of gateSteps) {
+        if (/^(?:        |      - )if:/m.test(step)) {
+          failures.push(
+            `${workflowPath} ${jobId} gate ${command} must not have a step-level if`
+          );
+        }
+        if (/^(?:        |      - )continue-on-error:/m.test(step)) {
+          failures.push(
+            `${workflowPath} ${jobId} gate ${command} must not use continue-on-error`
+          );
+        }
+      }
+    }
+    if (goVersion && (jobId === "go-check" || jobId === "release-check")) {
+      const setupGo =
+        steps.find((step) =>
+          step
+            .split(/\r?\n/)
+            .some(
+              (line) =>
+                line.trim() === `uses: actions/setup-go@${goVersion}` ||
+                line.trim() === `- uses: actions/setup-go@${goVersion}`
+            )
+        ) ?? "";
+      const inputs = workflowMappingBlockContent(setupGo, "with", 8);
+      if (
+        setupGo === "" ||
+        !/^          go-version-file: cli\/go\.mod\s*$/m.test(inputs) ||
+        !/^          cache-dependency-path: cli\/go\.sum\s*$/m.test(inputs)
+      ) {
+        failures.push(
+          `${workflowPath} ${jobId} job must set up pinned Go with cli/go.mod and cli/go.sum`
+        );
+      }
+    }
+    if (jobId === "release-check") {
+      const setupNode =
+        steps.find((step) =>
+          /^(?:        |      - )uses: actions\/setup-node@\S+\s*$/m.test(step)
+        ) ?? "";
+      const inputs = workflowMappingBlockContent(setupNode, "with", 8);
+      if (
+        !inputs
+          .split(/\r?\n/)
+          .some(
+            (line) => line.trim() === `node-version: ${toolchain.node.version}`
+          )
+      ) {
+        failures.push(
+          `${workflowPath} release-check job must set up Node ${toolchain.node.version}`
         );
       }
     }
   }
+  // A recipe under release-check would run locally but never in CI, where the
+  // target's parts run as separate jobs. Make allows blank and comment-only
+  // lines between the target and its recipe.
+  const releaseTarget = makefileContent.match(/^release-check:([^\n]*)\n/m);
+  const matchIndex = releaseTarget?.index;
+  const nextMakefileLine =
+    releaseTarget && matchIndex !== undefined
+      ? makefileContent
+          .slice(matchIndex + releaseTarget[0].length)
+          .split(/\r?\n/)
+          .find((line) => line.trim() !== "" && !/^ *#/.test(line))
+      : undefined;
+  if (
+    releaseTarget?.[1].trim().split(/\s+/).join(" ") !==
+      "check go-check package-check marketing-verify" ||
+    nextMakefileLine?.startsWith("\t")
+  ) {
+    failures.push(
+      "Makefile release-check must be exactly check go-check package-check marketing-verify with no recipe"
+    );
+  }
+  return failures;
+}
 
+/**
+ * @param {Record<string, string>} workflowContentsByPath
+ * @returns {string[]}
+ */
+export function validateWorkflowConcurrency(workflowContentsByPath) {
+  const failures = [];
+  for (const workflowPath of CI_WORKFLOW_PATHS) {
+    const content = workflowContentsByPath[workflowPath] ?? "";
+    const concurrency = workflowMappingBlockContent(content, "concurrency", 0);
+    const isCi = workflowPath === CI_WORKFLOW_PATH;
+    const group = isCi
+      ? "group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}"
+      : "group: ${{ github.workflow }}-${{ github.event.pull_request.number }}";
+    const cancellation = isCi
+      ? "cancel-in-progress: ${{ github.event_name == 'pull_request' }}"
+      : "cancel-in-progress: true";
+    const lines = concurrency.split(/\r?\n/).map((line) => line.trim());
+    const groupDeclaration =
+      concurrency.match(/^  group:[^\n]*(?:\n    [^\n]*)*/m)?.[0] ?? "";
+    if (groupDeclaration.replace(/\s+/g, " ").trim() !== group) {
+      failures.push(
+        `${workflowPath} must use workflow-specific PR concurrency${isCi ? " with a run-ID fallback" : ""}`
+      );
+    }
+    if (!lines.includes(cancellation)) {
+      failures.push(
+        `${workflowPath} must ${isCi ? "cancel only pull_request runs" : "cancel superseded policy runs"}`
+      );
+    }
+  }
   return failures;
 }

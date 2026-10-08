@@ -205,9 +205,7 @@ export function validateProductionDeployWorkflow(
     ],
     [
       "certified release flow",
-      deployWorkflowContent.includes(
-        "uses: ./.github/workflows/release-check.yml"
-      ) &&
+      deployWorkflowContent.includes("uses: ./.github/workflows/ci.yml") &&
         deployWorkflowContent.includes(
           "run: node scripts/production-release.mjs prepare"
         ) &&

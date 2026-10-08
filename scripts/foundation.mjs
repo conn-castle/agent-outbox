@@ -9,10 +9,11 @@ import { ROOT } from "./repo-root.mjs";
 import {
   assertNoForbiddenWorkflowCommands,
   CI_WORKFLOW_PATHS,
+  validateCiCertificationWorkflow,
   validateDatabaseTestCommand,
   validateMigrationReplayWorkflow,
   validatePolicyGatesWorkflow,
-  validateWorkflowGoChecks,
+  validateWorkflowConcurrency,
   validateWorkflowVersionPins
 } from "./foundation/ci-workflows.mjs";
 import { redactCommandResult, runQuiet } from "./foundation/commands.mjs";
@@ -263,7 +264,10 @@ function build() {
     )
   );
   assertNoFailures(validateGoModuleTooling(toolchain, readText("cli/go.mod")));
-  assertNoFailures(validateWorkflowGoChecks(toolchain, workflows));
+  assertNoFailures(
+    validateCiCertificationWorkflow(workflows, readText("Makefile"), toolchain)
+  );
+  assertNoFailures(validateWorkflowConcurrency(workflows));
   assertNoFailures(
     validateGoReleaserTooling(
       toolchain,

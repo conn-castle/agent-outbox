@@ -10,6 +10,10 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   policy-gates:
     name: Policy gates
@@ -28,31 +32,6 @@ jobs:
 
       - name: Set up dependencies
         run: make setup
-
-      - name: Resolve label state
-        id: ctx
-        env:
-          PR_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
-        run: |
-          set -euo pipefail
-          megachange_label_present=false
-          migration_label_present=false
-          legal_policy_label_present=false
-          printf '%s' "$PR_LABELS_JSON" > /tmp/labels.json
-          if jq -e '. | map(.name) | index("megachange-approved")' /tmp/labels.json >/dev/null; then
-            megachange_label_present=true
-          fi
-          if jq -e '. | map(.name) | index("migration-destructive-approved")' /tmp/labels.json >/dev/null; then
-            migration_label_present=true
-          fi
-          if jq -e '. | map(.name) | index("legal-policy-approved")' /tmp/labels.json >/dev/null; then
-            legal_policy_label_present=true
-          fi
-          {
-            echo "megachange_label_present=$megachange_label_present"
-            echo "migration_label_present=$migration_label_present"
-            echo "legal_policy_label_present=$legal_policy_label_present"
-          } >> "$GITHUB_OUTPUT"
 
       - name: Collect changed files
         env:
@@ -87,6 +66,36 @@ jobs:
             --fixtures scripts/policy-gates/migration-discipline-fixtures.txt
           node scripts/policy-gates/legal-policy-gate.mjs \
             --fixtures scripts/policy-gates/legal-policy-fixtures.txt
+
+      - name: Resolve label state
+        id: ctx
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          : "${GH_TOKEN:?Missing GitHub token; failing closed.}"
+          if ! labels_json="$(gh api --method GET --paginate --slurp \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels?per_page=100")"; then
+            echo "Unable to fetch current PR labels for ${GITHUB_REPOSITORY}#${PR_NUMBER}; failing closed." >&2
+            exit 1
+          fi
+          if ! label_outputs="$(printf '%s' "$labels_json" | jq -ers '
+            if length != 1 then error("Expected one paginated label response") else .[0] end
+            | if type != "array" or length == 0 then error("Expected label pages") else . end
+            | if all(.[]; type == "array" and all(.[];
+                type == "object" and (.name | type == "string" and length > 0)))
+              then [.[][] | .name]
+              else error("Malformed label page") end
+            | "megachange_label_present=\(index("megachange-approved") != null)",
+              "migration_label_present=\(index("migration-destructive-approved") != null)",
+              "legal_policy_label_present=\(index("legal-policy-approved") != null)"
+          ')"; then
+            echo "Invalid current PR label response; failing closed." >&2
+            exit 1
+          fi
+          printf '%s\n' "$label_outputs" >> "$GITHUB_OUTPUT"
 
       - name: Evaluate megachange cap
         env:

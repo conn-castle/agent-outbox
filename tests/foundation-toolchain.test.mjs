@@ -306,7 +306,7 @@ cli-release-dist:
 \tgo run $(GORELEASER_MODULE) release --clean --skip=publish
 \tcd cli && go run ./internal/tools/rendercask ../dist/homebrew/Casks/agent-outbox.rb "$(RELEASE_TAG)" ../dist/checksums.txt
 
-release-check: check go-check package-check
+release-check: check go-check package-check marketing-verify
 `;
   const goreleaser = `release:
   disable: true

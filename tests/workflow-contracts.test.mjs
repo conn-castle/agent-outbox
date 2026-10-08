@@ -300,19 +300,31 @@ test("production deploy workflow guard accepts only the manual deploy contract",
     ),
     []
   );
-  const releaseCheckWorkflow = readFileSync(
-    new URL("../.github/workflows/release-check.yml", import.meta.url),
+  const ciWorkflow = readFileSync(
+    new URL("../.github/workflows/ci.yml", import.meta.url),
     "utf8"
   );
   assert.match(
-    releaseCheckWorkflow,
+    ciWorkflow,
     /^  workflow_call:$/m,
-    "production certification must call the exact release-check workflow"
+    "production certification must call the CI workflow"
   );
   assert.equal(
-    /tags:\s*\n\s*-\s*"v\*"/.test(releaseCheckWorkflow),
+    /tags:\s*\n\s*-\s*"v\*"/.test(ciWorkflow),
     false,
-    "release-check must not use a redundant tag-push trigger"
+    "CI must not use a redundant tag-push trigger"
+  );
+
+  const obsoleteCertification = deployWorkflow.replace(
+    "uses: ./.github/workflows/ci.yml",
+    "uses: ./.github/workflows/release-check.yml"
+  );
+  assert.notEqual(obsoleteCertification, deployWorkflow);
+  assert.ok(
+    validateProductionDeployWorkflow(obsoleteCertification, "24.18.0").includes(
+      ".github/workflows/deploy-production.yml must include certified release flow"
+    ),
+    "production certification must call the CI workflow"
   );
 
   const withoutCleanup = deployWorkflow.replace(

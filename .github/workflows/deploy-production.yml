@@ -50,7 +50,7 @@ jobs:
     needs: validate-ref
     permissions:
       contents: read
-    uses: ./.github/workflows/release-check.yml
+    uses: ./.github/workflows/ci.yml
 
   build-cli:
     name: Build and validate release CLI
