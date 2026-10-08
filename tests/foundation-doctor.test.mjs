@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   firstVersionToken,
   goVersionFromOutput,
+  providerAuthResult,
   semanticVersionFromOutput,
-  supabaseProjectsIncludeRef
+  supabaseProjectsIncludeRef,
+  versionResult
 } from "../scripts/foundation/doctor.mjs";
 
 test("supabaseProjectsIncludeRef checks project refs without exposing project output", () => {
@@ -34,4 +36,31 @@ test("doctor version parsers extract pinned tool versions", () => {
   );
   assert.equal(goVersionFromOutput("unparseable"), "");
   assert.equal(semanticVersionFromOutput("unparseable"), "");
+});
+
+test("doctor command checks report missing commands and failed exits", () => {
+  const missing = "agent-outbox-command-that-does-not-exist";
+  const failingArgs = ["-e", "process.exit(3)"];
+  const redacted = '{"status":3,"signal":null,"error":null}';
+
+  assert.deepEqual(versionResult(missing, ["--version"], "1.0.0", String), {
+    ok: false,
+    message: `${missing} is not installed`
+  });
+  assert.deepEqual(providerAuthResult(missing, []), {
+    ok: false,
+    message: `${missing} is not installed`
+  });
+  assert.deepEqual(versionResult("node", failingArgs, "1.0.0", String), {
+    ok: false,
+    message: `node version check failed (${redacted})`
+  });
+  assert.deepEqual(providerAuthResult("node", failingArgs), {
+    ok: false,
+    message: `node auth check failed (${redacted})`
+  });
+  assert.deepEqual(providerAuthResult("node", ["-e", ""]), {
+    ok: true,
+    message: "node auth check passed"
+  });
 });

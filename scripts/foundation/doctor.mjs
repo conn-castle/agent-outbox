@@ -42,6 +42,29 @@ export function semanticVersionFromOutput(output) {
 }
 
 /**
+ * Reports a missing command or a non-zero exit as a failed check.
+ *
+ * @param {string} command
+ * @param {string} checkName
+ * @param {ReturnType<typeof runQuiet>} result
+ * @returns {CheckResult | null}
+ */
+function commandFailure(command, checkName, result) {
+  if (errorCode(result.error) === "ENOENT") {
+    return { ok: false, message: `${command} is not installed` };
+  }
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      message: `${command} ${checkName} failed (${JSON.stringify(
+        redactCommandResult(result)
+      )})`
+    };
+  }
+  return null;
+}
+
+/**
  * @param {string} command
  * @param {string[]} args
  * @param {string} expected
@@ -50,17 +73,9 @@ export function semanticVersionFromOutput(output) {
  */
 export function versionResult(command, args, expected, parser) {
   const result = runQuiet(command, args);
-  if (errorCode(result.error) === "ENOENT") {
-    return { ok: false, message: `${command} is not installed` };
-  }
-
-  if (result.status !== 0) {
-    return {
-      ok: false,
-      message: `${command} version check failed (${JSON.stringify(
-        redactCommandResult(result)
-      )})`
-    };
+  const failure = commandFailure(command, "version check", result);
+  if (failure) {
+    return failure;
   }
 
   const output = `${result.stdout}${result.stderr}`.trim();
@@ -81,21 +96,12 @@ export function versionResult(command, args, expected, parser) {
  * @returns {CheckResult}
  */
 export function providerAuthResult(command, args) {
-  const result = runQuiet(command, args);
-  if (errorCode(result.error) === "ENOENT") {
-    return { ok: false, message: `${command} is not installed` };
-  }
-
-  if (result.status !== 0) {
-    return {
-      ok: false,
-      message: `${command} auth check failed (${JSON.stringify(
-        redactCommandResult(result)
-      )})`
-    };
-  }
-
-  return { ok: true, message: `${command} auth check passed` };
+  return (
+    commandFailure(command, "auth check", runQuiet(command, args)) ?? {
+      ok: true,
+      message: `${command} auth check passed`
+    }
+  );
 }
 
 /**
@@ -113,17 +119,9 @@ export function supabaseProjectResult(envValues) {
   }
 
   const result = runQuiet("supabase", ["projects", "list", "--output", "json"]);
-  if (errorCode(result.error) === "ENOENT") {
-    return { ok: false, message: "supabase is not installed" };
-  }
-
-  if (result.status !== 0) {
-    return {
-      ok: false,
-      message: `supabase project check failed (${JSON.stringify(
-        redactCommandResult(result)
-      )})`
-    };
+  const failure = commandFailure("supabase", "project check", result);
+  if (failure) {
+    return failure;
   }
 
   try {

@@ -167,49 +167,37 @@ export function validateToolchainPackage(toolchain, packageJson) {
  */
 export function validateCommandsVersionPins(toolchain, commandsContent) {
   const errors = [];
-  const pinnedNodeVersions = [
-    ...commandsContent.matchAll(/(?:CI provisions|pinned) Node `([^`]+)`/g)
-  ].map((match) => match[1]);
-  const pnpmVersions = [...commandsContent.matchAll(/pnpm `([^`]+)`/g)].map(
-    (match) => match[1]
-  );
-  const flywayVersions = [...commandsContent.matchAll(/Flyway `([^`]+)`/g)].map(
-    (match) => match[1]
-  );
-
-  if (pinnedNodeVersions.length === 0) {
-    errors.push("COMMANDS.md must reference the pinned Node version");
-  }
-  for (const version of pinnedNodeVersions) {
-    if (version !== toolchain.node.version) {
-      errors.push(
-        `COMMANDS.md pinned Node ${version} must match toolchain.json ${toolchain.node.version}`
-      );
+  /** @type {[RegExp, string, string, string][]} */
+  const pins = [
+    [
+      /(?:CI provisions|pinned) Node `([^`]+)`/g,
+      "Node version",
+      "pinned Node",
+      toolchain.node.version
+    ],
+    [
+      /pnpm `([^`]+)`/g,
+      "pnpm version",
+      "pnpm",
+      toolchain.packageManager.version
+    ],
+    [/Flyway `([^`]+)`/g, "Flyway version", "Flyway", toolchain.flyway.version]
+  ];
+  for (const [pattern, missingName, mismatchName, expected] of pins) {
+    const versions = [...commandsContent.matchAll(pattern)].map(
+      (match) => match[1]
+    );
+    if (versions.length === 0) {
+      errors.push(`COMMANDS.md must reference the pinned ${missingName}`);
+    }
+    for (const version of versions) {
+      if (version !== expected) {
+        errors.push(
+          `COMMANDS.md ${mismatchName} ${version} must match toolchain.json ${expected}`
+        );
+      }
     }
   }
-
-  if (pnpmVersions.length === 0) {
-    errors.push("COMMANDS.md must reference the pinned pnpm version");
-  }
-  for (const version of pnpmVersions) {
-    if (version !== toolchain.packageManager.version) {
-      errors.push(
-        `COMMANDS.md pnpm ${version} must match toolchain.json ${toolchain.packageManager.version}`
-      );
-    }
-  }
-
-  if (flywayVersions.length === 0) {
-    errors.push("COMMANDS.md must reference the pinned Flyway version");
-  }
-  for (const version of flywayVersions) {
-    if (version !== toolchain.flyway.version) {
-      errors.push(
-        `COMMANDS.md Flyway ${version} must match toolchain.json ${toolchain.flyway.version}`
-      );
-    }
-  }
-
   return errors;
 }
 
@@ -260,49 +248,32 @@ export function validateGoReleaserTooling(
 
   const errors = [];
   const expected = `${tool.module}@v${tool.version}`;
-  if (!makefileContent.includes(expected)) {
-    errors.push(
-      `Makefile package-check must use pinned GoReleaser ${expected}`
-    );
-  }
-  if (
-    !makefileContent.includes(
-      "go run $(GORELEASER_MODULE) check .goreleaser.yaml"
-    )
-  ) {
-    errors.push("Makefile package-check must validate .goreleaser.yaml");
-  }
-  if (
-    !makefileContent.includes(
-      "go run $(GORELEASER_MODULE) release --snapshot --clean"
-    )
-  ) {
-    errors.push("Makefile package-check must build a clean snapshot release");
-  }
-  if (
-    !makefileContent.includes(
-      "go run $(GORELEASER_MODULE) release --clean --skip=publish"
-    )
-  ) {
-    errors.push(
+  for (const [requiredText, message] of [
+    [expected, `Makefile package-check must use pinned GoReleaser ${expected}`],
+    [
+      "go run $(GORELEASER_MODULE) check .goreleaser.yaml",
+      "Makefile package-check must validate .goreleaser.yaml"
+    ],
+    [
+      "go run $(GORELEASER_MODULE) release --snapshot --clean",
+      "Makefile package-check must build a clean snapshot release"
+    ],
+    [
+      "go run $(GORELEASER_MODULE) release --clean --skip=publish",
       "Makefile cli-release-dist must build a clean tagged release without publishing"
-    );
-  }
-  if (
-    !makefileContent.includes(
-      'cd cli && go run ./internal/tools/rendercask ../dist/homebrew/Casks/agent-outbox.rb "$(RELEASE_TAG)" ../dist/checksums.txt'
-    )
-  ) {
-    errors.push(
+    ],
+    [
+      'cd cli && go run ./internal/tools/rendercask ../dist/homebrew/Casks/agent-outbox.rb "$(RELEASE_TAG)" ../dist/checksums.txt',
       "Makefile cli-release-dist must render the Homebrew cask from release checksums"
-    );
-  }
-  if (
-    !makefileContent.includes("release-check: check go-check package-check")
-  ) {
-    errors.push(
+    ],
+    [
+      "release-check: check go-check package-check",
       "Makefile release-check must run check, go-check, and package-check"
-    );
+    ]
+  ]) {
+    if (!makefileContent.includes(requiredText)) {
+      errors.push(message);
+    }
   }
   if (
     !yamlTopLevelBlockHasScalar(goreleaserContent, "release", "disable", "true")

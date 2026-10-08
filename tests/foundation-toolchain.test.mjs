@@ -191,6 +191,27 @@ test("validateCommandsVersionPins allows lower-bound Node prerequisites", () => 
 
   assert.deepEqual(failures, []);
 });
+test("validateCommandsVersionPins requires every pinned version to be documented", () => {
+  const failures = validateCommandsVersionPins(
+    {
+      node: { version: "24.18.0", npm: "11.16.0" },
+      go: { version: "1.26.4" },
+      packageManager: { name: "pnpm", version: "11.9.0" },
+      flyway: FLYWAY_TOOLCHAIN_FIXTURE,
+      phase1Tools: {},
+      runtimePins: {},
+      runtimeDevTools: {},
+      providerCli: {}
+    },
+    "Run from: repo root."
+  );
+
+  assert.deepEqual(failures, [
+    "COMMANDS.md must reference the pinned Node version",
+    "COMMANDS.md must reference the pinned pnpm version",
+    "COMMANDS.md must reference the pinned Flyway version"
+  ]);
+});
 test("validateGoModuleTooling requires pinned Go module directives and dependencies", () => {
   const toolchain = {
     node: { version: "24.18.0", npm: "11.16.0" },
