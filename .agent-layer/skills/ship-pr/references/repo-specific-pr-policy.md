@@ -8,8 +8,13 @@ the current PR head SHA.
 - Required PR checks are `make check`, `make go-check`, `make browser`,
   `make migration-replay`, `make release-check`, and `Policy gates`. All must
   be `success` on the current head.
-- Judge each check name by its newest run on the current head SHA. An older
-  success never satisfies a newer failed, cancelled, or pending run.
+- Identify required jobs by workflow path and job key, using the workflow
+  definitions as the source of expected identities. Judge each identity by its
+  newest run and rerun attempt on the current head SHA; every expected identity
+  must succeed. Both `ci.yml` and `release-check.yml` publish `make browser` and
+  `make migration-replay`, so require success from both workflows for each name.
+  A missing job never satisfies the gate. An older success or a success from
+  another workflow never satisfies a failed, cancelled, or pending latest job.
 - This repository does not use a `ready-for-merge` label or a second merge-CI
   phase. Ordinary PR CI already runs the full verification surface.
 - Branch protection requires the PR branch to be up to date with `main`. Update
@@ -31,7 +36,8 @@ the current PR head SHA.
   labels. Their application retriggers Policy gates; do not manually rerun it.
 - Route every other diagnosed hosted failure through `/fix-ci`.
 - For a stuck or cancelled run that left no successful exact-head required
-  check, rerun interrupted failed jobs with `gh run rerun <run-id> --failed`.
+  workflow/job identity, rerun interrupted failed jobs with
+  `gh run rerun <run-id> --failed`.
   Do not create an empty commit.
 - Never force-push or rewrite history unless the user explicitly asks.
 
@@ -84,7 +90,10 @@ set -euo pipefail
 unset GH_FORCE_TTY CLICOLOR_FORCE
 export NO_COLOR=1 GH_PAGER=cat
 repo="$1" pr="$2" out="$3"
-[[ $repo == */* && $pr =~ ^[0-9]+$ && $out == .agent-layer/tmp/ship-pr-* ]] ||
+round_dir=".agent-layer/tmp/ship-pr-$pr"
+[[ $repo == */* && $pr =~ ^[0-9]+$ &&
+   $out == "$round_dir"/inventory-*.tsv &&
+   ${out#"$round_dir"/} != */* ]] ||
   { echo "inventory: invalid repo, pr, or out" >&2; exit 2; }
 rm -f -- "$out" "$out.partial"
 {
@@ -138,16 +147,29 @@ INVENTORY
 - Dispatch `pr_worker` for every fresh key or changed digest missing from the
   ledger, except recorded own replies. Never pre-filter or classify feedback as
   shipper, even apparent status-only items. Continue the same worker session when
-  available; list only new or changed keys on later rounds.
+  available; list only new or changed keys on later rounds unless the head-change
+  revalidation below applies.
+- Save the reviewed head SHA with each eligible disposition's worker evidence.
+  After any head change, re-dispatch `pr_worker` for every eligible key even if
+  its body digest is unchanged. The worker must revalidate each disposition
+  against that head: for `Fixed in`, prove the claimed SHA is still pushed and
+  contained in the current PR head and that the claimed fix remains present in
+  that head's tree; for `Deferred` or `Disagreed`, reconfirm the tracker or
+  rationale. Require worker evidence and affected reply validation to cover the
+  current head before reusing a reply; retain unchanged completed factual
+  proofs. If a disposition is no longer valid, resume addressing that feedback
+  and replace its reply through PRE/POST before requesting merge authorization.
 - Write every worker prompt to `prompt-<n>.md` in the round directory and
   dispatch it from that file. Include all caller context verbatim (including
   `ship_pr_context` and `<implementation_input>`), exact PR/head/base, this
   policy's absolute path with instructions to read and apply Feedback eligibility
   and Feedback rounds over the generic reference, all skill-required references,
-  inventory path and keys to classify, and one ledger line per listed key plus
-  proposed replies for eligible items. Wait for terminal state and read the
+  inventory path and keys to classify or revalidate. Instruct the worker to
+  return one ledger line per listed key, proposed replies for eligible items,
+  and head-bound disposition evidence; these are required worker outputs,
+  never prerequisites for dispatch. Wait for terminal state and read the
   complete final answer before acting. Continue incomplete answers with exactly
-  the missing, unclassified, or mismatched keys.
+  the missing, unclassified, mismatched, or unvalidated keys.
 
 ## Replies
 
@@ -183,7 +205,8 @@ Before every merge-authorization request, blocker, or other return to the caller
    watcher with `TMPDIR="$PWD/.agent-layer/tmp/ship-pr-<pr>/tmp"`, the skill's
    argument order, and the skill's log `.agent-layer/tmp/ship-pr-events-<pr>.jsonl`.
 3. After stopping, fetch fresh head SHA, mergeability, up-to-date status, newest
-   run of every required check on that head, and regenerate `inventory-final.tsv`.
+   run and rerun attempt of every required workflow/job identity on that head,
+   and regenerate `inventory-final.tsv`.
 
 Request merge authorization only when that after-stop fetch proves:
 
@@ -191,9 +214,13 @@ Request merge authorization only when that after-stop fetch proves:
   line has a disposition and reply; every other line is `excluded:<reason>`.
   Fetch every referenced reply again: it must still exist and its stored body
   must equal its validated file exactly.
-- The PR is mergeable and up to date; all six required checks have newest-run
-  `success` on the head; no uncommitted PR changes exist; no human-only approval
-  gate is pending.
+- Every eligible disposition has worker evidence and affected reply validation
+  covering the after-stop head, including proof that each claimed fix remains
+  present in that head's tree. Unchanged feedback digests or reply bytes alone
+  never satisfy disposition revalidation after a head change.
+- The PR is mergeable and up to date; every expected workflow/job identity for
+  all six required check names has latest-run/attempt `success` on the head;
+  no uncommitted PR changes exist; no human-only approval gate is pending.
 
 If any requirement fails or the head changed, restart the watcher and continue
 instead of requesting authorization, subject to the stop/inspection blocker
@@ -202,9 +229,9 @@ blocker handoffs, name each unresolved key or failed requirement and missing
 evidence.
 
 Report only verified evidence: PR and full head SHA; each required check's name,
-conclusion, and run ID; mergeability; inventory/ledger paths and item, eligible,
-excluded, and replied-line counts; each reply's source key, disposition, ID, and
-PRE/POST results; each worker round's prompt path, handle, invocation, and
-terminal state; watcher task ID or foreground exit, native stop status, and
-`pgrep` result; after-stop fetch time in UTC; required human-only approval; and
-unresolved items for blockers.
+workflow path, job key, conclusion, run ID, and attempt; mergeability;
+inventory/ledger paths and item, eligible, excluded, and replied-line counts;
+each reply's source key, disposition, ID, and PRE/POST results; each worker
+round's prompt path, handle, invocation, and terminal state; watcher task ID or
+foreground exit, native stop status, and `pgrep` result; after-stop fetch time
+in UTC; required human-only approval; and unresolved items for blockers.
