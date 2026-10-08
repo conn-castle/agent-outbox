@@ -36,6 +36,10 @@ const referenceOutputPath = repositoryUrl(referencePage.sourcePath);
 
 type JsonObject = Record<string, unknown>;
 
+/**
+ * Builds the OpenAPI document after validating the contract, implemented routes,
+ * and local schema references.
+ */
 function publicOpenApiDocument() {
   validatePublicApiContract();
   validateImplementedRoutes();
@@ -142,6 +146,10 @@ function publicOpenApiDocument() {
   return document;
 }
 
+/**
+ * Serializes the documentation bundle with validated guides in manifest order,
+ * followed by the generated reference, and a hash of its sources and OpenAPI.
+ */
 async function generatedApiDocsText() {
   const openapi = publicOpenApiDocument();
   const documents = [
@@ -192,6 +200,9 @@ async function generatedApiDocsText() {
   )}\n`;
 }
 
+/**
+ * Rebuilds and validates the OpenAPI document, then formats it as JSON.
+ */
 async function generatedOpenApiText() {
   return format(`${stableJson(publicOpenApiDocument())}\n`, {
     parser: "json",
@@ -210,6 +221,10 @@ async function generatedReferenceText(
   });
 }
 
+/**
+ * Builds an operation's success and error responses, requiring a success schema
+ * unless the operation downloads raw file bytes.
+ */
 function operationResponses(operation: (typeof PUBLIC_API_OPERATIONS)[number]) {
   if (operation.id !== "downloadOutputFile" && !operation.responseSchema) {
     throw new Error(
@@ -460,6 +475,10 @@ function validateGuideExamples(sourcePath: string, source: string) {
   }
 }
 
+/**
+ * Renders the reference's operations, parameters, examples, errors, and schemas
+ * from the public contract and supplied OpenAPI document.
+ */
 function renderReferenceMarkdown(
   openapi: ReturnType<typeof publicOpenApiDocument>
 ) {
@@ -563,6 +582,9 @@ function renderReferenceMarkdown(
   return normalizedSource(lines.join("\n"));
 }
 
+/**
+ * Renders an indented JSON code fence followed by a blank Markdown line.
+ */
 function jsonFence(value: unknown) {
   return ["```json", JSON.stringify(value, null, 2), "```", ""];
 }
@@ -600,6 +622,10 @@ function escapeHtml(value: string) {
     .replaceAll(">", "&gt;");
 }
 
+/**
+ * Runs generation in bundle, OpenAPI, reference order or checks in bundle,
+ * reference, OpenAPI order, stopping at the first failure in either mode.
+ */
 async function main() {
   const command = process.argv[2];
   if (command !== "generate" && command !== "check") {

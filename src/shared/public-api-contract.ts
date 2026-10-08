@@ -1129,6 +1129,10 @@ export function publicSchemaMatches(
   return Value.Check(PUBLIC_API_SCHEMAS[schemaName], value);
 }
 
+/**
+ * Returns null for a matching value or the last validation message per field
+ * path, using the fallback at the root if validation yields no error entries.
+ */
 export function publicSchemaMismatch(
   schemaName: keyof typeof PUBLIC_API_SCHEMAS,
   value: unknown,
@@ -1148,6 +1152,10 @@ export function publicSchemaMismatch(
   }));
 }
 
+/**
+ * Rejects duplicate operation ids or routes and validates each operation's
+ * request example before its response example.
+ */
 export function validatePublicApiContract() {
   const operationIds = new Set<string>();
   const routeKeys = new Set<string>();

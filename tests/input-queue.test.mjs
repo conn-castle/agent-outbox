@@ -271,6 +271,10 @@ test("input contract mismatches report the offending field path", () => {
   );
 });
 
+/**
+ * Verifies root and nested field paths and the last message for repeated errors
+ * on the same field.
+ */
 test("contract mismatches report the last error per field path, including nested array paths", () => {
   /** @type {any} */
   const input = structuredClone(PUBLIC_API_EXAMPLES.inputSubmission);
@@ -305,6 +309,9 @@ test("contract mismatches report the last error per field path, including nested
   );
 });
 
+/**
+ * Verifies that a non-object request reports the validator's root message.
+ */
 test("contract mismatch for a non-object body reports one root field", () => {
   assert.deepEqual(
     publicSchemaMismatch("InputDelete", "not an object", "unused fallback"),
@@ -312,6 +319,10 @@ test("contract mismatch for a non-object body reports one root field", () => {
   );
 });
 
+/**
+ * Verifies that page schemas reject invalid limits, negative counts, and empty
+ * continuation cursors at their corresponding field paths.
+ */
 test("cursor page contracts enforce page limits, counts, and cursors", () => {
   /** @type {any} */
   const check = structuredClone(PUBLIC_API_EXAMPLES.checkSuccess);
