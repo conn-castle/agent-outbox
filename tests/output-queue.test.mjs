@@ -9,7 +9,6 @@ import {
   handleOutputCheckRequest,
   handleOutputReadAllRequest,
   handleOutputReadRequest,
-  outputCheckPageStatement,
   outputFileMetadataStatement,
   outputPageStatement,
   outputResultByIdStatement,
@@ -848,7 +847,7 @@ test("output query builders scope by authenticated caller and metadata-only file
     outputOneId
   ]);
   assert.doesNotMatch(
-    outputCheckPageStatement(identity, 25, null).sql,
+    outputPageStatement(identity, 25, null, "check").sql,
     /action_value|response_kind|response_payload|answered_by_user_id/
   );
 
@@ -868,7 +867,7 @@ test("output page cursor preserves microsecond precision across the keyset round
   // otherwise a millisecond cursor stays strictly less than a microsecond column
   // value and pagination repeats the boundary row forever.
   assert.ok(
-    outputPageStatement(identity, 25, null).sql.includes(
+    outputPageStatement(identity, 25, null, "read").sql.includes(
       `to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor`
     )
   );
@@ -901,7 +900,7 @@ test("output page cursor preserves microsecond precision across the keyset round
 
   // The exact microsecond string flows through as the $3 keyset parameter so the
   // next page compares against the precise stored instant.
-  const nextPage = outputPageStatement(identity, 10, parsed.cursor);
+  const nextPage = outputPageStatement(identity, 10, parsed.cursor, "read");
   assert.match(nextPage.sql, /\$3::timestamptz/);
   assert.ok(nextPage.values);
   assert.equal(nextPage.values[2], "2026-06-30T23:25:51.123456Z");

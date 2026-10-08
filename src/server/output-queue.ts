@@ -250,6 +250,7 @@ export async function handleOutputAckRequest(
   );
 }
 
+/** Returns a caller's output summary page and total ready count without row locks. */
 export async function checkOutputPageInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity,
@@ -260,7 +261,7 @@ export async function checkOutputPageInTransaction(
     outputReadyCountStatement(identity)
   );
   const pageRows = await query<OutputCheckPageRow>(
-    outputCheckPageStatement(identity, limit, cursor)
+    outputPageStatement(identity, limit, cursor, "check")
   );
   const { page, hasMore, nextCursor } = pageFromRows(
     pageRows.rows,
@@ -319,6 +320,11 @@ export async function readOutputResultInTransaction(
   };
 }
 
+/**
+ * Locks a caller's output page, materializes available results and canonical
+ * inputs, and marks returned results read. Unavailable file outputs remain
+ * listed separately while pagination follows the selected page.
+ */
 export async function readAllOutputPageInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity,
@@ -326,7 +332,7 @@ export async function readAllOutputPageInTransaction(
   cursor: OutputCursor | null
 ): Promise<OutputQueueResult> {
   const pageRows = await query<OutputPageRow>(
-    outputPageStatement(identity, limit, cursor, { lockRows: true })
+    outputPageStatement(identity, limit, cursor, "read")
   );
   const { page, hasMore, nextCursor } = pageFromRows(
     pageRows.rows,
@@ -498,7 +504,8 @@ export function parseOutputReadAllBody(
   return parsed;
 }
 
-export function outputReadyCountStatement(
+/** Builds the total output-result count scoped to the authenticated caller. */
+function outputReadyCountStatement(
   identity: CallerIdentity
 ): TransactionContextStatement {
   return {
@@ -512,31 +519,7 @@ export function outputReadyCountStatement(
   };
 }
 
-export function outputPageStatement(
-  identity: CallerIdentity,
-  limit: number,
-  cursor: OutputCursor | null,
-  options: { lockRows?: boolean } = {}
-): TransactionContextStatement {
-  const values: (string | number)[] = [identity.accountId, identity.callerId];
-  const cursorClause = cursor
-    ? "and (answered_at, output_result_id) > ($3::timestamptz, $4::uuid)"
-    : "";
-
-  if (cursor) {
-    values.push(cursor.answeredAt, cursor.outputResultId);
-  }
-
-  values.push(limit + 1);
-
-  // read-all locks the page rows FOR UPDATE (like the single-read path) so a
-  // concurrent undo/ack/cleanup cannot delete or restore a row between the
-  // select and the mark-read update; the non-mutating check path never locks.
-  const lockClause = options.lockRows ? "\n      for update" : "";
-
-  return {
-    sql: `
-      select
+const OUTPUT_ROW_COLUMNS = `
         output_result_id::text as output_result_id,
         caller_id::text as caller_id,
         caller_item_id,
@@ -545,69 +528,56 @@ export function outputPageStatement(
         response_kind,
         response_payload,
         answered_at,
-        to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor,
-        answered_by_user_id::text as answered_by_user_id
-      from public.agent_outbox_output_results
-      where account_id = $1
-        and caller_id = $2
-        ${cursorClause}
-      order by answered_at, output_result_id
-      limit $${values.length}${lockClause}
-    `,
-    values
-  };
-}
+        answered_by_user_id::text as answered_by_user_id`;
 
-export function outputCheckPageStatement(
+/**
+ * Builds a caller-scoped keyset page with one extra row and a microsecond UTC
+ * cursor. "check" selects summaries without locks; "read" selects full rows
+ * and locks them FOR UPDATE so undo, acknowledgement, or cleanup cannot change
+ * them between selection and the mark-read update.
+ */
+export function outputPageStatement(
   identity: CallerIdentity,
   limit: number,
-  cursor: OutputCursor | null
+  cursor: OutputCursor | null,
+  projection: "check" | "read"
 ): TransactionContextStatement {
   const values: (string | number)[] = [identity.accountId, identity.callerId];
-  const cursorClause = cursor
-    ? "and (answered_at, output_result_id) > ($3::timestamptz, $4::uuid)"
-    : "";
-
   if (cursor) {
     values.push(cursor.answeredAt, cursor.outputResultId);
   }
-
   values.push(limit + 1);
+  const columns =
+    projection === "read"
+      ? OUTPUT_ROW_COLUMNS
+      : `
+        output_result_id::text as output_result_id,
+        caller_item_id,
+        answered_at`;
 
   return {
     sql: `
-      select
-        output_result_id::text as output_result_id,
-        caller_item_id,
-        answered_at,
+      select${columns},
         to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor
       from public.agent_outbox_output_results
       where account_id = $1
         and caller_id = $2
-        ${cursorClause}
+        ${cursor ? "and (answered_at, output_result_id) > ($3::timestamptz, $4::uuid)" : ""}
       order by answered_at, output_result_id
-      limit $${values.length}
+      limit $${values.length}${projection === "read" ? "\n      for update" : ""}
     `,
     values
   };
 }
 
+/** Builds a caller-scoped single-result lookup with a row lock for reading. */
 export function outputResultByIdStatement(
   identity: CallerIdentity,
   outputResultId: string
 ): TransactionContextStatement {
   return {
     sql: `
-      select
-        output_result_id::text as output_result_id,
-        caller_id::text as caller_id,
-        caller_item_id,
-        input_item_id::text as input_item_id,
-        action_value,
-        response_kind,
-        response_payload,
-        answered_at,
-        answered_by_user_id::text as answered_by_user_id
+      select${OUTPUT_ROW_COLUMNS}
       from public.agent_outbox_output_results
       where account_id = $1
         and caller_id = $2
@@ -643,7 +613,8 @@ export function outputFileMetadataStatement(
   };
 }
 
-export function markOutputResultsReadStatement(
+/** Builds a caller-scoped read-count increment, retaining the first read time. */
+function markOutputResultsReadStatement(
   identity: CallerIdentity,
   outputResultIds: readonly string[]
 ): TransactionContextStatement {

@@ -59,6 +59,14 @@ export type InputQueueSuccess =
 export type InputQueueResult =
   { ok: true; data: InputQueueSuccess } | { ok: false; error: ApiErrorInput };
 
+// The HTTP response omits the internal `operation` discriminant; the route
+// already names the operation. Distributes over the union so each variant
+// keeps its own fields.
+type WithoutOperation<T> = T extends unknown ? Omit<T, "operation"> : never;
+type InputQueueResponse =
+  | { ok: true; data: WithoutOperation<InputQueueSuccess> }
+  | { ok: false; error: ApiErrorInput };
+
 type ExistingInputRow = {
   input_item_id: string;
   status: "pending" | "answered";
@@ -115,12 +123,17 @@ function isCallerItemIdIndexWidthError(error: unknown): error is Error {
   );
 }
 
+/**
+ * Runs an input mutation in an authenticated caller transaction. Successful
+ * HTTP response data omits the internal operation discriminant; transaction
+ * errors retain their error shape.
+ */
 export async function handleInputQueueRequest(
   request: Request,
   context: ApiRequestContext,
   operation: InputQueueOperation,
   jsonBody: unknown
-): Promise<InputQueueResult> {
+): Promise<InputQueueResponse> {
   if (operation === "delete") {
     const parsed = parseInputDeleteBody(jsonBody);
     if (!parsed.ok) {
@@ -155,7 +168,11 @@ export async function handleInputQueueRequest(
     if (!transaction.authenticated) {
       return { ok: false, error: transaction.failure.clientError };
     }
-    return transaction.data;
+    if (!transaction.data.ok) {
+      return transaction.data;
+    }
+    const { operation: _operation, ...data } = transaction.data.data;
+    return { ok: true, data };
   } catch (error) {
     // This marker escapes the exact INSERT and is returned only after the
     // transaction helper has rolled back. Failed rollback/cleanup replaces or
@@ -487,7 +504,8 @@ export async function deleteInputItem(
   };
 }
 
-export function existingInputStatement(
+/** Selects and locks a caller's existing item, including its live-output state. */
+function existingInputStatement(
   identity: CallerIdentity,
   callerItemId: string
 ): TransactionContextStatement {
@@ -528,6 +546,10 @@ export function serializedSendInputItemStatement(
   };
 }
 
+/**
+ * Builds a pending-item insert with revision one, leaving a conflicting caller
+ * item unchanged. Identity values precede the shared content values.
+ */
 export function insertInputItemStatement(
   identity: CallerIdentity,
   submission: NormalizedInputSubmission
@@ -564,11 +586,18 @@ export function insertInputItemStatement(
       on conflict (caller_id, caller_item_id) do nothing
       returning input_item_id, current_revision
     `,
-    values: inputItemValues(identity, submission)
+    values: [
+      identity.accountId,
+      identity.callerId,
+      submission.callerItemId,
+      submission.callerItemIdHash,
+      ...inputContentValues(submission)
+    ]
   };
 }
 
-export function updateInputItemStatement(
+/** Builds a content replacement that increments the item's current revision. */
+function updateInputItemStatement(
   inputItemId: string,
   submission: NormalizedInputSubmission
 ): TransactionContextStatement {
@@ -596,28 +625,12 @@ export function updateInputItemStatement(
       where input_item_id = $1
       returning current_revision
     `,
-    values: [
-      inputItemId,
-      submission.priority,
-      submission.rowType.display,
-      submission.rowType.icon,
-      submission.rowAccentColor,
-      submission.titleHtml,
-      submission.subtitleHtml,
-      submission.cornerHtml,
-      submission.summaryHtml,
-      submission.detailsHtml,
-      submission.cardVisual?.kind ?? null,
-      JSON.stringify(submission.cardVisual?.payload ?? {}),
-      submission.skipDisabled,
-      submission.normalizedContentFingerprint,
-      submission.nonFilePayloadBytes,
-      submission.cardTime
-    ]
+    values: [inputItemId, ...inputContentValues(submission)]
   };
 }
 
-export function insertLinkButtonStatement(
+/** Builds a link-button insert preserving its normalized display order. */
+function insertLinkButtonStatement(
   inputItemId: string,
   button: NormalizedInputSubmission["linkButtons"][number]
 ): TransactionContextStatement {
@@ -642,7 +655,8 @@ export function insertLinkButtonStatement(
   };
 }
 
-export function insertActionStatement(
+/** Builds an action insert with its popup payload and returns the action ID. */
+function insertActionStatement(
   inputItemId: string,
   action: NormalizedInputAction
 ): TransactionContextStatement {
@@ -678,7 +692,8 @@ export function insertActionStatement(
   };
 }
 
-export function insertPopupOptionStatement(
+/** Builds a popup-option insert for an action in normalized display order. */
+function insertPopupOptionStatement(
   inputActionId: string,
   option: NormalizedPopupOption
 ): TransactionContextStatement {
@@ -703,7 +718,8 @@ export function insertPopupOptionStatement(
   };
 }
 
-export function deleteLinkButtonsStatement(
+/** Builds the deletion of an item's link buttons before replacing its content. */
+function deleteLinkButtonsStatement(
   inputItemId: string
 ): TransactionContextStatement {
   return {
@@ -712,7 +728,8 @@ export function deleteLinkButtonsStatement(
   };
 }
 
-export function deleteActionsStatement(
+/** Builds the deletion of an item's actions before replacing its content. */
+function deleteActionsStatement(
   inputItemId: string
 ): TransactionContextStatement {
   return {
@@ -721,7 +738,8 @@ export function deleteActionsStatement(
   };
 }
 
-export function deleteInputItemStatement(
+/** Builds the deletion of an input item by its previously selected internal ID. */
+function deleteInputItemStatement(
   inputItemId: string
 ): TransactionContextStatement {
   return {
@@ -838,15 +856,12 @@ async function auditContext(
   };
 }
 
-function inputItemValues(
-  identity: CallerIdentity,
-  submission: NormalizedInputSubmission
-) {
+/**
+ * Returns the 15 content values in column order for insert ($5..$19) and
+ * replace ($2..$16), serializing the visual payload and preserving nulls.
+ */
+function inputContentValues(submission: NormalizedInputSubmission) {
   return [
-    identity.accountId,
-    identity.callerId,
-    submission.callerItemId,
-    submission.callerItemIdHash,
     submission.priority,
     submission.rowType.display,
     submission.rowType.icon,

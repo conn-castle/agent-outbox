@@ -308,10 +308,7 @@ for (const [method, route, handlerModule, handlerName, noStore] of routeCases) {
     /** @type {any[][]} */
     const calls = [];
     const isInputMutation = handlerName === "handleInputQueueRequest";
-    const data = {
-      value: "preserved",
-      ...(isInputMutation ? { operation: route.split("/").at(-1) } : {})
-    };
+    const data = { value: "preserved" };
     const exports = loadRoute(
       route,
       handlerModule,
@@ -354,10 +351,6 @@ for (const [method, route, handlerModule, handlerName, noStore] of routeCases) {
       correlation_id: context.correlationId,
       data: { value: "preserved" }
     });
-    assert.equal(
-      isInputMutation ? data.operation : undefined,
-      isInputMutation ? route.split("/").at(-1) : undefined
-    );
   });
 
   test(`${method} ${route} preserves handler errors without no-store`, async () => {
@@ -442,6 +435,102 @@ for (const route of [
       }),
       (error) => error === failure
     );
+  });
+}
+
+const inputMutationResults = {
+  send: {
+    caller_item_id: "email:1",
+    status: "pending",
+    revision: 1,
+    created: true,
+    duplicate: false
+  },
+  replace: {
+    caller_item_id: "email:1",
+    status: "pending",
+    revision: 2,
+    replaced: true,
+    changed: true
+  },
+  delete: { caller_item_id: "email:1", deleted: true }
+};
+
+/**
+ * Loads the real input mutation route and input-queue handler; only the
+ * authenticated caller transaction is stubbed.
+ *
+ * @param {string} operation
+ * @param {unknown} transactionData
+ */
+async function loadInputMutationRoute(operation, transactionData) {
+  const inputQueue = loadModuleForTest("src/server/input-queue.ts", {
+    globals: {
+      process: { env: { DATABASE_APP_ROLE_URL: "postgresql://route-test" } }
+    },
+    stubs: {
+      "./accounting.ts": {},
+      "./api-errors.ts": await import("../src/server/api-errors.ts"),
+      "./caller-api-auth.ts": {
+        async runAuthenticatedCallerTransaction() {
+          return { authenticated: true, data: transactionData };
+        }
+      },
+      "./caller-api-limits.ts": {},
+      "./database.ts": {},
+      "./input-schema.ts": await import("../src/server/input-schema.ts"),
+      "./logging.ts": await import("../src/server/logging.ts"),
+      "./sentry.ts": {}
+    }
+  });
+  return loadRoute(
+    `/api/input/${operation}`,
+    "input-queue",
+    "handleInputQueueRequest",
+    /** @type {(...args: any[]) => Promise<any>} */ (
+      inputQueue.handleInputQueueRequest
+    )
+  );
+}
+
+for (const [operation, publicData] of Object.entries(inputMutationResults)) {
+  test(`POST /api/input/${operation} omits the internal operation from response data`, async () => {
+    const exports = await loadInputMutationRoute(operation, {
+      ok: true,
+      data: { operation, ...publicData }
+    });
+    const response = await exports.POST(
+      routeRequest(
+        "POST",
+        `/api/input/${operation}`,
+        JSON.stringify({ caller_item_id: "email:1" })
+      )
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).data, publicData);
+  });
+
+  test(`POST /api/input/${operation} returns transaction errors without data`, async () => {
+    const exports = await loadInputMutationRoute(operation, {
+      ok: false,
+      error: {
+        status: 409,
+        code: "input_not_pending",
+        message:
+          "Input replace/delete is allowed only while the item is pending."
+      }
+    });
+    const response = await exports.POST(
+      routeRequest(
+        "POST",
+        `/api/input/${operation}`,
+        JSON.stringify({ caller_item_id: "email:1" })
+      )
+    );
+    assert.equal(response.status, 409);
+    const payload = await response.json();
+    assert.equal(payload.error.code, "input_not_pending");
+    assert.equal("data" in payload, false);
   });
 }
 
