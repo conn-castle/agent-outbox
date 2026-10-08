@@ -123,6 +123,11 @@ function isCallerItemIdIndexWidthError(error: unknown): error is Error {
   );
 }
 
+/**
+ * Runs an input mutation in an authenticated caller transaction. Successful
+ * HTTP response data omits the internal operation discriminant; transaction
+ * errors retain their error shape.
+ */
 export async function handleInputQueueRequest(
   request: Request,
   context: ApiRequestContext,
@@ -499,6 +504,7 @@ export async function deleteInputItem(
   };
 }
 
+/** Selects and locks a caller's existing item, including its live-output state. */
 function existingInputStatement(
   identity: CallerIdentity,
   callerItemId: string
@@ -540,6 +546,10 @@ export function serializedSendInputItemStatement(
   };
 }
 
+/**
+ * Builds a pending-item insert with revision one, leaving a conflicting caller
+ * item unchanged. Identity values precede the shared content values.
+ */
 export function insertInputItemStatement(
   identity: CallerIdentity,
   submission: NormalizedInputSubmission
@@ -586,6 +596,7 @@ export function insertInputItemStatement(
   };
 }
 
+/** Builds a content replacement that increments the item's current revision. */
 function updateInputItemStatement(
   inputItemId: string,
   submission: NormalizedInputSubmission
@@ -618,6 +629,7 @@ function updateInputItemStatement(
   };
 }
 
+/** Builds a link-button insert preserving its normalized display order. */
 function insertLinkButtonStatement(
   inputItemId: string,
   button: NormalizedInputSubmission["linkButtons"][number]
@@ -643,6 +655,7 @@ function insertLinkButtonStatement(
   };
 }
 
+/** Builds an action insert with its popup payload and returns the action ID. */
 function insertActionStatement(
   inputItemId: string,
   action: NormalizedInputAction
@@ -679,6 +692,7 @@ function insertActionStatement(
   };
 }
 
+/** Builds a popup-option insert for an action in normalized display order. */
 function insertPopupOptionStatement(
   inputActionId: string,
   option: NormalizedPopupOption
@@ -704,6 +718,7 @@ function insertPopupOptionStatement(
   };
 }
 
+/** Builds the deletion of an item's link buttons before replacing its content. */
 function deleteLinkButtonsStatement(
   inputItemId: string
 ): TransactionContextStatement {
@@ -713,6 +728,7 @@ function deleteLinkButtonsStatement(
   };
 }
 
+/** Builds the deletion of an item's actions before replacing its content. */
 function deleteActionsStatement(
   inputItemId: string
 ): TransactionContextStatement {
@@ -722,6 +738,7 @@ function deleteActionsStatement(
   };
 }
 
+/** Builds the deletion of an input item by its previously selected internal ID. */
 function deleteInputItemStatement(
   inputItemId: string
 ): TransactionContextStatement {
@@ -839,7 +856,10 @@ async function auditContext(
   };
 }
 
-// Shared by insert ($5..$19) and replace ($2..$16), in column order.
+/**
+ * Returns the 15 content values in column order for insert ($5..$19) and
+ * replace ($2..$16), serializing the visual payload and preserving nulls.
+ */
 function inputContentValues(submission: NormalizedInputSubmission) {
   return [
     submission.priority,

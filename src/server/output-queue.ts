@@ -250,6 +250,7 @@ export async function handleOutputAckRequest(
   );
 }
 
+/** Returns a caller's output summary page and total ready count without row locks. */
 export async function checkOutputPageInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity,
@@ -319,6 +320,11 @@ export async function readOutputResultInTransaction(
   };
 }
 
+/**
+ * Locks a caller's output page, materializes available results and canonical
+ * inputs, and marks returned results read. Unavailable file outputs remain
+ * listed separately while pagination follows the selected page.
+ */
 export async function readAllOutputPageInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity,
@@ -498,6 +504,7 @@ export function parseOutputReadAllBody(
   return parsed;
 }
 
+/** Builds the total output-result count scoped to the authenticated caller. */
 function outputReadyCountStatement(
   identity: CallerIdentity
 ): TransactionContextStatement {
@@ -523,10 +530,12 @@ const OUTPUT_ROW_COLUMNS = `
         answered_at,
         answered_by_user_id::text as answered_by_user_id`;
 
-// One keyset page of output results. "check" selects only the summary columns
-// and never locks. "read" selects full rows and locks them FOR UPDATE (like the
-// single-read path) so a concurrent undo/ack/cleanup cannot delete or restore a
-// row between the select and the mark-read update.
+/**
+ * Builds a caller-scoped keyset page with one extra row and a microsecond UTC
+ * cursor. "check" selects summaries without locks; "read" selects full rows
+ * and locks them FOR UPDATE so undo, acknowledgement, or cleanup cannot change
+ * them between selection and the mark-read update.
+ */
 export function outputPageStatement(
   identity: CallerIdentity,
   limit: number,
@@ -561,6 +570,7 @@ export function outputPageStatement(
   };
 }
 
+/** Builds a caller-scoped single-result lookup with a row lock for reading. */
 export function outputResultByIdStatement(
   identity: CallerIdentity,
   outputResultId: string
@@ -603,6 +613,7 @@ export function outputFileMetadataStatement(
   };
 }
 
+/** Builds a caller-scoped read-count increment, retaining the first read time. */
 function markOutputResultsReadStatement(
   identity: CallerIdentity,
   outputResultIds: readonly string[]

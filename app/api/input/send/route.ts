@@ -3,6 +3,7 @@ import { handleInputQueueRequest } from "../../../../src/server/input-queue";
 
 export const runtime = "nodejs";
 
+/** Handles an input send request through the JSON API envelope and queue handler. */
 export async function POST(request: Request) {
   return respondToJsonApiRequest(request, "/api/input/send", (context, body) =>
     handleInputQueueRequest(request, context, "send", body)
