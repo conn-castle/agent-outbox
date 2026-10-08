@@ -35,6 +35,15 @@ the current PR head SHA.
 
 ## Readiness
 
+Before applying this gate or completing any other handoff, the publisher must
+obtain stop proof from a real invocation of its own native watcher. If no
+managed watcher is running, run the step 2 watcher command in a bounded
+foreground wait with `--exit-on-change`, reusing the same append-only log and
+keeping only one watcher active. Retain the watcher's own returned exit status
+before the after-stop fetch, even when the PR is ready on the first fetch.
+Evidence that no watcher was started does not satisfy the stop-proof
+requirement.
+
 Request merge authorization only after the watcher stop proof below and a fresh
 fetch made after that stop confirm:
 
@@ -69,10 +78,11 @@ reasoning effort that is neither the `pr_worker` nor the shipper session.
   bytes for PRE validation. This reply binding is distinct from the original
   source digest; it does not require deduplicating reply bodies across the PR.
 - After posting or editing (HOSTED POST), refetch the stored body through the
-  API and validate that entire stored body against the same evidence. Compute
-  its own SHA-256 from the entire refetched body's UTF-8 bytes before any
-  masking or newline normalization; bind POST validation to that stored reply,
-  separately from the original source digest.
+  API and validate that entire stored body against a fresh evidence snapshot
+  covering the same checks as PRE. Compute its own SHA-256 from the entire
+  refetched body's UTF-8 bytes before any masking or newline normalization;
+  bind POST validation to that stored reply, separately from the original
+  source digest.
 
 The canonical `scripts/read-pr-comments.sh` prints API IDs, URLs, and bodies;
 it does not determine eligibility from a Source footer. Apply
@@ -151,6 +161,6 @@ Before returning that request, have an independent validator, chosen as for
 replies, check the entire request against fresh GitHub state and the cited
 receipts. Return only after its completed report, read in full, passes that
 exact text. Return the validated text unchanged, followed by one line naming
-the validator invocation ID, the verdict, and the SHA-256 of the validated
-text's UTF-8 bytes with no trailing newline. Any edit
-requires revalidation.
+the validator invocation ID, terminal state, durable `termination_confirmed`
+status, verdict, and SHA-256 of the validated text's UTF-8 bytes with no
+trailing newline. Any edit requires revalidation.
