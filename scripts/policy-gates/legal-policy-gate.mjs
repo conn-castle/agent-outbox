@@ -19,11 +19,7 @@
  *   1 — guarded paths changed and label absent
  *  64 — usage error
  */
-import {
-  dispatchPolicyGate,
-  parseFixtureRows,
-  readChangedFiles
-} from "./gate-cli-utils.mjs";
+import { dispatchPolicyGate, readChangedFiles } from "./gate-cli-utils.mjs";
 
 const GUARDED_PATHS = [
   "app/privacy-policy/page.tsx",
@@ -74,43 +70,16 @@ function runPathsMode(pathsFile, labelPresent) {
   return 1;
 }
 
-/**
- * @param {string} fixturesPath
- * @returns {number}
- */
-function runFixturesMode(fixturesPath) {
-  const rows = parseFixtureRows(fixturesPath);
-  let failures = 0;
-
-  for (const row of rows) {
-    const paths = Array.isArray(row.paths) ? row.paths.map(String) : [];
-    const labelPresent = Boolean(row.label_present);
-    const expected = String(row.expected ?? "");
-    const hits = guardedHits(paths);
-    const actual = hits.length === 0 || labelPresent ? "pass" : "fail";
-    if (actual !== expected) {
-      failures += 1;
-      console.error(
-        `FIXTURE MISMATCH: ${row.name ?? "<unnamed>"} expected=${expected} actual=${actual}`
-      );
-      console.error(
-        `  hits=${hits.join(",") || "<none>"} label_present=${labelPresent}`
-      );
-    }
-  }
-
-  if (failures > 0) {
-    console.error(
-      `${failures}/${rows.length} legal-policy gate fixture(s) failed.`
-    );
-    return 1;
-  }
-  console.log(`All ${rows.length} legal-policy gate fixture(s) passed.`);
-  return 0;
-}
-
 dispatchPolicyGate({
   scriptName: "legal-policy-gate.mjs",
+  fixtureLabel: "legal-policy gate",
   runPathsMode,
-  runFixturesMode
+  evaluateFixture(row) {
+    const paths = Array.isArray(row.paths) ? row.paths.map(String) : [];
+    const hits = guardedHits(paths);
+    return {
+      findings: hits,
+      detail: `hits=${hits.join(",") || "<none>"} label_present=${Boolean(row.label_present)}`
+    };
+  }
 });
