@@ -426,6 +426,9 @@ test("policy-gates workflow retriggers on labels and never applies them", () => 
 
 // Run the deployed resolver itself with offline command responses. No GitHub or
 // git writes are involved; each invocation owns its fixtures and output file.
+/**
+ * @param {{ eventLabels?: { name: string }[], stdout?: string, status?: number, stderr?: string, token?: string }} [options]
+ */
 function resolveCurrentLabels({
   eventLabels = [],
   stdout = "[[]]",
@@ -510,6 +513,11 @@ const HUMAN_LABELS = [
   "legal-policy-approved"
 ].map((name) => ({ name }));
 
+/**
+ * @param {boolean} megachange
+ * @param {boolean} migration
+ * @param {boolean} legal
+ */
 function expectedLabelOutputs(megachange, migration, legal) {
   return `megachange_label_present=${megachange}\nmigration_label_present=${migration}\nlegal_policy_label_present=${legal}\n`;
 }
@@ -558,6 +566,7 @@ test("current PR labels use later pages despite a stale unlabeled event", () => 
 });
 
 test("current PR labels refetch on retries and observe independent removals", () => {
+  /** @type {{ labels: { name: string }[], expected: [boolean, boolean, boolean] }[]} */
   const responses = [
     { labels: HUMAN_LABELS, expected: [true, true, true] },
     { labels: [HUMAN_LABELS[1]], expected: [false, true, false] },
