@@ -145,19 +145,17 @@ function readRuntimeProofSourceContents() {
 /**
  * @returns {Record<string, string>}
  */
-function readPhase4ContractDocContents() {
-  return readPathContents(PHASE4_CONTRACT_DOC_FILES);
-}
-
-/**
- * @returns {Record<string, string>}
- */
 function readImplementedHttpRouteContents() {
   return readPathContents(
     listSourceFiles("app/api").filter((relativePath) =>
       relativePath.endsWith("/route.ts")
     )
   );
+}
+
+/** @param {string[]} failures */
+function assertNoFailures(failures) {
+  assert.deepEqual(failures, [], failures.join("\n"));
 }
 
 function checkRequiredFiles() {
@@ -213,14 +211,11 @@ function checkMakefileSurface() {
     [],
     `Makefile missing targets: ${missingTargets.join(", ")}`
   );
-  const databaseTestCommandFailures = validateDatabaseTestCommand(
-    /** @type {PackageJson} */ (readJson("package.json")),
-    makefile
-  );
-  assert.deepEqual(
-    databaseTestCommandFailures,
-    [],
-    databaseTestCommandFailures.join("\n")
+  assertNoFailures(
+    validateDatabaseTestCommand(
+      /** @type {PackageJson} */ (readJson("package.json")),
+      makefile
+    )
   );
 }
 
@@ -248,28 +243,23 @@ function build() {
   const toolchain = /** @type {Toolchain} */ (readJson("toolchain.json"));
   const packageJson = /** @type {PackageJson} */ (readJson("package.json"));
   const workflows = readWorkflowContents();
-  const packageErrors = validateToolchainPackage(toolchain, packageJson);
-  assert.deepEqual(packageErrors, [], packageErrors.join("\n"));
-  const workflowErrors = validateWorkflowVersionPins(toolchain, workflows);
-  assert.deepEqual(workflowErrors, [], workflowErrors.join("\n"));
-  const commandsErrors = validateCommandsVersionPins(
-    toolchain,
-    readText("docs/agent-layer/COMMANDS.md")
+  assertNoFailures(validateToolchainPackage(toolchain, packageJson));
+  assertNoFailures(validateWorkflowVersionPins(toolchain, workflows));
+  assertNoFailures(
+    validateCommandsVersionPins(
+      toolchain,
+      readText("docs/agent-layer/COMMANDS.md")
+    )
   );
-  assert.deepEqual(commandsErrors, [], commandsErrors.join("\n"));
-  const goModuleErrors = validateGoModuleTooling(
-    toolchain,
-    readText("cli/go.mod")
+  assertNoFailures(validateGoModuleTooling(toolchain, readText("cli/go.mod")));
+  assertNoFailures(validateWorkflowGoChecks(toolchain, workflows));
+  assertNoFailures(
+    validateGoReleaserTooling(
+      toolchain,
+      readText("Makefile"),
+      readText(".goreleaser.yaml")
+    )
   );
-  assert.deepEqual(goModuleErrors, [], goModuleErrors.join("\n"));
-  const goWorkflowErrors = validateWorkflowGoChecks(toolchain, workflows);
-  assert.deepEqual(goWorkflowErrors, [], goWorkflowErrors.join("\n"));
-  const goreleaserErrors = validateGoReleaserTooling(
-    toolchain,
-    readText("Makefile"),
-    readText(".goreleaser.yaml")
-  );
-  assert.deepEqual(goreleaserErrors, [], goreleaserErrors.join("\n"));
 
   console.log("Build consistency checks passed.");
 }
@@ -278,8 +268,7 @@ function smoke() {
   checkRequiredFiles();
 
   const envExample = readText(".env.example");
-  const envExampleErrors = validateRequiredEnvExample(envExample);
-  assert.deepEqual(envExampleErrors, [], envExampleErrors.join("\n"));
+  assertNoFailures(validateRequiredEnvExample(envExample));
   const requiredNames = requiredEnvNames(envExample);
   assert.ok(requiredNames.includes("DATABASE_URL"));
   assert.ok(requiredNames.includes("CALLER_KEY_HASH_SECRET"));
@@ -289,85 +278,38 @@ function smoke() {
   const nodeVersion = toolchain.node.version;
   const wranglerConfig = readText("wrangler.jsonc");
 
-  const workflowFailures = assertNoForbiddenWorkflowCommands(workflows);
-  assert.deepEqual(workflowFailures, [], workflowFailures.join("\n"));
-  const productionDeployWorkflowFailures = validateProductionDeployWorkflow(
-    workflows[PRODUCTION_DEPLOY_WORKFLOW_PATH],
-    nodeVersion
-  );
-  assert.deepEqual(
-    productionDeployWorkflowFailures,
-    [],
-    productionDeployWorkflowFailures.join("\n")
-  );
-  const productionRollbackWorkflowFailures = validateProductionRollbackWorkflow(
-    workflows[PRODUCTION_ROLLBACK_WORKFLOW_PATH],
-    nodeVersion
-  );
-  assert.deepEqual(
-    productionRollbackWorkflowFailures,
-    [],
-    productionRollbackWorkflowFailures.join("\n")
-  );
-  const productionReconciliationWorkflowFailures =
-    validateProductionReconciliationWorkflow(
-      workflows[PRODUCTION_RECONCILE_WORKFLOW_PATH],
-      nodeVersion
+  assertNoFailures(assertNoForbiddenWorkflowCommands(workflows));
+  for (const [validateReleaseWorkflow, workflowPath] of /** @type {const} */ ([
+    [validateProductionDeployWorkflow, PRODUCTION_DEPLOY_WORKFLOW_PATH],
+    [validateProductionRollbackWorkflow, PRODUCTION_ROLLBACK_WORKFLOW_PATH],
+    [
+      validateProductionReconciliationWorkflow,
+      PRODUCTION_RECONCILE_WORKFLOW_PATH
+    ],
+    [
+      validateAbandonedReleaseDetectionWorkflow,
+      ABANDONED_RELEASE_DETECTION_WORKFLOW_PATH
+    ]
+  ])) {
+    assertNoFailures(
+      validateReleaseWorkflow(workflows[workflowPath], nodeVersion)
     );
-  assert.deepEqual(
-    productionReconciliationWorkflowFailures,
-    [],
-    productionReconciliationWorkflowFailures.join("\n")
-  );
-  const abandonedReleaseDetectionWorkflowFailures =
-    validateAbandonedReleaseDetectionWorkflow(
-      workflows[ABANDONED_RELEASE_DETECTION_WORKFLOW_PATH],
-      nodeVersion
-    );
-  assert.deepEqual(
-    abandonedReleaseDetectionWorkflowFailures,
-    [],
-    abandonedReleaseDetectionWorkflowFailures.join("\n")
-  );
-  const migrationWorkflowFailures = validateMigrationReplayWorkflow(workflows);
-  assert.deepEqual(
-    migrationWorkflowFailures,
-    [],
-    migrationWorkflowFailures.join("\n")
-  );
-  const policyGatesWorkflowFailures = validatePolicyGatesWorkflow(workflows);
-  assert.deepEqual(
-    policyGatesWorkflowFailures,
-    [],
-    policyGatesWorkflowFailures.join("\n")
-  );
+  }
+  assertNoFailures(validateMigrationReplayWorkflow(workflows));
+  assertNoFailures(validatePolicyGatesWorkflow(workflows));
 
-  const scopeFailures = validateRuntimeProofScope(
-    readRuntimeProofSourceContents()
-  );
-  assert.deepEqual(scopeFailures, [], scopeFailures.join("\n"));
+  assertNoFailures(validateRuntimeProofScope(readRuntimeProofSourceContents()));
 
-  const phase4ContractDocFailures = validatePhase4ContractDocContents({
-    ...readPhase4ContractDocContents(),
-    ...readImplementedHttpRouteContents()
-  });
-  assert.deepEqual(
-    phase4ContractDocFailures,
-    [],
-    phase4ContractDocFailures.join("\n")
+  assertNoFailures(
+    validatePhase4ContractDocContents({
+      ...readPathContents(PHASE4_CONTRACT_DOC_FILES),
+      ...readImplementedHttpRouteContents()
+    })
   );
-  const cronScheduleFailures = validateWranglerCronSchedule(
-    wranglerConfig,
-    RUNTIME_CRON_SCHEDULE
+  assertNoFailures(
+    validateWranglerCronSchedule(wranglerConfig, RUNTIME_CRON_SCHEDULE)
   );
-  assert.deepEqual(cronScheduleFailures, [], cronScheduleFailures.join("\n"));
-  const requiredSecretFailures =
-    validateWranglerRequiredSecrets(wranglerConfig);
-  assert.deepEqual(
-    requiredSecretFailures,
-    [],
-    requiredSecretFailures.join("\n")
-  );
+  assertNoFailures(validateWranglerRequiredSecrets(wranglerConfig));
 
   console.log("Structural smoke checks passed.");
 }
@@ -402,25 +344,11 @@ function doctor() {
   );
 
   for (const [name, cli] of Object.entries(toolchain.providerCli)) {
-    if (name === "stripe") {
-      checks.push(
-        versionResult(
-          "stripe",
-          ["version"],
-          cli.version,
-          semanticVersionFromOutput
-        )
-      );
-    } else {
-      checks.push(
-        versionResult(
-          cli.authCheck[0],
-          ["--version"],
-          cli.version,
-          semanticVersionFromOutput
-        )
-      );
-    }
+    const command = name === "stripe" ? "stripe" : cli.authCheck[0];
+    const args = name === "stripe" ? ["version"] : ["--version"];
+    checks.push(
+      versionResult(command, args, cli.version, semanticVersionFromOutput)
+    );
   }
 
   const envPath = path.join(ROOT, ".env");
