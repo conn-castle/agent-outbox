@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
-import { auditEventInsertStatement } from "./accounting.ts";
+import {
+  auditEventInsertStatement,
+  type AuditSafeLifecycleInput
+} from "./accounting.ts";
 import {
   accountLimitProfileForAccount,
   accountWriteLockStatement,
@@ -24,6 +27,7 @@ import {
 import {
   compareUtcDateTimeValues,
   isIanaTimeZone,
+  isValidCivilDate,
   isValidUtcDateTime,
   type NormalizedFreeTextPopupPayload,
   type NormalizedDatePickerPopupPayload,
@@ -81,14 +85,6 @@ export type DatePickerDateTimeResponse = {
   mode: "datetime";
   value_utc: string;
   display_timezone: string;
-};
-
-export type UploadedFileResponse = {
-  file_id: string;
-  filename: string;
-  mime_type: string;
-  size_bytes: number;
-  sha256: string;
 };
 
 export type FileUploadResponse = {
@@ -213,7 +209,13 @@ type PopupActionForValidation = PersistedPopup & {
   optionValues?: readonly string[];
 };
 
-const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+type PreparedUpload = {
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  bytes: Buffer;
+};
 
 export async function createHumanAnswer(
   connectionString: string,
@@ -325,83 +327,63 @@ export async function createHumanAnswerInTransaction(
     })
   );
   const outputResultId = outputResult.rows[0].output_result_id;
-  let uploadedFile: {
-    outputFileId: string;
-    filename: string;
-    mimeType: string;
-    sizeBytes: number;
-    sha256: string;
-  } | null = null;
-  if (upload.file) {
-    const insertedFile = await query<OutputFileInsertRow>(
-      createOutputFileStatement({
-        input,
-        outputResultId,
-        file: upload.file
-      })
-    );
-    uploadedFile = {
-      outputFileId: insertedFile.rows[0].output_file_id,
-      filename: upload.file.filename,
-      mimeType: upload.file.mimeType,
-      sizeBytes: upload.file.sizeBytes,
-      sha256: upload.file.sha256
-    };
-  }
+  const file = upload.file;
+  const uploaded = file && {
+    ...file,
+    outputFileId: (
+      await query<OutputFileInsertRow>(
+        createOutputFileStatement({ input, outputResultId, file })
+      )
+    ).rows[0].output_file_id
+  };
 
   await query(markInputAnsweredStatement(input.inputItemId, answeredAt));
 
   const expiresAt = outputExpiresAt(answeredAt);
+  const audit = (
+    event: Pick<
+      AuditSafeLifecycleInput,
+      | "eventType"
+      | "responseKind"
+      | "nonFileBytes"
+      | "fileBytes"
+      | "outputFileId"
+    >
+  ) =>
+    auditEventInsertStatement({
+      accountAuditId: targetInput.account_audit_id,
+      callerAuditId: targetInput.caller_audit_id,
+      inputItemId: targetInput.input_item_id,
+      outputResultId,
+      itemStatus: "answered",
+      requestId: input.requestId,
+      correlationId: input.correlationId,
+      callerItemIdHash: targetInput.caller_item_id_hash,
+      metadata: { revision: targetInput.current_revision },
+      ...event
+    });
   const auditStatements = [
-    auditEventInsertStatement({
+    audit({
       eventType: "input_answered",
-      accountAuditId: targetInput.account_audit_id,
-      callerAuditId: targetInput.caller_audit_id,
-      inputItemId: targetInput.input_item_id,
-      outputResultId,
-      itemStatus: "answered",
       responseKind: payloadResult.responseKind,
-      nonFileBytes: byteCount(targetInput.non_file_payload_bytes),
-      requestId: input.requestId,
-      correlationId: input.correlationId,
-      callerItemIdHash: targetInput.caller_item_id_hash,
-      metadata: { revision: targetInput.current_revision }
+      nonFileBytes: byteCount(targetInput.non_file_payload_bytes)
     }),
-    auditEventInsertStatement({
+    audit({
       eventType: "output_created",
-      accountAuditId: targetInput.account_audit_id,
-      callerAuditId: targetInput.caller_audit_id,
-      inputItemId: targetInput.input_item_id,
-      outputResultId,
-      itemStatus: "answered",
       responseKind: payloadResult.responseKind,
-      nonFileBytes: payloadResult.responsePayloadBytes,
-      requestId: input.requestId,
-      correlationId: input.correlationId,
-      callerItemIdHash: targetInput.caller_item_id_hash,
-      metadata: { revision: targetInput.current_revision }
-    })
+      nonFileBytes: payloadResult.responsePayloadBytes
+    }),
+    ...(uploaded
+      ? [
+          audit({
+            eventType: "file_uploaded",
+            responseKind: "file_upload",
+            outputFileId: uploaded.outputFileId,
+            fileBytes: uploaded.sizeBytes
+          })
+        ]
+      : [])
   ];
-  if (uploadedFile) {
-    auditStatements.push(
-      auditEventInsertStatement({
-        eventType: "file_uploaded",
-        accountAuditId: targetInput.account_audit_id,
-        callerAuditId: targetInput.caller_audit_id,
-        inputItemId: targetInput.input_item_id,
-        outputResultId,
-        outputFileId: uploadedFile.outputFileId,
-        itemStatus: "answered",
-        responseKind: "file_upload",
-        fileBytes: uploadedFile.sizeBytes,
-        requestId: input.requestId,
-        correlationId: input.correlationId,
-        callerItemIdHash: targetInput.caller_item_id_hash,
-        metadata: { revision: targetInput.current_revision }
-      })
-    );
-  }
-
   for (const statement of auditStatements) {
     await query(statement);
   }
@@ -413,15 +395,15 @@ export async function createHumanAnswerInTransaction(
     callerItemId: targetInput.caller_item_id,
     actionValue: input.actionValue,
     responseKind: payloadResult.responseKind,
-    responsePayload: uploadedFile
+    responsePayload: uploaded
       ? {
           kind: "file_upload",
           file: {
-            file_id: uploadedFile.outputFileId,
-            filename: uploadedFile.filename,
-            mime_type: uploadedFile.mimeType,
-            size_bytes: uploadedFile.sizeBytes,
-            sha256: uploadedFile.sha256
+            file_id: uploaded.outputFileId,
+            filename: uploaded.filename,
+            mime_type: uploaded.mimeType,
+            size_bytes: uploaded.sizeBytes,
+            sha256: uploaded.sha256
           }
         }
       : payloadResult.responsePayload,
@@ -436,32 +418,38 @@ export function humanAnswerTransactionFailure(
   input: CreateHumanAnswerInput,
   startedAtMs = Date.now()
 ): HumanAnswerFailure {
-  reportRuntimeFailure(error, {
-    errorId: input.correlationId,
-    request_id: input.requestId,
-    surface: "app",
-    route: "/human",
-    method: "POST",
-    status_code: 503,
-    duration_ms: durationSinceMs(startedAtMs),
+  return reportHumanFailure(error, input, startedAtMs, {
     operation: "human_answer_transaction",
     operation_kind:
       input.response.kind === "file_upload" ? "file_upload" : undefined,
-    account_id: input.accountId,
-    caller_id: input.callerId,
-    message: "Human answer transaction failed unexpectedly."
+    message: "Human answer transaction failed unexpectedly.",
+    publicMessage: "Human answer is temporarily unavailable."
   });
-  return failure(
-    "temporary_unavailable",
-    "Human answer is temporarily unavailable."
-  );
 }
 
 export function humanAnswerUndoTransactionFailure(
   error: unknown,
   input: PreReadUndoInput
 ): HumanAnswerFailure {
-  const startedAtMs = Date.now();
+  return reportHumanFailure(error, input, Date.now(), {
+    operation: "human_answer_undo_transaction",
+    message: "Human answer undo transaction failed unexpectedly.",
+    publicMessage: "Human answer undo is temporarily unavailable."
+  });
+}
+
+// Field order is the emitted log-line order.
+function reportHumanFailure(
+  error: unknown,
+  input: HumanAnswerActorContext,
+  startedAtMs: number,
+  report: {
+    operation: string;
+    operation_kind?: "file_upload";
+    message: string;
+    publicMessage: string;
+  }
+): HumanAnswerFailure {
   reportRuntimeFailure(error, {
     errorId: input.correlationId,
     request_id: input.requestId,
@@ -470,15 +458,13 @@ export function humanAnswerUndoTransactionFailure(
     method: "POST",
     status_code: 503,
     duration_ms: durationSinceMs(startedAtMs),
-    operation: "human_answer_undo_transaction",
+    operation: report.operation,
+    operation_kind: report.operation_kind,
     account_id: input.accountId,
     caller_id: input.callerId,
-    message: "Human answer undo transaction failed unexpectedly."
+    message: report.message
   });
-  return failure(
-    "temporary_unavailable",
-    "Human answer undo is temporarily unavailable."
-  );
+  return failure("temporary_unavailable", report.publicMessage);
 }
 
 export async function undoHumanAnswerBeforeReadInTransaction(
@@ -665,19 +651,7 @@ async function preparedFileUpload(
   input: CreateHumanAnswerInput,
   payload: StoredPayload,
   startedAtMs: number
-): Promise<
-  | {
-      ok: true;
-      file: {
-        filename: string;
-        mimeType: string;
-        sizeBytes: number;
-        sha256: string;
-        bytes: Buffer;
-      } | null;
-    }
-  | HumanAnswerFailure
-> {
+): Promise<{ ok: true; file: PreparedUpload | null } | HumanAnswerFailure> {
   if (payload.responseKind !== "file_upload") {
     return { ok: true, file: null };
   }
@@ -685,18 +659,10 @@ async function preparedFileUpload(
 
   const profile = await accountLimitProfileForAccount(query, input.accountId);
   if (!profile) {
-    emitHumanFileUploadFailure(
+    return humanFileUploadFailure(
       input,
-      {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "File upload is temporarily unavailable."
-      },
+      unavailableUpload("File upload is temporarily unavailable."),
       startedAtMs
-    );
-    return failure(
-      "temporary_unavailable",
-      "File upload is temporarily unavailable."
     );
   }
   const limits = await enforceHumanFileUploadLimits(
@@ -706,50 +672,25 @@ async function preparedFileUpload(
     file.size
   );
   if (!limits.ok) {
-    emitHumanFileUploadFailure(input, limits.error, startedAtMs);
-    return {
-      ok: false,
-      code: limits.error.code,
-      message: limits.error.message
-    };
+    return humanFileUploadFailure(input, limits.error, startedAtMs);
   }
 
   let bytes: Buffer;
   try {
     bytes = Buffer.from(await file.arrayBuffer());
   } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: input.correlationId,
-      request_id: input.requestId,
-      surface: "app",
-      route: "/human",
-      method: "POST",
-      status_code: 503,
-      duration_ms: durationSinceMs(startedAtMs),
+    return reportHumanFailure(error, input, startedAtMs, {
       operation: "human_file_upload",
       operation_kind: "file_upload",
-      account_id: input.accountId,
-      caller_id: input.callerId,
-      message: "Human file upload failed unexpectedly."
+      message: "Human file upload failed unexpectedly.",
+      publicMessage: "Uploaded file could not be read safely."
     });
-    return failure(
-      "temporary_unavailable",
-      "Uploaded file could not be read safely."
-    );
   }
   if (bytes.byteLength !== file.size) {
-    emitHumanFileUploadFailure(
+    return humanFileUploadFailure(
       input,
-      {
-        status: 503,
-        code: "temporary_unavailable",
-        message: "Uploaded file could not be read safely."
-      },
+      unavailableUpload("Uploaded file could not be read safely."),
       startedAtMs
-    );
-    return failure(
-      "temporary_unavailable",
-      "Uploaded file could not be read safely."
     );
   }
 
@@ -765,11 +706,15 @@ async function preparedFileUpload(
   };
 }
 
-function emitHumanFileUploadFailure(
+function unavailableUpload(message: string) {
+  return { status: 503, code: "temporary_unavailable", message } as const;
+}
+
+function humanFileUploadFailure(
   input: CreateHumanAnswerInput,
   error: Pick<ApiErrorInput, "status" | "code" | "message" | "limit">,
   startedAtMs: number
-) {
+): HumanAnswerFailure {
   emitOperatorActionableFailure({
     status: error.status,
     limit: error.limit,
@@ -785,6 +730,7 @@ function emitHumanFileUploadFailure(
     caller_id: input.callerId,
     message: "Human file upload failed."
   });
+  return failure(error.code, error.message);
 }
 
 function createOutputResultStatement(input: {
@@ -855,13 +801,7 @@ function markInputAnsweredStatement(
 function createOutputFileStatement(input: {
   input: CreateHumanAnswerInput;
   outputResultId: string;
-  file: {
-    filename: string;
-    mimeType: string;
-    sizeBytes: number;
-    sha256: string;
-    bytes: Buffer;
-  };
+  file: PreparedUpload;
 }): TransactionContextStatement {
   return {
     sql: `
@@ -1074,7 +1014,7 @@ function validateDatePickerResponse(
 
     if (
       typeof response.value_date !== "string" ||
-      !validDateOnly(response.value_date)
+      !isValidCivilDate(response.value_date)
     ) {
       return invalidActionResponse(
         "response.value_date",
@@ -1082,10 +1022,9 @@ function validateDatePickerResponse(
       );
     }
 
-    const rangeFailure = validateDateRange(
-      response.value_date,
-      popupPayload.min_value,
-      popupPayload.max_value
+    const rangeFailure = validateDatePickerRange(
+      popupPayload,
+      response.value_date
     );
     if (rangeFailure) {
       return rangeFailure;
@@ -1119,7 +1058,7 @@ function validateDatePickerResponse(
 
   if (
     typeof response.value_utc !== "string" ||
-    !validUtcDateTime(response.value_utc)
+    !isValidUtcDateTime(response.value_utc)
   ) {
     return invalidActionResponse(
       "response.value_utc",
@@ -1127,10 +1066,9 @@ function validateDatePickerResponse(
     );
   }
 
-  const rangeFailure = validateDateTimeRange(
-    response.value_utc,
-    popupPayload.min_value,
-    popupPayload.max_value
+  const rangeFailure = validateDatePickerRange(
+    popupPayload,
+    response.value_utc
   );
   if (rangeFailure) {
     return rangeFailure;
@@ -1186,49 +1124,32 @@ function validateFileUploadResponse(
   return storedPayload("file_upload", {}, response.file);
 }
 
-function validateDateRange(
-  value: string,
-  minValue: string | null,
-  maxValue: string | null
+// Called after the response mode is checked against the configured mode.
+function validateDatePickerRange(
+  { mode, min_value, max_value }: NormalizedDatePickerPopupPayload,
+  value: string
 ): HumanAnswerFailure | null {
-  if (minValue !== null && value < minValue) {
+  const compare = (bound: string) =>
+    mode === "datetime"
+      ? compareUtcDateTimeValues(value, bound)
+      : value < bound
+        ? -1
+        : value > bound
+          ? 1
+          : 0;
+  const path = mode === "date" ? "response.value_date" : "response.value_utc";
+  if (min_value !== null && compare(min_value) < 0) {
     return invalidActionResponse(
-      "response.value_date",
-      "Date-picker date response is before the selected action minimum."
+      path,
+      `Date-picker ${mode} response is before the selected action minimum.`
     );
   }
-  if (maxValue !== null && value > maxValue) {
+  if (max_value !== null && compare(max_value) > 0) {
     return invalidActionResponse(
-      "response.value_date",
-      "Date-picker date response is after the selected action maximum."
+      path,
+      `Date-picker ${mode} response is after the selected action maximum.`
     );
   }
-
-  return null;
-}
-
-function validateDateTimeRange(
-  value: string,
-  minValue: string | null,
-  maxValue: string | null
-): HumanAnswerFailure | null {
-  if (minValue !== null) {
-    if (compareUtcDateTimeValues(value, minValue) < 0) {
-      return invalidActionResponse(
-        "response.value_utc",
-        "Date-picker datetime response is before the selected action minimum."
-      );
-    }
-  }
-  if (maxValue !== null) {
-    if (compareUtcDateTimeValues(value, maxValue) > 0) {
-      return invalidActionResponse(
-        "response.value_utc",
-        "Date-picker datetime response is after the selected action maximum."
-      );
-    }
-  }
-
   return null;
 }
 
@@ -1325,7 +1246,7 @@ function answerablePopup(
     if (display_timezone && !isIanaTimeZone(display_timezone)) {
       throw malformed("display_timezone must be an IANA timezone name");
     }
-    const validBound = mode === "date" ? validDateOnly : validUtcDateTime;
+    const validBound = mode === "date" ? isValidCivilDate : isValidUtcDateTime;
     for (const [key, value] of [
       ["min_value", min_value],
       ["max_value", max_value]
@@ -1368,22 +1289,6 @@ function normalizeMimeTypePattern(value: string) {
   return /^[a-z0-9!#$&^_.+-]+\/(?:[a-z0-9!#$&^_.+-]+|\*)$/.test(normalized)
     ? normalized
     : null;
-}
-
-function validDateOnly(value: string) {
-  if (!DATE_ONLY_PATTERN.test(value)) {
-    return false;
-  }
-
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  return (
-    !Number.isNaN(parsed.getTime()) &&
-    parsed.toISOString().slice(0, 10) === value
-  );
-}
-
-function validUtcDateTime(value: string) {
-  return isValidUtcDateTime(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

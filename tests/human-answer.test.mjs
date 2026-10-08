@@ -569,6 +569,117 @@ test("human answer response validation rejects impossible and sub-millisecond da
   );
 });
 
+test("date-picker ranges are inclusive and civil dates require a real padded date", () => {
+  /** @type {Array<{ mode: "date" | "datetime", min: string, max: string, value: string, message: string | null }>} */
+  const cases = [
+    {
+      mode: "date",
+      min: "2026-01-10",
+      max: "2026-02-10",
+      value: "2026-01-09",
+      message:
+        "Date-picker date response is before the selected action minimum."
+    },
+    {
+      mode: "date",
+      min: "2026-01-10",
+      max: "2026-02-10",
+      value: "2026-02-11",
+      message: "Date-picker date response is after the selected action maximum."
+    },
+    {
+      mode: "date",
+      min: "2026-01-10",
+      max: "2026-02-10",
+      value: "2026-01-10",
+      message: null
+    },
+    {
+      mode: "date",
+      min: "2026-01-10",
+      max: "2026-02-10",
+      value: "2026-02-10",
+      message: null
+    },
+    {
+      mode: "date",
+      min: "2026-01-10",
+      max: "2026-02-10",
+      value: "2026-02-30",
+      message: "Date-picker date responses require a YYYY-MM-DD date."
+    },
+    {
+      mode: "date",
+      min: "2026-01-10",
+      max: "2026-02-10",
+      value: "2026-2-03",
+      message: "Date-picker date responses require a YYYY-MM-DD date."
+    },
+    {
+      mode: "datetime",
+      min: "2026-01-10T00:00:00Z",
+      max: "2026-01-10T12:00:00.5Z",
+      value: "2026-01-10T12:00:00.501Z",
+      message:
+        "Date-picker datetime response is after the selected action maximum."
+    },
+    {
+      mode: "datetime",
+      min: "2026-01-10T12:00:00.5Z",
+      max: "2026-01-10T12:00:00.5Z",
+      value: "2026-01-10T12:00:00.500Z",
+      message: null
+    }
+  ];
+  for (const { mode, min, max, value, message } of cases) {
+    const result = validatedResponsePayload(
+      {
+        popupKind: "date_picker",
+        popupPayload: {
+          ...datePickerPayload,
+          mode,
+          min_value: min,
+          max_value: max
+        }
+      },
+      mode === "date"
+        ? {
+            kind: "date_picker",
+            mode,
+            value_date: value,
+            display_timezone: null
+          }
+        : {
+            kind: "date_picker",
+            mode,
+            value_utc: value,
+            display_timezone: "UTC"
+          }
+    );
+    if (message === null) {
+      assert.equal(result.ok, true, value);
+    } else {
+      assert.deepEqual(
+        result,
+        {
+          ok: false,
+          code: "invalid_action_response",
+          message: "Action response does not match the selected action.",
+          fields: [
+            {
+              path:
+                mode === "date" ? "response.value_date" : "response.value_utc",
+              code: "invalid_action_response",
+              message
+            }
+          ]
+        },
+        value
+      );
+    }
+  }
+});
+
 const pendingInputRow = {
   input_item_id: baseAnswerInput.inputItemId,
   caller_item_id: "caller-item-1",
@@ -579,6 +690,132 @@ const pendingInputRow = {
   account_audit_id: "audit-account-1",
   caller_audit_id: "audit-caller-1"
 };
+
+test("human uploads report safe failures without inserting an output file", async () => {
+  /** @type {Array<{ name: string, rows: HumanAnswerMockRows, read?: () => Promise<ArrayBuffer>, code: string, message: string, level: string, status: number, unexpected?: boolean }>} */
+  const cases = [
+    {
+      name: "no profile",
+      rows: { accountTierRows: [] },
+      code: "temporary_unavailable",
+      message: "File upload is temporarily unavailable.",
+      level: "error",
+      status: 503
+    },
+    {
+      name: "read rejection",
+      rows: {},
+      read: async () => {
+        throw new Error("private upload read error");
+      },
+      code: "temporary_unavailable",
+      message: "Uploaded file could not be read safely.",
+      level: "error",
+      status: 503,
+      unexpected: true
+    },
+    {
+      name: "short read",
+      rows: {},
+      read: async () => new ArrayBuffer(2),
+      code: "temporary_unavailable",
+      message: "Uploaded file could not be read safely.",
+      level: "error",
+      status: 503
+    },
+    {
+      name: "storage limit",
+      rows: {
+        accountStockUsageRows: [
+          {
+            queued_input_items: "1",
+            non_file_stored_bytes: "100",
+            overall_stored_bytes: "999999999999"
+          }
+        ]
+      },
+      code: "storage_limit_exceeded",
+      message:
+        "Stored account data byte limit reached; delete or acknowledge data to free storage.",
+      level: "warn",
+      status: 429
+    }
+  ];
+  for (const {
+    name,
+    rows,
+    read,
+    code,
+    message,
+    level,
+    status,
+    unexpected
+  } of cases) {
+    const file = new File(["hello"], "note.txt", { type: "text/plain" });
+    if (read) file.arrayBuffer = read;
+    /** @type {TransactionContextStatement[]} */
+    const calls = [];
+    /** @type {Array<Record<string, unknown>>} */
+    const logs = [];
+    const originalError = console.error;
+    const originalWarn = console.warn;
+    console.error = console.warn = (line) =>
+      logs.push(JSON.parse(String(line)));
+    try {
+      const result = await createHumanAnswerInTransaction(
+        mockQuery(calls, {
+          inputRows: [pendingInputRow],
+          actionRows: [
+            {
+              input_action_id: "action-1",
+              popup_kind: "file_upload",
+              popup_payload: fileUploadPayload
+            }
+          ],
+          accountTierRows: [{ tier: "hosted_paid" }],
+          advisoryLockRows: [{ acquired: true }],
+          accountStockUsageRows: [
+            {
+              queued_input_items: "1",
+              non_file_stored_bytes: "100",
+              overall_stored_bytes: "100"
+            }
+          ],
+          ...rows
+        }),
+        { ...baseAnswerInput, response: { kind: "file_upload", file } }
+      );
+      assert.deepEqual(result, { ok: false, code, message }, name);
+    } finally {
+      console.error = originalError;
+      console.warn = originalWarn;
+    }
+    assert.equal(
+      calls.some((call) =>
+        call.sql.includes("insert into public.agent_outbox_output_files")
+      ),
+      false,
+      name
+    );
+    assert.equal(logs.length, 1, name);
+    assert.equal(logs[0].level, level, name);
+    assert.equal(logs[0].status_code, status, name);
+    assert.equal(logs[0].operation, "human_file_upload", name);
+    assert.equal(logs[0].operation_kind, "file_upload", name);
+    assert.equal(
+      logs[0].message,
+      unexpected
+        ? "Human file upload failed unexpectedly."
+        : "Human file upload failed.",
+      name
+    );
+    assert.equal(
+      JSON.stringify(logs).includes("private upload read error"),
+      false,
+      name
+    );
+  }
+});
 
 /** @type {Array<{name: string, kind: string, payload: unknown, response: import("../src/server/human-answer.ts").HumanActionResponse, message: string}>} */
 const malformedPopupCases = [
@@ -1134,12 +1371,49 @@ test("human answer service stores uploaded bytes in one output file row and cont
   const auditCalls = calls.filter((call) =>
     call.sql.includes("insert into public.agent_outbox_audit_events")
   );
+  const outputInsert = calls.find((call) =>
+    call.sql.includes("insert into public.agent_outbox_output_results")
+  );
+  const auditRow = (
+    /** @type {string} */ eventType,
+    /** @type {string | null} */ outputFileId,
+    /** @type {string} */ responseKind,
+    /** @type {unknown} */ nonFileBytes,
+    /** @type {number | null} */ fileBytes
+  ) => [
+    eventType,
+    "audit-account-1",
+    "audit-caller-1",
+    baseAnswerInput.inputItemId,
+    "output-1",
+    outputFileId,
+    "answered",
+    responseKind,
+    nonFileBytes,
+    fileBytes,
+    null,
+    null,
+    null,
+    "req-test",
+    "corr-test",
+    "hash-1",
+    '{"revision":3}'
+  ];
   assert.deepEqual(
-    auditCalls.map((call) => call.values?.[0]),
-    ["input_answered", "output_created", "file_uploaded"]
+    auditCalls.map((call) => call.values),
+    [
+      auditRow("input_answered", null, "file_upload", 100, null),
+      auditRow(
+        "output_created",
+        null,
+        "file_upload",
+        outputInsert?.values?.[7],
+        null
+      ),
+      auditRow("file_uploaded", "file-1", "file_upload", null, 14)
+    ]
   );
   assert.doesNotMatch(JSON.stringify(auditCalls), /invoice|uploaded bytes/);
-  assert.equal(auditCalls[2].values?.[9], 14);
 });
 
 test("human answer service rejects oversized uploaded files before reading bytes", async () => {

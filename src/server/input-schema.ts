@@ -1550,7 +1550,7 @@ function optionalDatePickerValue(
   return value;
 }
 
-function isValidCivilDate(value: string) {
+export function isValidCivilDate(value: string) {
   if (!DATE_PATTERN.test(value)) {
     return false;
   }
