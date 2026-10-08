@@ -264,6 +264,7 @@ function loadBillingSessionModuleForTest(reportRuntimeFailure) {
  * @param {import("../src/server/database.ts").ProductTransactionQuery} [transactionQuery]
  * @returns {{
  *   createHumanAnswer: typeof createHumanAnswer,
+ *   humanAnswerTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerTransactionFailure,
  *   humanAnswerUndoTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerUndoTransactionFailure
  * }}
  */
@@ -307,6 +308,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure, transactionQuery) {
       "./input-schema.ts": {
         compareUtcDateTimeValues: () => 0,
         isIanaTimeZone: () => true,
+        isValidCivilDate: () => true,
         isValidUtcDateTime: () => true
       },
       "./logging.ts": { durationSinceMs, emitRuntimeLog },
@@ -320,6 +322,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure, transactionQuery) {
 
   const exportsForTest = /** @type {{
     createHumanAnswer: typeof createHumanAnswer,
+    humanAnswerTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerTransactionFailure,
     humanAnswerUndoTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerUndoTransactionFailure
   }} */ (exportsForTestModule);
   return exportsForTest;
@@ -1054,6 +1057,68 @@ test("malformed stored MIME patterns reach human answer transaction failure repo
     calls.some((call) => /^\s*(insert|update|delete)\b/i.test(call.sql)),
     false
   );
+});
+
+test("human failure reporters preserve emitted log key order", async () => {
+  const { reportRuntimeFailure } = loadSentryModuleForTest({
+    withScope() {},
+    captureException() {}
+  });
+  const {
+    humanAnswerTransactionFailure: answerFailure,
+    humanAnswerUndoTransactionFailure: undoFailure
+  } = loadHumanAnswerModuleForTest(reportRuntimeFailure);
+  const actor = {
+    accountId: "account-test",
+    callerId: "caller-test",
+    humanUserId: "human-test",
+    requestId: "req-test",
+    correlationId: "corr-test"
+  };
+  const logs = await captureStructuredLogs(async () => {
+    answerFailure(
+      new Error("private failure"),
+      {
+        ...actor,
+        inputItemId: "input-test",
+        expectedRevision: 3,
+        actionValue: "upload",
+        response: { kind: "file_upload", file: new File(["hello"], "note.txt") }
+      },
+      0
+    );
+    undoFailure(new Error("private failure"), {
+      ...actor,
+      outputResultId: "output-test"
+    });
+  });
+  assert.equal(logs.length, 2);
+  const sharedStart = [
+    "environment",
+    "release",
+    "request_id",
+    "surface",
+    "route",
+    "method",
+    "status_code",
+    "duration_ms",
+    "operation"
+  ];
+  const sharedEnd = [
+    "account_id",
+    "caller_id",
+    "message",
+    "level",
+    "error_id",
+    "error_name",
+    "sentry_captured"
+  ];
+  assert.deepEqual(Object.keys(logs[0]), [
+    ...sharedStart,
+    "operation_kind",
+    ...sharedEnd
+  ]);
+  assert.deepEqual(Object.keys(logs[1]), [...sharedStart, ...sharedEnd]);
 });
 
 test("human answer transaction failures share error id across structured log and Sentry", async () => {
