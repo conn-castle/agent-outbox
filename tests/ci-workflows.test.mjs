@@ -730,14 +730,31 @@ test("CI certification rejects a local release-check chain CI would not run", ()
       "Makefile release-check must be exactly check go-check package-check marketing-verify with no recipe"
     ]);
   }
-  const withRecipe = makefile.replace(
-    /^release-check:.*$/m,
-    "$&\n\t./scripts/extra-release-gate.sh"
-  );
-  assert.notEqual(withRecipe, makefile);
-  assert.deepEqual(certificationFailures(ciWorkflow, withRecipe), [
-    "Makefile release-check must be exactly check go-check package-check marketing-verify with no recipe"
-  ]);
+  for (const separator of [
+    "",
+    "\n",
+    "# Release gate comment\n",
+    "\n# Release gate comment\n",
+    "   \n  # Release gate comment\n\n"
+  ]) {
+    const withRecipe = makefile.replace(
+      /^release-check:.*$/m,
+      `$&\n${separator}\t./scripts/extra-release-gate.sh`
+    );
+    assert.notEqual(withRecipe, makefile);
+    assert.deepEqual(
+      certificationFailures(ciWorkflow, withRecipe),
+      [
+        "Makefile release-check must be exactly check go-check package-check marketing-verify with no recipe"
+      ],
+      `recipe after ${JSON.stringify(separator)}`
+    );
+    const withoutRecipe = makefile.replace(
+      /^release-check:.*$/m,
+      `$&\n${separator}`
+    );
+    assert.deepEqual(certificationFailures(ciWorkflow, withoutRecipe), []);
+  }
   assert.ok(
     certificationFailures(ciWorkflow, makefile, {
       ...toolchain,

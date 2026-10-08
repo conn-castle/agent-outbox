@@ -482,14 +482,19 @@ export function validateCiCertificationWorkflow(
     }
   }
   // A recipe under release-check would run locally but never in CI, where the
-  // target's parts run as separate jobs.
-  const releaseTarget = makefileContent.match(
-    /^release-check:([^\n]*)\n(\t?)/m
-  );
+  // target's parts run as separate jobs. Make allows blank and comment-only
+  // lines between the target and its recipe.
+  const releaseTarget = makefileContent.match(/^release-check:([^\n]*)\n/m);
+  const nextMakefileLine = releaseTarget
+    ? makefileContent
+        .slice(releaseTarget.index + releaseTarget[0].length)
+        .split(/\r?\n/)
+        .find((line) => line.trim() !== "" && !/^ *#/.test(line))
+    : undefined;
   if (
     releaseTarget?.[1].trim().split(/\s+/).join(" ") !==
       "check go-check package-check marketing-verify" ||
-    releaseTarget[2] !== ""
+    nextMakefileLine?.startsWith("\t")
   ) {
     failures.push(
       "Makefile release-check must be exactly check go-check package-check marketing-verify with no recipe"
