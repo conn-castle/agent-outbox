@@ -97,7 +97,7 @@ export function readChangedFiles(pathsFile) {
  * @param {string} fixturesPath
  * @returns {Record<string, unknown>[]}
  */
-export function parseFixtureRows(fixturesPath) {
+function parseFixtureRows(fixturesPath) {
   /** @type {Record<string, unknown>[]} */
   const rows = [];
   const text = fs.readFileSync(fixturesPath, "utf8");
@@ -115,20 +115,61 @@ export function parseFixtureRows(fixturesPath) {
 }
 
 /**
+ * Self-validates a gate against JSONL fixture rows. A row passes when it has
+ * no findings or carries `label_present`, and must match its `expected`.
+ *
+ * @param {string} fixturesPath
+ * @param {string} label
+ * @param {(row: Record<string, unknown>) => { findings: unknown[], detail: string }} evaluate
+ * @returns {number}
+ */
+function runFixturesMode(fixturesPath, label, evaluate) {
+  const rows = parseFixtureRows(fixturesPath);
+  let failures = 0;
+
+  for (const row of rows) {
+    const { findings, detail } = evaluate(row);
+    const expected = String(row.expected ?? "");
+    const actual =
+      findings.length === 0 || Boolean(row.label_present) ? "pass" : "fail";
+    if (actual !== expected) {
+      failures += 1;
+      console.error(
+        `FIXTURE MISMATCH: ${row.name ?? "<unnamed>"} expected=${expected} actual=${actual}`
+      );
+      console.error(`  ${detail}`);
+    }
+  }
+
+  if (failures > 0) {
+    console.error(`${failures}/${rows.length} ${label} fixture(s) failed.`);
+    return 1;
+  }
+  console.log(`All ${rows.length} ${label} fixture(s) passed.`);
+  return 0;
+}
+
+/**
  * @param {{
  *   scriptName: string,
+ *   fixtureLabel: string,
  *   runPathsMode: (pathsFile: string, labelPresent: boolean) => number,
- *   runFixturesMode: (fixturesPath: string) => number
+ *   evaluateFixture: (row: Record<string, unknown>) => { findings: unknown[], detail: string }
  * }} config
  */
 export function dispatchPolicyGate({
   scriptName,
+  fixtureLabel,
   runPathsMode,
-  runFixturesMode
+  evaluateFixture
 }) {
   const args = parsePolicyGateArgs(scriptName, process.argv.slice(2));
   const exitCode = args.fixturesPath
-    ? runFixturesMode(path.normalize(args.fixturesPath))
+    ? runFixturesMode(
+        path.normalize(args.fixturesPath),
+        fixtureLabel,
+        evaluateFixture
+      )
     : runPathsMode(path.normalize(args.pathsFile), args.labelPresent);
   process.exit(exitCode);
 }

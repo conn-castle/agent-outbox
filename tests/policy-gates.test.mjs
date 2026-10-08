@@ -180,6 +180,199 @@ test("migration annotations identify the offending action and its source line", 
   }
 });
 
+/**
+ * @param {Record<string, unknown>[]} rows
+ * @returns {string}
+ */
+function fixtureLines(rows) {
+  return `# comment\n\n${rows.map((row) => JSON.stringify(row)).join("\n")}\n`;
+}
+
+test("legal-policy fixture mode reports each mismatching row and a summary", () => {
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "legal-fixtures-"));
+  try {
+    const failing = path.join(tmpDir, "failing.txt");
+    writeFileSync(
+      failing,
+      fixtureLines([
+        {
+          name: "guarded without label",
+          paths: ["app/privacy-policy/page.tsx", "README.md"],
+          expected: "pass"
+        },
+        {
+          name: "guarded with label",
+          paths: ["app/terms-of-service/page.tsx"],
+          label_present: true,
+          expected: "pass"
+        },
+        { name: "unguarded", paths: ["README.md"], expected: "fail" }
+      ]),
+      "utf8"
+    );
+    const result = runNode([
+      "scripts/policy-gates/legal-policy-gate.mjs",
+      "--fixtures",
+      failing
+    ]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.deepEqual(result.stderr.trimEnd().split("\n"), [
+      "FIXTURE MISMATCH: guarded without label expected=pass actual=fail",
+      "  hits=app/privacy-policy/page.tsx label_present=false",
+      "FIXTURE MISMATCH: unguarded expected=fail actual=pass",
+      "  hits=<none> label_present=false",
+      "2/3 legal-policy gate fixture(s) failed."
+    ]);
+
+    const passing = path.join(tmpDir, "passing.txt");
+    writeFileSync(
+      passing,
+      fixtureLines([
+        {
+          name: "guarded",
+          paths: ["src/components/legal/LegalDocument.tsx"],
+          expected: "fail"
+        }
+      ]),
+      "utf8"
+    );
+    const passed = runNode([
+      "scripts/policy-gates/legal-policy-gate.mjs",
+      "--fixtures",
+      passing
+    ]);
+    assert.equal(passed.status, 0, passed.stderr);
+    assert.equal(passed.stdout, "All 1 legal-policy gate fixture(s) passed.\n");
+    assert.equal(passed.stderr, "");
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("migration fixture mode reports detected operations and a summary", () => {
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "migration-fixtures-"));
+  try {
+    const failing = path.join(tmpDir, "failing.txt");
+    writeFileSync(
+      failing,
+      fixtureLines([
+        {
+          name: "drops",
+          sql: "DROP TABLE t; ALTER TABLE u DROP COLUMN c;",
+          expected: "pass"
+        },
+        {
+          name: "approved drop",
+          sql: "DROP INDEX i;",
+          label_present: true,
+          expected: "pass"
+        },
+        {
+          name: "additive",
+          sql: "ALTER TABLE t ADD COLUMN c int;",
+          expected: "fail"
+        }
+      ]),
+      "utf8"
+    );
+    const result = runNode([
+      "scripts/policy-gates/migration-discipline-scan.mjs",
+      "--fixtures",
+      failing
+    ]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.deepEqual(result.stderr.trimEnd().split("\n"), [
+      "FIXTURE MISMATCH: drops expected=pass actual=fail",
+      "  violations=DROP TABLE,DROP COLUMN",
+      "FIXTURE MISMATCH: additive expected=fail actual=pass",
+      "  violations=<none>",
+      "2/3 migration discipline fixture(s) failed."
+    ]);
+
+    const passing = path.join(tmpDir, "passing.txt");
+    writeFileSync(
+      passing,
+      fixtureLines([{ name: "drop", sql: "DROP TABLE t;", expected: "fail" }]),
+      "utf8"
+    );
+    const passed = runNode([
+      "scripts/policy-gates/migration-discipline-scan.mjs",
+      "--fixtures",
+      passing
+    ]);
+    assert.equal(passed.status, 0, passed.stderr);
+    assert.equal(
+      passed.stdout,
+      "All 1 migration discipline fixture(s) passed.\n"
+    );
+    assert.equal(passed.stderr, "");
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("migration scan ignores comments but not comment markers inside quotes", () => {
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "migration-quotes-"));
+  try {
+    const sqlPath = path.join(tmpDir, "migration.sql");
+    const pathsFile = path.join(tmpDir, "paths.txt");
+    writeFileSync(pathsFile, `${sqlPath}\n`, "utf8");
+
+    const cases = [
+      {
+        sql: "-- DROP TABLE a;\n/* ALTER TABLE t DROP COLUMN x; */\nselect '--' as v; DROP INDEX i;",
+        operation: "DROP INDEX",
+        line: 3,
+        text: "DROP INDEX i;"
+      },
+      {
+        sql: "select 'it''s /* text' as v;\nDROP TABLE t;\nselect 1; -- */",
+        operation: "DROP TABLE",
+        line: 2
+      },
+      {
+        sql: 'select "a""/*b" from t;\nDROP INDEX i;\n-- */',
+        operation: "DROP INDEX",
+        line: 2
+      },
+      {
+        sql: "select '\"/*' as q;\nDROP TABLE t;\n-- */",
+        operation: "DROP TABLE",
+        line: 2
+      },
+      {
+        sql: 'select "\'/*" from t;\nDROP TABLE t;\n-- */',
+        operation: "DROP TABLE",
+        line: 2
+      }
+    ];
+
+    for (const { sql, operation, line, text } of cases) {
+      writeFileSync(sqlPath, sql, "utf8");
+      const result = runNode([
+        "scripts/policy-gates/migration-discipline-scan.mjs",
+        "--paths-file",
+        pathsFile
+      ]);
+      assert.equal(result.status, 1, sql);
+      const annotations = result.stderr
+        .split("\n")
+        .filter((text) => text.startsWith("::error "));
+      assert.deepEqual(
+        annotations,
+        [
+          `::error file=${sqlPath},line=${line}::${operation} in ${sqlPath}:${line} (${text ?? sql.split("\n")[line - 1].trim()})`
+        ],
+        sql
+      );
+    }
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("policy-gates workflow retriggers on labels and never applies them", () => {
   const workflow = readFileSync(
     path.join(ROOT, ".github/workflows/policy-gates.yml"),

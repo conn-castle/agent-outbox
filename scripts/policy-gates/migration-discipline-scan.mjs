@@ -1,11 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 
-import {
-  dispatchPolicyGate,
-  parseFixtureRows,
-  readChangedFiles
-} from "./gate-cli-utils.mjs";
+import { dispatchPolicyGate, readChangedFiles } from "./gate-cli-utils.mjs";
 
 const OPERATIONS = [
   { name: "DROP COLUMN", re: /\bDROP\s+COLUMN\b/i },
@@ -88,45 +84,21 @@ const SET_NOT_NULL = {
 function stripSqlComments(sql) {
   let out = "";
   let i = 0;
-  let inSingle = false;
-  let inDouble = false;
+  /** @type {string | null} */
+  let quote = null;
   while (i < sql.length) {
     const c = sql[i];
     const next = sql[i + 1];
-    if (inSingle) {
+    if (quote) {
+      // A doubled (escaped) quote closes and immediately reopens the literal,
+      // which preserves the same text and state.
       out += c;
-      if (c === "'" && next === "'") {
-        out += next;
-        i += 2;
-        continue;
-      }
-      if (c === "'") {
-        inSingle = false;
-      }
+      if (c === quote) quote = null;
       i += 1;
       continue;
     }
-    if (inDouble) {
-      out += c;
-      if (c === '"' && next === '"') {
-        out += next;
-        i += 2;
-        continue;
-      }
-      if (c === '"') {
-        inDouble = false;
-      }
-      i += 1;
-      continue;
-    }
-    if (c === "'") {
-      inSingle = true;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === '"') {
-      inDouble = true;
+    if (c === "'" || c === '"') {
+      quote = c;
       out += c;
       i += 1;
       continue;
@@ -284,37 +256,30 @@ function scanStatement(statementText, statementLines, filePath) {
   /** @type {MigrationViolation[]} */
   const violations = [];
   if (statementText.trim() === "") return violations;
+  /**
+   * @param {string} operation
+   * @param {number} offset
+   */
+  const record = (operation, offset) => {
+    const line = findLineAtOffset(statementText, statementLines, offset);
+    violations.push({
+      filePath,
+      lineNumber: line.lineNumber,
+      operation,
+      text: line.text.trim()
+    });
+  };
 
   for (const operation of OPERATIONS) {
     const match = operation.re.exec(statementText);
-    if (match) {
-      const line = findLineAtOffset(statementText, statementLines, match.index);
-      violations.push({
-        filePath,
-        lineNumber: line.lineNumber,
-        operation: operation.name,
-        text: line.text.trim()
-      });
-    }
+    if (match) record(operation.name, match.index);
   }
 
   const { hasHeader, actions } = statementActions(statementText);
   if (hasHeader) {
     for (const operation of IMPLICIT_COLUMN_OPERATIONS) {
       const action = actions.find((action) => operation.re.test(action.text));
-      if (action) {
-        const line = findLineAtOffset(
-          statementText,
-          statementLines,
-          action.offset
-        );
-        violations.push({
-          filePath,
-          lineNumber: line.lineNumber,
-          operation: operation.name,
-          text: line.text.trim()
-        });
-      }
+      if (action) record(operation.name, action.offset);
     }
   }
 
@@ -322,19 +287,7 @@ function scanStatement(statementText, statementLines, filePath) {
     actions,
     statementText
   );
-  if (notNullAction) {
-    const line = findLineAtOffset(
-      statementText,
-      statementLines,
-      notNullAction.offset
-    );
-    violations.push({
-      filePath,
-      lineNumber: line.lineNumber,
-      operation: SET_NOT_NULL.name,
-      text: line.text.trim()
-    });
-  }
+  if (notNullAction) record(SET_NOT_NULL.name, notNullAction.offset);
 
   return violations;
 }
@@ -425,43 +378,18 @@ function runPathsMode(pathsFile, labelPresent) {
   return 1;
 }
 
-/**
- * @param {string} fixturesPath
- * @returns {number}
- */
-function runFixturesMode(fixturesPath) {
-  const rows = parseFixtureRows(fixturesPath);
-  let failures = 0;
-
-  for (const row of rows) {
-    const sql = String(row.sql ?? "");
-    const labelPresent = Boolean(row.label_present);
-    const expected = String(row.expected ?? "");
-    const violations = scanSql(sql, `fixture:${row.name ?? "unnamed"}.sql`);
-    const actual = violations.length === 0 || labelPresent ? "pass" : "fail";
-    if (actual !== expected) {
-      failures += 1;
-      console.error(
-        `FIXTURE MISMATCH: ${row.name ?? "<unnamed>"} expected=${expected} actual=${actual}`
-      );
-      console.error(
-        `  violations=${violations.map((v) => v.operation).join(",") || "<none>"}`
-      );
-    }
-  }
-
-  if (failures > 0) {
-    console.error(
-      `${failures}/${rows.length} migration discipline fixture(s) failed.`
-    );
-    return 1;
-  }
-  console.log(`All ${rows.length} migration discipline fixture(s) passed.`);
-  return 0;
-}
-
 dispatchPolicyGate({
   scriptName: "migration-discipline-scan.mjs",
+  fixtureLabel: "migration discipline",
   runPathsMode,
-  runFixturesMode
+  evaluateFixture(row) {
+    const violations = scanSql(
+      String(row.sql ?? ""),
+      `fixture:${row.name ?? "unnamed"}.sql`
+    );
+    return {
+      findings: violations,
+      detail: `violations=${violations.map((v) => v.operation).join(",") || "<none>"}`
+    };
+  }
 });
