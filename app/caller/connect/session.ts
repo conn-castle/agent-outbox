@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
+import { unstable_rethrow } from "next/navigation";
 
 import {
   CALLER_CONNECT_FIXTURE_USER_ID_HEADER,
@@ -71,6 +72,70 @@ export async function runCallerConnectHumanTransaction<TResult>(
     },
     callback
   );
+}
+
+export async function runCallerPageTransaction<TResult>(
+  input: {
+    requestId: string;
+    fixtureClerkUserId?: string | null;
+    route: string;
+    operation: string;
+    unavailableMessage: string;
+    missingSessionMessage?: string;
+  },
+  callback: (
+    query: ProductTransactionQuery,
+    session: HumanAccountSession
+  ) => Promise<TResult>
+): Promise<
+  | { ok: true; session: HumanAccountSession; data: TResult }
+  | { ok: false; error: { status: number; code: string; message: string } }
+> {
+  const startedAtMs = Date.now();
+  let activeSession: HumanAccountSession | undefined;
+  try {
+    const transaction = await runCallerConnectHumanTransaction(
+      {
+        requestId: input.requestId,
+        fixtureClerkUserId: input.fixtureClerkUserId,
+        route: input.route,
+        method: "GET"
+      },
+      (query, session) => {
+        activeSession = session;
+        return callback(query, session);
+      }
+    );
+    if (!transaction.ok) {
+      return { ok: false, error: transaction };
+    }
+    return {
+      ok: true,
+      session: transaction.session,
+      data: transaction.data
+    };
+  } catch (error) {
+    unstable_rethrow(error);
+    reportCallerApprovalFailure(error, {
+      requestId: input.requestId,
+      route: input.route,
+      method: "GET",
+      operation: input.operation,
+      session: activeSession,
+      startedAtMs
+    });
+    if (!activeSession && input.missingSessionMessage) {
+      throw new Error(input.missingSessionMessage);
+    }
+    return {
+      ok: false,
+      error: {
+        status: 503,
+        code: "temporary_unavailable",
+        message: input.unavailableMessage
+      }
+    };
+  }
 }
 
 async function callerConnectClerkUserId(
