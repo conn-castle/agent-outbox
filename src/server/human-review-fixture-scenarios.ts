@@ -6,6 +6,9 @@ import { parseInputSubmission } from "./input-schema.ts";
 
 const fixtureCallerId = "00000000-0000-4000-8000-000000000503";
 
+/**
+ * Derive a stable fixture UUID from a seed using SHA-256.
+ */
 export function fixtureUuid(seed: string) {
   const hash = createHash("sha256").update(seed).digest("hex");
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(
@@ -29,6 +32,9 @@ type CoreFixture = Record<string, unknown> &
     | "output"
   > & { unanswerableActions?: readonly string[] };
 
+/**
+ * Build the ten core browser review scenarios from caller input and stored metadata.
+ */
 export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
   const fixtures: CoreFixture[] = [
     {
@@ -980,6 +986,11 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
   return fixtures.map(normalizeCoreFixture);
 }
 
+/**
+ * Validate caller input and combine normalized review fields with stored metadata.
+ * Only pending actions absent from unanswerableActions remain answerable.
+ * @throws When the fixture's caller input fails submission validation.
+ */
 function normalizeCoreFixture({
   inputItemId,
   status,
@@ -1018,6 +1029,9 @@ function normalizeCoreFixture({
   };
 }
 
+/**
+ * Build caller metadata with the fixed default ID or a stable ID derived from its slug.
+ */
 function fixtureCaller(
   displayName = "Steward Operations",
   slug = "steward-operations"
