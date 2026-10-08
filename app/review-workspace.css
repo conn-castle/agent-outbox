@@ -3074,11 +3074,6 @@ body:has(.shell > .human-workspace) {
   height: 0.75rem;
 }
 
-.human-workspace .mobile-back .back-arrow,
-.human-workspace .mobile-back .back-copy {
-  display: none;
-}
-
 .human-workspace .detail-header {
   position: relative;
   display: grid;
@@ -3522,8 +3517,7 @@ body:has(.shell > .human-workspace) {
 
 .human-workspace .detail-kicker,
 .human-workspace .detail-meta,
-.human-workspace .detail-section-label,
-.human-workspace .action-section .response-label {
+.human-workspace .detail-section-label {
   font-size: var(--queue-type-label);
   font-weight: 600;
 }

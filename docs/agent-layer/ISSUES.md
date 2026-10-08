@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-07 connect-ineffective-style-intents: Caller-connect styles show dropped spacing and heading intent
+    Priority: Low. Area: Caller connect / Visual design
+    Description: Never-applied declarations were removed from `app/globals.css` during CSS consolidation. Rendering is unchanged, but these effects are missing: dense-surface actions keep a 1.5rem top margin (the dropped rule set 1.1rem); actions inside `.connect-device-decision` keep a 1.5rem top margin (the dropped rule set 0); `.connect-error-card` headings use the generic connect-card heading (`#202426`, 0 0 0.65rem margin; the dropped rule set `#292724` and 0 0 0.5rem).
+    Open question: Whether any of these former intents are still the desired design.
+
 - Issue 2026-10-07 date-picker-invalid-mode-throws: Invalid date_picker mode with min and max values throws instead of returning 422
     Priority: Medium. Area: Input validation
     Description: In `parseDatePickerPopup` (`src/server/input-schema.ts`), an unsupported `mode` combined with string `min_value` and `max_value` reaches `compareDatePickerValues`, which falls through to `compareUtcDateTimeValues` and throws "UTC datetime values must be validated before compare", so the send/replace request fails with an exception instead of a field-level validation error.
