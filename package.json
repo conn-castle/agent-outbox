@@ -84,7 +84,6 @@
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
     "@sentry/nextjs": "10.73.0",
-    "@supabase/supabase-js": "2.117.2",
     "entities": "8.1.0",
     "lucide-react": "1.48.0",
     "marked": "18.0.14",

@@ -114,11 +114,6 @@
       "package": "@dnd-kit/utilities",
       "source": "corepack pnpm view @dnd-kit/utilities version"
     },
-    "supabaseJs": {
-      "version": "2.117.2",
-      "package": "@supabase/supabase-js",
-      "source": "npm view @supabase/supabase-js version engines --json"
-    },
     "sentryNextjs": {
       "version": "10.73.0",
       "package": "@sentry/nextjs",
