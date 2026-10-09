@@ -14,6 +14,239 @@ test.beforeEach(({ page }) => {
   page.on("pageerror", rethrowPageError);
 });
 
+test("end-of-queue links switch status, clear search, and reset pagination", async ({
+  page
+}) => {
+  await page.goto(
+    "/human?fixture_dataset=pagination&search=fixture-page&page=2"
+  );
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await expect(
+    reviewRowByTitle(page, "Beyond one hundred review")
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Review answered decisions" }).click();
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("status") === "answered" &&
+      !["search", "q", "page"].some((key) => url.searchParams.has(key))
+  );
+  await expect(
+    reviewRowByTitle(page, "GitHub security digest for archived repositories")
+  ).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/search=fixture-page&page=2/);
+  await expect(
+    reviewRowByTitle(page, "Beyond one hundred review")
+  ).toBeVisible();
+
+  await page.goto("/human?status=answered&search=GitHub");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await page.getByRole("link", { name: "Return to review queue" }).click();
+  await expect(page).toHaveURL(
+    (url) =>
+      !["status", "search", "q", "page"].some((key) =>
+        url.searchParams.has(key)
+      )
+  );
+  await expect(
+    reviewRowByTitle(page, "Review neighborhood permit brief")
+  ).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/status=answered&search=GitHub/);
+});
+
+test("removing a priority chip preserves other priority and type filters", async ({
+  page
+}) => {
+  await page.goto("/human?priority=urgent&priority=high&type=Decision+Check");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await openReviewTools(page);
+  await page
+    .getByRole("button", { name: "Remove Priority: Urgent filter" })
+    .click();
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.getAll("priority").join() === "high" &&
+      url.searchParams.get("type") === "Decision Check"
+  );
+  const chips = page.getByLabel("Applied filters");
+  await expect(chips).not.toContainText("Priority: Urgent");
+  await expect(chips).toContainText("Priority: High");
+  await expect(chips).toContainText("Type: Decision Check");
+  await expect(reviewRowByTitle(page, "Choose follow-up window")).toBeVisible();
+});
+
+const redirectNoticeParams = {
+  notice: "bulk_answered",
+  error: "invalid_request",
+  failedActionKind: "file_upload",
+  action: "Approve",
+  answered: "1",
+  failed: "0",
+  undo_target: "00000000-0000-4000-8000-000000000511",
+  undo_actor: "00000000-0000-4000-8000-000000000504",
+  undo_result: "00000000-0000-4000-8000-000000000599",
+  resolved: "00000000-0000-4000-8000-000000000511",
+  subject: "Permit brief"
+};
+
+test("redirect notices strip every notice parameter on load and preserve the view", async ({
+  page
+}) => {
+  const params = new URLSearchParams({
+    ...redirectNoticeParams,
+    search: "follow-up",
+    priority: "high",
+    type: "Decision Check",
+    order: "title:desc"
+  });
+  await page.goto(`/human?${params}`);
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await expect(lastActionError(page)).toContainText("invalid request");
+  await expect(page).toHaveURL(
+    (url) =>
+      Object.keys(redirectNoticeParams).every(
+        (key) => !url.searchParams.has(key)
+      ) &&
+      url.searchParams.get("search") === "follow-up" &&
+      url.searchParams.get("priority") === "high" &&
+      url.searchParams.get("type") === "Decision Check" &&
+      url.searchParams.get("order") === "title:desc"
+  );
+  await expect(reviewRowByTitle(page, "Choose follow-up window")).toBeVisible();
+});
+
+test("view changes strip every redirect notice parameter", async ({ page }) => {
+  await page.goto("/human?search=follow-up&priority=high");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  // Keep the parameters present until navigation, independently of the notice effect.
+  await page.evaluate((noticeParams) => {
+    const url = new URL(window.location.href);
+    for (const [key, value] of Object.entries(noticeParams))
+      url.searchParams.set(key, value);
+    window.history.replaceState(window.history.state, "", url);
+  }, redirectNoticeParams);
+  expect(new URL(page.url()).searchParams.get("subject")).toBe("Permit brief");
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "History" })
+    .click();
+  await expect(page).toHaveURL(
+    (url) =>
+      Object.keys(redirectNoticeParams).every(
+        (key) => !url.searchParams.has(key)
+      ) &&
+      url.searchParams.get("status") === "answered" &&
+      url.searchParams.get("search") === "follow-up" &&
+      url.searchParams.get("priority") === "high"
+  );
+});
+
+test("detail steppers name adjacent reviews and disable links at each end", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  const titles = await page
+    .locator("article.review-row .row-title")
+    .allTextContents();
+  expect(titles.length).toBeGreaterThan(2);
+  const [first, second] = titles;
+  const last = titles.at(-1)!;
+  await reviewLinkByTitle(page, first).click();
+  const nav = page.getByRole("navigation", { name: "Review navigation" });
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect(nav.locator("span.disabled")).toHaveText("Previous");
+  await expect(nav.getByRole("link", { name: /^Previous:/ })).toHaveCount(0);
+  await nav.getByRole("link", { name: `Next: ${second}`, exact: true }).click();
+  await expect(detail.locator(".detail-title")).toHaveText(second);
+  await nav
+    .getByRole("link", { name: `Previous: ${first}`, exact: true })
+    .click();
+  await expect(detail.locator(".detail-title")).toHaveText(first);
+  await page.getByRole("button", { name: "Close detail", exact: true }).click();
+  await reviewLinkByTitle(page, last).click();
+  await expect(detail.locator(".detail-title")).toHaveText(last);
+  await expect(nav.locator("span.disabled")).toHaveText("Next");
+  await expect(nav.getByRole("link", { name: /^Next:/ })).toHaveCount(0);
+});
+
+test("a full backdrop click closes details and Escape closes an unavailable review", async ({
+  page
+}) => {
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000511");
+  const dialog = page.getByRole("dialog", {
+    name: "Review detail",
+    exact: true
+  });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await page.mouse.click(5, 5);
+  await expect(dialog).toBeHidden();
+  await expect(page).not.toHaveURL(/item=/);
+  await page.goto("/human?item=00000000-0000-4000-8000-999999999999");
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("heading", { name: "Review unavailable" })
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page).not.toHaveURL(/item=/);
+});
+
+test("snooze buttons retain toggle labels and disabled explanations", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  const row = reviewRowByTitle(page, "Review neighborhood permit brief");
+  await row.getByRole("button", { name: "Snooze review", exact: true }).click();
+  const restore = row.getByRole("button", {
+    name: "Return review to queue",
+    exact: true
+  });
+  await expect(restore).toHaveAttribute("title", "Return review to queue");
+  await restore.click();
+  await expect(
+    row.getByRole("button", { name: "Snooze review", exact: true })
+  ).toHaveAttribute("title", "Snooze review");
+  const disabled = reviewRowByTitle(page, "Choose follow-up window").getByRole(
+    "button",
+    { name: "Snooze unavailable for this review", exact: true }
+  );
+  await expect(disabled).toBeDisabled();
+  await expect(disabled).toHaveAttribute(
+    "title",
+    "Snoozing is disabled for this review"
+  );
+});
+
+test("response submit buttons keep their label as the title", async ({
+  page
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await expect(
+    reviewRowByTitle(page, "Review neighborhood permit brief").getByRole(
+      "button",
+      { name: "Approve permit brief", exact: true }
+    )
+  ).toHaveAttribute("title", "Approve permit brief");
+  await reviewLinkByTitle(page, "Review neighborhood permit brief").click();
+  const detail = page.getByRole("region", { name: "Review detail" });
+  await expect(
+    detail.getByRole("button", { name: "Approve permit brief", exact: true })
+  ).toHaveAttribute("title", "Approve permit brief");
+  await openSecondaryActions(page);
+  await detail
+    .getByRole("button", { name: "Request edit", exact: true })
+    .click();
+  await expect(detail.locator('button[type="submit"]')).toHaveAttribute(
+    "title",
+    "Request edit"
+  );
+});
+
 test("detail timestamps are compact, readable, and retain exact UTC values, including compose mode", async ({
   page
 }) => {

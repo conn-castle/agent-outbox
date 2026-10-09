@@ -6,7 +6,9 @@ import {
   useRef,
   useState,
   type MouseEvent,
-  type PointerEvent
+  type PointerEvent,
+  type ReactNode,
+  type SyntheticEvent
 } from "react";
 import Link from "next/link";
 import {
@@ -96,29 +98,30 @@ export function ReviewDetail({
     onClose();
   }
 
-  function handleBackdropPointerDown(event: PointerEvent<HTMLDialogElement>) {
-    backdropPressRef.current = event.target === event.currentTarget;
-  }
-
-  function handleBackdropClick(event: MouseEvent<HTMLDialogElement>) {
-    if (!backdropPressRef.current) return;
-    backdropPressRef.current = false;
-    if (event.target === event.currentTarget) closeDetail();
-  }
+  // Shared by both dialog variants: Escape and a full backdrop press close it.
+  const dialogProps = {
+    ref: dialogRef,
+    tabIndex: -1,
+    onCancel: (event: SyntheticEvent<HTMLDialogElement>) => {
+      event.preventDefault();
+      closeDetail();
+    },
+    onPointerDown: (event: PointerEvent<HTMLDialogElement>) => {
+      backdropPressRef.current = event.target === event.currentTarget;
+    },
+    onClick: (event: MouseEvent<HTMLDialogElement>) => {
+      if (!backdropPressRef.current) return;
+      backdropPressRef.current = false;
+      if (event.target === event.currentTarget) closeDetail();
+    }
+  };
 
   if (!detail) {
     return (
       <dialog
-        ref={dialogRef}
+        {...dialogProps}
         className="detail-modal"
         aria-label="Review detail"
-        tabIndex={-1}
-        onCancel={(event) => {
-          event.preventDefault();
-          closeDetail();
-        }}
-        onPointerDown={handleBackdropPointerDown}
-        onClick={handleBackdropClick}
       >
         <section className="detail-pane empty-state" aria-label="Review detail">
           <span className="empty-state-icon">
@@ -169,17 +172,10 @@ export function ReviewDetail({
 
   return (
     <dialog
-      ref={dialogRef}
+      {...dialogProps}
       id={`review-detail-${detail.inputItemId}`}
       className={`detail-modal${requestedCompose ? " compose-modal" : ""}`}
       aria-label={requestedCompose ? requestedCompose.display : "Review detail"}
-      tabIndex={-1}
-      onCancel={(event) => {
-        event.preventDefault();
-        closeDetail();
-      }}
-      onPointerDown={handleBackdropPointerDown}
-      onClick={handleBackdropClick}
     >
       <section
         className={`detail-pane${requestedCompose ? " compose-pane" : ""}`}
@@ -190,37 +186,17 @@ export function ReviewDetail({
             <p className="compose-kicker">{requestedCompose.display}</p>
           ) : (
             <nav className="detail-stepper" aria-label="Review navigation">
-              {previousItem ? (
-                <Link
-                  href={previousItem.href}
-                  aria-label={`Previous: ${previousItem.label}`}
-                >
-                  <ChevronLeft aria-hidden="true" />
-                  <span>Previous</span>
-                </Link>
-              ) : (
-                <span className="disabled">
-                  <ChevronLeft aria-hidden="true" />
-                  <span>Previous</span>
-                </span>
-              )}
+              <StepperLink item={previousItem} label="Previous">
+                <ChevronLeft aria-hidden="true" />
+                <span>Previous</span>
+              </StepperLink>
               {positionLabel ? (
                 <span className="detail-position">{positionLabel}</span>
               ) : null}
-              {nextItem ? (
-                <Link
-                  href={nextItem.href}
-                  aria-label={`Next: ${nextItem.label}`}
-                >
-                  <span>Next</span>
-                  <ChevronRight aria-hidden="true" />
-                </Link>
-              ) : (
-                <span className="disabled">
-                  <span>Next</span>
-                  <ChevronRight aria-hidden="true" />
-                </span>
-              )}
+              <StepperLink item={nextItem} label="Next">
+                <span>Next</span>
+                <ChevronRight aria-hidden="true" />
+              </StepperLink>
             </nav>
           )}
           <button
@@ -410,6 +386,24 @@ export function ReviewDetail({
         </div>
       </section>
     </dialog>
+  );
+}
+
+function StepperLink({
+  item,
+  label,
+  children
+}: {
+  item: { href: string; label: string } | null;
+  label: string;
+  children: ReactNode;
+}) {
+  return item ? (
+    <Link href={item.href} aria-label={`${label}: ${item.label}`}>
+      {children}
+    </Link>
+  ) : (
+    <span className="disabled">{children}</span>
   );
 }
 

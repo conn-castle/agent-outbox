@@ -5,6 +5,7 @@ import {
   useId,
   useRef,
   useState,
+  type ButtonHTMLAttributes,
   type FormEvent,
   type MouseEventHandler,
   type ReactNode
@@ -361,8 +362,11 @@ export function LastAnswerUndoForm({
       {actionLabel ? (
         <input type="hidden" name="noticeAction" value={actionLabel} />
       ) : null}
-      <LastUndoSubmit
-        label={label}
+      <PendingSubmitButton
+        className="last-undo-button"
+        title={label}
+        aria-label={label}
+        data-testid="last-answer-undo"
         disabled={disabled}
         onClick={(event) => {
           event.preventDefault();
@@ -375,33 +379,10 @@ export function LastAnswerUndoForm({
             formData: new FormData(form)
           });
         }}
-      />
+      >
+        <span aria-hidden="true">{label}</span>
+      </PendingSubmitButton>
     </form>
-  );
-}
-
-function LastUndoSubmit({
-  label,
-  disabled,
-  onClick
-}: {
-  label: string;
-  disabled: boolean;
-  onClick?: MouseEventHandler<HTMLButtonElement>;
-}) {
-  const status = useFormStatus();
-  return (
-    <button
-      className="last-undo-button"
-      type="submit"
-      title={label}
-      aria-label={label}
-      data-testid="last-answer-undo"
-      disabled={disabled || status.pending}
-      onClick={onClick}
-    >
-      <span aria-hidden="true">{label}</span>
-    </button>
   );
 }
 
@@ -776,31 +757,30 @@ function fileMatchesAccept(file: File, acceptMimeTypes: string[]) {
   });
 }
 
-function SubmitButton({
-  className,
-  icon,
-  label,
-  disabled = false,
-  onClick
-}: {
-  className: string;
-  icon?: string | null;
-  label: string;
-  disabled?: boolean;
-  onClick?: MouseEventHandler<HTMLButtonElement>;
-}) {
+/** Submit button that stays disabled while its parent form is pending. */
+export function PendingSubmitButton({
+  disabled,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
   const status = useFormStatus();
   return (
-    <button
-      className={className}
-      type="submit"
-      title={label}
-      disabled={disabled || status.pending}
-      onClick={onClick}
-    >
+    <button {...props} type="submit" disabled={disabled || status.pending} />
+  );
+}
+
+function SubmitButton({
+  icon,
+  label,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  icon?: string | null;
+  label: string;
+}) {
+  return (
+    <PendingSubmitButton {...props} title={label}>
       {icon ? <HumanIcon name={icon} /> : null}
       <span>{label}</span>
-    </button>
+    </PendingSubmitButton>
   );
 }
 
