@@ -632,7 +632,63 @@ test("input parser accepts anchor href with multi-parameter query strings", () =
   assert.match(result.submission.detailsHtml ?? "", /a=1&b=2/);
 });
 
+test("input parser reports unsupported date picker modes with range bounds", () => {
+  for (const mode of ["time", "", null, undefined, 7]) {
+    const result = parseInputSubmission(
+      baseInput({
+        actions: [
+          {
+            ...baseInput().actions[0],
+            popup: {
+              kind: "date_picker",
+              label: "Schedule",
+              mode,
+              min_value: "2026-01-01",
+              max_value: "2026-01-02"
+            }
+          }
+        ]
+      }),
+      { limitProfile: "hosted-paid" }
+    );
+
+    assert.equal(result.ok, false);
+    if (result.ok) {
+      assert.fail("expected invalid date picker mode to be rejected");
+    }
+    assert.equal(result.error.status, 422);
+    assert.equal(
+      result.error.fields?.some(
+        (field) => field.path === "actions[0].popup.mode"
+      ),
+      true
+    );
+  }
+});
+
 test("input parser rejects impossible and inverted datetime picker bounds", () => {
+  const invertedDateBounds = parseInputSubmission(
+    baseInput({
+      actions: [
+        {
+          ...baseInput().actions[0],
+          popup: {
+            kind: "date_picker",
+            label: "Schedule",
+            mode: "date",
+            min_value: "2026-01-02",
+            max_value: "2026-01-01"
+          }
+        }
+      ]
+    }),
+    { limitProfile: "hosted-paid" }
+  );
+  assert.equal(invertedDateBounds.ok, false);
+  assert.equal(
+    invertedDateBounds.ok ? null : invertedDateBounds.error.fields?.[0]?.code,
+    "invalid_range"
+  );
   const invalidCalendarDate = parseInputSubmission(
     baseInput({
       actions: [

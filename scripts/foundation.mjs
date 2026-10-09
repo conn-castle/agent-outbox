@@ -9,6 +9,7 @@ import { ROOT } from "./repo-root.mjs";
 import {
   assertNoForbiddenWorkflowCommands,
   CI_WORKFLOW_PATHS,
+  validateBrowserWorkflow,
   validateDatabaseTestCommand,
   validateMigrationReplayWorkflow,
   validatePolicyGatesWorkflow,
@@ -322,6 +323,9 @@ function smoke() {
   );
   assertNoFailures(validateRequiredPullRequestChecks(allWorkflows));
   assertNoFailures(validateReleaseCheckJob(workflows, readText("Makefile")));
+  assertNoFailures(
+    validateBrowserWorkflow(workflows, readText("playwright.config.ts"))
+  );
   assertNoFailures(validateWorkflowConcurrency(workflows));
 
   assertNoFailures(validateRuntimeProofScope(readRuntimeProofSourceContents()));

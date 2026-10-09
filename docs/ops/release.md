@@ -31,9 +31,9 @@ Runtime fixture flags cannot enable fixtures in a normal production build.
 Browser verification uses one Playwright worker to limit browser memory
 pressure. This does not impose a hard memory cap on the build or server. Failed
 tests retain traces, screenshots, and error context under `test-results/`;
-Release Check uploads these as the `release-check-browser-failures` artifact for
-seven days. Inspect the original failure artifact before rerunning a failed
-gate.
+Release Check uploads these as `release-check-browser-failures-<project>`
+artifacts for seven days. Inspect the original failure artifact before rerunning
+a failed gate.
 
 Commit a new stable `package.json` version such as `0.1.0` in the release pull
 request. Version `0.0.0`, prerelease versions, reused tags, uncommitted
@@ -148,7 +148,7 @@ for the release window.
 
 `.github/workflows/release-check.yml` is the single verification workflow for
 pull requests, pushes to `main`, manual dispatch, and production certification.
-It defines five checks, each once:
+It defines five required checks, each once:
 
 - `make check`
 - `make go-check`
@@ -159,6 +159,21 @@ It defines five checks, each once:
 The separate `Policy gates` check completes the required PR checks. Do not
 require a status check in branch protection until a fresh or recent workflow run
 confirms the exact check name is green for the current tree.
+
+Release Check runs the complete `chromium-desktop` and `chromium-mobile`
+projects in a two-project matrix on separate GitHub-hosted runners. Each runner
+keeps one Playwright worker and builds its own application and disposable
+migrated database. Matrix fail-fast is disabled so both projects finish and
+retain their diagnostics. The single required `make browser` aggregate always
+runs after the matrix and fails unless the matrix result is successful; failed,
+cancelled, skipped, or missing coverage cannot certify a release. Local
+`make browser` still runs both projects by default. To run one complete project
+locally, use `corepack pnpm run browser --project=chromium-desktop` or
+`corepack pnpm run browser --project=chromium-mobile`.
+
+The CI matrix must include every project declared in `playwright.config.ts`.
+Structural verification checks the matrix against its explicit project names and
+fails when a computed or dynamic configuration prevents verifying coverage.
 
 The `make release-check` job needs the `check` and `go-check` jobs, then runs
 `make package-check marketing-verify`. Those targets together equal the
@@ -219,7 +234,7 @@ delete them.
 1. Validate the dispatch is the exact current `main` SHA, resolve the stable
    version from `package.json`, and require public-repository plus Homebrew tap
    access.
-2. Rerun the five-job reusable certification workflow on that SHA: `make check`,
+2. Rerun the reusable certification workflow on that SHA: `make check`,
    `make go-check`, `make release-check` (package and marketing verification),
    `make browser`, and `make migration-replay` followed by database
    verification.

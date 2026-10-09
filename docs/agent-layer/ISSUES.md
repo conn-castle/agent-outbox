@@ -33,11 +33,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Never-applied declarations were removed from `app/globals.css` during CSS consolidation. Rendering is unchanged, but these effects are missing: dense-surface actions keep a 1.5rem top margin (the dropped rule set 1.1rem); actions inside `.connect-device-decision` keep a 1.5rem top margin (the dropped rule set 0); `.connect-error-card` headings use the generic connect-card heading (`#202426`, 0 0 0.65rem margin; the dropped rule set `#292724` and 0 0 0.5rem).
     Open question: Whether any of these former intents are still the desired design.
 
-- Issue 2026-10-07 date-picker-invalid-mode-throws: Invalid date_picker mode with min and max values throws instead of returning 422
-    Priority: Medium. Area: Input validation
-    Description: In `parseDatePickerPopup` (`src/server/input-schema.ts`), an unsupported `mode` combined with string `min_value` and `max_value` reaches `compareDatePickerValues`, which falls through to `compareUtcDateTimeValues` and throws "UTC datetime values must be validated before compare", so the send/replace request fails with an exception instead of a field-level validation error.
-    Next step: Add a public-boundary test through `parseInputSubmission` for this input, then make the range comparison run only for a valid mode.
-
 - Issue 2026-10-07 human-action-duration-zero: Human answer/undo transaction failure reports log near-zero durations
     Priority: Low. Area: Observability / Human review
     Description: `runHumanActionMutation` in `app/human/actions.ts` calls `humanAnswerTransactionFailure` without `startedAtMs` and `humanAnswerUndoTransactionFailure` (which always starts its clock internally), so their `duration_ms` measures only the reporter call, not the failed transaction.
@@ -78,11 +73,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Low. Area: Human review / Search
     Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text.
     Open question: Whether search and sort should operate on decoded text, which requires server-side decoding or stored plain-text columns.
-
-- Issue 2026-08-17 legacy-color-transition: Existing arbitrary persisted colors lack a transition policy
-    Priority: High. Area: Human review / Data compatibility
-    Description: Releases v0.1.0–v0.1.2 accepted safe CSS colors (hex, `rgb()`/`hsl()`, extra names) and the current API accepts only named colors. Legacy values silently fall back during rendering, and they fail the canonical shape check (`src/server/canonical-input.ts`), so `/api/input/read` and `/api/output/{id}/read` return 503 for such items and one such row fails the whole `/api/output/read-all` page.
-    Next step: Inventory persisted values and establish an explicit migration or compatibility path before release.
 
 - Issue 2026-07-11 human-review-search-seq-scan: Human review search filters cannot use indexes at scale
     Priority: Low. Area: Human review / Performance

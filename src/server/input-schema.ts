@@ -892,6 +892,7 @@ function parseDatePickerPopup(
     );
   }
   if (
+    mode !== null &&
     minValue &&
     maxValue &&
     compareDatePickerValues(minValue, maxValue, mode) > 0
@@ -1597,7 +1598,7 @@ export function compareUtcDateTimeValues(left: string, right: string) {
 function compareDatePickerValues(
   left: string,
   right: string,
-  mode: "date" | "datetime" | null
+  mode: "date" | "datetime"
 ) {
   if (mode === "date") {
     return left.localeCompare(right);

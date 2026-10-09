@@ -182,7 +182,8 @@ against a disposable migrated `postgres:17` database. It first compiles an
 optimized test-only build into `.next-browser`, then serves it through the
 guarded `scripts/node-server.mjs start` entry on loopback; it must not require real Clerk or provider credentials. See the
 [browser build and fixture isolation contract](../ops/release.md#pre-release-gate)
-for the canonical build, environment, and artifact rules.
+for the canonical build, environment, and artifact rules, and
+[CI gates](../ops/release.md#ci-gates) for complete-project selectors.
 
 - Build the app
 
@@ -695,9 +696,10 @@ Run from: GitHub Actions checkout root Prerequisites: Workflow provisions Node
 provides a raw `postgres:17` service for migration replay and database verification.
 Notes: `.github/workflows/release-check.yml` serves PRs, pushes to `main`, manual
 dispatch, and production certification with read-only repository permissions.
-The five jobs run each verification lane once; `make release-check` waits for
+The workflow runs each verification lane once; `make release-check` waits for
 check/go-check and runs only package/marketing verification after its prerequisite
-result guard succeeds. See `docs/ops/release.md` for CI gates and concurrency.
+result guard succeeds. See [CI gates](../ops/release.md#ci-gates) for the
+browser matrix, required aggregate, and concurrency rules.
 
 - GitHub Actions Policy gates
 
