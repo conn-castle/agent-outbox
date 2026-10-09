@@ -1,5 +1,7 @@
 import {
+  apiNullableTimestamp,
   apiTemporaryUnavailable,
+  apiTimestamp,
   type ApiErrorInput,
   type ApiRequestContext
 } from "./api-errors.ts";
@@ -207,8 +209,8 @@ export async function callerStatusInTransaction(
           key_id: callerRow.key_id,
           prefix: callerRow.key_prefix,
           last_chars: callerRow.key_last_four,
-          created_at: timestampValue(callerRow.created_at),
-          last_used_at: nullableTimestampValue(callerRow.last_used_at)
+          created_at: apiTimestamp(callerRow.created_at),
+          last_used_at: apiNullableTimestamp(callerRow.last_used_at)
         }
       },
       account: publishedAccount.data
@@ -267,7 +269,7 @@ export async function accountStatusInTransaction(
       tier: accountRow.tier,
       effective_tier: getLimitProfile(profile).effectiveTier,
       billing_status: accountRow.billing_status,
-      grace_ends_at: nullableTimestampValue(accountRow.billing_grace_ends_at),
+      grace_ends_at: apiNullableTimestamp(accountRow.billing_grace_ends_at),
       file_upload_enabled: fileUploadEnabled(profile),
       storage,
       queued_input_items: databaseNonNegativeInteger(
@@ -403,7 +405,7 @@ function activeLimitBlockFromRow(
     limit_name: row.limit_name,
     limit_reason_code: row.limit_reason_code,
     limit_reason: row.limit_reason,
-    limit_resets_at: nullableTimestampValue(row.limit_resets_at),
+    limit_resets_at: apiNullableTimestamp(row.limit_resets_at),
     used_units: databaseNullableNonNegativeInteger(row.used_units),
     limit_units: databaseNullableNonNegativeInteger(row.limit_units)
   };
@@ -452,7 +454,7 @@ function activeLimitBlockForStatus(
     if (!billingGraceBlockApplies(accountRow)) {
       return null;
     }
-    limitResetsAt = nullableTimestampValue(accountRow.billing_grace_ends_at);
+    limitResetsAt = apiNullableTimestamp(accountRow.billing_grace_ends_at);
     usedUnits = block.used_units;
   } else {
     return null;
@@ -480,7 +482,7 @@ function billingGraceBlockApplies(row: AccountStatusRow) {
   ) {
     return false;
   }
-  const graceEndsAt = nullableTimestampValue(row.billing_grace_ends_at);
+  const graceEndsAt = apiNullableTimestamp(row.billing_grace_ends_at);
   if (!graceEndsAt) {
     return false;
   }
@@ -515,17 +517,4 @@ function databaseNonNegativeInteger(value: string | number) {
     return null;
   }
   return numeric;
-}
-
-function nullableTimestampValue(value: string | Date | null): string | null {
-  if (value == null) {
-    return null;
-  }
-  return timestampValue(value);
-}
-
-function timestampValue(value: string | Date): string {
-  return value instanceof Date
-    ? value.toISOString()
-    : new Date(value).toISOString();
 }

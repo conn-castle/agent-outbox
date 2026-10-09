@@ -6,7 +6,12 @@ import {
   persistedNumber,
   type PersistedPopup
 } from "./persisted-payload.ts";
-import { apiTemporaryUnavailable } from "./api-errors.ts";
+import {
+  apiNullableTimestamp,
+  apiTemporaryUnavailable,
+  apiTimestamp,
+  CANONICAL_UUID_PATTERN
+} from "./api-errors.ts";
 import type { AuthorizedHumanAccountContext } from "./authorization.ts";
 import type { TransactionContextStatement } from "./database.ts";
 import type {
@@ -213,8 +218,6 @@ type ActionOptionRow = {
 };
 
 export const REVIEW_PAGE_SIZE = 100;
-const CANONICAL_UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
  * Returns up to REVIEW_PAGE_SIZE matching rows starting at options.offset
@@ -889,7 +892,7 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
     titleHtml: row.title_html,
     subtitleHtml: row.subtitle_html,
     cornerHtml: row.corner_html,
-    cardTime: nullableTimestampValue(row.card_time),
+    cardTime: apiNullableTimestamp(row.card_time),
     summaryHtml: row.summary_html,
     cardVisual: cardVisualFromDatabase(
       row.input_item_id,
@@ -897,9 +900,9 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
       row.card_visual_payload
     ),
     skipDisabled: row.skip_disabled,
-    createdAt: timestampValue(row.created_at),
-    updatedAt: timestampValue(row.updated_at),
-    answeredAt: nullableTimestampValue(row.answered_at),
+    createdAt: apiTimestamp(row.created_at),
+    updatedAt: apiTimestamp(row.updated_at),
+    answeredAt: apiNullableTimestamp(row.answered_at),
     caller: {
       callerId: row.caller_id,
       displayName: row.caller_display_name,
@@ -918,8 +921,8 @@ function reviewListRowFromDatabase(row: HumanReviewRow): HumanReviewListRow {
             outputResultId: row.output_result_id,
             actionValue: row.output_action_value,
             actionDisplay: row.output_action_display ?? "Previous response",
-            answeredAt: timestampValue(row.output_answered_at),
-            firstReadAt: nullableTimestampValue(row.output_first_read_at),
+            answeredAt: apiTimestamp(row.output_answered_at),
+            firstReadAt: apiNullableTimestamp(row.output_first_read_at),
             readCount: row.output_read_count ?? 0,
             undoEligible: row.output_first_read_at == null
           }
@@ -998,17 +1001,4 @@ function cardVisualFromDatabase(
   throw new Error(
     `Unsupported persisted card_visual_kind for input item ${inputItemId}: ${JSON.stringify(kind)}`
   );
-}
-
-function nullableTimestampValue(value: string | Date | null): string | null {
-  if (value == null) {
-    return null;
-  }
-  return timestampValue(value);
-}
-
-function timestampValue(value: string | Date): string {
-  return value instanceof Date
-    ? value.toISOString()
-    : new Date(value).toISOString();
 }

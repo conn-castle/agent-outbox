@@ -1,5 +1,7 @@
 import {
+  apiNotFound,
   apiTemporaryUnavailable,
+  UUID_PATTERN,
   type ApiRequestContext
 } from "./api-errors.ts";
 import { enforceAccountOperationLimits } from "./caller-api-limits.ts";
@@ -13,7 +15,6 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import {
-  UUID_PATTERN,
   approveSetupRequestStatement,
   callerCredentialLifecycleLockStatement,
   denySetupRequest,
@@ -29,7 +30,6 @@ import {
   markSetupRequestExchangedStatement,
   markSetupRequestExpiredStatement,
   normalizeUserCode,
-  notFoundError,
   parseRecordBody,
   requiredText,
   setupCodeDigest,
@@ -513,7 +513,7 @@ export async function approveCredentialOperationBrowserSetupRequest(
   );
   const target = result.rows[0];
   if (!target) {
-    return notFoundError(setupRequestNotFoundMessage(input.operation));
+    return apiNotFound(setupRequestNotFoundMessage(input.operation));
   }
 
   const available = await ensurePendingApprovalTarget(query, target, input.now);
@@ -579,7 +579,7 @@ export async function approveCredentialOperationDeviceSetupRequest(
   );
   const target = result.rows[0];
   if (!target) {
-    return notFoundError(setupRequestNotFoundMessage(input.operation));
+    return apiNotFound(setupRequestNotFoundMessage(input.operation));
   }
 
   const available = await ensurePendingApprovalTarget(query, target, input.now);
@@ -1081,7 +1081,7 @@ async function approvalPreviewFromTarget(
   now: Date = new Date()
 ): Promise<OperationResult<CredentialOperationApprovalPreviewData>> {
   if (!target) {
-    return notFoundError("Caller credential operation request was not found.");
+    return apiNotFound("Caller credential operation request was not found.");
   }
 
   const available = await ensurePendingApprovalTarget(query, target, now);

@@ -17,6 +17,7 @@ import {
 } from "./database.ts";
 import {
   emitOperatorActionableFailure,
+  isJsonRecord,
   type ApiErrorCode,
   type ApiErrorInput,
   type ApiFieldError
@@ -626,7 +627,7 @@ function validatedActionPayload(
   action: PopupActionForValidation,
   response: unknown
 ): StoredPayload | HumanAnswerFailure {
-  if (!isRecord(response) || response.kind !== action.popupKind) {
+  if (!isJsonRecord(response) || response.kind !== action.popupKind) {
     return invalidActionResponse(
       "response.kind",
       "Response kind must match the selected action popup."
@@ -1384,10 +1385,6 @@ function validDateOnly(value: string) {
 
 function validUtcDateTime(value: string) {
   return isValidUtcDateTime(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function invalidActionResponse(

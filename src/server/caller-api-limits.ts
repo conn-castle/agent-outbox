@@ -3,7 +3,11 @@ import {
   consumesMonthlyCallerApiRequestQuota,
   type ActiveLimitBlockMetadata
 } from "./accounting.ts";
-import { apiTemporaryUnavailable, type ApiErrorInput } from "./api-errors.ts";
+import {
+  apiNullableTimestamp,
+  apiTemporaryUnavailable,
+  type ApiErrorInput
+} from "./api-errors.ts";
 import type {
   ProductTransactionQuery,
   TransactionContextStatement
@@ -875,7 +879,7 @@ function activeLimitBlockFromRow(
     limit_name: row.limit_name,
     limit_reason_code: row.limit_reason_code,
     limit_reason: row.limit_reason,
-    limit_resets_at: nullableTimestamp(row.limit_resets_at),
+    limit_resets_at: apiNullableTimestamp(row.limit_resets_at),
     used_units: nullableNonNegativeInteger(row.used_units),
     limit_units: nullableNonNegativeInteger(row.limit_units)
   };
@@ -911,15 +915,6 @@ function activeLimitBlockAppliesToProfile(
   }
 
   return block.used_units != null && block.used_units > limit.setting.value;
-}
-
-function nullableTimestamp(value: string | Date | null) {
-  if (!value) {
-    return null;
-  }
-  return value instanceof Date
-    ? value.toISOString()
-    : new Date(value).toISOString();
 }
 
 function nullableNonNegativeInteger(value: string | number | null) {

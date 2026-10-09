@@ -12,6 +12,7 @@ import {
 } from "./caller-auth.ts";
 import {
   apiTemporaryUnavailable,
+  apiTransactionFailure,
   type ApiErrorInput,
   type ApiRequestContext
 } from "./api-errors.ts";
@@ -29,7 +30,6 @@ import {
 } from "./database.ts";
 import type { LimitOperationKind } from "./limits.ts";
 import { durationSinceMs, emitRuntimeLog, safeErrorName } from "./logging.ts";
-import { reportRuntimeFailure } from "./sentry.ts";
 
 export type CallerCredentialLookup = (
   keyId: CallerApiKeyId
@@ -338,22 +338,12 @@ export async function runGuardedCallerTransaction<TResult>(
         })
       };
     }
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      request_id: context.requestId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
+    return apiTransactionFailure(error, context, {
       operation: operation.loggedOperation,
-      account_id: identity?.accountId,
-      caller_id: identity?.callerId,
-      message: operation.unexpectedFailureMessage
-    });
-    return apiTemporaryUnavailable(operation.unavailableMessage, {
-      errorId: context.correlationId,
-      reported: true
+      accountId: identity?.accountId,
+      callerId: identity?.callerId,
+      message: operation.unexpectedFailureMessage,
+      unavailableMessage: operation.unavailableMessage
     });
   }
 }

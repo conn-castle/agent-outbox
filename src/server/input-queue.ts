@@ -1,6 +1,8 @@
 import { auditEventInsertStatement } from "./accounting.ts";
 import {
+  apiNotFound,
   apiTemporaryUnavailable,
+  apiTransactionFailure,
   apiValidationFailed,
   type ApiErrorInput,
   type ApiRequestContext
@@ -20,8 +22,6 @@ import type {
   ProductTransactionQuery,
   TransactionContextStatement
 } from "./database.ts";
-import { durationSinceMs } from "./logging.ts";
-import { reportRuntimeFailure } from "./sentry.ts";
 import {
   parseInputDeleteBody,
   parseInputSubmission,
@@ -30,6 +30,8 @@ import {
   type NormalizedInputSubmission,
   type NormalizedPopupOption
 } from "./input-schema.ts";
+
+const INPUT_NOT_FOUND_MESSAGE = "Input item was not found for this caller.";
 
 export type InputQueueOperation = "send" | "replace" | "delete";
 
@@ -170,26 +172,13 @@ export async function handleInputQueueRequest(
         }
       ]);
     }
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      request_id: context.requestId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
+    return apiTransactionFailure(error, context, {
       operation: `input_${operation}`,
-      account_id: identity?.accountId,
-      caller_id: identity?.callerId,
-      message: "Input queue operation failed unexpectedly."
+      accountId: identity?.accountId,
+      callerId: identity?.callerId,
+      message: "Input queue operation failed unexpectedly.",
+      unavailableMessage: "Input queue operation is temporarily unavailable."
     });
-    return apiTemporaryUnavailable(
-      "Input queue operation is temporarily unavailable.",
-      {
-        errorId: context.correlationId,
-        reported: true
-      }
-    );
   }
 }
 
@@ -380,7 +369,7 @@ export async function replaceInputItem(
     submission.callerItemId
   );
   if (!existing) {
-    return notFoundError();
+    return apiNotFound(INPUT_NOT_FOUND_MESSAGE);
   }
   if (existing.status !== "pending") {
     return existing.has_live_output
@@ -455,7 +444,7 @@ export async function deleteInputItem(
 ): Promise<InputQueueResult> {
   const existing = await existingInput(query, identity, callerItemId);
   if (!existing) {
-    return notFoundError();
+    return apiNotFound(INPUT_NOT_FOUND_MESSAGE);
   }
   if (existing.status !== "pending") {
     return inputNotPendingError();
@@ -863,17 +852,6 @@ function inputItemValues(
     submission.nonFilePayloadBytes,
     submission.cardTime
   ];
-}
-
-function notFoundError(): InputQueueResult {
-  return {
-    ok: false,
-    error: {
-      status: 404,
-      code: "not_found",
-      message: "Input item was not found for this caller."
-    }
-  };
 }
 
 function answeredUnacknowledgedError(): InputQueueResult {

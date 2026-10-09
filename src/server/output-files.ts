@@ -5,9 +5,11 @@ import {
   type AuditSafeLifecycleEvent
 } from "./accounting.ts";
 import {
+  apiNotFound,
   apiResponseHeaders,
   apiTemporaryUnavailable,
   apiValidationFailed,
+  CANONICAL_UUID_PATTERN,
   type ApiErrorInput,
   type ApiRequestContext
 } from "./api-errors.ts";
@@ -114,14 +116,10 @@ export async function outputFileDownloadInTransaction(
     return { ok: false, error: pathError };
   }
 
-  const notFound: OutputFileDownloadResult = {
-    ok: false,
-    error: {
-      status: 404,
-      code: "not_found",
-      message: "Output file was not found."
-    }
-  };
+  const notFound = apiNotFound("Output file was not found.");
+  // Only canonical lowercase UUIDs can match a stored output or file id. Check
+  // ids before the uuid casts below so a malformed path id cannot abort the
+  // caller's transaction.
   if (!CANONICAL_UUID_PATTERN.test(path.outputResultId)) {
     return notFound;
   }
@@ -167,12 +165,6 @@ export async function outputFileDownloadInTransaction(
     })
   };
 }
-
-// Only canonical lowercase UUIDs can match a stored output or file id. Callers
-// check ids against this before the uuid casts below so a malformed path id
-// cannot abort the caller's transaction.
-export const CANONICAL_UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function callerOutputLockStatement(
   identity: CallerIdentity,

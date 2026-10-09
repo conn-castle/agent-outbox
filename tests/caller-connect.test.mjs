@@ -3728,7 +3728,7 @@ test("setup_request_id handlers reject non-object bodies and malformed IDs befor
   );
 });
 
-test("setup poll transaction-open failures report the exact unscoped log", async (t) => {
+test("setup poll transaction-open failures report the exact unscoped log fields", async (t) => {
   const log = t.mock.method(console, "error", () => {});
   const polls = [
     {
@@ -3793,10 +3793,12 @@ test("setup poll transaction-open failures report the exact unscoped log", async
         );
         assert.equal(calls, 1);
         assert.deepEqual(
-          log.mock.calls.map(({ arguments: args }) => args),
+          log.mock.calls.map(({ arguments: args }) =>
+            args.map((line) => JSON.parse(line))
+          ),
           [
             [
-              JSON.stringify({
+              {
                 environment: null,
                 release: null,
                 surface: "api",
@@ -3808,7 +3810,7 @@ test("setup poll transaction-open failures report the exact unscoped log", async
                 error_id: context.correlationId,
                 error_name: "Error",
                 sentry_captured: false
-              })
+              }
             ]
           ]
         );

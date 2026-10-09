@@ -1,10 +1,9 @@
+import { VERSIONED_UUID_PATTERN } from "./api-errors.ts";
 import { browserFixtureReviewDetail } from "./human-review-fixture.ts";
 
 const COOKIE_NAME = "agent_outbox_fixture_resolved";
 const MAX_RESOLVED_ITEMS = 50;
 const MAX_COOKIE_BYTES = 3500;
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type FixtureResolvedItem = {
   actionDisplay: string;
@@ -49,8 +48,8 @@ export async function recordFixtureResolvedItems(
       );
     }
     if (
-      !UUID_PATTERN.test(item.inputItemId) ||
-      !UUID_PATTERN.test(item.callerId)
+      !VERSIONED_UUID_PATTERN.test(item.inputItemId) ||
+      !VERSIONED_UUID_PATTERN.test(item.callerId)
     ) {
       continue;
     }
@@ -65,7 +64,7 @@ export async function recordFixtureResolvedItems(
 }
 
 export async function restoreFixtureResolvedItem(inputItemId: string) {
-  if (!UUID_PATTERN.test(inputItemId)) {
+  if (!VERSIONED_UUID_PATTERN.test(inputItemId)) {
     return;
   }
   const store = await cookieStore();
@@ -97,7 +96,7 @@ function parseResolvedItems(
     }
     const items: Record<string, FixtureResolvedItem> = {};
     for (const [inputItemId, value] of Object.entries(parsed)) {
-      if (!UUID_PATTERN.test(inputItemId) || !isResolvedItem(value)) {
+      if (!VERSIONED_UUID_PATTERN.test(inputItemId) || !isResolvedItem(value)) {
         continue;
       }
       items[inputItemId] = value;
@@ -120,7 +119,7 @@ function isResolvedItem(value: unknown): value is FixtureResolvedItem {
     typeof item.actionDisplay === "string" &&
     item.actionDisplay.length > 0 &&
     typeof item.callerId === "string" &&
-    UUID_PATTERN.test(item.callerId) &&
+    VERSIONED_UUID_PATTERN.test(item.callerId) &&
     typeof item.answeredAt === "string" &&
     (item.currentRevision === undefined ||
       (Number.isSafeInteger(item.currentRevision) &&
