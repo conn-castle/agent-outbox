@@ -24,6 +24,7 @@ import {
   runScheduledCleanup,
   scheduledCleanupStatementsForAccount
 } from "../src/server/scheduled.ts";
+import { queryResult } from "./helpers/fake-query.mjs";
 
 test("cleanup statement builders target lifecycle database functions", () => {
   const duplicateAck = duplicateAcknowledgementLookupStatement(
@@ -156,20 +157,6 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
   /** @type {import("../src/server/database.ts").TransactionContextStatement[][]} */
   const statementsByContext = [];
   const now = new Date("2026-07-15T12:34:56.000Z");
-  /**
-   * @param {import("pg").QueryResultRow[]} rows
-   * @returns {import("pg").QueryResult<import("pg").QueryResultRow>}
-   */
-  function cleanupQueryResult(rows) {
-    return {
-      command: "SELECT",
-      rowCount: rows.length,
-      oid: 0,
-      fields: [],
-      rows
-    };
-  }
-
   const result = await runScheduledCleanup({
     connectionString: "postgresql://cleanup-test",
     now,
@@ -188,13 +175,13 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
       const query = async (statement) => {
         statements.push(statement);
         if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
-          return cleanupQueryResult([
+          return queryResult([
             { account_id: "account-free" },
             { account_id: "account-paid" }
           ]);
         }
         if (statement.sql === cleanupAccountTierLockStatement("").sql) {
-          return cleanupQueryResult([
+          return queryResult([
             {
               tier:
                 context.accountId === "account-paid"
@@ -204,7 +191,7 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
           ]);
         }
 
-        return cleanupQueryResult([{ deleted_count: 1 }]);
+        return queryResult([{ deleted_count: 1 }]);
       };
 
       return await callback(
@@ -302,20 +289,6 @@ test("scheduled cleanup continues account maintenance after one account fails", 
   const contexts = [];
   const now = new Date("2026-07-15T12:34:56.000Z");
   const accountFailure = new Error("lock timeout");
-  /**
-   * @param {import("pg").QueryResultRow[]} rows
-   * @returns {import("pg").QueryResult<import("pg").QueryResultRow>}
-   */
-  function cleanupQueryResult(rows) {
-    return {
-      command: "SELECT",
-      rowCount: rows.length,
-      oid: 0,
-      fields: [],
-      rows
-    };
-  }
-
   /** @type {unknown} */
   let thrown;
   try {
@@ -337,16 +310,16 @@ test("scheduled cleanup continues account maintenance after one account fails", 
          */
         const query = async (statement) => {
           if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
-            return cleanupQueryResult([
+            return queryResult([
               { account_id: "account-free" },
               { account_id: "account-paid" }
             ]);
           }
           if (statement.sql === cleanupAccountTierLockStatement("").sql) {
-            return cleanupQueryResult([{ tier: "hosted_paid" }]);
+            return queryResult([{ tier: "hosted_paid" }]);
           }
 
-          return cleanupQueryResult([{ deleted_count: 1 }]);
+          return queryResult([{ deleted_count: 1 }]);
         };
 
         return await callback(
@@ -418,13 +391,7 @@ async function runCleanupWithFailures(failureFor) {
                 : statement.sql === cleanupAccountTierLockStatement("").sql
                   ? [{ tier: "hosted_free" }]
                   : [{ deleted_count: 1 }];
-              return {
-                command: "SELECT",
-                rowCount: rows.length,
-                oid: 0,
-                fields: [],
-                rows
-              };
+              return queryResult(rows);
             }
           )
         );
@@ -508,20 +475,6 @@ test("scheduled cleanup reports an account whose locked row cannot be read", asy
   const now = new Date("2026-07-15T12:34:56.000Z");
   /** @type {string[]} */
   const cleanedAccounts = [];
-  /**
-   * @param {import("pg").QueryResultRow[]} rows
-   * @returns {import("pg").QueryResult<import("pg").QueryResultRow>}
-   */
-  function cleanupQueryResult(rows) {
-    return {
-      command: "SELECT",
-      rowCount: rows.length,
-      oid: 0,
-      fields: [],
-      rows
-    };
-  }
-
   /** @type {unknown} */
   let thrown;
   try {
@@ -536,13 +489,13 @@ test("scheduled cleanup reports an account whose locked row cannot be read", asy
          */
         const query = async (statement) => {
           if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
-            return cleanupQueryResult([
+            return queryResult([
               { account_id: "account-missing" },
               { account_id: "account-paid" }
             ]);
           }
           if (statement.sql === cleanupAccountTierLockStatement("").sql) {
-            return cleanupQueryResult(
+            return queryResult(
               context.accountId === "account-missing"
                 ? []
                 : [{ tier: "hosted_paid" }]
@@ -552,7 +505,7 @@ test("scheduled cleanup reports an account whose locked row cannot be read", asy
             cleanedAccounts.push(context.accountId);
           }
 
-          return cleanupQueryResult([{ deleted_count: 0 }]);
+          return queryResult([{ deleted_count: 0 }]);
         };
 
         return await callback(

@@ -201,9 +201,7 @@ test("output file download rejects noncanonical ids before casting and locks can
 test("output file download rejects ids Postgres cannot store before the transaction", async () => {
   // A NUL in either id would fail in SQL and surface as a reported 503, so it
   // must fail validation even with no database configured.
-  const previous = process.env.DATABASE_APP_ROLE_URL;
-  delete process.env.DATABASE_APP_ROLE_URL;
-  try {
+  await withProcessEnv({ DATABASE_APP_ROLE_URL: undefined }, async () => {
     const result = await handleOutputFileDownloadRequest(
       new Request("https://api.test/api/output/x/files/y"),
       context,
@@ -232,13 +230,7 @@ test("output file download rejects ids Postgres cannot store before the transact
         ]
       }
     });
-  } finally {
-    if (previous === undefined) {
-      delete process.env.DATABASE_APP_ROLE_URL;
-    } else {
-      process.env.DATABASE_APP_ROLE_URL = previous;
-    }
-  }
+  });
 });
 
 test("file download headers force attachment nosniff and safe content metadata", () => {
