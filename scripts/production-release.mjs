@@ -200,6 +200,7 @@ async function defaultRuntimeCanary() {
   return response.json();
 }
 
+/** Build the release gateways and runtime proof reader from the process environment. */
 function defaultOrchestrator() {
   return {
     github: defaultGithubGateway,
@@ -209,7 +210,11 @@ function defaultOrchestrator() {
   };
 }
 
-/** @param {boolean} [requireReleaseId] */
+/**
+ * Resolve the exact owning deploy run, requiring an existing release ID when requested.
+ *
+ * @param {boolean} [requireReleaseId]
+ */
 function deployReleaseContext(requireReleaseId = false) {
   return resolveReleaseContext(process.env, {
     workflow: "deploy-production.yml",
@@ -218,6 +223,7 @@ function deployReleaseContext(requireReleaseId = false) {
   });
 }
 
+/** Derive draft mutation identity from the validated owning deploy run. */
 function mutationInputFromEnv() {
   const context = deployReleaseContext();
   return {
@@ -228,7 +234,11 @@ function mutationInputFromEnv() {
   };
 }
 
-/** @param {() => unknown | Promise<unknown>} work */
+/**
+ * Reconcile on interruption while work runs, then remove the signal handlers.
+ *
+ * @param {() => unknown | Promise<unknown>} work
+ */
 async function withDeployCompensation(work) {
   const stop = installCompensationHandlers(async () => {
     const context = deployReleaseContext();
@@ -284,6 +294,7 @@ async function prepareReleaseDraft() {
   });
 }
 
+/** Reconcile certified asset bytes against this deploy run's owned draft by release ID. */
 async function uploadReleaseAssets() {
   await withDeployCompensation(async () => {
     const context = deployReleaseContext(true);
@@ -297,6 +308,7 @@ async function uploadReleaseAssets() {
   });
 }
 
+/** Prove the live rollback target, persist it in the owned draft, and emit workflow outputs. */
 async function captureRollbackTarget() {
   await withDeployCompensation(async () => {
     const baseUrl = process.env.APP_BASE_URL;
@@ -353,6 +365,7 @@ function compareWorkerTriggers() {
   assertWorkerTriggersUnchanged(liveConfig, candidateConfig);
 }
 
+/** Upload an inactive Worker version and persist its ID in the owned draft and outputs. */
 async function uploadWorkerVersion() {
   await withDeployCompensation(async () => {
     const context = deployReleaseContext(true);
@@ -440,6 +453,7 @@ function verifyLiveCandidateForPublication() {
   }
 }
 
+/** Publish the owned release with certified assets and report publication or failure state. */
 async function publishRelease() {
   await withDeployCompensation(async () => {
     const context = deployReleaseContext(true);
@@ -568,6 +582,7 @@ const COMMANDS = {
   "verify-rollback-version": verifyRollbackVersion
 };
 
+/** Dispatch an own command-table entry or fail with the supported command usage. */
 async function main() {
   const command = process.argv[2] ?? "";
   if (!Object.hasOwn(COMMANDS, command)) {
