@@ -714,7 +714,13 @@ fi`;
     );
 }
 
-/** @param {string} content @returns {string[] | null} */
+/**
+ * Read project names without executing the config. Return null when the config
+ * is dynamic, ambiguous, empty, or duplicates names so coverage fails closed.
+ *
+ * @param {string} content
+ * @returns {string[] | null}
+ */
 function browserProjectNames(content) {
   // Load the installed compiler only for this check; doctor/bootstrap must not
   // acquire a dependency-install prerequisite. Parse without executing config.
@@ -740,7 +746,12 @@ function browserProjectNames(content) {
     return null;
   }
 
-  /** @param {import("typescript").Node} node @param {string} name */
+  /**
+   * Reject spreads and computed keys that could obscure or override a property.
+   *
+   * @param {import("typescript").Node} node
+   * @param {string} name
+   */
   function propertyValue(node, name) {
     if (!ts.isObjectLiteralExpression(node)) return null;
     const properties = node.properties.filter(ts.isPropertyAssignment);
