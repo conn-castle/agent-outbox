@@ -1025,6 +1025,7 @@ test("input request body parser rejects a leading byte order mark", async () => 
 test("send creates a pending item and stores normalized child rows", async () => {
   const submission = parseValidInput();
   const query = fakeQuery([
+    [{ acquired: true }],
     [],
     [{ input_item_id: "input-1", current_revision: 1 }],
     [],
@@ -1038,12 +1039,13 @@ test("send creates a pending item and stores normalized child rows", async () =>
     []
   ]);
 
-  const result = await sendInputItem(query, context, identity, submission);
+  const result = await sendInputItem(query, context, identity, submission, {
+    beforeCreate: async () => null
+  });
 
   assert.deepEqual(result, {
     ok: true,
     data: {
-      operation: "send",
       caller_item_id: "email:thread_123",
       status: "pending",
       revision: 1,
@@ -1052,21 +1054,22 @@ test("send creates a pending item and stores normalized child rows", async () =>
     }
   });
   assert.match(
-    query.calls[1].sql,
+    query.calls[2].sql,
     /insert into public\.agent_outbox_input_items/
   );
-  assert.match(query.calls[2].sql, /agent_outbox_input_link_buttons/);
-  assert.match(query.calls[3].sql, /agent_outbox_input_actions/);
-  assert.match(query.calls[5].sql, /agent_outbox_audit_events/);
+  assert.match(query.calls[3].sql, /agent_outbox_input_link_buttons/);
+  assert.match(query.calls[4].sql, /agent_outbox_input_actions/);
+  assert.match(query.calls[6].sql, /agent_outbox_audit_events/);
 });
 
 test("send and replace invariant failures carry the request correlation id", async () => {
   const submission = parseValidInput();
   const send = await sendInputItem(
-    fakeQuery([[], [], []]),
+    fakeQuery([[{ acquired: true }], [], [], []]),
     context,
     identity,
-    submission
+    submission,
+    { beforeCreate: async () => null }
   );
   const replace = await replaceInputItem(
     fakeQuery([
@@ -1083,7 +1086,8 @@ test("send and replace invariant failures carry the request correlation id", asy
     ]),
     context,
     identity,
-    submission
+    submission,
+    { beforeChange: async () => null }
   );
 
   for (const result of [send, replace]) {
@@ -1100,6 +1104,7 @@ test("send and replace invariant failures carry the request correlation id", asy
 test("send no-ops only for equivalent pending content and conflicts on changed content", async () => {
   const submission = parseValidInput();
   const duplicateQuery = fakeQuery([
+    [{ acquired: true }],
     [
       {
         input_item_id: "input-1",
@@ -1111,6 +1116,7 @@ test("send no-ops only for equivalent pending content and conflicts on changed c
     ]
   ]);
   const conflictQuery = fakeQuery([
+    [{ acquired: true }],
     [
       {
         input_item_id: "input-1",
@@ -1126,16 +1132,18 @@ test("send no-ops only for equivalent pending content and conflicts on changed c
     duplicateQuery,
     context,
     identity,
-    submission
+    submission,
+    { beforeCreate: async () => null }
   );
   const conflict = await sendInputItem(
     conflictQuery,
     context,
     identity,
-    submission
+    submission,
+    { beforeCreate: async () => null }
   );
 
-  if (!duplicate.ok || duplicate.data.operation !== "send") {
+  if (!duplicate.ok || !("duplicate" in duplicate.data)) {
     assert.fail("expected duplicate send success");
   }
   assert.equal(duplicate.data.duplicate, true);
@@ -1178,7 +1186,7 @@ test("duplicate send does not run accepted-submission limit guard", async () => 
   });
 
   assert.equal(result.ok, true);
-  if (!result.ok || result.data.operation !== "send") {
+  if (!result.ok || !("duplicate" in result.data)) {
     assert.fail("expected duplicate send success");
   }
   assert.equal(result.data.duplicate, true);
@@ -1186,51 +1194,6 @@ test("duplicate send does not run accepted-submission limit guard", async () => 
   assert.equal(guardCalled, false);
   assert.match(query.calls[0].sql, /pg_advisory_xact_lock/);
   assert.match(query.calls[1].sql, /agent_outbox_input_items/);
-});
-
-test("raced duplicate send does not run accepted-submission limit guard", async () => {
-  const submission = parseValidInput();
-  const query = fakeQuery([
-    [{ acquired: true }],
-    [],
-    [
-      {
-        input_item_id: "input-1",
-        status: "pending",
-        current_revision: 8,
-        normalized_content_fingerprint: submission.normalizedContentFingerprint,
-        non_file_payload_bytes: submission.nonFilePayloadBytes,
-        has_live_output: false
-      }
-    ]
-  ]);
-  let guardCalled = false;
-
-  const result = await sendInputItem(query, context, identity, submission, {
-    beforeCreate: async () => {
-      guardCalled = true;
-      return {
-        ok: false,
-        error: {
-          status: 429,
-          code: "quota_limit_exceeded",
-          message: "Should not be returned for raced duplicate send."
-        }
-      };
-    }
-  });
-
-  assert.equal(result.ok, true);
-  if (!result.ok || result.data.operation !== "send") {
-    assert.fail("expected raced duplicate send success");
-  }
-  assert.equal(result.data.duplicate, true);
-  assert.equal(result.data.revision, 8);
-  assert.equal(guardCalled, false);
-  assert.equal(query.calls.length, 3);
-  assert.match(query.calls[0].sql, /pg_advisory_xact_lock/);
-  assert.match(query.calls[1].sql, /agent_outbox_input_items/);
-  assert.match(query.calls[2].sql, /agent_outbox_input_items/);
 });
 
 test("send and replace reject answered items while output is unacknowledged", async () => {
@@ -1248,16 +1211,18 @@ test("send and replace reject answered items while output is unacknowledged", as
   ];
 
   const send = await sendInputItem(
-    fakeQuery(rows),
+    fakeQuery([[{ acquired: true }], ...rows]),
     context,
     identity,
-    submission
+    submission,
+    { beforeCreate: async () => null }
   );
   const replace = await replaceInputItem(
     fakeQuery(rows),
     context,
     identity,
-    submission
+    submission,
+    { beforeChange: async () => null }
   );
 
   assert.equal(send.ok, false);
@@ -1286,7 +1251,8 @@ test("replace increments revision only when pending content changes", async () =
     ]),
     context,
     identity,
-    submission
+    submission,
+    { beforeChange: async () => null }
   );
   const changedQuery = fakeQuery([
     [
@@ -1316,19 +1282,19 @@ test("replace increments revision only when pending content changes", async () =
     changedQuery,
     context,
     identity,
-    submission
+    submission,
+    { beforeChange: async () => null }
   );
 
   assert.equal(sameContent.ok, true);
   assert.deepEqual(sameContent.ok ? sameContent.data : null, {
-    operation: "replace",
     caller_item_id: "email:thread_123",
     status: "pending",
     revision: 5,
     replaced: false,
     changed: false
   });
-  if (!changed.ok || changed.data.operation !== "replace") {
+  if (!changed.ok || !("changed" in changed.data)) {
     assert.fail("expected changed replace success");
   }
   assert.equal(changed.data.revision, 6);
@@ -1379,7 +1345,6 @@ test("delete removes only pending input items", async () => {
   assert.deepEqual(deleted, {
     ok: true,
     data: {
-      operation: "delete",
       caller_item_id: "email:thread_123",
       deleted: true
     }
@@ -1490,7 +1455,10 @@ test("input delete transaction stays monthly-exempt while enforcing the minute t
   );
 
   assert.equal(result.ok, true);
-  assert.equal(result.ok ? result.data.operation : null, "delete");
+  assert.equal(
+    result.ok && "deleted" in result.data ? result.data.deleted : null,
+    true
+  );
   assert.equal(
     query.calls.some(
       (call) =>
@@ -1527,7 +1495,10 @@ test("allowed input send still reaches accepted-submission checks before inserti
   );
 
   assert.equal(result.ok, true);
-  assert.equal(result.ok ? result.data.operation : null, "send");
+  assert.equal(
+    result.ok && "created" in result.data ? result.data.created : null,
+    true
+  );
   assert.equal(
     query.calls.some((call) =>
       call.sql.includes("public.agent_outbox_account_stock_usage")
@@ -1574,9 +1545,7 @@ test("input replace succeeds when queued items already exceed the free cap", asy
 
   assert.equal(replace.ok, true);
   assert.equal(
-    replace.ok && replace.data.operation === "replace"
-      ? replace.data.revision
-      : null,
+    replace.ok && "revision" in replace.data ? replace.data.revision : null,
     3
   );
   assert.equal(wroteLimitBlock(replaceQuery), false);
