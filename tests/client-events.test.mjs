@@ -6,8 +6,8 @@ import {
   classifyReactError,
   clientEventsTestInternals,
   emitClientEvent,
-  installClientErrorEvents,
-  registerClientEventFlushListeners
+  emitUncaughtErrorEvent,
+  installClientErrorEvents
 } from "../src/client/client-events.ts";
 import {
   applyRateLimitRule,
@@ -20,9 +20,7 @@ import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 const require = createRequire(import.meta.url);
 
 /**
- * @typedef {{ name: string, category?: string }} TestClientEvent
  * @typedef {{ url: string, init: RequestInit & { headers: Record<string, string>, body?: BodyInit | null } }} FetchCall
- * @typedef {{ classifyReactError: (error: unknown) => "hydration" | "other", emitClientEvent: (name: string) => void }} ClientEventsStub
  */
 
 test("classifyReactError detects React hydration failures without matching unrelated errors", () => {
@@ -88,97 +86,6 @@ test("emitClientEvent buffers a burst and drains it across bounded batches", asy
     assert.equal(JSON.parse(String(requests[1].init.body)).events.length, 2);
     assert.equal(clientEventsTestInternals.queue.length, 0);
   } finally {
-    globalThis.fetch = previousFetch;
-  }
-});
-
-test("registerClientEventFlushListeners flushes on pagehide and hidden visibility", async () => {
-  const previousFetch = globalThis.fetch;
-  /** @type {FetchCall[]} */
-  const posts = [];
-  globalThis.fetch = async (url, init) => {
-    posts.push({
-      url: String(url),
-      init: /** @type {FetchCall["init"]} */ (init ?? {})
-    });
-    return new Response(null, { status: 204 });
-  };
-
-  /** @type {Map<string, (event: Event) => void>} */
-  const windowHandlers = new Map();
-  /** @type {Map<string, (event: Event) => void>} */
-  const documentHandlers = new Map();
-  /** @type {string[]} */
-  const windowRemoved = [];
-  /** @type {string[]} */
-  const documentRemoved = [];
-  const fakeDocument = {
-    visibilityState: "visible",
-    /**
-     * @param {string} type
-     * @param {(event: Event) => void} handler
-     */
-    addEventListener(type, handler) {
-      documentHandlers.set(type, handler);
-    },
-    /** @param {string} type */
-    removeEventListener(type) {
-      documentRemoved.push(type);
-    }
-  };
-  const fakeWindow = /** @type {Window} */ (
-    /** @type {unknown} */ ({
-      document: fakeDocument,
-      /**
-       * @param {string} type
-       * @param {(event: Event) => void} handler
-       */
-      addEventListener(type, handler) {
-        windowHandlers.set(type, handler);
-      },
-      /** @param {string} type */
-      removeEventListener(type) {
-        windowRemoved.push(type);
-      }
-    })
-  );
-
-  /** @returns {Promise<void>} */
-  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-  try {
-    const cleanup = registerClientEventFlushListeners(fakeWindow);
-
-    // pagehide flushes the queued batch.
-    clientEventsTestInternals.queue.length = 0;
-    emitClientEvent("client_error");
-    windowHandlers.get("pagehide")?.(new Event("pagehide"));
-    await tick();
-    assert.equal(posts.length, 1);
-    assert.equal(posts[0].url, "/api/client-events");
-    assert.equal(posts[0].init.method, "POST");
-
-    // visibilitychange while hidden flushes.
-    clientEventsTestInternals.queue.length = 0;
-    emitClientEvent("client_error");
-    fakeDocument.visibilityState = "hidden";
-    documentHandlers.get("visibilitychange")?.(new Event("visibilitychange"));
-    await tick();
-    assert.equal(posts.length, 2);
-
-    // visibilitychange while visible does not flush.
-    clientEventsTestInternals.queue.length = 0;
-    emitClientEvent("client_error");
-    fakeDocument.visibilityState = "visible";
-    documentHandlers.get("visibilitychange")?.(new Event("visibilitychange"));
-    await tick();
-    assert.equal(posts.length, 2);
-
-    cleanup();
-    assert.ok(windowRemoved.includes("pagehide"));
-    assert.ok(documentRemoved.includes("visibilitychange"));
-  } finally {
-    clientEventsTestInternals.queue.length = 0;
     globalThis.fetch = previousFetch;
   }
 });
@@ -294,96 +201,56 @@ class RecordedEventTarget extends EventTarget {
   }
 }
 
-test("app error boundary emits hydration_error or client_error from classified React errors", () => {
-  /** @type {TestClientEvent[]} */
-  const emissions = [];
-  const ErrorBoundary = loadErrorBoundaryForTest({
-    classifyReactError: () => "hydration",
-    /**
-     * @param {string} name
-     */
-    emitClientEvent: (name) => emissions.push({ name })
-  });
-  ErrorBoundary({ error: new Error("fixture"), reset: () => {} });
-  assert.deepEqual(emissions, [{ name: "hydration_error" }]);
+test("app error boundary emits real hydration_error and client_error telemetry", () => {
+  const ErrorBoundary = loadErrorBoundaryForTest();
+  try {
+    clientEventsTestInternals.queue.length = 0;
+    ErrorBoundary({
+      error: new Error("Minified React error #418; see docs"),
+      reset: () => {}
+    });
+    assert.deepEqual(clientEventsTestInternals.queue, [
+      { name: "hydration_error" }
+    ]);
 
-  /** @type {TestClientEvent[]} */
-  const otherEmissions = [];
-  const OtherBoundary = loadErrorBoundaryForTest({
-    classifyReactError: () => "other",
-    /**
-     * @param {string} name
-     */
-    emitClientEvent: (name) => otherEmissions.push({ name })
-  });
-  OtherBoundary({ error: new Error("fixture"), reset: () => {} });
-  assert.deepEqual(otherEmissions, [{ name: "client_error" }]);
+    clientEventsTestInternals.queue.length = 0;
+    ErrorBoundary({ error: new Error("plain failure"), reset: () => {} });
+    assert.deepEqual(clientEventsTestInternals.queue, [
+      { name: "client_error" }
+    ]);
+  } finally {
+    clientEventsTestInternals.queue.length = 0;
+  }
 });
 
-test("app error boundary drives the real classifyReactError from the thrown error", () => {
-  /** @type {TestClientEvent[]} */
-  const hydrationEmissions = [];
-  const HydrationBoundary = loadErrorBoundaryForTest({
-    classifyReactError,
-    /**
-     * @param {string} name
-     */
-    emitClientEvent: (name) => hydrationEmissions.push({ name })
-  });
-  HydrationBoundary({
-    error: new Error("Minified React error #418; see docs"),
-    reset: () => {}
-  });
-  assert.deepEqual(hydrationEmissions, [{ name: "hydration_error" }]);
+test("global error boundary renders a document shell and emits real hydration_error and client_error telemetry", () => {
+  const GlobalError = loadErrorBoundaryForTest("app/global-error.tsx");
+  try {
+    clientEventsTestInternals.queue.length = 0;
+    const rendered =
+      /** @type {{ type: unknown, props: { children: { type: unknown } } }} */ (
+        GlobalError({
+          error: new Error("plain root layout failure"),
+          reset: () => {}
+        })
+      );
+    assert.equal(rendered.type, "html");
+    assert.equal(rendered.props.children.type, "body");
+    assert.deepEqual(clientEventsTestInternals.queue, [
+      { name: "client_error" }
+    ]);
 
-  /** @type {TestClientEvent[]} */
-  const otherEmissions = [];
-  const OtherBoundary = loadErrorBoundaryForTest({
-    classifyReactError,
-    /**
-     * @param {string} name
-     */
-    emitClientEvent: (name) => otherEmissions.push({ name })
-  });
-  OtherBoundary({ error: new Error("plain failure"), reset: () => {} });
-  assert.deepEqual(otherEmissions, [{ name: "client_error" }]);
-});
-
-test("global error boundary renders a document shell and emits classified telemetry", () => {
-  /** @type {TestClientEvent[]} */
-  const emissions = [];
-  const GlobalError = loadErrorBoundaryForTest(
-    {
-      classifyReactError,
-      emitClientEvent: (name) => emissions.push({ name })
-    },
-    "app/global-error.tsx"
-  );
-  const rendered =
-    /** @type {{ type: unknown, props: { children: { type: unknown } } }} */ (
-      GlobalError({
-        error: new Error("plain root layout failure"),
-        reset: () => {}
-      })
-    );
-  assert.equal(rendered.type, "html");
-  assert.equal(rendered.props.children.type, "body");
-  assert.deepEqual(emissions, [{ name: "client_error" }]);
-
-  /** @type {TestClientEvent[]} */
-  const hydrationEmissions = [];
-  const HydrationGlobalError = loadErrorBoundaryForTest(
-    {
-      classifyReactError,
-      emitClientEvent: (name) => hydrationEmissions.push({ name })
-    },
-    "app/global-error.tsx"
-  );
-  HydrationGlobalError({
-    error: new Error("Minified React error #418; see docs"),
-    reset: () => {}
-  });
-  assert.deepEqual(hydrationEmissions, [{ name: "hydration_error" }]);
+    clientEventsTestInternals.queue.length = 0;
+    GlobalError({
+      error: new Error("Minified React error #418; see docs"),
+      reset: () => {}
+    });
+    assert.deepEqual(clientEventsTestInternals.queue, [
+      { name: "hydration_error" }
+    ]);
+  } finally {
+    clientEventsTestInternals.queue.length = 0;
+  }
 });
 
 test("Cloudflare rate-limit check and apply build Rulesets API requests", async () => {
@@ -506,9 +373,9 @@ test("Cloudflare rate-limit check and apply handle a fresh zone without the rule
 });
 
 /**
- * @param {ClientEventsStub} clientEventsStub
+ * @param {string} [path]
  */
-function loadErrorBoundaryForTest(clientEventsStub, path = "app/error.tsx") {
+function loadErrorBoundaryForTest(path = "app/error.tsx") {
   const exportsForTestModule = loadModuleForTest(path, {
     stubs: {
       react: {
@@ -529,7 +396,8 @@ function loadErrorBoundaryForTest(clientEventsStub, path = "app/error.tsx") {
          */
         jsxs: (type, props) => ({ type, props })
       },
-      "../src/client/client-events.ts": clientEventsStub,
+      // Use the real emitter, classifier, and queue; only React effects run inline.
+      "../src/client/client-events.ts": { emitUncaughtErrorEvent },
       // global-error.tsx imports the stylesheet for standalone rendering;
       // CSS is a bundler concern with no runtime module shape.
       "./globals.css": {}

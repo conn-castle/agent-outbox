@@ -2,10 +2,7 @@
 
 import { useEffect } from "react";
 
-import {
-  classifyReactError,
-  emitClientEvent
-} from "../src/client/client-events.ts";
+import { emitUncaughtErrorEvent } from "../src/client/client-events.ts";
 
 export default function ErrorBoundary({
   error,
@@ -14,13 +11,7 @@ export default function ErrorBoundary({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  useEffect(() => {
-    if (classifyReactError(error) === "hydration") {
-      emitClientEvent("hydration_error");
-    } else {
-      emitClientEvent("client_error");
-    }
-  }, [error]);
+  useEffect(() => emitUncaughtErrorEvent(error), [error]);
 
   return (
     <main className="error-main">
