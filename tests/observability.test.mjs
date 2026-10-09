@@ -79,6 +79,7 @@ import {
   DATABASE_POLICY_VERIFICATION_SKIP,
   phase3DatabaseVerificationUrl
 } from "./helpers/database.mjs";
+import { captureStructuredLogs } from "./helpers/structured-logs.mjs";
 import { withProcessEnv } from "./helpers/process-env.mjs";
 import { queryResult } from "./helpers/fake-query.mjs";
 import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
@@ -100,40 +101,6 @@ const CALLER_KEY_HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
  *   runWithScheduledSentry: <T>(task: () => Promise<T>) => Promise<T>
  * }} SentryModuleForTest
  */
-
-/**
- * @param {() => Promise<void>} callback
- * @returns {Promise<Array<Record<string, unknown>>>}
- */
-async function captureStructuredLogs(callback) {
-  const originals = {
-    error: console.error,
-    log: console.log,
-    warn: console.warn
-  };
-  /** @type {Array<Record<string, unknown>>} */
-  const lines = [];
-
-  console.error = (line) => {
-    lines.push(JSON.parse(String(line)));
-  };
-  console.log = (line) => {
-    lines.push(JSON.parse(String(line)));
-  };
-  console.warn = (line) => {
-    lines.push(JSON.parse(String(line)));
-  };
-
-  try {
-    await callback();
-  } finally {
-    console.error = originals.error;
-    console.log = originals.log;
-    console.warn = originals.warn;
-  }
-
-  return lines;
-}
 
 /**
  * @returns {import("react").ComponentType<{ children: import("react").ReactNode }>}
@@ -180,6 +147,61 @@ function loadSentryModuleForTest(sentryStub) {
   });
 
   return /** @type {SentryModuleForTest} */ (exportsForTestModule);
+}
+
+/**
+ * Loads the runtime reporter with a recording Sentry SDK stub.
+ */
+function loadRecordingSentryModuleForTest() {
+  /** @type {Array<Record<string, unknown>>} */
+  const tagSnapshots = [];
+  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
+  const sentryContexts = [];
+  /** @type {unknown[]} */
+  const fingerprints = [];
+  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
+  const capturedExceptions = [];
+  const { reportRuntimeFailure } = loadSentryModuleForTest({
+    /**
+     * @param {(scope: {
+     *   setTag(name: string, value: unknown): void,
+     *   setContext(name: string, value: Record<string, unknown>): void,
+     *   setFingerprint(value: unknown): void
+     * }) => void} callback
+     */
+    withScope(callback) {
+      /** @type {Record<string, unknown>} */
+      const tags = {};
+      callback({
+        setTag(name, value) {
+          tags[name] = value;
+        },
+        setContext(name, value) {
+          sentryContexts.push({ name, value });
+        },
+        setFingerprint(value) {
+          fingerprints.push(value);
+        }
+      });
+      tagSnapshots.push(tags);
+    },
+    /** @param {unknown} error */
+    captureException(error) {
+      capturedExceptions.push(
+        /** @type {{ name?: string, message?: string, stack?: string }} */ (
+          error
+        )
+      );
+    }
+  });
+
+  return {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    fingerprints,
+    capturedExceptions
+  };
 }
 
 /**
@@ -1071,46 +1093,12 @@ test("malformed stored MIME patterns reach human answer transaction failure repo
 });
 
 test("human answer transaction failures share error id across structured log and Sentry", async () => {
-  /** @type {Array<Record<string, unknown>>} */
-  const tagSnapshots = [];
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      /** @type {Record<string, unknown>} */
-      const tags = {};
-      callback({
-        setTag(name, value) {
-          tags[name] = value;
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-      tagSnapshots.push(tags);
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(
-        /** @type {{ name?: string, message?: string, stack?: string }} */ (
-          error
-        )
-      );
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   const { createHumanAnswer: createAnswer } =
     loadHumanAnswerModuleForTest(reportRuntimeFailure);
   const logs = await withProcessEnv(
@@ -1166,46 +1154,12 @@ test("human answer transaction failures share error id across structured log and
 });
 
 test("human answer undo transaction failures share error id across structured log and Sentry", async () => {
-  /** @type {Array<Record<string, unknown>>} */
-  const tagSnapshots = [];
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      /** @type {Record<string, unknown>} */
-      const tags = {};
-      callback({
-        setTag(name, value) {
-          tags[name] = value;
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-      tagSnapshots.push(tags);
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(
-        /** @type {{ name?: string, message?: string, stack?: string }} */ (
-          error
-        )
-      );
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   const { humanAnswerUndoTransactionFailure: undoFailure } =
     loadHumanAnswerModuleForTest(reportRuntimeFailure);
   const logs = await withProcessEnv(
@@ -1740,46 +1694,12 @@ test("human review server actions report transaction throws and propagate pre-in
 });
 
 test("caller approval failure reporter emits structured log and Sentry context", async () => {
-  /** @type {Array<Record<string, unknown>>} */
-  const tagSnapshots = [];
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      /** @type {Record<string, unknown>} */
-      const tags = {};
-      callback({
-        setTag(name, value) {
-          tags[name] = value;
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-      tagSnapshots.push(tags);
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(
-        /** @type {{ name?: string, message?: string, stack?: string }} */ (
-          error
-        )
-      );
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   const sessionModule =
     /** @type {{ reportCallerApprovalFailure(error: unknown, input: Record<string, unknown>): ReturnType<RuntimeFailureReporterForTest> }} */ (
       loadCommonJsModuleForTest("app/caller/connect/session.ts", {
@@ -1862,39 +1782,8 @@ test("caller approval failure reporter emits structured log and Sentry context",
 });
 
 test("runtime failures set a Sentry fingerprint from safe discriminators", async () => {
-  /** @type {unknown[]} */
-  const fingerprints = [];
-  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      callback({
-        setTag() {},
-        setContext() {},
-        setFingerprint(value) {
-          fingerprints.push(value);
-        }
-      });
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(
-        /** @type {{ name?: string, message?: string, stack?: string }} */ (
-          error
-        )
-      );
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const { reportRuntimeFailure, fingerprints, capturedExceptions } =
+    loadRecordingSentryModuleForTest();
 
   await withProcessEnv(
     {
@@ -1936,46 +1825,12 @@ test("runtime failures set a Sentry fingerprint from safe discriminators", async
 });
 
 test("connect terminal setup state reports transaction exceptions", async () => {
-  /** @type {Array<Record<string, unknown>>} */
-  const tagSnapshots = [];
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      /** @type {Record<string, unknown>} */
-      const tags = {};
-      callback({
-        setTag(name, value) {
-          tags[name] = value;
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-      tagSnapshots.push(tags);
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(
-        /** @type {{ name?: string, message?: string, stack?: string }} */ (
-          error
-        )
-      );
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   const sessionModule =
     /** @type {{ connectTerminalSetupState(query: import("../src/server/database.ts").ProductTransactionQuery, input: Record<string, unknown>): Promise<{ ok: boolean, error?: { status: number, code: string, message: string } }> }} */ (
       loadCommonJsModuleForTest("app/caller/connect/session.ts", {
@@ -2207,43 +2062,12 @@ test("billing webhook signature failures log correlation without body or secret 
 });
 
 test("billing webhook processing failures share one error id across structured log and Sentry", async () => {
-  /** @type {Map<string, unknown>} */
-  const tags = new Map();
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      callback({
-        setTag(name, value) {
-          tags.set(name, value);
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(
-        /** @type {{ name?: string, message?: string, stack?: string }} */ (
-          error
-        )
-      );
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   const { handleStripeWebhookRequest: handleWebhook } =
     loadBillingModuleForTest(reportRuntimeFailure);
   const stripe = /** @type {any} */ ({
@@ -2327,9 +2151,9 @@ test("billing webhook processing failures share one error id across structured l
   assert.equal(logs[0].status_code, 503);
   assert.equal(logs[0].operation, "stripe_webhook_processing");
   assert.equal(typeof logs[0].duration_ms, "number");
-  assert.equal(tags.get("error_id"), "corr-billing-webhook-processing");
-  assert.equal(tags.get("operation"), "stripe_webhook_processing");
-  assert.equal(tags.get("route"), "/api/billing/webhook");
+  assert.equal(tagSnapshots[0].error_id, "corr-billing-webhook-processing");
+  assert.equal(tagSnapshots[0].operation, "stripe_webhook_processing");
+  assert.equal(tagSnapshots[0].route, "/api/billing/webhook");
   assert.equal(sentryContexts.length, 1);
   assert.equal(sentryContexts[0].name, "agent_outbox");
   assert.equal(
@@ -2349,42 +2173,12 @@ test("billing webhook processing failures share one error id across structured l
 });
 
 test("billing checkout and portal Stripe failures share error ids across structured log and Sentry", async () => {
-  /** @type {Array<Record<string, unknown>>} */
-  const tagSnapshots = [];
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      /** @type {Record<string, unknown>} */
-      const tags = {};
-      callback({
-        setTag(name, value) {
-          tags[name] = value;
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-      tagSnapshots.push(tags);
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(/** @type {{ name?: string }} */ (error));
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   const {
     createBillingPortalSessionForAccount: createPortalSession,
     createCheckoutSessionForAccount: createCheckoutSession
@@ -2542,42 +2336,12 @@ test("billing checkout and portal Stripe failures share error ids across structu
 });
 
 test("billing account-lookup failures label the flow operation and redact secrets", async () => {
-  /** @type {Array<Record<string, unknown>>} */
-  const tagSnapshots = [];
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      /** @type {Record<string, unknown>} */
-      const tags = {};
-      callback({
-        setTag(name, value) {
-          tags[name] = value;
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-      tagSnapshots.push(tags);
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(/** @type {{ name?: string }} */ (error));
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   const { billingHumanSessionFromClerkUser } =
     loadBillingSessionModuleForTest(reportRuntimeFailure);
   const accountId = "00000000-0000-4000-8000-000000000511";
@@ -2726,42 +2490,12 @@ test("billing account-lookup failures label the flow operation and redact secret
 });
 
 test("billing session resolution failures share billing route error ids", async () => {
-  /** @type {Array<Record<string, unknown>>} */
-  const tagSnapshots = [];
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      /** @type {Record<string, unknown>} */
-      const tags = {};
-      callback({
-        setTag(name, value) {
-          tags[name] = value;
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-      tagSnapshots.push(tags);
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(/** @type {{ name?: string }} */ (error));
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   const { resolveHumanAccountSession } =
     loadHumanSessionModuleForTest(reportRuntimeFailure);
 
@@ -2828,44 +2562,8 @@ test(
    * error ids, logs, Sentry, messages, and that raw errors are not leaked.
    */
   async () => {
-  /** @type {Array<{ tags: Map<string, unknown>, contexts: Array<{ name: string, value: Record<string, unknown> }> }>} */
-  const sentryScopes = [];
-  /** @type {Array<{ name?: string, message?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      /** @type {Map<string, unknown>} */
-      const tags = new Map();
-      /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-      const contexts = [];
-      callback({
-        setTag(name, value) {
-          tags.set(name, value);
-        },
-        setContext(name, value) {
-          contexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-      sentryScopes.push({ tags, contexts });
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(
-        /** @type {{ name?: string, message?: string }} */ (error)
-      );
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const { reportRuntimeFailure, tagSnapshots, capturedExceptions } =
+    loadRecordingSentryModuleForTest();
   const { handleInputQueueRequest: handleInputQueue } =
     loadInputQueueModuleForTest(reportRuntimeFailure);
   const inputRequest = new Request(
@@ -2951,7 +2649,7 @@ test(
   );
 
   assert.equal(logs.length, 2);
-  assert.equal(sentryScopes.length, 2);
+  assert.equal(tagSnapshots.length, 2);
   assert.equal(capturedExceptions.length, 2);
   assert.equal(capturedExceptions[1].message, "Agent Outbox runtime failure");
   const inputLog = logs.find((log) => log.operation === "input_send");
@@ -2983,15 +2681,15 @@ test(
   assert.equal(typeof outputLog.duration_ms, "number");
   assert.equal(outputLog.message, "Output file download failed unexpectedly.");
   assert.deepEqual(
-    sentryScopes.map((scope) => scope.tags.get("error_id")),
+    tagSnapshots.map((tags) => tags.error_id),
     ["corr-input-queue-observability", "corr-output-file-observability"]
   );
   assert.deepEqual(
-    sentryScopes.map((scope) => scope.tags.get("route")),
+    tagSnapshots.map((tags) => tags.route),
     ["/api/input/send", "/api/output/[output_result_id]/files/[file_id]"]
   );
   assert.deepEqual(
-    sentryScopes.map((scope) => scope.tags.get("operation")),
+    tagSnapshots.map((tags) => tags.operation),
     ["input_send", "output_file_download"]
   );
   const serializedLogs = JSON.stringify(logs);
@@ -4194,35 +3892,12 @@ test("product transactions retain connection diagnostics when rollback also fail
 });
 
 test("input replacement failures expose safe diagnostic codes only in logs and Sentry", async () => {
-  /** @type {Array<Record<string, unknown>>} */
-  const scopes = [];
-  /** @type {Array<Record<string, unknown>>} */
-  const contexts = [];
-  /** @type {unknown[]} */
-  const exceptions = [];
-  const { reportRuntimeFailure } = loadSentryModuleForTest({
-    /** @param {Function} callback */
-    withScope(callback) {
-      /** @type {Record<string, unknown>} */
-      const tags = {};
-      callback({
-        /** @param {string} name @param {unknown} value */
-        setTag(name, value) {
-          tags[name] = value;
-        },
-        /** @param {string} _name @param {Record<string, unknown>} value */
-        setContext(_name, value) {
-          contexts.push(value);
-        },
-        setFingerprint() {}
-      });
-      scopes.push(tags);
-    },
-    /** @param {unknown} error */
-    captureException(error) {
-      exceptions.push(error);
-    }
-  });
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   const cases = [
     { code: "23503", message: "private row content", expected: "23503" },
     { message: "Query read timeout", expected: "QUERY_READ_TIMEOUT" },
@@ -4298,15 +3973,15 @@ test("input replacement failures expose safe diagnostic codes only in logs and S
         assert.equal(logs.length, 1);
         assert.equal(logs[0].operation, "input_replace");
         assert.equal(logs[0].error_code, expected);
-        assert.equal(scopes[index].error_code, expected);
-        assert.equal(contexts[index].error_code, expected);
-        assert.equal(scopes[index].error_id, context.correlationId);
+        assert.equal(tagSnapshots[index].error_code, expected);
+        assert.equal(sentryContexts[index].value.error_code, expected);
+        assert.equal(tagSnapshots[index].error_id, context.correlationId);
         assert.equal(logs[0].error_id, context.correlationId);
         const evidence = JSON.stringify([
           logs,
-          scopes[index],
-          contexts[index],
-          exceptions[index]
+          tagSnapshots[index],
+          sentryContexts[index].value,
+          capturedExceptions[index]
         ]);
         assert.equal(evidence.includes("private"), false);
       }
@@ -4315,43 +3990,12 @@ test("input replacement failures expose safe diagnostic codes only in logs and S
 });
 
 test("reportRuntimeFailure shares one error id across structured log and Sentry", async () => {
-  /** @type {Map<string, unknown>} */
-  const tags = new Map();
-  /** @type {Array<{ name: string, value: Record<string, unknown> }>} */
-  const sentryContexts = [];
-  /** @type {Array<{ name?: string, message?: string, stack?: string }>} */
-  const capturedExceptions = [];
-  const sentryStub = {
-    /**
-     * @param {(scope: {
-     *   setTag(name: string, value: unknown): void,
-     *   setContext(name: string, value: Record<string, unknown>): void,
-     *   setFingerprint(value: unknown): void
-     * }) => void} callback
-     */
-    withScope(callback) {
-      callback({
-        setTag(name, value) {
-          tags.set(name, value);
-        },
-        setContext(name, value) {
-          sentryContexts.push({ name, value });
-        },
-        setFingerprint() {}
-      });
-    },
-    /**
-     * @param {unknown} error
-     */
-    captureException(error) {
-      capturedExceptions.push(
-        /** @type {{ name?: string, message?: string, stack?: string }} */ (
-          error
-        )
-      );
-    }
-  };
-  const { reportRuntimeFailure } = loadSentryModuleForTest(sentryStub);
+  const {
+    reportRuntimeFailure,
+    tagSnapshots,
+    sentryContexts,
+    capturedExceptions
+  } = loadRecordingSentryModuleForTest();
   /** @type {Array<{ error_id: string, sentry_captured: boolean }>} */
   const reports = [];
   const logs = await withProcessEnv(
@@ -4391,9 +4035,9 @@ test("reportRuntimeFailure shares one error id across structured log and Sentry"
   assert.equal(logs.length, 1);
   assert.equal(logs[0].error_id, "err_shared_observability");
   assert.equal(logs[0].sentry_captured, true);
-  assert.equal(tags.get("error_id"), "err_shared_observability");
-  assert.equal(tags.get("operation"), "runtime.failure.test");
-  assert.equal(tags.get("route"), "/api/runtime/error");
+  assert.equal(tagSnapshots[0].error_id, "err_shared_observability");
+  assert.equal(tagSnapshots[0].operation, "runtime.failure.test");
+  assert.equal(tagSnapshots[0].route, "/api/runtime/error");
   assert.equal(sentryContext.name, "agent_outbox");
   assert.equal(sentryContext.value.error_id, "err_shared_observability");
   assert.equal(sentryContext.value.operation, "runtime.failure.test");
