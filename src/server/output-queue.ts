@@ -191,6 +191,7 @@ export async function handleOutputCheckRequest(
   );
 }
 
+/** Validates the output ID before authenticating and reading the caller's result. */
 export async function handleOutputReadRequest(
   request: Request,
   context: ApiRequestContext,
@@ -232,6 +233,7 @@ export async function handleOutputReadAllRequest(
   );
 }
 
+/** Validates the output ID before authenticating and acknowledging the caller's result. */
 export async function handleOutputAckRequest(
   request: Request,
   context: ApiRequestContext,
@@ -318,6 +320,10 @@ export async function readOutputResultInTransaction(
   };
 }
 
+/**
+ * Locks a result page and marks only successfully materialized outputs as read.
+ * Unavailable file outputs are reported separately; the cursor covers the fetched page.
+ */
 export async function readAllOutputPageInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity,
@@ -456,6 +462,10 @@ export function parseOutputPageQuery(
   );
 }
 
+/**
+ * Parses read-all pagination after validating the body and rejecting caller_id.
+ * Public schema validation follows the specific body, limit, and cursor checks.
+ */
 export function parseOutputReadAllBody(
   body: unknown
 ): PageRequest<OutputCursor> {
@@ -497,6 +507,7 @@ export function parseOutputReadAllBody(
   return parsed;
 }
 
+/** Counts all queued results belonging to the authenticated account and caller. */
 function outputReadyCountStatement(
   identity: CallerIdentity
 ): TransactionContextStatement {
@@ -511,14 +522,16 @@ function outputReadyCountStatement(
   };
 }
 
+/**
+ * Builds a read-all page with full output columns and FOR UPDATE row locks.
+ * Locks prevent concurrent undo, acknowledgement, or cleanup from changing rows
+ * between selection and the mark-read update.
+ */
 export function outputPageStatement(
   identity: CallerIdentity,
   limit: number,
   cursor: OutputCursor | null
 ): TransactionContextStatement {
-  // read-all locks the page rows FOR UPDATE (like the single-read path) so a
-  // concurrent undo/ack/cleanup cannot delete or restore a row between the
-  // select and the mark-read update; the non-mutating check path never locks.
   return outputKeysetPageStatement(
     identity,
     limit,
@@ -528,6 +541,7 @@ export function outputPageStatement(
   );
 }
 
+/** Builds a check page with summary columns and no row locks or read mutations. */
 export function outputCheckPageStatement(
   identity: CallerIdentity,
   limit: number,
@@ -544,6 +558,11 @@ export function outputCheckPageStatement(
   );
 }
 
+/**
+ * Builds a caller-scoped keyset query with one extra row to detect another page.
+ * The UTC cursor retains PostgreSQL timestamp precision; callers choose the
+ * projection and whether the selected rows must be locked.
+ */
 function outputKeysetPageStatement(
   identity: CallerIdentity,
   limit: number,
@@ -578,6 +597,7 @@ function outputKeysetPageStatement(
   };
 }
 
+/** Selects and locks one output result within the authenticated account and caller. */
 export function outputResultByIdStatement(
   identity: CallerIdentity,
   outputResultId: string
@@ -596,6 +616,7 @@ export function outputResultByIdStatement(
   };
 }
 
+/** Selects ordered file metadata for a nonempty set of the caller's output IDs. */
 export function outputFileMetadataStatement(
   identity: CallerIdentity,
   outputResultIds: readonly string[]
@@ -621,6 +642,7 @@ export function outputFileMetadataStatement(
   };
 }
 
+/** Preserves the first-read timestamp and increments each selected result's read count. */
 function markOutputResultsReadStatement(
   identity: CallerIdentity,
   outputResultIds: readonly string[]
@@ -791,6 +813,7 @@ export function cursorFromOutputRow(row: OutputPageCursorRow) {
   });
 }
 
+/** Wraps field errors with the output queue's validation-failure message. */
 function validationFailed(fields: ApiErrorInput["fields"]): {
   ok: false;
   error: ApiErrorInput;
@@ -798,6 +821,10 @@ function validationFailed(fields: ApiErrorInput["fields"]): {
   return apiValidationFailed(OUTPUT_VALIDATION_MESSAGE, fields);
 }
 
+/**
+ * Rejects a missing ID before an unstorable ID, or returns null for further handling.
+ * UUID matching remains inside the authenticated read and acknowledgement paths.
+ */
 function outputResultIdError(id: string): OutputQueueResult | null {
   if (!id) return outputResultIdRequiredError();
   if (!isStorableString(id)) {
@@ -806,6 +833,7 @@ function outputResultIdError(id: string): OutputQueueResult | null {
   return null;
 }
 
+/** Returns the missing-output-ID error before storage or authenticated lookup checks. */
 function outputResultIdRequiredError(): OutputQueueResult {
   return {
     ok: false,
