@@ -7,19 +7,7 @@ export async function POST(request: Request) {
   return respondToJsonApiRequest(
     request,
     "/api/input/replace",
-    async (context, body) => {
-      const result = await handleInputQueueRequest(
-        request,
-        context,
-        "replace",
-        body
-      );
-      if (!result.ok) {
-        return result;
-      }
-
-      const { operation: _operation, ...responseData } = result.data;
-      return { ok: true, data: responseData };
-    }
+    (context, body) =>
+      handleInputQueueRequest(request, context, "replace", body)
   );
 }

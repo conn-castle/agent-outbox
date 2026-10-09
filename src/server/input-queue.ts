@@ -37,7 +37,6 @@ export type InputQueueOperation = "send" | "replace" | "delete";
 
 export type InputQueueSuccess =
   | {
-      operation: "send";
       caller_item_id: string;
       status: "pending";
       revision: number;
@@ -45,7 +44,6 @@ export type InputQueueSuccess =
       duplicate: boolean;
     }
   | {
-      operation: "replace";
       caller_item_id: string;
       status: "pending";
       revision: number;
@@ -53,7 +51,6 @@ export type InputQueueSuccess =
       changed: boolean;
     }
   | {
-      operation: "delete";
       caller_item_id: string;
       deleted: true;
     };
@@ -273,12 +270,10 @@ export async function sendInputItem(
   identity: CallerIdentity,
   submission: NormalizedInputSubmission,
   options: {
-    beforeCreate?: () => Promise<InputQueueResult | null>;
-  } = {}
-): Promise<InputQueueResult> {
-  if (options.beforeCreate) {
-    await query(serializedSendInputItemStatement(identity, submission));
+    beforeCreate: () => Promise<InputQueueResult | null>;
   }
+): Promise<InputQueueResult> {
+  await query(serializedSendInputItemStatement(identity, submission));
 
   const existing = await existingInput(
     query,
@@ -289,20 +284,9 @@ export async function sendInputItem(
     return sendResultForExisting(existing, submission);
   }
 
-  if (options.beforeCreate) {
-    const concurrentExisting = await existingInput(
-      query,
-      identity,
-      submission.callerItemId
-    );
-    if (concurrentExisting) {
-      return sendResultForExisting(concurrentExisting, submission);
-    }
-
-    const limitResult = await options.beforeCreate();
-    if (limitResult) {
-      return limitResult;
-    }
+  const limitResult = await options.beforeCreate();
+  if (limitResult) {
+    return limitResult;
   }
 
   const inserted = await query<{
@@ -342,7 +326,6 @@ export async function sendInputItem(
   return {
     ok: true,
     data: {
-      operation: "send",
       caller_item_id: submission.callerItemId,
       status: "pending",
       revision: insertedRow.current_revision,
@@ -358,10 +341,10 @@ export async function replaceInputItem(
   identity: CallerIdentity,
   submission: NormalizedInputSubmission,
   options: {
-    beforeChange?: (
+    beforeChange: (
       existing: ExistingInputRow
     ) => Promise<InputQueueResult | null>;
-  } = {}
+  }
 ): Promise<InputQueueResult> {
   const existing = await existingInput(
     query,
@@ -383,7 +366,6 @@ export async function replaceInputItem(
     return {
       ok: true,
       data: {
-        operation: "replace",
         caller_item_id: submission.callerItemId,
         status: "pending",
         revision: existing.current_revision,
@@ -393,7 +375,7 @@ export async function replaceInputItem(
     };
   }
 
-  const limitResult = await options.beforeChange?.(existing);
+  const limitResult = await options.beforeChange(existing);
   if (limitResult) {
     return limitResult;
   }
@@ -426,7 +408,6 @@ export async function replaceInputItem(
   return {
     ok: true,
     data: {
-      operation: "replace",
       caller_item_id: submission.callerItemId,
       status: "pending",
       revision,
@@ -469,7 +450,6 @@ export async function deleteInputItem(
   return {
     ok: true,
     data: {
-      operation: "delete",
       caller_item_id: callerItemId,
       deleted: true
     }
@@ -585,24 +565,7 @@ export function updateInputItemStatement(
       where input_item_id = $1
       returning current_revision
     `,
-    values: [
-      inputItemId,
-      submission.priority,
-      submission.rowType.display,
-      submission.rowType.icon,
-      submission.rowAccentColor,
-      submission.titleHtml,
-      submission.subtitleHtml,
-      submission.cornerHtml,
-      submission.summaryHtml,
-      submission.detailsHtml,
-      submission.cardVisual?.kind ?? null,
-      JSON.stringify(submission.cardVisual?.payload ?? {}),
-      submission.skipDisabled,
-      submission.normalizedContentFingerprint,
-      submission.nonFilePayloadBytes,
-      submission.cardTime
-    ]
+    values: [inputItemId, ...submissionColumnValues(submission)]
   };
 }
 
@@ -733,7 +696,6 @@ function sendResultForExisting(
     return {
       ok: true,
       data: {
-        operation: "send",
         caller_item_id: submission.callerItemId,
         status: "pending",
         revision: existing.current_revision,
@@ -836,6 +798,12 @@ function inputItemValues(
     identity.callerId,
     submission.callerItemId,
     submission.callerItemIdHash,
+    ...submissionColumnValues(submission)
+  ];
+}
+
+function submissionColumnValues(submission: NormalizedInputSubmission) {
+  return [
     submission.priority,
     submission.rowType.display,
     submission.rowType.icon,

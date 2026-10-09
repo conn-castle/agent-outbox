@@ -308,10 +308,7 @@ for (const [method, route, handlerModule, handlerName, noStore] of routeCases) {
     /** @type {any[][]} */
     const calls = [];
     const isInputMutation = handlerName === "handleInputQueueRequest";
-    const data = {
-      value: "preserved",
-      ...(isInputMutation ? { operation: route.split("/").at(-1) } : {})
-    };
+    const data = { value: "preserved" };
     const exports = loadRoute(
       route,
       handlerModule,
@@ -354,10 +351,6 @@ for (const [method, route, handlerModule, handlerName, noStore] of routeCases) {
       correlation_id: context.correlationId,
       data: { value: "preserved" }
     });
-    assert.equal(
-      isInputMutation ? data.operation : undefined,
-      isInputMutation ? route.split("/").at(-1) : undefined
-    );
   });
 
   test(`${method} ${route} preserves handler errors without no-store`, async () => {
