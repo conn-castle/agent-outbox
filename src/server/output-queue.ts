@@ -41,12 +41,27 @@ import { publicSchemaMismatch } from "../shared/public-api-contract.ts";
 
 const OUTPUT_VALIDATION_MESSAGE = "Output queue request failed validation.";
 const OUTPUT_NOT_FOUND_MESSAGE = "Output result was not found for this caller.";
+const OUTPUT_ROW_COLUMNS = `output_result_id::text as output_result_id,
+        caller_id::text as caller_id,
+        caller_item_id,
+        input_item_id::text as input_item_id,
+        action_value,
+        response_kind,
+        response_payload,
+        answered_at,
+        answered_by_user_id::text as answered_by_user_id`;
 
 const outputCheckReadOperation = {
   rateLimitKind: "output_check_read",
   loggedOperation: "output_check_read",
   unavailableMessage: "Output queue operation is temporarily unavailable.",
   unexpectedFailureMessage: "Output queue operation failed unexpectedly."
+} as const;
+
+const outputAckOperation = {
+  ...outputCheckReadOperation,
+  rateLimitKind: "output_ack",
+  loggedOperation: "output_ack"
 } as const;
 
 export type OutputQueueResult =
@@ -181,12 +196,8 @@ export async function handleOutputReadRequest(
   context: ApiRequestContext,
   outputResultId: string
 ): Promise<OutputQueueResult> {
-  if (!outputResultId) {
-    return outputResultIdRequiredError();
-  }
-  if (!isStorableString(outputResultId)) {
-    return validationFailed([unstorableStringError("output_result_id")]);
-  }
+  const error = outputResultIdError(outputResultId);
+  if (error) return error;
 
   return runGuardedCallerTransaction(
     request,
@@ -226,22 +237,13 @@ export async function handleOutputAckRequest(
   context: ApiRequestContext,
   outputResultId: string
 ): Promise<OutputQueueResult> {
-  if (!outputResultId) {
-    return outputResultIdRequiredError();
-  }
-  if (!isStorableString(outputResultId)) {
-    return validationFailed([unstorableStringError("output_result_id")]);
-  }
+  const error = outputResultIdError(outputResultId);
+  if (error) return error;
 
   return runGuardedCallerTransaction(
     request,
     context,
-    {
-      rateLimitKind: "output_ack",
-      loggedOperation: "output_ack",
-      unavailableMessage: "Output queue operation is temporarily unavailable.",
-      unexpectedFailureMessage: "Output queue operation failed unexpectedly."
-    },
+    outputAckOperation,
     (query, identity) =>
       acknowledgeOutputInTransaction(query, identity, context, outputResultId)
   );
@@ -323,7 +325,7 @@ export async function readAllOutputPageInTransaction(
   cursor: OutputCursor | null
 ): Promise<OutputQueueResult> {
   const pageRows = await query<OutputPageRow>(
-    outputPageStatement(identity, limit, cursor, { lockRows: true })
+    outputPageStatement(identity, limit, cursor)
   );
   const { page, hasMore, nextCursor } = pageFromRows(
     pageRows.rows,
@@ -495,7 +497,7 @@ export function parseOutputReadAllBody(
   return parsed;
 }
 
-export function outputReadyCountStatement(
+function outputReadyCountStatement(
   identity: CallerIdentity
 ): TransactionContextStatement {
   return {
@@ -512,47 +514,18 @@ export function outputReadyCountStatement(
 export function outputPageStatement(
   identity: CallerIdentity,
   limit: number,
-  cursor: OutputCursor | null,
-  options: { lockRows?: boolean } = {}
+  cursor: OutputCursor | null
 ): TransactionContextStatement {
-  const values: (string | number)[] = [identity.accountId, identity.callerId];
-  const cursorClause = cursor
-    ? "and (answered_at, output_result_id) > ($3::timestamptz, $4::uuid)"
-    : "";
-
-  if (cursor) {
-    values.push(cursor.answeredAt, cursor.outputResultId);
-  }
-
-  values.push(limit + 1);
-
   // read-all locks the page rows FOR UPDATE (like the single-read path) so a
   // concurrent undo/ack/cleanup cannot delete or restore a row between the
   // select and the mark-read update; the non-mutating check path never locks.
-  const lockClause = options.lockRows ? "\n      for update" : "";
-
-  return {
-    sql: `
-      select
-        output_result_id::text as output_result_id,
-        caller_id::text as caller_id,
-        caller_item_id,
-        input_item_id::text as input_item_id,
-        action_value,
-        response_kind,
-        response_payload,
-        answered_at,
-        to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor,
-        answered_by_user_id::text as answered_by_user_id
-      from public.agent_outbox_output_results
-      where account_id = $1
-        and caller_id = $2
-        ${cursorClause}
-      order by answered_at, output_result_id
-      limit $${values.length}${lockClause}
-    `,
-    values
-  };
+  return outputKeysetPageStatement(
+    identity,
+    limit,
+    cursor,
+    OUTPUT_ROW_COLUMNS,
+    true
+  );
 }
 
 export function outputCheckPageStatement(
@@ -560,6 +533,24 @@ export function outputCheckPageStatement(
   limit: number,
   cursor: OutputCursor | null
 ): TransactionContextStatement {
+  return outputKeysetPageStatement(
+    identity,
+    limit,
+    cursor,
+    `output_result_id::text as output_result_id,
+        caller_item_id,
+        answered_at`,
+    false
+  );
+}
+
+function outputKeysetPageStatement(
+  identity: CallerIdentity,
+  limit: number,
+  cursor: OutputCursor | null,
+  columns: string,
+  forUpdate: boolean
+): TransactionContextStatement {
   const values: (string | number)[] = [identity.accountId, identity.callerId];
   const cursorClause = cursor
     ? "and (answered_at, output_result_id) > ($3::timestamptz, $4::uuid)"
@@ -574,16 +565,14 @@ export function outputCheckPageStatement(
   return {
     sql: `
       select
-        output_result_id::text as output_result_id,
-        caller_item_id,
-        answered_at,
+        ${columns},
         to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor
       from public.agent_outbox_output_results
       where account_id = $1
         and caller_id = $2
         ${cursorClause}
       order by answered_at, output_result_id
-      limit $${values.length}
+      limit $${values.length}${forUpdate ? "\n      for update" : ""}
     `,
     values
   };
@@ -596,15 +585,7 @@ export function outputResultByIdStatement(
   return {
     sql: `
       select
-        output_result_id::text as output_result_id,
-        caller_id::text as caller_id,
-        caller_item_id,
-        input_item_id::text as input_item_id,
-        action_value,
-        response_kind,
-        response_payload,
-        answered_at,
-        answered_by_user_id::text as answered_by_user_id
+        ${OUTPUT_ROW_COLUMNS}
       from public.agent_outbox_output_results
       where account_id = $1
         and caller_id = $2
@@ -640,7 +621,7 @@ export function outputFileMetadataStatement(
   };
 }
 
-export function markOutputResultsReadStatement(
+function markOutputResultsReadStatement(
   identity: CallerIdentity,
   outputResultIds: readonly string[]
 ): TransactionContextStatement {
@@ -815,6 +796,14 @@ function validationFailed(fields: ApiErrorInput["fields"]): {
   error: ApiErrorInput;
 } {
   return apiValidationFailed(OUTPUT_VALIDATION_MESSAGE, fields);
+}
+
+function outputResultIdError(id: string): OutputQueueResult | null {
+  if (!id) return outputResultIdRequiredError();
+  if (!isStorableString(id)) {
+    return validationFailed([unstorableStringError("output_result_id")]);
+  }
+  return null;
 }
 
 function outputResultIdRequiredError(): OutputQueueResult {
