@@ -21,6 +21,7 @@ import {
   callerCredentialLookupStatement,
   parseCallerBearerApiKey,
   type CallerApiKeyDisplayMetadata,
+  type CallerApiKeyParts,
   type CallerCredentialLookupRow
 } from "./caller-auth.ts";
 import {
@@ -432,22 +433,18 @@ export function publicAppBaseUrl(): SetupResult<string> {
 }
 
 export function isUniqueViolation(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  return "code" in error && (error as { code?: unknown }).code === "23505";
+  return sqlState(error) === "23505";
 }
 
-/**
- * Returns true only for an object whose code is exactly SQLSTATE "23503".
- */
 function isForeignKeyViolation(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
+  return sqlState(error) === "23503";
+}
 
-  return "code" in error && (error as { code?: unknown }).code === "23503";
+/** Returns the `code` (SQLSTATE) of an error object, if it has one. */
+function sqlState(error: unknown) {
+  return error && typeof error === "object" && "code" in error
+    ? error.code
+    : undefined;
 }
 
 export function setupRequestExpired(
@@ -811,11 +808,8 @@ export async function handleSetupDeviceStartRequest(
   );
 }
 
-export type PendingCredentialBearer = {
-  apiKey: string;
-  keyId: string;
-  secret: string;
-} & CallerApiKeyDisplayMetadata;
+export type PendingCredentialBearer = CallerApiKeyParts &
+  CallerApiKeyDisplayMetadata;
 
 /**
  * Rejects non-plain-object bodies with a 422 validation failure, then lets
