@@ -8,8 +8,6 @@ export const RELEASE_TAG_PATTERN =
 export const POSITIVE_INTEGER_ID = /^[1-9]\d*$/;
 export const REPOSITORY_NAME = /^[^/\s]+\/[^/\s]+$/;
 
-const WORKER_VERSION_MESSAGE =
-  /^run ([1-9]\d*) release ([1-9]\d*) ([0-9a-f]{12})$/;
 const WORKER_VERSION_MESSAGE_MAX_LENGTH = 100;
 
 export const GITHUB_RELEASE_ID_ENV_NAME = "AGENT_OUTBOX_GITHUB_RELEASE_ID";
@@ -71,14 +69,6 @@ export function configuredRuntimeRelease(canary) {
  * @param {unknown} value
  * @returns {boolean}
  */
-export function isReleaseTag(value) {
-  return typeof value === "string" && RELEASE_TAG_PATTERN.test(value);
-}
-
-/**
- * @param {unknown} value
- * @returns {boolean}
- */
 export function isPositiveIntegerId(value) {
   return typeof value === "string" && POSITIVE_INTEGER_ID.test(value);
 }
@@ -121,7 +111,7 @@ export function requireFullGitSha(value, name) {
  * @returns {string}
  */
 export function requireReleaseTag(value, name = "RELEASE_TAG") {
-  if (!isReleaseTag(value)) {
+  if (typeof value !== "string" || !RELEASE_TAG_PATTERN.test(value)) {
     throw new Error(`${name} must be a numbered vX.Y.Z release tag.`);
   }
   return /** @type {string} */ (value);
@@ -225,34 +215,7 @@ export function serializeWorkerVersionMessage(input) {
       `Worker version message exceeds ${WORKER_VERSION_MESSAGE_MAX_LENGTH} characters`
     );
   }
-  const parsed = parseWorkerVersionMessage(message);
-  if (
-    parsed.runId !== runId ||
-    parsed.releaseId !== releaseId ||
-    parsed.sha12 !== sha.slice(0, 12)
-  ) {
-    throw new Error("Worker version message failed round-trip validation");
-  }
   return message;
-}
-
-/**
- * @param {unknown} value
- * @returns {{ runId: string, releaseId: string, sha12: string }}
- */
-export function parseWorkerVersionMessage(value) {
-  if (typeof value !== "string") {
-    throw new Error("Worker version message is missing");
-  }
-  const match = WORKER_VERSION_MESSAGE.exec(value.trim());
-  if (!match) {
-    throw new Error(`Worker version message is not exact: ${value}`);
-  }
-  return {
-    runId: match[1],
-    releaseId: match[2],
-    sha12: match[3]
-  };
 }
 
 export class WorkerVersionMatchError extends Error {
@@ -331,9 +294,7 @@ export function validateActionsContext(env, options) {
   ) {
     failures.push(
       options.workflowMessage ??
-        (options.allowedWorkflows.length === 1
-          ? `Production mutation must run from ${options.allowedWorkflows[0]}.`
-          : `Production mutation must run from ${options.allowedWorkflows.join(" or ")}.`)
+        `Production mutation must run from ${options.allowedWorkflows.join(" or ")}.`
     );
   }
   return failures;

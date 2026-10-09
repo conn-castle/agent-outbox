@@ -160,27 +160,12 @@ export function deployJobReleasePhaseTuples(deployJobContent) {
 }
 
 /**
- * @param {ProductionDeployReleasePhaseTuple} actual
- * @param {ProductionDeployReleasePhaseTuple} expected
- * @returns {boolean}
- */
-function tuplesEqual(actual, expected) {
-  return (
-    actual.stepName === expected.stepName &&
-    actual.command === expected.command &&
-    actual.condition === expected.condition
-  );
-}
-
-/**
  * @param {string} deployJobContent
  * @returns {boolean}
  */
 export function deployReleasePhaseOrderMatches(deployJobContent) {
-  const actual = deployJobReleasePhaseTuples(deployJobContent);
-  const expected = expectedReleasePhaseTuples();
   return (
-    actual.length === expected.length &&
-    actual.every((tuple, index) => tuplesEqual(tuple, expected[index]))
+    JSON.stringify(deployJobReleasePhaseTuples(deployJobContent)) ===
+    JSON.stringify(expectedReleasePhaseTuples())
   );
 }
