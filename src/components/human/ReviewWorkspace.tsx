@@ -97,6 +97,20 @@ type PersistedWorkspaceState = {
 
 const WORKSPACE_STATE_KEY_PREFIX = "agent-outbox:human-review-workspace:v1";
 const WORKSPACE_ID_LIMIT = 100;
+// Query parameters the server action redirect writes to report a mutation.
+const REDIRECT_NOTICE_PARAMS = [
+  "notice",
+  "error",
+  "failedActionKind",
+  "action",
+  "answered",
+  "failed",
+  "undo_target",
+  "undo_actor",
+  "undo_result",
+  "resolved",
+  "subject"
+] as const;
 
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority" },
@@ -107,6 +121,11 @@ const SORT_OPTIONS = [
   { value: "card_time", label: "Card time" },
   { value: "created_at", label: "Created" },
   { value: "updated_at", label: "Last updated" }
+] as const;
+
+const STATUS_LINKS = [
+  { status: "pending", label: "Review queue" },
+  { status: "answered", label: "History" }
 ] as const;
 
 const PRIORITY_FILTER_OPTIONS = [
@@ -387,21 +406,15 @@ export function ReviewWorkspace({
     navigation: "replace" | "push" = "replace"
   ) {
     const params = new URLSearchParams(window.location.search);
-    params.delete("item");
-    params.delete("caller_id");
-    params.delete("caller_item_id");
-    params.delete("error");
-    params.delete("failedActionKind");
-    params.delete("notice");
-    params.delete("action");
-    params.delete("answered");
-    params.delete("failed");
-    params.delete("undo_target");
-    params.delete("undo_actor");
-    params.delete("undo_result");
-    params.delete("resolved");
-    params.delete("subject");
-    params.delete("compose");
+    for (const key of [
+      "item",
+      "caller_id",
+      "caller_item_id",
+      "compose",
+      ...REDIRECT_NOTICE_PARAMS
+    ]) {
+      params.delete(key);
+    }
     // Compose from the latest optimistic view. Both the rendered prop and the
     // browser URL can lag router.replace during rapid, sequential changes.
     const draft = { ...controlViewRef.current, ...changes };
@@ -418,28 +431,10 @@ export function ReviewWorkspace({
 
   function clearRedirectNoticeFromUrl() {
     const params = new URLSearchParams(window.location.search);
-    let changed = false;
-    for (const key of [
-      "notice",
-      "error",
-      "failedActionKind",
-      "action",
-      "answered",
-      "failed",
-      "undo_target",
-      "undo_actor",
-      "undo_result",
-      "resolved",
-      "subject"
-    ]) {
-      if (params.has(key)) {
-        params.delete(key);
-        changed = true;
-      }
-    }
-    if (!changed) {
+    if (!REDIRECT_NOTICE_PARAMS.some((key) => params.has(key))) {
       return;
     }
+    for (const key of REDIRECT_NOTICE_PARAMS) params.delete(key);
     const query = params.toString();
     router.replace(
       query ? `${window.location.pathname}?${query}` : window.location.pathname,
@@ -528,10 +523,13 @@ export function ReviewWorkspace({
     );
   }
 
-  function onStatusNavigate(status: HumanReviewView["status"]) {
+  function onStatusNavigate(
+    status: HumanReviewView["status"],
+    changes: Partial<HumanReviewView> = {}
+  ) {
     return (event: { preventDefault: () => void }) => {
       event.preventDefault();
-      updateViewImmediately({ status, page: 1 }, "push");
+      updateViewImmediately({ ...changes, status, page: 1 }, "push");
     };
   }
 
@@ -622,6 +620,17 @@ export function ReviewWorkspace({
       ? `${synchronizingMutationCount} review ${synchronizingMutationCount === 1 ? "update" : "updates"} waiting to synchronize.`
       : "";
   const viewStatus = humanReviewViewAnnouncement(view);
+  const otherStatus = view.status === "pending" ? "answered" : "pending";
+
+  function forgetMutation(mutationId: string) {
+    successGenerations.current.delete(mutationId);
+    retriedCanonicalRefreshes.current.delete(mutationId);
+  }
+
+  function retireMutation(mutationId: string) {
+    forgetMutation(mutationId);
+    dismiss(mutationId);
+  }
 
   useEffect(() => {
     if (previousCanonicalRows.current === rows) return;
@@ -686,9 +695,7 @@ export function ReviewWorkspace({
                 mutation.inputItemIds.includes(id)
               )
             ) {
-              successGenerations.current.delete(earlier.record.id);
-              retriedCanonicalRefreshes.current.delete(earlier.record.id);
-              dismiss(earlier.record.id);
+              retireMutation(earlier.record.id);
             }
           }
         }
@@ -717,9 +724,7 @@ export function ReviewWorkspace({
           );
           setSelectedIds((current) => removeIds(current, answeredIds));
         }
-        successGenerations.current.delete(record.id);
-        retriedCanonicalRefreshes.current.delete(record.id);
-        dismiss(record.id);
+        retireMutation(record.id);
       } else if (!retriedCanonicalRefreshes.current.has(record.id)) {
         retriedCanonicalRefreshes.current.add(record.id);
         router.refresh();
@@ -894,8 +899,7 @@ export function ReviewWorkspace({
         if (remainingIds.length === earlier.optimistic.inputItemIds.length)
           return earlier.optimistic;
         if (remainingIds.length === 0) {
-          successGenerations.current.delete(earlier.id);
-          retriedCanonicalRefreshes.current.delete(earlier.id);
+          forgetMutation(earlier.id);
           return null;
         }
         return {
@@ -923,9 +927,7 @@ export function ReviewWorkspace({
           setSelectedIds((current) => removeIds(current, new Set(answeredIds)));
         }
         if (result.operation === "bulk-answer" && result.answered === 0) {
-          successGenerations.current.delete(mutationId);
-          retriedCanonicalRefreshes.current.delete(mutationId);
-          dismiss(mutationId);
+          retireMutation(mutationId);
           setLastUndo(null);
           setLastError(result.message);
           return;
@@ -961,8 +963,7 @@ export function ReviewWorkspace({
         successGenerations.current.set(mutationId, canonicalGeneration.current);
       },
       onError: (error, mutationId) => {
-        successGenerations.current.delete(mutationId);
-        retriedCanonicalRefreshes.current.delete(mutationId);
+        forgetMutation(mutationId);
         if (
           error instanceof HumanMutationError &&
           (error.result?.code === "not_found" ||
@@ -978,9 +979,7 @@ export function ReviewWorkspace({
                 submission.inputItemIds.includes(id)
               )
             ) {
-              successGenerations.current.delete(record.id);
-              retriedCanonicalRefreshes.current.delete(record.id);
-              dismiss(record.id);
+              retireMutation(record.id);
             }
           }
           router.refresh();
@@ -1123,32 +1122,22 @@ export function ReviewWorkspace({
           </span>
         </Link>
         <nav className="app-location" aria-label="Primary">
-          <Link
-            className={view.status === "answered" ? undefined : "active"}
-            href={humanReviewHref({
-              ...controlView,
-              search,
-              status: "pending",
-              page: 1
-            })}
-            onNavigate={onStatusNavigate("pending")}
-            aria-current={view.status === "answered" ? undefined : "page"}
-          >
-            Review queue
-          </Link>
-          <Link
-            className={view.status === "answered" ? "active" : undefined}
-            href={humanReviewHref({
-              ...controlView,
-              search,
-              status: "answered",
-              page: 1
-            })}
-            onNavigate={onStatusNavigate("answered")}
-            aria-current={view.status === "answered" ? "page" : undefined}
-          >
-            History
-          </Link>
+          {STATUS_LINKS.map(({ status, label }) => (
+            <Link
+              key={status}
+              className={view.status === status ? "active" : undefined}
+              href={humanReviewHref({
+                ...controlView,
+                search,
+                status,
+                page: 1
+              })}
+              onNavigate={onStatusNavigate(status)}
+              aria-current={view.status === status ? "page" : undefined}
+            >
+              {label}
+            </Link>
+          ))}
         </nav>
         <div className="app-account">
           {lastError ? (
@@ -1389,43 +1378,19 @@ export function ReviewWorkspace({
                   <kbd>J</kbd>
                   <kbd>K</kbd> move · <kbd>Enter</kbd> open
                 </span>
-                {view.status === "pending" ? (
-                  <Link
-                    href={humanReviewHref({
-                      ...controlView,
-                      search: "",
-                      status: "answered",
-                      page: 1
-                    })}
-                    onNavigate={(event) => {
-                      event.preventDefault();
-                      updateViewImmediately(
-                        { search: "", status: "answered", page: 1 },
-                        "push"
-                      );
-                    }}
-                  >
-                    Review answered decisions
-                  </Link>
-                ) : (
-                  <Link
-                    href={humanReviewHref({
-                      ...controlView,
-                      search: "",
-                      status: "pending",
-                      page: 1
-                    })}
-                    onNavigate={(event) => {
-                      event.preventDefault();
-                      updateViewImmediately(
-                        { search: "", status: "pending", page: 1 },
-                        "push"
-                      );
-                    }}
-                  >
-                    Return to review queue
-                  </Link>
-                )}
+                <Link
+                  href={humanReviewHref({
+                    ...controlView,
+                    search: "",
+                    status: otherStatus,
+                    page: 1
+                  })}
+                  onNavigate={onStatusNavigate(otherStatus, { search: "" })}
+                >
+                  {view.status === "pending"
+                    ? "Review answered decisions"
+                    : "Return to review queue"}
+                </Link>
               </div>
             ) : null}
           </div>

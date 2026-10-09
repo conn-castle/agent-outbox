@@ -1,15 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useFormStatus } from "react-dom";
 
 import { submitBulkHumanAnswers } from "../../../app/human/actions";
-import type {
-  HumanReviewBulkAction,
-  HumanReviewListRow
-} from "../../server/human-review.ts";
+import type { HumanReviewListRow } from "../../server/human-review.ts";
 import {
   humanMutationFormProps,
+  PendingSubmitButton,
   useProgressiveFormAction,
   ViewStateFields,
   type OnHumanMutation
@@ -108,28 +105,13 @@ export function BulkActions({
           ))}
         </select>
       </label>
-      <BulkSubmitButton disabled={disabled} action={selectedAction} />
+      <PendingSubmitButton className="secondary-button" disabled={disabled}>
+        <HumanIcon name={selectedAction?.icon ?? "check"} />
+        <span>
+          {selectedAction ? `Apply ${selectedAction.display}` : "Apply"}
+        </span>
+      </PendingSubmitButton>
     </form>
-  );
-}
-
-function BulkSubmitButton({
-  disabled,
-  action
-}: {
-  disabled: boolean;
-  action: HumanReviewBulkAction | undefined;
-}) {
-  const status = useFormStatus();
-  return (
-    <button
-      className="secondary-button"
-      type="submit"
-      disabled={disabled || status.pending}
-    >
-      <HumanIcon name={action?.icon ?? "check"} />
-      <span>{action ? `Apply ${action.display}` : "Apply"}</span>
-    </button>
   );
 }
 

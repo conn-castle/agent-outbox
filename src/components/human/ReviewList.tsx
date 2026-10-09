@@ -86,14 +86,19 @@ export function ReviewList({
         const locked = lockedIds.has(row.inputItemId);
         const title = htmlToPlainText(row.titleHtml);
         const selected = row.inputItemId === selectedId;
+        const skipped = skippedIds.has(row.inputItemId);
+        const skipLabel = skipped ? "Return review to queue" : "Snooze review";
         const rowAccentColor = row.rowAccentColor
           ? resolveSupportedColor(row.rowAccentColor)
           : null;
         const rowHref = humanReviewHref(view, row.inputItemId);
-        const overflowActions =
-          row.status === "pending"
-            ? row.bulkActions.filter((action) => action.overflow)
-            : [];
+        const pendingActions = row.status === "pending" ? row.bulkActions : [];
+        const overflowActions = pendingActions.filter(
+          (action) => action.overflow
+        );
+        const inlineActions = pendingActions.filter(
+          (action) => !action.overflow
+        );
         const renderAction = (
           action: HumanReviewBulkAction,
           overflow: boolean,
@@ -187,11 +192,9 @@ export function ReviewList({
                         ) : null
                       }
                       contextAfter={
-                        <>
-                          {skippedIds.has(row.inputItemId) ? (
-                            <span className="status-pill">snoozed</span>
-                          ) : null}
-                        </>
+                        skipped ? (
+                          <span className="status-pill">snoozed</span>
+                        ) : null
                       }
                       utilities={
                         <>
@@ -213,20 +216,16 @@ export function ReviewList({
                               title={
                                 row.skipDisabled
                                   ? "Snoozing is disabled for this review"
-                                  : skippedIds.has(row.inputItemId)
-                                    ? "Return review to queue"
-                                    : "Snooze review"
+                                  : skipLabel
                               }
                               aria-label={
                                 row.skipDisabled
                                   ? "Snooze unavailable for this review"
-                                  : skippedIds.has(row.inputItemId)
-                                    ? "Return review to queue"
-                                    : "Snooze review"
+                                  : skipLabel
                               }
                               onClick={() => onSkipToggle(row.inputItemId)}
                             >
-                              {skippedIds.has(row.inputItemId) ? (
+                              {skipped ? (
                                 <Undo2 aria-hidden="true" />
                               ) : (
                                 <AlarmClock aria-hidden="true" />
@@ -308,18 +307,15 @@ export function ReviewList({
                     ) : undefined
                   }
                   actions={
-                    row.status === "pending" &&
-                    row.bulkActions.some((action) => !action.overflow) ? (
+                    inlineActions.length > 0 ? (
                       <div
                         className="inline-actions"
                         role="group"
                         aria-label={`Quick actions for ${title}`}
                       >
-                        {row.bulkActions
-                          .filter((action) => !action.overflow)
-                          .map((action) =>
-                            renderAction(action, false, handleMutation)
-                          )}
+                        {inlineActions.map((action) =>
+                          renderAction(action, false, handleMutation)
+                        )}
                       </div>
                     ) : null
                   }
