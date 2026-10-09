@@ -44,6 +44,7 @@ import {
   storedRowsFromSubmission
 } from "./helpers/canonical-input.mjs";
 import { queryResult } from "./helpers/fake-query.mjs";
+import { withProcessEnv } from "./helpers/process-env.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
@@ -685,9 +686,7 @@ test("input read body rejects caller_item_id values Postgres cannot match unchan
 });
 
 test("input read rejects a body caller_id before the transaction", async () => {
-  const previous = process.env.DATABASE_APP_ROLE_URL;
-  delete process.env.DATABASE_APP_ROLE_URL;
-  try {
+  await withProcessEnv({ DATABASE_APP_ROLE_URL: undefined }, async () => {
     const result = await handleInputReadRequest(
       new Request("https://api.test/api/input/read", { method: "POST" }),
       context,
@@ -703,19 +702,11 @@ test("input read rejects a body caller_id before the transaction", async () => {
         : result.error.fields?.map((field) => [field.path, field.code]),
       [["caller_id", "caller_id_not_allowed"]]
     );
-  } finally {
-    if (previous === undefined) {
-      delete process.env.DATABASE_APP_ROLE_URL;
-    } else {
-      process.env.DATABASE_APP_ROLE_URL = previous;
-    }
-  }
+  });
 });
 
 test("input read wrappers surface the caller-transaction config guard", async () => {
-  const previous = process.env.DATABASE_APP_ROLE_URL;
-  delete process.env.DATABASE_APP_ROLE_URL;
-  try {
+  await withProcessEnv({ DATABASE_APP_ROLE_URL: undefined }, async () => {
     const expected = {
       ok: false,
       error: {
@@ -739,13 +730,7 @@ test("input read wrappers surface the caller-transaction config guard", async ()
       ),
       expected
     );
-  } finally {
-    if (previous === undefined) {
-      delete process.env.DATABASE_APP_ROLE_URL;
-    } else {
-      process.env.DATABASE_APP_ROLE_URL = previous;
-    }
-  }
+  });
 });
 
 test("input read locks the caller-scoped root and treats a concurrent miss as not_found", async () => {

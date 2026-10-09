@@ -59,6 +59,7 @@ import {
 } from "../src/shared/account-display.ts";
 import { readFormDataWithLimit } from "../src/server/request-body.ts";
 import { fakeQuery } from "./helpers/fake-query.mjs";
+import { withProcessEnv } from "./helpers/process-env.mjs";
 
 /**
  * @typedef {import("pg").QueryResultRow} QueryResultRow
@@ -1685,36 +1686,27 @@ test("human account banner metadata reuses account status shaping under human ac
 });
 
 test("browser fixture bypass requires test environment and explicit fixture gate", () => {
-  const previous = {
-    NODE_ENV: process.env.NODE_ENV,
-    APP_ENV: process.env.APP_ENV,
-    AGENT_OUTBOX_BROWSER_FIXTURE: process.env.AGENT_OUTBOX_BROWSER_FIXTURE
-  };
+  withProcessEnv(
+    { APP_ENV: undefined, AGENT_OUTBOX_BROWSER_FIXTURE: undefined },
+    () => {
+      assert.equal(humanBrowserFixtureEnabled(), false);
 
-  try {
-    delete process.env.APP_ENV;
-    delete process.env.AGENT_OUTBOX_BROWSER_FIXTURE;
-    assert.equal(humanBrowserFixtureEnabled(), false);
+      process.env.APP_ENV = "test";
+      assert.equal(humanBrowserFixtureEnabled(), false);
 
-    setEnv("APP_ENV", "test");
-    delete process.env.AGENT_OUTBOX_BROWSER_FIXTURE;
-    assert.equal(humanBrowserFixtureEnabled(), false);
+      process.env.APP_ENV = "development";
+      process.env.AGENT_OUTBOX_BROWSER_FIXTURE = "1";
+      assert.equal(humanBrowserFixtureEnabled(), false);
 
-    setEnv("APP_ENV", "development");
-    setEnv("AGENT_OUTBOX_BROWSER_FIXTURE", "1");
-    assert.equal(humanBrowserFixtureEnabled(), false);
-
-    setEnv("APP_ENV", "test");
-    setEnv("NODE_ENV", "production");
-    setEnv("AGENT_OUTBOX_BROWSER_FIXTURE", "1");
-    assert.equal(humanBrowserFixtureEnabled(), false);
-
-    setEnv("NODE_ENV", "test");
-    setEnv("AGENT_OUTBOX_BROWSER_FIXTURE", "1");
-    assert.equal(humanBrowserFixtureEnabled(), true);
-  } finally {
-    restoreEnv(previous);
-  }
+      process.env.APP_ENV = "test";
+      withProcessEnv({ NODE_ENV: "production" }, () => {
+        assert.equal(humanBrowserFixtureEnabled(), false);
+      });
+      withProcessEnv({ NODE_ENV: "test" }, () => {
+        assert.equal(humanBrowserFixtureEnabled(), true);
+      });
+    }
+  );
 });
 
 test("human action form parser rejects malformed hidden fields before database writes", () => {
@@ -2431,25 +2423,4 @@ function detailQueryWithActions(actions) {
     [{ non_file_stored_bytes: "100", overall_stored_bytes: "100" }],
     []
   ]);
-}
-
-/**
- * @param {Record<string, string | undefined>} previous
- */
-function restoreEnv(previous) {
-  for (const [name, value] of Object.entries(previous)) {
-    setEnv(name, value);
-  }
-}
-
-/**
- * @param {string} name
- * @param {string | undefined} value
- */
-function setEnv(name, value) {
-  if (value === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
-  }
 }

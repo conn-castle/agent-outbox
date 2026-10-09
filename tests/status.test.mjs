@@ -9,6 +9,7 @@ import {
   storageStatusStatement
 } from "../src/server/status.ts";
 import { fakeQuery } from "./helpers/fake-query.mjs";
+import { withProcessEnv } from "./helpers/process-env.mjs";
 
 const identity = {
   accountId: "00000000-0000-4000-8000-000000000001",
@@ -489,9 +490,7 @@ test("status fails loudly when the authenticated account row is missing", async 
 });
 
 test("status wrappers surface the caller-transaction config guard", async () => {
-  const previous = process.env.DATABASE_APP_ROLE_URL;
-  delete process.env.DATABASE_APP_ROLE_URL;
-  try {
+  await withProcessEnv({ DATABASE_APP_ROLE_URL: undefined }, async () => {
     const expected = {
       ok: false,
       error: {
@@ -518,11 +517,5 @@ test("status wrappers surface the caller-transaction config guard", async () => 
       ),
       expected
     );
-  } finally {
-    if (previous === undefined) {
-      delete process.env.DATABASE_APP_ROLE_URL;
-    } else {
-      process.env.DATABASE_APP_ROLE_URL = previous;
-    }
-  }
+  });
 });

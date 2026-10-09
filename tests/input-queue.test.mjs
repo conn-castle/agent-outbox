@@ -28,6 +28,7 @@ import {
   publicSchemaMismatch
 } from "../src/shared/public-api-contract.ts";
 import { fakeQuery, queryResult } from "./helpers/fake-query.mjs";
+import { withProcessEnv } from "./helpers/process-env.mjs";
 
 /**
  * @typedef {import("../src/server/database.ts").TransactionContextStatement} TransactionContextStatement
@@ -835,9 +836,7 @@ test("send, replace, and delete reject a body caller_id before writing", async (
 });
 
 test("input delete rejects a body caller_id before the transaction", async () => {
-  const previous = process.env.DATABASE_APP_ROLE_URL;
-  delete process.env.DATABASE_APP_ROLE_URL;
-  try {
+  await withProcessEnv({ DATABASE_APP_ROLE_URL: undefined }, async () => {
     const result = await handleInputQueueRequest(
       new Request("https://api.test/api/input/delete", { method: "POST" }),
       context,
@@ -859,13 +858,7 @@ test("input delete rejects a body caller_id before the transaction", async () =>
       result.ok ? null : result.error.fields?.[0]?.message,
       "Caller identity is derived from bearer authentication."
     );
-  } finally {
-    if (previous === undefined) {
-      delete process.env.DATABASE_APP_ROLE_URL;
-    } else {
-      process.env.DATABASE_APP_ROLE_URL = previous;
-    }
-  }
+  });
 });
 
 test("file upload actions require paid tier and are accepted for paid callers", () => {

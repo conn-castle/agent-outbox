@@ -15,6 +15,7 @@ import {
 import { billingHumanSessionFromClerkUser } from "../src/server/billing-session.ts";
 import { INPUT_REQUEST_BODY_BYTE_LIMIT } from "../src/server/request-body.ts";
 import { queryResult } from "./helpers/fake-query.mjs";
+import { withProcessEnv } from "./helpers/process-env.mjs";
 
 const config = {
   secretKey: "sk_test_placeholder",
@@ -38,144 +39,124 @@ const billingEnvironmentNames = [
   "PUBLIC_APP_BASE_URL"
 ];
 
-test("portal billing configuration requires the explicit Stripe portal configuration", () => {
-  const previous = Object.fromEntries(
-    billingEnvironmentNames.map((name) => [name, process.env[name]])
+/**
+ * Runs `callback` with only the given billing variables set.
+ *
+ * @param {Record<string, string>} values
+ * @param {() => void} callback
+ */
+function withBillingEnv(values, callback) {
+  return withProcessEnv(
+    {
+      ...Object.fromEntries(
+        billingEnvironmentNames.map((name) => [name, undefined])
+      ),
+      ...values
+    },
+    callback
   );
-  try {
-    for (const name of billingEnvironmentNames) {
-      delete process.env[name];
-    }
-    process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
-    process.env.PUBLIC_APP_BASE_URL = "https://app.example.test";
+}
 
-    assert.deepEqual(requiredBillingConfiguration("portal"), [
-      "STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
-    ]);
-    assert.deepEqual(billingRuntimeConfig("portal"), {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message:
-          "Billing configuration is missing required variable names: STRIPE_BILLING_PORTAL_CONFIGURATION_ID."
-      }
-    });
+test("portal billing configuration requires the explicit Stripe portal configuration", () => {
+  withBillingEnv(
+    {
+      STRIPE_SECRET_KEY: "sk_test_placeholder",
+      PUBLIC_APP_BASE_URL: "https://app.example.test"
+    },
+    () => {
+      assert.deepEqual(requiredBillingConfiguration("portal"), [
+        "STRIPE_BILLING_PORTAL_CONFIGURATION_ID"
+      ]);
+      assert.deepEqual(billingRuntimeConfig("portal"), {
+        ok: false,
+        error: {
+          status: 503,
+          code: "temporary_unavailable",
+          message:
+            "Billing configuration is missing required variable names: STRIPE_BILLING_PORTAL_CONFIGURATION_ID."
+        }
+      });
 
-    process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID = "bpc_test";
-    assert.equal(billingRuntimeConfig("portal").ok, true);
-  } finally {
-    for (const name of billingEnvironmentNames) {
-      if (previous[name] === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = previous[name];
-      }
+      process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID = "bpc_test";
+      assert.equal(billingRuntimeConfig("portal").ok, true);
     }
-  }
+  );
 });
 
 test("checkout billing configuration requires both paid price ids", () => {
-  const previous = Object.fromEntries(
-    billingEnvironmentNames.map((name) => [name, process.env[name]])
+  withBillingEnv(
+    {
+      STRIPE_SECRET_KEY: "sk_test_placeholder",
+      STRIPE_WEBHOOK_SECRET: "whsec_placeholder",
+      STRIPE_PAID_MONTHLY_PRICE_ID: "price_test_paid_monthly",
+      STRIPE_BILLING_PORTAL_CONFIGURATION_ID: "bpc_test",
+      PUBLIC_APP_BASE_URL: "https://app.example.test"
+    },
+    () => {
+      assert.deepEqual(requiredBillingConfiguration("checkout"), [
+        "STRIPE_PAID_YEARLY_PRICE_ID"
+      ]);
+      assert.deepEqual(billingRuntimeConfig("all"), {
+        ok: false,
+        error: {
+          status: 503,
+          code: "temporary_unavailable",
+          message:
+            "Billing configuration is missing required variable names: STRIPE_PAID_YEARLY_PRICE_ID."
+        }
+      });
+
+      process.env.STRIPE_PAID_YEARLY_PRICE_ID = "price_test_paid_yearly";
+      assert.deepEqual(billingRuntimeConfig("checkout"), {
+        ok: true,
+        data: config
+      });
+    }
   );
-  try {
-    for (const name of billingEnvironmentNames) {
-      delete process.env[name];
-    }
-    process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
-    process.env.STRIPE_WEBHOOK_SECRET = "whsec_placeholder";
-    process.env.STRIPE_PAID_MONTHLY_PRICE_ID = "price_test_paid_monthly";
-    process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_ID = "bpc_test";
-    process.env.PUBLIC_APP_BASE_URL = "https://app.example.test";
-
-    assert.deepEqual(requiredBillingConfiguration("checkout"), [
-      "STRIPE_PAID_YEARLY_PRICE_ID"
-    ]);
-    assert.deepEqual(billingRuntimeConfig("all"), {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message:
-          "Billing configuration is missing required variable names: STRIPE_PAID_YEARLY_PRICE_ID."
-      }
-    });
-
-    process.env.STRIPE_PAID_YEARLY_PRICE_ID = "price_test_paid_yearly";
-    assert.deepEqual(billingRuntimeConfig("checkout"), {
-      ok: true,
-      data: config
-    });
-  } finally {
-    for (const name of billingEnvironmentNames) {
-      if (previous[name] === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = previous[name];
-      }
-    }
-  }
 });
 
 test("webhook billing configuration does not require the public app base URL", () => {
-  const previous = Object.fromEntries(
-    billingEnvironmentNames.map((name) => [name, process.env[name]])
+  withBillingEnv(
+    {
+      STRIPE_SECRET_KEY: "sk_test_placeholder",
+      STRIPE_WEBHOOK_SECRET: "whsec_placeholder",
+      PUBLIC_APP_BASE_URL: "file:///stale-irrelevant-value"
+    },
+    () => {
+      assert.deepEqual(billingRuntimeConfig("webhook"), {
+        ok: true,
+        data: {
+          secretKey: "sk_test_placeholder",
+          webhookSecret: "whsec_placeholder",
+          priceIds: { monthly: "", yearly: "" },
+          portalConfigurationId: "",
+          publicAppBaseUrl: ""
+        }
+      });
+    }
   );
-  try {
-    for (const name of billingEnvironmentNames) {
-      delete process.env[name];
-    }
-    process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
-    process.env.STRIPE_WEBHOOK_SECRET = "whsec_placeholder";
-    process.env.PUBLIC_APP_BASE_URL = "file:///stale-irrelevant-value";
-
-    assert.deepEqual(billingRuntimeConfig("webhook"), {
-      ok: true,
-      data: {
-        secretKey: "sk_test_placeholder",
-        webhookSecret: "whsec_placeholder",
-        priceIds: { monthly: "", yearly: "" },
-        portalConfigurationId: "",
-        publicAppBaseUrl: ""
-      }
-    });
-  } finally {
-    for (const name of billingEnvironmentNames) {
-      if (previous[name] === undefined) {
-        delete process.env[name];
-      } else {
-        process.env[name] = previous[name];
-      }
-    }
-  }
 });
 
 test("billing configuration rejects a non-origin public app URL", () => {
-  const previous = Object.fromEntries(
-    billingEnvironmentNames.map((name) => [name, process.env[name]])
-  );
-  try {
-    process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
-    process.env.STRIPE_PAID_MONTHLY_PRICE_ID = "price_test_paid_monthly";
-    process.env.STRIPE_PAID_YEARLY_PRICE_ID = "price_test_paid_yearly";
-    process.env.PUBLIC_APP_BASE_URL = "file:///tmp/agent-outbox";
-
-    assert.deepEqual(billingRuntimeConfig("checkout"), {
-      ok: false,
-      error: {
-        status: 503,
-        code: "temporary_unavailable",
-        message:
-          "Billing configuration has invalid PUBLIC_APP_BASE_URL; expected an absolute HTTP(S) origin."
-      }
-    });
-  } finally {
-    for (const name of billingEnvironmentNames) {
-      if (previous[name] === undefined) delete process.env[name];
-      else process.env[name] = previous[name];
+  withBillingEnv(
+    {
+      STRIPE_SECRET_KEY: "sk_test_placeholder",
+      STRIPE_PAID_MONTHLY_PRICE_ID: "price_test_paid_monthly",
+      STRIPE_PAID_YEARLY_PRICE_ID: "price_test_paid_yearly",
+      PUBLIC_APP_BASE_URL: "file:///tmp/agent-outbox"
+    },
+    () => {
+      assert.deepEqual(billingRuntimeConfig("checkout"), {
+        ok: false,
+        error: {
+          status: 503,
+          code: "temporary_unavailable",
+          message:
+            "Billing configuration has invalid PUBLIC_APP_BASE_URL; expected an absolute HTTP(S) origin."
+        }
+      });
     }
-  }
+  );
 });
 
 test("billing API session returns a JSON-envelope auth error when signed out", async () => {
