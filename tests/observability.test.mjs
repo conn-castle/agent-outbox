@@ -29,6 +29,7 @@ import {
 } from "../src/server/api-errors.ts";
 import * as apiRoute from "../src/server/api-route.ts";
 import {
+  billingAccountStatement,
   createBillingPortalSessionForAccount,
   createCheckoutSessionForAccount,
   handleStripeWebhookRequest
@@ -226,9 +227,8 @@ function loadBillingModuleForTest(reportRuntimeFailure) {
         readRawRequestBodyWithLimit
       },
       "./env.ts": { absoluteHttpOrigin },
-      "./api-errors.ts": { apiTemporaryUnavailable },
-      "./logging.ts": { durationSinceMs, emitRuntimeLog, safeErrorName },
-      "./sentry.ts": { reportRuntimeFailure }
+      "./api-errors.ts": loadApiErrorsModuleForTest({ reportRuntimeFailure }),
+      "./logging.ts": { durationSinceMs, emitRuntimeLog, safeErrorName }
     },
     globals: { console, process },
     fallbackRequire: require
@@ -243,19 +243,17 @@ function loadBillingModuleForTest(reportRuntimeFailure) {
 }
 
 /**
- * Loads billing-session.ts against a VM-compiled billing.ts whose Sentry
- * dependency is the supplied stub, so the account-lookup failure path runs the
- * real `billingRuntimeFailure` redaction and flow-based operation labelling
- * while the exception capture stays in-process.
+ * Loads billing-session.ts with the real shared apiTransactionFailure and a
+ * stubbed Sentry dependency, so account-lookup failures exercise redaction and
+ * flow-based operation labelling while exception capture stays in-process.
  * @param {RuntimeFailureReporterForTest} reportRuntimeFailure
  * @returns {{ billingHumanSessionFromClerkUser: typeof import("../src/server/billing-session.ts").billingHumanSessionFromClerkUser }}
  */
 function loadBillingSessionModuleForTest(reportRuntimeFailure) {
-  const billingModule = loadBillingModuleForTest(reportRuntimeFailure);
   return /** @type {{ billingHumanSessionFromClerkUser: typeof import("../src/server/billing-session.ts").billingHumanSessionFromClerkUser }} */ (
     loadCommonJsModuleForTest("src/server/billing-session.ts", {
-      "./api-errors.ts": { apiTemporaryUnavailable },
-      "./billing.ts": billingModule,
+      "./api-errors.ts": loadApiErrorsModuleForTest({ reportRuntimeFailure }),
+      "./billing.ts": { billingAccountStatement },
       "./human-session.ts": {
         requiredHumanSessionConfiguration: () => [],
         runHumanAccountTransaction() {
@@ -2452,7 +2450,6 @@ test("billing checkout and portal Stripe failures share error ids across structu
       captureStructuredLogs(async () => {
         const checkoutStripe = await createCheckoutSession({
           account: accountRow,
-          requestId: checkoutContext.requestId,
           interval: "monthly",
           context: checkoutContext,
           config,
@@ -2460,7 +2457,6 @@ test("billing checkout and portal Stripe failures share error ids across structu
         });
         const portalStripe = await createPortalSession({
           account: accountRow,
-          requestId: portalContext.requestId,
           context: portalContext,
           config,
           stripe
@@ -2471,6 +2467,8 @@ test("billing checkout and portal Stripe failures share error ids across structu
             ok: result.ok,
             status: result.ok ? null : result.error.status,
             code: result.ok ? null : result.error.code,
+            message: result.ok ? null : result.error.message,
+            reported: result.ok ? null : result.error.reported,
             errorId: result.ok ? null : result.error.errorId
           })),
           [
@@ -2478,12 +2476,16 @@ test("billing checkout and portal Stripe failures share error ids across structu
               ok: false,
               status: 503,
               code: "temporary_unavailable",
+              message: "Checkout session is temporarily unavailable.",
+              reported: true,
               errorId: "corr-billing-checkout"
             },
             {
               ok: false,
               status: 503,
               code: "temporary_unavailable",
+              message: "Billing portal is temporarily unavailable.",
+              reported: true,
               errorId: "corr-billing-portal"
             }
           ]
@@ -2513,10 +2515,17 @@ test("billing checkout and portal Stripe failures share error ids across structu
     assert.equal(log.method, "POST");
     assert.equal(log.status_code, 503);
     assert.equal(log.account_id, accountId);
+    assert.equal(Object.hasOwn(log, "caller_id"), false);
     assert.equal(typeof log.duration_ms, "number");
   }
   assert.equal(capturedExceptions.length, 2);
   assert.equal(sentryContexts.length, 2);
+  for (const { value } of sentryContexts) {
+    assert.equal(Object.hasOwn(value, "caller_id"), false);
+  }
+  for (const tags of tagSnapshots) {
+    assert.equal(Object.hasOwn(tags, "caller_id"), false);
+  }
   assert.deepEqual(
     tagSnapshots.map((tags) => tags.error_id),
     logs.map((log) => log.error_id)
@@ -2621,6 +2630,7 @@ test("billing account-lookup failures label the flow operation and redact secret
             ok: result.ok,
             status: result.ok ? null : result.error.status,
             code: result.ok ? null : result.error.code,
+            message: result.ok ? null : result.error.message,
             errorId: result.ok ? null : result.error.errorId,
             reported: result.ok ? null : result.error.reported
           })),
@@ -2629,6 +2639,7 @@ test("billing account-lookup failures label the flow operation and redact secret
               ok: false,
               status: 503,
               code: "temporary_unavailable",
+              message: "Checkout session is temporarily unavailable.",
               errorId: "corr-billing-checkout-lookup",
               reported: true
             },
@@ -2636,6 +2647,7 @@ test("billing account-lookup failures label the flow operation and redact secret
               ok: false,
               status: 503,
               code: "temporary_unavailable",
+              message: "Billing portal is temporarily unavailable.",
               errorId: "corr-billing-portal-lookup",
               reported: true
             }

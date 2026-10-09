@@ -1,14 +1,11 @@
 import {
   apiTemporaryUnavailable,
+  apiTransactionFailure,
   type ApiErrorInput,
   type ApiRequestContext,
   type ApiResult
 } from "./api-errors.ts";
-import {
-  billingAccountStatement,
-  billingRuntimeFailure,
-  type BillingAccount
-} from "./billing.ts";
+import { billingAccountStatement, type BillingAccount } from "./billing.ts";
 import {
   type HumanAccountSessionFailure,
   requiredHumanSessionConfiguration,
@@ -85,9 +82,7 @@ export async function billingHumanSessionFromClerkUser(input: {
     );
   } catch (error) {
     const portal = input.flow === "portal";
-    return billingRuntimeFailure(error, {
-      context: input.context,
-      requestId: input.context.requestId,
+    return apiTransactionFailure(error, input.context, {
       accountId,
       operation: portal
         ? "stripe_billing_portal_account_lookup"
@@ -95,7 +90,7 @@ export async function billingHumanSessionFromClerkUser(input: {
       message: portal
         ? "Stripe billing portal account lookup failed unexpectedly."
         : "Stripe checkout account lookup failed unexpectedly.",
-      responseMessage: portal
+      unavailableMessage: portal
         ? "Billing portal is temporarily unavailable."
         : "Checkout session is temporarily unavailable."
     });

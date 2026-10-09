@@ -4,6 +4,7 @@ import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
 import {
   apiTemporaryUnavailable,
+  apiTransactionFailure,
   isJsonRecord,
   type ApiRequestContext,
   type ApiResult
@@ -24,7 +25,6 @@ import {
   readJsonBodyWithLimit,
   readRawRequestBodyWithLimit
 } from "./request-body.ts";
-import { reportRuntimeFailure } from "./sentry.ts";
 
 const BILLING_GRACE_DAYS = SYSTEM_CONTRACT.billingDowngradeGraceDays;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -109,19 +109,9 @@ export function requiredBillingConfiguration(
 }
 
 export function billingRuntimeConfig(
-  surface: "checkout" | "portal" | "webhook" | "all" = "all"
+  surface: "checkout" | "portal" | "webhook"
 ): ApiResult<BillingConfig> {
-  const missing =
-    surface === "all"
-      ? [
-          "STRIPE_SECRET_KEY",
-          "STRIPE_WEBHOOK_SECRET",
-          "STRIPE_PAID_MONTHLY_PRICE_ID",
-          "STRIPE_PAID_YEARLY_PRICE_ID",
-          "STRIPE_BILLING_PORTAL_CONFIGURATION_ID",
-          "PUBLIC_APP_BASE_URL"
-        ].filter((name) => !process.env[name]?.trim())
-      : requiredBillingConfiguration(surface);
+  const missing = requiredBillingConfiguration(surface);
 
   if (missing.length > 0) {
     return apiTemporaryUnavailable(
@@ -181,9 +171,8 @@ function checkoutIntervalFromBody(body: unknown): ApiResult<BillingInterval> {
 
 export async function createCheckoutSessionForAccount(input: {
   account: BillingAccount;
-  requestId: string;
   interval: unknown;
-  context?: ApiRequestContext;
+  context: ApiRequestContext;
   config?: BillingConfig;
   stripe?: StripeClient;
 }): Promise<ApiResult<BillingCheckoutData>> {
@@ -222,13 +211,11 @@ export async function createCheckoutSessionForAccount(input: {
       subscription_data: { metadata: { account_id: account.account_id } }
     });
   } catch (error) {
-    return billingRuntimeFailure(error, {
-      context: input.context,
-      requestId: input.requestId,
+    return apiTransactionFailure(error, input.context, {
       accountId: account.account_id,
       operation: "stripe_checkout_session_create",
       message: "Stripe checkout session creation failed unexpectedly.",
-      responseMessage: "Checkout session is temporarily unavailable."
+      unavailableMessage: "Checkout session is temporarily unavailable."
     });
   }
 
@@ -241,8 +228,7 @@ export async function createCheckoutSessionForAccount(input: {
 
 export async function createBillingPortalSessionForAccount(input: {
   account: BillingAccount;
-  requestId: string;
-  context?: ApiRequestContext;
+  context: ApiRequestContext;
   config?: BillingConfig;
   stripe?: StripeClient;
 }): Promise<ApiResult<BillingPortalData>> {
@@ -267,13 +253,11 @@ export async function createBillingPortalSessionForAccount(input: {
       configuration: config.portalConfigurationId
     });
   } catch (error) {
-    return billingRuntimeFailure(error, {
-      context: input.context,
-      requestId: input.requestId,
+    return apiTransactionFailure(error, input.context, {
       accountId: account.account_id,
       operation: "stripe_billing_portal_session_create",
       message: "Stripe billing portal session creation failed unexpectedly.",
-      responseMessage: "Billing portal is temporarily unavailable."
+      unavailableMessage: "Billing portal is temporarily unavailable."
     });
   }
 
@@ -352,12 +336,11 @@ export async function handleStripeWebhookRequest(
       (query) => processStripeEventInTransaction(query, event, input.now)
     );
   } catch (error) {
-    return billingRuntimeFailure(error, {
-      context,
-      requestId: context.requestId,
+    return apiTransactionFailure(error, context, {
       operation: "stripe_webhook_processing",
       message: "Stripe webhook processing failed unexpectedly.",
-      responseMessage: "Stripe webhook processing is temporarily unavailable."
+      unavailableMessage:
+        "Stripe webhook processing is temporarily unavailable."
     });
   }
 
@@ -887,37 +870,6 @@ function checkoutIntervalFromValue(value: unknown): ApiResult<BillingInterval> {
   return invalidBillingRequest(
     'Checkout interval must be either "monthly" or "yearly".'
   );
-}
-
-export function billingRuntimeFailure(
-  error: unknown,
-  input: {
-    context?: ApiRequestContext;
-    requestId: string;
-    accountId?: string;
-    operation: string;
-    message: string;
-    responseMessage: string;
-  }
-): ApiResult<never> {
-  const errorId = input.context?.correlationId ?? input.requestId;
-  reportRuntimeFailure(error, {
-    errorId,
-    request_id: input.context?.requestId ?? input.requestId,
-    surface: "api",
-    route: input.context?.route,
-    method: input.context?.method,
-    status_code: 503,
-    duration_ms: durationSinceMs(input.context?.startedAtMs),
-    operation: input.operation,
-    account_id: input.accountId,
-    message: input.message
-  });
-
-  return apiTemporaryUnavailable(input.responseMessage, {
-    errorId,
-    reported: true
-  });
 }
 
 function stripeId(value: unknown): string | null {
