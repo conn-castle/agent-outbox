@@ -2,7 +2,7 @@ import {
   CLIENT_EVENT_BATCH_LIMIT,
   CLIENT_EVENT_BODY_BYTE_LIMIT,
   CLIENT_EVENT_CATEGORY_BY_NAME,
-  CLIENT_EVENT_NAME_SET,
+  isClientEventName,
   type ClientEvent,
   type ClientEventName
 } from "../shared/client-events-contract.ts";
@@ -188,12 +188,12 @@ function parseClientEvent(entry: unknown): ClientEvent | null {
 
   const input = entry as Record<string, unknown>;
   const name = typeof input.name === "string" ? input.name : null;
-  if (!name || !CLIENT_EVENT_NAME_SET.has(name as ClientEventName)) {
+  if (!name || !isClientEventName(name)) {
     return null;
   }
 
   return {
-    name: name as ClientEventName
+    name
   };
 }
 

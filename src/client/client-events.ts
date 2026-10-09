@@ -31,7 +31,7 @@ export function emitClientEvent(name: ClientEventName) {
   }
 }
 
-export function registerClientEventFlushListeners(target: Window) {
+function registerClientEventFlushListeners(target: Window) {
   const flush = () => {
     void flushClientEvents();
   };
@@ -43,11 +43,6 @@ export function registerClientEventFlushListeners(target: Window) {
 
   target.addEventListener("pagehide", flush);
   target.document.addEventListener("visibilitychange", flushWhenHidden);
-
-  return () => {
-    target.removeEventListener("pagehide", flush);
-    target.document.removeEventListener("visibilitychange", flushWhenHidden);
-  };
 }
 
 /**
@@ -87,11 +82,10 @@ export function installClientErrorEvents(target: Window) {
 }
 
 /**
- * Classify an uncaught error or rejection with the existing classifyReactError
- * function and enqueue only the name hydration_error or client_error, never the
- * exception itself.
+ * Classify an error or rejection with classifyReactError and enqueue only the
+ * name hydration_error or client_error, never the exception itself.
  */
-function emitUncaughtErrorEvent(error: unknown) {
+export function emitUncaughtErrorEvent(error: unknown) {
   emitClientEvent(
     classifyReactError(error) === "hydration"
       ? "hydration_error"
@@ -186,7 +180,6 @@ function reactHydrationCode(value: string) {
 }
 
 export const clientEventsTestInternals = {
-  boundedClientEventBody,
   flushClientEvents,
   queue
 };

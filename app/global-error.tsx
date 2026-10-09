@@ -6,10 +6,7 @@ import { useEffect } from "react";
 // so the recovery page must load the stylesheet itself.
 import "./globals.css";
 
-import {
-  classifyReactError,
-  emitClientEvent
-} from "../src/client/client-events.ts";
+import { emitUncaughtErrorEvent } from "../src/client/client-events.ts";
 
 export default function GlobalError({
   error,
@@ -18,13 +15,7 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  useEffect(() => {
-    if (classifyReactError(error) === "hydration") {
-      emitClientEvent("hydration_error");
-    } else {
-      emitClientEvent("client_error");
-    }
-  }, [error]);
+  useEffect(() => emitUncaughtErrorEvent(error), [error]);
 
   return (
     <html lang="en">
