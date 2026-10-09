@@ -16,7 +16,6 @@ export async function POST(request: Request) {
 
       return createBillingPortalSessionForAccount({
         account: session.data.account,
-        requestId: context.requestId,
         context
       });
     }

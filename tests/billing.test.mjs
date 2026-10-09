@@ -28,6 +28,19 @@ const config = {
   publicAppBaseUrl: "https://app.example.test"
 };
 
+const checkoutContext = {
+  requestId: "req-billing-checkout",
+  correlationId: "corr-billing-checkout",
+  route: "/api/billing/checkout",
+  method: "POST"
+};
+const portalContext = {
+  requestId: "req-billing-portal",
+  correlationId: "corr-billing-portal",
+  route: "/api/billing/portal",
+  method: "POST"
+};
+
 const accountId = "00000000-0000-4000-8000-000000000701";
 const userId = "00000000-0000-4000-8000-000000000702";
 const billingEnvironmentNames = [
@@ -96,7 +109,7 @@ test("checkout billing configuration requires both paid price ids", () => {
       assert.deepEqual(requiredBillingConfiguration("checkout"), [
         "STRIPE_PAID_YEARLY_PRICE_ID"
       ]);
-      assert.deepEqual(billingRuntimeConfig("all"), {
+      assert.deepEqual(billingRuntimeConfig("checkout"), {
         ok: false,
         error: {
           status: 503,
@@ -425,7 +438,7 @@ test("monthly checkout creates an account-scoped subscription session without ex
       billing_status: "not_applicable",
       stripe_customer_id: null
     },
-    requestId: "req-billing-checkout",
+    context: checkoutContext,
     interval: "monthly",
     config,
     stripe
@@ -480,7 +493,7 @@ test("default Stripe checkout client uses fetch transport for Worker compatibili
         billing_status: "not_applicable",
         stripe_customer_id: null
       },
-      requestId: "req-billing-worker-transport",
+      context: checkoutContext,
       interval: "monthly",
       config
     });
@@ -517,7 +530,7 @@ test("yearly checkout uses the yearly Stripe price id", async () => {
       billing_status: "not_applicable",
       stripe_customer_id: null
     },
-    requestId: "req-billing-checkout-yearly",
+    context: checkoutContext,
     interval: "yearly",
     config,
     stripe: /** @type {any} */ ({
@@ -556,7 +569,7 @@ test("checkout rejects missing or unsupported intervals before billing work", as
         billing_status: "not_applicable",
         stripe_customer_id: null
       },
-      requestId: "req-billing-checkout-invalid-interval",
+      context: checkoutContext,
       interval,
       config,
       stripe: /** @type {any} */ ({
@@ -590,7 +603,7 @@ test("checkout rejects live billing accounts before creating another subscriptio
       billing_status: "active",
       stripe_customer_id: "cus_test"
     },
-    requestId: "req-billing-checkout-live",
+    context: checkoutContext,
     interval: "monthly",
     config,
     stripe: /** @type {any} */ ({
@@ -628,7 +641,7 @@ test("billing portal requires an existing Stripe customer", async () => {
       billing_status: "not_applicable",
       stripe_customer_id: null
     },
-    requestId: "req-billing-portal",
+    context: portalContext,
     config,
     stripe: /** @type {any} */ ({
       checkout: { sessions: { async create() {} } },
@@ -656,7 +669,7 @@ test("billing portal creates an account-scoped session with configured portal po
       billing_status: "active",
       stripe_customer_id: "cus_test"
     },
-    requestId: "req-billing-portal-success",
+    context: portalContext,
     config,
     stripe: /** @type {any} */ ({
       checkout: { sessions: { async create() {} } },
