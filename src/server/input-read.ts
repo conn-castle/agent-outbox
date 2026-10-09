@@ -1,7 +1,9 @@
 import {
+  apiNotFound,
   apiTimestamp,
   apiValidationFailed,
   isJsonRecord,
+  VERSIONED_UUID_PATTERN,
   type ApiErrorInput,
   type ApiRequestContext
 } from "./api-errors.ts";
@@ -76,8 +78,6 @@ type InputListRow = {
 };
 
 const INPUT_VALIDATION_MESSAGE = "Input read request failed validation.";
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function handleInputListRequest(
   request: Request,
@@ -163,7 +163,7 @@ export async function readInputInTransaction(
   );
   const root = existing.rows[0];
   if (!root) {
-    return notFoundError();
+    return apiNotFound("Input item was not found for this caller.");
   }
 
   const materialized = await materializeCanonicalInputRoots(
@@ -292,7 +292,7 @@ function inputCursorFromPayload(
   payload: Record<string, unknown>
 ): InputCursor | null {
   return typeof payload.input_item_id === "string" &&
-    UUID_PATTERN.test(payload.input_item_id)
+    VERSIONED_UUID_PATTERN.test(payload.input_item_id)
     ? { inputItemId: payload.input_item_id }
     : null;
 }
@@ -325,15 +325,4 @@ function validationFailed(fields: ApiErrorInput["fields"]): {
   error: ApiErrorInput;
 } {
   return apiValidationFailed(INPUT_VALIDATION_MESSAGE, fields);
-}
-
-function notFoundError(): InputReadQueueResult {
-  return {
-    ok: false,
-    error: {
-      status: 404,
-      code: "not_found",
-      message: "Input item was not found for this caller."
-    }
-  };
 }

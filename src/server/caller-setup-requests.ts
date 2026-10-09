@@ -9,8 +9,11 @@ import {
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 
 import {
+  apiNotFound,
   apiTemporaryUnavailable,
+  apiTransactionFailure,
   apiValidationFailed,
+  UUID_PATTERN,
   type ApiErrorInput,
   type ApiFieldError,
   type ApiRequestContext
@@ -32,8 +35,6 @@ import {
 } from "./database.ts";
 import { absoluteHttpOrigin, requireCallerKeyHashSecret } from "./env.ts";
 import { isStorableString, unstorableStringError } from "./input-schema.ts";
-import { durationSinceMs } from "./logging.ts";
-import { reportRuntimeFailure } from "./sentry.ts";
 import { trustedClientIpAddress } from "./trusted-client-ip.ts";
 
 const SETUP_CODE_EXPIRES_IN_SECONDS =
@@ -48,8 +49,6 @@ const USER_CODE_GROUPS = 2;
 const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_SETUP_TEXT_LENGTH = 128;
 const MAX_CALLBACK_URL_LENGTH = 2048;
-export const UUID_PATTERN =
-  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 export type SetupResult<TData> =
   { ok: true; data: TData } | { ok: false; error: ApiErrorInput };
@@ -112,7 +111,7 @@ export async function getSetupRequestTerminalState(
   );
   const row = result.rows[0];
   if (!row) {
-    return notFoundError(setupRequestNotFoundMessage(input.operation));
+    return apiNotFound(setupRequestNotFoundMessage(input.operation));
   }
 
   return {
@@ -259,7 +258,7 @@ export async function denySetupRequest(
 
   const result = await query<{ setup_request_id: string }>(input.statement);
   if (!result.rows[0]) {
-    return notFoundError(setupRequestNotFoundMessage(input.operation));
+    return apiNotFound(setupRequestNotFoundMessage(input.operation));
   }
   return {
     ok: true,
@@ -398,17 +397,6 @@ export function invalidRequestError(message: string): SetupResult<never> {
     error: {
       status: 400,
       code: "invalid_request",
-      message
-    }
-  };
-}
-
-export function notFoundError(message: string): SetupResult<never> {
-  return {
-    ok: false,
-    error: {
-      status: 404,
-      code: "not_found",
       message
     }
   };
@@ -912,22 +900,12 @@ async function withFlowTransaction<TData>(
       callback
     );
   } catch (error) {
-    reportRuntimeFailure(error, {
-      errorId: context.correlationId,
-      surface: "api",
-      route: context.route,
-      method: context.method,
-      status_code: 503,
-      duration_ms: durationSinceMs(context.startedAtMs),
+    return apiTransactionFailure(error, context, {
       operation,
+      accountId: scope.accountId,
+      callerId: scope.callerId,
       message: messages.unexpectedFailure,
-      request_id: context.requestId,
-      account_id: scope.accountId,
-      caller_id: scope.callerId
-    });
-    return apiTemporaryUnavailable(messages.temporarilyUnavailable, {
-      errorId: context.correlationId,
-      reported: true
+      unavailableMessage: messages.temporarilyUnavailable
     });
   }
 }

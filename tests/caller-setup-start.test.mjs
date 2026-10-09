@@ -516,7 +516,7 @@ test("browser start success returns the setup row's approval URL", async () => {
   }
 });
 
-test("setup start transaction-open failures report the exact unscoped log", async (t) => {
+test("setup start transaction-open failures report the exact unscoped log fields", async (t) => {
   const log = t.mock.method(console, "error", () => {});
   for (const operation of /** @type {const} */ ([
     "connect",
@@ -561,10 +561,12 @@ test("setup start transaction-open failures report the exact unscoped log", asyn
       );
       assert.equal(calls, 1);
       assert.deepEqual(
-        log.mock.calls.map(({ arguments: args }) => args),
+        log.mock.calls.map(({ arguments: args }) =>
+          args.map((line) => JSON.parse(line))
+        ),
         [
           [
-            JSON.stringify({
+            {
               environment: null,
               release: null,
               surface: "api",
@@ -579,7 +581,7 @@ test("setup start transaction-open failures report the exact unscoped log", asyn
               error_id: CONTEXT.correlationId,
               error_name: "Error",
               sentry_captured: false
-            })
+            }
           ]
         ]
       );

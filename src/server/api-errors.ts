@@ -2,7 +2,7 @@ import { createCorrelationId } from "./correlation.ts";
 import type { ActiveLimitBlockMetadata } from "./accounting.ts";
 import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
 import type { LimitErrorMetadata } from "./limits.ts";
-import { captureRuntimeException } from "./sentry.ts";
+import { captureRuntimeException, reportRuntimeFailure } from "./sentry.ts";
 import type { ApiErrorCode } from "../shared/api-error-contract.ts";
 
 export type { ApiErrorCode } from "../shared/api-error-contract.ts";
@@ -53,6 +53,16 @@ export type ApiResult<TData> =
   { ok: true; data: TData } | { ok: false; error: ApiErrorInput };
 
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
+// Accepts UUID versions 1–5 with the RFC variant in either case.
+export const VERSIONED_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Accepts lowercase UUIDs of any version and variant.
+export const CANONICAL_UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// Accepts UUIDs of any version and variant in either case.
+export const UUID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 export function apiRequestContext(
   request: Request,
@@ -161,6 +171,26 @@ export function apiTimestamp(value: string | Date) {
     : new Date(value).toISOString();
 }
 
+export function apiNullableTimestamp(
+  value: string | Date | null
+): string | null {
+  return value == null ? null : apiTimestamp(value);
+}
+
+export function apiNotFound(message: string): {
+  ok: false;
+  error: ApiErrorInput;
+} {
+  return {
+    ok: false,
+    error: {
+      status: 404,
+      code: "not_found",
+      message
+    }
+  };
+}
+
 export function apiTemporaryUnavailable(
   message: string,
   options?: { errorId?: string; reported?: boolean }
@@ -175,6 +205,36 @@ export function apiTemporaryUnavailable(
       ...(options?.reported ? { reported: true } : {})
     }
   };
+}
+
+export function apiTransactionFailure(
+  error: unknown,
+  context: ApiRequestContext,
+  input: {
+    operation: string;
+    accountId?: string;
+    callerId?: string;
+    message: string;
+    unavailableMessage: string;
+  }
+): { ok: false; error: ApiErrorInput } {
+  reportRuntimeFailure(error, {
+    errorId: context.correlationId,
+    request_id: context.requestId,
+    surface: "api",
+    route: context.route,
+    method: context.method,
+    status_code: 503,
+    duration_ms: durationSinceMs(context.startedAtMs),
+    operation: input.operation,
+    account_id: input.accountId,
+    caller_id: input.callerId,
+    message: input.message
+  });
+  return apiTemporaryUnavailable(input.unavailableMessage, {
+    errorId: context.correlationId,
+    reported: true
+  });
 }
 
 export function apiValidationFailed(

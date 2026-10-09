@@ -17,11 +17,15 @@ import {
 import * as canonicalInput from "../src/server/canonical-input.ts";
 import {
   apiErrorResponse,
+  apiNotFound,
+  apiNullableTimestamp,
   apiRequestContext,
   apiResponseHeaders,
   apiSuccessResponse,
   apiTemporaryUnavailable,
-  apiValidationFailed
+  apiValidationFailed,
+  CANONICAL_UUID_PATTERN,
+  isJsonRecord
 } from "../src/server/api-errors.ts";
 import * as apiRoute from "../src/server/api-route.ts";
 import {
@@ -178,21 +182,24 @@ function loadSentryModuleForTest(sentryStub) {
 }
 
 /**
- * @param {(error: Error, input: Record<string, unknown>) => boolean} captureRuntimeException
- * @returns {Pick<typeof import("../src/server/api-errors.ts"), "apiErrorResponse">}
+ * @param {{
+ *   captureRuntimeException?: (error: Error, input: Record<string, unknown>) => boolean,
+ *   reportRuntimeFailure?: RuntimeFailureReporterForTest
+ * }} sentry
+ * @returns {typeof import("../src/server/api-errors.ts")}
  */
-function loadApiErrorsModuleForTest(captureRuntimeException) {
+function loadApiErrorsModuleForTest(sentry) {
   const exportsForTestModule = loadModuleForTest("src/server/api-errors.ts", {
     stubs: {
       "./correlation.ts": { createCorrelationId: () => "unused-correlation" },
       "./logging.ts": { durationSinceMs, emitRuntimeLog },
-      "./sentry.ts": { captureRuntimeException }
+      "./sentry.ts": sentry
     },
     globals: { console, process, Response, Headers },
     fallbackRequire: require
   });
 
-  return /** @type {Pick<typeof import("../src/server/api-errors.ts"), "apiErrorResponse">} */ (
+  return /** @type {typeof import("../src/server/api-errors.ts")} */ (
     exportsForTestModule
   );
 }
@@ -281,7 +288,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure, transactionQuery) {
           };
         }
       },
-      "./api-errors.ts": { apiLimitMetadata: () => null },
+      "./api-errors.ts": { apiLimitMetadata: () => null, isJsonRecord },
       "./caller-api-limits.ts": {
         accountWriteLockStatement,
         async accountLimitProfileForAccount() {
@@ -332,6 +339,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure, transactionQuery) {
 function loadHumanSessionModuleForTest(reportRuntimeFailure) {
   return /** @type {{ resolveHumanAccountSession: typeof import("../src/server/human-session.ts").resolveHumanAccountSession }} */ (
     loadCommonJsModuleForTest("src/server/human-session.ts", {
+      "./api-errors.ts": { apiNullableTimestamp },
       "./authorization.ts": {
         authorizeAccountMembership() {
           throw new Error("authorizeAccountMembership should not run.");
@@ -455,7 +463,13 @@ function loadInputQueueModuleForTest(
   return /** @type {ReturnType<typeof loadInputQueueModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/input-queue.ts", {
       "./accounting.ts": { auditEventInsertStatement() {} },
-      "./api-errors.ts": { apiTemporaryUnavailable, apiValidationFailed },
+      "./api-errors.ts": {
+        apiTemporaryUnavailable,
+        apiValidationFailed,
+        apiTransactionFailure: loadApiErrorsModuleForTest({
+          reportRuntimeFailure
+        }).apiTransactionFailure
+      },
       "./caller-api-auth.ts": { runAuthenticatedCallerTransaction },
       "./caller-api-limits.ts": {
         async accountLimitProfileForAccount() {},
@@ -468,9 +482,7 @@ function loadInputQueueModuleForTest(
         parseInputDeleteBody: /** @type {() => unknown} */ (() => ({})),
         parseInputSubmission: /** @type {() => unknown} */ (() => ({})),
         sha256Hex: /** @type {(value: string) => string} */ ((value) => value)
-      },
-      "./logging.ts": { durationSinceMs },
-      "./sentry.ts": { reportRuntimeFailure }
+      }
     })
   );
 }
@@ -539,7 +551,16 @@ function loadOutputFilesModuleForTest(
     "src/server/caller-api-auth.ts",
     {
       "./caller-auth.ts": callerAuth,
-      "./api-errors.ts": { apiTemporaryUnavailable },
+      "./api-errors.ts": {
+        apiTemporaryUnavailable,
+        apiTransactionFailure: loadApiErrorsModuleForTest({
+          reportRuntimeFailure: (error, input) => {
+            assert.ok(error instanceof Error);
+            assert.equal(error.message, "raw output transaction secret");
+            return reportRuntimeFailure(error, input);
+          }
+        }).apiTransactionFailure
+      },
       "./caller-api-limits.ts": {
         /**
          * @param {unknown} _query
@@ -576,16 +597,7 @@ function loadOutputFilesModuleForTest(
           assert.equal(context.callerId, identity.callerId);
         }
       },
-      "./logging.ts": { durationSinceMs, emitRuntimeLog, safeErrorName },
-      "./sentry.ts": {
-        reportRuntimeFailure: /** @type {RuntimeFailureReporterForTest} */ (
-          (error, input) => {
-            assert.ok(error instanceof Error);
-            assert.equal(error.message, "raw output transaction secret");
-            return reportRuntimeFailure(error, input);
-          }
-        )
-      }
+      "./logging.ts": { durationSinceMs, emitRuntimeLog, safeErrorName }
     }
   );
 
@@ -595,9 +607,11 @@ function loadOutputFilesModuleForTest(
       loadCommonJsModuleForTest("src/server/output-files.ts", {
         "./accounting.ts": { auditEventInsertStatement() {} },
         "./api-errors.ts": {
+          apiNotFound,
           apiResponseHeaders,
           apiTemporaryUnavailable,
-          apiValidationFailed
+          apiValidationFailed,
+          CANONICAL_UUID_PATTERN
         },
         "./caller-api-auth.ts": callerApiAuth,
         "./database.ts": {},
@@ -792,9 +806,11 @@ test("apiErrorResponse captures only unreported internal status-500 failures", a
   /** @type {Array<{ error: Error, input: Record<string, unknown> }>} */
   const captures = [];
   const { apiErrorResponse: apiErrorResponseForTest } =
-    loadApiErrorsModuleForTest((error, input) => {
-      captures.push({ error, input });
-      return true;
+    loadApiErrorsModuleForTest({
+      captureRuntimeException(error, input) {
+        captures.push({ error, input });
+        return true;
+      }
     });
   const context = {
     requestId: "req-api-boundary",
@@ -2889,6 +2905,10 @@ test(
           assert.equal(inputResult.error?.code, "temporary_unavailable");
           assert.equal(inputResult.error?.errorId, inputContext.correlationId);
           assert.equal(inputResult.error?.reported, true);
+          assert.equal(
+            inputResult.error?.message,
+            "Input queue operation is temporarily unavailable."
+          );
           await apiErrorResponse(inputContext, inputResult.error).json();
         }
 
@@ -2936,6 +2956,7 @@ test(
   assert.equal(inputLog.account_id, "00000000-0000-4000-8000-000000000201");
   assert.equal(inputLog.caller_id, "00000000-0000-4000-8000-000000000202");
   assert.equal(typeof inputLog.duration_ms, "number");
+  assert.equal(inputLog.message, "Input queue operation failed unexpectedly.");
   assert.equal(outputLog.error_id, "corr-output-file-observability");
   assert.equal(outputLog.request_id, "req-output-file-observability");
   assert.equal(

@@ -1,5 +1,7 @@
 import {
+  apiNotFound,
   apiTemporaryUnavailable,
+  UUID_PATTERN,
   type ApiRequestContext
 } from "./api-errors.ts";
 import { enforceAccountOperationLimits } from "./caller-api-limits.ts";
@@ -13,7 +15,6 @@ import {
   type TransactionContextStatement
 } from "./database.ts";
 import {
-  UUID_PATTERN,
   approveSetupRequestStatement,
   callerCredentialLifecycleLockStatement,
   denySetupRequest,
@@ -29,7 +30,6 @@ import {
   markSetupRequestExchangedStatement,
   markSetupRequestExpiredStatement,
   normalizeUserCode,
-  notFoundError,
   setupCodeDigest,
   setupRequestExpired,
   setupRequestNotFoundMessage,
@@ -414,7 +414,7 @@ export async function approveConnectBrowserSetupRequest(
   );
   const target = targetResult.rows[0];
   if (!target) {
-    return notFoundError(setupRequestNotFoundMessage("connect"));
+    return apiNotFound(setupRequestNotFoundMessage("connect"));
   }
 
   const available = await ensurePendingSetupApproval(query, target, input.now);
@@ -499,7 +499,7 @@ export async function approveConnectDeviceSetupRequest(
   );
   const target = targetResult.rows[0];
   if (!target) {
-    return notFoundError(setupRequestNotFoundMessage("connect"));
+    return apiNotFound(setupRequestNotFoundMessage("connect"));
   }
 
   if (target.status === "approved" || target.status === "exchanged") {
@@ -662,7 +662,7 @@ async function connectApprovalPreviewFromTarget(
   now: Date = new Date()
 ): Promise<ConnectResult<ConnectApprovalPreviewData>> {
   if (!target) {
-    return notFoundError(setupRequestNotFoundMessage("connect"));
+    return apiNotFound(setupRequestNotFoundMessage("connect"));
   }
 
   const available = await ensurePendingSetupApproval(query, target, now);

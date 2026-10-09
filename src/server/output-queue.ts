@@ -1,8 +1,11 @@
 import {
+  apiNotFound,
   apiTemporaryUnavailable,
   apiTimestamp,
   apiValidationFailed,
+  CANONICAL_UUID_PATTERN,
   isJsonRecord,
+  VERSIONED_UUID_PATTERN,
   type ApiErrorInput,
   type ApiRequestContext
 } from "./api-errors.ts";
@@ -25,11 +28,7 @@ import {
   runGuardedCallerTransaction,
   type CallerIdentity
 } from "./caller-api-auth.ts";
-import {
-  CANONICAL_UUID_PATTERN,
-  callerOutputLockStatement,
-  safeContentType
-} from "./output-files.ts";
+import { callerOutputLockStatement, safeContentType } from "./output-files.ts";
 import { materializeCanonicalInputsByItemId } from "./canonical-input.ts";
 import {
   encodePageCursor,
@@ -41,6 +40,7 @@ import {
 import { publicSchemaMismatch } from "../shared/public-api-contract.ts";
 
 const OUTPUT_VALIDATION_MESSAGE = "Output queue request failed validation.";
+const OUTPUT_NOT_FOUND_MESSAGE = "Output result was not found for this caller.";
 
 const outputCheckReadOperation = {
   rateLimitKind: "output_check_read",
@@ -157,9 +157,6 @@ type TerminalDeletionRow = {
 type DuplicateAckRow = {
   already_recorded: boolean;
 };
-
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function handleOutputCheckRequest(
   request: Request,
@@ -287,14 +284,14 @@ export async function readOutputResultInTransaction(
   outputResultId: string
 ): Promise<OutputQueueResult> {
   if (!CANONICAL_UUID_PATTERN.test(outputResultId)) {
-    return notFoundError();
+    return apiNotFound(OUTPUT_NOT_FOUND_MESSAGE);
   }
   const result = await query<OutputRow>(
     outputResultByIdStatement(identity, outputResultId)
   );
   const row = result.rows[0];
   if (!row) {
-    return notFoundError();
+    return apiNotFound(OUTPUT_NOT_FOUND_MESSAGE);
   }
 
   const filesByOutputId = await outputFileMetadataByResultId(query, identity, [
@@ -428,7 +425,7 @@ export async function acknowledgeOutputInTransaction(
     }
   }
 
-  if (UUID_PATTERN.test(outputResultId)) {
+  if (VERSIONED_UUID_PATTERN.test(outputResultId)) {
     const duplicate = await query<DuplicateAckRow>(
       duplicateAcknowledgementLookupStatement(identity, outputResultId)
     );
@@ -444,7 +441,7 @@ export async function acknowledgeOutputInTransaction(
     }
   }
 
-  return notFoundError();
+  return apiNotFound(OUTPUT_NOT_FOUND_MESSAGE);
 }
 
 export function parseOutputPageQuery(
@@ -798,7 +795,7 @@ function outputCursorFromPayload(
     isValidUtcDateTime(payload.answered_at) &&
     // Postgres timestamptz has no year 0000.
     !payload.answered_at.startsWith("0000-") &&
-    UUID_PATTERN.test(payload.output_result_id)
+    VERSIONED_UUID_PATTERN.test(payload.output_result_id)
     ? {
         answeredAt: payload.answered_at,
         outputResultId: payload.output_result_id
@@ -818,17 +815,6 @@ function validationFailed(fields: ApiErrorInput["fields"]): {
   error: ApiErrorInput;
 } {
   return apiValidationFailed(OUTPUT_VALIDATION_MESSAGE, fields);
-}
-
-function notFoundError(): OutputQueueResult {
-  return {
-    ok: false,
-    error: {
-      status: 404,
-      code: "not_found",
-      message: "Output result was not found for this caller."
-    }
-  };
 }
 
 function outputResultIdRequiredError(): OutputQueueResult {

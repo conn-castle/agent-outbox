@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
-import type {
-  ApiErrorCode,
-  ApiErrorInput,
-  ApiFieldError
+import {
+  isJsonRecord,
+  type ApiErrorCode,
+  type ApiErrorInput,
+  type ApiFieldError
 } from "./api-errors.ts";
 import {
   fileUploadEnabled,
@@ -200,7 +201,7 @@ const ALLOWED_HTML_ELEMENTS = new Set([
 
 export function parseInputDeleteBody(value: unknown): InputDeleteParseResult {
   const fields: ApiFieldError[] = [];
-  if (!isPlainRecord(value)) {
+  if (!isJsonRecord(value)) {
     return {
       ok: false,
       error: validationError([
@@ -242,7 +243,7 @@ export function parseInputSubmission(
 ): InputSubmissionParseResult {
   const fields: ApiFieldError[] = [];
 
-  if (!isPlainRecord(value)) {
+  if (!isJsonRecord(value)) {
     return {
       ok: false,
       error: validationError([
@@ -492,7 +493,7 @@ export function stableStringify(value: unknown): string {
 }
 
 function parseRowType(value: unknown, fields: ApiFieldError[], path: string) {
-  if (!isPlainRecord(value)) {
+  if (!isJsonRecord(value)) {
     fields.push(
       fieldError(path, "invalid_type", "row_type must be an object.")
     );
@@ -529,7 +530,7 @@ function parseLinkButtons(value: unknown, fields: ApiFieldError[]) {
 
   return value.map((entry, index): NormalizedInputLinkButton => {
     const path = `link_buttons[${index}]`;
-    if (!isPlainRecord(entry)) {
+    if (!isJsonRecord(entry)) {
       fields.push(
         fieldError(path, "invalid_type", "Link button must be an object.")
       );
@@ -566,7 +567,7 @@ function parseActions(value: unknown, fields: ApiFieldError[]) {
   const seenActionValues = new Set<string>();
   return value.map((entry, index): NormalizedInputAction => {
     const path = `actions[${index}]`;
-    if (!isPlainRecord(entry)) {
+    if (!isJsonRecord(entry)) {
       fields.push(
         fieldError(path, "invalid_type", "Action must be an object.")
       );
@@ -648,7 +649,7 @@ function parseActionAppearance(
 }
 
 function parsePopup(value: unknown, fields: ApiFieldError[], path: string) {
-  if (!isPlainRecord(value)) {
+  if (!isJsonRecord(value)) {
     fields.push(fieldError(path, "invalid_type", "popup must be an object."));
     return { kind: "none" as const, payload: {}, options: [] };
   }
@@ -813,7 +814,7 @@ function parsePopupOptions(
   const seenValues = new Set<string>();
   return value.map((entry, index): NormalizedPopupOption => {
     const optionPath = `${path}[${index}]`;
-    if (!isPlainRecord(entry)) {
+    if (!isJsonRecord(entry)) {
       fields.push(
         fieldError(optionPath, "invalid_type", "Option must be an object.")
       );
@@ -992,7 +993,7 @@ function parseCardVisual(
   if (value == null) {
     return null;
   }
-  if (!isPlainRecord(value)) {
+  if (!isJsonRecord(value)) {
     fields.push(
       fieldError(path, "invalid_type", "card_visual must be an object or null.")
     );
@@ -1677,10 +1678,6 @@ function fieldError(
   message: string
 ): ApiFieldError {
   return { path, code, message };
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export function sha256Hex(value: string) {

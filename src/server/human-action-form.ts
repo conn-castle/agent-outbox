@@ -1,3 +1,4 @@
+import { VERSIONED_UUID_PATTERN } from "./api-errors.ts";
 import type { HumanActionResponse } from "./human-answer.ts";
 import { isStorableString } from "./input-schema.ts";
 import {
@@ -5,9 +6,6 @@ import {
   POPUP_KINDS,
   type PopupKind
 } from "../shared/input-schema-rules.ts";
-
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export const MAX_BULK_HUMAN_ANSWER_ITEMS = 100;
 
@@ -247,7 +245,7 @@ function normalizeLineBreaks(value: string) {
 
 function uuidField(formData: FormData, key: string) {
   const value = stringField(formData, key);
-  return value && UUID_PATTERN.test(value) ? value : null;
+  return value && VERSIONED_UUID_PATTERN.test(value) ? value : null;
 }
 
 function integerField(formData: FormData, key: string) {
@@ -408,9 +406,9 @@ function parseBulkItem(value: FormDataEntryValue): BulkAnswerItem | null {
     const item = parsed as Record<string, unknown>;
     if (
       typeof item.inputItemId !== "string" ||
-      !UUID_PATTERN.test(item.inputItemId) ||
+      !VERSIONED_UUID_PATTERN.test(item.inputItemId) ||
       typeof item.callerId !== "string" ||
-      !UUID_PATTERN.test(item.callerId) ||
+      !VERSIONED_UUID_PATTERN.test(item.callerId) ||
       typeof item.expectedRevision !== "number" ||
       !Number.isSafeInteger(item.expectedRevision)
     ) {

@@ -1,3 +1,4 @@
+import { apiNullableTimestamp } from "./api-errors.ts";
 import {
   authorizeAccountMembership,
   type AccountMembership,
@@ -309,7 +310,7 @@ export async function resolveHumanAccountContextInTransaction(
       label: account.label,
       tier: account.tier,
       billingStatus: account.billing_status,
-      billingGraceEndsAt: nullableTimestampValue(account.billing_grace_ends_at)
+      billingGraceEndsAt: apiNullableTimestamp(account.billing_grace_ends_at)
     }
   };
 }
@@ -364,15 +365,6 @@ export function humanAccountContextStatement(
     `,
     values: [accountId]
   };
-}
-
-function nullableTimestampValue(value: string | Date | null): string | null {
-  if (value == null) {
-    return null;
-  }
-  return value instanceof Date
-    ? value.toISOString()
-    : new Date(value).toISOString();
 }
 
 function failure(
