@@ -735,6 +735,124 @@ for (const type of [
   );
 }
 
+for (const type of [
+  "checkout.session.completed",
+  "customer.subscription.updated",
+  "invoice.payment_failed"
+]) {
+  test(
+    `${type} rejects malformed account metadata without changing billing or provider state; valid identity still applies`,
+    gated,
+    async () =>
+      fixture(async (f) => {
+        assert.equal((await f.checkout()).ok, true);
+        const attempt = (await f.read()).attempt;
+        const metadata = {
+          account_id: f.accountId,
+          billing_attempt_id: attempt.attempt_id
+        };
+        assert.equal(
+          (
+            await f.webhook(
+              "customer.subscription.created",
+              f.subscription("sub_fake", "active", metadata)
+            )
+          ).ok,
+          true
+        );
+        const before = await f.read();
+        const providerBefore = structuredClone({
+          calls: f.stripe.calls,
+          sessions: f.stripe.sessions,
+          subscriptions: f.stripe.subscriptionObjects,
+          expired: f.stripe.expired
+        });
+        const objectForAccount = (/** @type {string} */ accountId) => {
+          const references = { ...metadata, account_id: accountId };
+          return type === "checkout.session.completed"
+            ? {
+                id: attempt.stripe_session_id,
+                client_reference_id: accountId,
+                metadata: references,
+                customer: "cus_fake",
+                subscription: "sub_fake"
+              }
+            : type === "invoice.payment_failed"
+              ? {
+                  customer: "cus_fake",
+                  parent: {
+                    subscription_details: {
+                      subscription: "sub_fake",
+                      metadata: references
+                    }
+                  }
+                }
+              : f.subscription("sub_fake", "past_due", references);
+        };
+        for (const malformed of [
+          "not-a-uuid",
+          `${f.accountId}'`,
+          f.accountId.replaceAll("-", "")
+        ]) {
+          const id = `evt_bad_account_${crypto.randomUUID()}`;
+          const logs = await captureStructuredLogs(async () => {
+            assert.deepEqual(
+              await f.webhook(
+                type,
+                objectForAccount(malformed),
+                1791576001,
+                id
+              ),
+              { ok: true, data: { processed: true } }
+            );
+            assert.deepEqual(
+              await f.webhook(
+                type,
+                objectForAccount(malformed),
+                1791576001,
+                id
+              ),
+              { ok: true, data: { processed: false } }
+            );
+          });
+          assert.equal(logs.length, 1);
+          assert.equal(logs[0].drop_reason, "billing_conflict");
+          assert.equal(logs[0].operation, "stripe_webhook_unapplied");
+          assert.deepEqual(await f.read(), before);
+          const ledger = await f.owner.query(
+            "select account_id from public.agent_outbox_stripe_webhook_events where stripe_event_id = $1",
+            [id]
+          );
+          assert.deepEqual(ledger.rows, [{ account_id: null }]);
+        }
+        assert.deepEqual(
+          {
+            calls: f.stripe.calls,
+            sessions: f.stripe.sessions,
+            subscriptions: f.stripe.subscriptionObjects,
+            expired: f.stripe.expired
+          },
+          providerBefore
+        );
+        assert.deepEqual(
+          await f.webhook(type, objectForAccount(f.accountId), 1791576002),
+          { ok: true, data: { processed: true } }
+        );
+        const after = await f.read();
+        assert.equal(after.account.tier, "hosted_paid");
+        assert.equal(
+          after.account.billing_status,
+          type === "checkout.session.completed" ? "active" : "past_due"
+        );
+        assert.ok(
+          after.account.stripe_last_event_created_at >
+            before.account.stripe_last_event_created_at
+        );
+        assert.equal(after.attempt.stripe_subscription_id, "sub_fake");
+      })
+  );
+}
+
 for (const firstStatus of ["active", "canceled"]) {
   test(
     `same-created-second terminal truth cannot revive (${firstStatus} first)`,

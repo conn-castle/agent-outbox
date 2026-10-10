@@ -49,6 +49,10 @@ export async function billingHumanSession(
   });
 }
 
+/**
+ * Resolves billing through the authenticated human account. Checkout receives a
+ * transaction runner bound to that identity so its short locks never span Stripe HTTP.
+ */
 export async function billingHumanSessionFromClerkUser(input: {
   context: ApiRequestContext;
   flow: BillingFlow;

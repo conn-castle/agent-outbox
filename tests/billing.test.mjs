@@ -1123,7 +1123,7 @@ test("subscription webhooks can update an account from Stripe metadata before ch
           ]);
         }
         if (/update public\.agent_outbox_accounts/.test(statement.sql)) {
-          assert.match(statement.sql, /account_id::text = \$8/);
+          assert.match(statement.sql, /account_id = \$8::uuid/);
           assert.equal(statement.values[7], accountId);
           return queryResult([{ account_id: accountId }]);
         }
@@ -1494,7 +1494,7 @@ test("account projection updates carry ordering timestamps and receipt-order tie
   for (const update of updates) {
     assert.match(
       update.sql,
-      /where account_id::text = \$8[\s\S]*stripe_last_event_created_at < \$9[\s\S]*stripe_last_event_created_at = \$9[\s\S]*stripe_last_event_receipt_order <= \$10/
+      /where account_id = \$8::uuid[\s\S]*stripe_last_event_created_at < \$9[\s\S]*stripe_last_event_created_at = \$9[\s\S]*stripe_last_event_receipt_order <= \$10/
     );
     assert.match(update.sql, /stripe_last_event_created_at = \$9/);
     assert.match(update.sql, /stripe_last_event_receipt_order = \$10/);

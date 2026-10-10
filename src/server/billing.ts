@@ -6,6 +6,7 @@ import {
   apiTemporaryUnavailable,
   apiTransactionFailure,
   isJsonRecord,
+  UUID_PATTERN,
   type ApiRequestContext,
   type ApiResult
 } from "./api-errors.ts";
@@ -210,6 +211,7 @@ function terminalSubscription(status: string | null) {
   return status === "canceled" || status === "incomplete_expired";
 }
 
+/** Recognizes terminal proof only for the account's current subscription. */
 function hasTerminalSubscription(account: CheckoutAccount) {
   return (
     !!account.stripe_subscription_id &&
@@ -219,6 +221,7 @@ function hasTerminalSubscription(account: CheckoutAccount) {
   );
 }
 
+/** Reads the attempt under its account lock; the caller must end the transaction before Stripe HTTP. */
 async function lockedCheckoutState(
   query: ProductTransactionQuery,
   accountId: string
@@ -240,6 +243,7 @@ async function lockedCheckoutState(
   return { account, attempt: attempts.rows[0] ?? null };
 }
 
+/** Rejects checkout until any previous subscription is confirmed terminal. */
 function assertCheckoutEligible(account: CheckoutAccount) {
   if (account.tier === "self_hosted") {
     throw new CheckoutUnavailable(
@@ -260,6 +264,11 @@ function assertCheckoutEligible(account: CheckoutAccount) {
   }
 }
 
+/**
+ * Reuses a durable account attempt and its Stripe idempotency key across retries.
+ * A changed interval replaces an unpaid session only after live expiration proof;
+ * a URL is returned only after rechecking the attempt and account eligibility.
+ */
 export async function createCheckoutSessionForAccount(input: {
   account: BillingAccount;
   interval: unknown;
@@ -931,6 +940,7 @@ function accountUpdateWithMatchStatement(
   };
 }
 
+/** Activates the authorized account, subject to webhook ordering in the same statement snapshot. */
 export function checkoutCompletedAccountUpdateStatement(input: {
   accountId: string;
   customerId: string | null;
@@ -999,6 +1009,10 @@ function stripeEventOrderingClause(
   };
 }
 
+/**
+ * Updates only the account resolved by billing identity authorization.
+ * Terminal subscription truth wins equal-timestamp receipt ordering, never older timestamps.
+ */
 export function subscriptionBillingUpdateStatement(input: {
   subscriptionId: string;
   customerId: string | null;
@@ -1038,7 +1052,7 @@ export function subscriptionBillingUpdateStatement(input: {
         stripe_current_period_end = $7,
         ${ordering.assignment}
         updated_at = now()
-      where account_id::text = $8 and deleted_at is null
+      where account_id = $8::uuid and deleted_at is null
         ${ordering.predicate}
       returning account_id::text as account_id
     `,
@@ -1054,7 +1068,7 @@ export function subscriptionBillingUpdateStatement(input: {
         ...ordering.values
       ]
     },
-    "account_id::text = $8 and deleted_at is null"
+    "account_id = $8::uuid and deleted_at is null"
   );
 }
 
@@ -1109,17 +1123,24 @@ function billingConflict(accountId: string | null): StripeEventOutcome {
   return { status: "unapplied", reason: "billing_conflict", accountId };
 }
 
+/**
+ * Locks accounts matching any supplied identity in one statement snapshot and
+ * rejects malformed or contradictory references before billing can change.
+ * Replacing a canonical subscription requires terminal proof and a matching attempt.
+ */
 async function authorizeBillingEvent(
   query: ProductTransactionQuery,
   references: BillingEventReferences
 ): Promise<{ accountId: string } | StripeEventOutcome> {
+  if (references.accountId && !UUID_PATTERN.test(references.accountId))
+    return billingConflict(null);
   // Resolve all available references in ONE statement snapshot. A contradictory
   // customer/subscription/account must never retarget or partially update accounts.
   const matches = await query<CheckoutAccount>({
     sql: `select account_id::text, tier, billing_status, stripe_customer_id,
       stripe_subscription_id, stripe_subscription_status, stripe_terminal_subscription_id
       from public.agent_outbox_accounts where deleted_at is null and (
-        ($1::text is not null and account_id::text = $1) or
+        ($1::uuid is not null and account_id = $1::uuid) or
         ($2::text is not null and stripe_customer_id = $2) or
         ($3::text is not null and stripe_subscription_id = $3)
       ) order by account_id for update`,
@@ -1200,6 +1221,7 @@ async function authorizeBillingEvent(
   return { accountId };
 }
 
+/** Records provider identities only after an authorized event applies to billing. */
 async function retainAuthorizedAttempt(
   query: ProductTransactionQuery,
   references: BillingEventReferences,
@@ -1219,6 +1241,7 @@ async function retainAuthorizedAttempt(
   });
 }
 
+/** Requires client and metadata account references to agree before authorizing paid activation. */
 async function applyCheckoutCompleted(
   query: ProductTransactionQuery,
   session: Stripe.Event.Data.Object,
@@ -1275,6 +1298,7 @@ async function applyCheckoutCompleted(
   return outcome;
 }
 
+/** Resolves subscription identities before applying entitlement and retaining attempt evidence. */
 async function applySubscriptionEvent(
   query: ProductTransactionQuery,
   object: Stripe.Event.Data.Object,
@@ -1333,6 +1357,7 @@ async function applySubscriptionEvent(
   return outcome;
 }
 
+/** Rejects contradictory legacy/nested subscription references before applying payment failure. */
 async function applyInvoicePaymentFailed(
   query: ProductTransactionQuery,
   object: Stripe.Event.Data.Object,

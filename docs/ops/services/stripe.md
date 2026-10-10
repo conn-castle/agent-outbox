@@ -209,9 +209,10 @@ attempt or replacement after terminal state requires that metadata; reconcile
 those payments before proceeding, without bypassing canonical identity
 protections. A point-in-time empty inventory does not cover later old-writer
 requests. Rollback restores the previous duplicate risk. Release readiness must
-verify the restricted runtime Stripe key permits Checkout retrieve and expire,
-as well as create, without mutating production objects as a test. Production
-schema changes run only through the protected release workflow.
+verify the restricted runtime Stripe key permits Checkout create, retrieve and
+expire, plus Subscription read/retrieve for previous-subscription eligibility
+checks, without mutating production objects as a test. Production schema changes
+run only through the protected release workflow.
 
 Webhook event ids are claimed inside the same database transaction that applies
 their billing changes. A committed ledger row therefore means the event
