@@ -24,6 +24,7 @@ export async function POST(request: Request) {
 
       return createCheckoutSessionForAccount({
         account: session.data.account,
+        runCheckoutTransaction: session.data.runCheckoutTransaction,
         interval: interval.data,
         context
       });

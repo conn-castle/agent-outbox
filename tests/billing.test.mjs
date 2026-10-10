@@ -5,7 +5,7 @@ import {
   billingRuntimeConfig,
   checkoutIntervalFromRequest,
   createBillingPortalSessionForAccount,
-  createCheckoutSessionForAccount,
+  createCheckoutSessionForAccount as checkoutForAccount,
   handleStripeWebhookRequest,
   processStripeEventInTransaction,
   requiredBillingConfiguration,
@@ -68,6 +68,107 @@ function withBillingEnv(values, callback) {
     },
     callback
   );
+}
+
+// Parser and transport fixtures only. Concurrency, commit uncertainty and RLS
+// are exercised against migrated PostgreSQL in billing-checkout-database.test.mjs.
+/** @param {Parameters<typeof checkoutForAccount>[0]} input */
+async function createCheckoutSessionForAccount(input) {
+  let attempt = /** @type {any} */ (null);
+  let session = /** @type {any} */ (null);
+  const stripe = /** @type {any} */ (input.stripe);
+  if (stripe?.checkout?.sessions && !stripe.checkout.sessions.retrieve) {
+    const create = stripe.checkout.sessions.create;
+    stripe.checkout.sessions.create = async (
+      /** @type {any} */ parameters,
+      /** @type {any} */ options
+    ) => {
+      const response = await create(parameters, options);
+      session = {
+        ...response,
+        id: "cs_unit",
+        status: "open",
+        payment_status: "unpaid",
+        client_reference_id: parameters.client_reference_id,
+        metadata: parameters.metadata
+      };
+      return session;
+    };
+    stripe.checkout.sessions.retrieve = async () => session;
+  }
+  return checkoutForAccount({
+    ...input,
+    runCheckoutTransaction: async (callback) =>
+      callback(
+        /** @type {any} */ (
+          async (/** @type {any} */ statement) => {
+            if (/from public.agent_outbox_accounts/.test(statement.sql))
+              return queryResult([
+                {
+                  ...input.account,
+                  stripe_subscription_id: null,
+                  stripe_subscription_status: null,
+                  stripe_terminal_subscription_id: null
+                }
+              ]);
+            if (
+              /insert into public.agent_outbox_billing_checkout_attempts/.test(
+                statement.sql
+              )
+            ) {
+              const [
+                account_id,
+                attempt_id,
+                billing_interval,
+                parameters,
+                stripe_api_version
+              ] = statement.values;
+              attempt = {
+                account_id,
+                attempt_id,
+                billing_interval,
+                creation_parameters: JSON.parse(parameters),
+                stripe_api_version,
+                created_at: new Date(),
+                stripe_session_id: null,
+                stripe_subscription_id: null
+              };
+              return queryResult([attempt]);
+            }
+            if (/set stripe_session_id =/.test(statement.sql)) {
+              attempt.stripe_session_id = statement.values[2];
+              return queryResult([]);
+            }
+            if (
+              /from public.agent_outbox_billing_checkout_attempts/.test(
+                statement.sql
+              )
+            )
+              return queryResult(attempt ? [attempt] : []);
+            throw new Error("Unexpected unit checkout statement");
+          }
+        )
+      )
+  });
+}
+
+// A consistent canonical account for parser/projection unit fixtures. Boundary
+// tests below override absence; database tests prove conflict authorization.
+/** @param {any} statement */
+function referenceAccount(statement) {
+  return /from public.agent_outbox_accounts[\s\S]*order by account_id for update/.test(
+    statement.sql
+  )
+    ? queryResult([
+        {
+          account_id: accountId,
+          stripe_customer_id: null,
+          stripe_subscription_id: statement.values[2],
+          stripe_subscription_status: "active",
+          stripe_terminal_subscription_id: null
+        }
+      ])
+    : null;
 }
 
 test("portal billing configuration requires the explicit Stripe portal configuration", () => {
@@ -284,7 +385,10 @@ test("billing API session returns the account row resolved inside the transactio
     )
   });
 
-  assert.deepEqual(result, { ok: true, data: { account } });
+  assert.equal(result.ok, true);
+  if (!result.ok) assert.fail("expected authenticated billing account");
+  assert.deepEqual(result.data.account, account);
+  assert.equal(typeof result.data.runCheckoutTransaction, "function");
   // The callback must actually run the account lookup keyed by the session's
   // account id, not synthesize the account from outside the transaction.
   assert.equal(lookupStatements.length, 1);
@@ -451,13 +555,20 @@ test("monthly checkout creates an account-scoped subscription session without ex
   assert.equal(calls.checkoutInputs.length, 1);
   assert.deepEqual(calls.checkoutInputs[0], {
     mode: "subscription",
-    customer: undefined,
     client_reference_id: accountId,
     line_items: [{ price: "price_test_paid_monthly", quantity: 1 }],
     success_url: "https://app.example.test/upgrade?checkout=success",
     cancel_url: "https://app.example.test/upgrade?checkout=cancelled",
-    metadata: { account_id: accountId },
-    subscription_data: { metadata: { account_id: accountId } }
+    metadata: {
+      account_id: accountId,
+      billing_attempt_id: calls.checkoutInputs[0].metadata.billing_attempt_id
+    },
+    subscription_data: {
+      metadata: {
+        account_id: accountId,
+        billing_attempt_id: calls.checkoutInputs[0].metadata.billing_attempt_id
+      }
+    }
   });
   assert.doesNotMatch(JSON.stringify(result), /cus_|sub_|sk_test|whsec/);
 });
@@ -472,6 +583,14 @@ test("default Stripe checkout client uses fetch transport for Worker compatibili
         JSON.stringify({
           id: "cs_test_worker_transport",
           object: "checkout.session",
+          status: "open",
+          payment_status: "unpaid",
+          client_reference_id: accountId,
+          metadata: Object.fromEntries(
+            [...new URLSearchParams(String(fetchCalls[0].init?.body))]
+              .filter(([name]) => name.startsWith("metadata["))
+              .map(([name, value]) => [name.slice(9, -1), value])
+          ),
           url: "https://checkout.stripe.com/c/pay/cs_test_worker_transport"
         }),
         {
@@ -504,7 +623,11 @@ test("default Stripe checkout client uses fetch transport for Worker compatibili
         url: "https://checkout.stripe.com/c/pay/cs_test_worker_transport"
       }
     });
-    assert.equal(fetchCalls.length, 1);
+    assert.equal(fetchCalls.length, 2);
+    assert.equal(fetchCalls[1].init?.method, "GET");
+    const headers = new Headers(fetchCalls[0].init?.headers);
+    assert.ok(headers.get("idempotency-key"));
+    assert.equal(headers.get("stripe-version"), "2026-08-26.dahlia");
     assert.equal(
       fetchCalls[0].url,
       "https://api.stripe.com/v1/checkout/sessions"
@@ -755,6 +878,8 @@ test("webhook verifies the raw Stripe signature and records idempotent processin
           /** @type {any} */ (
             async (/** @type {any} */ statement) => {
               calls.statements.push(statement);
+              const reference = referenceAccount(statement);
+              if (reference) return reference;
               if (
                 /insert into public\.agent_outbox_stripe_webhook_events/.test(
                   statement.sql
@@ -791,17 +916,17 @@ test("webhook verifies the raw Stripe signature and records idempotent processin
   assert.deepEqual(calls.contexts, [
     { requestId: "req-webhook", authSurface: "control_plane" }
   ]);
-  assert.equal(calls.statements.length, 3);
+  assert.equal(calls.statements.length, 5);
   assert.match(
     calls.statements[0].sql,
     /insert into public\.agent_outbox_stripe_webhook_events/
   );
-  assert.match(calls.statements[1].sql, /update public\.agent_outbox_accounts/);
+  assert.match(calls.statements[3].sql, /update public\.agent_outbox_accounts/);
   assert.match(
-    calls.statements[1].sql,
+    calls.statements[3].sql,
     /stripe_last_event_created_at = \$7[\s\S]*stripe_last_event_receipt_order = \$8[\s\S]*stripe_last_event_created_at < \$7[\s\S]*stripe_last_event_created_at = \$7[\s\S]*stripe_last_event_receipt_order <= \$8/
   );
-  assert.deepEqual(calls.statements[1].values, [
+  assert.deepEqual(calls.statements[3].values, [
     accountId,
     "cus_test",
     "sub_test",
@@ -812,10 +937,10 @@ test("webhook verifies the raw Stripe signature and records idempotent processin
     "1"
   ]);
   assert.match(
-    calls.statements[2].sql,
+    calls.statements[4].sql,
     /update public\.agent_outbox_stripe_webhook_events[\s\S]*set account_id = \$2/
   );
-  assert.deepEqual(calls.statements[2].values, [
+  assert.deepEqual(calls.statements[4].values, [
     "evt_checkout_completed",
     accountId
   ]);
@@ -913,6 +1038,8 @@ test("webhook replay stops before applying the event a second time", async () =>
     /** @type {any} */ (
       async (/** @type {any} */ statement) => {
         statements.push(statement);
+        const reference = referenceAccount(statement);
+        if (reference) return reference;
         return queryResult([]);
       }
     ),
@@ -981,6 +1108,8 @@ test("subscription webhooks can update an account from Stripe metadata before ch
     /** @type {any} */ (
       async (/** @type {any} */ statement) => {
         statements.push(statement);
+        const reference = referenceAccount(statement);
+        if (reference) return reference;
         if (
           /insert into public\.agent_outbox_stripe_webhook_events/.test(
             statement.sql
@@ -994,7 +1123,7 @@ test("subscription webhooks can update an account from Stripe metadata before ch
           ]);
         }
         if (/update public\.agent_outbox_accounts/.test(statement.sql)) {
-          assert.match(statement.sql, /account_id = \$8/);
+          assert.match(statement.sql, /account_id = \$8::uuid/);
           assert.equal(statement.values[7], accountId);
           return queryResult([{ account_id: accountId }]);
         }
@@ -1091,7 +1220,7 @@ test("subscription and failed-payment events update grace state without raw payl
     "grace",
     "2026-07-09T00:00:00.000Z",
     "2026-07-09T00:00:00.000Z",
-    null,
+    accountId,
     "2026-07-05T00:00:00.000Z",
     "1"
   ]);
@@ -1103,7 +1232,7 @@ test("subscription and failed-payment events update grace state without raw payl
     "past_due",
     "2026-07-12T00:00:00.000Z",
     null,
-    null,
+    accountId,
     "2026-07-06T00:00:00.000Z",
     "1"
   ]);
@@ -1220,6 +1349,8 @@ test("webhook ordering timestamps reject invalid metadata before ledger insertio
           /** @type {any} */ (
             async (/** @type {any} */ statement) => {
               statements.push(statement);
+              const reference = referenceAccount(statement);
+              if (reference) return reference;
               return queryResult([{ stripe_event_id: "evt_invalid_created" }]);
             }
           ),
@@ -1278,6 +1409,8 @@ test("webhook returns a retry-visible 503 for invalid ordering metadata without 
           /** @type {any} */ (
             async (/** @type {any} */ statement) => {
               statements.push(statement);
+              const reference = referenceAccount(statement);
+              if (reference) return reference;
               return queryResult([]);
             }
           )
@@ -1304,6 +1437,8 @@ test("account projection updates carry ordering timestamps and receipt-order tie
   let receiptOrder = 0;
   const query = async (/** @type {any} */ statement) => {
     statements.push(statement);
+    const reference = referenceAccount(statement);
+    if (reference) return reference;
     if (
       /insert into public\.agent_outbox_stripe_webhook_events/.test(
         statement.sql
@@ -1359,7 +1494,7 @@ test("account projection updates carry ordering timestamps and receipt-order tie
   for (const update of updates) {
     assert.match(
       update.sql,
-      /and \(\s*stripe_subscription_id = \$1[\s\S]*account_id = \$8::uuid\)\s*\)[\s\S]*stripe_last_event_created_at < \$9[\s\S]*stripe_last_event_created_at = \$9[\s\S]*stripe_last_event_receipt_order <= \$10/
+      /where account_id = \$8::uuid[\s\S]*stripe_last_event_created_at < \$9[\s\S]*stripe_last_event_created_at = \$9[\s\S]*stripe_last_event_receipt_order <= \$10/
     );
     assert.match(update.sql, /stripe_last_event_created_at = \$9/);
     assert.match(update.sql, /stripe_last_event_receipt_order = \$10/);
@@ -1384,6 +1519,8 @@ test("webhook writer remains compatible until the ordering expand migration is a
     /** @type {any} */ (
       async (/** @type {any} */ statement) => {
         statements.push(statement);
+        const reference = referenceAccount(statement);
+        if (reference) return reference;
         if (
           /insert into public\.agent_outbox_stripe_webhook_events/.test(
             statement.sql
@@ -1439,6 +1576,8 @@ test("webhook writer remains compatible until the ordering expand migration is a
 function fakeTransitionQuery(statements) {
   return async (/** @type {any} */ statement) => {
     statements.push(statement);
+    const reference = referenceAccount(statement);
+    if (reference) return reference;
     if (
       /insert into public\.agent_outbox_stripe_webhook_events/.test(
         statement.sql
@@ -1525,6 +1664,11 @@ async function webhookOutcome(input) {
             /** @type {any} */ (
               async (/** @type {any} */ statement) => {
                 statements.push(statement);
+                const reference = referenceAccount(statement);
+                if (reference)
+                  return input.updated || input.matched
+                    ? reference
+                    : queryResult([]);
                 if (
                   /insert into public\.agent_outbox_stripe_webhook_events/.test(
                     statement.sql
@@ -1552,6 +1696,12 @@ async function webhookOutcome(input) {
                         : []
                   );
                 }
+                if (
+                  /from public.agent_outbox_billing_checkout_attempts/.test(
+                    statement.sql
+                  )
+                )
+                  return queryResult([]);
                 assert.match(
                   statement.sql,
                   /update public\.agent_outbox_stripe_webhook_events/
@@ -1662,10 +1812,7 @@ for (const type of handledWebhookTypes) {
       const accountUpdates = statements.filter((statement) =>
         /update public\.agent_outbox_accounts/.test(statement.sql)
       );
-      assert.equal(
-        accountUpdates.length,
-        reason === "no_matching_account" ? 1 : 0
-      );
+      assert.equal(accountUpdates.length, 0);
       assert.equal(
         statements.some((statement) =>
           /update public\.agent_outbox_stripe_webhook_events/.test(
@@ -1696,7 +1843,7 @@ for (const type of handledWebhookTypes) {
       assert.equal(associations.length, state === "applied" ? 1 : 0);
       assert.equal(
         statements.length,
-        state === "duplicate" ? 1 : state === "applied" ? 3 : 2
+        state === "duplicate" ? 1 : state === "applied" ? 5 : 4
       );
     });
   }

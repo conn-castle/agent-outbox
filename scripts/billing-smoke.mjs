@@ -88,6 +88,8 @@ export async function runBillingSmokeChecks(env, options = {}) {
     return checks;
   }
 
+  // The yearly selection expires the known unpaid monthly session before
+  // replacement. Keep these requests sequential and never complete either URL.
   checks.push(
     await checkoutSessionCheck(fetchImpl, baseUrl, cookie, "monthly", timeoutMs)
   );
