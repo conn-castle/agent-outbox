@@ -515,7 +515,10 @@ test(
           created: 1783209600,
           type: "checkout.session.completed",
           data: {
-            object: { client_reference_id: preMigrationWriterAccountId }
+            object: {
+              client_reference_id: preMigrationWriterAccountId,
+              subscription: `sub_pre_${preMigrationWriterAccountId}`
+            }
           }
         })
       );
@@ -752,7 +755,8 @@ test(
       );
       releaseConcurrentEarlier();
       assert.deepEqual(await concurrentEarlierProcessing, {
-        status: "stale_ordering"
+        status: "applied",
+        accountId
       });
 
       const afterConcurrentEqual = await client.query(
@@ -765,8 +769,8 @@ test(
       );
       assert.deepEqual(afterConcurrentEqual.rows, [
         {
-          billing_status: "active",
-          stripe_subscription_status: "active"
+          billing_status: "canceled",
+          stripe_subscription_status: "canceled"
         }
       ]);
       const concurrentEarlierLedger = await client.query(
@@ -777,7 +781,9 @@ test(
         `,
         [concurrentEarlierEventId]
       );
-      assert.deepEqual(concurrentEarlierLedger.rows, [{ account_id: null }]);
+      assert.deepEqual(concurrentEarlierLedger.rows, [
+        { account_id: accountId }
+      ]);
     } catch (error) {
       bodyError = error;
     } finally {
@@ -885,6 +891,9 @@ test(
                 object:
                   type === "checkout.session.completed"
                     ? {
+                        subscription: missing
+                          ? "sub_nonexistent"
+                          : subscriptionId,
                         client_reference_id: missing
                           ? missingAccountId
                           : accountId
@@ -919,8 +928,8 @@ test(
         });
       }
 
-      // Stale events that match only by customer id or only by metadata
-      // account id must also be recognized as stale, not missing.
+      // Initial customer/metadata-only attachment remains supported. A later
+      // different subscription is a conflict even when its event is older.
       for (const matchBy of ["customer", "metadata"]) {
         await client.query("reset role");
         const accountId = crypto.randomUUID();
@@ -966,7 +975,9 @@ test(
           accountId
         });
         assert.deepEqual(await process(1783292400), {
-          status: "stale_ordering"
+          status: "unapplied",
+          reason: "billing_conflict",
+          accountId
         });
       }
     } finally {
@@ -985,7 +996,7 @@ for (const type of [
 ]) {
   for (const matchBy of ["customer", "subscription"]) {
     test(
-      `Stripe ${type} keeps a no-match outcome when concurrent checkout attaches the ${matchBy} after its account update`,
+      `Stripe ${type} keeps a no-match outcome when concurrent checkout attaches the ${matchBy} after its account reference read`,
       {
         skip: phase3DatabaseVerificationUrl
           ? false
@@ -1048,12 +1059,14 @@ for (const type of [
                   async (/** @type {any} */ statement) => {
                     const result = await query(statement);
                     if (
-                      /update public\.agent_outbox_accounts/.test(statement.sql)
+                      /from public\.agent_outbox_accounts[\s\S]*order by account_id for update/.test(
+                        statement.sql
+                      )
                     ) {
                       assert.equal(attached, false);
                       assert.equal(result.rows.length, 0);
-                      // Commit the attachment at the original race boundary:
-                      // after the UPDATE, before consuming its classification.
+                      // Attach after the reference read, before consuming its no-match
+                      // result. Later reads must not reclassify that snapshot.
                       assert.deepEqual(
                         await process({
                           id: checkoutId,
@@ -1062,6 +1075,7 @@ for (const type of [
                           data: {
                             object: {
                               client_reference_id: accountId,
+                              subscription: subscriptionId,
                               ...(matchBy === "customer"
                                 ? { customer: customerId }
                                 : { subscription: subscriptionId })

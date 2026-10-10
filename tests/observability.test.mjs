@@ -250,7 +250,12 @@ function loadBillingModuleForTest(reportRuntimeFailure) {
       },
       "./env.ts": { absoluteHttpOrigin },
       "./api-errors.ts": loadApiErrorsModuleForTest({ reportRuntimeFailure }),
-      "./logging.ts": { durationSinceMs, emitRuntimeLog, safeErrorName }
+      "./logging.ts": {
+        durationSinceMs,
+        emitRuntimeLog,
+        safeErrorName,
+        safeErrorCode
+      }
     },
     globals: { console, process },
     fallbackRequire: require
@@ -276,6 +281,11 @@ function loadBillingSessionModuleForTest(reportRuntimeFailure) {
     loadCommonJsModuleForTest("src/server/billing-session.ts", {
       "./api-errors.ts": loadApiErrorsModuleForTest({ reportRuntimeFailure }),
       "./billing.ts": { billingAccountStatement },
+      "./database.ts": {
+        async runProductTransaction() {
+          throw new Error("unexpected checkout transaction runner call");
+        }
+      },
       "./human-session.ts": {
         requiredHumanSessionConfiguration: () => [],
         runHumanAccountTransaction() {
@@ -2215,10 +2225,12 @@ test("billing checkout and portal Stripe failures share error ids across structu
     method: "POST",
     startedAtMs: Date.now()
   };
+  let checkoutCreateCalls = 0;
   const stripe = /** @type {any} */ ({
     checkout: {
       sessions: {
         async create() {
+          checkoutCreateCalls++;
           throw new Error("raw checkout stripe secret");
         }
       }
@@ -2247,7 +2259,48 @@ test("billing checkout and portal Stripe failures share error ids across structu
           interval: "monthly",
           context: checkoutContext,
           config,
-          stripe
+          stripe,
+          runCheckoutTransaction: async (callback) =>
+            callback(
+              /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
+                async (statement) => {
+                  if (
+                    statement.sql.includes("from public.agent_outbox_accounts")
+                  ) {
+                    return {
+                      rows: [
+                        {
+                          ...accountRow,
+                          stripe_subscription_id: null,
+                          stripe_subscription_status: null,
+                          stripe_terminal_subscription_id: null
+                        }
+                      ],
+                      rowCount: 1
+                    };
+                  }
+                  assert.match(
+                    statement.sql,
+                    /from public.agent_outbox_billing_checkout_attempts/
+                  );
+                  return {
+                    rows: [
+                      {
+                        account_id: accountId,
+                        attempt_id: "00000000-0000-4000-8000-000000000502",
+                        billing_interval: "monthly",
+                        creation_parameters: { mode: "subscription" },
+                        stripe_api_version: "2026-08-26.dahlia",
+                        stripe_session_id: null,
+                        stripe_subscription_id: null,
+                        created_at: new Date()
+                      }
+                    ],
+                    rowCount: 1
+                  };
+                }
+              )
+            )
         });
         const portalStripe = await createPortalSession({
           account: accountRow,
@@ -2270,7 +2323,8 @@ test("billing checkout and portal Stripe failures share error ids across structu
               ok: false,
               status: 503,
               code: "temporary_unavailable",
-              message: "Checkout session is temporarily unavailable.",
+              message:
+                "Checkout could not be confirmed. Retry the same interval; if this persists, contact support with the error ID.",
               reported: true,
               errorId: "corr-billing-checkout"
             },
@@ -2287,6 +2341,7 @@ test("billing checkout and portal Stripe failures share error ids across structu
       })
   );
 
+  assert.equal(checkoutCreateCalls, 1);
   assert.equal(logs.length, 2);
   assert.deepEqual(
     logs.map((log) => log.operation),

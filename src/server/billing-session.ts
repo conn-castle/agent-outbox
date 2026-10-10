@@ -5,7 +5,12 @@ import {
   type ApiRequestContext,
   type ApiResult
 } from "./api-errors.ts";
-import { billingAccountStatement, type BillingAccount } from "./billing.ts";
+import {
+  billingAccountStatement,
+  type BillingAccount,
+  type CheckoutTransactionRunner
+} from "./billing.ts";
+import { runProductTransaction } from "./database.ts";
 import {
   type HumanAccountSessionFailure,
   requiredHumanSessionConfiguration,
@@ -16,6 +21,7 @@ export type BillingFlow = "checkout" | "portal";
 
 type BillingHumanSessionData = {
   account: BillingAccount;
+  runCheckoutTransaction?: CheckoutTransactionRunner;
 };
 
 type BillingHumanSessionResult = ApiResult<BillingHumanSessionData>;
@@ -43,6 +49,10 @@ export async function billingHumanSession(
   });
 }
 
+/**
+ * Resolves billing through the authenticated human account. Checkout receives a
+ * transaction runner bound to that identity so its short locks never span Stripe HTTP.
+ */
 export async function billingHumanSessionFromClerkUser(input: {
   context: ApiRequestContext;
   flow: BillingFlow;
@@ -113,10 +123,23 @@ export async function billingHumanSessionFromClerkUser(input: {
     return apiTemporaryUnavailable("Billing account is unavailable.");
   }
 
+  const identity = transaction.session;
+  const runCheckoutTransaction: CheckoutTransactionRunner = (callback) =>
+    runProductTransaction(
+      process.env.DATABASE_APP_ROLE_URL!,
+      {
+        requestId: input.context.requestId,
+        authSurface: "human",
+        accountId: identity.accountId,
+        userId: identity.userId
+      },
+      callback
+    );
   return {
     ok: true,
     data: {
-      account: transaction.data
+      account: transaction.data,
+      ...(input.flow === "checkout" ? { runCheckoutTransaction } : {})
     }
   };
 }

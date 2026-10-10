@@ -34,6 +34,11 @@ export type RuntimeLogEvent = {
   client_event_name?: string;
   client_event_category?: string;
   drop_reason?: string;
+  billing_attempt_id?: string;
+  billing_attempt_created_at?: string;
+  checkout_failure_reason?: string;
+  stripe_session_status?: "open" | "complete" | "expired" | "unknown";
+  stripe_payment_status?: "paid" | "unpaid" | "no_payment_required" | "unknown";
   stripe_event_type?: string;
   event_count?: number;
   message: string;
@@ -71,11 +76,27 @@ const SAFE_LOG_KEYS = new Set([
   "client_event_name",
   "client_event_category",
   "drop_reason",
+  "billing_attempt_id",
+  "billing_attempt_created_at",
+  "checkout_failure_reason",
+  "stripe_session_status",
+  "stripe_payment_status",
   "stripe_event_type",
   "event_count",
   "message"
 ]);
 const SAFE_ERROR_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/;
+const STRIPE_ERROR_TYPES = new Set([
+  "StripeCardError",
+  "StripeInvalidRequestError",
+  "StripeAPIError",
+  "StripeAuthenticationError",
+  "StripePermissionError",
+  "StripeRateLimitError",
+  "StripeConnectionError",
+  "StripeSignatureVerificationError",
+  "StripeIdempotencyError"
+]);
 const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
 const SAFE_ERROR_CODES = new Set([
   "ECONNREFUSED",
@@ -88,7 +109,9 @@ const SAFE_ERROR_CODES = new Set([
   "EHOSTUNREACH",
   "QUERY_READ_TIMEOUT",
   "CONNECTION_TIMEOUT",
-  "CONNECTION_TERMINATED"
+  "CONNECTION_TERMINATED",
+  "resource_missing",
+  "idempotency_key_in_use"
 ]);
 
 export function safeLogEvent(event: RuntimeLogEvent) {
@@ -112,6 +135,14 @@ export function safeLogEvent(event: RuntimeLogEvent) {
 
 export function safeErrorName(error: unknown) {
   if (isErrorObject(error)) {
+    // Stripe keeps Error.name unchanged and puts its fixed SDK class in type.
+    if (
+      error.name === "Error" &&
+      typeof error.type === "string" &&
+      STRIPE_ERROR_TYPES.has(error.type)
+    ) {
+      return error.type;
+    }
     return safeErrorNameValue(error.name, "Error");
   }
 
@@ -200,9 +231,12 @@ function safeErrorCodeValue(value: unknown) {
     : undefined;
 }
 
-function isErrorObject(
-  error: unknown
-): error is { name?: unknown; code?: unknown; message?: unknown } {
+function isErrorObject(error: unknown): error is {
+  name?: unknown;
+  type?: unknown;
+  code?: unknown;
+  message?: unknown;
+} {
   return (
     error instanceof Error ||
     Object.prototype.toString.call(error) === "[object Error]"
