@@ -1,6 +1,10 @@
 import { createCorrelationId } from "./correlation.ts";
 import type { ActiveLimitBlockMetadata } from "./accounting.ts";
-import { durationSinceMs, emitRuntimeLog } from "./logging.ts";
+import {
+  durationSinceMs,
+  emitRuntimeLog,
+  type RuntimeLogEvent
+} from "./logging.ts";
 import type { LimitErrorMetadata } from "./limits.ts";
 import { captureRuntimeException, reportRuntimeFailure } from "./sentry.ts";
 import type { ApiErrorCode } from "../shared/api-error-contract.ts";
@@ -216,6 +220,14 @@ export function apiTransactionFailure(
     callerId?: string;
     message: string;
     unavailableMessage: string;
+    checkout?: Pick<
+      RuntimeLogEvent,
+      | "billing_attempt_id"
+      | "billing_attempt_created_at"
+      | "checkout_failure_reason"
+      | "stripe_session_status"
+      | "stripe_payment_status"
+    >;
   }
 ): { ok: false; error: ApiErrorInput } {
   reportRuntimeFailure(error, {
@@ -229,7 +241,8 @@ export function apiTransactionFailure(
     operation: input.operation,
     account_id: input.accountId,
     caller_id: input.callerId,
-    message: input.message
+    message: input.message,
+    ...input.checkout
   });
   return apiTemporaryUnavailable(input.unavailableMessage, {
     errorId: context.correlationId,

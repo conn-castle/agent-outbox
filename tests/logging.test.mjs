@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import Stripe from "stripe";
 
 import {
   safeErrorCode,
@@ -13,6 +14,21 @@ test("runtime error diagnostics keep database and connection codes without priva
     { code: "40P01", message: "private deadlock detail", expected: "40P01" },
     { code: "57014", message: "private query", expected: "57014" },
     { code: "ECONNRESET", message: "private host", expected: "ECONNRESET" },
+    {
+      code: "permission_denied",
+      message: "private key",
+      expected: undefined
+    },
+    {
+      code: "resource_missing",
+      message: "private customer",
+      expected: "resource_missing"
+    },
+    {
+      code: "idempotency_key_in_use",
+      message: "private key",
+      expected: "idempotency_key_in_use"
+    },
     { message: "Query read timeout", expected: "QUERY_READ_TIMEOUT" },
     { message: "timeout expired", expected: "CONNECTION_TIMEOUT" },
     {
@@ -71,6 +87,33 @@ test("runtime error diagnostics keep database and connection codes without priva
     assert.equal(log.error_code, code === "private-token" ? undefined : code);
     assert.equal(JSON.stringify(log).includes("private-token"), false);
   }
+});
+
+test("runtime diagnostics identify real Stripe SDK errors without exposing their payloads", () => {
+  for (const Constructor of [
+    Stripe.errors.StripePermissionError,
+    Stripe.errors.StripeConnectionError,
+    Stripe.errors.StripeIdempotencyError,
+    Stripe.errors.StripeAPIError
+  ]) {
+    const error = new Constructor({ message: "private Stripe payload" });
+    assert.equal(error.name, "Error");
+    assert.equal(safeErrorName(error), error.type);
+    assert.equal(safeErrorCode(error), undefined);
+    const log = safeLogEvent({
+      level: "error",
+      surface: "api",
+      operation: "stripe_checkout_session_expire",
+      message: "Checkout expiration failed.",
+      error_name: safeErrorName(error)
+    });
+    assert.equal(log.error_name, error.type);
+    assert.equal(JSON.stringify(log).includes("private"), false);
+  }
+  const unknown = Object.assign(new Error("private payload"), {
+    type: "private Stripe type"
+  });
+  assert.equal(safeErrorName(unknown), "Error");
 });
 
 test("safeLogEvent strips request bodies and arbitrary caller-controlled fields", () => {
