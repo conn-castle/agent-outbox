@@ -93,10 +93,14 @@ jobs:
       - name: Run release-only verification
         run: make package-check marketing-verify
 
-  browser:
-    name: make browser
+  browser-suites:
+    name: browser (${{ matrix.project }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium-desktop, chromium-mobile]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -113,15 +117,32 @@ jobs:
         run: corepack pnpm exec playwright install --with-deps chromium
 
       - name: Run browser smoke tests
-        run: make browser
+        run: corepack pnpm run browser --project=${{ matrix.project }}
 
       - name: Upload browser failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-check-browser-failures
+          name: release-check-browser-failures-${{ matrix.project }}
           path: test-results/
           retention-days: 7
+
+  browser:
+    name: make browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [browser-suites]
+    if: ${{ always() }}
+    steps:
+      - name: Require successful browser suites
+        env:
+          BROWSER_RESULT: ${{ needs['browser-suites'].result }}
+        run: |
+          set -euo pipefail
+          if [[ "${BROWSER_RESULT:-}" != "success" ]]; then
+            echo "::error::make browser requires successful browser projects in this run (result: ${BROWSER_RESULT:-missing})."
+            exit 1
+          fi
 
   migration-replay:
     name: make migration-replay

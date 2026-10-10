@@ -1,10 +1,13 @@
+import { createRequire } from "node:module";
+
 import {
   workflowJobContent,
   workflowMappingBlockContent,
   workflowNamedStepContent,
   workflowStepBlocks,
   parseWorkflowStepTuple,
-  workflowRunStepIncludes
+  workflowRunStepIncludes,
+  normalizeRunCommand
 } from "../workflow-yaml.mjs";
 
 /** @typedef {import("./toolchain.mjs").PackageJson} PackageJson */
@@ -609,4 +612,172 @@ export function validateWorkflowConcurrency(workflowContentsByPath) {
     );
   }
   return failures;
+}
+
+/**
+ * Require both complete browser projects and a single fail-closed aggregate.
+ * The matrix result is success only when every instance succeeds; the exact
+ * matrix and unconditioned command prevent omitted project coverage.
+ *
+ * @param {Record<string, string>} workflowContentsByPath
+ * @param {string} browserConfigContent
+ * @returns {string[]}
+ */
+export function validateBrowserWorkflow(
+  workflowContentsByPath,
+  browserConfigContent
+) {
+  const projects = browserProjectNames(browserConfigContent);
+  if (projects === null) {
+    return [
+      "playwright.config.ts must declare an explicit array of uniquely named projects so CI coverage can be verified"
+    ];
+  }
+  const content = workflowContentsByPath[RELEASE_CHECK_WORKFLOW_PATH] ?? "";
+  const suites = workflowJobContent(content, "browser-suites");
+  const aggregate = workflowJobContent(content, "browser");
+  const strategy = workflowMappingBlockContent(suites, "strategy", 4);
+  const steps = workflowStepBlocks(suites).map(parseWorkflowStepTuple);
+  const guard = workflowNamedStepContent(
+    aggregate,
+    "Require successful browser suites"
+  );
+  const guardStep = parseWorkflowStepTuple(guard.split(/\r?\n/));
+  const expectedGuard = `
+set -euo pipefail
+if [[ "\${BROWSER_RESULT:-}" != "success" ]]; then
+  echo "::error::make browser requires successful browser projects in this run (result: \${BROWSER_RESULT:-missing})."
+  exit 1
+fi`;
+  const diagnostics = workflowNamedStepContent(
+    suites,
+    "Upload browser failure diagnostics"
+  );
+  const requirements = [
+    [
+      "a fail-fast-disabled matrix covering every explicitly configured Playwright project",
+      normalizeRunCommand(strategy) ===
+        `strategy:\nfail-fast: false\nmatrix:\nproject: [${projects.join(", ")}]`
+    ],
+    [
+      "unconditional browser suites on isolated ubuntu-latest runners",
+      /^    runs-on: ubuntu-latest[ \t]*$/m.test(suites) &&
+        !/^    (?:if|needs):/m.test(suites) &&
+        steps.every(({ stepName, condition }) =>
+          stepName === "Upload browser failure diagnostics"
+            ? condition === "failure()"
+            : condition === null
+        )
+    ],
+    [
+      "one complete selected-project browser command",
+      steps.filter(
+        ({ command }) =>
+          command ===
+          "corepack pnpm run browser --project=${{ matrix.project }}"
+      ).length === 1
+    ],
+    [
+      "project-specific failure artifacts with seven-day retention",
+      /^        uses: actions\/upload-artifact@/m.test(diagnostics) &&
+        /^          name: release-check-browser-failures-\$\{\{ matrix.project \}\}[ \t]*$/m.test(
+          diagnostics
+        ) &&
+        /^          path: test-results\/[ \t]*$/m.test(diagnostics) &&
+        /^          retention-days: 7[ \t]*$/m.test(diagnostics)
+    ],
+    [
+      "a non-matrix make browser aggregate needing browser-suites with always()",
+      /^    name: make browser[ \t]*$/m.test(aggregate) &&
+        /^    needs: \[browser-suites\][ \t]*$/m.test(aggregate) &&
+        /^    if: \$\{\{ always\(\) \}\}[ \t]*$/m.test(aggregate) &&
+        !/^    strategy:/m.test(aggregate)
+    ],
+    [
+      "an unconditional aggregate guard requiring the successful matrix result",
+      workflowStepBlocks(aggregate).length === 1 &&
+        guardStep.condition === null &&
+        guardStep.command === normalizeRunCommand(expectedGuard) &&
+        normalizeRunCommand(workflowMappingBlockContent(guard, "env", 8)) ===
+          "env:\nBROWSER_RESULT: ${{ needs['browser-suites'].result }}"
+    ],
+    [
+      "browser jobs without continue-on-error",
+      !/^\s*(?:- )?continue-on-error:/m.test(suites + "\n" + aggregate)
+    ]
+  ];
+  return requirements
+    .filter(([, present]) => !present)
+    .map(
+      ([description]) =>
+        `${RELEASE_CHECK_WORKFLOW_PATH} must include ${description}`
+    );
+}
+
+/**
+ * Read project names without executing the config. Return null when the config
+ * is dynamic, ambiguous, empty, or duplicates names so coverage fails closed.
+ *
+ * @param {string} content
+ * @returns {string[] | null}
+ */
+function browserProjectNames(content) {
+  // Load the installed compiler only for this check; doctor/bootstrap must not
+  // acquire a dependency-install prerequisite. Parse without executing config.
+  const ts = /** @type {typeof import("typescript")} */ (
+    createRequire(import.meta.url)("typescript")
+  );
+  const source = ts.createSourceFile(
+    "playwright.config.ts",
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const declaration = source.statements.find(ts.isExportAssignment);
+  const config = declaration?.expression;
+  if (
+    !config ||
+    !ts.isCallExpression(config) ||
+    !ts.isIdentifier(config.expression) ||
+    config.expression.text !== "defineConfig" ||
+    config.arguments.length !== 1
+  ) {
+    return null;
+  }
+
+  /**
+   * Reject spreads and computed keys that could obscure or override a property.
+   *
+   * @param {import("typescript").Node} node
+   * @param {string} name
+   */
+  function propertyValue(node, name) {
+    if (!ts.isObjectLiteralExpression(node)) return null;
+    const properties = node.properties.filter(ts.isPropertyAssignment);
+    if (
+      properties.length !== node.properties.length ||
+      properties.some((property) => ts.isComputedPropertyName(property.name))
+    ) {
+      return null;
+    }
+    const matches = properties.filter(
+      (property) =>
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        property.name.text === name
+    );
+    return matches.length === 1 ? matches[0].initializer : null;
+  }
+
+  const projects = propertyValue(config.arguments[0], "projects");
+  if (!projects || !ts.isArrayLiteralExpression(projects)) return null;
+  const names = [];
+  for (const project of projects.elements) {
+    const name = propertyValue(project, "name");
+    if (!name || !ts.isStringLiteral(name) || !name.text) return null;
+    names.push(name.text);
+  }
+  return names.length > 0 && new Set(names).size === names.length
+    ? names
+    : null;
 }

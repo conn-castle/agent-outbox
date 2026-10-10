@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 
 import {
   assertNoForbiddenWorkflowCommands,
+  validateBrowserWorkflow,
   validateDatabaseTestCommand,
   validateMigrationReplayWorkflow,
   validatePolicyGatesWorkflow,
@@ -13,6 +15,12 @@ import {
   validateWorkflowGoChecks,
   validateWorkflowVersionPins
 } from "../scripts/foundation/ci-workflows.mjs";
+
+import {
+  parseWorkflowStepTuple,
+  workflowJobContent,
+  workflowNamedStepContent
+} from "../scripts/workflow-yaml.mjs";
 
 const FLYWAY_TOOLCHAIN_FIXTURE = {
   version: "12.10.0",
@@ -855,6 +863,15 @@ test("Policy gates rejects concurrency at workflow or job level", () => {
   }
 });
 
+const browserWorkflow = readFileSync(
+  new URL(`../${RELEASE_PATH}`, import.meta.url),
+  "utf8"
+);
+const browserConfig = readFileSync(
+  new URL("../playwright.config.ts", import.meta.url),
+  "utf8"
+);
+
 test("repository workflow files satisfy verification and policy contracts", () => {
   const directory = new URL("../.github/workflows/", import.meta.url);
   const workflows = Object.fromEntries(
@@ -876,6 +893,7 @@ test("repository workflow files satisfy verification and policy contracts", () =
     [
       ...validateRequiredPullRequestChecks(workflows),
       ...validateReleaseCheckJob(workflows, makefile),
+      ...validateBrowserWorkflow(workflows, browserConfig),
       ...validateWorkflowConcurrency(workflows),
       ...validateMigrationReplayWorkflow(workflows),
       ...validateWorkflowGoChecks(toolchain, workflows),
@@ -884,3 +902,195 @@ test("repository workflow files satisfy verification and policy contracts", () =
     []
   );
 });
+
+test("browser matrix cannot omit a newly configured project", () => {
+  const extendedConfig = browserConfig.replace(
+    "  ],\n  webServer:",
+    '    ,{ name: "chromium-tablet", use: {} }\n  ],\n  webServer:'
+  );
+  assert.notEqual(extendedConfig, browserConfig);
+  assert.notDeepEqual(
+    validateBrowserWorkflow(
+      { [RELEASE_PATH]: browserWorkflow },
+      extendedConfig
+    ),
+    []
+  );
+  const extendedWorkflow = browserWorkflow.replace(
+    "project: [chromium-desktop, chromium-mobile]",
+    "project: [chromium-desktop, chromium-mobile, chromium-tablet]"
+  );
+  assert.deepEqual(
+    validateBrowserWorkflow(
+      { [RELEASE_PATH]: extendedWorkflow },
+      extendedConfig
+    ),
+    []
+  );
+});
+
+test("browser matrix fails closed when configured coverage cannot be established", () => {
+  assert.notDeepEqual(
+    validateBrowserWorkflow(
+      { [RELEASE_PATH]: browserWorkflow },
+      browserConfig.replace(
+        "export default defineConfig(",
+        "export default withExtraProjects("
+      )
+    ),
+    []
+  );
+  for (const projects of [
+    "[]",
+    "additionalProjects",
+    '[...additionalProjects, { name: "chromium-desktop" }, { name: "chromium-mobile" }]',
+    '[{ name: "chromium-desktop", ...additionalSettings }, { name: "chromium-mobile" }]',
+    '[{ name: "chromium-desktop" }, { name: "chromium-desktop" }]'
+  ]) {
+    assert.notDeepEqual(
+      validateBrowserWorkflow(
+        { [RELEASE_PATH]: browserWorkflow },
+        `export default defineConfig({ projects: ${projects} });`
+      ),
+      [],
+      projects
+    );
+  }
+});
+
+test("browser aggregate accepts only complete successful coverage", () => {
+  const guard = workflowNamedStepContent(
+    workflowJobContent(browserWorkflow, "browser"),
+    "Require successful browser suites"
+  );
+  const { command } = parseWorkflowStepTuple(guard.split(/\r?\n/));
+  assert.ok(command);
+  /** @type {[string, string | undefined, boolean][]} */
+  const scenarios = [
+    ["both matrix instances succeeded", "success", true],
+    ["a project failed", "failure", false],
+    ["a project was cancelled", "cancelled", false],
+    ["coverage was skipped", "skipped", false],
+    ["coverage was missing", "", false],
+    ["result was missing", undefined, false],
+    ["unrecognized result", "invalid", false]
+  ];
+  for (const [description, browserResult, succeeds] of scenarios) {
+    const env = { ...process.env };
+    delete env.BROWSER_RESULT;
+    if (browserResult !== undefined) {
+      env.BROWSER_RESULT = browserResult;
+    }
+    /** @type {import("node:child_process").SpawnSyncReturns<string>} */
+    const execution = spawnSync("bash", ["-c", command], {
+      encoding: "utf8",
+      env
+    });
+    assert.equal(execution.error, undefined);
+    assert.equal(execution.status === 0, succeeds, description);
+    if (!succeeds) {
+      assert.match(execution.stdout, /::error::make browser requires/);
+    }
+  }
+});
+
+const INVALID_BROWSER_WORKFLOWS = [
+  [
+    "missing mobile",
+    "project: [chromium-desktop, chromium-mobile]",
+    "project: [chromium-desktop]"
+  ],
+  [
+    "mobile excluded",
+    "project: [chromium-desktop, chromium-mobile]",
+    "project: [chromium-desktop, chromium-mobile]\n        exclude:\n          - project: chromium-mobile"
+  ],
+  ["fail-fast cancellation", "fail-fast: false", "fail-fast: true"],
+  [
+    "conditional matrix",
+    "  browser-suites:\n",
+    "  browser-suites:\n    if: false\n"
+  ],
+  [
+    "conditional test command",
+    "        run: corepack pnpm run browser",
+    "        if: false\n        run: corepack pnpm run browser"
+  ],
+  [
+    "filtered tests",
+    "--project=${{ matrix.project }}",
+    "--project=${{ matrix.project }} --grep=smoke"
+  ],
+  [
+    "hardcoded desktop",
+    "--project=${{ matrix.project }}",
+    "--project=chromium-desktop"
+  ],
+  [
+    "matrix continue-on-error",
+    "  browser-suites:\n",
+    "  browser-suites:\n    continue-on-error: true\n"
+  ],
+  [
+    "test continue-on-error",
+    "        run: corepack pnpm run browser",
+    "        continue-on-error: true\n        run: corepack pnpm run browser"
+  ],
+  [
+    "aggregate continue-on-error",
+    "    name: make browser\n",
+    "    name: make browser\n    continue-on-error: true\n"
+  ],
+  ["missing matrix dependency", "    needs: [browser-suites]", "    needs: []"],
+  [
+    "skipped aggregate on failed dependencies",
+    "    if: ${{ always() }}",
+    "    if: success()"
+  ],
+  [
+    "conditional aggregate guard",
+    "      - name: Require successful browser suites",
+    "      - name: Require successful browser suites\n        if: false"
+  ],
+  ["accepting failure", '"success" ]]; then', '"cancelled" ]]; then'],
+  [
+    "guard exits successfully",
+    "            exit 1\n          fi\n\n  migration-replay:",
+    "            exit 0\n          fi\n\n  migration-replay:"
+  ],
+  [
+    "result guard disabled",
+    'if [[ "${BROWSER_RESULT:-}" != "success" ]]; then',
+    "if false; then"
+  ],
+  [
+    "result guard uses forged success",
+    "BROWSER_RESULT: ${{ needs['browser-suites'].result }}",
+    "BROWSER_RESULT: success"
+  ],
+  [
+    "colliding diagnostics",
+    "name: release-check-browser-failures-${{ matrix.project }}",
+    "name: release-check-browser-failures"
+  ],
+  [
+    "lost diagnostics",
+    "          path: test-results/",
+    "          path: nonexistent/"
+  ],
+  [
+    "shortened retention",
+    "          retention-days: 7",
+    "          retention-days: 1"
+  ]
+];
+for (const [description, from, to] of INVALID_BROWSER_WORKFLOWS) {
+  test(`browser workflow rejects ${description}`, () => {
+    const unsafe = browserWorkflow.replace(from, to);
+    assert.notEqual(unsafe, browserWorkflow, "mutation must change workflow");
+    assert.notDeepEqual(
+      validateBrowserWorkflow({ [RELEASE_PATH]: unsafe }, browserConfig),
+      []
+    );
+  });
+}

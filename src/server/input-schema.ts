@@ -852,6 +852,11 @@ function parsePopupOptions(
   });
 }
 
+/**
+ * Collect date-picker field errors and compare bounds only after validating the
+ * mode and values. An invalid mode returns a `none` placeholder; the submission
+ * parser rejects the accumulated errors before returning a successful submission.
+ */
 function parseDatePickerPopup(
   value: Record<string, unknown>,
   fields: ApiFieldError[],
@@ -892,6 +897,7 @@ function parseDatePickerPopup(
     );
   }
   if (
+    mode !== null &&
     minValue &&
     maxValue &&
     compareDatePickerValues(minValue, maxValue, mode) > 0
@@ -1594,10 +1600,14 @@ export function compareUtcDateTimeValues(left: string, right: string) {
   return leftKey.localeCompare(rightKey);
 }
 
+/**
+ * Compare bounds already validated for the selected mode. Datetime comparison
+ * throws for invalid values, so callers must validate before reaching it.
+ */
 function compareDatePickerValues(
   left: string,
   right: string,
-  mode: "date" | "datetime" | null
+  mode: "date" | "datetime"
 ) {
   if (mode === "date") {
     return left.localeCompare(right);
