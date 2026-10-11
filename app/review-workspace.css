@@ -4632,7 +4632,7 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 }
 
-@media (max-width: 520px) {
+@media (max-width: 800px) {
   .human-workspace {
     grid-template-rows: auto minmax(0, 1fr);
   }
@@ -4673,7 +4673,9 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   .human-workspace .app-feedback .last-undo-button {
     max-width: 100%;
   }
+}
 
+@media (max-width: 520px) {
   .human-workspace .account-banner[open] {
     z-index: 110;
   }
