@@ -68,6 +68,19 @@ export function productTransactionBeginSql(
   return sql;
 }
 
+/**
+ * Runs `callback` in one owned Postgres transaction and resolves with the
+ * callback's return value; the callback signals failure by throwing.
+ * A remembered client-side read timeout ("Query read timeout") rejects later
+ * queries and the commit, so timed-out work cannot silently succeed.
+ * Connection cleanup (`client.end()`) is attempted even when connecting
+ * fails, while rollback is attempted only after a successful connect without
+ * a remembered timeout. Transaction and rollback/connection-cleanup failures
+ * are retained together in `AggregateError`s whose cause preserves the
+ * preceding failure and which carry the cleanup terminal stage. Cleanup can
+ * fail after a successful commit, so a rejection does not prove the writes
+ * were uncommitted.
+ */
 export async function runProductTransaction<TResult>(
   connectionString: string,
   context: ProductTransactionContext,

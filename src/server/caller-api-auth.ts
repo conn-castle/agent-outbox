@@ -378,6 +378,12 @@ async function updateCallerLastUsedInSavepoint(
   }
 }
 
+/**
+ * Builds the throttled `last_used_at` bookkeeping update: rows with a missing
+ * timestamp or one older than 15 minutes qualify, and
+ * `for no key update skip locked` skips locked credential rows so this
+ * optional bookkeeping does not wait on their row locks.
+ */
 export function callerCredentialLastUsedStatement(input: {
   accountId: string;
   callerId: string;
