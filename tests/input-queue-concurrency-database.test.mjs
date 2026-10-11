@@ -395,8 +395,67 @@ test(
             "select account_id from public.agent_outbox_accounts where account_id = $1 for update",
             [fixture.accountId]
           );
+          // Synchronize the burst at the admission boundary: park each
+          // admitted writer before its account-lock wait until all 25
+          // writers have finished admission. Admission is nonblocking, so
+          // while parked no lock deadline ticks and no transaction-scoped
+          // advisory slot can be released early by a timeout rollback.
+          const writerCount = 25;
+          let admissionAttempts = 0;
+          let releaseAdmissionGate;
+          const admissionGate = new Promise((resolve) => {
+            releaseAdmissionGate = resolve;
+          });
+          const originalQuery = pg.Client.prototype.query;
+          t.mock.method(
+            pg.Client.prototype,
+            "query",
+            async function (text, values) {
+              const statementText =
+                typeof text === "string" ? text : text?.text;
+              const statementValues =
+                values ?? (typeof text === "object" ? text?.values : undefined);
+              if (
+                typeof statementText === "string" &&
+                statementText.includes("pg_try_advisory_xact_lock")
+              ) {
+                try {
+                  return await originalQuery.call(this, text, values);
+                } finally {
+                  if (
+                    statementValues?.[0] === fixture.accountId &&
+                    ++admissionAttempts >= writerCount
+                  ) {
+                    releaseAdmissionGate();
+                  }
+                }
+              }
+              if (
+                statementText ===
+                  "select account_id::text from public.agent_outbox_accounts where account_id = $1 for update" &&
+                statementValues?.[0] === fixture.accountId
+              ) {
+                await Promise.race([
+                  admissionGate,
+                  new Promise((_, reject) => {
+                    const timer = setTimeout(
+                      () =>
+                        reject(
+                          new Error(
+                            "admission gate timed out waiting for all writers to finish admission"
+                          )
+                        ),
+                      30_000
+                    );
+                    timer.unref?.();
+                  })
+                ]);
+              }
+              return originalQuery.call(this, text, values);
+            }
+          );
           let earlyRejections = 0;
-          const requests = Array.from({ length: 25 }, (_, index) =>
+          const requests = Array.from({ length: writerCount }, (_, index) =>
             post(fixture, "send", input(`admission-${index}`)).then(
               (result) => {
                 if (result.status === 429) earlyRejections++;
@@ -406,9 +465,12 @@ test(
           );
           // Do not release on the first waiter: all twenty admitted requests
           // must hold slots before the remaining five can reject deterministically.
+          // The gate above already bounds setup skew; keep a generous ceiling
+          // so slow CI waits for the rejections instead of failing early.
           await waitFor(
             async () => earlyRejections === 5,
-            "five excess requests must reject while the account remains held"
+            "five excess requests must reject while the account remains held",
+            30_000
           );
           await fixture.owner.query("rollback");
           const results = await Promise.all(requests);

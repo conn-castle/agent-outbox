@@ -3955,6 +3955,141 @@ test("product transactions retain connection diagnostics when rollback also fail
   }
 });
 
+test("product transaction aggregates carry the terminal database stage", async () => {
+  const original = Object.assign(new Error("callback failed"), {
+    code: "40001"
+  });
+  const rollbackError = new Error("rollback failed");
+  class RollbackFailureClient {
+    async connect() {}
+    /** @param {string} sql */
+    async query(sql) {
+      if (sql === "select failing") throw original;
+      if (sql === "rollback") throw rollbackError;
+      return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+    }
+    async end() {}
+  }
+  const rollbackModule =
+    /** @type {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction }} */ (
+      loadCommonJsModuleForTest("src/server/database.ts", {
+        pg: { Client: RollbackFailureClient }
+      })
+    );
+  const rollbackFailure = await rollbackModule
+    .runProductTransaction(
+      "postgresql://transaction-test",
+      { requestId: "req-rollback-stage", authSurface: "caller" },
+      (query) => query({ sql: "select failing" })
+    )
+    .then(
+      () => assert.fail("rollback failure must reject"),
+      (error) => error
+    );
+  assert.ok(rollbackFailure instanceof AggregateError);
+  assert.equal(
+    /** @type {Error & { agentOutboxOperationStage?: string }} */ (
+      rollbackFailure
+    ).agentOutboxOperationStage,
+    "database_rollback"
+  );
+
+  const endError = new Error("connection close failed");
+  class EndFailureClient {
+    async connect() {}
+    /** @param {string} sql */
+    async query(sql) {
+      if (sql === "select failing") throw original;
+      return { rows: [], rowCount: 0, command: "", oid: 0, fields: [] };
+    }
+    async end() {
+      throw endError;
+    }
+  }
+  const endModule =
+    /** @type {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction }} */ (
+      loadCommonJsModuleForTest("src/server/database.ts", {
+        pg: { Client: EndFailureClient }
+      })
+    );
+  const endFailure = await endModule
+    .runProductTransaction(
+      "postgresql://transaction-test",
+      { requestId: "req-end-stage", authSurface: "caller" },
+      (query) => query({ sql: "select failing" })
+    )
+    .then(
+      () => assert.fail("cleanup failure must reject"),
+      (error) => error
+    );
+  assert.ok(endFailure instanceof AggregateError);
+  assert.equal(
+    /** @type {Error & { agentOutboxOperationStage?: string }} */ (endFailure)
+      .agentOutboxOperationStage,
+    "database_end"
+  );
+
+  for (const [failure, terminalStage] of [
+    [rollbackFailure, "database_rollback"],
+    [endFailure, "database_end"]
+  ]) {
+    /** @type {Array<Record<string, unknown>>} */
+    const reports = [];
+    // Share host Error/AggregateError with the loaded module so the
+    // cross-realm `instanceof Error` stage check sees the test failures.
+    const { apiTransactionFailure } =
+      /** @type {typeof import("../src/server/api-errors.ts")} */ (
+        loadModuleForTest("src/server/api-errors.ts", {
+          stubs: {
+            "./correlation.ts": {
+              createCorrelationId: () => "unused-correlation"
+            },
+            "./logging.ts": { durationSinceMs, emitRuntimeLog },
+            "./sentry.ts": {
+              /**
+               * @param {unknown} _error
+               * @param {Record<string, unknown>} input
+               */
+              reportRuntimeFailure(_error, input) {
+                reports.push(input);
+                return {
+                  error_id: String(input.errorId),
+                  sentry_captured: false,
+                  log: {}
+                };
+              }
+            }
+          },
+          globals: {
+            console,
+            process,
+            Response,
+            Headers,
+            Error,
+            AggregateError
+          },
+          fallbackRequire: require
+        })
+      );
+    const context = {
+      requestId: "req-stage-precedence",
+      correlationId: "corr-stage-precedence",
+      route: "/api/input/send",
+      method: "POST",
+      startedAtMs: Date.now()
+    };
+    const result = apiTransactionFailure(failure, context, {
+      operation: "input_send",
+      operationStage: "input_profile",
+      message: "Input queue operation failed unexpectedly.",
+      unavailableMessage: "Input queue operation is temporarily unavailable."
+    });
+    assert.equal(result.ok, false);
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].operation_stage, terminalStage);
+  }
+});
+
 test("product transaction cleanup closes failed connects and does not queue rollback after a read timeout", async () => {
   const connectError = Object.assign(new Error("private connect detail"), {
     code: "ECONNRESET"

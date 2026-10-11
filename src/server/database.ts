@@ -154,10 +154,13 @@ export async function runProductTransaction<TResult>(
         stage = "database_rollback";
         await client.query("rollback");
       } catch (rollbackError) {
-        failure = new AggregateError(
-          [failure, withTransactionStage(rollbackError, stage)],
-          "Product transaction and rollback both failed.",
-          { cause: failure }
+        failure = withTransactionStage(
+          new AggregateError(
+            [failure, withTransactionStage(rollbackError, stage)],
+            "Product transaction and rollback both failed.",
+            { cause: failure }
+          ),
+          stage
         );
       }
     }
@@ -171,10 +174,13 @@ export async function runProductTransaction<TResult>(
   } catch (endError) {
     const stagedEndError = withTransactionStage(endError, stage);
     failure = failed
-      ? new AggregateError(
-          [failure, stagedEndError],
-          "Product transaction and connection cleanup both failed.",
-          { cause: failure }
+      ? withTransactionStage(
+          new AggregateError(
+            [failure, stagedEndError],
+            "Product transaction and connection cleanup both failed.",
+            { cause: failure }
+          ),
+          stage
         )
       : stagedEndError;
     failed = true;
