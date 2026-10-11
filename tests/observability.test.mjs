@@ -56,6 +56,7 @@ import {
   emitRuntimeLog,
   safeErrorCode,
   safeErrorName,
+  safeOperationStage,
   safeLogEvent
 } from "../src/server/logging.ts";
 import { absoluteHttpOrigin } from "../src/server/env.ts";
@@ -139,7 +140,12 @@ function loadSentryModuleForTest(sentryStub) {
       "./correlation.ts": {
         createCorrelationId: (/** @type {string} */ prefix) => `${prefix}_test`
       },
-      "./logging.ts": { emitRuntimeLog, safeErrorCode, safeErrorName },
+      "./logging.ts": {
+        emitRuntimeLog,
+        safeErrorCode,
+        safeErrorName,
+        safeOperationStage
+      },
       "./observability.ts": { runtimeRelease }
     },
     globals: { Error, console, process },
@@ -505,7 +511,10 @@ function loadInputQueueModuleForTest(
         async accountLimitProfileForAccount() {},
         accountWriteLockStatement() {},
         async enforceAcceptedInputSubmissionLimits() {},
-        async enforceAccountRequestLimits() {}
+        async enforceAccountRequestLimits() {},
+        async enforceInputSubmissionAdmission() {
+          return { ok: true };
+        }
       },
       "./database.ts": {},
       "./input-schema.ts": {
@@ -3946,6 +3955,172 @@ test("product transactions retain connection diagnostics when rollback also fail
   }
 });
 
+test("product transaction cleanup closes failed connects and does not queue rollback after a read timeout", async () => {
+  const connectError = Object.assign(new Error("private connect detail"), {
+    code: "ECONNRESET"
+  });
+  let connectClosed = false;
+  class ConnectFailureClient {
+    async connect() {
+      throw connectError;
+    }
+    async end() {
+      connectClosed = true;
+    }
+  }
+  const connectModule =
+    /** @type {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction }} */ (
+      loadCommonJsModuleForTest("src/server/database.ts", {
+        pg: { Client: ConnectFailureClient }
+      })
+    );
+  await assert.rejects(
+    connectModule.runProductTransaction(
+      "postgresql://transaction-test",
+      { requestId: "req-connect-cleanup", authSurface: "caller" },
+      async () => undefined
+    ),
+    (error) => error === connectError
+  );
+  assert.equal(connectClosed, true);
+
+  const timeout = new Error("Query read timeout");
+  /** @type {string[]} */
+  const calls = [];
+  let timeoutClosed = false;
+  class TimeoutClient {
+    async connect() {}
+    /** @param {string} sql */
+    async query(sql) {
+      calls.push(sql);
+      if (sql === "select delayed") throw timeout;
+      return { rows: [], rowCount: 0, command: "BEGIN", oid: 0, fields: [] };
+    }
+    async end() {
+      timeoutClosed = true;
+    }
+  }
+  const timeoutModule =
+    /** @type {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction }} */ (
+      loadCommonJsModuleForTest("src/server/database.ts", {
+        pg: { Client: TimeoutClient }
+      })
+    );
+  await assert.rejects(
+    timeoutModule.runProductTransaction(
+      "postgresql://transaction-test",
+      { requestId: "req-timeout-cleanup", authSurface: "caller" },
+      (query) => query({ sql: "select delayed" })
+    ),
+    (error) => error === timeout
+  );
+  assert.equal(timeoutClosed, true);
+  assert.equal(calls.includes("rollback"), false);
+
+  /** @type {string[]} */
+  const caughtTimeoutCalls = [];
+  class CaughtTimeoutClient {
+    async connect() {}
+    /** @param {string} sql */
+    async query(sql) {
+      caughtTimeoutCalls.push(sql);
+      if (sql === "select delayed") throw timeout;
+      return { rows: [], rowCount: 0, command: "BEGIN", oid: 0, fields: [] };
+    }
+    async end() {}
+  }
+  const caughtTimeoutModule =
+    /** @type {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction }} */ (
+      loadCommonJsModuleForTest("src/server/database.ts", {
+        pg: { Client: CaughtTimeoutClient }
+      })
+    );
+  await assert.rejects(
+    caughtTimeoutModule.runProductTransaction(
+      "postgresql://transaction-test",
+      { requestId: "req-caught-timeout", authSurface: "caller" },
+      async (query) => {
+        await query({ sql: "select delayed" }).catch(() => undefined);
+        return "false-success";
+      }
+    ),
+    (error) => error === timeout
+  );
+  assert.equal(caughtTimeoutCalls.includes("commit"), false);
+  assert.equal(caughtTimeoutCalls.includes("rollback"), false);
+
+  const commitError = Object.assign(new Error("commit failed"), {
+    code: "40001"
+  });
+  class CommitFailureClient {
+    async connect() {}
+    /** @param {string} sql */
+    async query(sql) {
+      if (sql === "commit") throw commitError;
+      return { rows: [], rowCount: 0, command: "BEGIN", oid: 0, fields: [] };
+    }
+    async end() {}
+  }
+  const commitFailureModule =
+    /** @type {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction }} */ (
+      loadCommonJsModuleForTest("src/server/database.ts", {
+        pg: { Client: CommitFailureClient }
+      })
+    );
+  await assert.rejects(
+    commitFailureModule.runProductTransaction(
+      "postgresql://transaction-test",
+      { requestId: "req-commit-stage", authSurface: "caller" },
+      async () => "callback-completed"
+    ),
+    (error) => {
+      assert.equal(error, commitError);
+      assert.equal(
+        /** @type {Error & { agentOutboxOperationStage?: string }} */ (error)
+          .agentOutboxOperationStage,
+        "database_commit"
+      );
+      return true;
+    }
+  );
+
+  for (const thrown of [undefined, null, 0]) {
+    let primitiveClosed = false;
+    class PrimitiveFailureClient {
+      async connect() {}
+      async query() {
+        return {
+          rows: [],
+          rowCount: 0,
+          command: "BEGIN",
+          oid: 0,
+          fields: []
+        };
+      }
+      async end() {
+        primitiveClosed = true;
+      }
+    }
+    const primitiveModule =
+      /** @type {{ runProductTransaction: typeof import("../src/server/database.ts").runProductTransaction }} */ (
+        loadCommonJsModuleForTest("src/server/database.ts", {
+          pg: { Client: PrimitiveFailureClient }
+        })
+      );
+    await assert.rejects(
+      primitiveModule.runProductTransaction(
+        "postgresql://transaction-test",
+        { requestId: "req-primitive-cleanup", authSurface: "caller" },
+        async () => {
+          throw thrown;
+        }
+      ),
+      (error) => error === thrown
+    );
+    assert.equal(primitiveClosed, true);
+  }
+});
+
 test("input replacement failures expose safe diagnostic codes only in logs and Sentry", async () => {
   const {
     reportRuntimeFailure,
@@ -4027,9 +4202,14 @@ test("input replacement failures expose safe diagnostic codes only in logs and S
         });
         assert.equal(logs.length, 1);
         assert.equal(logs[0].operation, "input_replace");
+        assert.equal(logs[0].operation_stage, "input_profile");
         assert.equal(logs[0].error_code, expected);
         assert.equal(tagSnapshots[index].error_code, expected);
         assert.equal(sentryContexts[index].value.error_code, expected);
+        assert.equal(
+          sentryContexts[index].value.operation_stage,
+          "input_profile"
+        );
         assert.equal(tagSnapshots[index].error_id, context.correlationId);
         assert.equal(logs[0].error_id, context.correlationId);
         const evidence = JSON.stringify([
@@ -4223,6 +4403,39 @@ test("sentry release metadata and source-map upload gate require the release pat
     () => {
       assert.equal(sentryReleaseUploadConfig(), null);
       assert.equal(sentryReleaseUploadEnabled(), false);
+    }
+  );
+});
+
+test("unknown diagnostic stages cannot enter logs or Sentry context", async () => {
+  const { reportRuntimeFailure, sentryContexts } =
+    loadRecordingSentryModuleForTest();
+  await withProcessEnv(
+    {
+      APP_ENV: "production",
+      SENTRY_RELEASE: "test-release",
+      NODE_ENV: "production",
+      CI: undefined,
+      SENTRY_DSN: "https://examplePublicKey@o0.ingest.sentry.io/0"
+    },
+    async () => {
+      const logs = await captureStructuredLogs(async () => {
+        reportRuntimeFailure(new Error("private failure detail"), {
+          errorId: "corr-stage-scrub",
+          surface: "api",
+          operation: "input_send",
+          operation_stage: "private_stage_content",
+          message: "Input failed."
+        });
+      });
+      assert.equal(logs[0].operation_stage, undefined);
+      assert.equal(sentryContexts[0].value.operation_stage, null);
+      assert.equal(
+        JSON.stringify([logs, sentryContexts]).includes(
+          "private_stage_content"
+        ),
+        false
+      );
     }
   );
 });

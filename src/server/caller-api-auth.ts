@@ -387,13 +387,18 @@ export function callerCredentialLastUsedStatement(input: {
     sql: `
       update public.agent_outbox_caller_credentials
       set last_used_at = now()
-      where account_id = $1
-        and caller_id = $2
-        and key_id = $3
-        and (
-          last_used_at is null
-          or last_used_at < now() - interval '15 minutes'
-        )
+      where caller_credential_id in (
+        select caller_credential_id
+        from public.agent_outbox_caller_credentials
+        where account_id = $1
+          and caller_id = $2
+          and key_id = $3
+          and (
+            last_used_at is null
+            or last_used_at < now() - interval '15 minutes'
+          )
+        for no key update skip locked
+      )
     `,
     values: [input.accountId, input.callerId, input.keyId]
   };

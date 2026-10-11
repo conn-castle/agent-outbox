@@ -19,6 +19,7 @@ export type RuntimeLogEvent = {
   status_code?: number;
   duration_ms?: number;
   operation: string;
+  operation_stage?: string;
   path_shape?: string;
   multipart_boundary?: string;
   content_length_state?: string;
@@ -61,6 +62,7 @@ const SAFE_LOG_KEYS = new Set([
   "status_code",
   "duration_ms",
   "operation",
+  "operation_stage",
   "path_shape",
   "multipart_boundary",
   "content_length_state",
@@ -86,6 +88,29 @@ const SAFE_LOG_KEYS = new Set([
   "message"
 ]);
 const SAFE_ERROR_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/;
+const SAFE_OPERATION_STAGES = new Set([
+  "database_connect",
+  "database_begin",
+  "database_context",
+  "database_callback",
+  "database_commit",
+  "database_rollback",
+  "database_end",
+  "input_timeouts",
+  "input_admission",
+  "input_account_lock",
+  "input_profile",
+  "input_request_limits",
+  "input_item_lock",
+  "input_submission_limits",
+  "input_write"
+]);
+
+export function safeOperationStage(value: unknown): string | undefined {
+  return typeof value === "string" && SAFE_OPERATION_STAGES.has(value)
+    ? value
+    : undefined;
+}
 const STRIPE_ERROR_TYPES = new Set([
   "StripeCardError",
   "StripeInvalidRequestError",
@@ -120,7 +145,8 @@ export function safeLogEvent(event: RuntimeLogEvent) {
       return (
         SAFE_LOG_KEYS.has(key) &&
         value !== undefined &&
-        (key !== "error_code" || safeErrorCodeValue(value) !== undefined)
+        (key !== "error_code" || safeErrorCodeValue(value) !== undefined) &&
+        (key !== "operation_stage" || safeOperationStage(value) !== undefined)
       );
     })
     .map(([key, value]) => {

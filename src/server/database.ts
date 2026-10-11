@@ -82,10 +82,30 @@ export async function runProductTransaction<TResult>(
     statement_timeout: DATABASE_CANARY_TIMEOUT_MS
   });
 
-  await client.connect();
-
+  let connected = false;
+  let result: TResult | undefined;
+  let failure: unknown;
+  let failed = false;
+  let clientReadTimeout: unknown;
+  let clientReadTimedOut = false;
+  let stage = "database_connect";
+  const query: ProductTransactionQuery = async (statement) => {
+    if (clientReadTimedOut) throw clientReadTimeout;
+    try {
+      return await client.query(statement.sql, statement.values);
+    } catch (error) {
+      if (isClientQueryReadTimeout(error)) {
+        clientReadTimeout = error;
+        clientReadTimedOut = true;
+      }
+      throw error;
+    }
+  };
   try {
-    await client.query(productTransactionBeginSql(options.isolationLevel));
+    await client.connect();
+    connected = true;
+    stage = "database_begin";
+    await query({ sql: productTransactionBeginSql(options.isolationLevel) });
     const contextEntries = [
       ["agent_outbox.request_id", context.requestId],
       ["agent_outbox.auth_surface", context.authSurface],
@@ -101,36 +121,84 @@ export async function runProductTransaction<TResult>(
     const contextSetters = contextEntries.map(
       (_, index) => `set_config($${index * 2 + 1}, $${index * 2 + 2}, true)`
     );
-    await client.query(`select ${contextSetters.join(", ")}`, contextValues);
-
-    const result = await callback((statement) => {
-      return client.query(statement.sql, statement.values);
+    stage = "database_context";
+    await query({
+      sql: `select ${contextSetters.join(", ")}`,
+      values: contextValues
     });
+
+    stage = "database_callback";
+    result = await callback(query);
+    if (clientReadTimedOut) {
+      throw clientReadTimeout;
+    }
 
     // Postgres answers `commit` on an aborted transaction with a ROLLBACK tag
     // instead of an error, so a callback that caught a statement error would
     // otherwise report success for writes that were discarded.
-    const commitResult = await client.query("commit");
+    stage = "database_commit";
+    const commitResult = await query({ sql: "commit" });
     if (commitResult.command === "ROLLBACK") {
       throw new Error(
         "Product transaction was aborted by a caught statement error; commit rolled back."
       );
     }
-    return result;
   } catch (error) {
-    try {
-      await client.query("rollback");
-    } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        "Product transaction and rollback both failed.",
-        { cause: error }
-      );
+    failed = true;
+    failure = withTransactionStage(error, stage);
+    // node-postgres's client-side read timeout leaves its query active. Do not
+    // queue another five-second rollback behind it; end() force-closes the
+    // owned connection and preserves the original timeout for classification.
+    if (connected && !clientReadTimedOut) {
+      try {
+        stage = "database_rollback";
+        await client.query("rollback");
+      } catch (rollbackError) {
+        failure = new AggregateError(
+          [failure, withTransactionStage(rollbackError, stage)],
+          "Product transaction and rollback both failed.",
+          { cause: failure }
+        );
+      }
     }
-    throw error;
-  } finally {
-    await client.end();
   }
+
+  try {
+    stage = "database_end";
+    // pg 8.23 retains its active query after a read timeout. end() uses
+    // the driver's forced-close path for that query; do not enqueue rollback.
+    await client.end();
+  } catch (endError) {
+    const stagedEndError = withTransactionStage(endError, stage);
+    failure = failed
+      ? new AggregateError(
+          [failure, stagedEndError],
+          "Product transaction and connection cleanup both failed.",
+          { cause: failure }
+        )
+      : stagedEndError;
+    failed = true;
+  }
+  if (failed) throw failure;
+  return result as TResult;
+}
+
+function isClientQueryReadTimeout(error: unknown) {
+  return error instanceof Error && error.message === "Query read timeout";
+}
+
+function withTransactionStage(error: unknown, stage: string) {
+  if (
+    error instanceof Error &&
+    Object.isExtensible(error) &&
+    !("agentOutboxOperationStage" in error)
+  ) {
+    Object.defineProperty(error, "agentOutboxOperationStage", {
+      value: stage,
+      enumerable: false
+    });
+  }
+  return error;
 }
 
 /**
@@ -220,9 +288,8 @@ export async function runTransactionContextCanary(connectionString: string) {
     statement_timeout: DATABASE_CANARY_TIMEOUT_MS
   });
 
-  await client.connect();
-
   try {
+    await client.connect();
     await client.query(begin.sql, begin.values);
     await client.query(setContext.sql, setContext.values);
     const result = await client.query<{ request_id: string }>(

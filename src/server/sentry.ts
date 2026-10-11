@@ -4,6 +4,7 @@ import {
   emitRuntimeLog,
   safeErrorCode,
   safeErrorName,
+  safeOperationStage,
   type RuntimeLogEvent
 } from "./logging.ts";
 import { createCorrelationId } from "./correlation.ts";
@@ -38,6 +39,8 @@ export function captureRuntimeException(
     errorId: string;
     suppressCapture?: boolean;
     operation?: string;
+    operationStage?: string;
+    durationMs?: number;
     route?: string;
   }
 ) {
@@ -66,6 +69,8 @@ export function captureRuntimeException(
         error_id: input.errorId,
         ...(errorCode ? { error_code: errorCode } : {}),
         operation: input.operation ?? null,
+        operation_stage: safeOperationStage(input.operationStage) ?? null,
+        duration_ms: input.durationMs ?? null,
         route: input.route ?? null,
         release
       });
@@ -107,6 +112,8 @@ export function reportRuntimeFailure(
     errorId,
     suppressCapture,
     operation: event.operation,
+    operationStage: event.operation_stage,
+    durationMs: event.duration_ms,
     route: event.route
   });
   const log = emitRuntimeLog({

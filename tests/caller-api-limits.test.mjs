@@ -7,6 +7,7 @@ import {
   enforceAcceptedInputSubmissionLimits,
   enforceAccountRequestLimits,
   enforceHumanFileUploadLimits,
+  enforceInputSubmissionAdmission,
   incrementQuotaWindowStatement,
   quotaWindow
 } from "../src/server/caller-api-limits.ts";
@@ -792,6 +793,20 @@ test("input submissions return the full error when no concurrency slot is availa
     }
   });
   assert.equal(query.calls.length, 2);
+});
+
+test("early input admission acquires the shared slot without tier or account reads", async () => {
+  const query = fakeQuery([[{ acquired: true }]]);
+  const result = await enforceInputSubmissionAdmission(query, identity);
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(query.calls.length, 1);
+  assert.match(query.calls[0].sql, /pg_try_advisory_xact_lock/);
+  assert.deepEqual(query.calls[0].values, [
+    identity.accountId,
+    20,
+    "concurrent_write_requests_per_account"
+  ]);
 });
 
 test("input submissions short-circuit active blocks with the full normalized error", async () => {
