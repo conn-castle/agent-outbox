@@ -238,6 +238,13 @@ slots for them.
 
 ## Render typed decisions deliberately
 
+The hosted review app offers a Dark mode toggle in its top bar beside the
+account menu. Light mode is the default. The choice applies to the review queue,
+history, menus, and dialogs, and is remembered in browser-local storage across
+navigation and reloads. It does not sync between devices. If browser storage is
+unavailable, the toggle still changes the current page and reports that the
+preference could not be saved.
+
 The hosted review card includes an icon-only feedback utility, separate from
 answer buttons. Its tooltip is “Add feedback” when empty and “Edit feedback”
 when a draft is present; a dot marks the latter state. The popup's Save button

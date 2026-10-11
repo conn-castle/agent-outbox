@@ -72,6 +72,7 @@ import {
 } from "../../shared/human-review-sort";
 import { htmlToPlainText } from "../../shared/html-text";
 import { AccountBanner } from "./AccountBanner";
+import { ThemeToggle } from "./ThemeToggle";
 import {
   LastAnswerUndoForm,
   type HumanMutationSubmission,
@@ -1140,31 +1141,34 @@ export function ReviewWorkspace({
           ))}
         </nav>
         <div className="app-account">
-          {lastError ? (
-            <p className="last-action-error" role="alert" title={lastError}>
-              <span>{lastError}</span>
-              <button
-                type="button"
-                aria-label="Dismiss error"
-                onClick={() => setLastError(null)}
-              >
-                <X aria-hidden="true" />
-              </button>
-            </p>
-          ) : null}
-          {lastUndo ? (
-            <LastAnswerUndoForm
-              undo={lastUndo}
-              disabled={lockedIds.has(lastUndo.inputItemId)}
-              onMutation={(submission) => {
-                enqueueHumanMutation(
-                  submission,
-                  lastUndo.rowSnapshots,
-                  viewRef.current.status === "pending"
-                );
-              }}
-            />
-          ) : null}
+          <div className="app-feedback">
+            {lastError ? (
+              <p className="last-action-error" role="alert" title={lastError}>
+                <span>{lastError}</span>
+                <button
+                  type="button"
+                  aria-label="Dismiss error"
+                  onClick={() => setLastError(null)}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </p>
+            ) : null}
+            {lastUndo ? (
+              <LastAnswerUndoForm
+                undo={lastUndo}
+                disabled={lockedIds.has(lastUndo.inputItemId)}
+                onMutation={(submission) => {
+                  enqueueHumanMutation(
+                    submission,
+                    lastUndo.rowSnapshots,
+                    viewRef.current.status === "pending"
+                  );
+                }}
+              />
+            ) : null}
+          </div>
+          <ThemeToggle />
           <AccountBanner banner={banner} identity={identity} />
           <span className="sr-only" data-testid="fixture-account-id">
             {session.account.accountId}
