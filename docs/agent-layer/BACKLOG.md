@@ -27,6 +27,12 @@ Unscheduled user-visible features and tasks (distinct from issues; not refactors
 
 <!-- ENTRIES START -->
 
+- Backlog 2026-10-10 hermetic-dogfooding: Hermetic local dogfooding environment
+    Priority: Low. Area: development, CLI, browser
+    Description: Provide a repeatable local environment for agents and humans to exercise the real Agent Outbox workflow without production accounts, data, credentials, or provider access.
+    Acceptance criteria: Caller connection, CLI submission, browser review, output read, file download, and acknowledgement work against disposable migrated Postgres with local identities, isolated browser and CLI state, synthetic data, and enforced outbound network isolation.
+    Notes: Deferred due to scope; reuse the browser harness where practical, but its canned queue and cookie-backed answers do not exercise the full database workflow. Keep external-service substitutes local and provider integration checks separate.
+
 - Backlog 2026-08-20 real-user-journey-certification: Real-user-journey certification gate
     Priority: Low. Area: CI, browser
     Description: Add a real-user-journey certification harness and a human-only `real-user-journey-approved` label that Policy gates require when that harness changes.
