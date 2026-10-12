@@ -25,9 +25,10 @@ tmp/
 # Local browser and agent review artifacts
 /.playwright-cli/
 /.agent-layer/tmp/
+/grove/pin_gc_orphans.json
 
 # >>> agent-layer
-# Template hash: 5b6ad04c9700375672b3a082a9a02eb2e79ff3c7160173c8825f516ecc352e4e
+# Template hash: 822f17ad8d3c5c75464d7c8b10f908d5295504b2cf9c22d9fae3e9416bc01c94
 # Managed by Agent Layer. To customize, edit .agent-layer/gitignore.block
 # and re-run `al sync` to apply changes.
 
@@ -39,7 +40,6 @@ tmp/
 
 # Agent Layer-generated instruction shims
 /AGENTS.md
-/CLAUDE.md
 /.github/copilot-instructions.md
 
 # Agent Layer-generated client configs + artifacts
