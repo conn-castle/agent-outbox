@@ -290,6 +290,80 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   min-width: 0;
 }
 
+.human-workspace .navigation-overflow {
+  position: relative;
+  display: none;
+}
+
+.human-workspace .navigation-overflow > summary {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.055);
+  color: #f8f5ee;
+  list-style: none;
+  cursor: pointer;
+}
+
+.human-workspace .navigation-overflow > summary::-webkit-details-marker {
+  display: none;
+}
+
+.human-workspace .navigation-overflow > summary:hover,
+.human-workspace .navigation-overflow[open] > summary {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.human-workspace .navigation-overflow > summary:focus-visible {
+  outline: 2px solid var(--review-accent-light);
+  outline-offset: 2px;
+}
+
+.human-workspace .navigation-popover {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  display: grid;
+  gap: 0.25rem;
+  width: 12rem;
+  padding: 0.4rem;
+  border: 1px solid var(--review-line-strong);
+  border-radius: 0.65rem;
+  background: var(--review-paper);
+  color: var(--review-text);
+  box-shadow: 0 0.8rem 2rem rgba(17, 22, 23, 0.22);
+}
+
+.human-workspace .navigation-popover a {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding-inline: 0.75rem;
+  border-radius: 0.35rem;
+  color: inherit;
+  font-size: var(--queue-type-meta);
+  text-decoration: none;
+}
+
+.human-workspace .navigation-popover a:hover,
+.human-workspace .navigation-popover a[aria-current="page"] {
+  background: var(--review-paper-soft);
+  color: var(--review-accent-dark);
+}
+
+.human-workspace .navigation-popover a[aria-current="page"] {
+  font-weight: 700;
+}
+
+.human-workspace .navigation-popover a:focus-visible {
+  outline: 2px solid var(--review-accent);
+  outline-offset: -2px;
+}
+
 .human-workspace .last-action-error {
   display: flex;
   min-width: 0;
@@ -4437,8 +4511,9 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 @media (max-width: 800px) {
   .human-workspace .account-banner > summary {
     width: 2.75rem;
-    min-height: 2.75rem;
-    padding: 0.2rem;
+    height: 2.75rem;
+    justify-content: center;
+    padding: 0;
   }
 
   .human-workspace .account-banner > summary > span:last-child {
@@ -4638,32 +4713,34 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 
   .human-workspace .app-bar {
-    position: relative;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 0 0.5rem;
-    padding-bottom: 0.4rem;
   }
 
-  .human-workspace .app-location {
-    grid-column: 1 / -1;
-    grid-row: 2;
+  .human-workspace .app-bar > .app-location {
+    display: none;
+  }
+
+  .human-workspace .navigation-overflow {
+    display: block;
   }
 
   .human-workspace .app-account {
-    position: static;
     justify-content: flex-end;
     gap: 0.4rem;
     padding-block: 0.45rem;
   }
 
   .human-workspace .app-feedback {
-    position: absolute;
+    position: fixed;
     right: 1rem;
-    bottom: 0.4rem;
+    bottom: 1rem;
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: center;
     gap: 0.4rem;
-    max-width: calc(100% - 13rem);
+    max-width: calc(100% - 2rem);
   }
 
   .human-workspace .app-feedback:empty {
@@ -4699,11 +4776,11 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
   .human-workspace .account-popover {
     position: fixed;
-    top: 7.5rem;
+    top: 4.5rem;
     right: 0.75rem;
     left: 0.75rem;
     width: auto;
-    max-height: calc(100dvh - 8.25rem);
+    max-height: calc(100dvh - 5.25rem);
   }
 
   .human-workspace .account-profile {

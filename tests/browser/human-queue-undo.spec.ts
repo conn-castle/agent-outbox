@@ -1,3 +1,4 @@
+import { openPrimaryNavigation } from "./navigation";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const permit = "Review neighborhood permit brief";
@@ -39,6 +40,7 @@ test("undo restores only the last answer, in its original queue position, across
   const restored = mutationResponse(page);
   await page.getByRole("button", { name: "Undo answer", exact: true }).click();
   await restored;
+  await openPrimaryNavigation(page);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "Review queue", exact: true })
@@ -126,6 +128,7 @@ for (const outcome of ["all", "partial", "none"] as const) {
         answered,
         initial.filter((title) => !answered.includes(title))
       );
+      await openPrimaryNavigation(page);
       await page
         .getByRole("navigation", { name: "Primary" })
         .getByRole("link", { name: "Review queue", exact: true })
@@ -607,6 +610,7 @@ async function expectHistory(
   answered: string[],
   pending: string[]
 ) {
+  await openPrimaryNavigation(page);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History", exact: true })

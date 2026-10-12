@@ -38,6 +38,7 @@ import {
   Filter,
   GripVertical,
   ListChecks,
+  MoreHorizontal,
   Plus,
   RotateCcw,
   Search,
@@ -1099,6 +1100,24 @@ export function ReviewWorkspace({
     return () => window.removeEventListener("keydown", moveQueueFocus);
   }, []);
 
+  const statusLinks = STATUS_LINKS.map(({ status, label }) => (
+    <Link
+      key={status}
+      className={view.status === status ? "active" : undefined}
+      href={humanReviewHref({ ...controlView, search, status, page: 1 })}
+      onNavigate={onStatusNavigate(status)}
+      onClick={(event) => {
+        const disclosure = event.currentTarget.closest("details");
+        if (!disclosure) return;
+        disclosure.open = false;
+        disclosure.querySelector<HTMLElement>("summary")?.focus();
+      }}
+      aria-current={view.status === status ? "page" : undefined}
+    >
+      {label}
+    </Link>
+  ));
+
   return (
     <main
       ref={workspaceRef}
@@ -1123,22 +1142,7 @@ export function ReviewWorkspace({
           </span>
         </Link>
         <nav className="app-location" aria-label="Primary">
-          {STATUS_LINKS.map(({ status, label }) => (
-            <Link
-              key={status}
-              className={view.status === status ? "active" : undefined}
-              href={humanReviewHref({
-                ...controlView,
-                search,
-                status,
-                page: 1
-              })}
-              onNavigate={onStatusNavigate(status)}
-              aria-current={view.status === status ? "page" : undefined}
-            >
-              {label}
-            </Link>
-          ))}
+          {statusLinks}
         </nav>
         <div className="app-account">
           <div className="app-feedback">
@@ -1170,6 +1174,14 @@ export function ReviewWorkspace({
           </div>
           <ThemeToggle />
           <AccountBanner banner={banner} identity={identity} />
+          <details className="navigation-overflow" data-dismissible-disclosure>
+            <summary aria-label="Navigation menu">
+              <MoreHorizontal aria-hidden="true" size={20} />
+            </summary>
+            <nav className="navigation-popover" aria-label="Primary">
+              {statusLinks}
+            </nav>
+          </details>
           <span className="sr-only" data-testid="fixture-account-id">
             {session.account.accountId}
           </span>

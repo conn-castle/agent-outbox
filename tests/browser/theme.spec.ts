@@ -1,3 +1,4 @@
+import { openPrimaryNavigation } from "./navigation";
 import { expect, test } from "@playwright/test";
 
 test("review theme switches by keyboard and persists across history and reloads", async ({
@@ -36,6 +37,7 @@ test("review theme switches by keyboard and persists across history and reloads"
     page.viewportSize()!.width
   );
 
+  await openPrimaryNavigation(page);
   await page.getByRole("link", { name: "History", exact: true }).click();
   await expect(page).toHaveURL(/status=answered/);
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
@@ -111,20 +113,23 @@ test("theme header controls stay visible with Undo at phone and tablet widths", 
       await page.setViewportSize({ width, height: 900 });
       const controls = await page
         .locator(
-          ".app-brand, .app-location a, .theme-toggle, .account-banner > summary, .last-undo-button"
+          ".app-brand, .app-location a, .theme-toggle, .account-banner > summary, .navigation-overflow > summary, .last-undo-button"
         )
         .evaluateAll((elements) =>
-          elements.map((element) => {
-            const { left, right, top, bottom } =
-              element.getBoundingClientRect();
-            return {
-              label: element.textContent || element.getAttribute("aria-label"),
-              left,
-              right,
-              top,
-              bottom
-            };
-          })
+          elements
+            .filter((element) => element.checkVisibility())
+            .map((element) => {
+              const { left, right, top, bottom } =
+                element.getBoundingClientRect();
+              return {
+                label:
+                  element.textContent || element.getAttribute("aria-label"),
+                left,
+                right,
+                top,
+                bottom
+              };
+            })
         );
       for (const [index, control] of controls.entries()) {
         expect(
@@ -147,6 +152,81 @@ test("theme header controls stay visible with Undo at phone and tablet widths", 
           ).toBe(false);
         }
       }
+      if (width <= 800) {
+        expect(
+          (await page.locator(".app-bar").boundingBox())!.height
+        ).toBeLessThanOrEqual(64);
+        const centers = await page
+          .locator(".account-banner > summary")
+          .evaluate((trigger) => {
+            const outer = trigger.getBoundingClientRect();
+            const inner = trigger
+              .querySelector(".account-avatar")!
+              .getBoundingClientRect();
+            return {
+              x: (inner.left + inner.right - outer.left - outer.right) / 2,
+              y: (inner.top + inner.bottom - outer.top - outer.bottom) / 2
+            };
+          });
+        expect(Math.abs(centers.x)).toBeLessThan(0.5);
+        expect(Math.abs(centers.y)).toBeLessThan(0.5);
+      }
     }
   }
+});
+
+test("compact navigation opens, dismisses and switches views without a second header row", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  const trigger = page.getByLabel("Navigation menu", { exact: true });
+  const menu = page.locator("details.navigation-overflow");
+  const primary = page.getByRole("navigation", { name: "Primary" });
+  await expect(primary).not.toBeVisible();
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(primary).toBeVisible();
+  const lightMenuBackground = await primary.evaluate(
+    (element) => getComputedStyle(element).backgroundColor
+  );
+  await expect(
+    primary.getByRole("link", { name: "Review queue", exact: true })
+  ).toHaveAttribute("aria-current", "page");
+  await page.keyboard.press("Escape");
+  await expect(menu).not.toHaveAttribute("open", "");
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page
+    .getByRole("heading", { name: "Needs review" })
+    .click({ position: { x: 5, y: 5 } });
+  await expect(menu).not.toHaveAttribute("open", "");
+  await trigger.click();
+  await primary.getByRole("link", { name: "History", exact: true }).click();
+  await expect(page).toHaveURL(/status=answered/);
+  await expect(menu).not.toHaveAttribute("open", "");
+  await expect(
+    page.getByRole("heading", { name: "Answered reviews" })
+  ).toBeVisible();
+  await trigger.click();
+  await expect(
+    primary.getByRole("link", { name: "History", exact: true })
+  ).toHaveAttribute("aria-current", "page");
+  await primary
+    .getByRole("link", { name: "Review queue", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Needs review" })
+  ).toBeVisible();
+  await expect(menu).not.toHaveAttribute("open", "");
+  await page.getByRole("button", { name: "Dark mode", exact: true }).click();
+  await trigger.click();
+  expect(
+    await primary.evaluate(
+      (element) => getComputedStyle(element).backgroundColor
+    )
+  ).not.toBe(lightMenuBackground);
+  await page.getByLabel("Account status").locator("summary").click();
+  await expect(menu).not.toHaveAttribute("open", "");
 });
