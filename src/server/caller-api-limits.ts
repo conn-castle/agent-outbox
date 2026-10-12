@@ -16,6 +16,7 @@ import {
   accountLimitStatusMetadata,
   isLimitName,
   limitErrorMetadata,
+  LIMIT_PROFILES,
   limitProfileSelectorForAccountTier,
   limitStatusMetadata,
   quotaWindowStartUtc,
@@ -213,6 +214,7 @@ export async function enforceIpControlPlaneLimit(
   return { ok: true };
 }
 
+/** Checks accepted-write quotas after mandatory early input admission. */
 export async function enforceAcceptedInputSubmissionLimits(
   query: ProductTransactionQuery,
   identity: CallerLimitIdentity,
@@ -230,16 +232,6 @@ export async function enforceAcceptedInputSubmissionLimits(
   );
   if (blocked) {
     return blocked;
-  }
-
-  const concurrency = await acquireConcurrencySlot(
-    query,
-    identity,
-    profile,
-    "input_submission"
-  );
-  if (!concurrency.ok) {
-    return concurrency;
   }
 
   await query(accountWriteLockStatement(identity));
@@ -271,6 +263,57 @@ export async function enforceAcceptedInputSubmissionLimits(
     profile,
     "input_submission",
     "submissions"
+  );
+}
+
+/**
+ * Acquires the input-write slot before send/replace waits on an account or
+ * input row. The setting is deliberately shared by every canonical profile;
+ * fail loudly if a future profile makes that assumption false rather than
+ * admitting using stale tier data before the account lock.
+ */
+export async function enforceInputSubmissionAdmission(
+  query: ProductTransactionQuery,
+  identity: CallerLimitIdentity
+): Promise<CallerLimitGuardResult> {
+  const settings = Object.values(LIMIT_PROFILES).map(
+    (profile) => profile.limits.concurrent_write_requests_per_account
+  );
+  const setting = settings[0];
+  if (
+    !setting ||
+    settings.some(
+      (candidate) =>
+        candidate.mode !== setting.mode || candidate.value !== setting.value
+    )
+  ) {
+    throw new Error(
+      "Input submission concurrency admission must use one shared profile setting."
+    );
+  }
+  if (setting.mode !== "enabled") {
+    return { ok: true };
+  }
+
+  const result = await query<AdvisoryLockRow>(
+    concurrencySlotStatement({
+      identity,
+      limitName: "concurrent_write_requests_per_account",
+      limitUnits: setting.value
+    })
+  );
+  if (result.rows[0]?.acquired) {
+    return { ok: true };
+  }
+
+  // The setting and its error metadata are shared. Hosted-free is the stable
+  // representative until canonical profiles deliberately diverge.
+  return limitError(
+    "hosted-free",
+    identity,
+    "input_submission",
+    "concurrent_write_requests_per_account",
+    setting.value + 1
   );
 }
 

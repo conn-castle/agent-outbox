@@ -136,7 +136,7 @@ function inputQueueThrottleQuery({
   tier = "hosted_free",
   quotaWindowRowsByLimit = {},
   defaultQuotaWindowRows = [],
-  advisoryLockRows = [],
+  advisoryLockRows = [{ acquired: true }],
   inputRows = [],
   accountStockUsageRows = [],
   insertedInputRows = [],
@@ -1664,13 +1664,18 @@ test("caller credential last-used update is scoped to authenticated account call
     sql: `
       update public.agent_outbox_caller_credentials
       set last_used_at = now()
-      where account_id = $1
-        and caller_id = $2
-        and key_id = $3
-        and (
-          last_used_at is null
-          or last_used_at < now() - interval '15 minutes'
-        )
+      where caller_credential_id in (
+        select caller_credential_id
+        from public.agent_outbox_caller_credentials
+        where account_id = $1
+          and caller_id = $2
+          and key_id = $3
+          and (
+            last_used_at is null
+            or last_used_at < now() - interval '15 minutes'
+          )
+        for no key update skip locked
+      )
     `,
     values: [identity.accountId, identity.callerId, "key_123"]
   });
@@ -1679,6 +1684,7 @@ test("caller credential last-used update is scoped to authenticated account call
   assert.match(statement.sql, /key_id = \$3/);
   assert.match(statement.sql, /last_used_at is null/);
   assert.match(statement.sql, /last_used_at < now\(\) - interval '15 minutes'/);
+  assert.match(statement.sql, /for no key update skip locked/);
 });
 
 test("account limit profile fails loud when the authenticated account row is missing", async () => {
