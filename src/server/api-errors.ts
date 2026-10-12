@@ -3,6 +3,7 @@ import type { ActiveLimitBlockMetadata } from "./accounting.ts";
 import {
   durationSinceMs,
   emitRuntimeLog,
+  terminalDatabaseStage,
   type RuntimeLogEvent
 } from "./logging.ts";
 import type { LimitErrorMetadata } from "./limits.ts";
@@ -216,6 +217,7 @@ export function apiTransactionFailure(
   context: ApiRequestContext,
   input: {
     operation: string;
+    operationStage?: string;
     accountId?: string;
     callerId?: string;
     message: string;
@@ -239,6 +241,8 @@ export function apiTransactionFailure(
     status_code: 503,
     duration_ms: durationSinceMs(context.startedAtMs),
     operation: input.operation,
+    operation_stage:
+      terminalDatabaseStageFromError(error) ?? input.operationStage,
     account_id: input.accountId,
     caller_id: input.callerId,
     message: input.message,
@@ -248,6 +252,13 @@ export function apiTransactionFailure(
     errorId: context.correlationId,
     reported: true
   });
+}
+
+function terminalDatabaseStageFromError(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const stage = (error as Error & { agentOutboxOperationStage?: unknown })
+    .agentOutboxOperationStage;
+  return terminalDatabaseStage(stage);
 }
 
 export function apiValidationFailed(

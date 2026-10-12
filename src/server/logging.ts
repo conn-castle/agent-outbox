@@ -19,6 +19,7 @@ export type RuntimeLogEvent = {
   status_code?: number;
   duration_ms?: number;
   operation: string;
+  operation_stage?: string;
   path_shape?: string;
   multipart_boundary?: string;
   content_length_state?: string;
@@ -61,6 +62,7 @@ const SAFE_LOG_KEYS = new Set([
   "status_code",
   "duration_ms",
   "operation",
+  "operation_stage",
   "path_shape",
   "multipart_boundary",
   "content_length_state",
@@ -86,6 +88,49 @@ const SAFE_LOG_KEYS = new Set([
   "message"
 ]);
 const SAFE_ERROR_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/;
+// Terminal database failures take precedence over input diagnostics. Callback
+// failures retain the input stage, even though database_callback is safe to log.
+const OPERATION_STAGES = {
+  database_connect: "terminal_database",
+  database_begin: "terminal_database",
+  database_context: "terminal_database",
+  database_callback: "database_callback",
+  database_commit: "terminal_database",
+  database_rollback: "terminal_database",
+  database_end: "terminal_database",
+  input_timeouts: "input",
+  input_admission: "input",
+  input_account_lock: "input",
+  input_profile: "input",
+  input_request_limits: "input",
+  input_item_lock: "input",
+  input_submission_limits: "input",
+  input_write: "input"
+} as const;
+
+export type OperationStage = keyof typeof OPERATION_STAGES;
+type OperationStageOfKind<TKind> = {
+  [TStage in OperationStage]: (typeof OPERATION_STAGES)[TStage] extends TKind
+    ? TStage
+    : never;
+}[OperationStage];
+export type InputOperationStage = OperationStageOfKind<"input">;
+export type DatabaseOperationStage = OperationStageOfKind<
+  "terminal_database" | "database_callback"
+>;
+
+export function safeOperationStage(value: unknown): OperationStage | undefined {
+  return typeof value === "string" && Object.hasOwn(OPERATION_STAGES, value)
+    ? (value as OperationStage)
+    : undefined;
+}
+
+export function terminalDatabaseStage(value: unknown) {
+  const stage = safeOperationStage(value);
+  return stage && OPERATION_STAGES[stage] === "terminal_database"
+    ? stage
+    : undefined;
+}
 const STRIPE_ERROR_TYPES = new Set([
   "StripeCardError",
   "StripeInvalidRequestError",
@@ -120,7 +165,8 @@ export function safeLogEvent(event: RuntimeLogEvent) {
       return (
         SAFE_LOG_KEYS.has(key) &&
         value !== undefined &&
-        (key !== "error_code" || safeErrorCodeValue(value) !== undefined)
+        (key !== "error_code" || safeErrorCodeValue(value) !== undefined) &&
+        (key !== "operation_stage" || safeOperationStage(value) !== undefined)
       );
     })
     .map(([key, value]) => {

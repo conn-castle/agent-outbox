@@ -82,6 +82,16 @@ operator-actionable handled failures. Useful fields include:
 - `account_id` or an opaque audit-safe account id when useful
 - `caller_id` or an opaque audit-safe caller id when useful
 - `operation`
+- `operation_stage` for bounded input-write stages (`input_timeouts`,
+  `input_admission`, `input_account_lock`, `input_profile`,
+  `input_request_limits`, `input_item_lock`, `input_submission_limits`, or
+  `input_write`). A recognized terminal transaction stage (`database_connect`,
+  `database_begin`, `database_context`, `database_commit`, `database_rollback`,
+  or `database_end`) takes precedence when the failure occurred there.
+  `database_callback` stays allowlisted but never takes precedence; callback
+  failures report the input-write stage. It is allowlisted in both the
+  structured log and Sentry `agent_outbox` context; it never contains SQL, bind
+  values, request content, or credentials.
 - `stripe_event_type` for handled Stripe webhook events
 - `path_shape` on Next.js `onRequestError` logs: `contains_dot`,
   `extensionless`, or `unknown` for the original request path. The raw path is

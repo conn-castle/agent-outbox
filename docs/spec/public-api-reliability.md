@@ -112,6 +112,11 @@ Several lifecycle conditions intentionally share a status:
   Honor `Retry-After` when present. Storage and retention limits may have no
   reset time; delete pending work or read and acknowledge completed work as the
   structured limit metadata directs instead of waiting blindly.
+- Send and replace also have a brief concurrent-write admission limit before
+  validation or idempotency lookup. Under saturation, even an invalid request,
+  unchanged replay, or missing item can receive `429`; retry with the same
+  `caller_item_id` and bounded backoff. A `503 temporary_unavailable` during a
+  lock wait remains an unknown write outcome and must be reconciled by that id.
 - `5xx` means retry only operations that are safe for the caller’s current
   state, using bounded exponential backoff and jitter.
 

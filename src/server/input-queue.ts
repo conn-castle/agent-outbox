@@ -1,3 +1,4 @@
+import type { InputOperationStage } from "./logging.ts";
 import { auditEventInsertStatement } from "./accounting.ts";
 import {
   apiNotFound,
@@ -16,6 +17,7 @@ import {
   accountWriteLockStatement,
   enforceAcceptedInputSubmissionLimits,
   enforceAccountRequestLimits,
+  enforceInputSubmissionAdmission,
   type CallerLimitGuardResult
 } from "./caller-api-limits.ts";
 import type {
@@ -32,6 +34,8 @@ import {
 } from "./input-schema.ts";
 
 const INPUT_NOT_FOUND_MESSAGE = "Input item was not found for this caller.";
+export const INPUT_WRITE_LOCK_TIMEOUT_MS = 2_000;
+const PRODUCT_TRANSACTION_STATEMENT_TIMEOUT_MS = 5_000;
 
 export type InputQueueOperation = "send" | "replace" | "delete";
 
@@ -57,6 +61,10 @@ export type InputQueueSuccess =
 
 export type InputQueueResult =
   { ok: true; data: InputQueueSuccess } | { ok: false; error: ApiErrorInput };
+
+type InputQueueDiagnostics = {
+  stage?: InputOperationStage;
+};
 
 type ExistingInputRow = {
   input_item_id: string;
@@ -135,6 +143,7 @@ export async function handleInputQueueRequest(
   }
 
   let identity: CallerIdentity | undefined;
+  const diagnostics: InputQueueDiagnostics = {};
   try {
     const transaction = await runAuthenticatedCallerTransaction(
       request,
@@ -147,7 +156,8 @@ export async function handleInputQueueRequest(
           context,
           auth,
           operation,
-          jsonBody
+          jsonBody,
+          diagnostics
         );
       }
     );
@@ -173,6 +183,7 @@ export async function handleInputQueueRequest(
       operation: `input_${operation}`,
       accountId: identity?.accountId,
       callerId: identity?.callerId,
+      operationStage: diagnostics.stage,
       message: "Input queue operation failed unexpectedly.",
       unavailableMessage: "Input queue operation is temporarily unavailable."
     });
@@ -184,14 +195,28 @@ export async function handleInputQueueRequestInTransaction(
   context: ApiRequestContext,
   auth: CallerIdentity,
   operation: InputQueueOperation,
-  jsonBody: unknown
+  jsonBody: unknown,
+  diagnostics: InputQueueDiagnostics = {}
 ): Promise<InputQueueResult> {
   if (operation !== "delete") {
-    // Lock the account before reading its tier so a concurrent downgrade
-    // cannot leave validation and limits on a stale profile. This also keeps
-    // send/replace in account-before-input lock order, matching human answers.
+    // Admission is nonblocking and happens before every account/input wait.
+    // Its cap is canonical across profiles; the profile below is still read
+    // under the account lock for validation and quota correctness.
+    diagnostics.stage = "input_timeouts";
+    await query(inputWriteTimeoutStatement());
+    diagnostics.stage = "input_admission";
+    const admission = await enforceInputSubmissionAdmission(query, auth);
+    const admissionResult = inputResultFromLimitGuard(admission);
+    if (admissionResult) {
+      return admissionResult;
+    }
+
+    // Keep account-before-input order, matching human answers. The local
+    // deadline also applies to the later per-item advisory and row locks.
+    diagnostics.stage = "input_account_lock";
     await query(accountWriteLockStatement(auth));
   }
+  diagnostics.stage = "input_profile";
   const profile = await accountLimitProfileForAccount(query, auth.accountId);
   if (!profile) {
     return apiTemporaryUnavailable(
@@ -204,6 +229,7 @@ export async function handleInputQueueRequestInTransaction(
     if (!parsed.ok) {
       return { ok: false, error: parsed.error };
     }
+    diagnostics.stage = "input_request_limits";
     const requestLimit = await enforceAccountRequestLimits(
       query,
       auth,
@@ -224,6 +250,7 @@ export async function handleInputQueueRequestInTransaction(
     return { ok: false, error: parsed.error };
   }
 
+  diagnostics.stage = "input_request_limits";
   const requestLimit = await enforceAccountRequestLimits(
     query,
     auth,
@@ -236,21 +263,27 @@ export async function handleInputQueueRequestInTransaction(
   }
 
   if (operation === "send") {
+    diagnostics.stage = "input_item_lock";
     return sendInputItem(query, context, auth, parsed.submission, {
       beforeCreate: async () => {
-        return inputResultFromLimitGuard(
+        diagnostics.stage = "input_submission_limits";
+        const limited = inputResultFromLimitGuard(
           await enforceAcceptedInputSubmissionLimits(query, auth, profile, {
             queuedItemDelta: 1,
             nonFilePayloadByteDelta: parsed.submission.nonFilePayloadBytes
           })
         );
+        if (!limited) diagnostics.stage = "input_write";
+        return limited;
       }
     });
   }
 
+  diagnostics.stage = "input_item_lock";
   return replaceInputItem(query, context, auth, parsed.submission, {
     beforeChange: async (existing) => {
-      return inputResultFromLimitGuard(
+      diagnostics.stage = "input_submission_limits";
+      const limited = inputResultFromLimitGuard(
         await enforceAcceptedInputSubmissionLimits(query, auth, profile, {
           queuedItemDelta: 0,
           nonFilePayloadByteDelta: Math.max(
@@ -260,8 +293,26 @@ export async function handleInputQueueRequestInTransaction(
           )
         })
       );
+      if (!limited) diagnostics.stage = "input_write";
+      return limited;
     }
   });
+}
+
+function inputWriteTimeoutStatement(): TransactionContextStatement {
+  return {
+    // SET LOCAL is scoped to this transaction. lock_timeout is intentionally
+    // below pg's existing 5-second read timeout, while statement_timeout makes
+    // that existing deadline effective at the PostgreSQL server as well. The
+    // public request transaction performs no callback work after this input
+    // operation returns: it commits or rolls back immediately, so these local
+    // settings cannot affect another operation.
+    sql: "select set_config('lock_timeout', $1, true), set_config('statement_timeout', $2, true)",
+    values: [
+      `${INPUT_WRITE_LOCK_TIMEOUT_MS}ms`,
+      `${PRODUCT_TRANSACTION_STATEMENT_TIMEOUT_MS}ms`
+    ]
+  };
 }
 
 export async function sendInputItem(
