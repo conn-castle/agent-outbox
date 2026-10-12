@@ -7,6 +7,7 @@ import { AppActionProvider } from "../src/components/actions/AppActionProvider";
 import { SiteFooter } from "../src/components/SiteFooter";
 import { SiteHeader } from "../src/components/SiteHeader";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate";
+import { REVIEW_THEME_INIT_SCRIPT } from "../src/shared/review-theme.ts";
 import "./globals.css";
 import "./review-workspace.css";
 
@@ -26,7 +27,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   );
 
   return (
-    <html lang="en" data-scroll-behavior="smooth">
+    <html lang="en" data-scroll-behavior="smooth" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{ __html: REVIEW_THEME_INIT_SCRIPT }}
+        />
+      </head>
       <body>
         <Script
           id="agent-outbox-immediate-action-feedback"

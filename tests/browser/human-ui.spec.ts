@@ -1,3 +1,4 @@
+import { openPrimaryNavigation } from "./navigation";
 import {
   expect,
   test,
@@ -127,6 +128,7 @@ test("view changes strip every redirect notice parameter", async ({ page }) => {
     window.history.replaceState(window.history.state, "", url);
   }, redirectNoticeParams);
   expect(new URL(page.url()).searchParams.get("subject")).toBe("Permit brief");
+  await openPrimaryNavigation(page);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
@@ -998,6 +1000,7 @@ test("authenticated review workspace renders content actions and preserves contr
   ).toHaveCount(0);
 
   await page.getByRole("textbox", { name: "Search" }).fill("");
+  await openPrimaryNavigation(page);
   await page.getByRole("link", { name: "History" }).click();
   await expect(page).not.toHaveURL(/search=/);
   await expect(
@@ -1018,6 +1021,7 @@ test("authenticated review workspace renders content actions and preserves contr
       .click();
     await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   }
+  await openPrimaryNavigation(page);
   await expect(page.getByRole("link", { name: "History" })).toHaveAttribute(
     "aria-current",
     "page"
@@ -1035,6 +1039,7 @@ test("primary navigation and queue disclosures behave consistently", async ({
 }) => {
   await page.goto("/human");
 
+  await openPrimaryNavigation(page);
   const primary = page.getByRole("navigation", { name: "Primary" });
   await expect(
     primary.getByRole("link", { name: "Review queue" })
@@ -1110,6 +1115,7 @@ test("review queue and history remain disjoint", async ({ page }) => {
   await expect(queueRows).toHaveCount(8);
   await expect(queueRows.locator(".inline-actions")).toHaveCount(8);
 
+  await openPrimaryNavigation(page);
   await page.getByRole("link", { name: "History" }).click();
   await expect(
     page.getByRole("heading", { name: "Answered reviews" })
@@ -1631,6 +1637,7 @@ test("routine reviews can be completed directly from the queue", async ({
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
   await openReviewTools(page);
 
+  await openPrimaryNavigation(page);
   await expect(
     page.getByRole("link", { name: "Review queue" })
   ).toHaveAttribute("aria-current", "page");
@@ -1668,6 +1675,7 @@ test("routine reviews can be completed directly from the queue", async ({
     0
   );
 
+  await openPrimaryNavigation(page);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
@@ -1749,6 +1757,7 @@ test("a second queue action is retained while the first is synchronizing", async
     "The second intent should wait in the app journal while the first syncs."
   ).toBe(1);
 
+  await openPrimaryNavigation(page);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
@@ -2140,6 +2149,7 @@ test("canonical search and status navigation preserve pending view changes", asy
   await expect(page).not.toHaveURL(/follow-up\+/);
   await expect(page).toHaveURL(/priority=high/);
   await page.getByRole("button", { name: "Done" }).click();
+  await openPrimaryNavigation(page);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
@@ -2240,6 +2250,7 @@ test("last-action undo from History does not leave a pending snapshot in History
   await row.getByRole("button", { name: "Approve to send" }).click();
   await expect(lastUndoButton(page, "Approve to send")).toBeVisible();
 
+  await openPrimaryNavigation(page);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
@@ -2448,6 +2459,7 @@ test("human actions submit undo and narrow bulk actions through server actions",
     .click();
   await expect(permitRow).toHaveCount(0);
   await expect(followUpRow).toHaveCount(0);
+  await openPrimaryNavigation(page);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
@@ -2721,6 +2733,7 @@ test("reviews beyond the first 100 remain discoverable and reviewable", async ({
     reviewLinkByTitle(page, "Beyond one hundred review")
   ).toHaveCount(0);
 
+  await openPrimaryNavigation(page);
   await page
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "History" })
@@ -2790,6 +2803,7 @@ test("Enter and the Search button submit immediately and cancel debounce", async
   await page.getByRole("button", { name: "Search" }).click();
   await expect(page).toHaveURL(/search=follow-up/);
   await page.getByRole("textbox", { name: "Search" }).fill("");
+  await openPrimaryNavigation(page);
   await page.getByRole("link", { name: "History" }).click();
   await expect(page).toHaveURL(/status=answered/);
   await expect(page).not.toHaveURL(/search=/);
@@ -3476,6 +3490,7 @@ test("mobile review navigation preserves the queue view", async ({
   await page.getByRole("button", { name: "Close detail", exact: true }).click();
 
   await expect(page).toHaveURL(/order=updated_at%3Adesc/);
+  await openPrimaryNavigation(page);
   await expect(
     page.getByRole("link", { name: "Review queue" })
   ).toHaveAttribute("aria-current", "page");

@@ -38,6 +38,7 @@ import {
   Filter,
   GripVertical,
   ListChecks,
+  MoreHorizontal,
   Plus,
   RotateCcw,
   Search,
@@ -72,6 +73,7 @@ import {
 } from "../../shared/human-review-sort";
 import { htmlToPlainText } from "../../shared/html-text";
 import { AccountBanner } from "./AccountBanner";
+import { ThemeToggle } from "./ThemeToggle";
 import {
   LastAnswerUndoForm,
   type HumanMutationSubmission,
@@ -1098,6 +1100,24 @@ export function ReviewWorkspace({
     return () => window.removeEventListener("keydown", moveQueueFocus);
   }, []);
 
+  const statusLinks = STATUS_LINKS.map(({ status, label }) => (
+    <Link
+      key={status}
+      className={view.status === status ? "active" : undefined}
+      href={humanReviewHref({ ...controlView, search, status, page: 1 })}
+      onNavigate={onStatusNavigate(status)}
+      onClick={(event) => {
+        const disclosure = event.currentTarget.closest("details");
+        if (!disclosure) return;
+        disclosure.open = false;
+        disclosure.querySelector<HTMLElement>("summary")?.focus();
+      }}
+      aria-current={view.status === status ? "page" : undefined}
+    >
+      {label}
+    </Link>
+  ));
+
   return (
     <main
       ref={workspaceRef}
@@ -1122,50 +1142,46 @@ export function ReviewWorkspace({
           </span>
         </Link>
         <nav className="app-location" aria-label="Primary">
-          {STATUS_LINKS.map(({ status, label }) => (
-            <Link
-              key={status}
-              className={view.status === status ? "active" : undefined}
-              href={humanReviewHref({
-                ...controlView,
-                search,
-                status,
-                page: 1
-              })}
-              onNavigate={onStatusNavigate(status)}
-              aria-current={view.status === status ? "page" : undefined}
-            >
-              {label}
-            </Link>
-          ))}
+          {statusLinks}
         </nav>
         <div className="app-account">
-          {lastError ? (
-            <p className="last-action-error" role="alert" title={lastError}>
-              <span>{lastError}</span>
-              <button
-                type="button"
-                aria-label="Dismiss error"
-                onClick={() => setLastError(null)}
-              >
-                <X aria-hidden="true" />
-              </button>
-            </p>
-          ) : null}
-          {lastUndo ? (
-            <LastAnswerUndoForm
-              undo={lastUndo}
-              disabled={lockedIds.has(lastUndo.inputItemId)}
-              onMutation={(submission) => {
-                enqueueHumanMutation(
-                  submission,
-                  lastUndo.rowSnapshots,
-                  viewRef.current.status === "pending"
-                );
-              }}
-            />
-          ) : null}
+          <div className="app-feedback">
+            {lastError ? (
+              <p className="last-action-error" role="alert" title={lastError}>
+                <span>{lastError}</span>
+                <button
+                  type="button"
+                  aria-label="Dismiss error"
+                  onClick={() => setLastError(null)}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </p>
+            ) : null}
+            {lastUndo ? (
+              <LastAnswerUndoForm
+                undo={lastUndo}
+                disabled={lockedIds.has(lastUndo.inputItemId)}
+                onMutation={(submission) => {
+                  enqueueHumanMutation(
+                    submission,
+                    lastUndo.rowSnapshots,
+                    viewRef.current.status === "pending"
+                  );
+                }}
+              />
+            ) : null}
+          </div>
+          <ThemeToggle />
           <AccountBanner banner={banner} identity={identity} />
+          <details className="navigation-overflow" data-dismissible-disclosure>
+            <summary aria-label="Navigation menu">
+              <MoreHorizontal aria-hidden="true" size={20} />
+            </summary>
+            <nav className="navigation-popover" aria-label="Primary">
+              {statusLinks}
+            </nav>
+          </details>
           <span className="sr-only" data-testid="fixture-account-id">
             {session.account.accountId}
           </span>
