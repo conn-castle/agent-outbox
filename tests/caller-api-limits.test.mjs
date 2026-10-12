@@ -546,7 +546,6 @@ test("caller request limits ignore cleanup-free blocks that require live revalid
 test("accepted input submission limits block stock overflow before incrementing submission windows", async () => {
   const query = fakeQuery([
     [],
-    [{ acquired: true }],
     [],
     [],
     [],
@@ -592,7 +591,6 @@ test("accepted input submission limits block stock overflow before incrementing 
 test("accepted input submission limits pre-check quota windows once before incrementing", async () => {
   const query = fakeQuery([
     [],
-    [{ acquired: true }],
     [],
     [],
     [],
@@ -763,14 +761,9 @@ test("file uploads return the full error when no concurrency slot is available",
   assert.equal(query.calls.length, 2);
 });
 
-test("input submissions return the full error when no concurrency slot is available", async () => {
-  const query = fakeQuery([[], []]);
-  const result = await enforceAcceptedInputSubmissionLimits(
-    query,
-    identity,
-    "hosted-free",
-    { queuedItemDelta: 1, nonFilePayloadByteDelta: 1 }
-  );
+test("early input admission returns the full error when no concurrency slot is available", async () => {
+  const query = fakeQuery([[]]);
+  const result = await enforceInputSubmissionAdmission(query, identity);
 
   assert.deepEqual(result, {
     ok: false,
@@ -792,7 +785,7 @@ test("input submissions return the full error when no concurrency slot is availa
       log: { callerId: identity.callerId }
     }
   });
-  assert.equal(query.calls.length, 2);
+  assert.equal(query.calls.length, 1);
 });
 
 test("early input admission acquires the shared slot without tier or account reads", async () => {
@@ -860,13 +853,7 @@ test("input submission preflight persists a full window overflow error without d
     apis: ["Date"],
     now: new Date("2026-06-30T12:34:56.789Z")
   });
-  const query = fakeQuery([
-    [],
-    [{ acquired: true }],
-    [],
-    [{ used_units: "5000" }],
-    []
-  ]);
+  const query = fakeQuery([[], [], [{ used_units: "5000" }], []]);
   const result = await enforceAcceptedInputSubmissionLimits(
     query,
     identity,
@@ -895,12 +882,12 @@ test("input submission preflight persists a full window overflow error without d
       log: { callerId: identity.callerId }
     }
   });
-  assert.equal(query.calls.length, 5);
+  assert.equal(query.calls.length, 4);
   assert.match(
-    query.calls[4].sql,
+    query.calls[3].sql,
     /insert into public.agent_outbox_account_limit_blocks/
   );
-  assert.deepEqual(query.calls[4].values, [
+  assert.deepEqual(query.calls[3].values, [
     identity.accountId,
     "input_submission",
     "input_submissions_per_calendar_month",

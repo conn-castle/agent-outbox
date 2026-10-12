@@ -88,27 +88,47 @@ const SAFE_LOG_KEYS = new Set([
   "message"
 ]);
 const SAFE_ERROR_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/;
-const SAFE_OPERATION_STAGES = new Set([
-  "database_connect",
-  "database_begin",
-  "database_context",
-  "database_callback",
-  "database_commit",
-  "database_rollback",
-  "database_end",
-  "input_timeouts",
-  "input_admission",
-  "input_account_lock",
-  "input_profile",
-  "input_request_limits",
-  "input_item_lock",
-  "input_submission_limits",
-  "input_write"
-]);
+// Terminal database failures take precedence over input diagnostics. Callback
+// failures retain the input stage, even though database_callback is safe to log.
+const OPERATION_STAGES = {
+  database_connect: "terminal_database",
+  database_begin: "terminal_database",
+  database_context: "terminal_database",
+  database_callback: "database_callback",
+  database_commit: "terminal_database",
+  database_rollback: "terminal_database",
+  database_end: "terminal_database",
+  input_timeouts: "input",
+  input_admission: "input",
+  input_account_lock: "input",
+  input_profile: "input",
+  input_request_limits: "input",
+  input_item_lock: "input",
+  input_submission_limits: "input",
+  input_write: "input"
+} as const;
 
-export function safeOperationStage(value: unknown): string | undefined {
-  return typeof value === "string" && SAFE_OPERATION_STAGES.has(value)
-    ? value
+export type OperationStage = keyof typeof OPERATION_STAGES;
+type OperationStageOfKind<TKind> = {
+  [TStage in OperationStage]: (typeof OPERATION_STAGES)[TStage] extends TKind
+    ? TStage
+    : never;
+}[OperationStage];
+export type InputOperationStage = OperationStageOfKind<"input">;
+export type DatabaseOperationStage = OperationStageOfKind<
+  "terminal_database" | "database_callback"
+>;
+
+export function safeOperationStage(value: unknown): OperationStage | undefined {
+  return typeof value === "string" && Object.hasOwn(OPERATION_STAGES, value)
+    ? (value as OperationStage)
+    : undefined;
+}
+
+export function terminalDatabaseStage(value: unknown) {
+  const stage = safeOperationStage(value);
+  return stage && OPERATION_STAGES[stage] === "terminal_database"
+    ? stage
     : undefined;
 }
 const STRIPE_ERROR_TYPES = new Set([

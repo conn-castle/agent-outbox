@@ -1,3 +1,4 @@
+import type { InputOperationStage } from "./logging.ts";
 import { auditEventInsertStatement } from "./accounting.ts";
 import {
   apiNotFound,
@@ -62,15 +63,7 @@ export type InputQueueResult =
   { ok: true; data: InputQueueSuccess } | { ok: false; error: ApiErrorInput };
 
 type InputQueueDiagnostics = {
-  stage?:
-    | "input_timeouts"
-    | "input_admission"
-    | "input_account_lock"
-    | "input_profile"
-    | "input_request_limits"
-    | "input_item_lock"
-    | "input_submission_limits"
-    | "input_write";
+  stage?: InputOperationStage;
 };
 
 type ExistingInputRow = {
@@ -277,8 +270,7 @@ export async function handleInputQueueRequestInTransaction(
         const limited = inputResultFromLimitGuard(
           await enforceAcceptedInputSubmissionLimits(query, auth, profile, {
             queuedItemDelta: 1,
-            nonFilePayloadByteDelta: parsed.submission.nonFilePayloadBytes,
-            concurrencyAlreadyAcquired: true
+            nonFilePayloadByteDelta: parsed.submission.nonFilePayloadBytes
           })
         );
         if (!limited) diagnostics.stage = "input_write";
@@ -298,8 +290,7 @@ export async function handleInputQueueRequestInTransaction(
             0,
             parsed.submission.nonFilePayloadBytes -
               databaseNonNegativeInteger(existing.non_file_payload_bytes)
-          ),
-          concurrencyAlreadyAcquired: true
+          )
         })
       );
       if (!limited) diagnostics.stage = "input_write";

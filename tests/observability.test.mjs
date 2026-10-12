@@ -57,6 +57,7 @@ import {
   safeErrorCode,
   safeErrorName,
   safeOperationStage,
+  terminalDatabaseStage,
   safeLogEvent
 } from "../src/server/logging.ts";
 import { absoluteHttpOrigin } from "../src/server/env.ts";
@@ -221,7 +222,11 @@ function loadApiErrorsModuleForTest(sentry) {
   const exportsForTestModule = loadModuleForTest("src/server/api-errors.ts", {
     stubs: {
       "./correlation.ts": { createCorrelationId: () => "unused-correlation" },
-      "./logging.ts": { durationSinceMs, emitRuntimeLog },
+      "./logging.ts": {
+        durationSinceMs,
+        emitRuntimeLog,
+        terminalDatabaseStage
+      },
       "./sentry.ts": sentry
     },
     globals: { console, process, Response, Headers },
@@ -4031,7 +4036,32 @@ test("product transaction aggregates carry the terminal database stage", async (
 
   for (const [failure, terminalStage] of [
     [rollbackFailure, "database_rollback"],
-    [endFailure, "database_end"]
+    [endFailure, "database_end"],
+    ...[
+      "database_connect",
+      "database_begin",
+      "database_context",
+      "database_commit",
+      "database_rollback",
+      "database_end"
+    ].map((stage) => [
+      Object.assign(new Error("transaction failure"), {
+        agentOutboxOperationStage: stage
+      }),
+      stage
+    ]),
+    ...[
+      "database_callback",
+      "input_write",
+      "private stage",
+      "toString",
+      "__proto__"
+    ].map((stage) => [
+      Object.assign(new Error("callback failure"), {
+        agentOutboxOperationStage: stage
+      }),
+      "input_profile"
+    ])
   ]) {
     /** @type {Array<Record<string, unknown>>} */
     const reports = [];
@@ -4044,7 +4074,11 @@ test("product transaction aggregates carry the terminal database stage", async (
             "./correlation.ts": {
               createCorrelationId: () => "unused-correlation"
             },
-            "./logging.ts": { durationSinceMs, emitRuntimeLog },
+            "./logging.ts": {
+              durationSinceMs,
+              emitRuntimeLog,
+              terminalDatabaseStage
+            },
             "./sentry.ts": {
               /**
                * @param {unknown} _error

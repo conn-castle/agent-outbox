@@ -214,6 +214,7 @@ export async function enforceIpControlPlaneLimit(
   return { ok: true };
 }
 
+/** Checks accepted-write quotas after mandatory early input admission. */
 export async function enforceAcceptedInputSubmissionLimits(
   query: ProductTransactionQuery,
   identity: CallerLimitIdentity,
@@ -221,8 +222,6 @@ export async function enforceAcceptedInputSubmissionLimits(
   input: {
     queuedItemDelta: number;
     nonFilePayloadByteDelta: number;
-    /** A send/replace admission slot was acquired before row locks. */
-    concurrencyAlreadyAcquired?: boolean;
   }
 ): Promise<CallerLimitGuardResult> {
   const blocked = await activeLimitBlockError(
@@ -233,18 +232,6 @@ export async function enforceAcceptedInputSubmissionLimits(
   );
   if (blocked) {
     return blocked;
-  }
-
-  if (!input.concurrencyAlreadyAcquired) {
-    const concurrency = await acquireConcurrencySlot(
-      query,
-      identity,
-      profile,
-      "input_submission"
-    );
-    if (!concurrency.ok) {
-      return concurrency;
-    }
   }
 
   await query(accountWriteLockStatement(identity));

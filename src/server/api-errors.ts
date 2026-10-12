@@ -3,6 +3,7 @@ import type { ActiveLimitBlockMetadata } from "./accounting.ts";
 import {
   durationSinceMs,
   emitRuntimeLog,
+  terminalDatabaseStage,
   type RuntimeLogEvent
 } from "./logging.ts";
 import type { LimitErrorMetadata } from "./limits.ts";
@@ -257,15 +258,7 @@ function terminalDatabaseStageFromError(error: unknown): string | undefined {
   if (!(error instanceof Error)) return undefined;
   const stage = (error as Error & { agentOutboxOperationStage?: unknown })
     .agentOutboxOperationStage;
-  return typeof stage === "string" &&
-    (stage === "database_connect" ||
-      stage === "database_begin" ||
-      stage === "database_context" ||
-      stage === "database_commit" ||
-      stage === "database_rollback" ||
-      stage === "database_end")
-    ? stage
-    : undefined;
+  return terminalDatabaseStage(stage);
 }
 
 export function apiValidationFailed(

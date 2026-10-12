@@ -1,6 +1,8 @@
 import type { Buffer } from "node:buffer";
 import { Client, type QueryResult, type QueryResultRow } from "pg";
 
+import type { DatabaseOperationStage } from "./logging.ts";
+
 const APP_DATABASE_ROLE = "agent_outbox_app";
 const DATABASE_CANARY_TIMEOUT_MS = 5_000;
 
@@ -101,7 +103,7 @@ export async function runProductTransaction<TResult>(
   let failed = false;
   let clientReadTimeout: unknown;
   let clientReadTimedOut = false;
-  let stage = "database_connect";
+  let stage: DatabaseOperationStage = "database_connect";
   const query: ProductTransactionQuery = async (statement) => {
     if (clientReadTimedOut) throw clientReadTimeout;
     try {
@@ -206,7 +208,7 @@ function isClientQueryReadTimeout(error: unknown) {
   return error instanceof Error && error.message === "Query read timeout";
 }
 
-function withTransactionStage(error: unknown, stage: string) {
+function withTransactionStage(error: unknown, stage: DatabaseOperationStage) {
   if (
     error instanceof Error &&
     Object.isExtensible(error) &&
