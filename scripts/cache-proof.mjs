@@ -384,13 +384,29 @@ try {
   await run("build-a", a, "make", ["build"]);
   report.coldTasks = taskStatistics(a);
   report.cacheBeforeSeed = cache(a);
-  // Exercise the exact native function invoked by Next's configured build path;
-  // capture identities before the subsequent build can compact its cache.
+  // Follow Next's build initialization before invoking its native seed helper.
+  // Without loaded bindings, getTurbopackCacheVersion returns undefined and
+  // the helper silently returns. Sample before compilation can compact files.
   const seedLog = await pnpm("native-seed-b", b, [
     "exec",
     "node",
     "-e",
-    'require("next/dist/lib/turbopack-cache-seed").seedTurbopackCacheIfNeeded({projectDir:process.cwd(),distDir:require("node:path").join(process.cwd(),".next")})'
+    `process.env.NODE_ENV = "production";
+(async () => {
+  const assert = require("node:assert/strict");
+  assert.equal(require("next/package.json").version, "16.4.0");
+  await require("next/dist/build/swc/install-bindings").installBindings();
+  const swc = require("next/dist/build/swc");
+  assert.equal(swc.getBindingsSync().isWasm, false, "Native bindings required.");
+  const version = swc.getTurbopackCacheVersion();
+  assert.equal(typeof version, "string", "Native cache version required.");
+  assert(version.length > 0, "Native cache version must not be empty.");
+  console.log("Native Turbopack cache version: " + version);
+  require("next/dist/lib/turbopack-cache-seed").seedTurbopackCacheIfNeeded({
+    projectDir: process.cwd(),
+    distDir: require("node:path").join(process.cwd(), ".next")
+  });
+})().catch((error) => { console.error(error); process.exitCode = 1; });`
   ]);
   assert(
     seedLog.includes("Seeded Turbopack cache from"),

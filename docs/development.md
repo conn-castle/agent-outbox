@@ -84,18 +84,20 @@ and exercises a deliberately changed Next type-peer graph before restoring final
 inputs. Unchanged compatible packages must retain their targets.
 
 The proof runs canonical builds in both final setups. It invokes the exact
-installed native cache-seed function used by Next builds and records immutable
-hardlink identities, byte counts, mutable copies, CURRENT metadata, and command
-times before the unchanged seeded build. Native task hit/miss statistics must
-show fewer misses in the seeded unchanged build than the cold build, with actual
-hits. These proof-only diagnostics follow Next 16.4's upstream cache tests;
-cache files alone cannot satisfy the job. It checks matching rendered home-page
-content, then concurrently builds changed source in one tree and runs canonical
-OpenNext packaging/Worker dry-run in the other. Output identities and rendered
-content must demonstrate isolation; shared direct dependency file hashes must
-remain unchanged. It uses four Next builds total, including OpenNext's build.
-The temporary source/peer fixtures never alter the candidate checkout or shared
-installed files.
+installed native cache-seed function used by Next builds after awaiting Next's
+native bindings initializer. It requires native bindings and a nonempty cache
+version; an uninitialized helper returning without seeding cannot pass. It
+records immutable hardlink identities, byte counts, mutable copies, CURRENT
+metadata, and command times before the unchanged seeded build. Native task
+hit/miss statistics must show fewer misses in the seeded unchanged build than
+the cold build, with actual hits. These proof-only diagnostics follow Next
+16.4's upstream cache tests; cache files alone cannot satisfy the job. It checks
+matching rendered home-page content, then concurrently builds changed source in
+one tree and runs canonical OpenNext packaging/Worker dry-run in the other.
+Output identities and rendered content must demonstrate isolation; shared direct
+dependency file hashes must remain unchanged. It uses four Next builds total,
+including OpenNext's build. The temporary source/peer fixtures never alter the
+candidate checkout or shared installed files.
 
 The pinned artifact action uploads only sanitized proof metadata and command
 logs, including on failure, with seven-day retention. A passing job supplies
