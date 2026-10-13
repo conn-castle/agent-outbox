@@ -75,9 +75,9 @@
   },
   "runtimePins": {
     "next": {
-      "version": "16.3.8",
+      "version": "16.4.0",
       "package": "next",
-      "source": "npm view next version engines peerDependencies --json"
+      "source": "corepack pnpm view next@16.4.0 --json (verified 2026-10-13)"
     },
     "react": {
       "version": "19.3.0",

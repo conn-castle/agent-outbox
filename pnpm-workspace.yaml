@@ -1,5 +1,23 @@
 packages:
   - "."
+virtualStoreType: global
+# These declarations import React types without declaring their type peer.
+packageExtensions:
+  next:
+    peerDependencies:
+      "@types/react": "*"
+  "@dnd-kit/core":
+    peerDependencies:
+      "@types/react": "*"
+  "@dnd-kit/modifiers":
+    peerDependencies:
+      "@types/react": "*"
+  "@dnd-kit/sortable":
+    peerDependencies:
+      "@types/react": "*"
+  "@dnd-kit/utilities":
+    peerDependencies:
+      "@types/react": "*"
 allowBuilds:
   "@sentry/cli": true
   core-js: false

@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# Explicit workspace settings override pnpm's CI default. Ordinary gates use
+# project stores; only the isolated compatibility proof opts into shared links.
+env:
+  PNPM_CONFIG_VIRTUAL_STORE_TYPE: project
+
 # Cancel superseded PR runs; give every non-PR run its own group.
 # Use a literal prefix because called workflows inherit the caller's github context.
 concurrency:
@@ -19,6 +24,41 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  cache-proof:
+    name: cache compatibility (Linux)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PNPM_CONFIG_VIRTUAL_STORE_TYPE: global
+      NEXT_TELEMETRY_DISABLED: "1"
+      WRANGLER_SEND_METRICS: "false"
+      # Native diagnostics used by Next 16.4's filesystem-cache regression tests.
+      NEXT_TURBOPACK_TASK_STATISTICS: .next/cache-proof-task-stats.json
+      TURBO_ENGINE_SNAPSHOT_MIN_ACTIVE_TIME_MILLIS: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.0
+
+      - name: Prove installed-store and worktree-cache compatibility
+        run: node scripts/cache-proof.mjs
+
+      - name: Upload sanitized cache proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-check-cache-proof-linux
+          path: .agent-layer/tmp/cache-hosted-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
   check:
     name: make check
     runs-on: ubuntu-latest
