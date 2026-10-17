@@ -195,3 +195,23 @@
 {"name":"nonbreaking space remains an identifier unit","sql":"ALTER TABLE t ALTER x y TYPE bigint;","label_present":false,"expected":"fail"}
 {"name":"nonbreaking space identifier exact default exemption","sql":"ALTER TABLE t ALTER x y SET DEFAULT 1, ALTER \"x y\" SET NOT NULL;","label_present":false,"expected":"pass"}
 {"name":"emoji E suffix is not an E-string prefix","sql":"ALTER TABLE t ALTER note SET DEFAULT 😀E'path\\', DROP x;","label_present":false,"expected":"fail"}
+
+# Foreign-table rename actions exclude option/default values (PR268 inline 4301430282).
+{"name":"foreign table option SET rename text is additive","sql":"ALTER FOREIGN TABLE t OPTIONS (SET option1 'RENAME TO');","label_present":false,"expected":"pass"}
+{"name":"foreign table option ADD rename text is additive","sql":"ALTER FOREIGN TABLE t OPTIONS (ADD option1 'RENAME TO');","label_present":false,"expected":"pass"}
+{"name":"foreign multiple options preserve rename text","sql":"ALTER FOREIGN TABLE t OPTIONS (ADD option1 'before, RENAME TO after', SET option2 'RENAME TO');","label_present":false,"expected":"pass"}
+{"name":"foreign column option rename text is additive","sql":"ALTER FOREIGN TABLE t ALTER COLUMN x OPTIONS (SET option1 'RENAME TO');","label_present":false,"expected":"pass"}
+{"name":"foreign column default rename text is additive","sql":"ALTER FOREIGN TABLE t ALTER x SET DEFAULT 'RENAME TO';","label_present":false,"expected":"pass"}
+{"name":"foreign quoted relation rename text stays in identifier","sql":"ALTER FOREIGN TABLE \"RENAME TO\" OPTIONS (SET option1 'value');","label_present":false,"expected":"pass"}
+{"name":"foreign U& option rename text is additive","sql":"ALTER FOREIGN TABLE U&\"t\" OPTIONS (SET option1 'RENAME TO');","label_present":false,"expected":"pass"}
+{"name":"foreign UESCAPE option rename text is additive","sql":"ALTER FOREIGN TABLE U&\"t\" UESCAPE '!' OPTIONS (SET option1 'RENAME TO');","label_present":false,"expected":"pass"}
+{"name":"foreign ONLY parenthesized options rename text is additive","sql":"ALTER FOREIGN TABLE IF EXISTS ONLY (\"s\".\"t\") OPTIONS (SET option1 'RENAME TO');","label_present":false,"expected":"pass"}
+{"name":"foreign quoted adjacent rename with IF EXISTS","sql":"ALTER FOREIGN TABLE IF EXISTS\"s\".\"t\"RENAME TO\"u\";","label_present":false,"expected":"fail"}
+{"name":"foreign ONLY parenthesized table rename","sql":"ALTER FOREIGN TABLE IF EXISTS ONLY(\"s\".\"t\")RENAME TO\"u\";","label_present":false,"expected":"fail"}
+{"name":"foreign U& spaced quoted table rename","sql":"ALTER FOREIGN TABLE U&\"table name\" RENAME TO u;","label_present":false,"expected":"fail"}
+{"name":"foreign U& schema and UESCAPE table rename","sql":"ALTER FOREIGN TABLE U&\"schema name\".U&\"table name\" UESCAPE '!' RENAME TO u;","label_present":false,"expected":"fail"}
+{"name":"foreign ONLY parenthesized opaque table rename","sql":"ALTER FOREIGN TABLE ONLY (U&\"table name\") RENAME TO u;","label_present":false,"expected":"fail"}
+{"name":"foreign rename text option does not hide later column drop","sql":"ALTER FOREIGN TABLE t OPTIONS (SET option1 'RENAME TO'), DROP x;","label_present":false,"expected":"fail"}
+{"name":"foreign rename text default does not hide later type change","sql":"ALTER FOREIGN TABLE t ALTER note SET DEFAULT 'RENAME TO', ALTER x TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"foreign rename text option does not hide next table rename","sql":"ALTER FOREIGN TABLE t OPTIONS (SET option1 'RENAME TO');\nALTER FOREIGN TABLE t RENAME TO u;","label_present":false,"expected":"fail"}
+{"name":"foreign column rename whose name contains table rename text","sql":"ALTER FOREIGN TABLE t RENAME \"RENAME TO\" TO y;","label_present":false,"expected":"fail"}

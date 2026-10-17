@@ -19,6 +19,16 @@ const ALTER_TABLE_HEADER = new RegExp(
     String.raw`(?:ONLY${KEYWORD_END}\s*\(\s*${QUALIFIED_NAME}\s*\)|(?:ONLY${KEYWORD_END}\s*)?${QUALIFIED_NAME})(?:\s*\*)?`,
   "i"
 );
+// Foreign-table renames must be the action immediately after the relation.
+// Accept opaque U& spellings here without decoding their names or UESCAPE.
+const FOREIGN_RENAME_IDENTIFIER = String.raw`(?:U&"(?:[^"]|"")+"(?:\s+UESCAPE${KEYWORD_END}\s*'[^']')?|${IDENTIFIER})`;
+const FOREIGN_RENAME_NAME = String.raw`${FOREIGN_RENAME_IDENTIFIER}(?:\s*\.\s*${FOREIGN_RENAME_IDENTIFIER})*`;
+const FOREIGN_TABLE_RENAME = new RegExp(
+  String.raw`\bALTER\s+FOREIGN\s+TABLE${KEYWORD_END}\s*(?:IF\s+EXISTS${KEYWORD_END}\s*)?` +
+    String.raw`(?:ONLY${KEYWORD_END}\s*\(\s*${FOREIGN_RENAME_NAME}\s*\)|(?:ONLY${KEYWORD_END}\s*)?${FOREIGN_RENAME_NAME})(?:\s*\*)?` +
+    String.raw`\s*RENAME\s+TO${KEYWORD_END}`,
+  "i"
+);
 // Keep conservative explicit coverage of opaque names (including U& forms).
 // The \S+ fallback requires whitespace afterward to avoid splitting suffixes.
 const OPERATIONS = [
@@ -31,7 +41,7 @@ const OPERATIONS = [
   {
     name: "RENAME TABLE",
     re: new RegExp(
-      String.raw`\b(?:RENAME\s+TABLE${KEYWORD_END}|ALTER\s+(?:FOREIGN\s+)?TABLE${KEYWORD_END}[\s\S]*?RENAME\s+TO${KEYWORD_END})`,
+      String.raw`\b(?:RENAME\s+TABLE${KEYWORD_END}|ALTER\s+TABLE${KEYWORD_END}[\s\S]*?RENAME\s+TO${KEYWORD_END})`,
       "i"
     )
   },
@@ -322,6 +332,8 @@ function scanStatement(statementText, statementLines, filePath) {
     const match = operation.re.exec(statementText);
     if (match) record(operation.name, match.index);
   }
+  const foreignRename = FOREIGN_TABLE_RENAME.exec(statementText);
+  if (foreignRename) record("RENAME TABLE", foreignRename.index);
 
   const { hasHeader, actions } = statementActions(statementText);
   if (hasHeader) {

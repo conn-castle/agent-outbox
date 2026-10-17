@@ -260,6 +260,26 @@ test("migration annotations identify the offending action and its source line", 
       sql: "ALTER TABLE t ALTER É SET DEFAULT 1,\n ALTER é SET NOT NULL;",
       operation: "ALTER COLUMN SET NOT NULL",
       line: 2
+    },
+    {
+      sql: 'ALTER FOREIGN TABLE t\n RENAME "RENAME TO" TO y;',
+      operation: "RENAME COLUMN",
+      line: 2
+    },
+    {
+      sql: "ALTER FOREIGN TABLE t OPTIONS (SET option1 'RENAME TO');\nALTER FOREIGN TABLE t RENAME TO u;",
+      operation: "RENAME TABLE",
+      line: 2
+    },
+    {
+      sql: "ALTER FOREIGN TABLE t ALTER note SET DEFAULT 'RENAME TO',\n ALTER x TYPE bigint;",
+      operation: "ALTER COLUMN TYPE",
+      line: 2
+    },
+    {
+      sql: "SELECT 1;\nALTER FOREIGN TABLE ONLY (U&\"table name\" UESCAPE '!') RENAME TO u;",
+      operation: "RENAME TABLE",
+      line: 2
     }
   ];
 
