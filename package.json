@@ -75,7 +75,7 @@
     "supabase": "2.118.0",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "wrangler": "4.147.0"
+    "wrangler": "4.151.1"
   },
   "dependencies": {
     "@clerk/nextjs": "7.9.10",

@@ -204,7 +204,7 @@
   },
   "providerCli": {
     "cloudflareWrangler": {
-      "version": "4.147.0",
+      "version": "4.151.1",
       "package": "wrangler",
       "source": "pnpm view wrangler version engines --json",
       "authCheck": ["wrangler", "whoami", "--env-file", "/dev/null"]
