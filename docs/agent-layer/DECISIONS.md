@@ -155,3 +155,8 @@ Record otherwise-lost rationale that materially constrains future work. Current 
     Decision: Use one workflow so every verification lane runs once and production certification is exercised before merge.
     Reason: Fully agentic development still needs packaging, workflow, and provider-parity regressions caught before merge; consolidating the certification workflow preserves that feedback while reducing duplicate runner work.
     Tradeoffs: The make release-check job waits on check/go-check, and pushes to main now also run package and marketing verification.
+
+- Decision 2026-10-17 opennext-map-no-patches: Accept intermediate Next-routed frames until upstream supports maps
+    Decision: The owner rejects maintaining dependency patches, loader or resolve hooks, overrides, forks, or bundler reimplementation to recover OpenNext's missing server map.
+    Reason: Avoid ongoing upstream maintenance for source-map recovery.
+    Tradeoffs: Next-routed frames stop at handler.mjs until a supported upstream option exists.
