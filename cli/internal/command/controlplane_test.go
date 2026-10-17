@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -715,14 +716,14 @@ func TestCallerConnectDevicePollRequestStopsAtDeviceExpiry(t *testing.T) {
 	store := &controlPlaneSecretStore{}
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	now := testControlNow
-	polls := 0
+	var polls atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/caller/connect/device/start":
 			writeEnvelope(w, fmt.Sprintf(`{"device_code":"dev_slow_pending","user_code":"SLOW-1","verification_uri":"https://app.example/caller/connect/device","verification_uri_complete":"https://app.example/caller/connect/device?user_code=SLOW-1","expires_at":%q,"poll_interval_seconds":5}`, now.Add(10*time.Millisecond).UTC().Format(time.RFC3339Nano)))
 		case "/api/caller/connect/device/poll":
-			polls++
+			polls.Add(1)
 			select {
 			case <-r.Context().Done():
 				return
@@ -754,8 +755,8 @@ func TestCallerConnectDevicePollRequestStopsAtDeviceExpiry(t *testing.T) {
 	if code != foundation.ExitTemporary {
 		t.Fatalf("exit code = %d, want device expiry timeout; stdout: %s stderr: %s", code, stdout, stderr)
 	}
-	if polls != 1 {
-		t.Fatalf("poll count = %d, want one in-flight poll", polls)
+	if got := polls.Load(); got != 1 {
+		t.Fatalf("poll count = %d, want one in-flight poll", got)
 	}
 	if sleeps != 0 {
 		t.Fatalf("sleep count = %d, want request deadline before retry sleep", sleeps)
