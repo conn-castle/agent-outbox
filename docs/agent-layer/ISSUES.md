@@ -34,6 +34,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Open question: Which release-build mapping approach should provide correct source lines while keeping upstream maintenance acceptable?
     Notes: Reproduced with the installed SDK and local sentry-cli resolution; no production change. OpenNext's missing server-map support is tracked upstream at https://github.com/opennextjs/opennextjs-cloudflare/issues/1352.
 
+- Issue 2026-10-17 dev-tool-advisory-constraints: Development-tool advisories remain outside upstream dependency ranges
+    Priority: Low. Area: Development tooling / Dependencies
+    Description: The remaining audit paths run through rclone.js (`adm-zip`) and markdownlint-cli2 (`braces`, `smol-toml`, and `katex`); the production dependency audit is clear. Current parent releases do not admit all fixed versions.
+    Next step: Recheck upstream releases for a supported dependency graph that clears these findings.
+    Notes: rclone.js 0.6.6 requires adm-zip ^0.5.9 (fix >=0.6.1); braces has no patched version; markdownlint-cli2 0.23.3 pins smol-toml 1.8.0 (fix >=1.9.0), and its math extension requires katex ^0.16.0 (fix >=0.18.2).
+
 - Issue 2026-10-17 public-header-mobile-clipping: Public header controls clip on narrow screens
     Priority: Medium. Area: Public site / Navigation
     Description: On `/docs/api/ui` at 360, 393, and 430px, the Get started control extends to about 486px and is clipped by the viewport. A two-row experiment avoided clipping but covered the sticky docs navigation and anchored headings.
