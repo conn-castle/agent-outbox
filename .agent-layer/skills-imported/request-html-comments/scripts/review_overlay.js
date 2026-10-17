@@ -1,4 +1,4 @@
-(() => {
+function createHtmlReview(options) {
   // Proxied iframe documents also receive this script. Only the visible,
   // top-level page should render controls.
   if (window.top !== window) return;
@@ -13,7 +13,7 @@
 
   const overlayCss = String.raw`
 .steward-review-ui, .steward-review-ui * { box-sizing: border-box; pointer-events: auto; }
-#steward-review-root { position: fixed; z-index: 2147483647; top: 22px; left: 50%; display: flex; align-items: center; gap: 5px; min-height: 50px; padding: 6px; color: #f8fafc; background: rgba(15,23,42,.96); border: 1px solid rgba(255,255,255,.18); border-radius: 999px; box-shadow: 0 16px 44px rgba(15,23,42,.28), 0 2px 8px rgba(15,23,42,.18); transform: translateX(-50%); font: 14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; backdrop-filter: blur(14px); user-select: none; }
+#steward-review-root { width: max-content; max-width: calc(100vw - 16px); flex-wrap: wrap; justify-content: center; position: fixed; z-index: 2147483647; top: 22px; left: 50%; display: flex; align-items: center; gap: 5px; min-height: 50px; padding: 6px; color: #f8fafc; background: rgba(15,23,42,.96); border: 1px solid rgba(255,255,255,.18); border-radius: 999px; box-shadow: 0 16px 44px rgba(15,23,42,.28), 0 2px 8px rgba(15,23,42,.18); transform: translateX(-50%); font: 14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; backdrop-filter: blur(14px); user-select: none; }
 #steward-review-root.steward-review-enter { animation: steward-review-enter .18s ease-out; }
 #steward-review-root button, .steward-review-popup button { appearance: none; margin: 0; text-transform: none; letter-spacing: normal; white-space: nowrap; }
 #steward-review-root button { appearance: none; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: auto; min-width: 0; max-width: none; height: 38px; cursor: pointer; margin: 0; border: 0; border-radius: 999px; padding: 0 13px; color: #e2e8f0; background: transparent; transition: background .14s ease, color .14s ease, box-shadow .14s ease, transform .14s ease; font: inherit; font-size: 13px; font-weight: 650; line-height: 1; text-transform: none; letter-spacing: normal; white-space: nowrap; }
@@ -39,6 +39,9 @@
 #steward-review-root .sr-separator { width: 1px; height: 22px; background: rgba(255,255,255,.16); }
 #steward-review-root .sr-status { position: absolute; top: calc(100% + 9px); left: 50%; width: max-content; max-width: min(360px, calc(100vw - 24px)); padding: 7px 11px; color: #f8fafc; background: rgba(15,23,42,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 9px; box-shadow: 0 8px 24px rgba(15,23,42,.2); transform: translateX(-50%); animation: steward-review-status .14s ease-out; font-size: 12px; pointer-events: none; }
 #steward-review-root .sr-status:empty { display: none; }
+:host(.sr-completed) #steward-review-root { visibility: hidden; }
+:host(.sr-completed) .sr-status { visibility: visible; }
+:host(.sr-completed) .steward-review-pin, :host(.sr-completed) .steward-review-highlight, :host(.sr-completed) .steward-review-popup { display: none !important; }
 .steward-review-pin { position: absolute; z-index: 2147483645; display: grid; width: 31px; height: 31px; cursor: pointer; place-items: center; padding: 0; color: #172554; background: #facc15; border: 2px solid #172554; border-radius: 9px; box-shadow: 0 6px 18px rgba(23,37,84,.28); transform: translate(-50%,-50%); transition: background .14s ease, box-shadow .14s ease, transform .14s ease; font: 800 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 .steward-review-pin[hidden] { display: none !important; }
 .steward-review-pin.sr-enter { animation: steward-review-pin-in .22s cubic-bezier(.2,.8,.2,1.2); }
@@ -87,16 +90,18 @@
 @media (prefers-reduced-motion: reduce) { #steward-review-root, .steward-review-pin, .steward-review-popup, .steward-review-info, .steward-review-pin.sr-enter, .steward-review-popup.sr-enter, .steward-review-info.sr-enter, #steward-review-root .sr-status { animation: none; transition: none; } }
 `;
 
-  // Bootstrap one isolated overlay. The server replaces the two sentinel
-  // values below before this script reaches the browser.
-  const endpoint = __ENDPOINT__;
-  // This is the only review rule that intentionally targets page content.
+  // Bootstrap one isolated overlay with host-provided persistence callbacks.
+  if (!options || typeof options.saveDraft !== "function" || typeof options.onFinish !== "function") throw new Error("HTML Review needs saveDraft and onFinish adapters");
+  let active = true;
+  let finishing = false;
+  let completed = false;
+  // Page targeting styles stay separate from the isolated review controls.
   // Keep it in the document; all review chrome styles live in the shadow root.
   // Document styles cannot cross a shadow boundary, so the rule is copied into
-  // an open shadow root on demand when one of its elements is hovered.
+  // an open shadow root on demand for elements being annotated.
   const pageStyle = document.createElement('style');
   pageStyle.id = 'steward-review-page-style';
-  pageStyle.textContent = '.steward-review-hover { outline: 3px solid #3b82f6 !important; outline-offset: 2px !important; cursor: crosshair !important; }';
+  pageStyle.textContent = '.steward-review-hover { outline: 3px solid #3b82f6 !important; outline-offset: 2px !important; cursor: crosshair !important; } .steward-review-text-selectable text { user-select: text !important; -webkit-user-select: text !important; }';
   document.head.appendChild(pageStyle);
   const overlayLayer = document.createElement('div');
   overlayLayer.className = 'steward-review-ui sr-layer';
@@ -144,7 +149,7 @@
   const textButton = root.querySelector('.sr-text-toggle');
   const infoButton = root.querySelector('.sr-info');
   const count = root.querySelector('.sr-count');
-  const initialComments = __INITIAL_COMMENTS__;
+  const initialComments = options.initialComments || [];
   const comments = initialComments.map(item => ({...item}));
   const pendingComments = new Map();
   const pendingDeletedIds = new Set();
@@ -158,7 +163,6 @@
   let draft = null;
   let draftSaveTimer = null;
   let draftSavePromise = Promise.resolve();
-  let finished = false;
   // Modal-host synchronization runs during startup, before saved comment
   // positioning is fully wired. Use a safe callback until the real refresher
   // is assigned below; referencing a later `const` here would throw in its
@@ -464,7 +468,7 @@
     refreshComments();
   };
   const syncOverlayHost = () => {
-    if (finished) return;
+    if (!active) return;
     const host = activeModalHost() || document.documentElement;
     if (overlayLayer.parentElement === host) {
       showOverlayLayer();
@@ -633,6 +637,8 @@
       }
     }
   };
+  const selectableSvgRoots = new Set();
+  let textSelectionClickDocument = null;
   const setMode = (nextMode) => {
     mode = nextMode;
     addButton.setAttribute('aria-pressed', String(mode === 'element'));
@@ -641,7 +647,11 @@
     else if (mode === 'text') status.textContent = 'Select text to comment - Esc to exit';
     else status.textContent = '';
     if (mode !== 'element') clearHover();
-    if (mode !== 'text') clearSelections();
+    if (mode !== 'text') {
+      clearSelections();
+      for (const svg of selectableSvgRoots) svg.classList.remove('steward-review-text-selectable');
+      selectableSvgRoots.clear();
+    }
   };
 
   const closeInfo = () => {
@@ -802,11 +812,17 @@
     return toTopClientPoint(rect.right, rect.top, range.commonAncestorContainer, geometry);
   };
 
+  // A served-page review can span several pages, and single-page apps change
+  // the URL without reloading, so each comment records the page it was made on
+  // and its pin shows only there. Comments without a page predate this field.
+  const currentPageUrl = () => `${location.pathname}${location.search}${location.hash}`;
+  const onCurrentPage = (item) => !item.page_url || item.page_url === currentPageUrl();
   const persistableTarget = (draftOrItem) => (
     draftOrItem.iframe_path?.length ? { iframe_path: draftOrItem.iframe_path } : {}
   );
   const commentFromDraft = (draftItem, comment) => ({
     id: draftItem.id, target_type: draftItem.targetType,
+    page_url: draftItem.page_url, page_title: draftItem.page_title,
     element: draftItem.element, selection: draftItem.selection,
     ...persistableTarget(draftItem),
     anchor: draftItem.anchor, anchor_coordinate_space: draftItem.anchorCoordinateSpace,
@@ -845,20 +861,14 @@
     else rememberDeletion(draft.id);
   };
   const saveDraft = () => {
-    if (finished) return draftSavePromise;
+
     if (draftSaveTimer) clearTimeout(draftSaveTimer);
     draftSaveTimer = null;
     if (!pendingComments.size && !pendingDeletedIds.size) return draftSavePromise;
     const savedComments = new Map(pendingComments);
     const savedDeletedIds = new Set(pendingDeletedIds);
     draftSavePromise = draftSavePromise.catch(() => {}).then(async () => {
-      const response = await fetch(`${endpoint}/draft`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ comments: [...savedComments.values()], deleted_ids: [...savedDeletedIds] }),
-        keepalive: true
-      });
-      if (!response.ok) throw new Error(await response.text());
+      await options.saveDraft({ comments: [...savedComments.values()], deleted_ids: [...savedDeletedIds] });
       for (const [id, item] of savedComments) {
         if (pendingComments.get(id) === item) pendingComments.delete(id);
       }
@@ -869,7 +879,7 @@
     return draftSavePromise;
   };
   const queueDraftSave = () => {
-    if (finished) return;
+    if (!active) return;
     if (draftSaveTimer) clearTimeout(draftSaveTimer);
     draftSaveTimer = setTimeout(() => saveDraft().catch(error => {
       status.textContent = `Could not save review draft: ${error.message}`;
@@ -901,6 +911,7 @@
     return null;
   };
   const anchorForComment = (item, origin = containingBlockOrigin()) => {
+    if (!onCurrentPage(item)) return hideCommentAnchor(item);
     const frameDocument = documentForComment(item);
     if (item.iframe_path?.length && !frameDocument) return hideCommentAnchor(item);
     const fallbackAnchor = () => {
@@ -1046,6 +1057,7 @@
     draft = item ? { item } : {
       ...target,
       id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+      page_url: currentPageUrl(), page_title: document.title,
       created_at: new Date().toISOString()
     };
     const placePopup = (nextX, nextY) => placeFixedElement(popup, nextX, nextY);
@@ -1108,7 +1120,21 @@
     rootNode.appendChild(style);
   };
   const onPointerDown = (event) => {
-    if (infoPanel && !infoPanel.contains(event.target) && !infoButton.contains(event.target)) closeInfo();
+    // A later gesture must retain normal page interaction even if the prior
+    // text-selection gesture did not produce a click.
+    textSelectionClickDocument = null;
+    const target = eventOrigin(event);
+    if (mode === 'text' && !isOverlay(target)) {
+      const svg = target.closest?.('svg');
+      if (svg) {
+        // Linked SVG text is not natively selectable in all browsers. Enable
+        // selection before mousedown, including inside open shadow roots.
+        ensureHoverStyle(svg);
+        svg.classList.add('steward-review-text-selectable');
+        selectableSvgRoots.add(svg);
+      }
+    }
+    if (infoPanel && !infoPanel.contains(target) && !infoButton.contains(target)) closeInfo();
   };
   const onPointerMove = (event) => {
     const target = eventOrigin(event);
@@ -1126,7 +1152,8 @@
   const onClick = (event) => {
     const target = eventOrigin(event);
     if (isOverlay(target)) return;
-    if (mode === 'text') {
+    if (mode === 'text' || (event.detail > 0 && textSelectionClickDocument === ownerDocumentOf(target))) {
+      textSelectionClickDocument = null;
       event.preventDefault();
       event.stopImmediatePropagation();
       return;
@@ -1181,6 +1208,9 @@
       return;
     }
     const topPoint = toTopClientPoint(event.clientX, event.clientY, target, geometry) || anchor;
+    // The pointerup handler opens the editor and leaves text mode before the
+    // same gesture's click. Consume that click so links cannot navigate.
+    textSelectionClickDocument = ownerDocumentOf(target);
     setMode('interact');
     openPopup(null, topPoint.x, topPoint.y, {
       targetType: 'text',
@@ -1208,7 +1238,8 @@
   };
   const bindAnnotationListeners = (doc, signal) => {
     const clearDocumentHover = () => clearHoverInDocument(doc);
-    listenUntilAbort(doc, 'pointerdown', onPointerDown, false, signal);
+    // Prepare selection even when page controls stop pointerdown bubbling.
+    listenUntilAbort(doc, 'pointerdown', onPointerDown, true, signal);
     listenUntilAbort(doc, 'pointermove', onPointerMove, true, signal);
     listenUntilAbort(doc, 'click', onClick, true, signal);
     listenUntilAbort(doc, 'pointerup', onPointerUp, true, signal);
@@ -1357,7 +1388,12 @@
   infoButton.addEventListener('click', toggleInfo);
 
   refreshComments = () => {
+    if (!active) return;
     const origin = containingBlockOrigin();
+    if (draft?.provisionalId) {
+      const item = draft.item || commentFromDraft(draft, '');
+      anchorForComment({...item, id: draft.provisionalId}, origin);
+    }
     for (const item of comments) {
       const pin = ensurePin(item);
       const anchor = anchorForComment(item, origin);
@@ -1393,6 +1429,18 @@
     closeInfo();
     scheduleCommentRefresh();
   });
+  // Route changes can leave the DOM untouched. Refresh explicitly rather than
+  // relying on mutations, scroll, or resize to update page-scoped annotations.
+  window.addEventListener('popstate', scheduleCommentRefresh);
+  window.addEventListener('hashchange', scheduleCommentRefresh);
+  for (const method of ['pushState', 'replaceState']) {
+    const original = window.history[method];
+    window.history[method] = function (...args) {
+      const result = original.apply(this, args);
+      scheduleCommentRefresh();
+      return result;
+    };
+  }
   if (document.fonts?.ready) document.fonts.ready.then(refreshComments);
 
   const dragHandle = root.querySelector('.sr-drag');
@@ -1419,33 +1467,146 @@
     dragHandle.addEventListener('pointercancel', end);
   });
 
+  // Hosts own persistence and completion; the engine never navigates the page.
+  const flush = async () => {
+    rememberOpenDraft();
+    try { await saveDraft(); }
+    catch (error) {
+      status.textContent = `Draft was not saved: ${error.message}`;
+      throw error;
+    }
+    if (/^(Could not save review draft:|Draft was not saved:)/.test(status.textContent)) status.textContent = '';
+  };
+  const hideReview = (saveWarning = '') => {
+    setMode('interact');
+    closeInfo();
+    if (popup) hideAsPopover(popup);
+    if (saveWarning) {
+      overlayLayer.classList.add('sr-completed');
+      status.textContent = saveWarning;
+      active = true;
+      syncOverlayHost();
+    } else {
+      hideAsPopover(overlayLayer);
+      overlayLayer.style.setProperty('display', 'none', 'important');
+    }
+    active = false;
+  };
+  const api = {
+    getComments: () => structuredClone(recoverableComments()),
+    flush,
+    async suspend() {
+      await flush();
+      hideReview();
+    },
+    resume() {
+      if (finishing) throw new Error('Review completion is in progress');
+      completed = false;
+      overlayLayer.classList.remove('sr-completed');
+      overlayLayer.inert = false;
+      active = true;
+      overlayLayer.style.setProperty('display', 'block', 'important');
+      syncOverlayHost();
+      scheduleCommentRefresh();
+    },
+    // The host must durably archive/clear its draft before clearing the UI.
+    clearComments() {
+      setMode('interact');
+      closeInfo();
+      closePopup();
+      if (draftSaveTimer) clearTimeout(draftSaveTimer);
+      draftSaveTimer = null;
+      pendingComments.clear();
+      pendingDeletedIds.clear();
+      for (const pin of pins.values()) pin.remove();
+      pins.clear();
+      for (const id of [...highlights.keys()]) removeHighlight(id);
+      renderedAnchors.clear();
+      comments.splice(0);
+      updateCount();
+    },
+    addComment(item) {
+      if (finishing || completed) throw new Error('Resume the review before adding comments');
+      if (!item?.id || !item.comment?.trim()) throw new Error('A comment needs an ID and text');
+      if (comments.some(existing => existing.id === item.id)) throw new Error('Comment ID already exists');
+      const copy = structuredClone(item);
+      comments.push(copy);
+      rememberComment(copy);
+      updateCount();
+      refreshComments();
+      queueDraftSave();
+    },
+  };
   const finish = async (action) => {
-    if (action === 'submit' && popup) {
+    if (finishing || completed) return;
+    if (options.requireSavedComment !== false && action === 'submit' && popup) {
       popup.querySelector('.sr-error').textContent = 'Save or close this comment before sending.';
       popup.querySelector('textarea').focus();
       return;
     }
+    finishing = true;
     setMode('interact');
     closeInfo();
-    closePopup();
-    status.textContent = '';
+    overlayLayer.inert = true;
+    let saveWarning = '';
     try {
-      await saveDraft();
-      const response = await fetch(`${endpoint}/${action}`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
-      if (!response.ok) throw new Error(await response.text());
-      finished = true;
-      document.documentElement.innerHTML = `<head><title>Review ${action === 'submit' ? 'submitted' : 'cancelled'}</title></head><body style="font:16px/1.5 system-ui;padding:3rem"><h1>Review ${action === 'submit' ? 'submitted' : 'cancelled'}</h1><p>You can close this tab.</p></body>`;
-    } catch (error) { status.textContent = `Could not finish review: ${error.message}`; }
+      try { await flush(); }
+      catch {
+        if (action !== 'submit' || options.submitRequiresPersistence !== false) return;
+        saveWarning = status.textContent;
+      }
+      const completionBody = document.body;
+      active = false;
+      await options.onFinish(action, api);
+      if (document.body !== completionBody || (!pendingComments.size && !pendingDeletedIds.size)) saveWarning = '';
+      completed = true;
+      hideReview(saveWarning);
+    } catch (error) {
+      active = true;
+      syncOverlayHost();
+      status.textContent = `Could not finish review: ${error.message}`;
+    }
+    finally {
+      finishing = false;
+      overlayLayer.inert = completed && !saveWarning;
+    }
   };
   window.addEventListener('pagehide', () => {
-    if (finished) return;
+    if (completed) return;
     if (draftSaveTimer) clearTimeout(draftSaveTimer);
     rememberOpenDraft();
     if (!pendingComments.size && !pendingDeletedIds.size) return;
-    const body = JSON.stringify({ comments: [...pendingComments.values()], deleted_ids: [...pendingDeletedIds] });
-    const queued = navigator.sendBeacon && navigator.sendBeacon(`${endpoint}/draft`, new Blob([body], {type: 'application/json'}));
-    if (!queued) fetch(`${endpoint}/draft`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body, keepalive: true });
+    const payload = { comments: [...pendingComments.values()], deleted_ids: [...pendingDeletedIds] };
+    try {
+      const result = (options.flushOnPageHide || options.saveDraft)(payload);
+      Promise.resolve(result).catch(error => { status.textContent = `Could not save review draft: ${error.message}`; });
+    } catch (error) { status.textContent = `Could not save review draft: ${error.message}`; }
   });
-  root.querySelector('.sr-send').addEventListener('click', () => finish('submit'));
-  root.querySelector('.sr-cancel').addEventListener('click', () => finish('cancel'));
-})();
+  const send = root.querySelector('.sr-send');
+  if (options.submitLabel) {
+    send.querySelector('.sr-send-label').textContent = options.submitLabel;
+    send.setAttribute('aria-label', options.submitLabel);
+    send.title = options.submitLabel;
+  }
+  if (options.submitIcon) send.querySelector('[aria-hidden]').textContent = options.submitIcon;
+  if (options.submitIconOnly) {
+    send.querySelector('.sr-send-label').hidden = true;
+    send.style.width = '38px'; send.style.padding = '0';
+  }
+  const cancel = root.querySelector('.sr-cancel');
+  if (options.closeLabel) { cancel.setAttribute('aria-label', options.closeLabel); cancel.title = options.closeLabel; }
+  for (const action of options.actions || []) {
+    const button = document.createElement('button');
+    button.textContent = action.label;
+    button.addEventListener('click', async () => {
+      try { await flush(); }
+      catch { return; }
+      try { await action.run(api); }
+      catch (error) { status.textContent = error.message; }
+    });
+    root.insertBefore(button, send);
+  }
+  send.addEventListener('click', () => finish('submit'));
+  cancel.addEventListener('click', () => finish('cancel'));
+  return api;
+}

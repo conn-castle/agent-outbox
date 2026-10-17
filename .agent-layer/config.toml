@@ -29,7 +29,6 @@ reasoning_effort = "xhigh" # codex only
 statusline = true
 
 [agents.codex.agent_specific]
-model_fallback = false
 
 [agents.codex.agent_specific.features]
 apps = false
@@ -39,7 +38,8 @@ in_app_browser = false
 plugins = false
 
 [agents.codex.agent_specific.tui]
-whimsy = false
+[agents.codex.agent_specific.tui.effects]
+starfield = false
 
 [agents.vscode]
 enabled = false
@@ -94,3 +94,15 @@ selectors = ['skills/apple-design']
 [[skills.imports]]
 repository = 'https://github.com/nicholasjconn/skills'
 selectors = ['skills/tools/request-html-comments']
+
+[[instructions.local]]
+selectors = ['00_rules.md']
+order = 0
+
+[[instructions.local]]
+selectors = ['01_memory.md']
+order = 10
+
+[[instructions.local]]
+selectors = ['04_conventions.md']
+order = 20

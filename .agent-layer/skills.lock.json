@@ -10,8 +10,8 @@
       "resolved_ref": "main",
       "ref_kind": "branch",
       "tracking": "tracked",
-      "commit": "d23d7f88a2e21c9e4b1418c7abe420f5c1052ba7",
-      "tree_hash": "sha256:40275ee69d527d933daa762ed32419d305fe5a99e41a3c0b2fa39baa1aeef297"
+      "commit": "2d228630ba1446365f614a108cb8252f1feda202",
+      "tree_hash": "sha256:c4c39e27719da56d6c17e6ebcaf6509cbb1a230eea7ad255af11a081a8a4c8bd"
     },
     {
       "name": "request-html-comments",
@@ -22,8 +22,8 @@
       "resolved_ref": "main",
       "ref_kind": "branch",
       "tracking": "tracked",
-      "commit": "6637075a6aa2cb969fdc0cd48d1a99567df9767b",
-      "tree_hash": "sha256:90c94b1555504f3a815efb69a9e54f80d9ad1e5e6e293e0d61d182222afe37d1"
+      "commit": "19b52bd200f61365ec1908edf794d5902c2c2a62",
+      "tree_hash": "sha256:39102e16044babe186e7df119cfbbf2dc45303d1a0b5e88ded10fccf2f99697d"
     }
   ]
 }
