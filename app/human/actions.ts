@@ -312,9 +312,14 @@ async function runHumanActionMutation<TInput, TSuccess extends { ok: true }>({
     query: ProductTransactionQuery,
     input: TInput
   ) => Promise<TSuccess | HumanAnswerFailure>;
-  reportFailure: (error: unknown, input: TInput) => HumanAnswerFailure;
+  reportFailure: (
+    error: unknown,
+    input: TInput,
+    startedAtMs: number
+  ) => HumanAnswerFailure;
 }): Promise<TSuccess | Pick<HumanMutationFailure, "ok" | "code" | "message">> {
   const clerkSession = await auth.protect({ unauthenticatedUrl: "/sign-in" });
+  const startedAtMs = Date.now();
   let input: TInput | null = null;
   try {
     const transaction = await runHumanAccountTransaction(
@@ -336,7 +341,7 @@ async function runHumanActionMutation<TInput, TSuccess extends { ok: true }>({
     if (input === null) {
       throw error;
     }
-    return reportFailure(error, input);
+    return reportFailure(error, input, startedAtMs);
   }
 }
 

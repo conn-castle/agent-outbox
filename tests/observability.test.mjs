@@ -312,6 +312,7 @@ function loadBillingSessionModuleForTest(reportRuntimeFailure) {
  * @param {import("../src/server/database.ts").ProductTransactionQuery} [transactionQuery]
  * @returns {{
  *   createHumanAnswer: typeof createHumanAnswer,
+ *   humanAnswerTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerTransactionFailure,
  *   humanAnswerUndoTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerUndoTransactionFailure
  * }}
  */
@@ -368,6 +369,7 @@ function loadHumanAnswerModuleForTest(reportRuntimeFailure, transactionQuery) {
 
   const exportsForTest = /** @type {{
     createHumanAnswer: typeof createHumanAnswer,
+    humanAnswerTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerTransactionFailure,
     humanAnswerUndoTransactionFailure: typeof import("../src/server/human-answer.ts").humanAnswerUndoTransactionFailure
   }} */ (exportsForTestModule);
   return exportsForTest;
@@ -1714,6 +1716,97 @@ test("human review server actions report transaction throws and propagate pre-in
         });
       });
     }
+  }
+});
+
+test("human action failure logs include the elapsed account transaction", async (t) => {
+  for (const operation of ["answer", "undo"]) {
+    await t.test(operation, async (t) => {
+      let now = Date.UTC(2026, 9, 17);
+      t.mock.method(Date, "now", () => now);
+      /** @type {Record<string, unknown>[]} */
+      const failures = [];
+      const reporters = loadHumanAnswerModuleForTest((_error, context) => {
+        failures.push(context);
+        return {
+          error_id: "duration-test",
+          sentry_captured: false,
+          log: context
+        };
+      });
+      async function failMutation() {
+        now += 375;
+        throw new Error("transaction failed");
+      }
+      const actions = /** @type {typeof import("../app/human/actions.ts")} */ (
+        loadModuleForTest("app/human/actions.ts", {
+          globals: { Date, URLSearchParams },
+          stubs: {
+            "@clerk/nextjs/server": {
+              auth: {
+                async protect() {
+                  now += 50;
+                  return { userId: "clerk-duration-test" };
+                }
+              }
+            },
+            "next/navigation": {},
+            "next/cache": {},
+            "../../src/server/correlation": {
+              /** @param {string} prefix */
+              createCorrelationId: (prefix) => `${prefix}_duration`
+            },
+            "../../src/server/human-answer": {
+              ...reporters,
+              createHumanAnswerInTransaction: failMutation,
+              undoHumanAnswerBeforeReadInTransaction: failMutation
+            },
+            "../../src/server/human-action-form": {
+              parseBulkHumanAnswersForm,
+              parseHumanAnswerForm,
+              parseUndoHumanAnswerForm
+            },
+            "../../src/server/human-review-fixture": {
+              humanBrowserFixtureEnabled: () => false
+            },
+            "../../src/server/client-events": { emitClientEventLog() {} },
+            "../../src/server/human-session": {
+              /** @param {unknown} _input @param {(query: unknown, session: unknown) => Promise<unknown>} callback */
+              async runHumanAccountTransaction(_input, callback) {
+                now += 125;
+                return callback(async () => queryResult([]), {
+                  accountId: "00000000-0000-4000-8000-000000000701",
+                  userId: "00000000-0000-4000-8000-000000000702"
+                });
+              }
+            },
+            "../../src/shared/human-review-view": {
+              HUMAN_REVIEW_VIEW_PARAM_KEYS
+            }
+          }
+        })
+      );
+      const form = new FormData();
+      form.set("inputItemId", "00000000-0000-4000-8000-000000000711");
+      form.set("callerId", "00000000-0000-4000-8000-000000000712");
+      form.set("outputResultId", "00000000-0000-4000-8000-000000000713");
+      form.set("expectedRevision", "1");
+      form.set("actionValue", "approve");
+      form.set("popupKind", "none");
+      const result = await (operation === "undo"
+        ? actions.executeUndoHumanAnswerMutation(form)
+        : actions.executeHumanAnswerMutation(form));
+      assert.equal(result.ok, false);
+      assert.equal(result.ok ? null : result.code, "temporary_unavailable");
+      assert.equal(failures.length, 1);
+      assert.equal(
+        failures[0].operation,
+        operation === "undo"
+          ? "human_answer_undo_transaction"
+          : "human_answer_transaction"
+      );
+      assert.equal(failures[0].duration_ms, 500);
+    });
   }
 });
 

@@ -460,9 +460,9 @@ export function humanAnswerTransactionFailure(
 
 export function humanAnswerUndoTransactionFailure(
   error: unknown,
-  input: PreReadUndoInput
+  input: PreReadUndoInput,
+  startedAtMs = Date.now()
 ): HumanAnswerFailure {
-  const startedAtMs = Date.now();
   reportRuntimeFailure(error, {
     errorId: input.correlationId,
     request_id: input.requestId,

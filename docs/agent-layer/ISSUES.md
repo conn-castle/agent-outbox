@@ -33,21 +33,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Never-applied declarations were removed from `app/globals.css` during CSS consolidation. Rendering is unchanged, but these effects are missing: dense-surface actions keep a 1.5rem top margin (the dropped rule set 1.1rem); actions inside `.connect-device-decision` keep a 1.5rem top margin (the dropped rule set 0); `.connect-error-card` headings use the generic connect-card heading (`#202426`, 0 0 0.65rem margin; the dropped rule set `#292724` and 0 0 0.5rem).
     Open question: Whether any of these former intents are still the desired design.
 
-- Issue 2026-10-07 human-action-duration-zero: Human answer/undo transaction failure reports log near-zero durations
-    Priority: Low. Area: Observability / Human review
-    Description: `runHumanActionMutation` in `app/human/actions.ts` calls `humanAnswerTransactionFailure` without `startedAtMs` and `humanAnswerUndoTransactionFailure` (which always starts its clock internally), so their `duration_ms` measures only the reporter call, not the failed transaction.
-    Next step: Capture the start time before the transaction and pass it to both reporters.
-
 - Issue 2026-10-06 copilot-review-project-context: Hosted review lacks a committed project-guidance entry point
     Priority: Low. Area: Review tooling
     Description: Canonical project instructions are tracked under `.agent-layer/instructions`, but generated `AGENTS.md` and `.github/copilot-instructions.md` are gitignored and no committed Copilot review instruction file or review skill exposes them through GitHub's documented paths; repository MCP settings and actual review-context use are unverified.
     Next step: Identify the minimum review context needed and verify a supported integration against available review-session evidence without duplicating canonical rules.
     Notes: Deferred from PR208 Copilot review https://github.com/conn-castle/agent-outbox/pull/208#pullrequestreview-5435689404 and PR217 Copilot review https://github.com/conn-castle/agent-outbox/pull/217#pullrequestreview-5441007257. PR218 Copilot review https://github.com/conn-castle/agent-outbox/pull/218#pullrequestreview-5441851622. PR219 Copilot review https://github.com/conn-castle/agent-outbox/pull/219#pullrequestreview-5442567932. PR220 Copilot review https://github.com/conn-castle/agent-outbox/pull/220#pullrequestreview-5443605544. PR221 Copilot review https://github.com/conn-castle/agent-outbox/pull/221#pullrequestreview-5444854506. PR222 Copilot review https://github.com/conn-castle/agent-outbox/pull/222#pullrequestreview-5445660454. PR223 Copilot review https://github.com/conn-castle/agent-outbox/pull/223#pullrequestreview-5446746917. PR224 Copilot review https://github.com/conn-castle/agent-outbox/pull/224#pullrequestreview-5447680653.
-
-- Issue 2026-10-02 cli-device-expiry-test-race: CLI device-expiry test races under `go test -race`
-    Priority: Low. Area: CLI tests
-    Description: `TestCallerConnectDevicePollRequestStopsAtDeviceExpiry` (`cli/internal/command/controlplane_test.go`) increments `polls` in the HTTP handler goroutine and reads it from the test goroutine after the client cancels the in-flight poll, so `-race` reports a data race. CI runs Go tests without `-race`, so it does not fail there.
-    Next step: Synchronize the handler counter (for example, with `sync/atomic`) before adding `-race` to any Go gate.
 
 - Issue 2026-10-02 migration-gate-lexing-gaps: Destructive-migration gate misreads some SQL lexical forms
     Priority: Low. Area: Policy gates / Migrations
