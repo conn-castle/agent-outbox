@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
+  symlinkSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -199,185 +202,448 @@ function workerDeployEnv(overrides = {}) {
   };
 }
 
-test("worker deploy wrapper builds, passes explicit bindings, and removes the temp secrets file", () => {
-  const env = workerDeployEnv({
-    CALLER_KEY_HASH_SECRET: `${HASH_SECRET_FIXTURE}#after-hash`,
-    CLERK_SECRET_KEY: "`sk_test_backticked`",
-    SMOKE_OR_CLEANUP_TOKEN: "token with space='quoted' \"double\" back\\slash"
+const DEBUG_ID = "123e4567-e89b-12d3-a456-426614174000";
+const OTHER_DEBUG_ID = "223e4567-e89b-12d3-a456-426614174000";
+const UNINJECTED =
+  "console.log(globalThis._debugIds, globalThis._sentryDebugIds);\n//# sourceMappingURL=entry.js.map\n";
+const uploadEnv = () =>
+  workerDeployEnv({
+    SENTRY_ORG: "proof-org",
+    SENTRY_PROJECT: "proof-project",
+    SENTRY_AUTH_TOKEN: "local-proof-not-a-token",
+    AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD: "1",
+    AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH: "1"
   });
+
+/**
+ * @param {(step: number, dir: string, args: string[]) => void | { status: number, stdout: string, stderr: string }} [hook]
+ * @param {Record<string, string | undefined>} [env]
+ */
+function uploadScenario(hook = () => {}, env = uploadEnv()) {
   const tempBase = mkdtempSync(
     path.join(os.tmpdir(), "agent-outbox-worker-deploy-test-")
   );
-  /** @type {{ command: string, args: string[], env: NodeJS.ProcessEnv | undefined, maxBuffer?: number, stdio?: import("node:child_process").StdioOptions }[]} */
+  /** @type {{args: string[], options: import("node:child_process").SpawnSyncOptions, config?: Record<string, any>}[]} */
   const calls = [];
-  /** @type {string | null} */
-  let secretsFilePath = null;
-  /** @type {string | null} */
-  let configFilePath = null;
-
-  try {
-    const uploaded = runWorkerVersionUpload({
+  let bundleDir = "";
+  let hash = "";
+  const run = () =>
+    runWorkerVersionUpload({
       env,
       tempBase,
       spawnSyncImpl(command, args, options) {
-        calls.push({
-          command,
-          args,
-          env: options.env,
-          maxBuffer: options.maxBuffer,
-          stdio: options.stdio
-        });
-
-        if (args[0] === "pnpm" && args[1] === "exec") {
-          const secretsFileIndex = args.indexOf("--secrets-file") + 1;
-          secretsFilePath = args[secretsFileIndex] ?? null;
-          assert.ok(secretsFilePath, "deploy command must pass --secrets-file");
-          assert.equal(existsSync(secretsFilePath), true);
-          // Wrangler parses a JSON secrets file before falling back to dotenv.
-          assert.deepEqual(
-            JSON.parse(readFileSync(secretsFilePath, "utf8")),
-            Object.fromEntries(
-              WORKER_DEPLOY_SECRET_NAMES.map((name) => [name, env[name]])
-            )
+        assert.equal(command, "corepack");
+        const step = calls.length;
+        const config =
+          args[2] === "wrangler"
+            ? JSON.parse(
+                readFileSync(args[args.indexOf("--config") + 1], "utf8")
+              )
+            : undefined;
+        calls.push({ args, options, config });
+        const dir = args.includes("--outdir")
+          ? args[args.indexOf("--outdir") + 1]
+          : bundleDir;
+        if (step === 1) {
+          bundleDir = dir;
+          mkdirSync(dir);
+          writeFileSync(path.join(dir, "README.md"), "Wrangler output");
+          writeFileSync(path.join(dir, "entry.js"), UNINJECTED);
+          writeFileSync(
+            path.join(dir, "entry.js.map"),
+            JSON.stringify({
+              version: 3,
+              sources: ["private.ts"],
+              sourcesContent: ["PRIVATE_SOURCE_CANARY"],
+              names: [],
+              mappings: "AAAA"
+            })
           );
-
-          const configFileIndex = args.indexOf("--config") + 1;
-          configFilePath = args[configFileIndex] ?? null;
-          assert.ok(configFilePath, "deploy command must pass --config");
-          assert.equal(existsSync(configFilePath), true);
-          const config = JSON.parse(readFileSync(configFilePath, "utf8"));
-          assert.deepEqual(config.hyperdrive, [
-            {
-              binding: DATABASE_HYPERDRIVE_BINDING,
-              id: env.CLOUDFLARE_HYPERDRIVE_ID
-            }
-          ]);
+        } else if (step === 2) {
+          const entry = path.join(dir, "entry.js");
+          writeFileSync(
+            entry,
+            `!function(){e._sentryDebugIds[n]="${DEBUG_ID}"}();\n${readFileSync(entry, "utf8")}//# debugId=${DEBUG_ID}\n`
+          );
+          const map = path.join(dir, "entry.js.map");
+          writeFileSync(
+            map,
+            JSON.stringify({
+              ...JSON.parse(readFileSync(map, "utf8")),
+              debugId: DEBUG_ID
+            })
+          );
+          hash = createHash("sha256").update(readFileSync(entry)).digest("hex");
+        } else if (step === 4) {
+          mkdirSync(dir);
+          writeFileSync(path.join(dir, "entry.js"), readFileSync(config.main));
+          writeFileSync(path.join(dir, "README.md"), "Wrangler output");
         }
-
-        const isUpload =
-          args.includes("versions") &&
-          args.includes("upload") &&
-          !args.includes("--dry-run");
+        const failure = hook(step, dir, args);
+        if (failure) return failure;
         return {
           status: 0,
-          signal: null,
-          error: undefined,
-          stdout: isUpload
-            ? "Worker Version ID: 123e4567-e89b-12d3-a456-426614174000\n"
-            : "",
+          stdout: step === 5 ? `Worker Version ID: ${CANDIDATE_VERSION}\n` : "",
           stderr: ""
         };
       }
     });
-    assert.equal(uploaded.versionId, "123e4567-e89b-12d3-a456-426614174000");
-
-    assert.equal(calls[0].command, "corepack");
-    assert.deepEqual(calls[0].args, ["pnpm", "run", "worker:build"]);
-    assert.equal(calls[0].env?.APP_BASE_URL, env.APP_BASE_URL);
-    assert.equal(calls[0].env?.CLOUDFLARE_API_TOKEN, undefined);
-    for (const name of WORKER_DEPLOY_SECRET_NAMES) {
-      assert.equal(calls[0].env?.[name], undefined);
+  return {
+    run,
+    calls,
+    tempBase,
+    env,
+    hash: () => hash,
+    clean() {
+      assert.deepEqual(readdirSync(tempBase), []);
+      for (const { args } of calls) {
+        for (const flag of ["--config", "--secrets-file", "--outdir"]) {
+          if (args.includes(flag))
+            assert.equal(existsSync(args[args.indexOf(flag) + 1]), false);
+        }
+      }
+      rmSync(tempBase, { recursive: true });
     }
-    assert.equal(calls[1].maxBuffer, GH_SPAWN_MAX_BUFFER_BYTES);
-    assert.deepEqual(calls[1].stdio, ["ignore", "pipe", "pipe"]);
-    assert.equal(calls[2].maxBuffer, GH_SPAWN_MAX_BUFFER_BYTES);
-    assert.equal(calls[1].command, "corepack");
-    assert.deepEqual(calls[1].args.slice(0, 6), [
+  };
+}
+
+test("Worker upload sends one Sentry identity before uploading the exact no-bundle bytes with private maps disabled", () => {
+  const env = uploadEnv();
+  env.CALLER_KEY_HASH_SECRET = `${HASH_SECRET_FIXTURE}#after-hash`;
+  env.CLERK_SECRET_KEY = "`sk_test_backticked`";
+  env.SMOKE_OR_CLEANUP_TOKEN =
+    "token with space='quoted' \"double\" back\\slash";
+  const scenario = uploadScenario((step, _dir, args) => {
+    if (![1, 4, 5].includes(step)) return;
+    assert.deepEqual(
+      JSON.parse(
+        readFileSync(args[args.indexOf("--secrets-file") + 1], "utf8")
+      ),
+      Object.fromEntries(
+        WORKER_DEPLOY_SECRET_NAMES.map((name) => [name, env[name]])
+      )
+    );
+  }, env);
+  try {
+    assert.deepEqual(scenario.run(), {
+      versionId: CANDIDATE_VERSION,
+      debugId: DEBUG_ID,
+      entrySha256: scenario.hash()
+    });
+    const calls = scenario.calls;
+    assert.equal(calls.length, 6);
+    assert.deepEqual(calls[0].args, ["pnpm", "run", "worker:build"]);
+    const bundleDir = calls[1].args.at(-2);
+    assert.ok(bundleDir?.startsWith(scenario.tempBase + path.sep));
+    assert.deepEqual(calls[1].args, [
+      "pnpm",
+      ...buildWranglerVersionsUploadArgs(
+        env,
+        calls[1].args[calls[1].args.indexOf("--secrets-file") + 1],
+        calls[1].args[6]
+      ),
+      "--dry-run",
+      "--outdir",
+      bundleDir,
+      "--upload-source-maps"
+    ]);
+    assert.deepEqual(calls[2].args, [
       "pnpm",
       "exec",
-      "wrangler",
-      "versions",
-      "upload",
-      "--config"
+      "sentry-cli",
+      "sourcemaps",
+      "inject",
+      bundleDir
     ]);
-    assert.ok(configFilePath);
-    assert.equal(calls[1].args.includes(configFilePath), true);
-    assert.equal(calls[1].args.includes("--env-file"), true);
-    assert.equal(calls[1].args.includes("--secrets-file"), true);
-    assert.equal(calls[1].args.includes("--dry-run"), true);
-    assert.equal(calls[1].args.includes("--keep-vars"), false);
-    assert.equal(calls[1].args.includes("--tag"), true);
-    assert.equal(calls[1].args.includes("v1.2.3"), true);
-
-    assert.equal(calls[2].command, "corepack");
-    assert.deepEqual(
-      calls[2].args,
-      calls[1].args.filter((arg) => arg !== "--dry-run")
-    );
-    for (const call of calls.slice(1)) {
-      assert.equal(call.env?.CLOUDFLARE_API_TOKEN, env.CLOUDFLARE_API_TOKEN);
-      assert.equal(call.env?.APP_BASE_URL, undefined);
-      for (const name of WORKER_DEPLOY_SECRET_NAMES) {
-        assert.equal(call.env?.[name], undefined);
-      }
+    assert.deepEqual(calls[3].args, [
+      "pnpm",
+      "exec",
+      "sentry-cli",
+      "sourcemaps",
+      "upload",
+      "--strict",
+      "--wait",
+      bundleDir
+    ]);
+    assert.deepEqual(calls[4].args, [
+      ...calls[5].args,
+      "--dry-run",
+      "--outdir",
+      calls[4].args.at(-1)
+    ]);
+    assert.equal(calls[5].args.includes("--upload-source-maps"), false);
+    const original = calls[1].config;
+    for (const call of [calls[4], calls[5]]) {
+      assert.ok(path.isAbsolute(call.config?.main));
+      assert.ok(path.isAbsolute(call.config?.assets.directory));
+      assert.equal(call.config?.assets.directory.includes(bundleDir), false);
+      assert.deepEqual(call.config?.hyperdrive, [
+        {
+          binding: DATABASE_HYPERDRIVE_BINDING,
+          id: env.CLOUDFLARE_HYPERDRIVE_ID
+        }
+      ]);
+      assert.deepEqual(call.config, {
+        ...original,
+        main: path.join(bundleDir ?? "", "entry.js"),
+        no_bundle: true,
+        find_additional_modules: false,
+        upload_source_maps: false
+      });
+      // Every argument except the derived config path stays identical.
+      assert.deepEqual(
+        call.args.slice(7, call.args.includes("--dry-run") ? -3 : undefined),
+        calls[1].args.slice(7, -4)
+      );
     }
-
-    const varBindings = calls[2].args.flatMap((arg, index, args) =>
-      arg === "--var" ? [args[index + 1]] : []
+    const vars = calls[5].args.flatMap((arg, i, args) =>
+      arg === "--var" ? [args[i + 1]] : []
     );
-    const expectedPublicVarBindings = [
+    assert.deepEqual(vars, [
       `${DATABASE_CONNECTION_MODE_VAR}:${DATABASE_CONNECTION_MODE_HYPERDRIVE}`,
       ...WORKER_DEPLOY_PUBLIC_VAR_NAMES.map((name) => `${name}:${env[name]}`),
       `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:${env.CLERK_PUBLISHABLE_KEY}`
-    ];
-    assert.deepEqual(varBindings, expectedPublicVarBindings);
-    assert.equal(
-      varBindings.some((binding) =>
-        binding.startsWith("CLOUDFLARE_API_TOKEN:")
-      ),
-      false
-    );
-    assert.ok(secretsFilePath, "test must observe a secrets file path");
-    assert.equal(existsSync(secretsFilePath), false);
-    assert.ok(configFilePath, "test must observe a config file path");
-    assert.equal(existsSync(configFilePath), false);
+    ]);
+    for (const [i, call] of calls.entries()) {
+      assert.equal(
+        call.options.env?.SENTRY_AUTH_TOKEN,
+        [0, 3].includes(i) ? env.SENTRY_AUTH_TOKEN : undefined
+      );
+      assert.equal(
+        call.options.env?.CLOUDFLARE_API_TOKEN,
+        [1, 4, 5].includes(i) ? env.CLOUDFLARE_API_TOKEN : undefined
+      );
+      for (const name of WORKER_DEPLOY_SECRET_NAMES)
+        assert.equal(call.options.env?.[name], undefined);
+      assert.equal(
+        call.args.some((arg) => arg.includes(env.SENTRY_AUTH_TOKEN ?? "")),
+        false
+      );
+      if (i > 0)
+        assert.equal(call.options.maxBuffer, GH_SPAWN_MAX_BUFFER_BYTES);
+    }
+    for (const i of [2, 3])
+      assert.equal(calls[i].options.env?.SENTRY_LOAD_DOTENV, "0");
+    assert.equal(calls[3].options.env?.SENTRY_ORG, env.SENTRY_ORG);
+    assert.equal(calls[3].options.env?.SENTRY_PROJECT, env.SENTRY_PROJECT);
   } finally {
-    rmSync(tempBase, { force: true, recursive: true });
+    scenario.clean();
   }
 });
 
-for (const failingStep of ["dry-run", "upload"]) {
-  test(`worker deploy wrapper reports wrangler output when the ${failingStep} fails and removes temp files`, () => {
-    const tempBase = mkdtempSync(
-      path.join(os.tmpdir(), "agent-outbox-worker-deploy-test-")
-    );
+for (const name of [
+  "SENTRY_ORG",
+  "SENTRY_PROJECT",
+  "SENTRY_AUTH_TOKEN",
+  "AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD",
+  "AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH"
+]) {
+  for (const value of [undefined, "", "0"]) {
+    if (value === "0" && name.startsWith("SENTRY_")) continue;
+    test(`Worker upload rejects ${name}=${value} before any command`, () => {
+      const scenario = uploadScenario(undefined, {
+        ...uploadEnv(),
+        [name]: value
+      });
+      try {
+        assert.throws(
+          scenario.run,
+          new RegExp(
+            `${name} ${name.startsWith("SENTRY_") ? "is required for Worker source map upload" : "must be 1 for production Worker version upload"}`
+          )
+        );
+        assert.equal(scenario.calls.length, 0);
+      } finally {
+        scenario.clean();
+      }
+    });
+  }
+}
+
+/** @type {[string, number, (dir: string) => void, RegExp][]} */
+const invalidBundles = [
+  [
+    "extra module",
+    1,
+    (d) => writeFileSync(path.join(d, "chunk.wasm"), "x"),
+    /chunk.wasm/
+  ],
+  [
+    "missing map",
+    1,
+    (d) => rmSync(path.join(d, "entry.js.map")),
+    /required regular files/
+  ],
+  ["nested directory", 1, (d) => mkdirSync(path.join(d, "nested")), /nested/],
+  [
+    "README directory",
+    1,
+    (d) => {
+      rmSync(path.join(d, "README.md"));
+      mkdirSync(path.join(d, "README.md"));
+    },
+    /README.md/
+  ],
+  [
+    "entry symlink",
+    1,
+    (d) => {
+      rmSync(path.join(d, "entry.js"));
+      symlinkSync("README.md", path.join(d, "entry.js"));
+    },
+    /entry.js/
+  ],
+  [
+    "native registration",
+    1,
+    (d) =>
+      writeFileSync(
+        path.join(d, "entry.js"),
+        `(e._debugIds = {}))[n] = "${DEBUG_ID}";\n${UNINJECTED}`
+      ),
+    /uninjected/
+  ],
+  [
+    "Sentry registration",
+    1,
+    (d) =>
+      writeFileSync(
+        path.join(d, "entry.js"),
+        `e._sentryDebugIds[n]="${DEBUG_ID}";\n${UNINJECTED}`
+      ),
+    /uninjected/
+  ],
+  [
+    "preexisting comment",
+    1,
+    (d) =>
+      writeFileSync(
+        path.join(d, "entry.js"),
+        `//# debugId=${DEBUG_ID}\n${UNINJECTED}`
+      ),
+    /uninjected/
+  ],
+  [
+    "preexisting map ID",
+    1,
+    (d) => writeFileSync(path.join(d, "entry.js.map"), '{"debugId":"old"}'),
+    /uninjected/
+  ],
+  [
+    "invalid map JSON",
+    1,
+    (d) => writeFileSync(path.join(d, "entry.js.map"), "{"),
+    /JSON/
+  ],
+  [
+    "missing map URL",
+    1,
+    (d) => writeFileSync(path.join(d, "entry.js"), "export default {};"),
+    /sourceMappingURL/
+  ],
+  [
+    "two injected comments",
+    2,
+    (d) =>
+      writeFileSync(
+        path.join(d, "entry.js"),
+        readFileSync(path.join(d, "entry.js"), "utf8") +
+          `//# debugId=${DEBUG_ID}\n`
+      ),
+    /injected Worker identity/
+  ],
+  [
+    "registration mismatch",
+    2,
+    (d) =>
+      writeFileSync(
+        path.join(d, "entry.js"),
+        readFileSync(path.join(d, "entry.js"), "utf8").replace(
+          `Ids[n]="${DEBUG_ID}"`,
+          `Ids[n]="${OTHER_DEBUG_ID}"`
+        )
+      ),
+    /injected Worker identity/
+  ],
+  [
+    "map mismatch",
+    2,
+    (d) =>
+      writeFileSync(
+        path.join(d, "entry.js.map"),
+        JSON.stringify({ debugId: OTHER_DEBUG_ID })
+      ),
+    /injected Worker identity/
+  ],
+  [
+    "post-inject extra file",
+    2,
+    (d) => writeFileSync(path.join(d, "extra.js"), "x"),
+    /extra.js/
+  ],
+  [
+    "changed no-bundle bytes",
+    4,
+    (d) => writeFileSync(path.join(d, "entry.js"), "changed"),
+    /differs/
+  ],
+  [
+    "private map in verify output",
+    4,
+    (d) => writeFileSync(path.join(d, "entry.js.map"), "PRIVATE_SOURCE_CANARY"),
+    /entry.js.map/
+  ]
+];
+for (const [name, step, mutate, error] of invalidBundles) {
+  test(`Worker upload fails closed on ${name}`, () => {
+    const scenario = uploadScenario((i, dir) => {
+      if (i === step) mutate(dir);
+    });
     try {
-      assert.throws(
-        () =>
-          runWorkerVersionUpload({
-            env: workerDeployEnv(),
-            tempBase,
-            spawnSyncImpl(_command, args) {
-              const step = args.includes("--dry-run") ? "dry-run" : "upload";
-              const fails = args.includes("versions") && step === failingStep;
-              return {
-                status: fails ? 1 : 0,
-                signal: null,
-                error: undefined,
-                stdout: fails ? `wrangler ${step} progress\n` : "",
-                stderr: fails ? `X [ERROR] ${step} binding rejected\n` : ""
-              };
-            }
-          }),
-        (error) => {
-          assert.ok(error instanceof Error);
-          assert.match(error.message, /failed with status 1:\n/);
-          assert.match(
-            error.message,
-            new RegExp(`wrangler ${failingStep} progress`)
-          );
-          assert.match(
-            error.message,
-            new RegExp(`X \\[ERROR\\] ${failingStep} binding rejected`)
-          );
-          return true;
-        }
-      );
-      assert.deepEqual(readdirSync(tempBase), []);
+      assert.throws(scenario.run, error);
+      assert.equal(scenario.calls.length, step + 1);
     } finally {
-      rmSync(tempBase, { force: true, recursive: true });
+      scenario.clean();
     }
   });
+}
+
+test("Worker outdir README is optional", () => {
+  const scenario = uploadScenario((step, dir) => {
+    if (step === 1 || step === 4) rmSync(path.join(dir, "README.md"));
+  });
+  try {
+    assert.equal(scenario.run().debugId, DEBUG_ID);
+  } finally {
+    scenario.clean();
+  }
+});
+
+for (let step = 0; step < 6; step++) {
+  for (const failure of ["status", "spawn"]) {
+    test(`Worker upload stops and cleans up on command ${step} ${failure} failure`, () => {
+      const scenario = uploadScenario((i) => {
+        if (i !== step) return;
+        if (failure === "spawn") throw new Error(`step ${step} spawn error`);
+        return {
+          status: 1,
+          stdout: `step ${step} progress`,
+          stderr: "binding rejected"
+        };
+      });
+      try {
+        assert.throws(
+          scenario.run,
+          failure === "spawn"
+            ? new RegExp(`step ${step} spawn error`)
+            : /failed with status 1:\n.*progress\nbinding rejected/
+        );
+        assert.equal(scenario.calls.length, step + 1);
+      } finally {
+        scenario.clean();
+      }
+    });
+  }
 }
 
 test("worker deploy command environments keep runtime secrets out of build and deploy subprocesses", () => {

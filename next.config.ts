@@ -85,8 +85,8 @@ const sentryConfig = {
     finalize: sentryUploadEnabled
   },
   sourcemaps: {
-    disable: !sentryUploadEnabled,
-    deleteSourcemapsAfterUpload: true
+    // Final Worker bundle maps are uploaded by scripts/worker-deploy.mjs.
+    disable: true
   },
   telemetry: false,
   webpack: {
