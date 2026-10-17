@@ -511,6 +511,8 @@
     margin: 0 -1rem;
     padding: 0.7rem 1rem;
     overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--slate-text) transparent;
     border-bottom: 1px solid var(--line-light);
     background: color-mix(in srgb, var(--paper) 94%, transparent);
     backdrop-filter: blur(16px);

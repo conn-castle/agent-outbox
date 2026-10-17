@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { REVIEW_THEME_STORAGE_KEY } from "../../src/shared/review-theme";
 
 test("API docs teach the workflow and expose the generated contract", async ({
   page
@@ -88,6 +89,83 @@ test("API docs teach the workflow and expose the generated contract", async ({
         document.documentElement.clientWidth
     )
   ).toBe(true);
+});
+
+for (const theme of ["light", "dark"]) {
+  test(`embedded review previews preserve docs header with saved theme (${theme})`, async ({
+    page
+  }) => {
+    await page.addInitScript(
+      ({ key, value }) => {
+        localStorage.setItem(key, value);
+      },
+      { key: REVIEW_THEME_STORAGE_KEY, value: theme }
+    );
+    await page.goto("/docs/api");
+    const headerColors = await page
+      .locator(".topbar .brand, .topbar .nav a")
+      .evaluateAll((elements) =>
+        elements.map((element) => getComputedStyle(element).color)
+      );
+    for (const route of ["/docs/api/ui", "/docs/api/row-anatomy"]) {
+      await page.goto(route);
+      await expect(
+        page.locator(".human-row-anatomy-preview").first()
+      ).toBeVisible();
+      expect(
+        await page
+          .locator(".topbar .brand, .topbar .nav a")
+          .evaluateAll((elements) =>
+            elements.map((element) => getComputedStyle(element).color)
+          )
+      ).toEqual(headerColors);
+    }
+  });
+}
+
+test("mobile docs navigation reveals the current page without scrolling the document", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 360, height: 700 });
+  await page.goto("/docs/api/ui");
+  for (const width of [360, 430, 1440, 393]) {
+    await page.setViewportSize({ width, height: 700 });
+    const sidebar = page.getByRole("complementary", {
+      name: "API documentation"
+    });
+    await expect
+      .poll(async () =>
+        sidebar.evaluate((element) => {
+          const active = element.querySelector('[aria-current="page"]')!;
+          const bounds = active.getBoundingClientRect();
+          const viewport = element.getBoundingClientRect();
+          return bounds.left >= viewport.left && bounds.right <= viewport.right;
+        })
+      )
+      .toBe(true);
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  }
+  const sidebar = page.getByRole("complementary", {
+    name: "API documentation"
+  });
+  for (const name of ["Quick start", "API reference"]) {
+    const link = sidebar.getByRole("link", { name, exact: true });
+    await link.focus();
+    const linkBounds = await link.boundingBox();
+    const sidebarBounds = await sidebar.boundingBox();
+    expect(linkBounds!.x).toBeGreaterThanOrEqual(sidebarBounds!.x);
+    expect(linkBounds!.x + linkBounds!.width).toBeLessThanOrEqual(
+      sidebarBounds!.x + sidebarBounds!.width
+    );
+  }
+});
+
+test("docs page scrolling respects reduced motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/docs/api");
+  await expect(page.locator("html")).toHaveCSS("scroll-behavior", "auto");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(page.locator("html")).toHaveCSS("scroll-behavior", "smooth");
 });
 
 test("embedded phone anatomy keeps live utility sizing and ownership color", async ({
