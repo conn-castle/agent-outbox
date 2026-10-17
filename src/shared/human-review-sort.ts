@@ -1,5 +1,5 @@
 import type { HumanReviewListRow } from "../server/human-review.ts";
-import { htmlTagStrippedText } from "./html-text.ts";
+import { htmlToPlainText } from "./html-text.ts";
 import type {
   HumanReviewSort,
   HumanReviewSortDirection,
@@ -65,8 +65,8 @@ function compareByKey(
     }
     case "title":
       return compareHumanReviewTypeNames(
-        htmlTagStrippedText(left.titleHtml),
-        htmlTagStrippedText(right.titleHtml)
+        htmlToPlainText(left.titleHtml),
+        htmlToPlainText(right.titleHtml)
       );
     case "caller":
       return compareHumanReviewTypeNames(

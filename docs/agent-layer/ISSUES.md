@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-17 review-text-maintenance-scan: Derived-text maintenance scans retained rows after convergence
+    Priority: Low. Area: Scheduled maintenance / Performance
+    Description: The hourly per-account null-digest query has no supporting partial index, so even a fully derived account requires scanning its retained rows to find no candidates.
+    Next step: Measure the candidate query plan and duration at representative retained item counts before changing its indexing.
+
 - Issue 2026-10-17 worker-next-routed-source-map: Next-routed Worker frames stop at OpenNext handler.mjs
     Priority: Medium. Area: Observability / Release build
     Description: OpenNext's server-bundle pass emits no source map, so final Worker frames for Next-routed code resolve to minified handler.mjs rather than application TypeScript.
@@ -60,15 +65,10 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Declarations that never applied were removed during CSS consolidation, leaving: pressed context links still scaling under `prefers-reduced-motion: reduce`; the filter popover close button using accent-dark rather than muted; and a 0 min-height detail loading panel (intended 8rem). Old-palette literals (`#f3efe6` page background, `#fffdf8`/`rgba(255, 253, 248, …)` popovers, `#202526` anatomy colors) also no longer match the effective tokens.
     Open question: Which of these former intents are still the desired design.
 
-- Issue 2026-09-28 review-search-entity-text: Review search and title sort use entity-encoded text
-    Priority: Low. Area: Human review / Search
-    Description: Production search and title sort in `src/server/human-review.ts` strip tags but do not decode character references, so searching `AT&T` misses a title stored as `AT&amp;T` and titles sort by encoded text.
-    Open question: Whether search and sort should operate on decoded text, which requires server-side decoding or stored plain-text columns.
-
 - Issue 2026-07-11 human-review-search-seq-scan: Human review search filters cannot use indexes at scale
     Priority: Low. Area: Human review / Performance
-    Description: `humanReviewListStatement` (src/server/human-review.ts) filters with leading-wildcard `ilike` over `regexp_replace`-stripped HTML columns plus `caller_item_id`/`display_name`, so search scans all of an account's rows; queries are account-scoped via the indexed `account_id`, so this is only a concern for accounts with very large item counts.
-    Next step: If per-account item counts grow enough for search latency to matter, add `pg_trgm` expression GIN indexes matching the exact `regexp_replace` expressions (or pre-stripped plain-text columns) via Flyway online-index migrations.
+    Description: `humanReviewListStatement` (src/server/human-review.ts) filters with leading-wildcard `ilike` over coalesced derived text / tag-stripped HTML expressions plus `caller_item_id`/`display_name`, so search scans all of an account's rows; queries are account-scoped via the indexed `account_id`, so this is only a concern for accounts with very large item counts.
+    Next step: If per-account item counts grow enough for search latency to matter, add `pg_trgm` expression GIN indexes matching the exact `coalesce(i.<field>_text, btrim(regexp_replace(regexp_replace(i.<field>_html, '<[^>]*>', ' ', 'g'), '[<JAVASCRIPT_WHITESPACE_CLASS>]+', ' ', 'g')))` expressions from `reviewSearchTextSql` for title/subtitle/summary (including its literal whitespace class), rather than the bare derived columns via Flyway online-index migrations.
     Notes: Raised by gemini-code-assist review on PR #28.
 
 - Issue 2026-07-11 stripe-webhook-status-contract-migration: Remove the transitional Stripe webhook status column after rollout

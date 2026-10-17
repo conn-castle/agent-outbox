@@ -1,3 +1,4 @@
+import { reviewTextCandidatesStatement } from "../src/server/review-search-text.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -173,6 +174,8 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
        * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
        */
       const query = async (statement) => {
+        if (statement.sql === reviewTextCandidatesStatement("").sql)
+          return queryResult([]);
         statements.push(statement);
         if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
           return queryResult([
@@ -220,7 +223,9 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
       requestId: "cleanup-test-request",
       authSurface: "cleanup",
       accountId: "account-paid"
-    }
+    },
+    { ...globalContext, accountId: "account-free" },
+    { ...globalContext, accountId: "account-paid" }
   ]);
   assert.deepEqual(
     statementsByContext.slice(0, 3),
@@ -253,7 +258,8 @@ test("scheduled cleanup runs global and account-scoped maintenance under cleanup
     accounts_seen: 2,
     accounts_cleaned: 2,
     statements_run: 14,
-    rows_affected: 14
+    rows_affected: 14,
+    rows_derived: 0
   });
   assert.match(result.recorded_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(
@@ -300,15 +306,13 @@ test("scheduled cleanup continues account maintenance after one account fails", 
         assert.equal(connectionString, "postgresql://cleanup-test");
         contexts.push(context);
 
-        if (context.accountId === "account-free") {
-          throw accountFailure;
-        }
-
         /**
          * @param {import("../src/server/database.ts").TransactionContextStatement} statement
          * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
          */
         const query = async (statement) => {
+          if (statement.sql === reviewTextCandidatesStatement("").sql)
+            return queryResult([]);
           if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
             return queryResult([
               { account_id: "account-free" },
@@ -316,6 +320,7 @@ test("scheduled cleanup continues account maintenance after one account fails", 
             ]);
           }
           if (statement.sql === cleanupAccountTierLockStatement("").sql) {
+            if (context.accountId === "account-free") throw accountFailure;
             return queryResult([{ tier: "hosted_paid" }]);
           }
 
@@ -342,6 +347,16 @@ test("scheduled cleanup continues account maintenance after one account fails", 
   assert.deepEqual(
     contexts.filter((context) => context.accountId),
     [
+      {
+        requestId: "cleanup-test-request",
+        authSurface: "cleanup",
+        accountId: "account-free"
+      },
+      {
+        requestId: "cleanup-test-request",
+        authSurface: "cleanup",
+        accountId: "account-paid"
+      },
       {
         requestId: "cleanup-test-request",
         authSurface: "cleanup",
@@ -379,6 +394,8 @@ async function runCleanupWithFailures(failureFor) {
           /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
             /** @param {import("../src/server/database.ts").TransactionContextStatement} statement */
             async (statement) => {
+              if (statement.sql === reviewTextCandidatesStatement("").sql)
+                return queryResult([]);
               const failure = failureFor(statement.sql, context);
               if (failure) {
                 throw failure;
@@ -395,7 +412,7 @@ async function runCleanupWithFailures(failureFor) {
             }
           )
         );
-        if (context.accountId) {
+        if (context.accountId && typeof result !== "number") {
           cleanedAccounts.push(context.accountId);
         }
         return result;
@@ -488,6 +505,8 @@ test("scheduled cleanup reports an account whose locked row cannot be read", asy
          * @returns {Promise<import("pg").QueryResult<import("pg").QueryResultRow>>}
          */
         const query = async (statement) => {
+          if (statement.sql === reviewTextCandidatesStatement("").sql)
+            return queryResult([]);
           if (statement.sql.includes("agent_outbox_cleanup_account_targets")) {
             return queryResult([
               { account_id: "account-missing" },
