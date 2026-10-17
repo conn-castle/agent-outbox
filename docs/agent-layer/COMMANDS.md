@@ -720,7 +720,7 @@ overrides. `make test` also runs the fixture self-checks.
 ## Derive review search text after a Node-hosted upgrade
 
 ```bash
-corepack pnpm exec node scripts/derive-review-search-text.ts
+corepack pnpm exec tsx scripts/derive-review-search-text.ts
 ```
 
 Requires the migrated database and `DATABASE_APP_ROLE_URL` for the restricted
