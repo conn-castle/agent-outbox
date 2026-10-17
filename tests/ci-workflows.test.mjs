@@ -1080,8 +1080,8 @@ const INVALID_BROWSER_WORKFLOWS = [
   ],
   [
     "shortened retention",
-    "          path: test-results/\n          retention-days: 7",
-    "          path: test-results/\n          retention-days: 1"
+    "          retention-days: 7",
+    "          retention-days: 1"
   ]
 ];
 for (const [description, from, to] of INVALID_BROWSER_WORKFLOWS) {

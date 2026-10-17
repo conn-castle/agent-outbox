@@ -3,6 +3,12 @@
 # - Usually you only need to toggle agent/server `enabled` values.
 # - Leave advanced fields as-is unless you have a specific need.
 
+instructions.local = [
+  { selectors = ['00_rules.md'], order = 0 },
+  { selectors = ['01_memory.md'], order = 10 },
+  { selectors = ['04_conventions.md'], order = 20 },
+]
+
 [approvals]
 mode = "yolo"
 
@@ -94,15 +100,3 @@ selectors = ['skills/apple-design']
 [[skills.imports]]
 repository = 'https://github.com/nicholasjconn/skills'
 selectors = ['skills/tools/request-html-comments']
-
-[[instructions.local]]
-selectors = ['00_rules.md']
-order = 0
-
-[[instructions.local]]
-selectors = ['01_memory.md']
-order = 10
-
-[[instructions.local]]
-selectors = ['04_conventions.md']
-order = 20

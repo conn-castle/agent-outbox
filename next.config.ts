@@ -1,7 +1,5 @@
 import { withSentryConfig } from "@sentry/nextjs/config";
 import type { NextConfig } from "next";
-import { readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
 import { browserBuildConfig } from "./scripts/browser-build-config";
 
 import {
@@ -14,23 +12,6 @@ import { HUMAN_MUTATION_REQUEST_BODY_BYTE_LIMIT } from "./src/server/request-bod
 
 const sentryNextjsEdgeEntry =
   "./node_modules/@sentry/nextjs/build/esm/edge/index.js";
-
-// Pinned pnpm 11.25 writes JSON to .modules.yaml. Use its installed location,
-// including native platform defaults, rather than expanding the project root.
-const modulesManifest = JSON.parse(
-  readFileSync(resolve("node_modules/.modules.yaml"), "utf8")
-);
-if (typeof modulesManifest.virtualStoreDir !== "string") {
-  throw new Error("pnpm virtual store metadata is missing; run make setup.");
-}
-const virtualStoreRoot = realpathSync(
-  resolve("node_modules", modulesManifest.virtualStoreDir)
-);
-const storeRelativeToProject = relative(process.cwd(), virtualStoreRoot);
-const externalVirtualStore =
-  storeRelativeToProject === ".." ||
-  storeRelativeToProject.startsWith(`..${sep}`) ||
-  isAbsolute(storeRelativeToProject);
 
 const publicAppHostname = process.env.PUBLIC_APP_BASE_URL
   ? new URL(process.env.PUBLIC_APP_BASE_URL).hostname
@@ -47,12 +28,6 @@ const nextConfig: NextConfig = {
   devIndicators:
     process.env.AGENT_OUTBOX_BROWSER_FIXTURE === "1" ? false : undefined,
   experimental: {
-    turbopackAdditionalRoots: externalVirtualStore
-      ? { pnpm: { path: virtualStoreRoot } }
-      : undefined,
-    turbopackFileSystemCacheForDev: true,
-    turbopackFileSystemCacheForBuild: true,
-    turbopackSeedCacheFromWorktree: true,
     // Next's Node middleware copy otherwise truncates valid forms at 10 MiB.
     // Leave headroom so the route can detect overflow before the copy truncates.
     // Repository Node launchers guard unrelated ingress at 10 MiB before Next.

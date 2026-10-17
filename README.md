@@ -114,9 +114,6 @@ make setup
 make check
 ```
 
-See [repository development](docs/development.md) for worktree dependency reuse
-and Agent Layer setup.
-
 Start the local Next.js app/API origin:
 
 ```bash

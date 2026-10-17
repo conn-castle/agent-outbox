@@ -12,8 +12,6 @@ question or task. This is a router, not a product overview or a planning index.
 - [`docs/architecture.md`](docs/architecture.md) —> System boundaries, runtime
   topology, trust boundaries, data authority, queue/delivery model, limit
   enforcement, and runtime proofs
-- [`docs/development.md`](docs/development.md) —> Repository setup, native cache
-  reuse across worktrees, and Agent Layer configuration
 - [`docs/spec/`](docs/spec/README.md) —> Canonical caller HTTP contract, input
   and output schemas, pagination, file download, status, registration, and API
   error envelopes
