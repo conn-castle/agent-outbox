@@ -4,6 +4,7 @@ import {
   emitRuntimeLog,
   safeErrorCode,
   safeErrorName,
+  safeErrorNameValue,
   safeOperationStage,
   type RuntimeLogEvent
 } from "./logging.ts";
@@ -197,6 +198,11 @@ const runtimeContentSafetyIntegration: ReturnType<
   typeof Sentry.getDefaultIntegrations
 >[number] = {
   name: "AgentOutboxRuntimeContentSafety",
+  // Defaults register LinkedErrors first; processors such as ContextLines run
+  // later. Internal SDK errors pass through this hook too.
+  preprocessEvent(event, hint, client) {
+    retainVerifiedExceptionFrames(event, hint, client.getOptions().stackParser);
+  },
   setup(client) {
     // Internal SDK exceptions skip event processors and beforeSend. This hook
     // runs for their envelopes too, immediately before transport.send.
@@ -236,6 +242,7 @@ function scrubSentryEvent<TEvent extends Sentry.Event>(event: TEvent): TEvent {
         continue;
       }
       exception.value = SANITIZED_RUNTIME_FAILURE_MESSAGE;
+      exception.type = safeErrorNameValue(exception.type, "Error");
       if (Array.isArray(exception.stacktrace?.frames)) {
         for (const frame of exception.stacktrace.frames) {
           if (frame && typeof frame === "object") {
@@ -249,6 +256,10 @@ function scrubSentryEvent<TEvent extends Sentry.Event>(event: TEvent): TEvent {
   delete event.logentry;
   delete event.extra;
   delete event.breadcrumbs;
+  // NodeSystemError copies arbitrary enumerable fields from the raw error.
+  if (event.contexts) {
+    delete event.contexts.node_system_error;
+  }
   if (typeof event.request?.method === "string") {
     event.request = { method: event.request.method };
   } else {
@@ -389,5 +400,116 @@ function runtimeExceptionFromUnknown(error: unknown) {
 function sanitizedSentryException(error: Error) {
   const sanitized = new Error(SANITIZED_RUNTIME_FAILURE_MESSAGE);
   sanitized.name = safeErrorName(error);
+  sanitized.stack = `${sanitized.name}: ${SANITIZED_RUNTIME_FAILURE_MESSAGE}${originalStackFrames(error)}`;
   return sanitized;
+}
+
+function originalStackFrames(error: Error) {
+  // The SDK can parse multiline message text as frames. Remove the entire
+  // verified original header, or send no frames when it cannot be verified.
+  try {
+    const header = Error.prototype.toString.call(error);
+    const { stack } = error;
+    if (typeof stack !== "string") {
+      return "";
+    }
+    // Keep the leading newline: the SDK parser skips its first line.
+    if (stack.startsWith(`${header}\n`)) {
+      return stack.slice(header.length);
+    }
+    // Native Node errors include their code in the stack header. Verify the
+    // full name/code/message before removing it; none of those raw fields go
+    // into the sanitized stack.
+    const { name } = error;
+    const code = (error as Error & { code?: unknown }).code;
+    if (
+      typeof name === "string" &&
+      name.length > 0 &&
+      typeof code === "string" &&
+      code.length > 0 &&
+      (header === name || header.startsWith(`${name}: `))
+    ) {
+      const codedHeader = `${name} [${code}]${header.slice(name.length)}`;
+      if (stack.startsWith(`${codedHeader}\n`)) {
+        return stack.slice(codedHeader.length);
+      }
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+function retainVerifiedExceptionFrames(
+  event: Sentry.Event,
+  hint: Sentry.EventHint | undefined,
+  stackParser: typeof Sentry.defaultStackParser | undefined
+) {
+  const values = event.exception?.values;
+  // captureException(undefined) has source metadata too. Only its absence
+  // identifies caller-supplied captureEvent frames that we trust as given.
+  if (
+    event.type === "transaction" ||
+    !hint ||
+    !Object.hasOwn(hint, "originalException") ||
+    !Array.isArray(values)
+  ) {
+    return;
+  }
+  const sources = new Map<number, unknown>();
+  let omitted = false;
+  // LinkedErrors prepends children, so resolve parents before their children.
+  for (const exception of [...values].reverse()) {
+    if (!exception || typeof exception !== "object") {
+      continue;
+    }
+    let frames: Sentry.StackFrame[] = [];
+    try {
+      const source = exceptionSource(exception.mechanism, hint, sources);
+      if (typeof exception.mechanism?.exception_id === "number") {
+        sources.set(exception.mechanism.exception_id, source);
+      }
+      if (source !== null && typeof source === "object") {
+        const stack = originalStackFrames(source as Error);
+        if (stack && typeof stackParser === "function") {
+          frames = stackParser(stack, 1);
+        }
+      }
+    } catch {
+      // Source getters and parser failures cannot justify retaining SDK frames.
+      frames = [];
+    }
+    if (frames.length) {
+      exception.stacktrace = { frames };
+    } else {
+      omitted ||= Boolean(exception.stacktrace?.frames?.length);
+      delete exception.stacktrace;
+    }
+  }
+  if (omitted) {
+    event.tags = { ...event.tags, stack_frames: "omitted" };
+  }
+}
+
+function exceptionSource(
+  mechanism: Sentry.Exception["mechanism"],
+  hint: Sentry.EventHint,
+  sources: Map<number, unknown>
+) {
+  if (mechanism?.synthetic) {
+    return undefined;
+  }
+  if (typeof mechanism?.parent_id !== "number") {
+    return hint.originalException;
+  }
+  const parent = sources.get(mechanism.parent_id) as
+    { cause?: unknown; errors?: unknown } | undefined;
+  if (mechanism.source === "cause") {
+    return parent?.cause;
+  }
+  const index = /^errors\[(\d+)\]$/.exec(mechanism.source ?? "")?.[1];
+  const errors = parent?.errors;
+  return index !== undefined && Array.isArray(errors)
+    ? errors[Number(index)]
+    : undefined;
 }

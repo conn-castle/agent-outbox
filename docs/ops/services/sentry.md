@@ -68,14 +68,31 @@ are not already proven in this repository.
 
 ## Event Content
 
-Runtime Sentry init (`src/server/sentry.ts`) disables SDK breadcrumbs and scrubs
-every event and transaction before sending. The same scrubber runs in
-`beforeSend`/`beforeSendTransaction` and again at the `beforeEnvelope` transport
-boundary, including internal SDK exceptions that bypass the earlier hooks. The
-envelope sampling header is scrubbed at that boundary too:
+Runtime Sentry init (`src/server/sentry.ts`) disables SDK breadcrumbs and
+verifies SDK-derived exception frames in `preprocessEvent`, after LinkedErrors
+resolves causes and AggregateError children and before processors such as Node's
+ContextLines read source files. Each exception retains frames only when its
+source stack starts with the error's exact name/message header (including the
+code for Node's coded errors) followed by a newline; the client's SDK parser
+parses the remaining frames. Synthetic inputs, unverifiable headers, and failed
+source reads have no frames. When verification leaves an exception that had
+SDK-parsed frames with none, the event gets `stack_frames=omitted`; an already
+frameless exception does not necessarily get that tag. Explicit `captureEvent`
+frames without original-exception metadata remain trusted as supplied.
 
-- Exception messages become `Agent Outbox runtime failure`; exception types,
-  stack frames (without local variables), and mechanisms remain.
+The shared content scrubber runs in `beforeSend`/`beforeSendTransaction` and
+again at the `beforeEnvelope` transport boundary. Internal SDK exceptions
+receive early frame verification too, and transport scrubbing covers their
+content even though they bypass event processors and `beforeSend`. The envelope
+sampling header is scrubbed at that boundary too:
+
+- Exception messages become `Agent Outbox runtime failure`; valid safe exception
+  class names remain, while invalid names become `Error` using the logger's name
+  validation. Retained stack frames (without local variables), allowed source
+  context, and mechanisms remain.
+- The raw `node_system_error` context is removed because it copies arbitrary
+  original-error properties. Canonical reporter tags and `agent_outbox` context
+  remain.
 - Request data keeps only the HTTP method.
 - `nextjs.request_path`, breadcrumbs, extras, and free-text message fields are
   removed.

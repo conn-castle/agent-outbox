@@ -32,6 +32,41 @@ const { onRequestError } = loadModule("instrumentation.ts", {
 const DSN = "https://public@o0.ingest.sentry.io/0";
 const RELEASE = "agent-outbox@scrubbing-test";
 const MESSAGE = "Agent Outbox runtime failure";
+const runtimeMessageSentinels = [
+  "PRIVATE-RUNTIME-FIRST",
+  "PRIVATE-RUNTIME-HOST",
+  "PRIVATE-RUNTIME-FN",
+  "PRIVATE-RUNTIME-FILE"
+];
+
+function runtimeOriginThrowSite() {
+  return new TypeError(
+    "PRIVATE-RUNTIME-FIRST\nretry at PRIVATE-RUNTIME-HOST:5432\n    at PRIVATE-RUNTIME-FN (PRIVATE-RUNTIME-FILE.js:1:2)"
+  );
+}
+
+/** @param {string} label */
+function privateFrameMessage(label) {
+  return `PRIVATE-${label}-MESSAGE\nretry at PRIVATE-${label}-HOST:5432\n    at PRIVATE-${label}-FN (PRIVATE-${label}-FILE.js:1:2)`;
+}
+
+function causeOriginThrowSite() {
+  return new SyntaxError(privateFrameMessage("CAUSE"));
+}
+
+/** @param {Error} child */
+function aggregateOriginThrowSite(child) {
+  return new AggregateError(
+    [runtimeOriginThrowSite(), "not an error", child],
+    privateFrameMessage("AGGREGATE")
+  );
+}
+
+/** @param {unknown} [cause] */
+function directOriginThrowSite(cause) {
+  return new RangeError(privateFrameMessage("DIRECT"), { cause });
+}
+
 const sensitiveAttributes = Object.fromEntries(
   [
     "http.request.header.authorization",
@@ -233,7 +268,7 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
           { routerKind: "App Router", routePath: "/human", routeType: "render" }
         );
         onRequestError(
-          new TypeError("PRIVATE-INSTRUMENTATION-MESSAGE"),
+          new TypeError(privateFrameMessage("INSTRUMENTATION")),
           {
             path: "/human?PRIVATE-INSTRUMENTATION-PATH",
             method: "POST",
@@ -241,14 +276,122 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
           },
           { routerKind: "App Router", routePath: "/human", routeType: "render" }
         );
-        runtime.captureRuntimeException(
-          new TypeError("PRIVATE-RUNTIME-MESSAGE"),
+        const runtimeError = runtimeOriginThrowSite();
+        for (const sentinel of runtimeMessageSentinels) {
+          assert.ok(runtimeError.message.includes(sentinel));
+        }
+        const missingStack = runtimeOriginThrowSite();
+        missingStack.stack = undefined;
+        const mutatedHeader = runtimeOriginThrowSite();
+        // Force formatting before the message changes, so verification fails.
+        assert.equal(typeof mutatedHeader.stack, "string");
+        mutatedHeader.message = "PRIVATE-RUNTIME-MUTATED";
+        const unsafeName = runtimeOriginThrowSite();
+        unsafeName.name = "PRIVATE-RUNTIME-NAME";
+        const throwingStack = runtimeOriginThrowSite();
+        Object.defineProperty(throwingStack, "stack", {
+          get() {
+            throw new Error("PRIVATE-STACK-GETTER");
+          }
+        });
+        const throwingHeader = runtimeOriginThrowSite();
+        Object.defineProperty(throwingHeader, "message", {
+          get() {
+            throw new Error("PRIVATE-HEADER-GETTER");
+          }
+        });
+        const runtimeFrameCases = [
           {
             errorId: "err_runtime_test",
             operation: "runtime.test",
-            route: "/human"
+            error: runtimeError,
+            expectedType: "TypeError",
+            preservesFrames: true
+          },
+          {
+            errorId: "err_runtime_missing_stack",
+            operation: "runtime.missing_stack",
+            error: missingStack,
+            expectedType: "TypeError",
+            preservesFrames: false
+          },
+          {
+            errorId: "err_runtime_mutated_header",
+            operation: "runtime.mutated_header",
+            error: mutatedHeader,
+            expectedType: "TypeError",
+            preservesFrames: false
+          },
+          {
+            errorId: "err_runtime_unsafe_name",
+            operation: "runtime.unsafe_name",
+            error: unsafeName,
+            expectedType: "Error",
+            preservesFrames: true
+          },
+          {
+            errorId: "err_runtime_throwing_stack",
+            operation: "runtime.throwing_stack",
+            error: throwingStack,
+            expectedType: "TypeError",
+            preservesFrames: false
+          },
+          {
+            errorId: "err_runtime_throwing_header",
+            operation: "runtime.throwing_header",
+            error: throwingHeader,
+            expectedType: "TypeError",
+            preservesFrames: false
           }
-        );
+        ];
+        const runtimeCaptureReturns = new Map();
+        for (const { error, errorId, operation } of runtimeFrameCases) {
+          runtimeCaptureReturns.set(
+            errorId,
+            runtime.captureRuntimeException(error, {
+              errorId,
+              operation,
+              route: "/human"
+            })
+          );
+        }
+        const child = causeOriginThrowSite();
+        child.name = "PRIVATE-CAUSE-NAME";
+        const linked = directOriginThrowSite(aggregateOriginThrowSite(child));
+        linked.name = "PRIVATE-DIRECT-NAME";
+        Sentry.withScope((scope) => {
+          scope.setTag("case", "linked");
+          Sentry.captureException(linked);
+        });
+        const mutated = directOriginThrowSite();
+        assert.equal(typeof mutated.stack, "string");
+        mutated.message = "PRIVATE-MUTATED-MESSAGE";
+        const missing = directOriginThrowSite();
+        missing.stack = undefined;
+        for (const [label, error] of /** @type {[string, unknown][]} */ ([
+          ["mutated", mutated],
+          ["missing", missing],
+          ["string", privateFrameMessage("STRING")],
+          ["object", { message: privateFrameMessage("OBJECT") }],
+          ["undefined", undefined]
+        ])) {
+          Sentry.withScope((scope) => {
+            scope.setTag("case", label);
+            const syntheticException = new Error(
+              privateFrameMessage("SYNTHETIC")
+            );
+            assert.equal(typeof syntheticException.stack, "string");
+            Sentry.captureException(error, { syntheticException });
+          });
+        }
+        const singleLine = new Error("PRIVATE-SINGLE-LINE");
+        const parser = client.getOptions().stackParser;
+        assert.equal(typeof parser, "function");
+        const singleLineFrames = parser(singleLine.stack ?? "", 1);
+        Sentry.withScope((scope) => {
+          scope.setTag("case", "single-line");
+          Sentry.captureException(singleLine);
+        });
         const explicitId = Sentry.captureEvent({
           message: "PRIVATE-EVENT-MESSAGE",
           logentry: { message: "PRIVATE-LOGENTRY" },
@@ -312,7 +455,9 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
             request_path: "/human?PRIVATE-SDK-INHERITED-PATH"
           });
           scope.addEventProcessor(() => {
-            throw new Error("PRIVATE-SDK-PROCESSING-MESSAGE");
+            const error = new Error(privateFrameMessage("SDK-PROCESSING"));
+            error.name = "PRIVATE-INTERNAL-NAME";
+            throw error;
           });
           Sentry.captureException(new Error("PRIVATE-SDK-ORIGINAL-MESSAGE"));
         });
@@ -393,6 +538,150 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
           ([header]) =>
             /** @type {Record<string, unknown> | undefined} */ (header.trace)
         );
+        await t.test(
+          "linked values use each original error before processors",
+          () => {
+            const event = events.find((event) => event.tags?.case === "linked");
+            assert.ok(event);
+            const values = event.exception?.values;
+            assert.equal(values?.length, 4);
+            for (const [source, origin, type] of [
+              [undefined, "directOriginThrowSite", "Error"],
+              ["cause", "aggregateOriginThrowSite", "AggregateError"],
+              ["errors[0]", "runtimeOriginThrowSite", "TypeError"],
+              ["errors[2]", "causeOriginThrowSite", "Error"]
+            ]) {
+              /** @type {import("@sentry/nextjs").Exception | undefined} */
+              const value = values?.find(
+                (value) => value.mechanism?.source === source
+              );
+              assert.ok(value);
+              assert.equal(value.type, type);
+              assert.equal(value.value, MESSAGE);
+              assert.equal(
+                value.mechanism?.type,
+                source ? "chained" : "generic"
+              );
+              assert.equal(typeof value.mechanism?.exception_id, "number");
+              if (source) {
+                /** @type {import("@sentry/nextjs").Exception | undefined} */
+                const parent = values?.find(
+                  (candidate) =>
+                    candidate.mechanism?.exception_id ===
+                    value.mechanism?.parent_id
+                );
+                assert.ok(parent);
+                assert.equal(
+                  parent.mechanism?.source,
+                  source === "cause" ? undefined : "cause"
+                );
+              }
+              assert.ok(
+                value.stacktrace?.frames?.some(
+                  (frame) =>
+                    frame.function === origin &&
+                    frame.filename?.endsWith("sentry-event-scrubbing.test.mjs")
+                )
+              );
+            }
+            assert.equal(event.tags?.stack_frames, undefined);
+          }
+        );
+        for (const label of [
+          "mutated",
+          "missing",
+          "string",
+          "object",
+          "undefined"
+        ]) {
+          await t.test(`${label}: unverifiable SDK frames are omitted`, () => {
+            const event = events.find((event) => event.tags?.case === label);
+            assert.ok(event);
+            assert.equal(
+              event.exception?.values?.[0]?.stacktrace?.frames?.length ?? 0,
+              0
+            );
+            assert.equal(
+              event.tags?.stack_frames,
+              label === "missing" ? undefined : "omitted"
+            );
+            if (["string", "object", "undefined"].includes(label)) {
+              assert.equal(
+                event.exception?.values?.[0]?.mechanism?.synthetic,
+                true
+              );
+            }
+          });
+        }
+        await t.test("ordinary single-line SDK frames are unchanged", () => {
+          const event = events.find(
+            (event) => event.tags?.case === "single-line"
+          );
+          assert.ok(event);
+          // Compare the wire representation; the SDK also adds undefined debug IDs.
+          assert.equal(
+            JSON.stringify(event.exception?.values?.[0]?.stacktrace?.frames),
+            JSON.stringify(singleLineFrames)
+          );
+          assert.equal(event.tags?.stack_frames, undefined);
+        });
+        for (const capture of runtimeFrameCases) {
+          await t.test(
+            `${capture.operation}: original frames and privacy`,
+            () => {
+              assert.equal(runtimeCaptureReturns.get(capture.errorId), true);
+              const event = events.find(
+                (event) => event.tags?.error_id === capture.errorId
+              );
+              assert.ok(
+                event,
+                "successful capture must reach in-memory transport"
+              );
+              const exception = event.exception?.values?.[0];
+              assert.equal(exception?.type, capture.expectedType);
+              assert.equal(exception?.value, MESSAGE);
+              assert.equal(event.tags?.stack_frames, undefined);
+              assert.deepEqual(event.fingerprint, [
+                "agent-outbox-runtime-failure",
+                capture.expectedType,
+                capture.operation,
+                "/human"
+              ]);
+              const frames = exception?.stacktrace?.frames ?? [];
+              if (capture.preservesFrames) {
+                assert.ok(
+                  frames.some(
+                    (frame) =>
+                      frame.function === "runtimeOriginThrowSite" &&
+                      frame.filename?.endsWith(
+                        "sentry-event-scrubbing.test.mjs"
+                      )
+                  ),
+                  "the original function and file must survive capture"
+                );
+              } else {
+                assert.equal(frames.length, 0);
+              }
+              for (const frame of frames) {
+                assert.doesNotMatch(
+                  frame.filename ?? "",
+                  /src\/server\/sentry\.ts$/
+                );
+                assert.doesNotMatch(
+                  frame.function ?? "",
+                  /sanitizedSentryException|captureRuntimeException/
+                );
+              }
+              for (const sentinel of [
+                ...runtimeMessageSentinels,
+                "PRIVATE-RUNTIME-MUTATED",
+                "PRIVATE-RUNTIME-NAME"
+              ]) {
+                assert.equal(serialized.includes(sentinel), false);
+              }
+            }
+          );
+        }
         const sentinelGroups = {
           "exception messages": [
             "PRIVATE-ERROR-MESSAGE",
@@ -638,6 +927,13 @@ test("runtime Sentry hooks scrub real edge SDK envelopes", async (t) => {
           assert.ok(samplingHeader?.trace_id);
           const instrumented = events.find(
             (event) => event.tags?.operation === "next_request_error"
+          );
+          assert.equal(instrumented?.tags?.stack_frames, undefined);
+          assert.ok(
+            instrumented?.exception?.values?.[0]?.stacktrace?.frames?.some(
+              (frame) =>
+                frame.filename?.endsWith("sentry-event-scrubbing.test.mjs")
+            )
           );
           assert.match(String(instrumented?.tags?.error_id), /^err_/);
           assert.equal(
