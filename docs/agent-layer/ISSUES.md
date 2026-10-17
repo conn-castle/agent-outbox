@@ -46,7 +46,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-10-02 migration-gate-lexing-gaps: Destructive-migration gate misreads some SQL lexical forms
     Priority: Low. Area: Policy gates / Migrations
-    Description: `scripts/policy-gates/migration-discipline-scan.mjs` matches regexes over comment-stripped text without a SQL tokenizer. These destructive statements pass without the label: `E'...\'...'` strings that hide a later `DROP x` or `SET NOT NULL` action, quoted identifiers with no surrounding whitespace (`DROP"x"`, `ALTER TABLE"t"`), `U&"..."` table names, and `ALTER FOREIGN TABLE`. Dollar-quoted text and string literals that contain `ALTER TABLE ... DROP` can falsely block additive statements.
+    Description: `scripts/policy-gates/migration-discipline-scan.mjs` matches regexes over comment-stripped text without a SQL tokenizer. Some destructive operations using `U&"..."` table/column names still pass without the label, and `UESCAPE` identities are not canonicalized. E strings whose embedded semicolon separates the `ALTER TABLE` header from a later implicit action (`ALTER TABLE t ALTER note SET DEFAULT E'prefix;it\'s', DROP x;`) can bypass detection. Dollar-quoted text and string literals that contain `ALTER TABLE ... DROP` can falsely block additive statements.
     Next step: Add fixtures for any of these forms when a real migration uses them.
 
 - Issue 2026-09-29 review-ineffective-style-intents: Review styles show dropped intent and stale palette literals

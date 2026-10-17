@@ -3,68 +3,97 @@ import fs from "node:fs";
 
 import { dispatchPolicyGate, readChangedFiles } from "./gate-cli-utils.mjs";
 
+// PostgreSQL scan.l accepts high-bit bytes in both identifier positions. For
+// UTF-8 SQL, accept every non-ASCII UTF-16 unit, including surrogate pairs.
+// Keep regexes Unicode-unaware: /iu would fold long s into ASCII SQL keywords.
+const IDENTIFIER_START = String.raw`[A-Za-z_\u0080-\uFFFF]`;
+const IDENTIFIER_CONTINUATION = String.raw`[A-Za-z_0-9$\u0080-\uFFFF]`;
+const IDENTIFIER_CHARACTER = new RegExp(IDENTIFIER_CONTINUATION);
+const KEYWORD_END = String.raw`(?!${IDENTIFIER_CONTINUATION})`;
+// Quotes delimit tokens without whitespace. Unquoted names must end at a real
+// identifier boundary so backtracking cannot turn xTYPE or xSET into actions.
+const IDENTIFIER = String.raw`(?:"(?:[^"]|"")+"|${IDENTIFIER_START}${IDENTIFIER_CONTINUATION}*${KEYWORD_END})`;
+const QUALIFIED_NAME = String.raw`${IDENTIFIER}(?:\s*\.\s*${IDENTIFIER})*`;
+const ALTER_TABLE_HEADER = new RegExp(
+  String.raw`\bALTER\s+(?:FOREIGN\s+)?TABLE${KEYWORD_END}\s*(?:IF\s+EXISTS${KEYWORD_END}\s*)?` +
+    String.raw`(?:ONLY${KEYWORD_END}\s*\(\s*${QUALIFIED_NAME}\s*\)|(?:ONLY${KEYWORD_END}\s*)?${QUALIFIED_NAME})(?:\s*\*)?`,
+  "i"
+);
+// Foreign-table renames must be the action immediately after the relation.
+// Accept opaque U& spellings here without decoding their names or UESCAPE.
+const FOREIGN_RENAME_IDENTIFIER = String.raw`(?:U&"(?:[^"]|"")+"(?:\s+UESCAPE${KEYWORD_END}\s*'[^']')?|${IDENTIFIER})`;
+const FOREIGN_RENAME_NAME = String.raw`${FOREIGN_RENAME_IDENTIFIER}(?:\s*\.\s*${FOREIGN_RENAME_IDENTIFIER})*`;
+const FOREIGN_TABLE_RENAME = new RegExp(
+  String.raw`\bALTER\s+FOREIGN\s+TABLE${KEYWORD_END}\s*(?:IF\s+EXISTS${KEYWORD_END}\s*)?` +
+    String.raw`(?:ONLY${KEYWORD_END}\s*\(\s*${FOREIGN_RENAME_NAME}\s*\)|(?:ONLY${KEYWORD_END}\s*)?${FOREIGN_RENAME_NAME})(?:\s*\*)?` +
+    String.raw`\s*RENAME\s+TO${KEYWORD_END}`,
+  "i"
+);
+// Keep conservative explicit coverage of opaque names (including U& forms).
+// The \S+ fallback requires whitespace afterward to avoid splitting suffixes.
 const OPERATIONS = [
   { name: "DROP COLUMN", re: /\bDROP\s+COLUMN\b/i },
-  { name: "DROP TABLE", re: /\bDROP\s+TABLE\b/i },
+  {
+    name: "DROP TABLE",
+    re: new RegExp(String.raw`\bDROP\s+(?:FOREIGN\s+)?TABLE${KEYWORD_END}`, "i")
+  },
   { name: "RENAME COLUMN", re: /\bRENAME\s+COLUMN\b/i },
   {
     name: "RENAME TABLE",
-    re: /\b(?:RENAME\s+TABLE|ALTER\s+TABLE[\s\S]*?RENAME\s+TO)\b/i
+    re: new RegExp(
+      String.raw`\b(?:RENAME\s+TABLE${KEYWORD_END}|ALTER\s+TABLE${KEYWORD_END}[\s\S]*?RENAME\s+TO${KEYWORD_END})`,
+      "i"
+    )
   },
   {
     name: "ALTER COLUMN TYPE",
-    re: /\bALTER\s+COLUMN\b\s+(?:"[^"]+"|\S+)\s+(?:SET\s+DATA\s+)?\bTYPE\b/i
+    re: new RegExp(
+      String.raw`\bALTER\s+COLUMN${KEYWORD_END}\s*(?:${IDENTIFIER}\s*|\S+\s+)(?:SET\s+DATA\s+)?TYPE${KEYWORD_END}`,
+      "i"
+    )
   },
   { name: "DROP INDEX", re: /\bDROP\s+INDEX\b/i }
 ];
 
-// Postgres makes the COLUMN keyword optional in ALTER TABLE actions, so these
-// patterns are anchored to the start of one top-level action to also cover
-// `DROP x`, `RENAME x TO y`, and `ALTER x ...`.
-// PostgreSQL scan.l accepts high-bit bytes in both identifier positions. For
-// UTF-8 SQL, that includes every non-ASCII code point, not just letters/numbers.
-const IDENTIFIER_START = String.raw`[A-Za-z_\u0080-\u{10FFFF}]`;
-const IDENTIFIER_CONTINUATION = String.raw`[A-Za-z_0-9$\u0080-\u{10FFFF}]`;
-const KEYWORD_END = String.raw`(?!${IDENTIFIER_CONTINUATION})`;
-const IDENTIFIER = String.raw`(?:"(?:[^"]|"")+"|${IDENTIFIER_START}${IDENTIFIER_CONTINUATION}*)`;
-const ALTER_TABLE_HEADER = new RegExp(
-  String.raw`\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?` +
-    String.raw`${IDENTIFIER}(?:\s*\.\s*${IDENTIFIER})*(?:\s*\*)?`,
-  "iu"
-);
+// PostgreSQL makes COLUMN optional in regular and foreign ALTER TABLE actions.
+// Anchor these patterns to top-level actions to cover DROP x, RENAME x TO y,
+// and ALTER x without treating nested options or constraint actions as columns.
 const IMPLICIT_COLUMN_OPERATIONS = [
   {
     name: "DROP COLUMN",
     re: new RegExp(
-      String.raw`^\s*DROP\s+(?!(?:COLUMN|CONSTRAINT)${KEYWORD_END})`,
-      "iu"
+      String.raw`^\s*DROP${KEYWORD_END}\s*(?!(?:COLUMN|CONSTRAINT)${KEYWORD_END})${IDENTIFIER}`,
+      "i"
     )
   },
   {
     name: "RENAME COLUMN",
     re: new RegExp(
-      String.raw`^\s*RENAME\s+(?!(?:TO|COLUMN|CONSTRAINT)${KEYWORD_END})${IDENTIFIER}\s+TO\b`,
-      "iu"
+      String.raw`^\s*RENAME${KEYWORD_END}\s*(?!(?:TO|COLUMN|CONSTRAINT)${KEYWORD_END})${IDENTIFIER}\s*TO${KEYWORD_END}`,
+      "i"
     )
   },
   {
     name: "ALTER COLUMN TYPE",
     re: new RegExp(
-      String.raw`^\s*ALTER\s+(?!(?:COLUMN|CONSTRAINT)${KEYWORD_END})${IDENTIFIER}` +
-        String.raw`\s+(?:SET\s+DATA\s+)?TYPE\b`,
-      "iu"
+      String.raw`^\s*ALTER${KEYWORD_END}\s*(?!(?:COLUMN|CONSTRAINT)${KEYWORD_END})${IDENTIFIER}` +
+        String.raw`\s*(?:SET\s+DATA\s+)?TYPE${KEYWORD_END}`,
+      "i"
     )
   }
 ];
 const ALTER_COLUMN_ACTION = new RegExp(
-  String.raw`^\s*ALTER\s+(?:COLUMN\s+)?(?!(?:COLUMN|CONSTRAINT)${KEYWORD_END})` +
-    String.raw`(${IDENTIFIER})\s+([\s\S]*)$`,
-  "iu"
+  String.raw`^\s*ALTER${KEYWORD_END}\s*(?:COLUMN${KEYWORD_END}\s*)?(?!(?:COLUMN|CONSTRAINT)${KEYWORD_END})` +
+    String.raw`(${IDENTIFIER})\s*([\s\S]*)$`,
+  "i"
 );
 
 const SET_NOT_NULL = {
   name: "ALTER COLUMN SET NOT NULL",
-  re: /\bALTER\s+COLUMN\b\s+(?:"[^"]+"|\S+)\s+\bSET\s+NOT\s+NULL\b/i
+  re: new RegExp(
+    String.raw`\bALTER\s+COLUMN${KEYWORD_END}\s*(?:${IDENTIFIER}\s*|\S+\s+)SET\s+NOT\s+NULL${KEYWORD_END}`,
+    "i"
+  )
 };
 
 /**
@@ -72,6 +101,47 @@ const SET_NOT_NULL = {
  * @typedef {{ lineNumber: number, text: string }} StatementLine
  * @typedef {{ text: string, offset: number }} StatementAction
  */
+
+/**
+ * Read one quoted fragment at a time, retaining E-string mode for newline
+ * continuations. PostgreSQL's quotecontinue rule permits whitespace and line
+ * comments between fragments. Ordinary strings and identifiers only double
+ * their delimiter; backslash escape pairs belong to E/e strings alone.
+ *
+ * @param {string} sql
+ * @returns {(start: number) => number} Exclusive end of the quoted fragment.
+ */
+function createQuoteReader(sql) {
+  let escapeContinuation = -1;
+  const continuation =
+    /[ \t\f\v]*(?:--[^\r\n]*)?[\r\n](?:[ \t\f\v\r\n]|--[^\r\n]*[\r\n])*'/y;
+  return (start) => {
+    const quote = sql[start];
+    const escapes =
+      quote === "'" &&
+      (start === escapeContinuation ||
+        (/[eE]/.test(sql[start - 1] ?? "") &&
+          !IDENTIFIER_CHARACTER.test(sql[start - 2] ?? "")));
+    escapeContinuation = -1;
+    for (let i = start + 1; i < sql.length; i += 1) {
+      if (escapes && sql[i] === "\\") {
+        i += 1;
+      } else if (sql[i] === quote) {
+        if (sql[i + 1] === quote) {
+          i += 1;
+          continue;
+        }
+        if (escapes) {
+          continuation.lastIndex = i + 1;
+          const match = continuation.exec(sql);
+          if (match) escapeContinuation = continuation.lastIndex - 1;
+        }
+        return i + 1;
+      }
+    }
+    return sql.length;
+  };
+}
 
 /**
  * Strip `--` and block comments while preserving newlines and string/identifier
@@ -84,23 +154,14 @@ const SET_NOT_NULL = {
 function stripSqlComments(sql) {
   let out = "";
   let i = 0;
-  /** @type {string | null} */
-  let quote = null;
+  const readQuote = createQuoteReader(sql);
   while (i < sql.length) {
     const c = sql[i];
     const next = sql[i + 1];
-    if (quote) {
-      // A doubled (escaped) quote closes and immediately reopens the literal,
-      // which preserves the same text and state.
-      out += c;
-      if (c === quote) quote = null;
-      i += 1;
-      continue;
-    }
     if (c === "'" || c === '"') {
-      quote = c;
-      out += c;
-      i += 1;
+      const end = readQuote(i);
+      out += sql.slice(i, end);
+      i = end;
       continue;
     }
     if (c === "-" && next === "-") {
@@ -129,7 +190,7 @@ function stripSqlComments(sql) {
 }
 
 /**
- * Fold unquoted identifiers like Postgres; quoted identifiers stay exact.
+ * Fold ASCII in unquoted UTF-8 identifiers; quoted identifiers stay exact.
  *
  * @param {string} raw
  * @returns {string}
@@ -137,7 +198,7 @@ function stripSqlComments(sql) {
 function columnNameKey(raw) {
   return raw.startsWith('"')
     ? raw.slice(1, -1).replaceAll('""', '"')
-    : raw.toLowerCase();
+    : raw.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 }
 
 /**
@@ -160,14 +221,11 @@ function splitTopLevelActions(text) {
     });
   };
   let depth = 0;
-  /** @type {string | null} */
-  let quote = null;
+  const readQuote = createQuoteReader(text);
   for (let i = 0; i < text.length; i += 1) {
     const c = text[i];
-    if (quote) {
-      if (c === quote) quote = null;
-    } else if (c === "'" || c === '"') {
-      quote = c;
+    if (c === "'" || c === '"') {
+      i = readQuote(i) - 1;
     } else if (c === "(") {
       depth += 1;
     } else if (c === ")") {
@@ -183,7 +241,7 @@ function splitTopLevelActions(text) {
 }
 
 /**
- * Top-level actions after the `ALTER TABLE` header, or the whole statement as
+ * Top-level actions after the `ALTER [FOREIGN] TABLE` header, or the statement as
  * one action list when no header is present.
  *
  * @param {string} statementText
@@ -274,6 +332,8 @@ function scanStatement(statementText, statementLines, filePath) {
     const match = operation.re.exec(statementText);
     if (match) record(operation.name, match.index);
   }
+  const foreignRename = FOREIGN_TABLE_RENAME.exec(statementText);
+  if (foreignRename) record("RENAME TABLE", foreignRename.index);
 
   const { hasHeader, actions } = statementActions(statementText);
   if (hasHeader) {
