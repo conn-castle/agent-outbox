@@ -3092,6 +3092,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await restoreLastAnswer();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
+  await openSecondaryActions(page);
   await page.getByRole("button", { name: "Select checks" }).click();
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
@@ -3399,6 +3400,7 @@ test("canonical row visuals and popup constraints expose only supported semantic
   await expect(page.getByText("Displayed timezone: UTC")).toBeVisible();
   await page.getByRole("button", { name: "Close action" }).click();
 
+  await openSecondaryActions(page);
   await page.getByRole("button", { name: "Select checks" }).click();
   const multiSubmit = page.getByRole("button", {
     name: "Select checks"
