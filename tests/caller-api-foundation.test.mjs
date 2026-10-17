@@ -21,7 +21,7 @@ import {
 } from "../src/server/caller-auth.ts";
 import {
   activeLimitBlockMetadata,
-  auditSafeLifecycleEvent,
+  auditEventInsertStatement,
   consumesMonthlyCallerApiRequestQuota
 } from "../src/server/accounting.ts";
 import {
@@ -681,24 +681,71 @@ test("accounting helpers keep audit data content-safe and reject invalid byte co
     freeTextAnswer: "private text",
     callerDisplayName: "raw caller name"
   });
-  const auditEvent = auditSafeLifecycleEvent(unsafeAuditInput);
+  const statement = auditEventInsertStatement(unsafeAuditInput);
 
-  assert.deepEqual(auditEvent, {
-    event_type: "input_answered",
-    account_audit_id: "account_audit",
-    caller_audit_id: "caller_audit",
-    input_item_id: "input_id",
-    output_result_id: "output_id",
-    item_status: "answered",
-    response_kind: "free_text",
-    non_file_bytes: 120,
-    caller_item_id_hash: "hash_only",
-    metadata: { revision: 2 }
-  });
+  assert.match(
+    statement.sql,
+    /insert into public\.agent_outbox_audit_events\(\s*event_type,\s*account_audit_id,\s*caller_audit_id,\s*input_item_id,\s*output_result_id,\s*output_file_id,\s*item_status,\s*response_kind,\s*non_file_bytes,\s*file_bytes,\s*quota_metric,\s*limit_name,\s*deletion_reason,\s*request_id,\s*correlation_id,\s*caller_item_id_hash,\s*metadata\s*\)/
+  );
+  assert.deepEqual(statement.values, [
+    "input_answered",
+    "account_audit",
+    "caller_audit",
+    "input_id",
+    "output_id",
+    null,
+    "answered",
+    "free_text",
+    120,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    "hash_only",
+    JSON.stringify({ revision: 2 })
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(statement.values),
+    /private|raw caller name|looks safe/
+  );
+  assert.deepEqual(
+    auditEventInsertStatement({
+      eventType: "file_deleted",
+      accountAuditId: "account_audit",
+      outputFileId: "file_id",
+      fileBytes: 0,
+      quotaMetric: "queued_input_items",
+      limitName: "queued_input_items",
+      deletionReason: "acknowledged",
+      requestId: "req_1",
+      correlationId: "corr_1"
+    }).values,
+    [
+      "file_deleted",
+      "account_audit",
+      null,
+      null,
+      null,
+      "file_id",
+      null,
+      null,
+      null,
+      0,
+      "queued_input_items",
+      "queued_input_items",
+      "acknowledged",
+      "req_1",
+      "corr_1",
+      null,
+      "{}"
+    ]
+  );
   assert.equal(consumesMonthlyCallerApiRequestQuota("output_check_read"), true);
   assert.throws(
     () =>
-      auditSafeLifecycleEvent({
+      auditEventInsertStatement({
         eventType: "input_deleted",
         accountAuditId: "account_audit",
         nonFileBytes: -1
@@ -707,7 +754,7 @@ test("accounting helpers keep audit data content-safe and reject invalid byte co
   );
   assert.throws(
     () =>
-      auditSafeLifecycleEvent({
+      auditEventInsertStatement({
         eventType: "file_deleted",
         accountAuditId: "account_audit",
         fileBytes: Number.NaN
