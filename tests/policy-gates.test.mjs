@@ -27,7 +27,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 function runNode(args) {
   return spawnSync(process.execPath, args, {
     cwd: ROOT,
-    encoding: "utf8"
+    encoding: "utf8",
+    timeout: 10_000
   });
 }
 
@@ -117,6 +118,12 @@ test("migration annotations identify the offending action and its source line", 
 
   const cases = [
     {
+      sql: `UPDATE t SET note = E'it\\'s' -- ${"-".repeat(128)}\nWHERE id = 1;\nDROP TABLE t;`,
+      operation: "DROP TABLE",
+      line: 3,
+      text: "DROP TABLE t;"
+    },
+    {
       sql: "ALTER TABLE t DROP CONSTRAINT c,\n DROP x;",
       operation: "DROP COLUMN",
       line: 2
@@ -155,6 +162,123 @@ test("migration annotations identify the offending action and its source line", 
     {
       sql: "SELECT 1; ALTER TABLE t DROP CONSTRAINT c,\r\n DROP x;",
       operation: "DROP COLUMN",
+      line: 2
+    },
+    {
+      sql: "ALTER TABLE t ALTER note SET DEFAULT E'it\\'s--/*',\n DROP x;",
+      operation: "DROP COLUMN",
+      line: 2
+    },
+    {
+      sql: "ALTER TABLE t ALTER safe SET DEFAULT '',\n ALTER safe SET NOT NULL,\n ALTER note SET DEFAULT E'first' -- continuation\n 'it\\'s--/*',\n /* real comment\n continues */ ALTER x SET NOT NULL;",
+      operation: "ALTER COLUMN SET NOT NULL",
+      line: 6,
+      text: "ALTER x SET NOT NULL;"
+    },
+    {
+      sql: "SELECT E'first'\r\n 'it\\'s--/*'; DROP TABLE t;",
+      operation: "DROP TABLE",
+      line: 2,
+      text: "DROP TABLE t;"
+    },
+    {
+      sql: "ALTER TABLE t ALTER note SET DEFAULT E'it\\'s',\n ALTER \"path\\\" TYPE bigint;",
+      operation: "ALTER COLUMN TYPE",
+      line: 2
+    },
+    {
+      sql: 'ALTER TABLE IF EXISTS ONLY"s"."t" ADD COLUMN "n" int,\n DROP"x";',
+      operation: "DROP COLUMN",
+      line: 2
+    },
+    {
+      sql: 'ALTER TABLE"t"\n RENAME"x"TO"y";',
+      operation: "RENAME COLUMN",
+      line: 2
+    },
+    {
+      sql: 'ALTER TABLE"t" ADD COLUMN "n" int,\n ALTER COLUMN"x"TYPE bigint;',
+      operation: "ALTER COLUMN TYPE",
+      line: 2
+    },
+    {
+      sql: 'ALTER TABLE"t" ALTER"safe"SET DEFAULT 1,\n ALTER"safe"SET NOT NULL,\n ALTER COLUMN"x"SET NOT NULL;',
+      operation: "ALTER COLUMN SET NOT NULL",
+      line: 3
+    },
+    {
+      sql: 'SELECT 1;\nALTER TABLE"t"RENAME TO"u";',
+      operation: "RENAME TABLE",
+      line: 2
+    },
+    {
+      sql: 'ALTER FOREIGN TABLE"t" OPTIONS (DROP option1),\n DROP"x";',
+      operation: "DROP COLUMN",
+      line: 2
+    },
+    {
+      sql: 'SELECT 1;\nALTER FOREIGN TABLE"s"."t"RENAME TO"u";',
+      operation: "RENAME TABLE",
+      line: 2
+    },
+    {
+      sql: 'SELECT 1;\nDROP FOREIGN TABLE"s"."t";',
+      operation: "DROP TABLE",
+      line: 2
+    },
+    {
+      sql: 'ALTER TABLE t ADD COLUMN n int,\n ALTER COLUMN U&"x" TYPE bigint;',
+      operation: "ALTER COLUMN TYPE",
+      line: 2
+    },
+    {
+      sql: 'ALTER TABLE t ADD COLUMN n int,\n ALTER COLUMN U&"x" SET NOT NULL;',
+      operation: "ALTER COLUMN SET NOT NULL",
+      line: 2
+    },
+    {
+      sql: 'SELECT 1;\nALTER TABLE U&"t" RENAME TO u;',
+      operation: "RENAME TABLE",
+      line: 2
+    },
+    {
+      sql: "SELECT 1;\nALTER TABLE ONLY (t) RENAME TO u;",
+      operation: "RENAME TABLE",
+      line: 2
+    },
+    {
+      sql: 'ALTER TABLE IF EXISTS ONLY ("s"."t") ADD COLUMN n int,\n DROP x;',
+      operation: "DROP COLUMN",
+      line: 2
+    },
+    {
+      sql: "ALTER FOREIGN TABLE t ADD COLUMN n int,\n DROP conſtraint;",
+      operation: "DROP COLUMN",
+      line: 2
+    },
+    {
+      sql: "ALTER TABLE t ALTER É SET DEFAULT 1,\n ALTER é SET NOT NULL;",
+      operation: "ALTER COLUMN SET NOT NULL",
+      line: 2
+    },
+    {
+      sql: 'ALTER FOREIGN TABLE t\n RENAME "RENAME TO" TO y;',
+      operation: "RENAME COLUMN",
+      line: 2
+    },
+    {
+      sql: "ALTER FOREIGN TABLE t OPTIONS (SET option1 'RENAME TO');\nALTER FOREIGN TABLE t RENAME TO u;",
+      operation: "RENAME TABLE",
+      line: 2
+    },
+    {
+      sql: "ALTER FOREIGN TABLE t ALTER note SET DEFAULT 'RENAME TO',\n ALTER x TYPE bigint;",
+      operation: "ALTER COLUMN TYPE",
+      line: 2
+    },
+    {
+      sql: "SELECT 1;\nALTER FOREIGN TABLE ONLY (U&\"table name\" UESCAPE '!') RENAME TO u;",
+      operation: "RENAME TABLE",
       line: 2
     }
   ];
