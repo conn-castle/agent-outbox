@@ -41,12 +41,27 @@ import { publicSchemaMismatch } from "../shared/public-api-contract.ts";
 
 const OUTPUT_VALIDATION_MESSAGE = "Output queue request failed validation.";
 const OUTPUT_NOT_FOUND_MESSAGE = "Output result was not found for this caller.";
+const OUTPUT_ROW_COLUMNS = `output_result_id::text as output_result_id,
+        caller_id::text as caller_id,
+        caller_item_id,
+        input_item_id::text as input_item_id,
+        action_value,
+        response_kind,
+        response_payload,
+        answered_at,
+        answered_by_user_id::text as answered_by_user_id`;
 
 const outputCheckReadOperation = {
   rateLimitKind: "output_check_read",
   loggedOperation: "output_check_read",
   unavailableMessage: "Output queue operation is temporarily unavailable.",
   unexpectedFailureMessage: "Output queue operation failed unexpectedly."
+} as const;
+
+const outputAckOperation = {
+  ...outputCheckReadOperation,
+  rateLimitKind: "output_ack",
+  loggedOperation: "output_ack"
 } as const;
 
 export type OutputQueueResult =
@@ -176,17 +191,14 @@ export async function handleOutputCheckRequest(
   );
 }
 
+/** Validates the output ID before authenticating and reading the caller's result. */
 export async function handleOutputReadRequest(
   request: Request,
   context: ApiRequestContext,
   outputResultId: string
 ): Promise<OutputQueueResult> {
-  if (!outputResultId) {
-    return outputResultIdRequiredError();
-  }
-  if (!isStorableString(outputResultId)) {
-    return validationFailed([unstorableStringError("output_result_id")]);
-  }
+  const error = outputResultIdError(outputResultId);
+  if (error) return error;
 
   return runGuardedCallerTransaction(
     request,
@@ -221,27 +233,19 @@ export async function handleOutputReadAllRequest(
   );
 }
 
+/** Validates the output ID before authenticating and acknowledging the caller's result. */
 export async function handleOutputAckRequest(
   request: Request,
   context: ApiRequestContext,
   outputResultId: string
 ): Promise<OutputQueueResult> {
-  if (!outputResultId) {
-    return outputResultIdRequiredError();
-  }
-  if (!isStorableString(outputResultId)) {
-    return validationFailed([unstorableStringError("output_result_id")]);
-  }
+  const error = outputResultIdError(outputResultId);
+  if (error) return error;
 
   return runGuardedCallerTransaction(
     request,
     context,
-    {
-      rateLimitKind: "output_ack",
-      loggedOperation: "output_ack",
-      unavailableMessage: "Output queue operation is temporarily unavailable.",
-      unexpectedFailureMessage: "Output queue operation failed unexpectedly."
-    },
+    outputAckOperation,
     (query, identity) =>
       acknowledgeOutputInTransaction(query, identity, context, outputResultId)
   );
@@ -316,6 +320,10 @@ export async function readOutputResultInTransaction(
   };
 }
 
+/**
+ * Locks a result page and marks only successfully materialized outputs as read.
+ * Unavailable file outputs are reported separately; the cursor covers the fetched page.
+ */
 export async function readAllOutputPageInTransaction(
   query: ProductTransactionQuery,
   identity: CallerIdentity,
@@ -323,7 +331,7 @@ export async function readAllOutputPageInTransaction(
   cursor: OutputCursor | null
 ): Promise<OutputQueueResult> {
   const pageRows = await query<OutputPageRow>(
-    outputPageStatement(identity, limit, cursor, { lockRows: true })
+    outputPageStatement(identity, limit, cursor)
   );
   const { page, hasMore, nextCursor } = pageFromRows(
     pageRows.rows,
@@ -454,6 +462,10 @@ export function parseOutputPageQuery(
   );
 }
 
+/**
+ * Parses read-all pagination after validating the body and rejecting caller_id.
+ * Public schema validation follows the specific body, limit, and cursor checks.
+ */
 export function parseOutputReadAllBody(
   body: unknown
 ): PageRequest<OutputCursor> {
@@ -495,7 +507,8 @@ export function parseOutputReadAllBody(
   return parsed;
 }
 
-export function outputReadyCountStatement(
+/** Counts all queued results belonging to the authenticated account and caller. */
+function outputReadyCountStatement(
   identity: CallerIdentity
 ): TransactionContextStatement {
   return {
@@ -509,57 +522,54 @@ export function outputReadyCountStatement(
   };
 }
 
+/**
+ * Builds a read-all page with full output columns and FOR UPDATE row locks.
+ * Locks prevent concurrent undo, acknowledgement, or cleanup from changing rows
+ * between selection and the mark-read update.
+ */
 export function outputPageStatement(
   identity: CallerIdentity,
   limit: number,
-  cursor: OutputCursor | null,
-  options: { lockRows?: boolean } = {}
+  cursor: OutputCursor | null
 ): TransactionContextStatement {
-  const values: (string | number)[] = [identity.accountId, identity.callerId];
-  const cursorClause = cursor
-    ? "and (answered_at, output_result_id) > ($3::timestamptz, $4::uuid)"
-    : "";
-
-  if (cursor) {
-    values.push(cursor.answeredAt, cursor.outputResultId);
-  }
-
-  values.push(limit + 1);
-
-  // read-all locks the page rows FOR UPDATE (like the single-read path) so a
-  // concurrent undo/ack/cleanup cannot delete or restore a row between the
-  // select and the mark-read update; the non-mutating check path never locks.
-  const lockClause = options.lockRows ? "\n      for update" : "";
-
-  return {
-    sql: `
-      select
-        output_result_id::text as output_result_id,
-        caller_id::text as caller_id,
-        caller_item_id,
-        input_item_id::text as input_item_id,
-        action_value,
-        response_kind,
-        response_payload,
-        answered_at,
-        to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor,
-        answered_by_user_id::text as answered_by_user_id
-      from public.agent_outbox_output_results
-      where account_id = $1
-        and caller_id = $2
-        ${cursorClause}
-      order by answered_at, output_result_id
-      limit $${values.length}${lockClause}
-    `,
-    values
-  };
+  return outputKeysetPageStatement(
+    identity,
+    limit,
+    cursor,
+    OUTPUT_ROW_COLUMNS,
+    true
+  );
 }
 
+/** Builds a check page with summary columns and no row locks or read mutations. */
 export function outputCheckPageStatement(
   identity: CallerIdentity,
   limit: number,
   cursor: OutputCursor | null
 ): TransactionContextStatement {
+  return outputKeysetPageStatement(
+    identity,
+    limit,
+    cursor,
+    `output_result_id::text as output_result_id,
+        caller_item_id,
+        answered_at`,
+    false
+  );
+}
+
+/**
+ * Builds a caller-scoped keyset query with one extra row to detect another page.
+ * The UTC cursor retains PostgreSQL timestamp precision; callers choose the
+ * projection and whether the selected rows must be locked.
+ */
+function outputKeysetPageStatement(
+  identity: CallerIdentity,
+  limit: number,
+  cursor: OutputCursor | null,
+  columns: string,
+  forUpdate: boolean
+): TransactionContextStatement {
   const values: (string | number)[] = [identity.accountId, identity.callerId];
   const cursorClause = cursor
     ? "and (answered_at, output_result_id) > ($3::timestamptz, $4::uuid)"
@@ -574,21 +584,20 @@ export function outputCheckPageStatement(
   return {
     sql: `
       select
-        output_result_id::text as output_result_id,
-        caller_item_id,
-        answered_at,
+        ${columns},
         to_char(answered_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as answered_at_cursor
       from public.agent_outbox_output_results
       where account_id = $1
         and caller_id = $2
         ${cursorClause}
       order by answered_at, output_result_id
-      limit $${values.length}
+      limit $${values.length}${forUpdate ? "\n      for update" : ""}
     `,
     values
   };
 }
 
+/** Selects and locks one output result within the authenticated account and caller. */
 export function outputResultByIdStatement(
   identity: CallerIdentity,
   outputResultId: string
@@ -596,15 +605,7 @@ export function outputResultByIdStatement(
   return {
     sql: `
       select
-        output_result_id::text as output_result_id,
-        caller_id::text as caller_id,
-        caller_item_id,
-        input_item_id::text as input_item_id,
-        action_value,
-        response_kind,
-        response_payload,
-        answered_at,
-        answered_by_user_id::text as answered_by_user_id
+        ${OUTPUT_ROW_COLUMNS}
       from public.agent_outbox_output_results
       where account_id = $1
         and caller_id = $2
@@ -615,6 +616,7 @@ export function outputResultByIdStatement(
   };
 }
 
+/** Selects ordered file metadata for a nonempty set of the caller's output IDs. */
 export function outputFileMetadataStatement(
   identity: CallerIdentity,
   outputResultIds: readonly string[]
@@ -640,7 +642,8 @@ export function outputFileMetadataStatement(
   };
 }
 
-export function markOutputResultsReadStatement(
+/** Preserves the first-read timestamp and increments each selected result's read count. */
+function markOutputResultsReadStatement(
   identity: CallerIdentity,
   outputResultIds: readonly string[]
 ): TransactionContextStatement {
@@ -810,6 +813,7 @@ export function cursorFromOutputRow(row: OutputPageCursorRow) {
   });
 }
 
+/** Wraps field errors with the output queue's validation-failure message. */
 function validationFailed(fields: ApiErrorInput["fields"]): {
   ok: false;
   error: ApiErrorInput;
@@ -817,6 +821,19 @@ function validationFailed(fields: ApiErrorInput["fields"]): {
   return apiValidationFailed(OUTPUT_VALIDATION_MESSAGE, fields);
 }
 
+/**
+ * Rejects a missing ID before an unstorable ID, or returns null for further handling.
+ * UUID matching remains inside the authenticated read and acknowledgement paths.
+ */
+function outputResultIdError(id: string): OutputQueueResult | null {
+  if (!id) return outputResultIdRequiredError();
+  if (!isStorableString(id)) {
+    return validationFailed([unstorableStringError("output_result_id")]);
+  }
+  return null;
+}
+
+/** Returns the missing-output-ID error before storage or authenticated lookup checks. */
 function outputResultIdRequiredError(): OutputQueueResult {
   return {
     ok: false,
