@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { tsImport } from "tsx/esm/api";
 
 import { transactionContextCanaryStatements as databaseCanaryStatements } from "../src/server/database.ts";
 import {
@@ -109,17 +110,58 @@ test("application security headers add HSTS only in production", () => {
       value: "camera=(), microphone=(), geolocation=()"
     }
   ]);
-
-  const nextConfig = readFileSync(
-    new URL("../next.config.ts", import.meta.url),
-    "utf8"
-  );
-  assert.match(
-    nextConfig,
-    /source: "\/:path\*"[\s\S]*headers: applicationSecurityHeaders\([\s\S]*process\.env\.APP_ENV,[\s\S]*process\.env\.AGENT_OUTBOX_BROWSER_FIXTURE === "1"[\s\S]*\)/,
-    "Next.js must apply the security-header policy to every application path"
-  );
 });
+test("Next applies security headers to every path in each runtime environment", async () => {
+  const { default: config } = await withProcessEnv(
+    { APP_ENV: "development", PUBLIC_APP_BASE_URL: undefined },
+    () => tsImport("../next.config.ts", import.meta.url)
+  );
+  for (const appEnv of ["production", "development", "test"]) {
+    for (const fixture of ["0", "1"]) {
+      await withProcessEnv(
+        { APP_ENV: appEnv, AGENT_OUTBOX_BROWSER_FIXTURE: fixture },
+        async () => {
+          assert.deepEqual(
+            await config.headers(),
+            [
+              {
+                source: "/:path*",
+                headers: [
+                  { key: "X-Content-Type-Options", value: "nosniff" },
+                  {
+                    key: "X-Frame-Options",
+                    value:
+                      appEnv === "test" && fixture === "1"
+                        ? "SAMEORIGIN"
+                        : "DENY"
+                  },
+                  {
+                    key: "Referrer-Policy",
+                    value: "strict-origin-when-cross-origin"
+                  },
+                  {
+                    key: "Permissions-Policy",
+                    value: "camera=(), microphone=(), geolocation=()"
+                  },
+                  ...(appEnv === "production"
+                    ? [
+                        {
+                          key: "Strict-Transport-Security",
+                          value: "max-age=31536000"
+                        }
+                      ]
+                    : [])
+                ]
+              }
+            ],
+            `${appEnv}, fixture=${fixture}`
+          );
+        }
+      );
+    }
+  }
+});
+
 test("Cloudflare static assets get production security headers and immutable build caching", () => {
   // Cloudflare answers static asset requests before the Worker runs, so
   // next.config.ts headers() never reaches them; public/_headers must match.

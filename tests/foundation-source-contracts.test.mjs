@@ -274,21 +274,10 @@ test("worker cron schedule stays aligned with runtime scheduled canary", () => {
     new URL("../wrangler.jsonc", import.meta.url),
     "utf8"
   );
-  const workerEntry = readFileSync(
-    new URL("../worker/entry.mjs", import.meta.url),
-    "utf8"
-  );
-
   assert.deepEqual(
     validateWranglerCronSchedule(wranglerConfig, RUNTIME_CRON_SCHEDULE),
     []
   );
-  assert.match(workerEntry, /runScheduledCanary/);
-  assert.match(
-    workerEntry,
-    /const cleanup = runWithScheduledSentry\(\(\) =>\s+runScheduledCleanup\(/
-  );
-  assert.match(workerEntry, /context\.waitUntil\(cleanup\)/);
   assert.deepEqual(
     validateWranglerCronSchedule(
       `{

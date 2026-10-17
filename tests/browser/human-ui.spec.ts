@@ -845,6 +845,44 @@ test("account popup identifies the user, shows free usage, and links to upgrade"
   }
 });
 
+test("selection and snooze survive a same-tab reload", async ({
+  page,
+  isMobile
+}) => {
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  const snoozed = reviewRowByTitle(page, "Review neighborhood permit brief");
+  await snoozed
+    .getByRole("button", { name: "Snooze review", exact: true })
+    .click();
+  await expect(snoozed).toContainText("snoozed");
+  await page
+    .locator(
+      isMobile
+        ? ".compact-selection-button"
+        : ".review-controls .selection-mode-button"
+    )
+    .click();
+  const selected = reviewRowByTitle(page, "Choose follow-up window");
+  await selected.getByRole("checkbox").check();
+  await expect(selected.getByRole("checkbox")).toBeChecked();
+
+  await page.reload();
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await expect(
+    page.locator(
+      isMobile
+        ? ".compact-selection-button"
+        : ".review-controls .selection-mode-button"
+    )
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(selected.getByRole("checkbox")).toBeChecked();
+  await expect(snoozed).toContainText("snoozed");
+  await expect(page.locator("article.review-row").last()).toContainText(
+    "Review neighborhood permit brief"
+  );
+});
+
 test("authenticated review workspace renders content actions and preserves controls across detail navigation", async ({
   page,
   isMobile
