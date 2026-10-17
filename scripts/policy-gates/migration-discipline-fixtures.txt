@@ -96,3 +96,32 @@
 {"name":"drop after drop constraint blocked","sql":"ALTER TABLE users DROP CONSTRAINT c,\n DROP x;","label_present":false,"expected":"fail"}
 {"name":"rename after keyword literal blocked","sql":"ALTER TABLE users ALTER note SET DEFAULT 'RENAME',\n RENAME x TO y;","label_present":false,"expected":"fail"}
 {"name":"type after keyword literal blocked","sql":"ALTER TABLE users ALTER note SET DEFAULT 'TYPE',\n ALTER x TYPE bigint;","label_present":false,"expected":"fail"}
+
+# Escape-string boundaries and ordinary-string/identifier controls.
+{"name":"E escaped apostrophe before implicit drop","sql":"ALTER TABLE t ALTER note SET DEFAULT E'it\\'s', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E escaped default does not hide unexempt not-null","sql":"ALTER TABLE t ALTER safe SET DEFAULT '', ALTER safe SET NOT NULL, ALTER note SET DEFAULT E'it\\'s', ALTER x SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"E in-string line comment before real drop","sql":"SELECT E'it\\'s--'; DROP TABLE t;","label_present":false,"expected":"fail"}
+{"name":"E in-string block comment before real drop","sql":"SELECT E'it\\'s/*'; DROP TABLE t;","label_present":false,"expected":"fail"}
+{"name":"lowercase e escaped apostrophe before implicit drop","sql":"ALTER TABLE t ALTER note SET DEFAULT e'it\\'s', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E odd backslash run keeps apostrophe inside string","sql":"ALTER TABLE t ALTER note SET DEFAULT E'it\\\\\\'s', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E even backslash run permits closing quote","sql":"ALTER TABLE t ALTER note SET DEFAULT E'path\\\\', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E doubled and backslash escaped quotes before drop","sql":"ALTER TABLE t ALTER note SET DEFAULT E'it''s\\'still', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E escaped quote keeps comma and drop text inside default","sql":"ALTER TABLE t ALTER note SET DEFAULT E'it\\'s, DROP x';","label_present":false,"expected":"pass"}
+{"name":"E escaped quote keeps parentheses inside default","sql":"ALTER TABLE t ALTER note SET DEFAULT E'it\\'s(', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E newline continuation retains escapes","sql":"ALTER TABLE t ALTER note SET DEFAULT E'first'\n 'it\\'s', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E repeated newline continuations retain escapes","sql":"ALTER TABLE t ALTER note SET DEFAULT E'first'\n 'second'\n 'it\\'s', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E CRLF continuation retains escapes","sql":"ALTER TABLE t ALTER note SET DEFAULT E'first'\r\n 'it\\'s', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E line-comment continuation retains escapes","sql":"ALTER TABLE t ALTER note SET DEFAULT E'first' -- continuation\n 'it\\'s--/*', DROP x;","label_present":false,"expected":"fail"}
+{"name":"E continuation keeps comma and drop text inside default","sql":"ALTER TABLE t ALTER note SET DEFAULT E'first'\n 'it\\'s, DROP x';","label_present":false,"expected":"pass"}
+{"name":"E continuation comment markers do not consume following statement","sql":"SELECT E'first'\n 'it\\'s/*--'; DROP TABLE t;","label_present":false,"expected":"fail"}
+{"name":"E actual trailing comments remain removable","sql":"ALTER TABLE t ALTER note SET DEFAULT E'it\\'s'; -- DROP TABLE t;\n/* DROP INDEX i; */","label_present":false,"expected":"pass"}
+{"name":"ordinary string backslash does not escape closing quote","sql":"ALTER TABLE t ALTER note SET DEFAULT 'path\\', DROP x;","label_present":false,"expected":"fail"}
+{"name":"ordinary continuation keeps backslashes literal","sql":"ALTER TABLE t ALTER note SET DEFAULT 'first'\n 'path\\', DROP x;","label_present":false,"expected":"fail"}
+{"name":"separate ordinary string after E does not inherit escapes","sql":"ALTER TABLE t ALTER note SET DEFAULT E'first' || 'path\\', DROP x;","label_present":false,"expected":"fail"}
+{"name":"quoted identifier backslash does not escape closing quote","sql":"ALTER TABLE t ALTER \"path\\\" SET DEFAULT 1, DROP x;","label_present":false,"expected":"fail"}
+{"name":"ordinary doubled quote keeps comma and comment markers literal","sql":"ALTER TABLE t ALTER note SET DEFAULT 'it''s, -- /*';","label_present":false,"expected":"pass"}
+{"name":"identifier doubled quote keeps comma and comment markers literal","sql":"ALTER TABLE t ALTER \"it\"\"s, -- /*\" SET DEFAULT 1;","label_present":false,"expected":"pass"}
+{"name":"nameE type suffix is not an E prefix","sql":"ALTER TABLE t ALTER note SET DEFAULT nameE'path\\', DROP x;","label_present":false,"expected":"fail"}
+{"name":"name$E type suffix is not an E prefix","sql":"ALTER TABLE t ALTER note SET DEFAULT name$E'path\\', DROP x;","label_present":false,"expected":"fail"}
+{"name":"caféE type suffix is not an E prefix","sql":"ALTER TABLE t ALTER note SET DEFAULT caféE'path\\', DROP x;","label_present":false,"expected":"fail"}
+{"name":"DO body destructive operation remains covered","sql":"DO $$BEGIN ALTER TABLE t DROP COLUMN x; END$$;","label_present":false,"expected":"fail"}

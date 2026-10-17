@@ -25,6 +25,7 @@ const OPERATIONS = [
 // UTF-8 SQL, that includes every non-ASCII code point, not just letters/numbers.
 const IDENTIFIER_START = String.raw`[A-Za-z_\u0080-\u{10FFFF}]`;
 const IDENTIFIER_CONTINUATION = String.raw`[A-Za-z_0-9$\u0080-\u{10FFFF}]`;
+const IDENTIFIER_CHARACTER = new RegExp(IDENTIFIER_CONTINUATION, "u");
 const KEYWORD_END = String.raw`(?!${IDENTIFIER_CONTINUATION})`;
 const IDENTIFIER = String.raw`(?:"(?:[^"]|"")+"|${IDENTIFIER_START}${IDENTIFIER_CONTINUATION}*)`;
 const ALTER_TABLE_HEADER = new RegExp(
@@ -74,6 +75,47 @@ const SET_NOT_NULL = {
  */
 
 /**
+ * Read one quoted fragment at a time, retaining E-string mode for newline
+ * continuations. PostgreSQL's quotecontinue rule permits whitespace and line
+ * comments between fragments. Ordinary strings and identifiers only double
+ * their delimiter; backslash escape pairs belong to E/e strings alone.
+ *
+ * @param {string} sql
+ * @returns {(start: number) => number} Exclusive end of the quoted fragment.
+ */
+function createQuoteReader(sql) {
+  let escapeContinuation = -1;
+  const continuation =
+    /[ \t\f\v]*(?:--[^\r\n]*)?[\r\n](?:[ \t\f\v\r\n]|--[^\r\n]*[\r\n])*'/y;
+  return (start) => {
+    const quote = sql[start];
+    const escapes =
+      quote === "'" &&
+      (start === escapeContinuation ||
+        (/[eE]/.test(sql[start - 1] ?? "") &&
+          !IDENTIFIER_CHARACTER.test(sql[start - 2] ?? "")));
+    escapeContinuation = -1;
+    for (let i = start + 1; i < sql.length; i += 1) {
+      if (escapes && sql[i] === "\\") {
+        i += 1;
+      } else if (sql[i] === quote) {
+        if (sql[i + 1] === quote) {
+          i += 1;
+          continue;
+        }
+        if (escapes) {
+          continuation.lastIndex = i + 1;
+          const match = continuation.exec(sql);
+          if (match) escapeContinuation = continuation.lastIndex - 1;
+        }
+        return i + 1;
+      }
+    }
+    return sql.length;
+  };
+}
+
+/**
  * Strip `--` and block comments while preserving newlines and string/identifier
  * literals. This closes comment-based DEFAULT bypasses without a full SQL
  * tokenizer.
@@ -84,23 +126,14 @@ const SET_NOT_NULL = {
 function stripSqlComments(sql) {
   let out = "";
   let i = 0;
-  /** @type {string | null} */
-  let quote = null;
+  const readQuote = createQuoteReader(sql);
   while (i < sql.length) {
     const c = sql[i];
     const next = sql[i + 1];
-    if (quote) {
-      // A doubled (escaped) quote closes and immediately reopens the literal,
-      // which preserves the same text and state.
-      out += c;
-      if (c === quote) quote = null;
-      i += 1;
-      continue;
-    }
     if (c === "'" || c === '"') {
-      quote = c;
-      out += c;
-      i += 1;
+      const end = readQuote(i);
+      out += sql.slice(i, end);
+      i = end;
       continue;
     }
     if (c === "-" && next === "-") {
@@ -160,14 +193,11 @@ function splitTopLevelActions(text) {
     });
   };
   let depth = 0;
-  /** @type {string | null} */
-  let quote = null;
+  const readQuote = createQuoteReader(text);
   for (let i = 0; i < text.length; i += 1) {
     const c = text[i];
-    if (quote) {
-      if (c === quote) quote = null;
-    } else if (c === "'" || c === '"') {
-      quote = c;
+    if (c === "'" || c === '"') {
+      i = readQuote(i) - 1;
     } else if (c === "(") {
       depth += 1;
     } else if (c === ")") {
