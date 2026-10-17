@@ -262,7 +262,7 @@ export function durationSinceMs(startedAtMs: number | undefined) {
   return Math.max(0, Date.now() - Number(startedAtMs));
 }
 
-function safeErrorNameValue(value: unknown, fallback: string) {
+export function safeErrorNameValue(value: unknown, fallback: string) {
   if (typeof value === "string" && SAFE_ERROR_NAME_PATTERN.test(value)) {
     return value;
   }
