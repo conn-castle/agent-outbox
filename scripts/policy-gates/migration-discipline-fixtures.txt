@@ -125,3 +125,73 @@
 {"name":"name$E type suffix is not an E prefix","sql":"ALTER TABLE t ALTER note SET DEFAULT name$E'path\\', DROP x;","label_present":false,"expected":"fail"}
 {"name":"caféE type suffix is not an E prefix","sql":"ALTER TABLE t ALTER note SET DEFAULT caféE'path\\', DROP x;","label_present":false,"expected":"fail"}
 {"name":"DO body destructive operation remains covered","sql":"DO $$BEGIN ALTER TABLE t DROP COLUMN x; END$$;","label_present":false,"expected":"fail"}
+
+# Quoted token adjacency and foreign-table policy operations.
+{"name":"quoted table adjacent to TABLE","sql":"ALTER TABLE\"t\" DROP x;","label_present":false,"expected":"fail"}
+{"name":"quoted drop column adjacent to DROP","sql":"ALTER TABLE t DROP\"x\";","label_present":false,"expected":"fail"}
+{"name":"quoted type column adjacent to ALTER","sql":"ALTER TABLE t ALTER\"x\" TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"quoted rename column adjacent to RENAME and TO","sql":"ALTER TABLE t RENAME\"x\"TO\"y\";","label_present":false,"expected":"fail"}
+{"name":"quoted schema and table adjacent to ONLY and action","sql":"ALTER TABLE IF EXISTS ONLY\"s\".\"t\"DROP\"x\";","label_present":false,"expected":"fail"}
+{"name":"quoted table adjacent to EXISTS","sql":"ALTER TABLE IF EXISTS\"t\" ALTER\"x\"SET DATA TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"quoted explicit type column adjacent to COLUMN and TYPE","sql":"ALTER TABLE\"t\"ALTER COLUMN\"x\"TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"quoted explicit drop column adjacent to COLUMN","sql":"ALTER TABLE t DROP COLUMN\"x\";","label_present":false,"expected":"fail"}
+{"name":"quoted explicit rename column adjacent to COLUMN and TO","sql":"ALTER TABLE t RENAME COLUMN\"x\"TO\"y\";","label_present":false,"expected":"fail"}
+{"name":"quoted table rename adjacent to action and target","sql":"ALTER TABLE\"t\"RENAME TO\"u\";","label_present":false,"expected":"fail"}
+{"name":"quoted doubled quotes in schema table and column","sql":"ALTER TABLE\"s\"\"chema\".\"ta\"\"ble\"ALTER\"co\"\"l\"TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"quoted not-null adjacent to SET","sql":"ALTER TABLE\"t\"ALTER\"x\"SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"quoted explicit not-null adjacent to COLUMN and SET","sql":"ALTER TABLE\"t\"ALTER COLUMN\"x\"SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"quoted doubled-quote same-column default exemption","sql":"ALTER TABLE\"t\"ALTER COLUMN\"x\"\"y\"SET DEFAULT 1, ALTER\"x\"\"y\"SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"quoted default and unquoted same-column exemption","sql":"ALTER TABLE\"t\"ALTER\"x\"SET DEFAULT 1, ALTER x SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"quoted not-null other-column default does not exempt","sql":"ALTER TABLE\"t\"ALTER\"y\"SET DEFAULT 1, ALTER\"x\"SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"quoted unexempt not-null after exempt column","sql":"ALTER TABLE\"t\"ALTER\"safe\"SET DEFAULT 1, ALTER\"safe\"SET NOT NULL, ALTER COLUMN\"x\"SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"quoted additive actions and constraint exclusions","sql":"ALTER TABLE\"t\"ADD COLUMN\"y\"int, DROP CONSTRAINT \"c\", ALTER\"x\"DROP DEFAULT, ALTER COLUMN\"y\"DROP NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"quoted rename constraint remains excluded","sql":"ALTER TABLE\"t\"RENAME CONSTRAINT \"c\" TO\"d\";","label_present":false,"expected":"pass"}
+{"name":"unquoted TYPE suffix is not a type action","sql":"ALTER TABLE t ALTER xTYPE DROP DEFAULT, ALTER COLUMN xTYPE DROP NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"unquoted SET suffix remains a complete default column","sql":"ALTER TABLE t ALTER xSET SET DEFAULT 1, ALTER x SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"unquoted TO suffix remains a complete rename column","sql":"ALTER TABLE t RENAME xTO TO y;","label_present":false,"expected":"fail"}
+{"name":"unquoted keyword dollar and unicode suffixes remain columns","sql":"ALTER TABLE\"t\"ALTER column$flag SET DEFAULT 1, ALTER column$flag SET NOT NULL, ALTER constraint́ TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"foreign implicit drop column","sql":"ALTER FOREIGN TABLE t DROP x;","label_present":false,"expected":"fail"}
+{"name":"foreign rename table","sql":"ALTER FOREIGN TABLE t RENAME TO u;","label_present":false,"expected":"fail"}
+{"name":"foreign drop table","sql":"DROP FOREIGN TABLE t;","label_present":false,"expected":"fail"}
+{"name":"foreign explicit drop if exists column","sql":"ALTER FOREIGN TABLE IF EXISTS ONLY\"s\".\"t\" DROP COLUMN IF EXISTS \"x\";","label_present":false,"expected":"fail"}
+{"name":"foreign implicit rename column","sql":"ALTER FOREIGN TABLE\"t\"RENAME\"x\"TO\"y\";","label_present":false,"expected":"fail"}
+{"name":"foreign explicit rename column","sql":"ALTER FOREIGN TABLE t RENAME COLUMN\"x\"TO\"y\";","label_present":false,"expected":"fail"}
+{"name":"foreign implicit type change","sql":"ALTER FOREIGN TABLE t ALTER x TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"foreign explicit set data type","sql":"ALTER FOREIGN TABLE\"t\"ALTER COLUMN\"x\"SET DATA TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"foreign not-null without default","sql":"ALTER FOREIGN TABLE t ALTER x SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"foreign same-column default exemption","sql":"ALTER FOREIGN TABLE\"t\"ALTER\"x\"SET DEFAULT 1, ALTER COLUMN\"x\"SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"foreign other-column default does not exempt","sql":"ALTER FOREIGN TABLE t ALTER y SET DEFAULT 1, ALTER COLUMN x SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"foreign options drops and additive actions remain allowed","sql":"ALTER FOREIGN TABLE t ADD COLUMN x int, ALTER COLUMN y OPTIONS (DROP option1), OPTIONS (ADD option2 'value', SET option3 'value', DROP option4), ALTER y DROP DEFAULT, ALTER y DROP NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"foreign options do not hide later column drop","sql":"ALTER FOREIGN TABLE t OPTIONS (DROP option1), DROP x;","label_present":false,"expected":"fail"}
+{"name":"foreign rename constraint remains excluded","sql":"ALTER FOREIGN TABLE\"t\"RENAME CONSTRAINT \"c\" TO\"d\";","label_present":false,"expected":"pass"}
+{"name":"foreign drop constraint remains excluded","sql":"ALTER FOREIGN TABLE t DROP CONSTRAINT c;","label_present":false,"expected":"pass"}
+{"name":"foreign drop multiple quoted tables","sql":"DROP FOREIGN TABLE IF EXISTS \"s\".\"t\", \"u\" CASCADE;","label_present":false,"expected":"fail"}
+
+# Independent review R1-R7: retained coverage and PostgreSQL identifier semantics.
+{"name":"R1 U& explicit alter column type","sql":"ALTER TABLE t ALTER COLUMN U&\"x\" TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"R2 U& explicit set not null","sql":"ALTER TABLE t ALTER COLUMN U&\"x\" SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"R3 U& table rename","sql":"ALTER TABLE U&\"t\" RENAME TO u;","label_present":false,"expected":"fail"}
+{"name":"R4 ONLY paren rename","sql":"ALTER TABLE ONLY (t) RENAME TO u;","label_present":false,"expected":"fail"}
+{"name":"R5 ONLY paren implicit drop","sql":"ALTER TABLE ONLY (t) DROP x;","label_present":false,"expected":"fail"}
+{"name":"R6 long-s constraint keyword drop","sql":"ALTER TABLE t DROP conſtraint;","label_present":false,"expected":"fail"}
+{"name":"R7 unicode case-fold default exemption","sql":"ALTER TABLE t ALTER É SET DEFAULT 1, ALTER é SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"U& explicit set data type preserves conservative coverage","sql":"ALTER TABLE t ALTER COLUMN U&\"x\" SET DATA TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"U& same-column default is not decoded for exemption","sql":"ALTER TABLE t ALTER COLUMN U&\"x\" SET DEFAULT 1, ALTER COLUMN U&\"x\" SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"U& foreign table rename preserves conservative coverage","sql":"ALTER FOREIGN TABLE U&\"t\" RENAME TO u;","label_present":false,"expected":"fail"}
+{"name":"ONLY parenthesized qualified quoted table drop","sql":"ALTER TABLE IF EXISTS ONLY(\"s\".\"t\")DROP\"x\";","label_present":false,"expected":"fail"}
+{"name":"foreign ONLY parenthesized table implicit type","sql":"ALTER FOREIGN TABLE ONLY (s.t) ALTER x TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"ONLY parenthesized table additive actions","sql":"ALTER TABLE ONLY (s.t) ADD COLUMN x int, ALTER x DROP DEFAULT, DROP CONSTRAINT c;","label_present":false,"expected":"pass"}
+{"name":"ONLY parenthesized table default exemption","sql":"ALTER TABLE ONLY (t) ALTER x SET DEFAULT 1, ALTER x SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"long-s constraint column rename is not a keyword","sql":"ALTER TABLE t RENAME conſtraint TO y;","label_present":false,"expected":"fail"}
+{"name":"long-s constraint column type is not a keyword","sql":"ALTER TABLE t ALTER conſtraint TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"long-s constraint column not-null is not a keyword","sql":"ALTER TABLE t ALTER conſtraint SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"long-s constraint column exact default exemption","sql":"ALTER TABLE t ALTER conſtraint SET DEFAULT 1, ALTER \"conſtraint\" SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"Kelvin identifier default does not exempt ASCII k","sql":"ALTER TABLE t ALTER K SET DEFAULT 1, ALTER k SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"supplementary case variants are distinct columns","sql":"ALTER TABLE t ALTER 𐐀 SET DEFAULT 1, ALTER 𐐨 SET NOT NULL;","label_present":false,"expected":"fail"}
+{"name":"non-ASCII default matches exact quoted identifier","sql":"ALTER TABLE t ALTER É SET DEFAULT 1, ALTER \"É\" SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"ASCII case within combining identifier still folds","sql":"ALTER TABLE t ALTER É SET DEFAULT 1, ALTER é SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"emoji identifier exact default exemption","sql":"ALTER TABLE 😀 ALTER 😀X SET DEFAULT 1, ALTER \"😀x\" SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"high-bit identifier exact default exemption","sql":"ALTER TABLE t ALTER X SET DEFAULT 1, ALTER \"x\" SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"nonbreaking space remains an identifier unit","sql":"ALTER TABLE t ALTER x y TYPE bigint;","label_present":false,"expected":"fail"}
+{"name":"nonbreaking space identifier exact default exemption","sql":"ALTER TABLE t ALTER x y SET DEFAULT 1, ALTER \"x y\" SET NOT NULL;","label_present":false,"expected":"pass"}
+{"name":"emoji E suffix is not an E-string prefix","sql":"ALTER TABLE t ALTER note SET DEFAULT 😀E'path\\', DROP x;","label_present":false,"expected":"fail"}
