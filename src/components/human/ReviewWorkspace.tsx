@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type RefObject,
   type ReactNode
 } from "react";
 import { createPortal } from "react-dom";
@@ -82,6 +83,7 @@ import {
 import { BulkActions } from "./BulkActions";
 import { ReviewDetail, ReviewDetailLoading } from "./ReviewDetail";
 import { ReviewList } from "./ReviewList";
+import { useReviewSelection } from "./review-selection";
 import { useFeedbackDrafts } from "./Feedback";
 import {
   HUMAN_MUTATION_SCOPE,
@@ -92,13 +94,6 @@ import {
   type HumanOptimisticMutation
 } from "./human-mutation-client";
 
-type PersistedWorkspaceState = {
-  selectedIds?: unknown;
-  skippedIds?: unknown;
-};
-
-const WORKSPACE_STATE_KEY_PREFIX = "agent-outbox:human-review-workspace:v1";
-const WORKSPACE_ID_LIMIT = 100;
 // Query parameters the server action redirect writes to report a mutation.
 const REDIRECT_NOTICE_PARAMS = [
   "notice",
@@ -189,10 +184,17 @@ export function ReviewWorkspace({
   const router = useRouter();
   const feedback = useFeedbackDrafts(session.accountId, session.userId);
   const { mutations, currentMutations, enqueue, dismiss } = useAppActions();
+  const {
+    selectedIds,
+    skippedIds,
+    selectionMode,
+    hydrated,
+    setRowSelected,
+    toggleSkipped,
+    toggleSelectionMode,
+    deselect
+  } = useReviewSelection(session.accountId, rows);
   const [search, setSearch] = useState(view.search);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [skippedIds, setSkippedIds] = useState<Set<string>>(new Set());
-  const [selectionMode, setSelectionMode] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [lastUndo, setLastUndo] = useState<LastAnswerUndo | null>(() =>
     lastAnswerUndoFromNotice(notice)
@@ -205,19 +207,12 @@ export function ReviewWorkspace({
     label: string;
   } | null>(null);
   const [detailDismissed, setDetailDismissed] = useState(false);
-  const [openViewControl, setOpenViewControl] = useState<
-    "filter" | "sort" | null
-  >(null);
-  const [useViewControlSheet, setUseViewControlSheet] = useState(false);
   const workspaceRef = useRef<HTMLElement>(null);
   const [controlView, setControlView] = useState(view);
   const controlViewRef = useRef(view);
   const requestedViewHref = useRef<string | null>(null);
   const incomingViewRef = useRef(view);
   incomingViewRef.current = view;
-  const [hydratedAccountId, setHydratedAccountId] = useState<string | null>(
-    null
-  );
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSearch = useRef<string | null>(null);
   const previousDetailId = useRef<string | null>(null);
@@ -251,14 +246,6 @@ export function ReviewWorkspace({
   }, [canonicalViewHref]);
 
   useEffect(() => {
-    const persisted = readWorkspaceState(session.accountId);
-    setSelectedIds(new Set(persisted?.selectedIds ?? []));
-    setSkippedIds(new Set(persisted?.skippedIds ?? []));
-    setSelectionMode((persisted?.selectedIds.length ?? 0) > 0);
-    setHydratedAccountId(session.accountId);
-  }, [session.accountId]);
-
-  useEffect(() => {
     if (
       requestedViewHref.current !== null &&
       requestedViewHref.current !== canonicalViewHref
@@ -279,57 +266,6 @@ export function ReviewWorkspace({
     window.addEventListener("popstate", clearRequestedView);
     return () => window.removeEventListener("popstate", clearRequestedView);
   }, []);
-
-  useEffect(() => {
-    const query = window.matchMedia("(max-width: 800px)");
-    const synchronize = () => setUseViewControlSheet(query.matches);
-    synchronize();
-    query.addEventListener("change", synchronize);
-    return () => query.removeEventListener("change", synchronize);
-  }, []);
-
-  useEffect(() => {
-    if (openViewControl === null) return;
-    const closeViewControl = () => {
-      const trigger = document.querySelector<HTMLElement>(
-        `[data-view-popover-trigger="${openViewControl}"]`
-      );
-      setOpenViewControl(null);
-      return trigger;
-    };
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest(
-          "[data-view-popover-control], [data-view-popover-surface]"
-        )
-      ) {
-        return;
-      }
-      closeViewControl();
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      closeViewControl()?.focus();
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [openViewControl]);
-
-  useEffect(() => {
-    if (hydratedAccountId !== session.accountId) {
-      return;
-    }
-    writeWorkspaceState(session.accountId, {
-      selectedIds: [...selectedIds],
-      skippedIds: [...skippedIds]
-    });
-  }, [hydratedAccountId, selectedIds, session.accountId, skippedIds]);
 
   useEffect(() => {
     const selector = "details[data-dismissible-disclosure]";
@@ -370,18 +306,6 @@ export function ReviewWorkspace({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
-
-  useEffect(() => {
-    const visibleNonPendingIds = new Set(
-      rows
-        .filter((row) => row.status !== "pending")
-        .map((row) => row.inputItemId)
-    );
-    if (visibleNonPendingIds.size === 0) {
-      return;
-    }
-    setSelectedIds((current) => removeIds(current, visibleNonPendingIds));
-  }, [rows]);
 
   useEffect(() => {
     if (pendingSearch.current !== null) {
@@ -724,7 +648,7 @@ export function ReviewWorkspace({
               );
             })
           );
-          setSelectedIds((current) => removeIds(current, answeredIds));
+          deselect(answeredIds);
         }
         retireMutation(record.id);
       } else if (!retriedCanonicalRefreshes.current.has(record.id)) {
@@ -732,7 +656,16 @@ export function ReviewWorkspace({
         router.refresh();
       }
     }
-  }, [dismiss, hasNext, humanMutations, router, rows, totalCount, view]);
+  }, [
+    deselect,
+    dismiss,
+    hasNext,
+    humanMutations,
+    router,
+    rows,
+    totalCount,
+    view
+  ]);
 
   const visibleRows = useMemo(() => {
     return [...projectedRows].sort((left, right) => {
@@ -926,7 +859,7 @@ export function ReviewWorkspace({
           if (typeof sent === "string") feedback.clearSubmitted(id, sent);
         }
         if (answeredIds.length > 0) {
-          setSelectedIds((current) => removeIds(current, new Set(answeredIds)));
+          deselect(new Set(answeredIds));
         }
         if (result.operation === "bulk-answer" && result.answered === 0) {
           retireMutation(mutationId);
@@ -1018,37 +951,6 @@ export function ReviewWorkspace({
     clearRedirectNoticeFromUrl();
   }, [notice, noticeEpoch]);
 
-  function setRowSelected(inputItemId: string, selected: boolean) {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (selected) {
-        addBoundedId(next, inputItemId);
-      } else {
-        next.delete(inputItemId);
-      }
-      return next;
-    });
-  }
-
-  function toggleSkipped(inputItemId: string) {
-    setSkippedIds((current) => {
-      const next = new Set(current);
-      if (next.has(inputItemId)) {
-        next.delete(inputItemId);
-      } else {
-        addBoundedId(next, inputItemId);
-      }
-      return next;
-    });
-  }
-
-  function toggleSelectionMode() {
-    if (selectionMode) {
-      setSelectedIds(new Set());
-    }
-    setSelectionMode((current) => !current);
-  }
-
   useEffect(() => {
     function moveQueueFocus(event: KeyboardEvent) {
       if (
@@ -1123,9 +1025,7 @@ export function ReviewWorkspace({
       ref={workspaceRef}
       className="human-workspace ph-no-capture"
       data-review-mutation-count={humanMutations.length}
-      data-workspace-hydrated={
-        hydratedAccountId === session.accountId ? "true" : "false"
-      }
+      data-workspace-hydrated={hydrated ? "true" : "false"}
     >
       <header className="app-bar">
         <Link
@@ -1276,9 +1176,7 @@ export function ReviewWorkspace({
               aria-label="Review controls"
             >
               <span className="sr-only" data-testid="workspace-hydrated">
-                {hydratedAccountId === session.accountId
-                  ? "hydrated"
-                  : "loading"}
+                {hydrated ? "hydrated" : "loading"}
               </span>
               <form
                 className="review-search"
@@ -1305,33 +1203,14 @@ export function ReviewWorkspace({
                   />
                 </label>
               </form>
-              <div className="filter-controls">
-                <ReviewFilterControl
-                  view={controlView}
-                  typeOptions={typeOptions}
-                  open={openViewControl === "filter"}
-                  sheet={useViewControlSheet}
-                  portalTarget={workspaceRef.current}
-                  onOpenChange={(open) =>
-                    setOpenViewControl(open ? "filter" : null)
-                  }
-                  onChange={(changes) =>
-                    updateViewImmediately({ ...changes, page: 1 })
-                  }
-                />
-                <ReviewSortControl
-                  view={controlView}
-                  open={openViewControl === "sort"}
-                  sheet={useViewControlSheet}
-                  portalTarget={workspaceRef.current}
-                  onOpenChange={(open) =>
-                    setOpenViewControl(open ? "sort" : null)
-                  }
-                  onChange={(changes) =>
-                    updateViewImmediately({ ...changes, page: 1 })
-                  }
-                />
-              </div>
+              <ReviewViewControls
+                view={controlView}
+                typeOptions={typeOptions}
+                workspaceRef={workspaceRef}
+                onChange={(changes) =>
+                  updateViewImmediately({ ...changes, page: 1 })
+                }
+              />
               <button
                 className={
                   selectionMode
@@ -1497,6 +1376,85 @@ export function ReviewWorkspace({
         />
       ) : null}
     </main>
+  );
+}
+
+function ReviewViewControls({
+  view,
+  typeOptions,
+  workspaceRef,
+  onChange
+}: {
+  view: HumanReviewView;
+  typeOptions: string[];
+  workspaceRef: RefObject<HTMLElement | null>;
+  onChange: (changes: Partial<HumanReviewView>) => void;
+}) {
+  const [openViewControl, setOpenViewControl] = useState<
+    "filter" | "sort" | null
+  >(null);
+  const [useViewControlSheet, setUseViewControlSheet] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 800px)");
+    const synchronize = () => setUseViewControlSheet(query.matches);
+    synchronize();
+    query.addEventListener("change", synchronize);
+    return () => query.removeEventListener("change", synchronize);
+  }, []);
+
+  useEffect(() => {
+    if (openViewControl === null) return;
+    const closeViewControl = () => {
+      const trigger = document.querySelector<HTMLElement>(
+        `[data-view-popover-trigger="${openViewControl}"]`
+      );
+      setOpenViewControl(null);
+      return trigger;
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          "[data-view-popover-control], [data-view-popover-surface]"
+        )
+      ) {
+        return;
+      }
+      closeViewControl();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeViewControl()?.focus();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openViewControl]);
+
+  return (
+    <div className="filter-controls">
+      <ReviewFilterControl
+        view={view}
+        typeOptions={typeOptions}
+        open={openViewControl === "filter"}
+        sheet={useViewControlSheet}
+        portalTarget={workspaceRef.current}
+        onOpenChange={(open) => setOpenViewControl(open ? "filter" : null)}
+        onChange={onChange}
+      />
+      <ReviewSortControl
+        view={view}
+        open={openViewControl === "sort"}
+        sheet={useViewControlSheet}
+        portalTarget={workspaceRef.current}
+        onOpenChange={(open) => setOpenViewControl(open ? "sort" : null)}
+        onChange={onChange}
+      />
+    </div>
   );
 }
 
@@ -2149,89 +2107,6 @@ function humanReviewViewAnnouncement(view: HumanReviewView) {
     ...view.types.map((type) => `type ${type}`)
   ];
   return `View updated. Sorted by ${sort}.${filters.length ? ` Filtered by ${filters.join(", ")}.` : ""}`;
-}
-
-function workspaceStateKey(accountId: string) {
-  return `${WORKSPACE_STATE_KEY_PREFIX}:${accountId}`;
-}
-
-function readWorkspaceState(accountId: string): {
-  selectedIds: string[];
-  skippedIds: string[];
-} | null {
-  try {
-    const raw = window.sessionStorage.getItem(workspaceStateKey(accountId));
-    if (!raw) {
-      return null;
-    }
-
-    const parsedJson: unknown = JSON.parse(raw);
-    if (
-      parsedJson === null ||
-      typeof parsedJson !== "object" ||
-      Array.isArray(parsedJson)
-    ) {
-      return null;
-    }
-    const parsed = parsedJson as Partial<PersistedWorkspaceState>;
-    return {
-      selectedIds: Array.isArray(parsed.selectedIds)
-        ? boundedStringIds(parsed.selectedIds)
-        : [],
-      skippedIds: Array.isArray(parsed.skippedIds)
-        ? boundedStringIds(parsed.skippedIds)
-        : []
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writeWorkspaceState(
-  accountId: string,
-  state: {
-    selectedIds: string[];
-    skippedIds: string[];
-  }
-) {
-  try {
-    window.sessionStorage.setItem(
-      workspaceStateKey(accountId),
-      JSON.stringify({
-        selectedIds: boundedStringIds(state.selectedIds),
-        skippedIds: boundedStringIds(state.skippedIds)
-      })
-    );
-  } catch {
-    // Browsers can disable session storage; the queue still works with defaults.
-  }
-}
-
-function boundedStringIds(values: unknown[]) {
-  return [
-    ...new Set(
-      values.filter((value): value is string => typeof value === "string")
-    )
-  ].slice(-WORKSPACE_ID_LIMIT);
-}
-
-function addBoundedId(ids: Set<string>, id: string) {
-  ids.delete(id);
-  ids.add(id);
-  while (ids.size > WORKSPACE_ID_LIMIT) {
-    const oldest = ids.values().next().value;
-    if (oldest === undefined) break;
-    ids.delete(oldest);
-  }
-}
-
-function removeIds(ids: Set<string>, removals: Set<string>) {
-  if (![...removals].some((id) => ids.has(id))) {
-    return ids;
-  }
-  const next = new Set(ids);
-  for (const id of removals) next.delete(id);
-  return next;
 }
 
 function humanReviewRowMatchesView(

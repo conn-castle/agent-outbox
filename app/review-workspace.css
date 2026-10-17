@@ -204,10 +204,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   color: var(--review-text);
 }
 
-.human-workspace * {
-  box-sizing: border-box;
-}
-
 .human-workspace button,
 .human-workspace input,
 .human-workspace select,
@@ -2663,7 +2659,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
 .human-workspace .row-utilities .row-overflow > summary {
   display: flex;
-  box-sizing: border-box;
   width: 1.75rem;
   height: 1.75rem;
   min-height: 1.75rem;
@@ -2673,9 +2668,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   border: 0;
   border-radius: 0.35rem;
   background: transparent;
-}
-
-.human-workspace .row-utilities .row-overflow > summary {
   color: var(--review-muted);
 }
 
@@ -2695,7 +2687,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
 .human-workspace .row-utilities .row-overflow-menu .row-overflow-item {
   display: flex;
-  box-sizing: border-box;
   width: 100%;
   min-height: 2.2rem;
   padding: 0 0.6rem;
@@ -4527,18 +4518,12 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 
   .human-workspace .workspace-body.queue-only {
-    width: min(calc(100% - 2rem), 69rem);
     min-height: 0;
     margin-top: 1rem;
-    margin-inline: auto;
   }
 
   .human-workspace .review-search input {
     font-size: 1rem;
-  }
-
-  .human-workspace .queue-header {
-    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .human-workspace .mobile-tools-button,
@@ -4563,10 +4548,8 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
   .human-workspace .review-controls {
     position: static;
-    grid-column: 1 / -1;
     grid-row: auto;
     grid-template-columns: minmax(0, 1fr);
-    width: 100%;
   }
 
   .human-workspace .review-controls:not(.open) {
@@ -4801,10 +4784,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
     cursor: pointer;
   }
 
-  .human-workspace .app-account {
-    display: flex;
-  }
-
   .human-workspace .last-action-error {
     max-width: 8.5rem;
   }
@@ -4822,15 +4801,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
     display: none;
   }
 
-  .human-workspace .mobile-tools-button,
-  .human-workspace .compact-selection-button {
-    display: inline-flex;
-  }
-
-  .human-workspace .review-controls .selection-mode-button {
-    display: none;
-  }
-
   .human-workspace .review-controls.open {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -4840,7 +4810,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 
   .human-workspace .view-popover {
-    right: 1rem;
     left: 1rem;
     width: auto;
   }
@@ -4911,7 +4880,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 
   .human-workspace .queue-count {
-    display: inline-flex;
     grid-column: 1 / -1;
     justify-self: start;
   }
@@ -5044,10 +5012,8 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 
   .human-workspace .row-body {
-    display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: auto;
-    gap: 0.4rem;
   }
 
   .human-workspace .row-heading,
@@ -5082,7 +5048,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
   .human-workspace .row-utilities .row-skip-button {
     width: 2.75rem;
-    justify-content: center;
   }
 
   .human-workspace .row-utilities > .feedback-button {
@@ -5117,16 +5082,9 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
   .human-workspace .row-subtitle {
     display: -webkit-box;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: normal;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-  }
-
-  .human-workspace .row-primary,
-  .human-workspace .row-side {
-    display: contents;
   }
 
   .human-workspace .row-context {
@@ -5134,10 +5092,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
     grid-row: 4;
     width: 100%;
     justify-content: flex-start;
-  }
-
-  .human-workspace .row-context .numeric-bar {
-    width: 100%;
   }
 
   .human-workspace .row-summary-link {
@@ -5153,7 +5107,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 
   .human-workspace .row-footer {
-    grid-column: 1 / -1;
     grid-row: 7;
   }
 
