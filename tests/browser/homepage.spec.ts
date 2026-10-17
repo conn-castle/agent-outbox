@@ -50,7 +50,18 @@ test("the homepage stays inside the viewport at tablet and phone widths", async 
           document.documentElement.clientWidth
       )
     ).toBe(true);
-    await expect(page.locator(".nav-cta")).toBeInViewport();
+    const menu = page.getByRole("button", { name: "Menu" });
+    await expect(menu).toBeInViewport({ ratio: 1 });
+    await expect(async () => {
+      if ((await menu.getAttribute("aria-expanded")) !== "true") {
+        await menu.click();
+      }
+      await expect(menu).toHaveAttribute("aria-expanded", "true", {
+        timeout: 500
+      });
+    }).toPass();
+    await expect(page.locator(".nav-cta")).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press("Escape");
     await expect(
       page.getByRole("heading", {
         name: "Keep agents moving. Review when it works for you.",

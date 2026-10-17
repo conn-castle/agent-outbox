@@ -103,12 +103,13 @@ svg {
 }
 
 .topbar {
+  --site-header-gutter: 0px;
   position: relative;
-  z-index: 20;
+  z-index: 80;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 2rem;
+  gap: clamp(1rem, 2vw, 2rem);
   width: min(100% - 3rem, 1440px);
   margin: 0 auto;
   padding: 1.15rem 0;
@@ -191,7 +192,8 @@ svg {
 }
 
 /* The toggle only exists in the compact header; desktop shows the links inline. */
-.nav-toggle {
+.nav-toggle,
+.nav-scrim {
   display: none;
 }
 
@@ -2089,6 +2091,15 @@ body > .error-main {
 }
 
 @media (max-width: 900px) {
+  .nav-scrim {
+    position: fixed;
+    z-index: 70;
+    inset: 0;
+    display: block;
+    background: rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+  }
+
   .nav-toggle {
     display: inline-flex;
     align-items: center;
@@ -2105,8 +2116,10 @@ body > .error-main {
     cursor: pointer;
   }
 
-  .shell:has(.landing) .nav .nav-cta {
+  .nav .nav-cta {
     min-height: 2.75rem;
+    padding: 0 0.75rem;
+    border-radius: 0.6rem;
   }
 
   .nav-toggle-bars,
@@ -2135,19 +2148,46 @@ body > .error-main {
   }
 
   .nav {
-    position: relative;
+    position: static;
+  }
+
+  .nav[data-menu-open="true"] .nav-toggle {
+    border-color: var(--amber);
+    background: rgba(242, 163, 71, 0.12);
+  }
+
+  .nav[data-menu-open="true"] .nav-toggle-bars {
+    background: transparent;
+  }
+
+  .nav[data-menu-open="true"] .nav-toggle-bars::before {
+    top: 0;
+    transform: rotate(45deg);
+  }
+
+  .nav[data-menu-open="true"] .nav-toggle-bars::after {
+    top: 0;
+    transform: rotate(-45deg);
+  }
+
+  .nav .nav-icon-link {
+    justify-content: flex-start;
   }
 
   .nav-links {
     position: absolute;
-    top: calc(100% + 0.75rem);
-    right: 0;
+    top: calc(100% + 0.5rem);
+    right: var(--site-header-gutter);
     z-index: 30;
     display: none;
     flex-direction: column;
     align-items: stretch;
     gap: 0;
-    min-width: 12rem;
+    width: min(22rem, calc(100vw - 2rem));
+    max-height: calc(100dvh - 100% - 1.5rem);
+    overflow-y: auto;
+    scroll-padding-block: 0.5rem;
+    overscroll-behavior: contain;
     padding: 0.4rem;
     border: 1px solid var(--nav-panel-line, var(--line-on-ink));
     border-radius: 0.9rem;
@@ -2179,9 +2219,10 @@ body > .error-main {
 
   .shell:has(.landing) .topbar,
   .shell:has(.legal-main) .topbar {
+    --site-header-gutter: 1rem;
     align-items: center;
     gap: 1rem;
-    padding: 0.85rem 1rem;
+    padding: 0.85rem var(--site-header-gutter);
   }
 
   .shell:has(.landing) .brand span {
@@ -2416,32 +2457,20 @@ body > .error-main {
 }
 
 @media (max-width: 430px) {
+  .shell:has(.landing, .legal-main, .api-docs-page) .nav-links {
+    width: calc(100vw - 2rem);
+  }
+
   .shell:has(.landing) .topbar {
     gap: 0.75rem;
     padding-right: 1rem;
     padding-left: 1rem;
   }
 
-  .shell:has(.landing) .product-wordmark {
+  .topbar .product-wordmark {
     --wordmark-mark-size: 2.1rem;
     --wordmark-type-size: 1rem;
     --wordmark-gap: 0.4rem;
-  }
-
-  .shell:has(.landing) .nav {
-    gap: 0.5rem;
-  }
-
-  .shell:has(.landing) .nav-toggle {
-    padding-right: 0.6rem;
-    padding-left: 0.6rem;
-    font-size: 0.78rem;
-  }
-
-  .shell:has(.landing) .nav .nav-cta {
-    padding-right: 0.65rem;
-    padding-left: 0.65rem;
-    font-size: 0.75rem;
   }
 
   .landing-hero h1 {
