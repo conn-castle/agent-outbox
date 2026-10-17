@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 function GitHubMark() {
   return (
@@ -33,6 +34,7 @@ export function SiteNav({
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const navRef = useRef<HTMLElement | null>(null);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
   const pathname = usePathname();
 
   // Covers navigation the panel itself does not originate, such as history
@@ -49,9 +51,18 @@ export function SiteNav({
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setOpen(false);
+        if (navRef.current?.contains(document.activeElement)) {
+          toggleRef.current?.focus();
+        }
       }
     }
     function onPointerDown(event: PointerEvent) {
+      if (
+        event.target instanceof Element &&
+        event.target.closest(".nav-scrim")
+      ) {
+        return;
+      }
       if (!navRef.current?.contains(event.target as Node)) {
         setOpen(false);
       }
@@ -70,9 +81,27 @@ export function SiteNav({
       aria-label="Primary"
       ref={navRef}
       data-menu-open={open ? "true" : undefined}
+      onBlur={(event) => {
+        if (
+          event.relatedTarget &&
+          !event.currentTarget.contains(event.relatedTarget)
+        ) {
+          setOpen(false);
+        }
+      }}
     >
+      {open &&
+        createPortal(
+          <div
+            className="nav-scrim"
+            aria-hidden="true"
+            onClick={() => setOpen(false)}
+          />,
+          document.body
+        )}
       <button
         type="button"
+        ref={toggleRef}
         className="nav-toggle"
         aria-expanded={open}
         aria-controls={panelId}
@@ -105,10 +134,10 @@ export function SiteNav({
           <span className="nav-icon-label">GitHub</span>
         </a>
         <Link href={signInHref}>Sign in</Link>
+        <Link className="nav-cta" href={signUpHref}>
+          Get started
+        </Link>
       </div>
-      <Link className="nav-cta" href={signUpHref}>
-        Get started
-      </Link>
     </nav>
   );
 }
