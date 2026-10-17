@@ -89,13 +89,14 @@ The production deploy wrapper passes these as deploy-time Wrangler
 `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` from `CLERK_PUBLISHABLE_KEY` for Clerk's
 Next.js middleware/runtime package; do not store or rotate it as a separate
 source value. The build subprocess receives these non-secret configuration
-values plus the minimal process environment needed to run the toolchain. When
-Sentry source-map upload is enabled (`AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD` and
-`AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH` set), the wrapper additionally threads
-`SENTRY_ORG`, `SENTRY_PROJECT`, and the `SENTRY_AUTH_TOKEN` secret into the
-build subprocess only — never into the Worker runtime `--var` bindings and never
-into the wrangler deploy subprocess — so the Sentry build plugin can create the
-release and upload source maps.
+values plus the minimal process environment needed to run the toolchain.
+`upload-worker` requires `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`,
+and both `AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD` and
+`AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH` set to `1`. The three Sentry values
+reach only the build subprocess, for release creation/finalization, and the
+`sentry-cli sourcemaps upload` subprocess. They never reach the offline inject
+step, Wrangler, or Worker runtime `--var` bindings. See
+[Sentry Source Maps](services/sentry.md#source-maps) for the upload flow.
 
 Deploy-only configuration values:
 

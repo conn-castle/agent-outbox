@@ -262,12 +262,14 @@ delete them.
    release. See
    [Apply Worker routes and cron triggers](#apply-worker-routes-and-cron-triggers).
 6. Build once, dry-run, and upload the Worker as an inactive version with
-   `wrangler versions upload`. Stamp `--tag` with the public `vX.Y.Z` and
-   `--message` with `run <id> release <releaseId> <sha12>`. Parse and keep the
-   uploaded version ID. Do not run `wrangler deploy` or the experimental trigger
-   deployment command. `wrangler versions list` returns only the 10 most recent
-   versions and has no pagination flag; if a candidate falls outside that
-   window, identity recovery holds instead of guessing.
+   `wrangler versions upload`. Bundle once, inject and upload the matching map
+   to Sentry, then upload the same bytes in no-bundle mode; see
+   [Sentry Source Maps](services/sentry.md#source-maps). Stamp `--tag` with the
+   public `vX.Y.Z` and `--message` with `run <id> release <releaseId> <sha12>`.
+   Parse and keep the uploaded version ID. Do not run `wrangler deploy` or the
+   experimental trigger deployment command. `wrangler versions list` returns
+   only the 10 most recent versions and has no pagination flag; if a candidate
+   falls outside that window, identity recovery holds instead of guessing.
 7. Validate the durable production Flyway history, apply every pending
    checked-in migration using `DATABASE_MIGRATION_URL` from the protected
    `production` GitHub environment, and validate the resulting history.
@@ -647,6 +649,7 @@ version through a pull request and dispatch a new numbered production release.
 Before a broader launch, the owner must accept:
 
 - unresolved hosted-health or billing-smoke `action_required` items;
-- Sentry release/source-map posture if source maps are not uploaded;
+- Sentry source-map limitation for Next-routed Worker frames (see
+  [Sentry Source Maps](services/sentry.md#source-maps));
 - final branch-protection and production-environment rules;
 - the public legal gate and the exact legal/business commitments listed above.

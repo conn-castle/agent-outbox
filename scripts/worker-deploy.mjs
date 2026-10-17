@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
+  lstatSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -97,7 +100,7 @@ const COMMAND_ENV_PASSTHROUGH_NAMES = [
 
 // Threaded into the OpenNext build subprocess only (never the Worker runtime
 // --var bindings and never the wrangler deploy subprocess) so the Sentry build
-// plugin can create the release and upload source maps when upload is enabled.
+// plugin can create and finalize the release when upload is enabled.
 // commandEnvironment drops empty/undefined values, so these are absent unless
 // set. SENTRY_RELEASE is already a public var binding, so it is not repeated.
 const SENTRY_UPLOAD_BUILD_PASSTHROUGH_NAMES = [
@@ -107,6 +110,22 @@ const SENTRY_UPLOAD_BUILD_PASSTHROUGH_NAMES = [
   "AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD",
   "AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH"
 ];
+
+const SENTRY_CLI_UPLOAD_ENV_NAMES = [
+  "SENTRY_ORG",
+  "SENTRY_PROJECT",
+  "SENTRY_AUTH_TOKEN"
+];
+const BUNDLE_ENTRY = "entry.js";
+const BUNDLE_MAP = "entry.js.map";
+// Wrangler's informational README is never uploaded.
+const WRANGLER_OUTDIR_README = "README.md";
+// Match registrations, not the SDK's expected reads of these identifiers.
+const NATIVE_DEBUG_ID_REGISTRATION =
+  /\._debugIds\s*=\s*\{\s*\}\s*\)\s*\)\s*\[[^\]]*\]\s*=\s*["'][0-9a-f-]{36}["']/g;
+const SENTRY_DEBUG_ID_REGISTRATION =
+  /_sentryDebugIds\s*\[[^\]]*\]\s*=\s*["']([0-9a-f-]{36})["']/g;
+const DEBUG_ID_COMMENT = /^\/\/# debugId=(.*)$/gm;
 
 const DERIVED_PUBLIC_VAR_BINDINGS = [
   {
@@ -311,6 +330,19 @@ export function validateWorkerVersionUploadEnvironment(env) {
     const value = env[name];
     if (typeof value !== "string" || value.trim() === "") {
       failures.push(`${name} is required for Worker version upload`);
+    }
+  }
+  for (const name of SENTRY_CLI_UPLOAD_ENV_NAMES) {
+    if (typeof env[name] !== "string" || env[name].trim() === "") {
+      failures.push(`${name} is required for Worker source map upload`);
+    }
+  }
+  for (const name of [
+    "AGENT_OUTBOX_SENTRY_RELEASE_UPLOAD",
+    "AGENT_OUTBOX_SENTRY_DEPLOY_RELEASE_PATH"
+  ]) {
+    if (env[name] !== "1") {
+      failures.push(`${name} must be 1 for production Worker version upload`);
     }
   }
   const releaseId = env[GITHUB_RELEASE_ID_ENV_NAME];
@@ -684,13 +716,79 @@ function runCommand(command, args, options, spawnSyncImpl) {
   return result;
 }
 
+/** @param {string} dir @param {string[]} required */
+function assertOutdirFiles(dir, required) {
+  const files = readdirSync(dir).sort();
+  const allowed = new Set([...required, WRANGLER_OUTDIR_README]);
+  if (
+    required.some((name) => !files.includes(name)) ||
+    files.some(
+      (name) => !allowed.has(name) || !lstatSync(path.join(dir, name)).isFile()
+    )
+  ) {
+    throw new Error(
+      `Unexpected Wrangler output in ${dir}: [${files.join(", ")}]; required regular files: ${required.join(", ")}`
+    );
+  }
+}
+
+/** @param {string} dir */
+function assertUninjectedBundle(dir) {
+  const js = readFileSync(path.join(dir, BUNDLE_ENTRY), "utf8");
+  const map = JSON.parse(readFileSync(path.join(dir, BUNDLE_MAP), "utf8"));
+  const native = [...js.matchAll(NATIVE_DEBUG_ID_REGISTRATION)].length;
+  const sentry = [...js.matchAll(SENTRY_DEBUG_ID_REGISTRATION)].length;
+  const comments = [...js.matchAll(DEBUG_ID_COMMENT)].length;
+  if (
+    native ||
+    sentry ||
+    comments ||
+    Object.hasOwn(map, "debugId") ||
+    js.trimEnd().split("\n").at(-1) !== `//# sourceMappingURL=${BUNDLE_MAP}`
+  ) {
+    throw new Error(
+      `Invalid uninjected Worker bundle in ${dir}: native registrations=${native}, Sentry registrations=${sentry}, debug ID comments=${comments}; expected no identity and trailing sourceMappingURL=${BUNDLE_MAP}`
+    );
+  }
+}
+
+/** @param {string} dir @returns {string} */
+function readInjectedDebugId(dir) {
+  const js = readFileSync(path.join(dir, BUNDLE_ENTRY), "utf8");
+  const map = JSON.parse(readFileSync(path.join(dir, BUNDLE_MAP), "utf8"));
+  const native = [...js.matchAll(NATIVE_DEBUG_ID_REGISTRATION)].length;
+  const registrations = [...js.matchAll(SENTRY_DEBUG_ID_REGISTRATION)].map(
+    (m) => m[1]
+  );
+  const comments = [...js.matchAll(DEBUG_ID_COMMENT)].map((m) => m[1].trim());
+  const id = comments[0];
+  if (
+    native ||
+    registrations.length !== 1 ||
+    comments.length !== 1 ||
+    !WORKER_VERSION_ID.test(id ?? "") ||
+    registrations[0] !== id ||
+    map.debugId !== id
+  ) {
+    throw new Error(
+      `Invalid injected Worker identity in ${dir}: native registrations=${native}, Sentry registrations=${registrations.length}, debug ID comments=${comments.length}; registration, comment and map debugId must match one UUID`
+    );
+  }
+  return id;
+}
+
+/** @param {string} file */
+function sha256File(file) {
+  return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
 /**
  * @param {{
  *   env?: NodeJS.ProcessEnv | Record<string, string | undefined>,
  *   spawnSyncImpl?: SpawnSyncLike,
  *   tempBase?: string
  * }} [options]
- * @returns {{ versionId: string }}
+ * @returns {{ versionId: string, debugId: string, entrySha256: string }}
  */
 export function runWorkerVersionUpload(options = {}) {
   const env = options.env ?? process.env;
@@ -732,6 +830,10 @@ export function runWorkerVersionUpload(options = {}) {
   );
   /** @type {{ path: string, cleanup: () => void } | null} */
   let wranglerConfigFile = null;
+  /** @type {{ path: string, cleanup: () => void } | null} */
+  let noBundleConfigFile = null;
+  /** @type {string | undefined} */
+  let work;
   try {
     const hyperdriveId = env[HYPERDRIVE_ID_ENV_NAME];
     if (typeof hyperdriveId !== "string") {
@@ -748,20 +850,103 @@ export function runWorkerVersionUpload(options = {}) {
           hyperdriveId
         )
     );
-    const wranglerUploadArgs = buildWranglerVersionsUploadArgs(
+    work = mkdtempSync(
+      path.join(
+        selectTempBase(env, options.tempBase),
+        "agent-outbox-worker-bundle-"
+      )
+    );
+    const bundleDir = path.join(work, "bundle");
+    const verifyDir = path.join(work, "verify");
+    const baseArgs = buildWranglerVersionsUploadArgs(
       env,
       secretsFile.path,
       wranglerConfigFile.path
     );
     runCommand(
       "corepack",
-      ["pnpm", ...wranglerUploadArgs, "--dry-run"],
+      [
+        "pnpm",
+        ...baseArgs,
+        "--dry-run",
+        "--outdir",
+        bundleDir,
+        "--upload-source-maps"
+      ],
       uploadCommandOptions,
       spawnSyncImpl
     );
+    assertOutdirFiles(bundleDir, [BUNDLE_ENTRY, BUNDLE_MAP]);
+    assertUninjectedBundle(bundleDir);
+
+    const sentryOptions = {
+      ...uploadCommandOptions,
+      env: commandEnvironment(env, { SENTRY_LOAD_DOTENV: "0" })
+    };
+    runCommand(
+      "corepack",
+      ["pnpm", "exec", "sentry-cli", "sourcemaps", "inject", bundleDir],
+      sentryOptions,
+      spawnSyncImpl
+    );
+    assertOutdirFiles(bundleDir, [BUNDLE_ENTRY, BUNDLE_MAP]);
+    const debugId = readInjectedDebugId(bundleDir);
+    const entrySha256 = sha256File(path.join(bundleDir, BUNDLE_ENTRY));
+    runCommand(
+      "corepack",
+      [
+        "pnpm",
+        "exec",
+        "sentry-cli",
+        "sourcemaps",
+        "upload",
+        "--strict",
+        "--wait",
+        bundleDir
+      ],
+      {
+        ...sentryOptions,
+        env: commandEnvironment(env, {
+          ...Object.fromEntries(
+            SENTRY_CLI_UPLOAD_ENV_NAMES.map((name) => [name, env[name]])
+          ),
+          SENTRY_LOAD_DOTENV: "0"
+        })
+      },
+      spawnSyncImpl
+    );
+
+    const bundleConfigPath = wranglerConfigFile.path;
+    noBundleConfigFile = writeOwnerOnlyTempFile(
+      env,
+      options.tempBase,
+      "agent-outbox-wrangler-nobundle-",
+      "wrangler.jsonc",
+      () => {
+        const config = JSON.parse(readFileSync(bundleConfigPath, "utf8"));
+        return `${JSON.stringify({ ...config, main: path.join(bundleDir, BUNDLE_ENTRY), no_bundle: true, find_additional_modules: false, upload_source_maps: false }, null, 2)}\n`;
+      }
+    );
+    const nbArgs = buildWranglerVersionsUploadArgs(
+      env,
+      secretsFile.path,
+      noBundleConfigFile.path
+    );
+    runCommand(
+      "corepack",
+      ["pnpm", ...nbArgs, "--dry-run", "--outdir", verifyDir],
+      uploadCommandOptions,
+      spawnSyncImpl
+    );
+    assertOutdirFiles(verifyDir, [BUNDLE_ENTRY]);
+    if (sha256File(path.join(verifyDir, BUNDLE_ENTRY)) !== entrySha256) {
+      throw new Error(
+        "Wrangler no-bundle output differs from the Sentry-uploaded bundle"
+      );
+    }
     const uploaded = runCommand(
       "corepack",
-      ["pnpm", ...wranglerUploadArgs],
+      ["pnpm", ...nbArgs],
       uploadCommandOptions,
       spawnSyncImpl
     );
@@ -771,10 +956,16 @@ export function runWorkerVersionUpload(options = {}) {
         combinedOutput.endsWith("\n") ? combinedOutput : `${combinedOutput}\n`
       );
     }
-    return { versionId: parseUploadedWorkerVersionId(combinedOutput) };
+    const versionId = parseUploadedWorkerVersionId(combinedOutput);
+    process.stdout.write(
+      `Worker bundle sha256 ${entrySha256} Sentry debug ID ${debugId}\n`
+    );
+    return { versionId, debugId, entrySha256 };
   } finally {
     secretsFile.cleanup();
     wranglerConfigFile?.cleanup();
+    noBundleConfigFile?.cleanup();
+    if (work) rmSync(work, { force: true, recursive: true });
   }
 }
 

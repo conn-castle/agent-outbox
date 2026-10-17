@@ -28,11 +28,10 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-10-17 worker-source-map-chain: Worker frames reference source maps for different generated coordinates
+- Issue 2026-10-17 worker-next-routed-source-map: Next-routed Worker frames stop at OpenNext handler.mjs
     Priority: Medium. Area: Observability / Release build
-    Description: Release builds upload Next chunk maps, then OpenNext and Wrangler combine those chunks into entry.js. Multiple chunk debug IDs collapse onto that filename, selecting a chunk map for final-bundle coordinates and producing invalid source-map locations. OpenNext also omits the intermediate server map needed to reach application TypeScript.
-    Open question: Which release-build mapping approach should provide correct source lines while keeping upstream maintenance acceptable?
-    Notes: Reproduced with the installed SDK and local sentry-cli resolution; no production change. OpenNext's missing server-map support is tracked upstream at https://github.com/opennextjs/opennextjs-cloudflare/issues/1352.
+    Description: OpenNext's server-bundle pass emits no source map, so final Worker frames for Next-routed code resolve to minified handler.mjs rather than application TypeScript.
+    Next step: Recheck opennextjs-cloudflare #1352/#1124/#824 for a supported server-bundle source-map option.
 
 - Issue 2026-10-17 dev-tool-advisory-constraints: Development-tool advisories remain outside upstream dependency ranges
     Priority: Low. Area: Development tooling / Dependencies

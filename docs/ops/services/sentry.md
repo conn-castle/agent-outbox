@@ -104,6 +104,28 @@ sampling header is scrubbed at that boundary too:
 - Transaction names, span descriptions, and the transaction name in the envelope
   sampling header lose any query or fragment suffix.
 
+## Source Maps
+
+Release builds disable Sentry's Next.js source maps. The build plugin still
+creates and finalizes `SENTRY_RELEASE` when the release upload gate is enabled.
+During `upload-worker`, Wrangler bundles once with a source map in a private
+temporary directory. `sentry-cli` injects one debug ID, then uploads `entry.js`
+and its matching map as project artifact bundles with `--strict --wait`, without
+release association. An injection, upload, identity, or byte-verification
+failure stops the release before an inactive Worker version exists.
+
+Wrangler then uploads those exact injected bytes in no-bundle mode, with
+`upload_source_maps: false` explicitly set. Maps never become deployed assets
+and are never sent to Cloudflare. Temporary bundles and maps are removed on
+success and failure. See the [release flow](../release.md#production-deploy) for
+the surrounding certification and deployment gates.
+
+Worker-direct frames resolve to application TypeScript. **Next-routed frames
+resolve only to OpenNext's `.open-next/server-functions/default/handler.mjs`**:
+OpenNext emits no intermediate server-bundle map. Full TypeScript mapping for
+those frames remains unavailable; see
+[OpenNext issue #1352](https://github.com/opennextjs/opennextjs-cloudflare/issues/1352).
+
 ## Safe Checks
 
 - Verify the configured organization and project before inspecting production.
@@ -127,9 +149,8 @@ sampling header is scrubbed at that boundary too:
   derives categories from event names, permits one capture attempt per Worker
   isolate per minute across all GitHub launch names, and never forwards browser
   messages or Clerk/provider text.
-- During release verification, confirm whether source-map upload is
-  intentionally enabled or disabled for the deploy path. Missing source maps are
-  acceptable only when the owner accepts that posture for the release window.
+- During release verification, check the final Worker bundle identity and the
+  Next-routed mapping limitation described in [Source Maps](#source-maps).
 
 ## Guardrails
 
