@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-17 public-header-mobile-clipping: Public header controls clip on narrow screens
+    Priority: Medium. Area: Public site / Navigation
+    Description: On `/docs/api/ui` at 360, 393, and 430px, the Get started control extends to about 486px and is clipped by the viewport. A two-row experiment avoided clipping but covered the sticky docs navigation and anchored headings.
+    Open question: Which compact header presentation should preserve navigation and touch targets without clipping or covering sticky sections?
+
 - Issue 2026-10-07 connect-ineffective-style-intents: Caller-connect styles show dropped spacing and heading intent
     Priority: Low. Area: Caller connect / Visual design
     Description: Never-applied declarations were removed from `app/globals.css` during CSS consolidation. Rendering is unchanged, but these effects are missing: dense-surface actions keep a 1.5rem top margin (the dropped rule set 1.1rem); actions inside `.connect-device-decision` keep a 1.5rem top margin (the dropped rule set 0); `.connect-error-card` headings use the generic connect-card heading (`#202426`, 0 0 0.65rem margin; the dropped rule set `#292724` and 0 0 0.5rem).
@@ -43,11 +48,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Priority: Low. Area: Policy gates / Migrations
     Description: `scripts/policy-gates/migration-discipline-scan.mjs` matches regexes over comment-stripped text without a SQL tokenizer. These destructive statements pass without the label: `E'...\'...'` strings that hide a later `DROP x` or `SET NOT NULL` action, quoted identifiers with no surrounding whitespace (`DROP"x"`, `ALTER TABLE"t"`), `U&"..."` table names, and `ALTER FOREIGN TABLE`. Dollar-quoted text and string literals that contain `ALTER TABLE ... DROP` can falsely block additive statements.
     Next step: Add fixtures for any of these forms when a real migration uses them.
-
-- Issue 2026-09-29 docs-ui-topbar-contrast: API UI docs page renders the wordmark dark on the dark top bar
-    Priority: Medium. Area: API documentation / Visual design
-    Description: On `/docs/api/ui` the embedded row-anatomy preview carries `.human-workspace`, so the `.shell:has(.human-workspace)` topbar rules in `app/globals.css` apply; the "Agent" wordmark becomes near-invisible and the nav links and call-to-action are dimmed on the dark API-docs top bar. `/docs/api` is unaffected.
-    Open question: Whether to scope the workspace topbar rules or stop marking embedded anatomy previews as `.human-workspace`.
 
 - Issue 2026-09-29 review-ineffective-style-intents: Review styles show dropped intent and stale palette literals
     Priority: Low. Area: Human review / Visual design

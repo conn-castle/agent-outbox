@@ -38,8 +38,10 @@
   box-sizing: border-box;
 }
 
-html {
-  scroll-behavior: smooth;
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
 }
 
 body {
@@ -197,7 +199,6 @@ svg {
   display: none;
 }
 
-.shell:has(.human-workspace) .topbar,
 .shell:has(.legal-main) .topbar {
   color: var(--text);
 }
@@ -206,22 +207,18 @@ svg {
   background: var(--paper);
 }
 
-.shell:has(.human-workspace) .brand,
 .shell:has(.legal-main) .brand {
   color: var(--text);
 }
 
-.shell:has(.human-workspace) .nav a,
 .shell:has(.legal-main) .nav a {
   color: #697175;
 }
 
-.shell:has(.human-workspace) .nav a:hover,
 .shell:has(.legal-main) .nav a:hover {
   color: var(--text);
 }
 
-.shell:has(.human-workspace) .nav .nav-cta,
 .shell:has(.legal-main) .nav .nav-cta {
   border-color: rgba(200, 110, 45, 0.35);
   background: rgba(242, 163, 71, 0.08);

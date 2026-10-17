@@ -8,6 +8,7 @@ import {
 } from "../../server/api-docs";
 import { OPENAPI_DOCUMENT } from "../../shared/api-docs-manifest";
 import { SYSTEM_CONTRACT } from "../../shared/system-contract";
+import { ApiDocsSidebar } from "./ApiDocsSidebar";
 import { ReviewRowAnatomyGallery } from "./ReviewRowAnatomyGallery";
 
 const REVIEW_ROW_ANATOMY_MARKER = "<!-- review-row-anatomy -->";
@@ -43,7 +44,7 @@ export function ApiDocsPage({ slug }: { slug: ApiDocSlug }) {
       </header>
 
       <div className="api-docs-shell">
-        <aside className="api-docs-sidebar" aria-label="API documentation">
+        <ApiDocsSidebar slug={slug}>
           <div>
             <p>Start here</p>
             <nav aria-label="API sections">
@@ -63,7 +64,7 @@ export function ApiDocsPage({ slug }: { slug: ApiDocSlug }) {
             <span>OpenAPI 3.1</span>
             <strong>Download contract</strong>
           </a>
-        </aside>
+        </ApiDocsSidebar>
 
         <article className="api-docs-article">
           <div className="api-docs-sync-note">
