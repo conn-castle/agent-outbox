@@ -44,7 +44,7 @@ test("public legal and contact routes are reachable from the global footer", asy
   );
   await expect(primaryNav.locator('a[href="/sign-in"]')).toHaveText("Sign in");
   await expect(
-    primaryNav.getByRole("link", { name: "Get started" })
+    primaryNav.getByRole("link", { name: "Get started", includeHidden: true })
   ).toHaveAttribute("href", "/sign-up");
 
   const footer = page.getByRole("contentinfo");

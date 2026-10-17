@@ -40,11 +40,6 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Next step: Recheck upstream releases for a supported dependency graph that clears these findings.
     Notes: rclone.js 0.6.6 requires adm-zip ^0.5.9 (fix >=0.6.1); braces has no patched version; markdownlint-cli2 0.23.3 pins smol-toml 1.8.0 (fix >=1.9.0), and its math extension requires katex ^0.16.0 (fix >=0.18.2).
 
-- Issue 2026-10-17 public-header-mobile-clipping: Public header controls clip on narrow screens
-    Priority: Medium. Area: Public site / Navigation
-    Description: On `/docs/api/ui` at 360, 393, and 430px, the Get started control extends to about 486px and is clipped by the viewport. A two-row experiment avoided clipping but covered the sticky docs navigation and anchored headings.
-    Open question: Which compact header presentation should preserve navigation and touch targets without clipping or covering sticky sections?
-
 - Issue 2026-10-07 connect-ineffective-style-intents: Caller-connect styles show dropped spacing and heading intent
     Priority: Low. Area: Caller connect / Visual design
     Description: Never-applied declarations were removed from `app/globals.css` during CSS consolidation. Rendering is unchanged, but these effects are missing: dense-surface actions keep a 1.5rem top margin (the dropped rule set 1.1rem); actions inside `.connect-device-decision` keep a 1.5rem top margin (the dropped rule set 0); `.connect-error-card` headings use the generic connect-card heading (`#202426`, 0 0 0.65rem margin; the dropped rule set `#292724` and 0 0 0.5rem).

@@ -1,5 +1,17 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { REVIEW_THEME_STORAGE_KEY } from "../../src/shared/review-theme";
+
+// Menu is a client island; wait for its public expanded state after hydration.
+async function openPrimaryMenu(toggle: Locator) {
+  await expect(async () => {
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+      await toggle.click();
+    }
+    await expect(toggle).toHaveAttribute("aria-expanded", "true", {
+      timeout: 500
+    });
+  }).toPass();
+}
 
 test("API docs teach the workflow and expose the generated contract", async ({
   page
@@ -138,7 +150,9 @@ test("mobile docs navigation reveals the current page without scrolling the docu
         sidebar.evaluate((element) => {
           const active = element.querySelector('[aria-current="page"]')!;
           const bounds = active.getBoundingClientRect();
-          const viewport = element.getBoundingClientRect();
+          const viewport = element
+            .querySelector(".api-docs-sidebar-scroll")!
+            .getBoundingClientRect();
           return bounds.left >= viewport.left && bounds.right <= viewport.right;
         })
       )
@@ -148,11 +162,37 @@ test("mobile docs navigation reveals the current page without scrolling the docu
   const sidebar = page.getByRole("complementary", {
     name: "API documentation"
   });
+  const previous = sidebar.getByRole("button", {
+    name: "Previous documentation sections"
+  });
+  const scrollViewport = page.locator(".api-docs-sidebar-scroll");
+  const beforePrevious = await scrollViewport.evaluate(
+    (viewport) => viewport.scrollLeft
+  );
+  await previous.click();
+  await expect
+    .poll(() => scrollViewport.evaluate((viewport) => viewport.scrollLeft))
+    .toBeLessThan(beforePrevious);
+  const afterPrevious = await scrollViewport.evaluate(
+    (viewport) => viewport.scrollLeft
+  );
+  await sidebar
+    .getByRole("button", { name: "Next documentation sections" })
+    .click();
+  await expect
+    .poll(() =>
+      page
+        .locator(".api-docs-sidebar-scroll")
+        .evaluate((viewport) => viewport.scrollLeft)
+    )
+    .toBeGreaterThan(afterPrevious);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
   for (const name of ["Quick start", "API reference"]) {
     const link = sidebar.getByRole("link", { name, exact: true });
     await link.focus();
+    await expect(link).toBeInViewport({ ratio: 1 });
     const linkBounds = await link.boundingBox();
-    const sidebarBounds = await sidebar.boundingBox();
+    const sidebarBounds = await scrollViewport.boundingBox();
     expect(linkBounds!.x).toBeGreaterThanOrEqual(sidebarBounds!.x);
     expect(linkBounds!.x + linkBounds!.width).toBeLessThanOrEqual(
       sidebarBounds!.x + sidebarBounds!.width
@@ -671,16 +711,16 @@ test("the compact header reaches every destination through its menu", async ({
   await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
   await expect(
     primaryNav.getByRole("link", { name: "Get started" })
-  ).toBeVisible();
+  ).toBeHidden();
 
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await openPrimaryMenu(toggle);
   for (const name of [
     "Caller access",
     "How it works",
     "Pricing",
     "Docs",
-    "Sign in"
+    "Sign in",
+    "Get started"
   ]) {
     await expect(primaryNav.getByRole("link", { name })).toBeVisible();
   }
@@ -689,7 +729,7 @@ test("the compact header reaches every destination through its menu", async ({
   await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
 
   await toggle.click();
-  await page.locator(".landing-hero").click({ position: { x: 5, y: 5 } });
+  await page.locator(".nav-scrim").click({ position: { x: 5, y: 500 } });
   await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeHidden();
 
   await toggle.click();
@@ -728,17 +768,137 @@ test("the compact legal header keeps its navigation inside the menu", async ({
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(
     primaryNav.getByRole("link", { name: "Get started" })
-  ).toBeVisible();
+  ).toBeHidden();
 
-  // SiteNav is a client island. A single click before hydration is a no-op,
-  // and closed compact links are display:none so getByRole cannot see them.
-  await expect(async () => {
-    if ((await toggle.getAttribute("aria-expanded")) !== "true") {
-      await toggle.click();
-    }
-    await expect(toggle).toHaveAttribute("aria-expanded", "true", {
-      timeout: 500
-    });
-  }).toPass();
+  await openPrimaryMenu(toggle);
   await expect(primaryNav.getByRole("link", { name: "Docs" })).toBeVisible();
+});
+
+test("public headers keep compact controls reachable without covering docs anchors", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "The explicit viewport matrix runs once");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  for (const width of [320, 360, 393, 430, 768, 900, 901, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const route of [
+      "/",
+      "/privacy-policy",
+      "/docs/api/ui",
+      "/does-not-exist"
+    ]) {
+      await page.goto(route);
+      const nav = page.getByRole("navigation", { name: "Primary" });
+      const toggle = nav.getByRole("button", { name: "Menu" });
+      const brand = page.locator(".topbar .brand");
+      for (const control of [brand, nav]) {
+        const bounds = await control.boundingBox();
+        expect(bounds, `${route} at ${width}px`).not.toBeNull();
+        expect(bounds!.x).toBeGreaterThanOrEqual(0);
+        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+      }
+      if (width <= 900) {
+        await openPrimaryMenu(toggle);
+        const signup = nav.getByRole("link", { name: "Get started" });
+        await expect(signup).toBeInViewport({ ratio: 1 });
+        const signupBounds = await signup.boundingBox();
+        expect(signupBounds!.height).toBeGreaterThanOrEqual(44);
+        await nav.getByRole("link", { name: "Docs", exact: true }).focus();
+        await page.keyboard.press("Escape");
+        await expect(toggle).toBeFocused();
+        await expect(signup).toBeHidden();
+      } else {
+        await expect(toggle).toBeHidden();
+        await expect(
+          nav.getByRole("link", { name: "Get started" })
+        ).toBeInViewport({ ratio: 1 });
+      }
+      if (route === "/docs/api/ui" && width <= 760) {
+        const heading = page.locator(".api-docs-content h2[id]").first();
+        await heading.evaluate((element) =>
+          element.scrollIntoView({ behavior: "instant" })
+        );
+        const geometry = await page.evaluate(() => ({
+          headerBottom: document
+            .querySelector(".topbar")!
+            .getBoundingClientRect().bottom,
+          sidebar: document
+            .querySelector(".api-docs-sidebar")!
+            .getBoundingClientRect()
+            .toJSON(),
+          headingTop: document
+            .querySelector(".api-docs-content h2[id]")!
+            .getBoundingClientRect().top
+        }));
+        expect(geometry.sidebar.top).toBeGreaterThanOrEqual(
+          geometry.headerBottom - 1
+        );
+        expect(geometry.headingTop).toBeGreaterThanOrEqual(
+          geometry.sidebar.bottom
+        );
+      }
+    }
+  }
+});
+
+test("compact menu scrolls on landscape screens and closes when focus leaves", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(isMobile, "The explicit landscape viewport matrix runs once");
+  for (const size of [
+    { width: 740, height: 360 },
+    { width: 667, height: 375 },
+    { width: 844, height: 390 }
+  ]) {
+    await page.setViewportSize(size);
+    await page.goto("/docs/api/ui");
+    const nav = page.getByRole("navigation", { name: "Primary" });
+    const toggle = nav.getByRole("button", { name: "Menu" });
+    await openPrimaryMenu(toggle);
+    const signup = nav.getByRole("link", { name: "Get started" });
+    await signup.scrollIntoViewIfNeeded();
+    await expect(signup).toBeInViewport({ ratio: 1 });
+    await signup.focus();
+    await page.keyboard.press("Tab");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(signup).toBeHidden();
+    await expect(page.locator(".nav-scrim")).toHaveCount(0);
+  }
+});
+
+test("tapping the menu backdrop dismisses without activating the covered link", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(!isMobile, "Native touch regression");
+  await page.setViewportSize({ width: 430, height: 932 });
+  await page.goto("/docs/api/ui");
+  const link = page
+    .getByRole("navigation", { name: "API sections" })
+    .getByRole("link", { name: "Review patterns", exact: true });
+  await expect(
+    page.getByRole("button", { name: "Previous documentation sections" })
+  ).toBeEnabled();
+  const target = await link.elementHandle();
+  expect(target).not.toBeNull();
+  await target!.evaluate((element) =>
+    element.addEventListener("click", () =>
+      element.setAttribute("data-touch-activated", "true")
+    )
+  );
+  const box = (await link.boundingBox())!;
+  const viewport = (await page
+    .locator(".api-docs-sidebar-scroll")
+    .boundingBox())!;
+  const left = Math.max(box.x, viewport.x);
+  const right = Math.min(box.x + box.width, viewport.x + viewport.width);
+  expect(right - left).toBeGreaterThan(2);
+  const toggle = page.getByRole("button", { name: "Menu" });
+  await openPrimaryMenu(toggle);
+  await page.touchscreen.tap((left + right) / 2, box.y + box.height / 2);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(await target!.getAttribute("data-touch-activated")).toBeNull();
+  await expect(page).toHaveURL(/\/docs\/api\/ui$/);
 });
