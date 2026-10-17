@@ -2182,6 +2182,69 @@ test("datetime picker bounds offer only minutes the server accepts", () => {
       max: "2026-04-04T16:30:00Z",
       renderedMin: "2026-04-05T01:30",
       renderedMax: "2026-04-05T03:00"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:45:00Z",
+      max: "2026-11-01T06:30:00Z",
+      renderedMin: "2026-11-01T01:45",
+      renderedMax: "2026-11-01T01:59"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T05:00:00Z",
+      max: "2026-11-01T06:30:00Z",
+      renderedMin: "2026-11-01T01:00",
+      renderedMax: "2026-11-01T01:59"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-11-01T04:00:00Z",
+      max: "2026-11-01T05:30:00.000000001Z",
+      renderedMin: "2026-11-01T00:00",
+      renderedMax: "2026-11-01T01:30"
+    },
+    {
+      timezone: "Australia/Lord_Howe",
+      min: "2026-04-04T14:00:00Z",
+      max: "2026-04-04T14:45:00Z",
+      renderedMin: "2026-04-05T01:00",
+      renderedMax: "2026-04-05T01:29"
+    },
+    {
+      timezone: "Australia/Lord_Howe",
+      min: "2026-04-04T15:15:00Z",
+      max: "2026-04-04T15:20:30Z",
+      renderedMin: "2026-04-05T01:45",
+      renderedMax: "2026-04-05T01:50"
+    },
+    {
+      timezone: "Australia/Lord_Howe",
+      min: "2026-04-04T14:45:00Z",
+      max: "2026-04-04T15:15:00Z",
+      renderedMin: "2026-04-05T01:30",
+      renderedMax: "2026-04-05T01:45"
+    },
+    {
+      timezone: "America/New_York",
+      min: "2026-03-08T06:59:30Z",
+      max: "2026-03-08T07:01:00Z",
+      renderedMin: "2026-03-08T03:00",
+      renderedMax: "2026-03-08T03:01"
+    },
+    ...["0999", "0099", "0001"].map((year) => ({
+      timezone: "UTC",
+      min: `${year}-01-02T00:00:00Z`,
+      max: `${year}-01-02T00:02:00Z`,
+      renderedMin: `${year}-01-02T00:00`,
+      renderedMax: `${year}-01-02T00:02`
+    })),
+    {
+      timezone: "UTC",
+      min: "0001-01-01T00:00:00Z",
+      max: "0001-01-01T00:01:00Z",
+      renderedMin: "0001-01-01T00:00",
+      renderedMax: "0001-01-01T00:01"
     }
   ];
 
@@ -2191,36 +2254,143 @@ test("datetime picker bounds offer only minutes the server accepts", () => {
     assert.equal(lower, renderedMin, `${min} in ${timezone}`);
     assert.equal(upper, renderedMax, `${max} in ${timezone}`);
 
-    const submit = (/** @type {string} */ valueLocal) => {
-      const form = answerForm();
-      form.set("actionValue", "pick_datetime");
-      form.set("popupKind", "date_picker");
-      form.set("response.mode", "datetime");
-      form.set("response.display_timezone", timezone);
-      form.set("response.value_local", valueLocal);
-      const parsed = parseHumanAnswerForm(form);
-      assert.equal(parsed.ok, true, valueLocal);
-      return validatedResponsePayload(
-        {
-          popupKind: "date_picker",
-          popupPayload: {
-            label: "Follow-up instant",
-            mode: "datetime",
-            placeholder: null,
-            display_timezone: timezone,
-            min_value: min,
-            max_value: max
-          }
-        },
-        parsed.response
-      ).ok;
-    };
+    const action = acceptedDatetimeAction(timezone, min, max);
+    const submit = (/** @type {string} */ valueLocal) =>
+      submitDatetime(action, valueLocal).ok;
     assert.equal(submit(lower), true, `${lower} in ${timezone}`);
     assert.equal(submit(shiftLocalMinute(lower, -1)), false);
     assert.equal(submit(upper), true, `${upper} in ${timezone}`);
     assert.equal(submit(shiftLocalMinute(upper, 1)), false);
   }
 });
+
+test("datetime picker preserves the server's actual occurrence choice", () => {
+  for (const { timezone, local, utc } of [
+    {
+      timezone: "America/New_York",
+      local: "2026-11-01T01:50",
+      utc: "2026-11-01T05:50:00.000Z"
+    },
+    {
+      timezone: "Australia/Lord_Howe",
+      local: "2026-04-05T01:45",
+      utc: "2026-04-04T15:15:00.000Z"
+    }
+  ]) {
+    const result = submitDatetime(acceptedDatetimeAction(timezone), local);
+    assert.equal(result.ok, true);
+    if (result.ok)
+      assert.deepEqual(result.responsePayload, {
+        mode: "datetime",
+        value_utc: utc,
+        display_timezone: timezone
+      });
+  }
+});
+
+test("datetime picker handles unbounded, empty-minute and invalid bounds", () => {
+  assert.equal(localDateTimeBound(null, "UTC", "up"), undefined);
+  assert.equal(localDateTimeBound(null, "UTC", "down"), undefined);
+  for (const rounding of /** @type {const} */ (["up", "down"])) {
+    assert.equal(localDateTimeBound("not-a-date", "UTC", rounding), undefined);
+    assert.equal(
+      localDateTimeBound("2026-01-01T00:00:00Z", "invalid-zone", rounding),
+      undefined
+    );
+  }
+  for (const { min, max } of [
+    { min: "2026-07-01T00:00:30Z", max: "2026-07-01T00:00:59.999999999Z" },
+    { min: "2026-07-01T00:00:00.000000001Z", max: "2026-07-01T00:00:59Z" }
+  ]) {
+    const action = acceptedDatetimeAction("UTC", min, max);
+    const lower = localDateTimeBound(min, "UTC", "up");
+    const upper = localDateTimeBound(max, "UTC", "down");
+    assert.equal(lower, "2026-07-01T00:01");
+    assert.equal(upper, "2026-07-01T00:00");
+    assert.equal(submitDatetime(action, lower).ok, false);
+    assert.equal(submitDatetime(action, upper).ok, false);
+  }
+  for (const [min, max] of [
+    [null, "2026-11-01T06:30:00Z"],
+    ["2026-11-01T05:45:00Z", null],
+    [null, null]
+  ]) {
+    const action = acceptedDatetimeAction("America/New_York", min, max);
+    assert.equal(submitDatetime(action, "2026-11-01T01:50").ok, true);
+    if (min)
+      assert.equal(
+        localDateTimeBound(min, "America/New_York", "up"),
+        "2026-11-01T01:45"
+      );
+    if (max)
+      assert.equal(
+        localDateTimeBound(max, "America/New_York", "down"),
+        "2026-11-01T01:59"
+      );
+  }
+  const spring = acceptedDatetimeAction("America/New_York");
+  assert.equal(submitDatetime(spring, "2026-03-08T02:30").ok, false);
+  for (const year of ["0001", "0099", "0999"]) {
+    const action = acceptedDatetimeAction("UTC", `${year}-01-01T00:00:00Z`);
+    const result = submitDatetime(action, `${year}-01-02T00:00`);
+    assert.equal(result.ok, true);
+    if (result.ok)
+      assert.deepEqual(result.responsePayload, {
+        mode: "datetime",
+        value_utc: `${year}-01-02T00:00:00.000Z`,
+        display_timezone: "UTC"
+      });
+    assert.equal(submitDatetime(action, `${year}-02-29T00:00`).ok, false);
+  }
+});
+
+/** @param {string} timezone @param {string | null} [min] @param {string | null} [max] */
+function acceptedDatetimeAction(timezone, min = null, max = null) {
+  const submission = parseValidSubmission(
+    richPublicInput({
+      actions: [
+        {
+          display: "Schedule",
+          icon: "calendar",
+          value: "pick_datetime",
+          overflow: false,
+          popup: {
+            kind: "date_picker",
+            label: "Choose time",
+            mode: "datetime",
+            display_timezone: timezone,
+            min_value: min,
+            max_value: max
+          }
+        }
+      ]
+    })
+  );
+  const action = submission.actions[0];
+  return {
+    ...action,
+    popupKind: /** @type {const} */ ("date_picker"),
+    popupPayload:
+      /** @type {import("../src/server/input-schema.ts").NormalizedDatePickerPopupPayload} */ (
+        action.popupPayload
+      )
+  };
+}
+
+/** @param {ReturnType<typeof acceptedDatetimeAction>} action @param {string} valueLocal */
+function submitDatetime(action, valueLocal) {
+  const form = answerForm();
+  form.set("actionValue", action.value);
+  form.set("popupKind", "date_picker");
+  form.set("response.mode", "datetime");
+  form.set(
+    "response.display_timezone",
+    String(action.popupPayload.display_timezone)
+  );
+  form.set("response.value_local", valueLocal);
+  const parsed = parseHumanAnswerForm(form);
+  return parsed.ok ? validatedResponsePayload(action, parsed.response) : parsed;
+}
 
 test("browser fixture renders queue timestamps against a frozen reference", () => {
   // Marketing screenshots are hash-attested per release and re-captured by

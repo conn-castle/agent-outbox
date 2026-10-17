@@ -3092,6 +3092,7 @@ test("popup controls cover typed response kinds", async ({ page }) => {
   await restoreLastAnswer();
 
   await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
+  await openSecondaryActions(page);
   await page.getByRole("button", { name: "Select checks" }).click();
   await page.getByLabel("Facts reviewed").check();
   await page.getByLabel("Tone reviewed").check();
@@ -3145,6 +3146,43 @@ test("free-text defaults outside the length bounds submit only after editing", a
     await expect(lastUndoButton(page)).toHaveCount(0);
     mutations.length = 0;
   }
+});
+
+test("datetime bounds keep fold minutes native-valid and early years renderable", async ({
+  page
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto("/human?item=00000000-0000-4000-8000-000000000512");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await openSecondaryActions(page);
+  await page.getByRole("button", { name: "Pick fold time" }).click();
+  const field = page.getByLabel("Fold instant");
+  await expect(field).toHaveAttribute("min", "2026-11-01T01:45");
+  await expect(field).toHaveAttribute("max", "2026-11-01T01:59");
+  for (const [value, valid] of [
+    ["2026-11-01T01:44", false],
+    ["2026-11-01T01:45", true],
+    ["2026-11-01T01:50", true],
+    ["2026-11-01T01:59", true],
+    ["2026-11-01T02:00", false]
+  ] as const) {
+    await field.fill(value);
+    expect(
+      await field.evaluate((input: HTMLInputElement) => input.checkValidity())
+    ).toBe(valid);
+  }
+  await page.getByRole("button", { name: "Close action" }).click();
+  await openSecondaryActions(page);
+  await page.getByRole("button", { name: "Pick early year" }).click();
+  const early = page.getByLabel("Early instant");
+  await expect(early).toHaveAttribute("min", "0999-01-01T00:00");
+  await expect(early).toHaveAttribute("max", "0999-12-31T23:59");
+  await early.fill("0999-01-01T00:00");
+  expect(
+    await early.evaluate((input: HTMLInputElement) => input.checkValidity())
+  ).toBe(true);
+  expect(pageErrors).toEqual([]);
 });
 
 test("row popup actions open a focused composer instead of the full detail", async ({
@@ -3362,6 +3400,7 @@ test("canonical row visuals and popup constraints expose only supported semantic
   await expect(page.getByText("Displayed timezone: UTC")).toBeVisible();
   await page.getByRole("button", { name: "Close action" }).click();
 
+  await openSecondaryActions(page);
   await page.getByRole("button", { name: "Select checks" }).click();
   const multiSubmit = page.getByRole("button", {
     name: "Select checks"

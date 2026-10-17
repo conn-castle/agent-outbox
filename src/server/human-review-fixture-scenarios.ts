@@ -250,6 +250,34 @@ export function browserFixtureCoreReviewDetails(): HumanReviewDetail[] {
           }
         },
         {
+          display: "Pick fold time",
+          icon: "clock",
+          value: "pick_fold_time",
+          overflow: true,
+          popup: {
+            kind: "date_picker",
+            label: "Fold instant",
+            mode: "datetime",
+            display_timezone: "America/New_York",
+            min_value: "2026-11-01T05:45:00Z",
+            max_value: "2026-11-01T06:30:00Z"
+          }
+        },
+        {
+          display: "Pick early year",
+          icon: "calendar",
+          value: "pick_early_year",
+          overflow: true,
+          popup: {
+            kind: "date_picker",
+            label: "Early instant",
+            mode: "datetime",
+            display_timezone: "UTC",
+            min_value: "0999-01-01T00:00:00Z",
+            max_value: "0999-12-31T23:59:59Z"
+          }
+        },
+        {
           display: "Select checks",
           icon: "check",
           value: "select_checks",

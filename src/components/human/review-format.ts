@@ -1,3 +1,9 @@
+import {
+  calendarTimestamp,
+  utcFromLocalDateTime,
+  zonedParts
+} from "../../shared/local-datetime.ts";
+
 const relativeTimestampFormatter = new Intl.RelativeTimeFormat("en", {
   numeric: "auto",
   style: "short"
@@ -73,9 +79,8 @@ export function visualUnitSuffix(display: string, unit: string | null) {
 
 const MINUTE_MS = 60_000;
 
-// datetime-local inputs step by whole minutes, while stored UTC bounds may carry
-// seconds and up to nine fractional digits. Rounding the minimum up keeps the
-// earliest offered minute inside the server's inclusive full-precision range.
+// Native bounds must use the same civil-minute resolver as form submission.
+// Across a fold, projecting the UTC maximum directly can hide valid minutes.
 export function localDateTimeBound(
   value: string | null,
   timezone: string,
@@ -83,51 +88,43 @@ export function localDateTimeBound(
 ) {
   if (!value) return undefined;
   const parsed = new Date(value).getTime();
-  if (Number.isNaN(parsed)) return undefined;
-  const minute = Math.floor(parsed / MINUTE_MS) * MINUTE_MS;
-  const minimumInstant =
-    rounding === "up" && hasSubMinutePrecision(value)
-      ? minute + MINUTE_MS
-      : minute;
-  let instant = minimumInstant;
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  });
-  const formatLocal = (timestamp: number) => {
-    const parts = formatter.formatToParts(new Date(timestamp));
-    const part = (type: Intl.DateTimeFormatPartTypes) =>
-      parts.find((entry) => entry.type === type)?.value ?? "";
-    return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}:${part("second")}`;
-  };
+  if (!Number.isFinite(parsed)) return undefined;
+  // Date truncates fractions beyond milliseconds; retain inclusive precision.
+  const extraFraction = /\.\d{3}(\d+)Z$/.exec(value)?.[1] ?? "";
+  const threshold =
+    parsed + (rounding === "up" && /[1-9]/.test(extraFraction) ? 1 : 0);
 
-  for (;;) {
-    const bound = formatLocal(instant).slice(0, 16);
-    if (rounding === "down") return bound;
-
-    // Match utcFromLocalDateTime's three offset adjustments: during a fold,
-    // the submitted civil minute may resolve to an earlier UTC occurrence.
-    const desiredUtc = Date.parse(`${bound}:00Z`);
-    let resolved = desiredUtc;
-    for (let index = 0; index < 3; index += 1) {
-      resolved += desiredUtc - Date.parse(`${formatLocal(resolved)}Z`);
+  try {
+    // Only offsets adjacent to the bound can affect its civil endpoint. Sample
+    // either side of a transition, then search at most its offset difference.
+    // Ordinary bounds need one resolver call, regardless of the action range.
+    const day = 24 * 60 * MINUTE_MS;
+    const offsets = [-day, 0, day].map((delta) => {
+      const instant = parsed + delta;
+      return (
+        calendarTimestamp(zonedParts(new Date(instant), timezone)) -
+        Math.floor(instant / 1000) * 1000
+      );
+    });
+    const first = Math.min(...offsets);
+    const last = Math.max(...offsets);
+    const upward = rounding === "up";
+    let civil = upward
+      ? Math.ceil((threshold + first) / MINUTE_MS) * MINUTE_MS
+      : Math.floor((threshold + last) / MINUTE_MS) * MINUTE_MS;
+    const steps = Math.ceil((last - first) / MINUTE_MS);
+    for (let index = 0; index <= steps; index += 1) {
+      const bound = new Date(civil).toISOString().slice(0, 16);
+      const resolved = utcFromLocalDateTime(bound, timezone);
+      if (resolved !== null) {
+        const instant = Date.parse(resolved);
+        if (upward ? instant >= threshold : instant <= threshold) return bound;
+      }
+      civil += upward ? MINUTE_MS : -MINUTE_MS;
     }
-    if (resolved >= minimumInstant && formatLocal(resolved) === `${bound}:00`) {
-      return bound;
-    }
-    // Advance through the repeated hour until the server accepts the minute.
-    instant += MINUTE_MS;
+  } catch {
+    // Invalid zones or dates outside the native input's range have no bound.
+    return undefined;
   }
-}
-
-// Date keeps only milliseconds, so check the original string's digits.
-function hasSubMinutePrecision(value: string) {
-  const match = /:(\d{2})(?:\.(\d+))?Z$/.exec(value);
-  return match !== null && (match[1] !== "00" || /[1-9]/.test(match[2] ?? ""));
+  return undefined;
 }
