@@ -17,7 +17,6 @@ import { GH_SPAWN_MAX_BUFFER_BYTES } from "../scripts/release/gateway-github.mjs
 
 import {
   findExactWorkerVersion,
-  parseWorkerVersionMessage,
   serializeWorkerVersionMessage,
   validateWorkerVersionReleaseTag
 } from "../scripts/release/identity.mjs";
@@ -56,11 +55,10 @@ test("Worker version messages are strict and uniquely matched", () => {
     releaseId: DRAFT_ID,
     sha: RELEASE.expectedSha
   });
-  assert.deepEqual(parseWorkerVersionMessage(message), {
-    runId: RELEASE.runId,
-    releaseId: String(DRAFT_ID),
-    sha12: RELEASE.expectedSha.slice(0, 12)
-  });
+  assert.equal(
+    message,
+    `run ${RELEASE.runId} release ${DRAFT_ID} ${RELEASE.expectedSha.slice(0, 12)}`
+  );
   const match = findExactWorkerVersion(
     [
       {
