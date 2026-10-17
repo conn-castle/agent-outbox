@@ -1,3 +1,4 @@
+import * as reviewSearchText from "../src/server/review-search-text.ts";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
@@ -67,7 +68,10 @@ import {
   sentryReleaseUploadConfig,
   sentryReleaseUploadEnabled
 } from "../src/server/observability.ts";
-import { runScheduledCleanup } from "../src/server/scheduled.ts";
+import {
+  runScheduledCleanup,
+  cleanupAccountTierLockStatement
+} from "../src/server/scheduled.ts";
 import {
   sentryCaptureEnabled,
   sentryRuntimeInitOptions
@@ -505,6 +509,7 @@ function loadInputQueueModuleForTest(
 
   return /** @type {ReturnType<typeof loadInputQueueModuleForTest>} */ (
     loadCommonJsModuleForTest("src/server/input-queue.ts", {
+      "./review-search-text.ts": reviewSearchText,
       "./accounting.ts": { auditEventInsertStatement() {} },
       "./api-errors.ts": {
         apiTemporaryUnavailable,
@@ -2972,7 +2977,7 @@ test("scheduled cleanup failures log request account and duration without error 
     );
   });
 
-  assert.equal(logs.length, 2);
+  assert.equal(logs.length, 4);
   const accountFailureLog = logs.find((log) => log.account_id);
   assert.ok(accountFailureLog);
   assert.equal(
@@ -3036,6 +3041,12 @@ test("scheduled cleanup logs a global prune failure without account or error tex
         "error",
         "maintenance.scheduled_cleanup",
         "scheduled cleanup global maintenance failed",
+        undefined
+      ],
+      [
+        "info",
+        "maintenance.scheduled_cleanup",
+        "scheduled cleanup committed progress",
         undefined
       ],
       [
@@ -4700,4 +4711,101 @@ test("unknown diagnostic stages cannot enter logs or Sentry context", async () =
       );
     }
   );
+});
+
+test("scheduled derivation logs committed partial progress, isolates failures, and sanitizes content", async () => {
+  /** @type {string[]} */
+  const events = [];
+  let batches = 0;
+  const logs = await captureStructuredLogs(async () => {
+    await assert.rejects(
+      runScheduledCleanup({
+        connectionString: "postgresql://test",
+        requestId: "req-progress",
+        async runTransaction(_url, context, callback) {
+          return callback(
+            /** @type {import("../src/server/database.ts").ProductTransactionQuery} */ (
+              async (statement) => {
+                const sql = statement.sql;
+                let rows;
+                if (sql.includes("agent_outbox_cleanup_account_targets"))
+                  rows = [
+                    { account_id: "account-a" },
+                    { account_id: "account-b" }
+                  ];
+                else if (sql === cleanupAccountTierLockStatement("").sql) {
+                  events.push(`cleanup:${context.accountId}`);
+                  if (context.accountId === "account-b")
+                    throw new Error("private cleanup detail");
+                  rows = [{ tier: "hosted_paid" }];
+                } else if (
+                  sql === reviewSearchText.reviewTextCandidatesStatement("").sql
+                ) {
+                  events.push(`derive:${context.accountId}`);
+                  if (context.accountId === "account-a" && ++batches === 2)
+                    throw new Error("private derivation detail");
+                  rows =
+                    context.accountId === "account-a"
+                      ? Array.from({ length: 100 }, (_, n) => ({
+                          input_item_id: String(n),
+                          title_html: "private HTML &amp;",
+                          subtitle_html: "",
+                          summary_html: ""
+                        }))
+                      : [];
+                } else
+                  rows = sql.includes("from unnest")
+                    ? Array.from({ length: 100 }, () => ({
+                        input_item_id: "id"
+                      }))
+                    : [{ deleted_count: 0 }];
+                return {
+                  rows,
+                  rowCount: rows.length,
+                  command: "SELECT",
+                  oid: 0,
+                  fields: []
+                };
+              }
+            )
+          );
+        }
+      }),
+      (error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.equal(error.errors.length, 2);
+        return true;
+      }
+    );
+  });
+  assert.deepEqual(events, [
+    "cleanup:account-a",
+    "cleanup:account-b",
+    "derive:account-a",
+    "derive:account-a",
+    "derive:account-b"
+  ]);
+  assert.ok(
+    logs.some(
+      (log) =>
+        log.operation === "maintenance.review_search_text" &&
+        log.rows_derived === 100
+    )
+  );
+  const progress = logs.findIndex(
+    (log) => log.message === "scheduled cleanup committed progress"
+  );
+  assert.equal(logs[progress].rows_derived, 100);
+  assert.ok(
+    progress <
+      logs.findLastIndex((log) => log.message === "scheduled cleanup failed")
+  );
+  assert.ok(
+    logs.some(
+      (log) =>
+        log.level === "error" &&
+        log.operation === "maintenance.review_search_text"
+    )
+  );
+  assert.doesNotMatch(JSON.stringify(logs), /private|title_html|summary_html/);
 });

@@ -792,7 +792,7 @@ test("human review list statement scopes rows by account and supports focused fi
   assert.match(statement.sql, /i\.status = \$2/);
   assert.match(
     statement.sql,
-    /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\),\s+'\[[^\]]+\]\+',\s+' ',\s+'g'\s+\)\) ilike \$3/
+    /regexp_replace\(i\.title_html, '<\[\^>\]\*>', ' ', 'g'\),\s+'\[[^\]]+\]\+',\s+' ',\s+'g'\s+\)\)\) ilike \$3/
   );
   assert.deepEqual(visibleTextWhitespaceClasses(statement.sql), [
     javascriptWhitespaceClass(),
@@ -869,7 +869,10 @@ test("human review list statement supports canonical text, date, and null-last v
     [javascriptWhitespaceClass()]
   );
   assert.doesNotMatch(titleAndCaller.sql, /\[\[:space:\]\]/);
-  assert.match(titleAndCaller.sql, /btrim\(regexp_replace/);
+  assert.match(
+    titleAndCaller.sql,
+    /coalesce\(i\.title_text, btrim\(regexp_replace/
+  );
   assert.match(titleAndCaller.sql, /translate\([\s\S]*c\.display_name/);
 
   const created = humanReviewListStatement(context, {
@@ -2594,3 +2597,41 @@ function detailQueryWithActions(actions) {
     []
   ]);
 }
+
+test("fixture search decodes references and title sort uses the visible title", () =>
+  withProcessEnv({ AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE: "1" }, () => {
+    const page = browserFixtureReviewPage(
+      {
+        ...defaultHumanReviewView,
+        status: "answered",
+        search: "<noreply@github.com>"
+      },
+      { includePaginationRows: true }
+    );
+    assert.ok(
+      page.rows.some((row) =>
+        row.subtitleHtml.includes("GitHub &lt;noreply@github.com&gt;")
+      )
+    );
+    assert.equal(
+      browserFixtureReviewPage(
+        { ...defaultHumanReviewView, status: "answered", search: "lt;" },
+        { includePaginationRows: true }
+      ).rows.length,
+      0
+    );
+    const template = page.rows[0];
+    const rows = [
+      { ...template, titleHtml: "&#90;ebra" },
+      { ...template, titleHtml: "Apple" }
+    ];
+    rows.sort((a, b) =>
+      compareHumanReviewRows(a, b, {
+        sorts: [{ key: "title", direction: "asc" }]
+      })
+    );
+    assert.deepEqual(
+      rows.map((row) => row.titleHtml),
+      ["Apple", "&#90;ebra"]
+    );
+  }));

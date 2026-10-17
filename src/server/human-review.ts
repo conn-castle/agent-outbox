@@ -546,9 +546,9 @@ function humanReviewFilters(
     // Search visible text so allowed inline tags neither match tag names nor
     // split matching phrases.
     filters.push(`(
-      ${reviewVisibleTextSql("i.title_html")} ilike $${values.length} escape '!'
-      or ${reviewVisibleTextSql("i.subtitle_html")} ilike $${values.length} escape '!'
-      or ${reviewVisibleTextSql("i.summary_html")} ilike $${values.length} escape '!'
+      ${reviewSearchTextSql("title")} ilike $${values.length} escape '!'
+      or ${reviewSearchTextSql("subtitle")} ilike $${values.length} escape '!'
+      or ${reviewSearchTextSql("summary")} ilike $${values.length} escape '!'
       or i.caller_item_id ilike $${values.length} escape '!'
       or i.row_type_display ilike $${values.length} escape '!'
       or c.display_name ilike $${values.length} escape '!'
@@ -788,10 +788,7 @@ function reviewSortExpressions(
     case "visual_score":
       return [`${reviewVisualScoreExpression()}${suffix} nulls last`];
     case "title":
-      return reviewTextSortExpressions(
-        reviewVisibleTextSql("i.title_html"),
-        suffix
-      );
+      return reviewTextSortExpressions(reviewSearchTextSql("title"), suffix);
     case "caller":
       return reviewTextSortExpressions("c.display_name", suffix);
     case "created_at":
@@ -834,8 +831,11 @@ const JAVASCRIPT_WHITESPACE_CLASS = [
   "\\ufeff"
 ].join("");
 
-// Tags become spaces and whitespace runs collapse, matching
-// `htmlTagStrippedText` in the client search and sort mirror.
+function reviewSearchTextSql(field: "title" | "subtitle" | "summary") {
+  return `coalesce(i.${field}_text, ${reviewVisibleTextSql(`i.${field}_html`)})`;
+}
+
+// Tag-stripped fallback for rows not yet derived by maintenance.
 function reviewVisibleTextSql(htmlColumn: string) {
   return `btrim(regexp_replace(
         regexp_replace(${htmlColumn}, '<[^>]*>', ' ', 'g'),

@@ -42,6 +42,7 @@ export type RuntimeLogEvent = {
   stripe_payment_status?: "paid" | "unpaid" | "no_payment_required" | "unknown";
   stripe_event_type?: string;
   event_count?: number;
+  rows_derived?: number;
   message: string;
 };
 
@@ -85,6 +86,7 @@ const SAFE_LOG_KEYS = new Set([
   "stripe_payment_status",
   "stripe_event_type",
   "event_count",
+  "rows_derived",
   "message"
 ]);
 const SAFE_ERROR_NAME_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/;

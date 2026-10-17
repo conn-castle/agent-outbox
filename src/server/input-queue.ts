@@ -1,3 +1,7 @@
+import {
+  reviewTextValues,
+  reviewTextSourceDigestSql
+} from "./review-search-text.ts";
 import type { InputOperationStage } from "./logging.ts";
 import { auditEventInsertStatement } from "./accounting.ts";
 import {
@@ -575,16 +579,21 @@ export function insertInputItemStatement(
         skip_disabled,
         normalized_content_fingerprint,
         non_file_payload_bytes,
-        card_time
+        card_time,
+        title_text, subtitle_text, summary_text, review_text_source_sha256
       )
       values (
         $1, $2, $3, $4, 'pending', $5, 1, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15::jsonb, $16, $17, $18, $19
+        $11, $12, $13, $14, $15::jsonb, $16, $17, $18, $19,
+        $20, $21, $22, ${reviewTextSourceDigestSql("$9::text", "$10::text", "$12::text")}
       )
       on conflict (caller_id, caller_item_id) do nothing
       returning input_item_id, current_revision
     `,
-    values: inputItemValues(identity, submission)
+    values: [
+      ...inputItemValues(identity, submission),
+      ...reviewTextValues(submission)
+    ]
   };
 }
 
@@ -612,11 +621,17 @@ export function updateInputItemStatement(
         normalized_content_fingerprint = $14,
         non_file_payload_bytes = $15,
         card_time = $16,
+        title_text = $17, subtitle_text = $18, summary_text = $19,
+        review_text_source_sha256 = ${reviewTextSourceDigestSql("$6::text", "$7::text", "$9::text")},
         updated_at = now()
       where input_item_id = $1
       returning current_revision
     `,
-    values: [inputItemId, ...submissionColumnValues(submission)]
+    values: [
+      inputItemId,
+      ...submissionColumnValues(submission),
+      ...reviewTextValues(submission)
+    ]
   };
 }
 

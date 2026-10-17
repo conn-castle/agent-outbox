@@ -155,12 +155,16 @@ Neither replaces the original 503 response or its error log. Known 400/413
 rejections do not initialize, capture, or flush through this boundary.
 
 Scheduled cleanup runs each global prune and each account's maintenance in its
-own transaction, so one failing step does not block the others. Each failed step
-emits an error log with `operation=maintenance.scheduled_cleanup`: global prunes
-use the message `scheduled cleanup global maintenance failed`, and account steps
-carry `account_id`. After all steps run, the invocation fails with one summary
-error log. If the account list cannot be read, the run fails before any account
-maintenance.
+own transaction, so one failing step does not block the others. Failed cleanup
+steps emit an error log with `operation=maintenance.scheduled_cleanup`: global
+prunes use the message `scheduled cleanup global maintenance failed`, and
+account steps carry `account_id`. After cleanup finishes for all accounts,
+review search text derivation runs in bounded committed batches; its per-account
+failures use `operation=maintenance.review_search_text`. Nonempty batches log
+committed `rows_derived` progress. The `scheduled cleanup committed progress`
+log reports the committed total before any aggregate failure, including partial
+success. After all steps run, failures produce one summary error log. If the
+account list cannot be read, the run fails before any account maintenance.
 
 The repository Node entry reports ingress overflow as a warning with
 `operation=api_error.request_too_large`, `route=node_ingress`, and

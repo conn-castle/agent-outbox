@@ -1,3 +1,4 @@
+import { deriveReviewSearchTextForAccount } from "./review-search-text.ts";
 import { createCorrelationId } from "./correlation.ts";
 import { SYSTEM_CONTRACT } from "../shared/system-contract.ts";
 import {
@@ -84,6 +85,7 @@ export type ScheduledCleanupResult = {
   accounts_cleaned: number;
   statements_run: number;
   rows_affected: number;
+  rows_derived: number;
 };
 
 export function runScheduledCanary(input: ScheduledCanaryInput) {
@@ -292,7 +294,47 @@ export async function runScheduledCleanup(
       }
     }
 
-    if (globalFailures.length > 0 || accountFailures.length > 0) {
+    let rowsDerived = 0;
+    const derivationFailures: unknown[] = [];
+    // Complete retention for every account before spending time on projections.
+    for (const account of accounts) {
+      try {
+        await deriveReviewSearchTextForAccount({
+          connectionString,
+          accountId: account.accountId,
+          requestId,
+          runTransaction,
+          onCommitted: (count) => {
+            rowsDerived += count;
+          }
+        });
+      } catch (error) {
+        emitScheduledCleanupFailure({
+          requestId,
+          error,
+          accountId: account.accountId,
+          startedAtMs,
+          operation: "maintenance.review_search_text",
+          message: "review search text derivation failed"
+        });
+        derivationFailures.push(error);
+      }
+    }
+    emitRuntimeLog({
+      level: "info",
+      request_id: requestId,
+      environment: process.env.APP_ENV ?? null,
+      surface: "scheduled",
+      operation: SCHEDULED_CLEANUP_OPERATION,
+      rows_derived: rowsDerived,
+      message: "scheduled cleanup committed progress"
+    });
+
+    if (
+      globalFailures.length > 0 ||
+      accountFailures.length > 0 ||
+      derivationFailures.length > 0
+    ) {
       const failedScopes: string[] = [];
       if (globalFailures.length > 0) {
         failedScopes.push(
@@ -307,8 +349,16 @@ export async function runScheduledCleanup(
           `${accountFailures.length} account(s): ${failedAccountIds}`
         );
       }
+      if (derivationFailures.length > 0)
+        failedScopes.push(
+          `${derivationFailures.length} review text derivation account(s)`
+        );
       throw new AggregateError(
-        [...globalFailures, ...accountFailures.map((failure) => failure.error)],
+        [
+          ...globalFailures,
+          ...accountFailures.map((failure) => failure.error),
+          ...derivationFailures
+        ],
         `Scheduled cleanup failed for ${failedScopes.join(" and ")}`
       );
     }
@@ -331,7 +381,8 @@ export async function runScheduledCleanup(
       accounts_seen: accounts.length,
       accounts_cleaned: accountsCleaned,
       statements_run: statementsRun,
-      rows_affected: rowsAffected
+      rows_affected: rowsAffected,
+      rows_derived: rowsDerived
     };
   } catch (error) {
     emitScheduledCleanupFailure({ requestId, error, startedAtMs });
@@ -425,6 +476,7 @@ function emitScheduledCleanupFailure(input: {
   accountId?: string;
   startedAtMs?: number;
   message?: string;
+  operation?: string;
 }) {
   reportRuntimeFailure(input.error, {
     errorId: createCorrelationId("cleanup"),
@@ -432,7 +484,7 @@ function emitScheduledCleanupFailure(input: {
     environment: process.env.APP_ENV ?? null,
     surface: "scheduled",
     duration_ms: durationSinceMs(input.startedAtMs),
-    operation: SCHEDULED_CLEANUP_OPERATION,
+    operation: input.operation ?? SCHEDULED_CLEANUP_OPERATION,
     account_id: input.accountId,
     message: input.message ?? "scheduled cleanup failed"
   });

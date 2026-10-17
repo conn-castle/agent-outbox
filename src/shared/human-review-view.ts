@@ -1,4 +1,4 @@
-import { htmlTagStrippedText } from "./html-text.ts";
+import { htmlToPlainText } from "./html-text.ts";
 import type { QueuePriority } from "./input-schema-rules.ts";
 
 export const HUMAN_REVIEW_VIEW_PARAM_KEYS = [
@@ -160,9 +160,9 @@ export function humanReviewMatchesSearch(
   const term = search.toLowerCase();
   if (!term) return true;
   return [
-    htmlTagStrippedText(row.titleHtml),
-    htmlTagStrippedText(row.subtitleHtml),
-    htmlTagStrippedText(row.summaryHtml),
+    htmlToPlainText(row.titleHtml),
+    htmlToPlainText(row.subtitleHtml),
+    htmlToPlainText(row.summaryHtml),
     row.callerItemId,
     row.rowType.display,
     row.caller.displayName

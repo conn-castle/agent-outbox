@@ -163,6 +163,9 @@ locks so a replaced revision cannot be answered. Output file downloads lock the
 output row before its file row, the same order as acknowledgement, pre-read
 undo, and cleanup deletions that cascade from the output to its files.
 
+Review text derivation uses input-row `FOR UPDATE SKIP LOCKED` without an
+account lock, so it never waits on a foreground input lock in reverse order.
+
 Storage rules:
 
 - Preserve the typed product shape in relational tables instead of storing each
@@ -349,6 +352,11 @@ Rules:
   and row-type filters allow multiple values within each facet, combine facets
   with AND semantics, and run in the database before bounded pagination. The
   active filters remain visible as individually removable chips.
+- Search covers decoded visible title, subtitle, and summary plus caller item
+  id, row type, and caller name; title sort uses decoded visible title. Derived
+  text is stored beside untouched caller HTML. Rows present before the migration
+  and rows changed by older writers use tag-stripped HTML until bounded hourly
+  maintenance derives their text, skipping locked rows.
 - Answer creation captures the input's prior ordering timestamp on the output
   result. Pre-read undo restores that timestamp so the row returns to its prior
   canonical queue position instead of becoming the newest item.
