@@ -5,9 +5,12 @@ description: >-
   over-engineering, and debt, maintain .agent-layer/tmp interface-audit reports,
   and finish at the final recommendation gate. Use for fresh interface cleanup
   audits or --update refreshes; not for implementation.
+compatibility: Requires access to source and .agent-layer/tmp for project audit reports. This scratch convention does not require al.
 ---
 
 # interface-audit
+
+Prerequisites: Requires access to source and .agent-layer/tmp for project audit reports. This scratch convention does not require al.
 
 Produce one evidence-backed audit of product interface boundaries. Do not
 implement or launch planning.

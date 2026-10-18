@@ -3,9 +3,12 @@ name: implement
 description: >-
   Implement a large, substantive code change directly or through a planned
   cross-agent workflow, adding plan or code review only when warranted.
+compatibility: Requires named implementer, plan_reviewers, and code_reviewer targets. Delegated planning/review paths require dispatch-agent and the Agent Dispatch MCP dispatch_start/inspect/wait/output/continue/cancel contract; direct implementation does not dispatch. Project scratch uses .agent-layer/tmp as a convention.
 ---
 
 # implement
+
+Prerequisites: Requires named implementer, plan_reviewers, and code_reviewer targets. Delegated planning/review paths require dispatch-agent and the Agent Dispatch MCP dispatch_start/inspect/wait/output/continue/cancel contract; direct implementation does not dispatch. Project scratch uses .agent-layer/tmp as a convention. Missing dispatch capabilities must be reported; tracked skill content can advance independently of the installed CLI.
 
 ## Inputs
 

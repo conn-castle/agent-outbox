@@ -5,9 +5,12 @@ description: >-
   especially for version-specific syntax, configuration, and migrations. Use
   Context7 when available. Not for general web research or browser automation.
 allowed-tools: Bash(ctx7:*)
+compatibility: Requires Node.js/npx for the Context7 CLI (ctx7), Context7 access/authentication when needed, and network access for external documentation.
 ---
 
 # Find Documentation
+
+Prerequisites: Requires Node.js/npx for the Context7 CLI (ctx7), Context7 access/authentication when needed, and network access for external documentation.
 
 Check local docs and installed CLI help first. If they do not answer the question,
 use Context7 when available, or consult official documentation directly.

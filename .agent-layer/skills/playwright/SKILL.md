@@ -2,11 +2,13 @@
 name: playwright
 description: Use globally installed `playwright-cli` for browser automation, UI inspection, screenshots, Playwright test debugging, or test generation. Trigger when a task needs browser interaction or test repair. Do not use for generic tests, web search, non-browser docs, or API-only work.
 license: Apache-2.0
-compatibility: Requires globally installed `playwright-cli` from the maintained `@playwright/cli` npm package and any browser, app, or Playwright test environment needed by the task. The unscoped `playwright-cli` npm package is deprecated; its replacement keeps the same binary name.
+compatibility: Requires globally installed `playwright-cli` from the maintained `@playwright/cli` npm package and any browser, app, or Playwright test environment needed by the task. The unscoped `playwright-cli` npm package is deprecated; its replacement keeps the same binary name. Agent Layer wording describes project conventions, not an al runtime dependency.
 allowed-tools: Bash(playwright-cli:*) Bash(npx:*) Bash(npm:*)
 ---
 
 # Browser Automation with playwright-cli
+
+Prerequisites: Requires globally installed playwright-cli from @playwright/cli and the browser/app/test environment needed by the task. Agent Layer wording describes project conventions, not an al runtime dependency.
 
 > Modified by Conn Castle Studios on 2026-05-26 from the Apache-2.0
 > playwright-cli skill: reduced duplicated command reference material and
