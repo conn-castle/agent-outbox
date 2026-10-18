@@ -4,9 +4,12 @@ description: >-
   Audit agent memory files (ISSUES, BACKLOG, DECISIONS, COMMANDS,
   CONTEXT) for structure, staleness, placement, consistency, and DECISIONS.md
   bloat; fix accepted findings.
+compatibility: Requires the docs/agent-layer project memory convention (ISSUES, BACKLOG, DECISIONS, COMMANDS, CONTEXT). .agent-layer/tmp is a scratch convention; al is not a runtime requirement.
 ---
 
 # audit-memory
+
+Prerequisites: Requires the docs/agent-layer project memory convention (ISSUES, BACKLOG, DECISIONS, COMMANDS, CONTEXT). .agent-layer/tmp is a scratch convention; al is not a runtime requirement.
 
 Audit memory files and fix evidence-backed problems.
 

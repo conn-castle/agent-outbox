@@ -2,11 +2,13 @@
 name: tavily-web
 description: |
   Use Tavily CLI for web search, URL extraction, site mapping, and cited research. Trigger when the user needs current web info, asks to search/read a page, provides URLs, or wants a sourced report. Do not use for browser automation, local docs, or Tavily setup.
-compatibility: Requires the Tavily CLI (`tvly`), authentication, and network access.
+compatibility: Requires the Tavily CLI (`tvly`), authentication, and network access. Agent Layer retrieval/scratch wording describes project conventions, not an al runtime dependency.
 allowed-tools: Bash(tvly:*)
 ---
 
 # Tavily Web
+
+Prerequisites: Requires Tavily CLI (tvly), authentication, and network access. Agent Layer retrieval/scratch wording describes project conventions, not an al runtime dependency.
 
 Use the Tavily CLI as Agent Layer's web retrieval path. Route the request to the smallest useful Tavily command, then summarize the sourced result.
 
