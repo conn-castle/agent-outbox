@@ -3,9 +3,12 @@ name: ship-pr
 description: >-
   Ship one pull request, monitor hosted CI and review feedback,
   follow PR policy, and request authorization before merging and cleaning up.
+compatibility: Requires dispatch-agent, a named pr_worker target, the Agent Dispatch MCP dispatch_start/inspect/wait/output/continue/cancel contract, Git, authenticated GitHub CLI (gh), Bash, jq, and standard OS tools. Its in-tree scripts are self-contained; Python 3.11+ is required only for their tests.
 ---
 
 # ship-pr
+
+Prerequisites: Requires dispatch-agent, a named pr_worker target, the Agent Dispatch MCP dispatch_start/inspect/wait/output/continue/cancel contract, Git, authenticated GitHub CLI (gh), Bash, jq, and standard OS tools. Its in-tree scripts are self-contained; Python 3.11+ is required only for their tests. Missing dispatch capabilities must be reported; tracked skill content can advance independently of the installed CLI.
 
 Invoking this skill authorizes branch creation, staging, commits, pushes, PR
 creation or updates, and eligible comment replies needed to prepare one PR for
@@ -54,6 +57,11 @@ Unless the user narrows the scope, include the entire current working tree.
    The log detects changes between invocations and suppresses duplicate
    deadline notifications; it never replaces fresh GitHub state. Keep JSON
    payloads file-backed to avoid process argument-size limits.
+   On an interrupted final log write, the watcher preserves the original log
+   at a unique sibling path reported on stderr and resumes from complete
+   records only if at least one remains. A partial first record, malformed
+   earlier records, or newline-terminated records stop the watcher with an
+   error and leave the log unchanged for inspection.
 
 3. Fetch the current head, checks, and mergeability with `gh`. Read comments
    with this stateless command; never infer current state from the watcher log:
