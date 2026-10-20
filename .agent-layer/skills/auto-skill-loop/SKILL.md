@@ -3,9 +3,12 @@ name: auto-skill-loop
 description: >-
   Run an autonomous loop intended to result in merged PRs.
 disable-model-invocation: true
+compatibility: Requires dispatch-agent, implement, ship-pr, the Agent Dispatch MCP dispatch_start/inspect/wait/output/continue/cancel contract, and named operator, planner, plan_reviewers, implementer, code_reviewer, pr_worker, and rote_worker targets. Issue/backlog modes use docs/agent-layer project memory conventions.
 ---
 
 # auto-skill-loop
+
+Prerequisites: Requires dispatch-agent, implement, ship-pr, the Agent Dispatch MCP dispatch_start/inspect/wait/output/continue/cancel contract, and named operator, planner, plan_reviewers, implementer, code_reviewer, pr_worker, and rote_worker targets. Issue/backlog modes use docs/agent-layer project memory conventions. Missing dispatch capabilities must be reported; tracked skill content can advance independently of the installed CLI.
 
 Continue across PRs until the user stops the loop or step 1 reaches its no-work
 exit condition. A merged PR or a worker's final reply does not complete the loop.
