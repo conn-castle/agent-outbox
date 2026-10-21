@@ -47,14 +47,15 @@ uses `DATABASE_APP_ROLE_URL`. Clerk handles human authentication, and the Outbox
 server authenticates caller API requests. These requests do not use Supabase
 Auth, PostgREST, GraphQL, or `supabase-js`.
 
-Supabase's [default-grant announcement](https://github.com/orgs/supabase/discussions/45329),
-reviewed on 2026-10-20, schedules the change for existing projects on October 30,
-2026. It affects automatic Data API grants on new `public` objects, preserves
-existing grants, and does not change direct Postgres access. Outbox migrations
-grant the restricted application role access explicitly, so fresh Flyway replay
-does not depend on automatic API-role grants. Follow the [Flyway rules](../migrations.md)
-for local or disposable replay; `supabase db reset` is not this repository's
-migration workflow.
+Supabase's
+[default-grant announcement](https://github.com/orgs/supabase/discussions/45329),
+reviewed on 2026-10-20, schedules the change for existing projects on October
+30, 2026. It affects automatic Data API grants on new `public` objects,
+preserves existing grants, and does not change direct Postgres access. Outbox
+migrations grant the restricted application role access explicitly, so fresh
+Flyway replay does not depend on automatic API-role grants. Follow the
+[Flyway rules](../migrations.md) for local or disposable replay;
+`supabase db reset` is not this repository's migration workflow.
 
 Keep privileges in the migration that introduces each object. Grant the app role
 only the operations the server needs, required schema usage and sequence access,
@@ -64,42 +65,36 @@ ledger permits SELECT and INSERT, while billing checkout attempts permit SELECT,
 INSERT, and UPDATE; account deletion removes attempts through the foreign-key
 cascade without a direct DELETE grant.
 
-Do not add grants to `anon`, `authenticated`, or `service_role` to address a Data
-API notice unless a separately established application requirement uses those
-roles. `REVOKE ... FROM PUBLIC` does not remove privileges granted directly to
-named provider roles or inherited through role membership. Inspect actual object
-ACLs and creator-specific default privileges before recommending any revocation;
-RLS alone does not constrain a role with `BYPASSRLS`. Check the webhook ledger,
-checkout attempts, and webhook receipt sequence in particular: their creation
-migrations revoke `PUBLIC` without revoking named API roles. This is not proof of
-production exposure.
+Do not add grants to `anon`, `authenticated`, or `service_role` to address a
+Data API notice unless a separately established application requirement uses
+those roles. `REVOKE ... FROM PUBLIC` does not remove privileges granted
+directly to named provider roles or inherited through role membership. Inspect
+actual object ACLs and creator-specific default privileges before recommending
+any revocation; RLS alone does not constrain a role with `BYPASSRLS`.
 
 ## Read-only Grant Investigation
 
 Follow [the canonical secret-access procedure](../secrets.md) with AWS profile
-`conn`. Retrieve only the target identity and database credentials needed for the
-inspection, inside the operator process; never print or persist their values.
-Use the restricted app-role connection for catalog inspection when sufficient.
-An expired SSO session requires operator authentication through the documented
-[SSO recovery command](sentry.md#tool); a missing runtime environment variable
-does not establish that the canonical credential is missing.
+`conn`. Retrieve only the target identity and database credentials needed for
+the inspection, inside the operator process; never print or persist their
+values. Use the restricted app-role connection for catalog inspection when
+sufficient. An expired SSO session requires operator authentication through the
+documented [SSO recovery command](sentry.md#tool); a missing runtime environment
+variable does not establish that the canonical credential is missing.
 
 Verify the canonical target against the live Worker's Hyperdrive origin before
 connecting. Set `default_transaction_read_only=on` when opening the connection,
 use a bounded `REPEATABLE READ READ ONLY` transaction and statement/connection
 timeouts, and roll back after inspection. Catalog checks need no application row
-contents: inspect role attributes and memberships, schema/object ACLs, effective
-privileges, default ACLs for the actual object creators, RLS flags and policies,
-and function ownership/security mode. Verify exposed schemas separately through
-the project's Data API settings; schema names alone do not prove API exposure.
+contents: inspect role attributes and memberships, schema ACLs and all table,
+sequence, and function ACLs, effective privileges, default ACLs for the actual
+object creators, RLS flags and policies, and function ownership/security mode.
+Verify exposed schemas separately through the project's Data API settings;
+schema names alone do not prove API exposure.
 
-On 2026-10-20, canonical credential retrieval failed because AWS SSO had expired,
-and the cached Supabase account received HTTP 403 for the Outbox project. That
-investigation did not verify live ACLs, default privileges, or Data API exposure;
-those observations do not establish current access or security status. An absent
-inventory entry or permission denial does not mean Outbox is absent or unhealthy.
-Report access limitations and restore the appropriate operator access before
-claiming live grants or Data API settings were verified.
+An absent inventory entry or permission denial does not mean Outbox is absent or
+unhealthy. Report access limitations and restore the appropriate operator access
+before claiming live grants or Data API settings were verified.
 
 ## Safe Checks
 
