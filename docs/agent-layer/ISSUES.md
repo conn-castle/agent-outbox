@@ -31,7 +31,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 - Issue 2026-10-20 supabase-api-grants-unverified: Production API-role grants and Data API exposure lack verification
     Priority: Medium. Area: operations / database access
     Description: On 2026-10-20, expired AWS SSO prevented canonical credential retrieval and the cached Supabase account returned HTTP 403; that investigation did not verify live ACLs, creator default privileges, or Data API exposure. These dated observations establish neither current credential status nor production exposure.
-    Notes: Source grant gaps include PUBLIC-only revokes without named API-role revocations for the webhook ledger, checkout attempts, receipt sequence, and the Stripe ordering and review text trigger functions; these examples are not an exhaustive inventory.
+    Notes: Source grant gaps include PUBLIC-only revokes without named API-role revocations for the webhook ledger table, checkout attempts, receipt sequence, and the Stripe ordering and review text trigger functions; these examples are not an exhaustive inventory.
     Next step: With appropriate operator access, inspect current table, sequence, and function ACLs, creator defaults, effective role privileges, and Data API settings before recommending any privilege change.
 
 - Issue 2026-10-19 prod-audit-read-route: No least-privilege documented route for read-only production audit-event inspection
