@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-19 prod-audit-read-route: No least-privilege documented route for read-only production audit-event inspection
+    Priority: Medium. Area: operations / database access
+    Description: The 2026-10-19 historical investigation used a migration credential with BYPASSRLS in a guarded read-only transaction when the account identity was unknown; this does not establish that owner access is required. The app role has SELECT under forced RLS, with account-scoped caller/human or cleanup context routes, but no operator runbook establishes a least-privilege historical audit-read procedure.
+    Open question: Which least-privilege access route should operators use for historical audit-event investigations, including when the account identity is unknown?
+
 - Issue 2026-10-17 review-text-maintenance-scan: Derived-text maintenance scans retained rows after convergence
     Priority: Low. Area: Scheduled maintenance / Performance
     Description: The hourly per-account null-digest query has no supporting partial index, so even a fully derived account requires scanning its retained rows to find no candidates.
