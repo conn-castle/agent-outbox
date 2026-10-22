@@ -39,6 +39,28 @@ passwords, full database URLs, API keys, and decrypted Systems Manager Parameter
 Store values only in approved operator-controlled systems. Do not commit those
 values to Markdown.
 
+## Database Access And Data API Grants
+
+Agent Outbox connects to Postgres with `pg`: Workers use Hyperdrive and local
+Node uses `DATABASE_APP_ROLE_URL`. Clerk and server caller authentication supply
+application identities; requests do not use Supabase Auth or the Data API.
+
+Flyway migrations explicitly grant the restricted app role access, independently
+of Supabase's automatic Data API grants. Do not grant `anon`, `authenticated`,
+or `service_role` access merely in response to a Data API notice.
+
+Preserve forced RLS and transaction-local account and authentication context.
+`REVOKE ... FROM PUBLIC` does not remove named-role or inherited grants; forced
+RLS does not constrain roles with `BYPASSRLS`.
+
+## Read-only Grant Investigation
+
+Use [secrets](../secrets.md) and [migration rules](../migrations.md). Verify the
+canonical Outbox target against the Worker's Hyperdrive origin before
+connecting. Inspect schema, table, sequence, and function ACLs, effective
+privileges, creator-specific default privileges, RLS, function
+ownership/security mode, and Data API exposure settings.
+
 ## Safe Checks
 
 - Verify the configured organization, project ref, database host, app role, and

@@ -28,6 +28,16 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-10-20 supabase-api-grants-unverified: Migration API-role revocations are inconsistent
+    Priority: Medium. Area: operations / database access
+    Description: The initial schema conditionally revokes named API roles; later migrations revoke only PUBLIC for the webhook ledger table, checkout attempts, receipt sequence, and the Stripe ordering and review text trigger functions. Current live ACLs and Data API exposure are unknown.
+    Next step: Verify effective privileges, creator defaults, RLS, and Data API exposure before proposing privilege changes.
+
+- Issue 2026-10-19 prod-audit-read-route: Historical audit access lacks a least-privilege procedure
+    Priority: Medium. Area: operations / database access
+    Description: App-role audit SELECT depends on account-scoped caller, human, or cleanup context; an operator procedure for investigations with unknown account identity is undocumented.
+    Open question: Which least-privilege route should operators use for historical audit reads when the account identity is unknown?
+
 - Issue 2026-10-17 review-text-maintenance-scan: Derived-text maintenance scans retained rows after convergence
     Priority: Low. Area: Scheduled maintenance / Performance
     Description: The hourly per-account null-digest query has no supporting partial index, so even a fully derived account requires scanning its retained rows to find no candidates.
