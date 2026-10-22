@@ -41,60 +41,25 @@ values to Markdown.
 
 ## Database Access And Data API Grants
 
-Agent Outbox uses `pg` over the Postgres protocol. The production Worker obtains
-its restricted application-role connection from Hyperdrive; local Node execution
-uses `DATABASE_APP_ROLE_URL`. Clerk handles human authentication, and the Outbox
-server authenticates caller API requests. These requests do not use Supabase
-Auth, PostgREST, GraphQL, or `supabase-js`.
+Agent Outbox connects to Postgres with `pg`: Workers use Hyperdrive and local
+Node uses `DATABASE_APP_ROLE_URL`. Clerk and server caller authentication supply
+application identities; requests do not use Supabase Auth or the Data API.
 
-Supabase's
-[default-grant announcement](https://github.com/orgs/supabase/discussions/45329),
-reviewed on 2026-10-20, schedules the change for existing projects on October
-30, 2026. It affects automatic Data API grants on new `public` objects,
-preserves existing grants, and does not change direct Postgres access. Outbox
-migrations grant the restricted application role access explicitly, so fresh
-Flyway replay does not depend on automatic API-role grants. Follow the
-[Flyway rules](../migrations.md) for local or disposable replay;
-`supabase db reset` is not this repository's migration workflow.
+Flyway migrations explicitly grant the restricted app role access, independently
+of Supabase's automatic Data API grants. Do not grant `anon`, `authenticated`,
+or `service_role` access merely in response to a Data API notice.
 
-Keep privileges in the migration that introduces each object. Grant the app role
-only the operations the server needs, required schema usage and sequence access,
-and execution of its application functions. Preserve forced RLS and
-transaction-local account and authentication context. For example, the audit
-ledger permits SELECT and INSERT, while billing checkout attempts permit SELECT,
-INSERT, and UPDATE; account deletion removes attempts through the foreign-key
-cascade without a direct DELETE grant.
-
-Do not add grants to `anon`, `authenticated`, or `service_role` to address a
-Data API notice unless a separately established application requirement uses
-those roles. `REVOKE ... FROM PUBLIC` does not remove privileges granted
-directly to named provider roles or inherited through role membership. Inspect
-actual object ACLs and creator-specific default privileges before recommending
-any revocation; RLS alone does not constrain a role with `BYPASSRLS`.
+Preserve forced RLS and transaction-local account and authentication context.
+`REVOKE ... FROM PUBLIC` does not remove named-role or inherited grants; forced
+RLS does not constrain roles with `BYPASSRLS`.
 
 ## Read-only Grant Investigation
 
-Follow [the canonical secret-access procedure](../secrets.md) with AWS profile
-`conn`. Retrieve only the target identity and database credentials needed for
-the inspection, inside the operator process; never print or persist their
-values. Use the restricted app-role connection for catalog inspection when
-sufficient. An expired SSO session requires operator authentication through the
-documented [SSO recovery command](sentry.md#tool); a missing runtime environment
-variable does not establish that the canonical credential is missing.
-
-Verify the canonical target against the live Worker's Hyperdrive origin before
-connecting. Set `default_transaction_read_only=on` when opening the connection,
-use a bounded `REPEATABLE READ READ ONLY` transaction and statement/connection
-timeouts, and roll back after inspection. Catalog checks need no application row
-contents: inspect role attributes and memberships, schema ACLs and all table,
-sequence, and function ACLs, effective privileges, default ACLs for the actual
-object creators, RLS flags and policies, and function ownership/security mode.
-Verify exposed schemas separately through the project's Data API settings;
-schema names alone do not prove API exposure.
-
-An absent inventory entry or permission denial does not mean Outbox is absent or
-unhealthy. Report access limitations and restore the appropriate operator access
-before claiming live grants or Data API settings were verified.
+Use [secrets](../secrets.md) and [migration rules](../migrations.md). Verify the
+canonical Outbox target against the Worker's Hyperdrive origin before
+connecting. Inspect schema, table, sequence, and function ACLs, effective
+privileges, creator-specific default privileges, RLS, function
+ownership/security mode, and Data API exposure settings.
 
 ## Safe Checks
 

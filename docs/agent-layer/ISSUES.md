@@ -28,16 +28,15 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-10-20 supabase-api-grants-unverified: Production API-role grants and Data API exposure lack verification
+- Issue 2026-10-20 supabase-api-grants-unverified: Migration API-role revocations are inconsistent
     Priority: Medium. Area: operations / database access
-    Description: On 2026-10-20, expired AWS SSO prevented canonical credential retrieval and the cached Supabase account returned HTTP 403; that investigation did not verify live ACLs, creator default privileges, or Data API exposure. These dated observations establish neither current credential status nor production exposure.
-    Notes: Source grant gaps include PUBLIC-only revokes without named API-role revocations for the webhook ledger table, checkout attempts, receipt sequence, and the Stripe ordering and review text trigger functions; these examples are not an exhaustive inventory.
-    Next step: With appropriate operator access, inspect current table, sequence, and function ACLs, creator defaults, effective role privileges, and Data API settings before recommending any privilege change.
+    Description: The initial schema conditionally revokes named API roles; later migrations revoke only PUBLIC for the webhook ledger table, checkout attempts, receipt sequence, and the Stripe ordering and review text trigger functions. Current live ACLs and Data API exposure are unknown.
+    Next step: Verify effective privileges, creator defaults, RLS, and Data API exposure before proposing privilege changes.
 
-- Issue 2026-10-19 prod-audit-read-route: No least-privilege documented route for read-only production audit-event inspection
+- Issue 2026-10-19 prod-audit-read-route: Historical audit access lacks a least-privilege procedure
     Priority: Medium. Area: operations / database access
-    Description: The 2026-10-19 historical investigation used a migration credential with BYPASSRLS in a guarded read-only transaction when the account identity was unknown; this does not establish that owner access is required. The app role has SELECT under forced RLS, with account-scoped caller/human or cleanup context routes, but no operator runbook establishes a least-privilege historical audit-read procedure.
-    Open question: Which least-privilege access route should operators use for historical audit-event investigations, including when the account identity is unknown?
+    Description: App-role audit SELECT depends on account-scoped caller, human, or cleanup context; an operator procedure for investigations with unknown account identity is undocumented.
+    Open question: Which least-privilege route should operators use for historical audit reads when the account identity is unknown?
 
 - Issue 2026-10-17 review-text-maintenance-scan: Derived-text maintenance scans retained rows after convergence
     Priority: Low. Area: Scheduled maintenance / Performance
