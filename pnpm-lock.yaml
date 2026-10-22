@@ -281,8 +281,8 @@ importers:
         specifier: 19.3.0
         version: 19.3.0(@types/react@19.3.0)
       clerk:
-        specifier: 3.2.0
-        version: 3.2.0
+        specifier: 4.0.0
+        version: 4.0.0
       ignore:
         specifier: 7.0.10
         version: 7.0.10
@@ -628,47 +628,47 @@ packages:
     resolution: {integrity: sha512-YBJtclx3ytvQGNYhf0/pG+WHUk1ams7Aai3D2AB8c96AkSnzUE+i1Q98HyupIulPDr3fUWeQJtex4DYyO9D4fA==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/cli-darwin-arm64@3.2.0':
-    resolution: {integrity: sha512-ACdcyqqdtDtoOE5A8BvClY2vcDdlRxc5pKotCbbB7DjsiZ3CE/g18M0yMyYYPvPLzd93PS7yReTPxWuxhhuZ/g==}
+  '@clerk/cli-darwin-arm64@4.0.0':
+    resolution: {integrity: sha512-dtPE7yqfP7/56knN7kqSxdY5ZN51jl2b8COz9JdGoPn/H/wgtqR5paoq3dgINZU706UoqvwvHDQjyeiNQSMW8Q==}
     cpu: [arm64]
     os: [darwin]
 
-  '@clerk/cli-darwin-x64@3.2.0':
-    resolution: {integrity: sha512-0th+akBnO5lImawIxV/LTCn9Y990GDh5ZibrdzeBVGnLBklBoVMjCT2QKUSiHEbr4maUEj8k0Xl1VbPzE7WNxA==}
+  '@clerk/cli-darwin-x64@4.0.0':
+    resolution: {integrity: sha512-ooxR1oIPcBarVIKOzL1F02FEyYQ4uSb5fBh8yknl3iZ24OQ0T97jRzuMnBSuqt/APXLNKxW24wubQ3+f67zOXQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@clerk/cli-linux-arm64-musl@3.2.0':
-    resolution: {integrity: sha512-+JnogjMMV+bb0N8R3e/NngvVGNy+aZGihDr4rl8LTTZ6MqpPL/n7RtTVOIbaAd544VDZgSWbHsX7F2uyp7WEuw==}
+  '@clerk/cli-linux-arm64-musl@4.0.0':
+    resolution: {integrity: sha512-rdXh+nglvSKQT0OzdRKmnYPOq9VjH67ZpwoM52DcsGFRbb85L9aFmz+4Lpn17fr2TxLfixmCTHbuHpbJr71Wnw==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@clerk/cli-linux-arm64@3.2.0':
-    resolution: {integrity: sha512-ZfcZHtH88josgIiCiM8GJpTyip7q3UphlqAPFrOkPnymES/oNEh1vHRSnmvlNWtOKVzZt4U00fz633Ykagdxcw==}
+  '@clerk/cli-linux-arm64@4.0.0':
+    resolution: {integrity: sha512-AbdFq2URW9QmXr4qbi+n+jUj0HFwFcsdUnJqWzLTacBuLrWkeFEj07iBHciXIm3uPlURg9J/C5ckLlIFqPg8oQ==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@clerk/cli-linux-x64-musl@3.2.0':
-    resolution: {integrity: sha512-7VD17oW/7YdQ/c3kTI218CXZmbStDeVj34L47b0chXwRer9THVYi+VnhhhiyQpCouyquqWRL2XPIfT/g5OZ3SQ==}
+  '@clerk/cli-linux-x64-musl@4.0.0':
+    resolution: {integrity: sha512-LRWumAtGcGx8VbXltG6AyRhwX6QxaWcKS4m/Zz9es27O27EmUMUTmj4YItXRx8KpBWCfWULOrabroCUN8vfJ+g==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@clerk/cli-linux-x64@3.2.0':
-    resolution: {integrity: sha512-sIELzItsUSRkXyh+iR+i92yEvqoMHhrqNndjgfHQ6fwh/+1DcoT0UCZYtZBWwM21l7eJ742Qju3lxsWxUWKy1w==}
+  '@clerk/cli-linux-x64@4.0.0':
+    resolution: {integrity: sha512-ZqDcMXQV2OZg3C3Ee5JVq8qk+4rmK/o3bp4znp//1p34PtdTaViVPOjz8VEIooYGOo85lCBefEvYD9a9jGSRmg==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@clerk/cli-win32-arm64@3.2.0':
-    resolution: {integrity: sha512-+7OBsTwTM/IFHWE7MorEMNHxj8MsgktPvJeMFOhJvb66gjVwa+8hMv+ogwAUXoBKEUvos7gJZ6huUfJh2xnZZw==}
+  '@clerk/cli-win32-arm64@4.0.0':
+    resolution: {integrity: sha512-ZZkj2c9iaE2HgFOJOghQu2zS2g/f2cG4ULwuNl0P/V1N40LKzHA5/slVJb251QXAPb8nYGeSlKaD/3teB9JxcQ==}
     cpu: [arm64]
     os: [win32]
 
-  '@clerk/cli-win32-x64@3.2.0':
-    resolution: {integrity: sha512-T4JI0CPyMe1U/kuZApCqOPK3C0E20AStUH16I0cbz/mGmcMLBowMMHXaO1xKplM4nz/OKn0392Q1qsjd5RHASw==}
+  '@clerk/cli-win32-x64@4.0.0':
+    resolution: {integrity: sha512-WwdOtSAD/Ia4robOFzaXFKUL2QzmE3QA98KLl2TPLoUJVRB1oiSPLDOT9bwb+SPcpB49dVri7nWRa7nbC1wztQ==}
     cpu: [x64]
     os: [win32]
 
@@ -1425,6 +1425,7 @@ packages:
   '@opentelemetry/sdk-trace-base@2.11.0':
     resolution: {integrity: sha512-H19x/TX/LZdqiYOjM7fqtSxwlplC5pgelavqbQdHbhdq0q/AI/TGkM2dfGuuynTXmJPeF2HoZVoPDu+TGoW78A==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
 
@@ -2300,8 +2301,8 @@ packages:
   cjs-module-lexer@2.2.1:
     resolution: {integrity: sha512-Ca8swihM+/4yKecYHY52kgJd300hi2lADU/a1RxNTRe+RJ9jvqQlESpbz9DnG9mowez8qwXHB8qYdIUw9e+F5Q==}
 
-  clerk@3.2.0:
-    resolution: {integrity: sha512-nu2YUXwetAukdCeRcuCZAdHqTOryQtebd7SeihduXsqgZYwEkl6BB+m4QCSFoS3ODA64FampvKY/PGsyEJ5zGw==}
+  clerk@4.0.0:
+    resolution: {integrity: sha512-r5zuQtPcE7QMTbnkQHbXjBJc3pjw5ospo6Lkg49lRMNbcRNxBPduWCbsXoy2tw2tJdwLWeiI+PoC84jjg51OZA==}
     engines: {node: '>=20.0.0'}
     hasBin: true
 
@@ -4540,28 +4541,28 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/cli-darwin-arm64@3.2.0':
+  '@clerk/cli-darwin-arm64@4.0.0':
     optional: true
 
-  '@clerk/cli-darwin-x64@3.2.0':
+  '@clerk/cli-darwin-x64@4.0.0':
     optional: true
 
-  '@clerk/cli-linux-arm64-musl@3.2.0':
+  '@clerk/cli-linux-arm64-musl@4.0.0':
     optional: true
 
-  '@clerk/cli-linux-arm64@3.2.0':
+  '@clerk/cli-linux-arm64@4.0.0':
     optional: true
 
-  '@clerk/cli-linux-x64-musl@3.2.0':
+  '@clerk/cli-linux-x64-musl@4.0.0':
     optional: true
 
-  '@clerk/cli-linux-x64@3.2.0':
+  '@clerk/cli-linux-x64@4.0.0':
     optional: true
 
-  '@clerk/cli-win32-arm64@3.2.0':
+  '@clerk/cli-win32-arm64@4.0.0':
     optional: true
 
-  '@clerk/cli-win32-x64@3.2.0':
+  '@clerk/cli-win32-x64@4.0.0':
     optional: true
 
   '@clerk/nextjs@7.9.10(next@16.3.8(@babel/core@7.29.7(supports-color@10.2.2))(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@24.19.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
@@ -5965,16 +5966,16 @@ snapshots:
 
   cjs-module-lexer@2.2.1: {}
 
-  clerk@3.2.0:
+  clerk@4.0.0:
     optionalDependencies:
-      '@clerk/cli-darwin-arm64': 3.2.0
-      '@clerk/cli-darwin-x64': 3.2.0
-      '@clerk/cli-linux-arm64': 3.2.0
-      '@clerk/cli-linux-arm64-musl': 3.2.0
-      '@clerk/cli-linux-x64': 3.2.0
-      '@clerk/cli-linux-x64-musl': 3.2.0
-      '@clerk/cli-win32-arm64': 3.2.0
-      '@clerk/cli-win32-x64': 3.2.0
+      '@clerk/cli-darwin-arm64': 4.0.0
+      '@clerk/cli-darwin-x64': 4.0.0
+      '@clerk/cli-linux-arm64': 4.0.0
+      '@clerk/cli-linux-arm64-musl': 4.0.0
+      '@clerk/cli-linux-x64': 4.0.0
+      '@clerk/cli-linux-x64-musl': 4.0.0
+      '@clerk/cli-win32-arm64': 4.0.0
+      '@clerk/cli-win32-x64': 4.0.0
 
   client-only@0.0.1: {}
 
