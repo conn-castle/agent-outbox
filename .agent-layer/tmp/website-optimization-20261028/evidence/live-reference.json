@@ -1,0 +1,141 @@
+[
+  {
+    "host": "agent-outbox.dev",
+    "desktop": {
+      "runs": [
+        {
+          "ttfb": 0.2772000000476837,
+          "load": 2.3772999999523163,
+          "fcp": 0.472,
+          "lcp": 0.6,
+          "cls": 0,
+          "long_task_excess_ms": 0,
+          "wire_bytes": 1229031,
+          "requests": 39,
+          "bytes_by_type": {
+            "Document": 11334,
+            "Image": 494463,
+            "Stylesheet": 31417,
+            "Script": 683275,
+            "Fetch": 7524,
+            "Other": 1018
+          }
+        },
+        {
+          "ttfb": 1.1820999999046327,
+          "load": 2.4621999999284743,
+          "fcp": 1.464,
+          "lcp": 1.552,
+          "cls": 0,
+          "long_task_excess_ms": 0,
+          "wire_bytes": 1231790,
+          "requests": 39,
+          "bytes_by_type": {
+            "Document": 11313,
+            "Image": 494869,
+            "Stylesheet": 31962,
+            "Script": 683682,
+            "Fetch": 8940,
+            "Other": 1024
+          }
+        },
+        {
+          "ttfb": 0.5708999999761581,
+          "load": 2.0455,
+          "fcp": 0.856,
+          "lcp": 0.928,
+          "cls": 0,
+          "long_task_excess_ms": 0,
+          "wire_bytes": 1231492,
+          "requests": 39,
+          "bytes_by_type": {
+            "Document": 11308,
+            "Image": 494873,
+            "Stylesheet": 31868,
+            "Script": 683540,
+            "Fetch": 8878,
+            "Other": 1025
+          }
+        }
+      ],
+      "median": {
+        "ttfb": 0.5708999999761581,
+        "load": 2.3772999999523163,
+        "fcp": 0.856,
+        "lcp": 0.928,
+        "cls": 0,
+        "long_task_excess_ms": 0,
+        "wire_bytes": 1231492,
+        "requests": 39
+      }
+    },
+    "mobile": {
+      "runs": [
+        {
+          "ttfb": 0.29240000009536743,
+          "load": 6.0355,
+          "fcp": 1.06,
+          "lcp": 3.724,
+          "cls": 0,
+          "long_task_excess_ms": 157,
+          "wire_bytes": 983724,
+          "requests": 36,
+          "bytes_by_type": {
+            "Document": 11307,
+            "Image": 249039,
+            "Stylesheet": 31858,
+            "Script": 683714,
+            "Fetch": 6783,
+            "Other": 1023
+          }
+        },
+        {
+          "ttfb": 2.337,
+          "load": 8.103400000095368,
+          "fcp": 3.048,
+          "lcp": 5.832,
+          "cls": 0,
+          "long_task_excess_ms": 184,
+          "wire_bytes": 983578,
+          "requests": 36,
+          "bytes_by_type": {
+            "Document": 11306,
+            "Image": 249039,
+            "Stylesheet": 31883,
+            "Script": 683548,
+            "Fetch": 6778,
+            "Other": 1024
+          }
+        },
+        {
+          "ttfb": 1.8423999999761582,
+          "load": 7.552899999976158,
+          "fcp": 2.572,
+          "lcp": 5.34,
+          "cls": 0,
+          "long_task_excess_ms": 134,
+          "wire_bytes": 983912,
+          "requests": 36,
+          "bytes_by_type": {
+            "Document": 11313,
+            "Image": 249052,
+            "Stylesheet": 31956,
+            "Script": 683796,
+            "Fetch": 6777,
+            "Other": 1018
+          }
+        }
+      ],
+      "median": {
+        "ttfb": 1.8423999999761582,
+        "load": 7.552899999976158,
+        "fcp": 2.572,
+        "lcp": 5.34,
+        "cls": 0,
+        "long_task_excess_ms": 157,
+        "wire_bytes": 983724,
+        "requests": 36
+      }
+    }
+  }
+]

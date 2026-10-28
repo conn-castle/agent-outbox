@@ -1,0 +1,238 @@
+{
+  "method": {
+    "host": "castle-forge",
+    "url": "http://127.0.0.1:31288/",
+    "protocol": "http/1.1",
+    "browser": "Chromium 156.0.8078.73 via installed playwright-cli 0.1.18",
+    "build": "Next 16.3.8 optimized production mode, existing repository loopback browser fixture configuration; same pinned Node 24.18.0/dependencies; no hosted Clerk/Sentry traffic",
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "dpr": 3,
+      "mobile": true,
+      "touch": true
+    },
+    "cdp": {
+      "down_bytes_per_second": 200000,
+      "up_bytes_per_second": 93750,
+      "latency_ms": 150,
+      "cpu_rate": 4
+    },
+    "cache": "Fresh nonpersistent context each run, browser cache cleared and disabled; no auth profile reused",
+    "order": "Three baseline runs then three candidate runs; same host/port/protocol/config/browser and exclusive shared workload lock",
+    "lcp": "Last observed first-viewport LCP after load, image decode and fonts ready, before any scroll/input; LCP element is the mobile product PNG",
+    "scroll": "From top to full document bottom, 633 CSS px per 150 ms; no tabs changed. Decode all encountered images and await document.fonts.ready; verify request completion. Same eager-image composition; no URL backgrounds/external fonts.",
+    "full_scroll_asset_completion": "Navigation-relative max responseEnd for img/css/link/script resource entries discovered through full scroll, plus document responseEnd. Covers all encountered images, CSS, scripts and fonts; excludes favicon, route-data prefetches and verification/idle after assets completed. Kept separately from loadEventEnd and scan-completion time.",
+    "transfer": "CDP Network.loadingFinished encodedDataLength summed for actual browser traffic through scan, including headers and route prefetches; Resource Timing encodedBodySize and source PNG bytes separately. First baseline run also has extra CDP bytes; all runs retained.",
+    "host_contention": "Shared lock waited 7m31s before baseline build, then held for both builds and both three-run/capture phases. Other-owner heavy work excluded cooperatively. Background nonbenchmark processes remained: baseline-start load average 5.20 and brief gog/Claude spikes; candidate-start 4.15 with lower competing CPU. Raw host snapshots retained; timing estimates may include host noise, although run ranges were narrow.",
+    "live_limit": "Local estimates do not predict absolute hosted release timings: hosted Clerk/UI/analytics requests, edge TTFB/protocol and host hardware differ. No synthetic score or live guarantee."
+  },
+  "variants": {
+    "base": {
+      "metrics": {
+        "lcpMs": {
+          "runs": [
+            2816,
+            2832,
+            2816
+          ],
+          "median": 2816
+        },
+        "loadMs": {
+          "runs": [
+            3602.2999999523163,
+            3528.5999999046326,
+            3528.899999976158
+          ],
+          "median": 3528.899999976158
+        },
+        "fullScrollAssetCompletionMs": {
+          "runs": [
+            3301.6999999284744,
+            3301.899999976158,
+            3288
+          ],
+          "median": 3301.6999999284744
+        },
+        "browserTransferBytes": {
+          "runs": [
+            604153,
+            602762,
+            602765
+          ],
+          "median": 602765
+        },
+        "resourceTransferBytes": {
+          "runs": [
+            595105,
+            595107,
+            595110
+          ],
+          "median": 595107
+        },
+        "encodedBodyBytes": {
+          "runs": [
+            586105,
+            586107,
+            586110
+          ],
+          "median": 586107
+        },
+        "cls": {
+          "runs": [
+            0,
+            0,
+            0
+          ],
+          "median": 0
+        }
+      },
+      "product_png_browser_transfer_bytes": [
+        {
+          "file": "product-review-ipad.png",
+          "browser_transfer_bytes": 141288
+        },
+        {
+          "file": "product-review-mobile.png",
+          "browser_transfer_bytes": 104071
+        }
+      ],
+      "raw": [
+        "timings/base-1.json",
+        "timings/base-2.json",
+        "timings/base-3.json"
+      ],
+      "scanCompletedMs": [
+        6200.5,
+        6060.699999928474,
+        6065.699999928474
+      ]
+    },
+    "worktree": {
+      "metrics": {
+        "lcpMs": {
+          "runs": [
+            2084,
+            2076,
+            2088
+          ],
+          "median": 2084
+        },
+        "loadMs": {
+          "runs": [
+            3236.0999999046326,
+            3206.0999999046326,
+            3195.1999999284744
+          ],
+          "median": 3206.0999999046326
+        },
+        "fullScrollAssetCompletionMs": {
+          "runs": [
+            2980,
+            2972.0999999046326,
+            2979.6999999284744
+          ],
+          "median": 2979.6999999284744
+        },
+        "browserTransferBytes": {
+          "runs": [
+            539152,
+            539151,
+            539152
+          ],
+          "median": 539152
+        },
+        "resourceTransferBytes": {
+          "runs": [
+            531498,
+            531497,
+            531498
+          ],
+          "median": 531498
+        },
+        "encodedBodyBytes": {
+          "runs": [
+            522498,
+            522497,
+            522498
+          ],
+          "median": 522498
+        },
+        "cls": {
+          "runs": [
+            0,
+            0,
+            0
+          ],
+          "median": 0
+        }
+      },
+      "product_png_browser_transfer_bytes": [
+        {
+          "file": "product-review-ipad.png",
+          "browser_transfer_bytes": 106594
+        },
+        {
+          "file": "product-review-mobile.png",
+          "browser_transfer_bytes": 75166
+        }
+      ],
+      "raw": [
+        "timings/worktree-1.json",
+        "timings/worktree-2.json",
+        "timings/worktree-3.json"
+      ],
+      "scanCompletedMs": [
+        5791.699999928474,
+        5746.799999952316,
+        5729.599999904633
+      ]
+    }
+  },
+  "delta": {
+    "lcpMs": {
+      "candidate_minus_base": -732
+    },
+    "loadMs": {
+      "candidate_minus_base": -322.8000000715256
+    },
+    "fullScrollAssetCompletionMs": {
+      "candidate_minus_base": -322.0
+    },
+    "browserTransferBytes": {
+      "candidate_minus_base": -63613
+    },
+    "resourceTransferBytes": {
+      "candidate_minus_base": -63609
+    },
+    "encodedBodyBytes": {
+      "candidate_minus_base": -63609
+    },
+    "cls": {
+      "candidate_minus_base": 0
+    }
+  },
+  "visual": {
+    "pairs": 20,
+    "total_pixels": 90323632,
+    "differing_pixels": 0,
+    "max_channel_delta": 0,
+    "raw": "visual-diffs.json",
+    "stabilization": "Same fresh fixtures, release metadata fixed to base SHA in both builds, same system fonts/ready state. Wait finite interaction transitions to finish; align observed infinite animations only (none observed on homepage). No masks, CSS/content changes, hidden elements or tolerance."
+  },
+  "functional": {
+    "matched_views": [
+      "desktop",
+      "tablet-wide",
+      "tablet",
+      "mobile"
+    ],
+    "equal_dom_links_text_images": true,
+    "menu_escape_focus_return": true,
+    "pricing_anchor_and_menu_close": true,
+    "signup_cta_and_fixture_route": true,
+    "docs_route_headings": true,
+    "page_errors": [],
+    "limits": "No authenticated hosted session or real Clerk signup exercised; existing fixture signup boundary used. Auth, analytics, logging, errors and runtime source have zero changes. Hosted browser CI covers broader existing interaction suites."
+  }
+}

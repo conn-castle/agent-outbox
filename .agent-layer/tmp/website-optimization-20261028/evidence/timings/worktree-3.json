@@ -1,0 +1,1141 @@
+{
+  "started": "2026-10-28T16:01:02.031Z",
+  "viewport": {
+    "width": 390,
+    "height": 844,
+    "dpr": 3
+  },
+  "network": {
+    "down": 200000,
+    "up": 93750,
+    "latency": 150,
+    "cpu": 4
+  },
+  "browser": "156.0.8078.73",
+  "initial": {
+    "url": "http://127.0.0.1:31288/",
+    "nav": {
+      "name": "http://127.0.0.1:31288/",
+      "entryType": "navigation",
+      "startTime": 0,
+      "duration": 3195.1999999284744,
+      "navigationId": 8186,
+      "initiatorType": "navigation",
+      "deliveryType": "",
+      "nextHopProtocol": "http/1.1",
+      "renderBlockingStatus": "non-blocking",
+      "contentType": "text/html",
+      "contentEncoding": "gzip",
+      "workerStart": 0,
+      "workerRouterEvaluationStart": 0,
+      "workerCacheLookupStart": 0,
+      "workerMatchedSourceType": "",
+      "workerFinalSourceType": "",
+      "redirectStart": 0,
+      "redirectEnd": 0,
+      "fetchStart": 0.2999999523162842,
+      "domainLookupStart": 0.2999999523162842,
+      "domainLookupEnd": 0.2999999523162842,
+      "connectStart": 0.2999999523162842,
+      "secureConnectionStart": 0,
+      "connectEnd": 0.2999999523162842,
+      "requestStart": 0.6999999284744263,
+      "responseStart": 10.899999976158142,
+      "firstInterimResponseStart": 0,
+      "finalResponseHeadersStart": 10.899999976158142,
+      "responseEnd": 220,
+      "transferSize": 12090,
+      "encodedBodySize": 11790,
+      "decodedBodySize": 49980,
+      "responseStatus": 200,
+      "serverTiming": [],
+      "unloadEventStart": 0,
+      "unloadEventEnd": 0,
+      "domInteractive": 716.7999999523163,
+      "domContentLoadedEventStart": 716.7999999523163,
+      "domContentLoadedEventEnd": 716.7999999523163,
+      "domComplete": 3195.1999999284744,
+      "loadEventStart": 3195.1999999284744,
+      "loadEventEnd": 3195.1999999284744,
+      "type": "navigate",
+      "redirectCount": 0,
+      "activationStart": 0,
+      "criticalCHRestart": 0,
+      "notRestoredReasons": null,
+      "confidence": {
+        "randomizedTriggerRate": 0.4994798,
+        "value": "high"
+      }
+    },
+    "metrics": {
+      "lcp": [
+        {
+          "time": 736,
+          "size": 48657,
+          "url": "",
+          "tag": "H1",
+          "text": "Where agents wait for\nyour decision."
+        },
+        {
+          "time": 2088,
+          "size": 65860,
+          "url": "http://127.0.0.1:31288/product-review-mobile.png",
+          "tag": "IMG",
+          "text": ""
+        }
+      ],
+      "cls": []
+    },
+    "resources": [
+      {
+        "name": "http://127.0.0.1:31288/agent-outbox-mark.svg",
+        "initiatorType": "link",
+        "startTime": 179.19999992847443,
+        "responseEnd": 332.39999997615814,
+        "transferSize": 931,
+        "encodedBodySize": 631,
+        "decodedBodySize": 631
+      },
+      {
+        "name": "http://127.0.0.1:31288/product-review-ipad.png",
+        "initiatorType": "link",
+        "startTime": 179.29999995231628,
+        "responseEnd": 2709.6999999284744,
+        "transferSize": 106437,
+        "encodedBodySize": 106137,
+        "decodedBodySize": 106137
+      },
+      {
+        "name": "http://127.0.0.1:31288/product-review-mobile.png",
+        "initiatorType": "link",
+        "startTime": 180.09999990463257,
+        "responseEnd": 2072.5,
+        "transferSize": 75010,
+        "encodedBodySize": 74710,
+        "decodedBodySize": 74710
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/0b8-iy6xg0j2g.css",
+        "initiatorType": "link",
+        "startTime": 180.19999992847443,
+        "responseEnd": 549.6999999284744,
+        "transferSize": 11174,
+        "encodedBodySize": 10874,
+        "decodedBodySize": 51634
+      },
+      {
+        "name": "http://127.0.0.1:31288/conn-castle-logo.svg",
+        "initiatorType": "link",
+        "startTime": 180.19999992847443,
+        "responseEnd": 557.1999999284744,
+        "transferSize": 2220,
+        "encodedBodySize": 1920,
+        "decodedBodySize": 4315
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/25_t5nh62wxo0.css",
+        "initiatorType": "link",
+        "startTime": 180.29999995231628,
+        "responseEnd": 640.0999999046326,
+        "transferSize": 16048,
+        "encodedBodySize": 15748,
+        "decodedBodySize": 93890
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/0fyyw3cmr7kks.js",
+        "initiatorType": "link",
+        "startTime": 180.29999995231628,
+        "responseEnd": 902,
+        "transferSize": 3543,
+        "encodedBodySize": 3243,
+        "decodedBodySize": 10511
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/3vohhb9om5lq9.js",
+        "initiatorType": "script",
+        "startTime": 180.29999995231628,
+        "responseEnd": 1059.2999999523163,
+        "transferSize": 8791,
+        "encodedBodySize": 8491,
+        "decodedBodySize": 31566
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/453zh2s5o4gk3.js",
+        "initiatorType": "script",
+        "startTime": 180.39999997615814,
+        "responseEnd": 2019.3999999761581,
+        "transferSize": 43398,
+        "encodedBodySize": 43098,
+        "decodedBodySize": 156456
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/2-9tvdb5v8wnf.js",
+        "initiatorType": "script",
+        "startTime": 181.09999990463257,
+        "responseEnd": 2545,
+        "transferSize": 64929,
+        "encodedBodySize": 64629,
+        "decodedBodySize": 204608
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/turbopack-3mg2kn3jn_4_g.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 1382.3999999761581,
+        "transferSize": 4621,
+        "encodedBodySize": 4321,
+        "decodedBodySize": 10980
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/0ahkfiyyy5wtk.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 1667.3999999761581,
+        "transferSize": 3995,
+        "encodedBodySize": 3695,
+        "decodedBodySize": 14441
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/0f348yxouv3_y.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 2477.1999999284744,
+        "transferSize": 10984,
+        "encodedBodySize": 10684,
+        "decodedBodySize": 30204
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/23hmm9p51lpn1.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 2822.1999999284744,
+        "transferSize": 47819,
+        "encodedBodySize": 47519,
+        "decodedBodySize": 173190
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/2upmsmqh_6m_f.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 2979.6999999284744,
+        "transferSize": 107533,
+        "encodedBodySize": 107233,
+        "decodedBodySize": 335332
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/3hb7pjp_0oksw.js",
+        "initiatorType": "script",
+        "startTime": 181.29999995231628,
+        "responseEnd": 2267.6999999284744,
+        "transferSize": 1258,
+        "encodedBodySize": 958,
+        "decodedBodySize": 958
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/1rhhxokahno4c.js",
+        "initiatorType": "script",
+        "startTime": 182,
+        "responseEnd": 2507.2999999523163,
+        "transferSize": 1510,
+        "encodedBodySize": 1210,
+        "decodedBodySize": 2516
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/2nedzfqqbku4g.js",
+        "initiatorType": "script",
+        "startTime": 182.19999992847443,
+        "responseEnd": 2649.5999999046326,
+        "transferSize": 930,
+        "encodedBodySize": 630,
+        "decodedBodySize": 1296
+      },
+      {
+        "name": "http://127.0.0.1:31288/immediate-action-feedback.js",
+        "initiatorType": "link",
+        "startTime": 182.29999995231628,
+        "responseEnd": 361.89999997615814,
+        "transferSize": 1111,
+        "encodedBodySize": 811,
+        "decodedBodySize": 2628
+      }
+    ],
+    "images": [
+      {
+        "src": "http://127.0.0.1:31288/agent-outbox-mark.svg",
+        "complete": true,
+        "naturalWidth": 150,
+        "top": 18.796875
+      },
+      {
+        "src": "http://127.0.0.1:31288/product-review-mobile.png",
+        "complete": true,
+        "naturalWidth": 430,
+        "top": 658.765625
+      },
+      {
+        "src": "http://127.0.0.1:31288/product-review-ipad.png",
+        "complete": true,
+        "naturalWidth": 768,
+        "top": 0
+      },
+      {
+        "src": "http://127.0.0.1:31288/product-review-mobile.png",
+        "complete": true,
+        "naturalWidth": 430,
+        "top": 6351.1875
+      },
+      {
+        "src": "http://127.0.0.1:31288/conn-castle-logo.svg",
+        "complete": true,
+        "naturalWidth": 240,
+        "top": 9099.671875
+      }
+    ],
+    "backgrounds": [
+      "linear-gradient(145deg, rgb(48, 54, 56), rgb(23, 27, 29) 46%, rgb(8, 10, 11))",
+      "radial-gradient(circle at 50% 52%, rgba(242, 163, 71, 0.13), rgba(242, 163, 71, 0.035) 38%, rgba(0, 0, 0, 0) 65%)",
+      "linear-gradient(145deg, rgb(58, 66, 69), rgb(32, 38, 41) 42%, rgb(17, 21, 23))",
+      "linear-gradient(145deg, rgba(242, 163, 71, 0.09), rgba(255, 255, 255, 0.035) 62%)",
+      "radial-gradient(circle, rgba(242, 163, 71, 0.12), rgba(0, 0, 0, 0) 432px), none"
+    ],
+    "fonts": "loaded",
+    "scrollHeight": 9632
+  },
+  "scrollStartMs": 3262.6999999284744,
+  "scrolled": {
+    "url": "http://127.0.0.1:31288/",
+    "nav": {
+      "name": "http://127.0.0.1:31288/",
+      "entryType": "navigation",
+      "startTime": 0,
+      "duration": 3195.1999999284744,
+      "navigationId": 8186,
+      "initiatorType": "navigation",
+      "deliveryType": "",
+      "nextHopProtocol": "http/1.1",
+      "renderBlockingStatus": "non-blocking",
+      "contentType": "text/html",
+      "contentEncoding": "gzip",
+      "workerStart": 0,
+      "workerRouterEvaluationStart": 0,
+      "workerCacheLookupStart": 0,
+      "workerMatchedSourceType": "",
+      "workerFinalSourceType": "",
+      "redirectStart": 0,
+      "redirectEnd": 0,
+      "fetchStart": 0.2999999523162842,
+      "domainLookupStart": 0.2999999523162842,
+      "domainLookupEnd": 0.2999999523162842,
+      "connectStart": 0.2999999523162842,
+      "secureConnectionStart": 0,
+      "connectEnd": 0.2999999523162842,
+      "requestStart": 0.6999999284744263,
+      "responseStart": 10.899999976158142,
+      "firstInterimResponseStart": 0,
+      "finalResponseHeadersStart": 10.899999976158142,
+      "responseEnd": 220,
+      "transferSize": 12090,
+      "encodedBodySize": 11790,
+      "decodedBodySize": 49980,
+      "responseStatus": 200,
+      "serverTiming": [],
+      "unloadEventStart": 0,
+      "unloadEventEnd": 0,
+      "domInteractive": 716.7999999523163,
+      "domContentLoadedEventStart": 716.7999999523163,
+      "domContentLoadedEventEnd": 716.7999999523163,
+      "domComplete": 3195.1999999284744,
+      "loadEventStart": 3195.1999999284744,
+      "loadEventEnd": 3195.1999999284744,
+      "type": "navigate",
+      "redirectCount": 0,
+      "activationStart": 0,
+      "criticalCHRestart": 0,
+      "notRestoredReasons": null,
+      "confidence": {
+        "randomizedTriggerRate": 0.4994798,
+        "value": "high"
+      }
+    },
+    "metrics": {
+      "lcp": [
+        {
+          "time": 736,
+          "size": 48657,
+          "url": "",
+          "tag": "H1",
+          "text": "Where agents wait for\nyour decision."
+        },
+        {
+          "time": 2088,
+          "size": 65860,
+          "url": "http://127.0.0.1:31288/product-review-mobile.png",
+          "tag": "IMG",
+          "text": ""
+        }
+      ],
+      "cls": []
+    },
+    "resources": [
+      {
+        "name": "http://127.0.0.1:31288/agent-outbox-mark.svg",
+        "initiatorType": "link",
+        "startTime": 179.19999992847443,
+        "responseEnd": 332.39999997615814,
+        "transferSize": 931,
+        "encodedBodySize": 631,
+        "decodedBodySize": 631
+      },
+      {
+        "name": "http://127.0.0.1:31288/product-review-ipad.png",
+        "initiatorType": "link",
+        "startTime": 179.29999995231628,
+        "responseEnd": 2709.6999999284744,
+        "transferSize": 106437,
+        "encodedBodySize": 106137,
+        "decodedBodySize": 106137
+      },
+      {
+        "name": "http://127.0.0.1:31288/product-review-mobile.png",
+        "initiatorType": "link",
+        "startTime": 180.09999990463257,
+        "responseEnd": 2072.5,
+        "transferSize": 75010,
+        "encodedBodySize": 74710,
+        "decodedBodySize": 74710
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/0b8-iy6xg0j2g.css",
+        "initiatorType": "link",
+        "startTime": 180.19999992847443,
+        "responseEnd": 549.6999999284744,
+        "transferSize": 11174,
+        "encodedBodySize": 10874,
+        "decodedBodySize": 51634
+      },
+      {
+        "name": "http://127.0.0.1:31288/conn-castle-logo.svg",
+        "initiatorType": "link",
+        "startTime": 180.19999992847443,
+        "responseEnd": 557.1999999284744,
+        "transferSize": 2220,
+        "encodedBodySize": 1920,
+        "decodedBodySize": 4315
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/25_t5nh62wxo0.css",
+        "initiatorType": "link",
+        "startTime": 180.29999995231628,
+        "responseEnd": 640.0999999046326,
+        "transferSize": 16048,
+        "encodedBodySize": 15748,
+        "decodedBodySize": 93890
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/0fyyw3cmr7kks.js",
+        "initiatorType": "link",
+        "startTime": 180.29999995231628,
+        "responseEnd": 902,
+        "transferSize": 3543,
+        "encodedBodySize": 3243,
+        "decodedBodySize": 10511
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/3vohhb9om5lq9.js",
+        "initiatorType": "script",
+        "startTime": 180.29999995231628,
+        "responseEnd": 1059.2999999523163,
+        "transferSize": 8791,
+        "encodedBodySize": 8491,
+        "decodedBodySize": 31566
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/453zh2s5o4gk3.js",
+        "initiatorType": "script",
+        "startTime": 180.39999997615814,
+        "responseEnd": 2019.3999999761581,
+        "transferSize": 43398,
+        "encodedBodySize": 43098,
+        "decodedBodySize": 156456
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/2-9tvdb5v8wnf.js",
+        "initiatorType": "script",
+        "startTime": 181.09999990463257,
+        "responseEnd": 2545,
+        "transferSize": 64929,
+        "encodedBodySize": 64629,
+        "decodedBodySize": 204608
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/turbopack-3mg2kn3jn_4_g.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 1382.3999999761581,
+        "transferSize": 4621,
+        "encodedBodySize": 4321,
+        "decodedBodySize": 10980
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/0ahkfiyyy5wtk.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 1667.3999999761581,
+        "transferSize": 3995,
+        "encodedBodySize": 3695,
+        "decodedBodySize": 14441
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/0f348yxouv3_y.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 2477.1999999284744,
+        "transferSize": 10984,
+        "encodedBodySize": 10684,
+        "decodedBodySize": 30204
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/23hmm9p51lpn1.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 2822.1999999284744,
+        "transferSize": 47819,
+        "encodedBodySize": 47519,
+        "decodedBodySize": 173190
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/2upmsmqh_6m_f.js",
+        "initiatorType": "script",
+        "startTime": 181.19999992847443,
+        "responseEnd": 2979.6999999284744,
+        "transferSize": 107533,
+        "encodedBodySize": 107233,
+        "decodedBodySize": 335332
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/3hb7pjp_0oksw.js",
+        "initiatorType": "script",
+        "startTime": 181.29999995231628,
+        "responseEnd": 2267.6999999284744,
+        "transferSize": 1258,
+        "encodedBodySize": 958,
+        "decodedBodySize": 958
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/1rhhxokahno4c.js",
+        "initiatorType": "script",
+        "startTime": 182,
+        "responseEnd": 2507.2999999523163,
+        "transferSize": 1510,
+        "encodedBodySize": 1210,
+        "decodedBodySize": 2516
+      },
+      {
+        "name": "http://127.0.0.1:31288/_next/static/chunks/2nedzfqqbku4g.js",
+        "initiatorType": "script",
+        "startTime": 182.19999992847443,
+        "responseEnd": 2649.5999999046326,
+        "transferSize": 930,
+        "encodedBodySize": 630,
+        "decodedBodySize": 1296
+      },
+      {
+        "name": "http://127.0.0.1:31288/immediate-action-feedback.js",
+        "initiatorType": "link",
+        "startTime": 182.29999995231628,
+        "responseEnd": 361.89999997615814,
+        "transferSize": 1111,
+        "encodedBodySize": 811,
+        "decodedBodySize": 2628
+      },
+      {
+        "name": "http://127.0.0.1:31288/icon.svg?icon.1y4b8rqadx9xu.svg",
+        "initiatorType": "other",
+        "startTime": 3211.5999999046326,
+        "responseEnd": 3369.7999999523163,
+        "transferSize": 1090,
+        "encodedBodySize": 790,
+        "decodedBodySize": 790
+      },
+      {
+        "name": "http://127.0.0.1:31288/sign-up?_rsc=5CB68i4pnAekjehf",
+        "initiatorType": "fetch",
+        "startTime": 3271.7999999523163,
+        "responseEnd": 3429.5,
+        "transferSize": 477,
+        "encodedBodySize": 177,
+        "decodedBodySize": 336
+      },
+      {
+        "name": "http://127.0.0.1:31288/?_rsc=tXyZJ52UQVBCVsD3",
+        "initiatorType": "fetch",
+        "startTime": 3272.0999999046326,
+        "responseEnd": 3437.0999999046326,
+        "transferSize": 1073,
+        "encodedBodySize": 773,
+        "decodedBodySize": 1344
+      },
+      {
+        "name": "http://127.0.0.1:31288/sign-up?_rsc=tXyZJ52UQVBCVsD3",
+        "initiatorType": "fetch",
+        "startTime": 3440.399999976158,
+        "responseEnd": 3594.5,
+        "transferSize": 1097,
+        "encodedBodySize": 797,
+        "decodedBodySize": 1469
+      },
+      {
+        "name": "http://127.0.0.1:31288/upgrade?_rsc=5CB68i4pnAekjehf",
+        "initiatorType": "fetch",
+        "startTime": 5112.099999904633,
+        "responseEnd": 5267.599999904633,
+        "transferSize": 466,
+        "encodedBodySize": 166,
+        "decodedBodySize": 267
+      },
+      {
+        "name": "http://127.0.0.1:31288/upgrade?_rsc=tXyZJ52UQVBCVsD3",
+        "initiatorType": "fetch",
+        "startTime": 5270.599999904633,
+        "responseEnd": 5424.899999976158,
+        "transferSize": 1085,
+        "encodedBodySize": 785,
+        "decodedBodySize": 1400
+      },
+      {
+        "name": "http://127.0.0.1:31288/docs/api?_rsc=5CB68i4pnAekjehf",
+        "initiatorType": "fetch",
+        "startTime": 5417,
+        "responseEnd": 5575.299999952316,
+        "transferSize": 468,
+        "encodedBodySize": 168,
+        "decodedBodySize": 316
+      },
+      {
+        "name": "http://127.0.0.1:31288/contact?_rsc=5CB68i4pnAekjehf",
+        "initiatorType": "fetch",
+        "startTime": 5417.099999904633,
+        "responseEnd": 5582.399999976158,
+        "transferSize": 466,
+        "encodedBodySize": 166,
+        "decodedBodySize": 267
+      },
+      {
+        "name": "http://127.0.0.1:31288/privacy-policy?_rsc=5CB68i4pnAekjehf",
+        "initiatorType": "fetch",
+        "startTime": 5417.099999904633,
+        "responseEnd": 5589.299999952316,
+        "transferSize": 472,
+        "encodedBodySize": 172,
+        "decodedBodySize": 274
+      },
+      {
+        "name": "http://127.0.0.1:31288/terms-of-service?_rsc=5CB68i4pnAekjehf",
+        "initiatorType": "fetch",
+        "startTime": 5428,
+        "responseEnd": 5596.799999952316,
+        "transferSize": 472,
+        "encodedBodySize": 172,
+        "decodedBodySize": 276
+      }
+    ],
+    "images": [
+      {
+        "src": "http://127.0.0.1:31288/agent-outbox-mark.svg",
+        "complete": true,
+        "naturalWidth": 150,
+        "top": 18.796875
+      },
+      {
+        "src": "http://127.0.0.1:31288/product-review-mobile.png",
+        "complete": true,
+        "naturalWidth": 430,
+        "top": -8129.234375
+      },
+      {
+        "src": "http://127.0.0.1:31288/product-review-ipad.png",
+        "complete": true,
+        "naturalWidth": 768,
+        "top": 0
+      },
+      {
+        "src": "http://127.0.0.1:31288/product-review-mobile.png",
+        "complete": true,
+        "naturalWidth": 430,
+        "top": -2436.8125
+      },
+      {
+        "src": "http://127.0.0.1:31288/conn-castle-logo.svg",
+        "complete": true,
+        "naturalWidth": 240,
+        "top": 311.671875
+      }
+    ],
+    "backgrounds": [
+      "linear-gradient(145deg, rgb(48, 54, 56), rgb(23, 27, 29) 46%, rgb(8, 10, 11))",
+      "radial-gradient(circle at 50% 52%, rgba(242, 163, 71, 0.13), rgba(242, 163, 71, 0.035) 38%, rgba(0, 0, 0, 0) 65%)",
+      "linear-gradient(145deg, rgb(58, 66, 69), rgb(32, 38, 41) 42%, rgb(17, 21, 23))",
+      "linear-gradient(145deg, rgba(242, 163, 71, 0.09), rgba(255, 255, 255, 0.035) 62%)",
+      "radial-gradient(circle, rgba(242, 163, 71, 0.12), rgba(0, 0, 0, 0) 432px), none"
+    ],
+    "fonts": "loaded",
+    "scrollHeight": 9632
+  },
+  "scanCompletedMs": 5729.599999904633,
+  "requests": [
+    {
+      "id": "9FD206C62F19A129E19A6A512376A7C0",
+      "url": "http://127.0.0.1:31288/",
+      "type": "Document",
+      "start": 614140.434483,
+      "status": 200,
+      "mime": "text/html",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614140.594722,
+      "end": 614140.654198,
+      "transferBytes": 12367
+    },
+    {
+      "id": "3193054.2",
+      "url": "http://127.0.0.1:31288/agent-outbox-mark.svg",
+      "type": "Image",
+      "start": 614140.613329,
+      "status": 200,
+      "mime": "image/svg+xml",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614140.76692,
+      "end": 614140.766591,
+      "transferBytes": 1110
+    },
+    {
+      "id": "3193054.3",
+      "url": "http://127.0.0.1:31288/product-review-ipad.png",
+      "type": "Image",
+      "start": 614140.613496,
+      "status": 200,
+      "mime": "image/png",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614140.789355,
+      "end": 614143.143836,
+      "transferBytes": 106594
+    },
+    {
+      "id": "3193054.4",
+      "url": "http://127.0.0.1:31288/product-review-mobile.png",
+      "type": "Image",
+      "start": 614140.614295,
+      "status": 200,
+      "mime": "image/png",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614140.833932,
+      "end": 614142.506668,
+      "transferBytes": 75166
+    },
+    {
+      "id": "3193054.5",
+      "url": "http://127.0.0.1:31288/conn-castle-logo.svg",
+      "type": "Image",
+      "start": 614140.614352,
+      "status": 200,
+      "mime": "image/svg+xml",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614140.954472,
+      "end": 614140.991355,
+      "transferBytes": 2448
+    },
+    {
+      "id": "3193054.6",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/0b8-iy6xg0j2g.css",
+      "type": "Stylesheet",
+      "start": 614140.614381,
+      "status": 200,
+      "mime": "text/css",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614140.774728,
+      "end": 614140.983906,
+      "transferBytes": 11431
+    },
+    {
+      "id": "3193054.7",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/25_t5nh62wxo0.css",
+      "type": "Stylesheet",
+      "start": 614140.614416,
+      "status": 200,
+      "mime": "text/css",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614140.781668,
+      "end": 614141.074323,
+      "transferBytes": 16306
+    },
+    {
+      "id": "3193054.8",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/0fyyw3cmr7kks.js",
+      "type": "Script",
+      "start": 614140.614454,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614141.336694,
+      "end": 614141.336189,
+      "transferBytes": 3813
+    },
+    {
+      "id": "3193054.9",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/3vohhb9om5lq9.js",
+      "type": "Script",
+      "start": 614140.614488,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614141.493935,
+      "end": 614141.493482,
+      "transferBytes": 9062
+    },
+    {
+      "id": "3193054.10",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/453zh2s5o4gk3.js",
+      "type": "Script",
+      "start": 614140.614514,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614142.454477,
+      "end": 614142.453588,
+      "transferBytes": 43694
+    },
+    {
+      "id": "3193054.11",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/2-9tvdb5v8wnf.js",
+      "type": "Script",
+      "start": 614140.615327,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614142.980438,
+      "end": 614142.979177,
+      "transferBytes": 65240
+    },
+    {
+      "id": "3193054.12",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/2upmsmqh_6m_f.js",
+      "type": "Script",
+      "start": 614140.615362,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614143.415272,
+      "end": 614143.413962,
+      "transferBytes": 107879
+    },
+    {
+      "id": "3193054.13",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/turbopack-3mg2kn3jn_4_g.js",
+      "type": "Script",
+      "start": 614140.615386,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614141.817461,
+      "end": 614141.816622,
+      "transferBytes": 4892
+    },
+    {
+      "id": "3193054.14",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/0ahkfiyyy5wtk.js",
+      "type": "Script",
+      "start": 614140.615412,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614142.10249,
+      "end": 614142.10161,
+      "transferBytes": 4265
+    },
+    {
+      "id": "3193054.15",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/23hmm9p51lpn1.js",
+      "type": "Script",
+      "start": 614140.615437,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614143.257374,
+      "end": 614143.256381,
+      "transferBytes": 48121
+    },
+    {
+      "id": "3193054.16",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/0f348yxouv3_y.js",
+      "type": "Script",
+      "start": 614140.615466,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614142.912513,
+      "end": 614142.911338,
+      "transferBytes": 11255
+    },
+    {
+      "id": "3193054.17",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/3hb7pjp_0oksw.js",
+      "type": "Script",
+      "start": 614140.615489,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614142.702374,
+      "end": 614142.701933,
+      "transferBytes": 1479
+    },
+    {
+      "id": "3193054.18",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/1rhhxokahno4c.js",
+      "type": "Script",
+      "start": 614140.615518,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614142.942326,
+      "end": 614142.941559,
+      "transferBytes": 1779
+    },
+    {
+      "id": "3193054.19",
+      "url": "http://127.0.0.1:31288/_next/static/chunks/2nedzfqqbku4g.js",
+      "type": "Script",
+      "start": 614140.616375,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614143.084876,
+      "end": 614143.083865,
+      "transferBytes": 1199
+    },
+    {
+      "id": "3193054.20",
+      "url": "http://127.0.0.1:31288/immediate-action-feedback.js",
+      "type": "Script",
+      "start": 614140.616401,
+      "status": 200,
+      "mime": "application/javascript",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614140.796672,
+      "end": 614140.796069,
+      "transferBytes": 1362
+    },
+    {
+      "id": "3193054.53",
+      "url": "http://127.0.0.1:31288/icon.svg?icon.1y4b8rqadx9xu.svg",
+      "type": "Other",
+      "start": 614143.645784,
+      "status": 200,
+      "mime": "image/svg+xml",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614143.804496,
+      "end": 614143.804051,
+      "transferBytes": 1295
+    },
+    {
+      "id": "3193054.54",
+      "url": "http://127.0.0.1:31288/sign-up?_rsc=5CB68i4pnAekjehf",
+      "type": "Fetch",
+      "start": 614143.705216,
+      "status": 200,
+      "mime": "text/x-component",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614143.86666,
+      "end": 614143.863744,
+      "transferBytes": 730
+    },
+    {
+      "id": "3193054.55",
+      "url": "http://127.0.0.1:31288/?_rsc=tXyZJ52UQVBCVsD3",
+      "type": "Fetch",
+      "start": 614143.705984,
+      "status": 200,
+      "mime": "text/x-component",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614143.875653,
+      "end": 614143.871327,
+      "transferBytes": 1340
+    },
+    {
+      "id": "3193054.56",
+      "url": "http://127.0.0.1:31288/sign-up?_rsc=tXyZJ52UQVBCVsD3",
+      "type": "Fetch",
+      "start": 614143.874621,
+      "status": 200,
+      "mime": "text/x-component",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614144.029708,
+      "end": 614144.028769,
+      "transferBytes": 1364
+    },
+    {
+      "id": "3193054.57",
+      "url": "http://127.0.0.1:31288/upgrade?_rsc=5CB68i4pnAekjehf",
+      "type": "Fetch",
+      "start": 614145.545524,
+      "status": 200,
+      "mime": "text/x-component",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614145.702047,
+      "end": 614145.701784,
+      "transferBytes": 719
+    },
+    {
+      "id": "3193054.58",
+      "url": "http://127.0.0.1:31288/upgrade?_rsc=tXyZJ52UQVBCVsD3",
+      "type": "Fetch",
+      "start": 614145.704668,
+      "status": 200,
+      "mime": "text/x-component",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614145.859617,
+      "end": 614145.859077,
+      "transferBytes": 1352
+    },
+    {
+      "id": "3193054.59",
+      "url": "http://127.0.0.1:31288/docs/api?_rsc=5CB68i4pnAekjehf",
+      "type": "Fetch",
+      "start": 614145.851133,
+      "status": 200,
+      "mime": "text/x-component",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614146.009634,
+      "end": 614146.009448,
+      "transferBytes": 721
+    },
+    {
+      "id": "3193054.60",
+      "url": "http://127.0.0.1:31288/contact?_rsc=5CB68i4pnAekjehf",
+      "type": "Fetch",
+      "start": 614145.851254,
+      "status": 200,
+      "mime": "text/x-component",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614146.016808,
+      "end": 614146.016629,
+      "transferBytes": 719
+    },
+    {
+      "id": "3193054.61",
+      "url": "http://127.0.0.1:31288/privacy-policy?_rsc=5CB68i4pnAekjehf",
+      "type": "Fetch",
+      "start": 614145.851307,
+      "status": 200,
+      "mime": "text/x-component",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614146.023742,
+      "end": 614146.023502,
+      "transferBytes": 725
+    },
+    {
+      "id": "3193054.62",
+      "url": "http://127.0.0.1:31288/terms-of-service?_rsc=5CB68i4pnAekjehf",
+      "type": "Fetch",
+      "start": 614145.86213,
+      "status": 200,
+      "mime": "text/x-component",
+      "protocol": "http/1.1",
+      "fromDiskCache": false,
+      "fromServiceWorker": false,
+      "response": 614146.031442,
+      "end": 614146.031086,
+      "transferBytes": 725
+    },
+    {
+      "id": "3193054.63",
+      "url": "http://127.0.0.1:31288/docs/api?_rsc=tXyZJ52UQVBCVsD3",
+      "type": "Fetch",
+      "start": 614146.012531
+    },
+    {
+      "id": "3193054.64",
+      "url": "http://127.0.0.1:31288/contact?_rsc=tXyZJ52UQVBCVsD3",
+      "type": "Fetch",
+      "start": 614146.01927
+    },
+    {
+      "id": "3193054.65",
+      "url": "http://127.0.0.1:31288/privacy-policy?_rsc=tXyZJ52UQVBCVsD3",
+      "type": "Fetch",
+      "start": 614146.02632
+    },
+    {
+      "id": "3193054.66",
+      "url": "http://127.0.0.1:31288/terms-of-service?_rsc=tXyZJ52UQVBCVsD3",
+      "type": "Fetch",
+      "start": 614146.034835
+    }
+  ],
+  "metrics": {
+    "lcpMs": 2088,
+    "loadMs": 3195.1999999284744,
+    "fullScrollAssetCompletionMs": 2979.6999999284744,
+    "browserTransferBytes": 539152,
+    "resourceTransferBytes": 531498,
+    "encodedBodyBytes": 522498,
+    "cls": 0
+  },
+  "errors": []
+}

@@ -1,0 +1,722 @@
+{
+  "variant": "worktree",
+  "browser": "156.0.8078.73",
+  "views": [
+    {
+      "name": "desktop",
+      "width": 1440,
+      "height": 1000,
+      "dpr": 1,
+      "full": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-desktop-full.png",
+      "top": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-desktop-top.png",
+      "errors": [],
+      "state": {
+        "title": "Agent Outbox",
+        "text": "Agent Outbox\nCaller access\nHow it works\nPricing\nDocs\nSign in\nGet started\n\nHUMAN DECISIONS FOR AUTONOMOUS WORK\n\nWhere agents wait for\nyour decision.\n\nAgent Outbox is an asynchronous review queue for automated agents. Callers submit questions or approval requests, then retrieve your response when their workflow is ready to continue.\n\nGet started free\nExplore the product\n\u2193\n\nAGENT OUTBOX / REVIEW QUEUE\n\nACTUAL PRODUCT INTERFACE\n\napp.agent-outbox.dev/human\n\n\u2022\u2022\u2022\n\nOne inbox. Every agent decision that needs your review.\n\nSEARCH \u00b7 FILTER \u00b7 REVIEW \u00b7 RESPOND\n\n01 / INSTALLATION\n\nConnect once. Then step away.\n\nInstall the CLI and connect an agent to your account. It can send a review request whenever human input is required\u2014even when nobody is watching the run.\n\n01\n\nInstall with Homebrew\n\n02\n\nConnect your agent\n\n03\n\nApprove in browser\n\nagent-outbox / zsh\nHomebrew\n$ brew install --cask conn-castle/tap/agent-outbox\n# Connect your agent, then approve it in the browser:\n$ agent-outbox caller connect my-agent\n\nmy-agent is a local label you choose. The connect command opens Agent Outbox so you can review and approve the caller in your browser. Headless sessions use a device code.\n\n02 / THE HANDOFF\n\nAgents should ask.\nNot guess.\n\nSome steps require human judgment. Agent Outbox makes that handoff a deliberate, reliable part of the workflow, even when the reviewer and agent are working at different times.\n\n01\n\nThe agent reaches a decision point.\n\nIt sends a structured request with the relevant context and response options already attached.\n\n02\n\nThe review stays organized until you are ready.\n\nAgent Outbox keeps every request visible for the right reviewer, without adding another meeting or live handoff.\n\n03\n\nYour response becomes the next instruction.\n\nThe agent receives one explicit response, acknowledges it, and continues from the same point in its workflow.\n\n03 / THE DECISION\n\nSee what the agent needs from you.\n\nEach request brings the prompt, supporting material, and available responses into one place. Review the context, respond, and return to your work.\n\nAgent identity, priority, and revision stay visible\nApproval, choice, text, date, and file responses\nResponses can be undone until agent acknowledgement\n\n04 / USE CASES\n\nPut human judgment exactly where it adds value.\n\nUse one review queue for approvals, edits, questions, and operational decisions across your agent workflows.\n\n01\n\nBEFORE IT SENDS\n\nApprove agent-drafted email.\n\nLet an agent prepare the reply and gather the context. Keep final review in human hands before it reaches a customer, partner, or teammate.\n\n02\n\nBEFORE IT COMMITS\n\nConfirm a high-impact decision.\n\nSend purchases, policy exceptions, and production changes to the accountable person before action is taken.\n\n03\n\nWHEN A RUN HITS AMBIGUITY\n\nAnswer without watching the run.\n\nLet an overnight research or data agent pause on a missing assumption, ask the right person, and resume after the answer arrives.\n\n04\n\nWHEN AN AUTOMATED CHECK FAILS\n\nResolve the exception asynchronously.\n\nRoute a failed deployment check, unmatched record, or policy exception to an owner, then let the workflow continue from their response.\n\n05 / WHEREVER YOU ARE\n\nReview from any screen.\n\nReview one request between meetings or work through the full queue at your desk. The responsive interface keeps the prompt, context, and actions in view.\n\nACTUAL RESPONSIVE PRODUCT \u00b7 430PX VIEWPORT\n\n06 / PRICING\n\nStart free.\nScale with Pro.\n\nBuild and run complete review workflows on the free plan. Choose Pro for higher volume, longer-lived pending requests, file uploads, and expanded storage.\n\nSTARTER\n\n$0\nper month\n\nComplete review workflows for everyday volume.\n\n5,000 review requests each month\nUp to 1,000 pending requests\n60-day window for pending requests\n32 MB review data storage\nStart for free\n\nPRO\n\n$5\nper month \u00b7 $50 per year\n\nHigher-volume workflows with files and more storage.\n\nNo monthly submission or queue caps\nPending requests stay until resolved\nFile uploads in human responses\n1 GB total account storage\nStart with Pro\n\nPlans apply per account. Both include the complete review queue, search, status controls, and every non-file response type. Standard request-size and rate protections apply.\n\nREADY WHEN YOU ARE\n\nKeep agents moving.\nReview when it works for you.\nCreate your free account\n\nFree to start \u00b7 No credit card required\n\nAgent Outbox\n\nBrought to you by Conn Castle Studios.\n\nAn asynchronous human review queue for AI agents.\n\nPRODUCT\n\nCaller access\nHow it works\nPricing\n\nRESOURCES\n\nAPI docs\nGitHub\nContact\n\n\u00a9 2026 Conn Castle Studios. All rights reserved.\n\nPrivacy Policy\nTerms of Service\nSoftware License\nv0.7.1 \u00b7 e0aebb4",
+        "links": [
+          {
+            "text": "Agent Outbox",
+            "href": "/"
+          },
+          {
+            "text": "Caller access",
+            "href": "/#installation"
+          },
+          {
+            "text": "How it works",
+            "href": "/#how-it-works"
+          },
+          {
+            "text": "Pricing",
+            "href": "/#pricing"
+          },
+          {
+            "text": "Docs",
+            "href": "/docs/api"
+          },
+          {
+            "text": "",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          },
+          {
+            "text": "Sign in",
+            "href": "/sign-in"
+          },
+          {
+            "text": "Get started",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Get started free",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Explore the product\n\u2193",
+            "href": "#product"
+          },
+          {
+            "text": "Start for free",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Start with Pro",
+            "href": "/upgrade"
+          },
+          {
+            "text": "Create your free account",
+            "href": "/sign-up"
+          },
+          {
+            "text": "",
+            "href": "https://conncastlestudios.com"
+          },
+          {
+            "text": "Conn Castle Studios",
+            "href": "https://conncastlestudios.com"
+          },
+          {
+            "text": "Caller access",
+            "href": "/#installation"
+          },
+          {
+            "text": "How it works",
+            "href": "/#how-it-works"
+          },
+          {
+            "text": "Pricing",
+            "href": "/#pricing"
+          },
+          {
+            "text": "API docs",
+            "href": "/docs/api"
+          },
+          {
+            "text": "GitHub",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          },
+          {
+            "text": "Contact",
+            "href": "/contact"
+          },
+          {
+            "text": "Privacy Policy",
+            "href": "/privacy-policy"
+          },
+          {
+            "text": "Terms of Service",
+            "href": "/terms-of-service"
+          },
+          {
+            "text": "Software License",
+            "href": "https://github.com/conn-castle/agent-outbox/blob/main/LICENSE"
+          },
+          {
+            "text": "",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          }
+        ],
+        "images": [
+          {
+            "src": "http://127.0.0.1:31288/agent-outbox-mark.svg",
+            "alt": "",
+            "width": 44,
+            "height": 44,
+            "naturalWidth": 150,
+            "naturalHeight": 150
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-queue.png",
+            "alt": "Agent Outbox review queue with pending requests and an open neighborhood permit review",
+            "width": 1318,
+            "height": 879,
+            "naturalWidth": 1440,
+            "naturalHeight": 960
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-ipad.png",
+            "alt": "Agent Outbox request detail with structured context and response actions",
+            "width": 569,
+            "height": 772,
+            "naturalWidth": 768,
+            "naturalHeight": 1024
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-mobile.png",
+            "alt": "Agent Outbox review queue on a mobile screen",
+            "width": 323,
+            "height": 700,
+            "naturalWidth": 430,
+            "naturalHeight": 932
+          },
+          {
+            "src": "http://127.0.0.1:31288/conn-castle-logo.svg",
+            "alt": "Conn Castle Studios",
+            "width": 102,
+            "height": 64,
+            "naturalWidth": 240,
+            "naturalHeight": 150
+          }
+        ],
+        "animations": [],
+        "fonts": "loaded",
+        "scrollWidth": 1440
+      },
+      "pricing": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-desktop-pricing.png",
+      "pricingNavigation": {
+        "hash": "#pricing",
+        "scrollY": 6228,
+        "headingVisible": true,
+        "menuExpanded": "false"
+      },
+      "ctaHref": "/sign-up",
+      "ctaHover": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-desktop-cta-hover.png",
+      "cta": {
+        "url": "http://127.0.0.1:31288/sign-up",
+        "text": "PUBLIC SIGNUP\n\nBrowser fixture signup\n\nThis deterministic test path represents Clerk-hosted signup in the browser harness and lands on the protected review queue.\n\nCreate test account\n\nBy continuing, you agree to the Terms of Service and acknowledge the Privacy Policy."
+      },
+      "signUp": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-desktop-sign-up.png",
+      "docs": {
+        "url": "http://127.0.0.1:31288/docs/api",
+        "title": "API Documentation | Agent Outbox",
+        "headings": [
+          "Build your first human checkpoint",
+          "Before you start#",
+          "1. Send a review request#",
+          "2. Continue other work#",
+          "3. Check for a decision#",
+          "4. Read the decision#",
+          "5. Acknowledge durable handling#",
+          "Where to go next#"
+        ]
+      },
+      "docsScreenshot": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-desktop-docs.png"
+    },
+    {
+      "name": "tablet-wide",
+      "width": 1024,
+      "height": 1000,
+      "dpr": 1,
+      "full": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-tablet-wide-full.png",
+      "top": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-tablet-wide-top.png",
+      "errors": [],
+      "state": {
+        "title": "Agent Outbox",
+        "text": "Agent Outbox\nCaller access\nHow it works\nPricing\nDocs\nSign in\nGet started\n\nHUMAN DECISIONS FOR AUTONOMOUS WORK\n\nWhere agents wait for\nyour decision.\n\nAgent Outbox is an asynchronous review queue for automated agents. Callers submit questions or approval requests, then retrieve your response when their workflow is ready to continue.\n\nGet started free\nExplore the product\n\u2193\n\nAGENT OUTBOX / REVIEW QUEUE\n\nACTUAL PRODUCT INTERFACE\n\napp.agent-outbox.dev/human\n\n\u2022\u2022\u2022\n\nOne inbox. Every agent decision that needs your review.\n\nSEARCH \u00b7 FILTER \u00b7 REVIEW \u00b7 RESPOND\n\n01 / INSTALLATION\n\nConnect once. Then step away.\n\nInstall the CLI and connect an agent to your account. It can send a review request whenever human input is required\u2014even when nobody is watching the run.\n\n01\n\nInstall with Homebrew\n\n02\n\nConnect your agent\n\n03\n\nApprove in browser\n\nagent-outbox / zsh\nHomebrew\n$ brew install --cask conn-castle/tap/agent-outbox\n# Connect your agent, then approve it in the browser:\n$ agent-outbox caller connect my-agent\n\nmy-agent is a local label you choose. The connect command opens Agent Outbox so you can review and approve the caller in your browser. Headless sessions use a device code.\n\n02 / THE HANDOFF\n\nAgents should ask.\nNot guess.\n\nSome steps require human judgment. Agent Outbox makes that handoff a deliberate, reliable part of the workflow, even when the reviewer and agent are working at different times.\n\n01\n\nThe agent reaches a decision point.\n\nIt sends a structured request with the relevant context and response options already attached.\n\n02\n\nThe review stays organized until you are ready.\n\nAgent Outbox keeps every request visible for the right reviewer, without adding another meeting or live handoff.\n\n03\n\nYour response becomes the next instruction.\n\nThe agent receives one explicit response, acknowledges it, and continues from the same point in its workflow.\n\n03 / THE DECISION\n\nSee what the agent needs from you.\n\nEach request brings the prompt, supporting material, and available responses into one place. Review the context, respond, and return to your work.\n\nAgent identity, priority, and revision stay visible\nApproval, choice, text, date, and file responses\nResponses can be undone until agent acknowledgement\n\n04 / USE CASES\n\nPut human judgment exactly where it adds value.\n\nUse one review queue for approvals, edits, questions, and operational decisions across your agent workflows.\n\n01\n\nBEFORE IT SENDS\n\nApprove agent-drafted email.\n\nLet an agent prepare the reply and gather the context. Keep final review in human hands before it reaches a customer, partner, or teammate.\n\n02\n\nBEFORE IT COMMITS\n\nConfirm a high-impact decision.\n\nSend purchases, policy exceptions, and production changes to the accountable person before action is taken.\n\n03\n\nWHEN A RUN HITS AMBIGUITY\n\nAnswer without watching the run.\n\nLet an overnight research or data agent pause on a missing assumption, ask the right person, and resume after the answer arrives.\n\n04\n\nWHEN AN AUTOMATED CHECK FAILS\n\nResolve the exception asynchronously.\n\nRoute a failed deployment check, unmatched record, or policy exception to an owner, then let the workflow continue from their response.\n\n05 / WHEREVER YOU ARE\n\nReview from any screen.\n\nReview one request between meetings or work through the full queue at your desk. The responsive interface keeps the prompt, context, and actions in view.\n\nACTUAL RESPONSIVE PRODUCT \u00b7 430PX VIEWPORT\n\n06 / PRICING\n\nStart free.\nScale with Pro.\n\nBuild and run complete review workflows on the free plan. Choose Pro for higher volume, longer-lived pending requests, file uploads, and expanded storage.\n\nSTARTER\n\n$0\nper month\n\nComplete review workflows for everyday volume.\n\n5,000 review requests each month\nUp to 1,000 pending requests\n60-day window for pending requests\n32 MB review data storage\nStart for free\n\nPRO\n\n$5\nper month \u00b7 $50 per year\n\nHigher-volume workflows with files and more storage.\n\nNo monthly submission or queue caps\nPending requests stay until resolved\nFile uploads in human responses\n1 GB total account storage\nStart with Pro\n\nPlans apply per account. Both include the complete review queue, search, status controls, and every non-file response type. Standard request-size and rate protections apply.\n\nREADY WHEN YOU ARE\n\nKeep agents moving.\nReview when it works for you.\nCreate your free account\n\nFree to start \u00b7 No credit card required\n\nAgent Outbox\n\nBrought to you by Conn Castle Studios.\n\nAn asynchronous human review queue for AI agents.\n\nPRODUCT\n\nCaller access\nHow it works\nPricing\n\nRESOURCES\n\nAPI docs\nGitHub\nContact\n\n\u00a9 2026 Conn Castle Studios. All rights reserved.\n\nPrivacy Policy\nTerms of Service\nSoftware License\nv0.7.1 \u00b7 e0aebb4",
+        "links": [
+          {
+            "text": "Agent Outbox",
+            "href": "/"
+          },
+          {
+            "text": "Caller access",
+            "href": "/#installation"
+          },
+          {
+            "text": "How it works",
+            "href": "/#how-it-works"
+          },
+          {
+            "text": "Pricing",
+            "href": "/#pricing"
+          },
+          {
+            "text": "Docs",
+            "href": "/docs/api"
+          },
+          {
+            "text": "",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          },
+          {
+            "text": "Sign in",
+            "href": "/sign-in"
+          },
+          {
+            "text": "Get started",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Get started free",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Explore the product\n\u2193",
+            "href": "#product"
+          },
+          {
+            "text": "Start for free",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Start with Pro",
+            "href": "/upgrade"
+          },
+          {
+            "text": "Create your free account",
+            "href": "/sign-up"
+          },
+          {
+            "text": "",
+            "href": "https://conncastlestudios.com"
+          },
+          {
+            "text": "Conn Castle Studios",
+            "href": "https://conncastlestudios.com"
+          },
+          {
+            "text": "Caller access",
+            "href": "/#installation"
+          },
+          {
+            "text": "How it works",
+            "href": "/#how-it-works"
+          },
+          {
+            "text": "Pricing",
+            "href": "/#pricing"
+          },
+          {
+            "text": "API docs",
+            "href": "/docs/api"
+          },
+          {
+            "text": "GitHub",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          },
+          {
+            "text": "Contact",
+            "href": "/contact"
+          },
+          {
+            "text": "Privacy Policy",
+            "href": "/privacy-policy"
+          },
+          {
+            "text": "Terms of Service",
+            "href": "/terms-of-service"
+          },
+          {
+            "text": "Software License",
+            "href": "https://github.com/conn-castle/agent-outbox/blob/main/LICENSE"
+          },
+          {
+            "text": "",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          }
+        ],
+        "images": [
+          {
+            "src": "http://127.0.0.1:31288/agent-outbox-mark.svg",
+            "alt": "",
+            "width": 44,
+            "height": 44,
+            "naturalWidth": 150,
+            "naturalHeight": 150
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-queue.png",
+            "alt": "Agent Outbox review queue with pending requests and an open neighborhood permit review",
+            "width": 974,
+            "height": 649,
+            "naturalWidth": 1440,
+            "naturalHeight": 960
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-ipad.png",
+            "alt": "Agent Outbox request detail with structured context and response actions",
+            "width": 569,
+            "height": 772,
+            "naturalWidth": 768,
+            "naturalHeight": 1024
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-mobile.png",
+            "alt": "Agent Outbox review queue on a mobile screen",
+            "width": 323,
+            "height": 700,
+            "naturalWidth": 430,
+            "naturalHeight": 932
+          },
+          {
+            "src": "http://127.0.0.1:31288/conn-castle-logo.svg",
+            "alt": "Conn Castle Studios",
+            "width": 102,
+            "height": 64,
+            "naturalWidth": 240,
+            "naturalHeight": 150
+          }
+        ],
+        "animations": [],
+        "fonts": "loaded",
+        "scrollWidth": 1024
+      },
+      "pricing": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-tablet-wide-pricing.png",
+      "pricingNavigation": {
+        "hash": "#pricing",
+        "scrollY": 6399,
+        "headingVisible": true,
+        "menuExpanded": "false"
+      }
+    },
+    {
+      "name": "tablet",
+      "width": 768,
+      "height": 1024,
+      "dpr": 1,
+      "full": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-tablet-full.png",
+      "top": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-tablet-top.png",
+      "errors": [],
+      "state": {
+        "title": "Agent Outbox",
+        "text": "Agent Outbox\nMenu\n\nHUMAN DECISIONS FOR AUTONOMOUS WORK\n\nWhere agents wait for\nyour decision.\n\nAgent Outbox is an asynchronous review queue for automated agents. Callers submit questions or approval requests, then retrieve your response when their workflow is ready to continue.\n\nGet started free\nExplore the product\n\u2193\n\nAGENT OUTBOX / REVIEW QUEUE\n\nOne inbox. Every agent decision that needs your review.\n\n01 / INSTALLATION\n\nConnect once. Then step away.\n\nInstall the CLI and connect an agent to your account. It can send a review request whenever human input is required\u2014even when nobody is watching the run.\n\n01\n\nInstall with Homebrew\n\n02\n\nConnect your agent\n\n03\n\nApprove in browser\n\nagent-outbox / zsh\nHomebrew\n$ brew install --cask conn-castle/tap/agent-outbox\n# Connect your agent, then approve it in the browser:\n$ agent-outbox caller connect my-agent\n\nmy-agent is a local label you choose. The connect command opens Agent Outbox so you can review and approve the caller in your browser. Headless sessions use a device code.\n\n02 / THE HANDOFF\n\nAgents should ask.\nNot guess.\n\nSome steps require human judgment. Agent Outbox makes that handoff a deliberate, reliable part of the workflow, even when the reviewer and agent are working at different times.\n\n01\n\nThe agent reaches a decision point.\n\nIt sends a structured request with the relevant context and response options already attached.\n\n02\n\nThe review stays organized until you are ready.\n\nAgent Outbox keeps every request visible for the right reviewer, without adding another meeting or live handoff.\n\n03\n\nYour response becomes the next instruction.\n\nThe agent receives one explicit response, acknowledges it, and continues from the same point in its workflow.\n\n03 / THE DECISION\n\nSee what the agent needs from you.\n\nEach request brings the prompt, supporting material, and available responses into one place. Review the context, respond, and return to your work.\n\nAgent identity, priority, and revision stay visible\nApproval, choice, text, date, and file responses\nResponses can be undone until agent acknowledgement\n\n04 / USE CASES\n\nPut human judgment exactly where it adds value.\n\nUse one review queue for approvals, edits, questions, and operational decisions across your agent workflows.\n\n01\n\nBEFORE IT SENDS\n\nApprove agent-drafted email.\n\nLet an agent prepare the reply and gather the context. Keep final review in human hands before it reaches a customer, partner, or teammate.\n\n02\n\nBEFORE IT COMMITS\n\nConfirm a high-impact decision.\n\nSend purchases, policy exceptions, and production changes to the accountable person before action is taken.\n\n03\n\nWHEN A RUN HITS AMBIGUITY\n\nAnswer without watching the run.\n\nLet an overnight research or data agent pause on a missing assumption, ask the right person, and resume after the answer arrives.\n\n04\n\nWHEN AN AUTOMATED CHECK FAILS\n\nResolve the exception asynchronously.\n\nRoute a failed deployment check, unmatched record, or policy exception to an owner, then let the workflow continue from their response.\n\n05 / WHEREVER YOU ARE\n\nReview from any screen.\n\nReview one request between meetings or work through the full queue at your desk. The responsive interface keeps the prompt, context, and actions in view.\n\nACTUAL RESPONSIVE PRODUCT \u00b7 430PX VIEWPORT\n\n06 / PRICING\n\nStart free.\nScale with Pro.\n\nBuild and run complete review workflows on the free plan. Choose Pro for higher volume, longer-lived pending requests, file uploads, and expanded storage.\n\nSTARTER\n\n$0\nper month\n\nComplete review workflows for everyday volume.\n\n5,000 review requests each month\nUp to 1,000 pending requests\n60-day window for pending requests\n32 MB review data storage\nStart for free\n\nPRO\n\n$5\nper month \u00b7 $50 per year\n\nHigher-volume workflows with files and more storage.\n\nNo monthly submission or queue caps\nPending requests stay until resolved\nFile uploads in human responses\n1 GB total account storage\nStart with Pro\n\nPlans apply per account. Both include the complete review queue, search, status controls, and every non-file response type. Standard request-size and rate protections apply.\n\nREADY WHEN YOU ARE\n\nKeep agents moving.\nReview when it works for you.\nCreate your free account\n\nFree to start \u00b7 No credit card required\n\nAgent Outbox\n\nBrought to you by Conn Castle Studios.\n\nAn asynchronous human review queue for AI agents.\n\nPRODUCT\n\nCaller access\nHow it works\nPricing\n\nRESOURCES\n\nAPI docs\nGitHub\nContact\n\n\u00a9 2026 Conn Castle Studios. All rights reserved.\n\nPrivacy Policy\nTerms of Service\nSoftware License\nv0.7.1 \u00b7 e0aebb4",
+        "links": [
+          {
+            "text": "Agent Outbox",
+            "href": "/"
+          },
+          {
+            "text": "Caller access",
+            "href": "/#installation"
+          },
+          {
+            "text": "How it works",
+            "href": "/#how-it-works"
+          },
+          {
+            "text": "Pricing",
+            "href": "/#pricing"
+          },
+          {
+            "text": "Docs",
+            "href": "/docs/api"
+          },
+          {
+            "text": "GitHub",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          },
+          {
+            "text": "Sign in",
+            "href": "/sign-in"
+          },
+          {
+            "text": "Get started",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Get started free",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Explore the product\n\u2193",
+            "href": "#product"
+          },
+          {
+            "text": "Start for free",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Start with Pro",
+            "href": "/upgrade"
+          },
+          {
+            "text": "Create your free account",
+            "href": "/sign-up"
+          },
+          {
+            "text": "",
+            "href": "https://conncastlestudios.com"
+          },
+          {
+            "text": "Conn Castle Studios",
+            "href": "https://conncastlestudios.com"
+          },
+          {
+            "text": "Caller access",
+            "href": "/#installation"
+          },
+          {
+            "text": "How it works",
+            "href": "/#how-it-works"
+          },
+          {
+            "text": "Pricing",
+            "href": "/#pricing"
+          },
+          {
+            "text": "API docs",
+            "href": "/docs/api"
+          },
+          {
+            "text": "GitHub",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          },
+          {
+            "text": "Contact",
+            "href": "/contact"
+          },
+          {
+            "text": "Privacy Policy",
+            "href": "/privacy-policy"
+          },
+          {
+            "text": "Terms of Service",
+            "href": "/terms-of-service"
+          },
+          {
+            "text": "Software License",
+            "href": "https://github.com/conn-castle/agent-outbox/blob/main/LICENSE"
+          },
+          {
+            "text": "",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          }
+        ],
+        "images": [
+          {
+            "src": "http://127.0.0.1:31288/agent-outbox-mark.svg",
+            "alt": "",
+            "width": 44,
+            "height": 44,
+            "naturalWidth": 150,
+            "naturalHeight": 150
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-mobile.png",
+            "alt": "Agent Outbox review queue with pending requests and an open neighborhood permit review",
+            "width": 446,
+            "height": 967,
+            "naturalWidth": 430,
+            "naturalHeight": 932
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-ipad.png",
+            "alt": "Agent Outbox request detail with structured context and response actions",
+            "width": 583,
+            "height": 786,
+            "naturalWidth": 768,
+            "naturalHeight": 1024
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-mobile.png",
+            "alt": "Agent Outbox review queue on a mobile screen",
+            "width": 283,
+            "height": 613,
+            "naturalWidth": 430,
+            "naturalHeight": 932
+          },
+          {
+            "src": "http://127.0.0.1:31288/conn-castle-logo.svg",
+            "alt": "Conn Castle Studios",
+            "width": 102,
+            "height": 64,
+            "naturalWidth": 240,
+            "naturalHeight": 150
+          }
+        ],
+        "animations": [],
+        "fonts": "loaded",
+        "scrollWidth": 768
+      },
+      "menu": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-tablet-menu.png",
+      "escapeFocus": true,
+      "pricing": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-tablet-pricing.png",
+      "pricingNavigation": {
+        "hash": "#pricing",
+        "scrollY": 6772,
+        "headingVisible": true,
+        "menuExpanded": "false"
+      }
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "height": 844,
+      "dpr": 3,
+      "full": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-mobile-full.png",
+      "top": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-mobile-top.png",
+      "errors": [],
+      "state": {
+        "title": "Agent Outbox",
+        "text": "Agent Outbox\nMenu\n\nHUMAN DECISIONS FOR AUTONOMOUS WORK\n\nWhere agents wait for\nyour decision.\n\nAgent Outbox is an asynchronous review queue for automated agents. Callers submit questions or approval requests, then retrieve your response when their workflow is ready to continue.\n\nGet started free\nExplore the product\n\u2193\n\nAGENT OUTBOX / REVIEW QUEUE\n\nOne inbox. Every agent decision that needs your review.\n\n01 / INSTALLATION\n\nConnect once. Then step away.\n\nInstall the CLI and connect an agent to your account. It can send a review request whenever human input is required\u2014even when nobody is watching the run.\n\n01\n\nInstall with Homebrew\n\n02\n\nConnect your agent\n\n03\n\nApprove in browser\n\nagent-outbox / zsh\nHomebrew\n$ brew install --cask conn-castle/tap/agent-outbox\n# Connect your agent, then approve it in the browser:\n$ agent-outbox caller connect my-agent\n\nmy-agent is a local label you choose. The connect command opens Agent Outbox so you can review and approve the caller in your browser. Headless sessions use a device code.\n\n02 / THE HANDOFF\n\nAgents should ask. Not guess.\n\nSome steps require human judgment. Agent Outbox makes that handoff a deliberate, reliable part of the workflow, even when the reviewer and agent are working at different times.\n\n01\n\nThe agent reaches a decision point.\n\nIt sends a structured request with the relevant context and response options already attached.\n\n02\n\nThe review stays organized until you are ready.\n\nAgent Outbox keeps every request visible for the right reviewer, without adding another meeting or live handoff.\n\n03\n\nYour response becomes the next instruction.\n\nThe agent receives one explicit response, acknowledges it, and continues from the same point in its workflow.\n\n03 / THE DECISION\n\nSee what the agent needs from you.\n\nEach request brings the prompt, supporting material, and available responses into one place. Review the context, respond, and return to your work.\n\nAgent identity, priority, and revision stay visible\nApproval, choice, text, date, and file responses\nResponses can be undone until agent acknowledgement\n\n04 / USE CASES\n\nPut human judgment exactly where it adds value.\n\nUse one review queue for approvals, edits, questions, and operational decisions across your agent workflows.\n\n01\n\nBEFORE IT SENDS\n\nApprove agent-drafted email.\n\nLet an agent prepare the reply and gather the context. Keep final review in human hands before it reaches a customer, partner, or teammate.\n\n02\n\nBEFORE IT COMMITS\n\nConfirm a high-impact decision.\n\nSend purchases, policy exceptions, and production changes to the accountable person before action is taken.\n\n03\n\nWHEN A RUN HITS AMBIGUITY\n\nAnswer without watching the run.\n\nLet an overnight research or data agent pause on a missing assumption, ask the right person, and resume after the answer arrives.\n\n04\n\nWHEN AN AUTOMATED CHECK FAILS\n\nResolve the exception asynchronously.\n\nRoute a failed deployment check, unmatched record, or policy exception to an owner, then let the workflow continue from their response.\n\n05 / WHEREVER YOU ARE\n\nReview from any screen.\n\nReview one request between meetings or work through the full queue at your desk. The responsive interface keeps the prompt, context, and actions in view.\n\nACTUAL RESPONSIVE PRODUCT \u00b7 430PX VIEWPORT\n\n06 / PRICING\n\nStart free.\nScale with Pro.\n\nBuild and run complete review workflows on the free plan. Choose Pro for higher volume, longer-lived pending requests, file uploads, and expanded storage.\n\nSTARTER\n\n$0\nper month\n\nComplete review workflows for everyday volume.\n\n5,000 review requests each month\nUp to 1,000 pending requests\n60-day window for pending requests\n32 MB review data storage\nStart for free\n\nPRO\n\n$5\nper month \u00b7 $50 per year\n\nHigher-volume workflows with files and more storage.\n\nNo monthly submission or queue caps\nPending requests stay until resolved\nFile uploads in human responses\n1 GB total account storage\nStart with Pro\n\nPlans apply per account. Both include the complete review queue, search, status controls, and every non-file response type. Standard request-size and rate protections apply.\n\nREADY WHEN YOU ARE\n\nKeep agents moving.\nReview when it works for you.\nCreate your free account\n\nFree to start \u00b7 No credit card required\n\nAgent Outbox\n\nBrought to you by Conn Castle Studios.\n\nAn asynchronous human review queue for AI agents.\n\nPRODUCT\n\nCaller access\nHow it works\nPricing\n\nRESOURCES\n\nAPI docs\nGitHub\nContact\n\n\u00a9 2026 Conn Castle Studios. All rights reserved.\n\nPrivacy Policy\nTerms of Service\nSoftware License\nv0.7.1 \u00b7 e0aebb4",
+        "links": [
+          {
+            "text": "Agent Outbox",
+            "href": "/"
+          },
+          {
+            "text": "Caller access",
+            "href": "/#installation"
+          },
+          {
+            "text": "How it works",
+            "href": "/#how-it-works"
+          },
+          {
+            "text": "Pricing",
+            "href": "/#pricing"
+          },
+          {
+            "text": "Docs",
+            "href": "/docs/api"
+          },
+          {
+            "text": "GitHub",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          },
+          {
+            "text": "Sign in",
+            "href": "/sign-in"
+          },
+          {
+            "text": "Get started",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Get started free",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Explore the product\n\u2193",
+            "href": "#product"
+          },
+          {
+            "text": "Start for free",
+            "href": "/sign-up"
+          },
+          {
+            "text": "Start with Pro",
+            "href": "/upgrade"
+          },
+          {
+            "text": "Create your free account",
+            "href": "/sign-up"
+          },
+          {
+            "text": "",
+            "href": "https://conncastlestudios.com"
+          },
+          {
+            "text": "Conn Castle Studios",
+            "href": "https://conncastlestudios.com"
+          },
+          {
+            "text": "Caller access",
+            "href": "/#installation"
+          },
+          {
+            "text": "How it works",
+            "href": "/#how-it-works"
+          },
+          {
+            "text": "Pricing",
+            "href": "/#pricing"
+          },
+          {
+            "text": "API docs",
+            "href": "/docs/api"
+          },
+          {
+            "text": "GitHub",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          },
+          {
+            "text": "Contact",
+            "href": "/contact"
+          },
+          {
+            "text": "Privacy Policy",
+            "href": "/privacy-policy"
+          },
+          {
+            "text": "Terms of Service",
+            "href": "/terms-of-service"
+          },
+          {
+            "text": "Software License",
+            "href": "https://github.com/conn-castle/agent-outbox/blob/main/LICENSE"
+          },
+          {
+            "text": "",
+            "href": "https://github.com/conn-castle/agent-outbox"
+          }
+        ],
+        "images": [
+          {
+            "src": "http://127.0.0.1:31288/agent-outbox-mark.svg",
+            "alt": "",
+            "width": 34,
+            "height": 34,
+            "naturalWidth": 150,
+            "naturalHeight": 150
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-mobile.png",
+            "alt": "Agent Outbox review queue with pending requests and an open neighborhood permit review",
+            "width": 356,
+            "height": 772,
+            "naturalWidth": 430,
+            "naturalHeight": 932
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-ipad.png",
+            "alt": "Agent Outbox request detail with structured context and response actions",
+            "width": 768,
+            "height": 1024,
+            "naturalWidth": 768,
+            "naturalHeight": 1024
+          },
+          {
+            "src": "http://127.0.0.1:31288/product-review-mobile.png",
+            "alt": "Agent Outbox review queue on a mobile screen",
+            "width": 283,
+            "height": 613,
+            "naturalWidth": 430,
+            "naturalHeight": 932
+          },
+          {
+            "src": "http://127.0.0.1:31288/conn-castle-logo.svg",
+            "alt": "Conn Castle Studios",
+            "width": 77,
+            "height": 48,
+            "naturalWidth": 240,
+            "naturalHeight": 150
+          }
+        ],
+        "animations": [],
+        "fonts": "loaded",
+        "scrollWidth": 390
+      },
+      "menu": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-mobile-menu.png",
+      "escapeFocus": true,
+      "pricing": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-mobile-pricing.png",
+      "pricingNavigation": {
+        "hash": "#pricing",
+        "scrollY": 6784,
+        "headingVisible": true,
+        "menuExpanded": "false"
+      },
+      "ctaHref": "/sign-up",
+      "ctaHover": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-mobile-cta-hover.png",
+      "cta": {
+        "url": "http://127.0.0.1:31288/sign-up",
+        "text": "PUBLIC SIGNUP\n\nBrowser fixture signup\n\nThis deterministic test path represents Clerk-hosted signup in the browser harness and lands on the protected review queue.\n\nCreate test account\n\nBy continuing, you agree to the Terms of Service and acknowledge the Privacy Policy."
+      },
+      "signUp": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-mobile-sign-up.png",
+      "docs": {
+        "url": "http://127.0.0.1:31288/docs/api",
+        "title": "API Documentation | Agent Outbox",
+        "headings": [
+          "Build your first human checkpoint",
+          "Before you start#",
+          "1. Send a review request#",
+          "2. Continue other work#",
+          "3. Check for a decision#",
+          "4. Read the decision#",
+          "5. Acknowledge durable handling#",
+          "Where to go next#"
+        ]
+      },
+      "docsScreenshot": "/home/nicholasjconn/git-repos/conn-castle/agent-outbox/.agent-layer/tmp/website-optimization-20261028/screenshots/worktree-mobile-docs.png"
+    }
+  ]
+}
