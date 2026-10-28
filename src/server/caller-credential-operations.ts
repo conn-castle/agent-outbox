@@ -1127,13 +1127,9 @@ async function ensurePendingApprovalTarget(
   return { ok: true, data: null };
 }
 
-function approvalTargetBySetupRequestIdStatement(input: {
-  operation: CredentialOperation;
-  setupRequestId: string;
-  accountId: string;
-}): TransactionContextStatement {
-  return {
-    sql: `
+// Setup row joined to the account's unrevoked caller and that caller's newest
+// unexpired active credential. Callers append the WHERE and locking clauses.
+const APPROVAL_TARGET_SELECT = `
       select
         setup.setup_request_id::text as setup_request_id,
         setup.operation,
@@ -1165,7 +1161,15 @@ function approvalTargetBySetupRequestIdStatement(input: {
           and (expires_at is null or expires_at > now())
         order by created_at desc
         limit 1
-      ) credential on true
+      ) credential on true`;
+
+function approvalTargetBySetupRequestIdStatement(input: {
+  operation: CredentialOperation;
+  setupRequestId: string;
+  accountId: string;
+}): TransactionContextStatement {
+  return {
+    sql: `${APPROVAL_TARGET_SELECT}
       where setup.setup_request_id = $1
         and setup.flow = 'browser'
         and setup.operation = $3
@@ -1181,39 +1185,7 @@ function approvalTargetByUserCodeStatement(input: {
   accountId: string;
 }): TransactionContextStatement {
   return {
-    sql: `
-      select
-        setup.setup_request_id::text as setup_request_id,
-        setup.operation,
-        setup.status,
-        setup.local_caller_name,
-        setup.callback_url,
-        setup.expires_at,
-        caller.caller_id::text as caller_id,
-        caller.caller_slug,
-        caller.display_name as caller_display_name,
-        credential.caller_credential_id::text as active_credential_id,
-        credential.key_id as active_key_id,
-        credential.key_last_four as active_key_last_four
-      from public.agent_outbox_caller_setup_requests setup
-      join public.agent_outbox_callers caller
-        on caller.caller_id = setup.caller_id
-       and caller.account_id = $2
-       and caller.revoked_at is null
-      left join lateral (
-        select
-          caller_credential_id,
-          key_id,
-          key_last_four
-        from public.agent_outbox_caller_credentials
-        where account_id = caller.account_id
-          and caller_id = caller.caller_id
-          and status = 'active'
-          and revoked_at is null
-          and (expires_at is null or expires_at > now())
-        order by created_at desc
-        limit 1
-      ) credential on true
+    sql: `${APPROVAL_TARGET_SELECT}
       where setup.user_code_hash = $1
         and setup.flow = 'device'
         and setup.operation = $3
