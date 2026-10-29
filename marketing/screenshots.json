@@ -9,7 +9,7 @@
       "route": "/human?status=all",
       "width": 1440,
       "height": 960,
-      "sha256": "51930328f703520d06de0ea97665877cd3521895b242d319e11798a15a303bac"
+      "sha256": "2ce56b6371a72bd43db184d6eef78b9732fea4ab70c3aecda3b055912b83f16f"
     },
     {
       "id": "detailTablet",
@@ -18,7 +18,7 @@
       "route": "/human?status=all&item=c685b264-dc53-478d-8326-df3438613f11",
       "width": 768,
       "height": 1024,
-      "sha256": "9a16b9b2e1f06c5d79313b99d82396cb2b12973b1533babf4e63deefbd45edd8"
+      "sha256": "28f10dbcad5cf7b0fc9f71cbba20fcbabe7c4da330daab9dd1053841626b147d"
     },
     {
       "id": "queueMobile",
@@ -27,7 +27,7 @@
       "route": "/human?status=all",
       "width": 430,
       "height": 932,
-      "sha256": "e77e752519d207e00691f0917b2d5c4eb6690fe808294c8ed2755aee18548f3b"
+      "sha256": "d901ee26b495b31ca105136eb72a394b2592eff08eb228b81eec9af2dd8e02eb"
     }
   ]
 }
