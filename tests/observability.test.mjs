@@ -113,9 +113,8 @@ const CALLER_KEY_HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
 /**
  * @param {string | null} [host]
  * @param {string} [modulePath]
- * @returns {typeof import("../app/layout.tsx").default}
  */
-function loadLayoutForTest(
+async function renderLayoutForTest(
   host = "localhost:38000",
   modulePath = "app/layout.tsx"
 ) {
@@ -133,20 +132,12 @@ function loadLayoutForTest(
     globals: { console, process },
     fallbackRequire: rootLayoutTestRequire
   });
-
-  return /** @type {typeof import("../app/layout.tsx").default} */ (
+  const Layout = /** @type {typeof import("../app/layout.tsx").default} */ (
     exportsForTestModule.default
   );
-}
 
-/**
- * @param {string | null} [host]
- * @param {string} [modulePath]
- */
-async function renderLayoutForTest(host, modulePath) {
-  const RootLayout = loadLayoutForTest(host, modulePath);
   return renderToStaticMarkup(
-    await RootLayout({
+    await Layout({
       children: React.createElement("main", null, "fixture")
     })
   );
@@ -3687,64 +3678,35 @@ test("RootLayout omits the retired Cloudflare beacon even with a leftover produc
 test("layouts preserve browser auth context across website and app hosts", async (t) => {
   const publishableKey = "pk_test_root_layout";
   for (const {
-    name,
     host,
+    name = host ?? "missing host",
     key = publishableKey,
     fixture = false,
-    rootClerk,
-    authClerk
+    provider
   } of [
-    {
-      name: "website",
-      host: "agent-outbox.dev",
-      rootClerk: false,
-      authClerk: true
-    },
-    {
-      name: "normalized website",
-      host: "AGENT-OUTBOX.DEV:443",
-      rootClerk: false,
-      authClerk: true
-    },
-    {
-      name: "app",
-      host: "app.agent-outbox.dev",
-      rootClerk: true,
-      authClerk: false
-    },
-    {
-      name: "localhost",
-      host: "localhost:38000",
-      rootClerk: true,
-      authClerk: false
-    },
-    {
-      name: "preview",
-      host: "preview.workers.dev",
-      rootClerk: true,
-      authClerk: false
-    },
-    { name: "missing host", host: null, rootClerk: true, authClerk: false },
+    { host: "agent-outbox.dev", provider: "auth" },
+    { host: "AGENT-OUTBOX.DEV:443", provider: "auth" },
+    { host: "app.agent-outbox.dev", provider: "root" },
+    { host: "localhost:38000", provider: "root" },
+    { host: "preview.workers.dev", provider: "root" },
+    { host: null, provider: "root" },
     {
       name: "missing key",
       host: "agent-outbox.dev",
       key: "",
-      rootClerk: false,
-      authClerk: false
+      provider: null
     },
     {
       name: "app fixture",
       host: "app.agent-outbox.dev",
       fixture: true,
-      rootClerk: false,
-      authClerk: false
+      provider: null
     },
     {
       name: "website fixture",
       host: "agent-outbox.dev",
       fixture: true,
-      rootClerk: false,
-      authClerk: false
+      provider: null
     }
   ]) {
     await t.test(name, async () => {
@@ -3762,8 +3724,14 @@ test("layouts preserve browser auth context across website and app hosts", async
             host,
             "src/components/auth/AuthPageProvider.tsx"
           );
-          assert.equal(root.includes("data-clerk-provider="), rootClerk);
-          assert.equal(auth.includes("data-clerk-provider="), authClerk);
+          assert.equal(
+            root.includes("data-clerk-provider="),
+            provider === "root"
+          );
+          assert.equal(
+            auth.includes("data-clerk-provider="),
+            provider === "auth"
+          );
           for (const html of [root, auth]) {
             assert.ok(html.includes("<main>fixture</main>"));
           }
