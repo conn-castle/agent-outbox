@@ -46,7 +46,9 @@ import {
 } from "../src/server/human-action-form.ts";
 import { CLIENT_EVENT_BODY_BYTE_LIMIT } from "../src/shared/client-events-contract.ts";
 import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../src/shared/human-review-view.ts";
+import { classifyHost } from "../src/shared/hosted-origins.ts";
 import { SYSTEM_CONTRACT } from "../src/shared/system-contract.ts";
+import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate.ts";
 import {
   clientEventServerTestInternals,
   emitClientEventLog,
@@ -109,23 +111,33 @@ const CALLER_KEY_HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
  */
 
 /**
- * @returns {import("react").ComponentType<{ children: import("react").ReactNode }>}
+ * @param {string | null} [host]
+ * @param {string} [modulePath]
  */
-function loadRootLayoutForTest() {
-  const exportsForTestModule = loadModuleForTest("app/layout.tsx", {
+async function renderLayoutForTest(
+  host = "localhost:38000",
+  modulePath = "app/layout.tsx"
+) {
+  const exportsForTestModule = loadModuleForTest(modulePath, {
+    stubs: {
+      "next/headers": {
+        headers: async () => new Headers(host === null ? {} : { host })
+      },
+      "../src/shared/hosted-origins.ts": { classifyHost },
+      "../../shared/hosted-origins.ts": { classifyHost },
+      "../../server/human-review-fixture-gate.ts": {
+        humanBrowserFixtureEnabled
+      }
+    },
     globals: { console, process },
     fallbackRequire: rootLayoutTestRequire
   });
-
-  return /** @type {import("react").ComponentType<{ children: import("react").ReactNode }>} */ (
+  const Layout = /** @type {typeof import("../app/layout.tsx").default} */ (
     exportsForTestModule.default
   );
-}
 
-function renderRootLayoutForTest() {
-  const RootLayout = loadRootLayoutForTest();
   return renderToStaticMarkup(
-    React.createElement(RootLayout, {
+    await Layout({
       children: React.createElement("main", null, "fixture")
     })
   );
@@ -755,7 +767,7 @@ function rootLayoutTestRequire(specifier) {
     return { __esModule: true, default: ScriptStub };
   }
   if (specifier === "../src/server/human-review-fixture-gate") {
-    return { humanBrowserFixtureEnabled: () => false };
+    return { humanBrowserFixtureEnabled };
   }
   if (specifier === "../src/server/app-version") {
     return { formatVersionLabel };
@@ -764,7 +776,7 @@ function rootLayoutTestRequire(specifier) {
     return { ClientEventsInit: () => null };
   }
   if (specifier === "../src/components/actions/AppActionProvider") {
-    return { AppActionProvider: ClerkProviderStub };
+    return { AppActionProvider: React.Fragment };
   }
   if (specifier === "../src/components/SiteFooter") {
     return { SiteFooter: () => React.createElement("footer") };
@@ -780,10 +792,14 @@ function rootLayoutTestRequire(specifier) {
 }
 
 /**
- * @param {{ children?: import("react").ReactNode }} props
+ * @param {{ children?: import("react").ReactNode, publishableKey: string }} props
  */
-function ClerkProviderStub({ children }) {
-  return React.createElement(React.Fragment, null, children);
+function ClerkProviderStub({ children, publishableKey }) {
+  return React.createElement(
+    "div",
+    { "data-clerk-provider": publishableKey },
+    children
+  );
 }
 
 /**
@@ -3641,15 +3657,15 @@ test("client event endpoint drops malformed batches with the matching drop reaso
   }
 });
 
-test("RootLayout omits the retired Cloudflare beacon even with a leftover production token", () => {
-  withProcessEnv(
+test("RootLayout omits the retired Cloudflare beacon even with a leftover production token", async () => {
+  await withProcessEnv(
     {
       APP_ENV: "production",
       CLERK_PUBLISHABLE_KEY: undefined,
       NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "public_token-123"
     },
-    () => {
-      const html = renderRootLayoutForTest();
+    async () => {
+      const html = await renderLayoutForTest();
       assert.equal(
         html.includes("static.cloudflareinsights.com/beacon.min.js"),
         false
@@ -3657,6 +3673,75 @@ test("RootLayout omits the retired Cloudflare beacon even with a leftover produc
       assert.equal(html.includes("data-cf-beacon"), false);
     }
   );
+});
+
+test("layouts preserve browser auth context across website and app hosts", async (t) => {
+  const publishableKey = "pk_test_root_layout";
+  for (const {
+    host,
+    name = host ?? "missing host",
+    key = publishableKey,
+    fixture = false,
+    provider
+  } of [
+    { host: "agent-outbox.dev", provider: "auth" },
+    { host: "AGENT-OUTBOX.DEV:443", provider: "auth" },
+    { host: "app.agent-outbox.dev", provider: "root" },
+    { host: "localhost:38000", provider: "root" },
+    { host: "preview.workers.dev", provider: "root" },
+    { host: null, provider: "root" },
+    {
+      name: "missing key",
+      host: "agent-outbox.dev",
+      key: "",
+      provider: null
+    },
+    {
+      name: "app fixture",
+      host: "app.agent-outbox.dev",
+      fixture: true,
+      provider: null
+    },
+    {
+      name: "website fixture",
+      host: "agent-outbox.dev",
+      fixture: true,
+      provider: null
+    }
+  ]) {
+    await t.test(name, async () => {
+      await withProcessEnv(
+        {
+          NODE_ENV: "production",
+          APP_ENV: fixture ? "test" : "production",
+          CLERK_PUBLISHABLE_KEY: key,
+          AGENT_OUTBOX_COMPILED_BROWSER_FIXTURE: fixture ? "1" : undefined,
+          AGENT_OUTBOX_BROWSER_FIXTURE: fixture ? "1" : undefined
+        },
+        async () => {
+          const root = await renderLayoutForTest(host);
+          const auth = await renderLayoutForTest(
+            host,
+            "src/components/auth/AuthPageProvider.tsx"
+          );
+          assert.equal(
+            root.includes("data-clerk-provider="),
+            provider === "root"
+          );
+          assert.equal(
+            auth.includes("data-clerk-provider="),
+            provider === "auth"
+          );
+          for (const html of [root, auth]) {
+            assert.ok(html.includes("<main>fixture</main>"));
+          }
+          assert.ok(root.includes("<header></header>"));
+          assert.ok(root.includes("<footer></footer>"));
+          assert.ok(root.includes('src="/immediate-action-feedback.js"'));
+        }
+      );
+    });
+  }
 });
 
 test("runtime logs populate release from the shared runtime source", async () => {
