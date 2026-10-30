@@ -1,5 +1,6 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Script from "next/script";
 import type { ReactNode } from "react";
 
@@ -7,6 +8,7 @@ import { AppActionProvider } from "../src/components/actions/AppActionProvider";
 import { SiteFooter } from "../src/components/SiteFooter";
 import { SiteHeader } from "../src/components/SiteHeader";
 import { humanBrowserFixtureEnabled } from "../src/server/human-review-fixture-gate";
+import { classifyHost } from "../src/shared/hosted-origins.ts";
 import { REVIEW_THEME_INIT_SCRIPT } from "../src/shared/review-theme.ts";
 import "./globals.css";
 import "./review-workspace.css";
@@ -16,7 +18,13 @@ export const metadata: Metadata = {
   description: "An asynchronous human review queue for AI agents."
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({
+  children
+}: {
+  children: ReactNode;
+}) {
+  const websiteHost =
+    classifyHost((await headers()).get("host") ?? "") === "website";
   const browserFixtureEnabled = humanBrowserFixtureEnabled();
   const content = (
     <div className="shell">
@@ -39,7 +47,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           src="/immediate-action-feedback.js"
           strategy="beforeInteractive"
         />
-        {process.env.CLERK_PUBLISHABLE_KEY && !browserFixtureEnabled ? (
+        {process.env.CLERK_PUBLISHABLE_KEY &&
+        !browserFixtureEnabled &&
+        !websiteHost ? (
           <ClerkProvider publishableKey={process.env.CLERK_PUBLISHABLE_KEY}>
             <AppActionProvider>{content}</AppActionProvider>
           </ClerkProvider>

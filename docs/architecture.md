@@ -103,6 +103,11 @@ membership so future roles can reuse the same model. Hosted production protected
 routes fail closed when Clerk configuration is incomplete; explicit test fixture
 bypasses are the only middleware bypass.
 
+The canonical public website host renders without the browser Clerk provider;
+its public pages do not consume Clerk context. App, localhost, and preview hosts
+retain the configured provider. Host redirects and server-side authentication
+continue to run through the same middleware on both hosted origins.
+
 Caller routes use only Agent Outbox caller API keys. Caller endpoints must not
 trust Clerk session state. Browser code must not access product tables directly.
 Hosted connect, rotate, and revoke per-IP control-plane limits trust only
