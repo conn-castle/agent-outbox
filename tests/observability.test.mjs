@@ -112,15 +112,23 @@ const CALLER_KEY_HASH_SECRET_FIXTURE = "0123456789abcdef0123456789abcdef";
 
 /**
  * @param {string | null} [host]
+ * @param {string} [modulePath]
  * @returns {typeof import("../app/layout.tsx").default}
  */
-function loadRootLayoutForTest(host = "localhost:38000") {
-  const exportsForTestModule = loadModuleForTest("app/layout.tsx", {
+function loadLayoutForTest(
+  host = "localhost:38000",
+  modulePath = "app/layout.tsx"
+) {
+  const exportsForTestModule = loadModuleForTest(modulePath, {
     stubs: {
       "next/headers": {
         headers: async () => new Headers(host === null ? {} : { host })
       },
-      "../src/shared/hosted-origins.ts": { classifyHost }
+      "../src/shared/hosted-origins.ts": { classifyHost },
+      "../../shared/hosted-origins.ts": { classifyHost },
+      "../../server/human-review-fixture-gate.ts": {
+        humanBrowserFixtureEnabled
+      }
     },
     globals: { console, process },
     fallbackRequire: rootLayoutTestRequire
@@ -131,9 +139,12 @@ function loadRootLayoutForTest(host = "localhost:38000") {
   );
 }
 
-/** @param {string | null} [host] */
-async function renderRootLayoutForTest(host) {
-  const RootLayout = loadRootLayoutForTest(host);
+/**
+ * @param {string | null} [host]
+ * @param {string} [modulePath]
+ */
+async function renderLayoutForTest(host, modulePath) {
+  const RootLayout = loadLayoutForTest(host, modulePath);
   return renderToStaticMarkup(
     await RootLayout({
       children: React.createElement("main", null, "fixture")
@@ -3663,7 +3674,7 @@ test("RootLayout omits the retired Cloudflare beacon even with a leftover produc
       NEXT_PUBLIC_CLOUDFLARE_WEB_ANALYTICS_TOKEN: "public_token-123"
     },
     async () => {
-      const html = await renderRootLayoutForTest();
+      const html = await renderLayoutForTest();
       assert.equal(
         html.includes("static.cloudflareinsights.com/beacon.min.js"),
         false
@@ -3673,26 +3684,67 @@ test("RootLayout omits the retired Cloudflare beacon even with a leftover produc
   );
 });
 
-test("RootLayout selects browser auth by request host and preserves provider guards", async (t) => {
+test("layouts preserve browser auth context across website and app hosts", async (t) => {
   const publishableKey = "pk_test_root_layout";
-  for (const { name, host, key = publishableKey, fixture = false, clerk } of [
-    { name: "website", host: "agent-outbox.dev", clerk: false },
-    { name: "normalized website", host: "AGENT-OUTBOX.DEV:443", clerk: false },
-    { name: "app", host: "app.agent-outbox.dev", clerk: true },
-    { name: "localhost", host: "localhost:38000", clerk: true },
-    { name: "preview", host: "preview.workers.dev", clerk: true },
-    { name: "missing host", host: null, clerk: true },
+  for (const {
+    name,
+    host,
+    key = publishableKey,
+    fixture = false,
+    rootClerk,
+    authClerk
+  } of [
     {
-      name: "missing key",
-      host: "app.agent-outbox.dev",
-      key: "",
-      clerk: false
+      name: "website",
+      host: "agent-outbox.dev",
+      rootClerk: false,
+      authClerk: true
     },
     {
-      name: "browser fixture",
+      name: "normalized website",
+      host: "AGENT-OUTBOX.DEV:443",
+      rootClerk: false,
+      authClerk: true
+    },
+    {
+      name: "app",
+      host: "app.agent-outbox.dev",
+      rootClerk: true,
+      authClerk: false
+    },
+    {
+      name: "localhost",
+      host: "localhost:38000",
+      rootClerk: true,
+      authClerk: false
+    },
+    {
+      name: "preview",
+      host: "preview.workers.dev",
+      rootClerk: true,
+      authClerk: false
+    },
+    { name: "missing host", host: null, rootClerk: true, authClerk: false },
+    {
+      name: "missing key",
+      host: "agent-outbox.dev",
+      key: "",
+      rootClerk: false,
+      authClerk: false
+    },
+    {
+      name: "app fixture",
       host: "app.agent-outbox.dev",
       fixture: true,
-      clerk: false
+      rootClerk: false,
+      authClerk: false
+    },
+    {
+      name: "website fixture",
+      host: "agent-outbox.dev",
+      fixture: true,
+      rootClerk: false,
+      authClerk: false
     }
   ]) {
     await t.test(name, async () => {
@@ -3705,15 +3757,19 @@ test("RootLayout selects browser auth by request host and preserves provider gua
           AGENT_OUTBOX_BROWSER_FIXTURE: fixture ? "1" : undefined
         },
         async () => {
-          const html = await renderRootLayoutForTest(host);
-          assert.equal(html.includes("data-clerk-provider="), clerk);
-          if (clerk) {
-            assert.ok(html.includes(`data-clerk-provider="${publishableKey}"`));
+          const root = await renderLayoutForTest(host);
+          const auth = await renderLayoutForTest(
+            host,
+            "src/components/auth/AuthPageProvider.tsx"
+          );
+          assert.equal(root.includes("data-clerk-provider="), rootClerk);
+          assert.equal(auth.includes("data-clerk-provider="), authClerk);
+          for (const html of [root, auth]) {
+            assert.ok(html.includes("<main>fixture</main>"));
           }
-          assert.ok(html.includes("<main>fixture</main>"));
-          assert.ok(html.includes("<header></header>"));
-          assert.ok(html.includes("<footer></footer>"));
-          assert.ok(html.includes('src="/immediate-action-feedback.js"'));
+          assert.ok(root.includes("<header></header>"));
+          assert.ok(root.includes("<footer></footer>"));
+          assert.ok(root.includes('src="/immediate-action-feedback.js"'));
         }
       );
     });
