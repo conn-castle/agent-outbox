@@ -47,8 +47,6 @@ import {
 } from "../../shared/human-review-view";
 import { compareHumanReviewTypeNames } from "../../shared/human-review-sort";
 
-// The review queue's filter and sort controls, and how a view is described.
-
 const SORT_OPTIONS = [
   { value: "priority", label: "Priority" },
   { value: "type", label: "Type" },
