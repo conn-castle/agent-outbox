@@ -718,6 +718,48 @@ export function ReviewWorkspace({
     );
   }
   startUndoRef.current = startUndo;
+  const lockedIdsRef = useRef(lockedIds);
+  lockedIdsRef.current = lockedIds;
+
+  // Ctrl+Z or Cmd+Z presses the Undo control. Text fields and dialogs keep
+  // their own undo, and a held key undoes once.
+  useEffect(() => {
+    function undoByKeyboard(event: KeyboardEvent) {
+      if (
+        event.key.toLowerCase() !== "z" ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.shiftKey ||
+        event.altKey ||
+        event.repeat ||
+        event.defaultPrevented
+      ) {
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.closest("input, select, textarea, dialog"))
+      ) {
+        return;
+      }
+      // Read the stack as it is now, so a second press before the next render
+      // reaches the answer before the one just undone.
+      const entry = offeredUndoEntry(undoStackRef.current);
+      if (
+        !entry ||
+        entry.undoRequested ||
+        entry.inputItemIds.some((id) => lockedIdsRef.current.has(id))
+      ) {
+        return;
+      }
+      event.preventDefault();
+      startUndoRef.current(entry.id);
+    }
+
+    window.addEventListener("keydown", undoByKeyboard);
+    return () => window.removeEventListener("keydown", undoByKeyboard);
+  }, []);
 
   useEffect(() => {
     if (!notice) return;

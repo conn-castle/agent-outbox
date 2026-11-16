@@ -284,13 +284,15 @@ person acts. One Undo control in the application bar names the most recent
 action not yet undone; pressing it reverses that action and then offers the one
 before it, so repeated presses walk back through the session's answers in
 reverse order. A bulk answer is one step and restores every item it answered.
-Pressing Undo while the answer is still saving starts the undo as soon as the
-answer is accepted. An action leaves the stack when it is undone (from the bar
-or from History), when its answer fails, or when the server permanently rejects
-the undo because the caller already read the output; a temporarily failed undo
-is offered again. The stack lives in the mounted page and is empty after a
-reload; eligible answers remain reversible from History. A bulk result with zero
-successes is a failure from the mutation endpoint, not a successful projection.
+Ctrl+Z or Cmd+Z presses the same control unless focus is in a text field or a
+dialog, which keep their own undo; there is no redo. Pressing Undo while the
+answer is still saving starts the undo as soon as the answer is accepted. An
+action leaves the stack when it is undone (from the bar or from History), when
+its answer fails, or when the server permanently rejects the undo because the
+caller already read the output; a temporarily failed undo is offered again. The
+stack lives in the mounted page and is empty after a reload; eligible answers
+remain reversible from History. A bulk result with zero successes is a failure
+from the mutation endpoint, not a successful projection.
 
 JavaScript-disabled review forms retain redirecting server actions as a
 fallback. Navigational and security-sensitive workflows use their existing

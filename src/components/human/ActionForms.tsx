@@ -383,6 +383,7 @@ export function LastAnswerUndoForm({
         className="last-undo-button"
         title={label}
         aria-label={label}
+        aria-keyshortcuts="Control+Z Meta+Z"
         data-testid="last-answer-undo"
         disabled={disabled}
         onClick={(event) => {

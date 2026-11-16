@@ -63,6 +63,35 @@ test("repeated undo without waiting for the server reverses every answer", async
   await expectHistory(page, [], [permit, followUp, email]);
 });
 
+test("Ctrl+Z and Cmd+Z press Undo, and a text field keeps its own undo", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  for (const [, action] of actions.slice(0, 2)) await answer(page, action);
+  await expectQueue(page, without(initial, permit, followUp));
+
+  // In a text field the shortcut belongs to the field: no answer is reversed.
+  await row(page, email).getByRole("button", { name: "Add feedback" }).click();
+  const popup = page.getByRole("dialog", { name: "Feedback", exact: true });
+  await popup.getByRole("textbox", { name: "Feedback" }).fill("Draft");
+  await page.keyboard.press("Control+z");
+  await popup.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expectUndoOffered(page, "Approve follow-up");
+  await expectQueue(page, without(initial, permit, followUp));
+
+  // Two presses without waiting for the server reverse both answers in turn.
+  const restored = waitForMutations(page, 2);
+  await page.keyboard.press("Control+z");
+  await page.keyboard.press("Meta+z");
+  await restored;
+  await expectQueue(page, initial);
+  await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+
+  await page.reload();
+  await expectHydrated(page);
+  await expectQueue(page, initial);
+});
+
 test("undo targets the newest answer while it is still saving", async ({
   page
 }) => {
