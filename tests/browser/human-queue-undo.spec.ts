@@ -1,4 +1,5 @@
 import {
+  continueWithChangedForm,
   continueWithStaleBulkItems,
   mutationForm
 } from "./human-mutation-routes";
@@ -160,6 +161,85 @@ test("undo reverses a whole bulk answer as one step", async ({ page }) => {
   await expectHydrated(page);
   await expectQueue(page, initial);
   await expectHistory(page, [], [permit, followUp, email]);
+});
+
+test("a partly failed bulk undo keeps offering the answers it did not restore", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  await selectRows(page, [permit, followUp]);
+  const answered = mutationResponse(page);
+  await applyBulk(page);
+  expect((await answered).ok()).toBe(true);
+  await expectQueueMembership(page, without(initial, permit, followUp));
+
+  // The second answer's undo names an output the server does not hold, so
+  // the server restores only the first.
+  await page.route("**/human/mutations", (route) =>
+    continueWithChangedForm(route, (form) => {
+      const [first] = form.getAll("outputResultId");
+      form.delete("outputResultId");
+      form.append("outputResultId", first);
+      form.append("outputResultId", "00000000-0000-4000-8000-00000000dead");
+    })
+  );
+  await undo(page);
+  await expect(page.locator(".last-action-error")).toContainText(
+    "1 restored, 1 failed"
+  );
+  await page.unroute("**/human/mutations");
+  await expectQueueMembership(page, without(initial, followUp));
+
+  // The same action is offered again for the answer still in History.
+  await expectUndoOffered(page, "Approve permit brief");
+  await undo(page);
+  await expectQueueMembership(page, initial);
+  await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+  await page.reload();
+  await expectHydrated(page);
+  await expectQueueMembership(page, initial);
+});
+
+test("a repeated undo is recognized only for the answer it undid", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  await answer(page, "Approve permit brief");
+  let sent: [string, string][] = [];
+  await page.route("**/human/mutations", async (route) => {
+    const form = await mutationForm(route.request());
+    sent = [...form.entries()].map(([key, value]) => [key, String(value)]);
+    await route.continue();
+  });
+  await undo(page);
+  await expectQueue(page, initial);
+  await page.unroute("**/human/mutations");
+
+  const repeat = (fields: [string, string][]) =>
+    page.evaluate(async (entries) => {
+      const body = new FormData();
+      for (const [key, value] of entries) body.append(key, value);
+      const response = await fetch("/human/mutations", {
+        method: "POST",
+        body
+      });
+      return { status: response.status, result: await response.json() };
+    }, fields);
+  expect(await repeat(sent)).toMatchObject({
+    status: 200,
+    result: { ok: true, operation: "undo" }
+  });
+  // The item is restored, but not by undoing this output.
+  expect(
+    await repeat(
+      sent.map(([key, value]) => [
+        key,
+        key === "outputResultId"
+          ? "00000000-0000-4000-8000-00000000dead"
+          : value
+      ])
+    )
+  ).toMatchObject({ status: 409, result: { ok: false, code: "not_found" } });
 });
 
 test("an answer undone from History leaves the remaining undo order intact", async ({

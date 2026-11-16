@@ -66,6 +66,7 @@ import {
   patchUndoEntry,
   removeUndoEntry,
   removeUndoTargets,
+  settleUndoEntry,
   type UndoEntry
 } from "./undo-stack";
 import type {
@@ -503,7 +504,10 @@ export function ReviewWorkspace({
     if (detail && submission.inputItemIds.includes(detail.inputItemId)) {
       setDetailDismissed(true);
       setPendingDetail(null);
-      router.replace(humanReviewHref(view), { scroll: false });
+      // The latest requested view, so a filter change still loading is kept.
+      router.replace(humanReviewHref(controlViewRef.current), {
+        scroll: false
+      });
     }
   };
 
@@ -622,8 +626,15 @@ export function ReviewWorkspace({
       onSuccess: (result) => {
         applyServerState(result.state);
         if (result.operation === "undo") {
-          // Items a partial undo could not restore stay answered in History.
-          forgetUndoneAnswers();
+          if (undoEntryId) {
+            // Answers a partial undo could not restore stay on the stack
+            // while the server still holds them unread.
+            updateUndoStack((stack) =>
+              settleUndoEntry(stack, undoEntryId, result.state)
+            );
+          } else {
+            forgetUndoneAnswers();
+          }
           setLastError(result.failed > 0 ? result.message : null);
           return;
         }
@@ -652,6 +663,12 @@ export function ReviewWorkspace({
         if (failure?.state) applyServerState(failure.state);
         if (answerEntryId) {
           updateUndoStack((stack) => removeUndoEntry(stack, answerEntryId));
+        } else if (undoEntryId && failure?.state) {
+          // The reported rows say which answers can still be undone.
+          const { state } = failure;
+          updateUndoStack((stack) =>
+            settleUndoEntry(stack, undoEntryId, state)
+          );
         } else if (
           failure?.code === "output_already_read" ||
           failure?.code === "not_found"

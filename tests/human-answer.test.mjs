@@ -1702,6 +1702,14 @@ test(
         [["pending", 2, null], null]
       );
       assert.equal(compareAsOf(restoredState.asOf, answeredState.asOf), 1);
+      // No items to report is an empty state, not a malformed query.
+      const emptyState = await runHumanAnswerDatabaseTransaction(
+        client,
+        ids,
+        "human",
+        (query) => humanReviewItemStatesInTransaction(query, reviewContext, [])
+      );
+      assert.deepEqual(emptyState.items, []);
 
       // A late repeat of the undone answer must not answer the item again.
       const lateRepeat = await answer(mutationCorrelation);

@@ -1341,10 +1341,25 @@ test("human mutation results carry item state read after the mutations, keyed fo
   const answerInputs = [];
   let stateReadFails = false;
   let sessionTransactions = 0;
+  // Input item or output ids whose mutation fails without a known outcome.
+  /** @type {Set<unknown>} */
+  const temporarilyFailing = new Set();
+  const temporaryFailure = {
+    ok: false,
+    code: "temporary_unavailable",
+    message: "Temporarily unavailable."
+  };
+  /** @param {Record<string, unknown>} input */
+  function undoAnswer(input) {
+    return temporarilyFailing.has(input.outputResultId)
+      ? temporaryFailure
+      : { ok: true };
+  }
   /** @param {Record<string, unknown>} input */
   function answer(input) {
     answerInputs.push(input);
     events.push(`answer ${input.inputItemId}`);
+    if (temporarilyFailing.has(input.inputItemId)) return temporaryFailure;
     return {
       ok: true,
       outputResultId: `output-${String(input.inputItemId).slice(-3)}`
@@ -1374,7 +1389,13 @@ test("human mutation results carry item state read after the mutations, keyed fo
         /** @param {string} _connectionString @param {Record<string, unknown>} input */
         createHumanAnswer: async (_connectionString, input) => answer(input),
         /** @param {unknown} _query @param {Record<string, unknown>} input */
-        createHumanAnswerInTransaction: async (_query, input) => answer(input)
+        createHumanAnswerInTransaction: async (_query, input) => answer(input),
+        /** @param {string} _connectionString @param {Record<string, unknown>} input */
+        undoHumanAnswerBeforeRead: async (_connectionString, input) =>
+          undoAnswer(input),
+        /** @param {unknown} _query @param {Record<string, unknown>} input */
+        undoHumanAnswerBeforeReadInTransaction: async (_query, input) =>
+          undoAnswer(input)
       },
       "../../src/server/human-review-page": {
         /** @param {unknown} stateSession @param {string} _requestId @param {string[]} inputItemIds */
@@ -1455,6 +1476,42 @@ test("human mutation results carry item state read after the mutations, keyed fo
     itemStateFor([firstItemId])
   );
   assert.equal(answerInputs[0]?.correlationId, `human_answer_${mutationId}`);
+
+  // A temporary failure leaves that item's outcome unknown. The request is
+  // then reported as retryable as a whole, never as a partial result that
+  // leaves out an answer or undo which may have committed.
+  temporarilyFailing.add(secondItemId);
+  const unknownBulk = await actions.executeBulkHumanAnswersMutation(bulkForm);
+  assert.deepEqual(
+    [unknownBulk.ok, !unknownBulk.ok && unknownBulk.code],
+    [false, "temporary_unavailable"]
+  );
+
+  const firstOutputId = "00000000-0000-4000-8000-000000000731";
+  const secondOutputId = "00000000-0000-4000-8000-000000000732";
+  const undoForm = new FormData();
+  undoForm.set("mutationId", mutationId);
+  for (const [inputItemId, outputResultId] of [
+    [firstItemId, firstOutputId],
+    [secondItemId, secondOutputId]
+  ]) {
+    undoForm.append("inputItemId", inputItemId);
+    undoForm.append("callerId", callerId);
+    undoForm.append("outputResultId", outputResultId);
+  }
+  temporarilyFailing.add(secondOutputId);
+  const unknownUndo = await actions.executeUndoHumanAnswerMutation(undoForm);
+  assert.deepEqual(
+    [unknownUndo.ok, !unknownUndo.ok && unknownUndo.code],
+    [false, "temporary_unavailable"]
+  );
+  temporarilyFailing.clear();
+  const undone = await actions.executeUndoHumanAnswerMutation(undoForm);
+  assert.deepEqual(
+    undone.ok &&
+      undone.operation === "undo" && [...undone.restoredInputItemIds],
+    [firstItemId, secondItemId]
+  );
 
   // A success the client cannot apply is not reported as one: the request
   // fails, and its retry finds the committed answer.

@@ -45,6 +45,8 @@ import type {
 } from "../../src/shared/human-mutation";
 
 const humanPath = "/human";
+// A failure whose mutation may have committed; the route answers it with 503.
+const TEMPORARY_UNAVAILABLE = "temporary_unavailable";
 
 // A mutation outcome before the items' authoritative state is attached.
 type MutationOutcome =
@@ -238,7 +240,10 @@ async function bulkAnswerOutcome(
         callerId: item.callerId,
         outputResultId: result.outputResultId
       });
-    } else if (result.sessionFailed) {
+    } else if (result.sessionFailed || result.code === TEMPORARY_UNAVAILABLE) {
+      // Without a session nothing can succeed. A temporary failure leaves
+      // this item's outcome unknown, so the whole request is reported as
+      // retryable: its repeat replays what committed and tries the rest.
       return humanMutationFailure(
         "bulk-answer",
         inputItemIds,
@@ -302,9 +307,17 @@ async function undoOutcome(
     );
     if (result.ok) {
       restoredInputItemIds.push(target.inputItemId);
+    } else if (result.sessionFailed || result.code === TEMPORARY_UNAVAILABLE) {
+      // As for a bulk answer: retryable as a whole, replayed on the repeat.
+      return humanMutationFailure(
+        "undo",
+        inputItemIds,
+        result.code,
+        result.message,
+        requestId
+      );
     } else {
       failures.push(result);
-      if (result.sessionFailed) break;
     }
   }
 

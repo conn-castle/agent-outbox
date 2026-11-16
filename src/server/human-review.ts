@@ -273,14 +273,18 @@ export async function humanReviewItemStatesInTransaction(
   inputItemIds: string[]
 ): Promise<HumanMutationState> {
   const placeholders = inputItemIds.map((_, index) => `$${index + 2}::uuid`);
-  const result = await query<HumanReviewRow>({
-    sql: `
-      ${reviewRowSelect()}
-      where i.account_id = $1
-        and i.input_item_id in (${placeholders.join(", ")})
-    `,
-    values: [context.accountId, ...inputItemIds]
-  });
+  // An empty `in ()` is not valid SQL, and there is nothing to read.
+  const result =
+    inputItemIds.length === 0
+      ? { rows: [] }
+      : await query<HumanReviewRow>({
+          sql: `
+            ${reviewRowSelect()}
+            where i.account_id = $1
+              and i.input_item_id in (${placeholders.join(", ")})
+          `,
+          values: [context.accountId, ...inputItemIds]
+        });
   const asOf = asOfFromRow(
     await query<{ as_of: string }>({
       sql: `select ${asOfSql("clock_timestamp()")} as as_of`

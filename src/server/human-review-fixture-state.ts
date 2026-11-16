@@ -1,7 +1,8 @@
 import { VERSIONED_UUID_PATTERN } from "./api-errors.ts";
 import {
   browserFixtureReviewDetail,
-  browserFixtureReviewRow
+  browserFixtureReviewRow,
+  fixtureResolvedOutputResultId
 } from "./human-review-fixture.ts";
 import type { HumanMutationState } from "../shared/human-mutation.ts";
 
@@ -108,7 +109,18 @@ export async function undoFixtureAnswer(target: {
   const store = await cookieStore();
   const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
   const previous = current[inputItemId];
-  if (previous?.undone) return { ok: true };
+  if (previous?.undone) {
+    // A repeat is recognized only for the output this undo removed, which was
+    // answered one revision before the restored item's current one.
+    return previous.callerId === target.callerId &&
+      previous.currentRevision !== undefined &&
+      fixtureResolvedOutputResultId(
+        inputItemId,
+        previous.currentRevision - 1
+      ) === target.outputResultId
+      ? { ok: true }
+      : fixtureFailure("not_found", "Output result was not found.");
+  }
   const canonical = browserFixtureReviewDetail(inputItemId, {
     resolvedItems: current
   });

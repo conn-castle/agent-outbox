@@ -1,4 +1,7 @@
-import type { HumanUndoTarget } from "../../shared/human-mutation.ts";
+import type {
+  HumanMutationState,
+  HumanUndoTarget
+} from "../../shared/human-mutation.ts";
 import type { HumanReviewListRow } from "../../server/human-review";
 
 // One answer action (single or bulk) that the Undo control can reverse. The
@@ -55,6 +58,30 @@ export function confirmUndoEntry(
         }
       : entry
   );
+}
+
+/**
+ * Settles an entry's undo from the rows the server reported. Answers it
+ * restored, or can no longer reverse, leave the stack; answers it still holds
+ * unread stay on the entry, which is offered again to finish the undo.
+ */
+export function settleUndoEntry(
+  stack: UndoEntry[],
+  entryId: string,
+  state: HumanMutationState
+) {
+  const entry = stack.find((candidate) => candidate.id === entryId);
+  const remaining = (entry?.targets ?? []).filter((target) => {
+    const output = state.items.find(
+      (item) => item.inputItemId === target.inputItemId
+    )?.row?.output;
+    return (
+      output?.outputResultId === target.outputResultId && output.undoEligible
+    );
+  });
+  return patchUndoEntry(confirmUndoEntry(stack, entryId, remaining), entryId, {
+    undoing: false
+  });
 }
 
 /**

@@ -278,7 +278,7 @@ function isUuid(value: FormDataEntryValue | undefined): value is string {
 
 function uuidField(formData: FormData, key: string) {
   const value = stringField(formData, key);
-  return value && VERSIONED_UUID_PATTERN.test(value) ? value : null;
+  return isUuid(value ?? undefined) ? value : null;
 }
 
 /**
