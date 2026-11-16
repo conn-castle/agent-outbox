@@ -260,6 +260,20 @@ export function fixtureResolvedOutputResultId(
   );
 }
 
+/** Marks a detail's actions answerable or not; a list row has none. */
+function withAnswerableActions<T extends HumanReviewListRow>(
+  row: T,
+  answerable: boolean
+): Partial<HumanReviewDetail> {
+  return "actions" in row
+    ? {
+        actions: (
+          row as T & { actions: HumanReviewDetail["actions"] }
+        ).actions.map((action) => ({ ...action, answerable }))
+      }
+    : {};
+}
+
 function applyFixtureResolvedState<T extends HumanReviewListRow>(
   row: T,
   resolved: BrowserFixtureResolvedItem | undefined,
@@ -269,8 +283,15 @@ function applyFixtureResolvedState<T extends HumanReviewListRow>(
     row = { ...row, currentRevision: resolved.currentRevision };
   }
   if (!isResolved) {
+    // An undone answer of an originally answered fixture is pending again.
     return resolved?.undone && row.status === "answered"
-      ? { ...row, status: "pending", answeredAt: null, output: null }
+      ? {
+          ...row,
+          status: "pending",
+          answeredAt: null,
+          output: null,
+          ...withAnswerableActions(row, true)
+        }
       : row;
   }
   return {
@@ -292,13 +313,7 @@ function applyFixtureResolvedState<T extends HumanReviewListRow>(
             undoEligible: true
           },
           bulkActions: [],
-          ...("actions" in row
-            ? {
-                actions: (
-                  row as T & { actions: HumanReviewDetail["actions"] }
-                ).actions.map((action) => ({ ...action, answerable: false }))
-              }
-            : {})
+          ...withAnswerableActions(row, false)
         }
       : {})
   };

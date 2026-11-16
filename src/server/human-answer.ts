@@ -118,8 +118,6 @@ export type HumanAnswerFailure = {
 
 export type HumanAnswerSuccess = {
   ok: true;
-  // Set when this request repeats an answer that had already committed.
-  replayed?: true;
   outputResultId: string;
   inputItemId: string;
   callerItemId: string;
@@ -155,13 +153,13 @@ export type HumanAnswerActorContext = {
 };
 
 export type PreReadUndoInput = HumanAnswerActorContext & {
+  // The answered item and its output. An output of another item is not found.
+  inputItemId: string;
   outputResultId: string;
 };
 
 export type PreReadUndoSuccess = {
   ok: true;
-  // Set when this request repeats an undo that had already committed.
-  replayed?: true;
   outputResultId: string;
   outputDeleted: boolean;
   inputRestored: boolean;
@@ -288,7 +286,6 @@ export async function createHumanAnswerInTransaction(
     if (original) {
       return {
         ok: true,
-        replayed: true,
         outputResultId: original.output_result_id,
         inputItemId: targetInput.input_item_id,
         callerItemId: targetInput.caller_item_id,
@@ -570,7 +567,6 @@ export async function undoHumanAnswerBeforeReadInTransaction(
     if (undone.rows[0]?.already_undone) {
       return {
         ok: true,
-        replayed: true,
         outputResultId: input.outputResultId,
         outputDeleted: true,
         inputRestored: true,
@@ -704,7 +700,10 @@ export function answeredByCorrelationStatement(
 }
 
 export function undoneOutputLookupStatement(
-  input: Pick<PreReadUndoInput, "accountId" | "callerId" | "outputResultId">
+  input: Pick<
+    PreReadUndoInput,
+    "accountId" | "callerId" | "inputItemId" | "outputResultId"
+  >
 ): TransactionContextStatement {
   return {
     sql: `
@@ -717,18 +716,27 @@ export function undoneOutputLookupStatement(
           on item.input_item_id = event.input_item_id
          and item.account_id = caller.account_id
         where event.output_result_id = $3::uuid
+          and event.input_item_id = $4::uuid
           and event.event_type = 'output_undone'
           and caller.account_id = $1::uuid
           and caller.caller_id = $2::uuid
           and item.status = 'pending'
       ) as already_undone
     `,
-    values: [input.accountId, input.callerId, input.outputResultId]
+    values: [
+      input.accountId,
+      input.callerId,
+      input.outputResultId,
+      input.inputItemId
+    ]
   };
 }
 
 export function outputForPreReadUndoStatement(
-  input: Pick<PreReadUndoInput, "accountId" | "callerId" | "outputResultId">
+  input: Pick<
+    PreReadUndoInput,
+    "accountId" | "callerId" | "inputItemId" | "outputResultId"
+  >
 ): TransactionContextStatement {
   return {
     sql: `
@@ -737,9 +745,15 @@ export function outputForPreReadUndoStatement(
       where account_id = $1
         and caller_id = $2
         and output_result_id = $3
+        and input_item_id = $4
       for update
     `,
-    values: [input.accountId, input.callerId, input.outputResultId]
+    values: [
+      input.accountId,
+      input.callerId,
+      input.outputResultId,
+      input.inputItemId
+    ]
   };
 }
 

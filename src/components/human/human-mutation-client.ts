@@ -22,18 +22,22 @@ export class HumanMutationError extends Error {
   readonly unconfirmed: boolean;
   // Answers of a bulk request that some attempt reported as committed.
   readonly committed: HumanUndoTarget[];
+  // The newest item state any attempt reported.
+  readonly state: HumanMutationState | null;
 
   constructor(
     message: string,
     result: HumanMutationFailure | null = null,
     unconfirmed = false,
-    committed: HumanUndoTarget[] = result?.undo ?? []
+    committed: HumanUndoTarget[] = result?.undo ?? [],
+    state: HumanMutationState | null = result?.state ?? null
   ) {
     super(message);
     this.name = "HumanMutationError";
     this.result = result;
     this.unconfirmed = unconfirmed;
     this.committed = committed;
+    this.state = state;
   }
 }
 
@@ -52,6 +56,9 @@ export async function synchronizeHumanMutation(
   // What any attempt reported as committed stays committed, whatever a
   // later attempt goes on to report.
   const committed = new Map<string, HumanUndoTarget>();
+  // Each attempt's state covers every item of the request and is read after
+  // the previous attempt's, so the latest one reported is the newest.
+  let state: HumanMutationState | null = null;
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await sendHumanMutation(formData);
@@ -61,6 +68,7 @@ export async function synchronizeHumanMutation(
       for (const target of error.committed) {
         committed.set(target.inputItemId, target);
       }
+      state = error.state ?? state;
       if (error.unconfirmed && delay !== undefined) {
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
@@ -71,7 +79,8 @@ export async function synchronizeHumanMutation(
         error.message,
         error.result,
         error.unconfirmed || attempt > 0,
-        [...committed.values()]
+        [...committed.values()],
+        state
       );
     }
   }
