@@ -64,15 +64,21 @@ test("repeated undo without waiting for the server reverses every answer", async
   await expectHistory(page, [], [permit, followUp, email]);
 });
 
-test("Ctrl+Z and Cmd+Z press Undo, one answer per press", async ({ page }) => {
+test("the undo shortcut presses Undo, one answer per press", async ({
+  page
+}) => {
   const initial = await openQueue(page);
   for (const [, action] of actions) await answer(page, action);
   await expectQueue(page, without(initial, permit, followUp, email));
+  await expect(page.getByTestId("last-answer-undo")).toHaveAttribute(
+    "aria-keyshortcuts",
+    "Control+Z"
+  );
 
   // Two presses without waiting for the server reverse two answers in turn.
   const restored = waitForMutations(page, 2);
   await page.keyboard.press("Control+z");
-  await page.keyboard.press("Meta+z");
+  await page.keyboard.press("Control+z");
   await restored;
   await expectQueue(page, without(initial, permit));
 
@@ -98,6 +104,34 @@ test("Ctrl+Z and Cmd+Z press Undo, one answer per press", async ({ page }) => {
   await expectQueue(page, initial);
 });
 
+test.describe("on an Apple platform", () => {
+  test.use({
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+  });
+
+  test("the undo shortcut is Cmd+Z, and Ctrl+Z is left alone", async ({
+    page
+  }) => {
+    const initial = await openQueue(page);
+    await answer(page, "Approve permit brief");
+    await expect(page.getByTestId("last-answer-undo")).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Meta+Z"
+    );
+
+    await page.keyboard.press("Control+z");
+    await expectUndoOffered(page, "Approve permit brief");
+    await expectQueue(page, without(initial, permit));
+
+    const restored = waitForMutations(page, 1);
+    await page.keyboard.press("Meta+z");
+    await restored;
+    await expectQueue(page, initial);
+    await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+  });
+});
+
 test("the undo shortcut leaves text fields, open panels and other key combinations alone", async ({
   page
 }) => {
@@ -109,9 +143,11 @@ test("the undo shortcut leaves text fields, open panels and other key combinatio
     await expectQueue(page, answered);
   };
 
-  // Redo and a press with both modifiers are not the shortcut.
+  // Redo, a press with both modifiers and, off Apple platforms, Cmd+Z are
+  // not the shortcut.
   await page.keyboard.press("Control+Shift+z");
   await page.keyboard.press("Control+Meta+z");
+  await page.keyboard.press("Meta+z");
   await expectNothingUndone();
 
   // A text field keeps the shortcut for its own undo.
@@ -149,6 +185,16 @@ test("the undo shortcut leaves text fields, open panels and other key combinatio
   await page.keyboard.press("Control+z");
   await restored;
   await expectUndoOffered(page, "Approve permit brief");
+
+  // Nor has a menu of choices.
+  await row(page, email)
+    .getByRole("checkbox", { name: "Select review" })
+    .check();
+  const last = waitForMutations(page, 1);
+  await page.getByLabel("Compatible quick action").focus();
+  await page.keyboard.press("Control+z");
+  await last;
+  await expectQueue(page, initial);
 });
 
 test("undo targets the newest answer while it is still saving", async ({

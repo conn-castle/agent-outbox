@@ -31,6 +31,7 @@ import type {
 import { HumanIcon } from "./TypedContent";
 import { actionAppearanceClass } from "./action-appearance";
 import { localDateTimeBound } from "./review-format";
+import { isApplePlatform, undoShortcutKeys } from "./undo-shortcut";
 
 export type HumanMutationSubmission = {
   operation: HumanMutationOperation;
@@ -354,6 +355,12 @@ export function LastAnswerUndoForm({
   onUndo: () => void;
 }) {
   const formAction = useProgressiveFormAction(undoHumanAnswer);
+  // The platform is known only in the browser, and this control is only ever
+  // rendered there after an answer, so the shortcut is named once mounted.
+  const [shortcutKeys, setShortcutKeys] = useState<string>();
+  useEffect(() => {
+    setShortcutKeys(undoShortcutKeys(isApplePlatform(navigator.userAgent)));
+  }, []);
   const { actionLabel } = undo;
   const count = undo.inputItemIds.length;
   const label = actionLabel
@@ -383,7 +390,7 @@ export function LastAnswerUndoForm({
         className="last-undo-button"
         title={label}
         aria-label={label}
-        aria-keyshortcuts="Control+Z Meta+Z"
+        aria-keyshortcuts={shortcutKeys}
         data-testid="last-answer-undo"
         disabled={disabled}
         onClick={(event) => {

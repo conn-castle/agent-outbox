@@ -70,6 +70,11 @@ import {
   undoAvailable,
   type UndoEntry
 } from "./undo-stack";
+import {
+  isApplePlatform,
+  isUndoShortcut,
+  keepsUndoShortcut
+} from "./undo-shortcut";
 import type {
   HumanMutationState,
   HumanUndoTarget
@@ -739,36 +744,42 @@ export function ReviewWorkspace({
   const lockedIdsRef = useRef(lockedIds);
   lockedIdsRef.current = lockedIds;
 
-  // Ctrl+Z or Cmd+Z presses the Undo control. A text field keeps its own
-  // undo, an open dialog or panel keeps the keyboard, and a held key undoes
-  // once.
+  // What the Undo control and its shortcut both do: undo the offered action
+  // unless that is unavailable. Locks are read as they are now, including
+  // undos started since the last render. Returns whether an undo started.
+  function requestUndo() {
+    const stack = undoStackRef.current;
+    const entry = offeredUndoEntry(stack);
+    const locked = new Set(lockedIdsRef.current);
+    for (const other of stack) {
+      if (other.undoing) other.inputItemIds.forEach((id) => locked.add(id));
+    }
+    if (!entry || !undoAvailable(entry, locked)) return false;
+    startUndo(entry.id);
+    return true;
+  }
+  const requestUndoRef = useRef(requestUndo);
+  requestUndoRef.current = requestUndo;
+
+  // The platform's undo shortcut presses the Undo control. A text field keeps
+  // its own undo, an open dialog or panel keeps the keyboard, and a held key
+  // undoes once.
   useEffect(() => {
+    const applePlatform = isApplePlatform(navigator.userAgent);
     function undoByKeyboard(event: KeyboardEvent) {
       if (
-        !isUndoShortcut(event) ||
+        !isUndoShortcut(event, applePlatform) ||
         event.repeat ||
         event.isComposing ||
         event.defaultPrevented ||
-        document.querySelector('dialog[open], [role="dialog"]')
+        keepsUndoShortcut(event.target) ||
+        // A modal makes the page behind it inert even when focus is on
+        // neither; the filter and sort panels are this workspace's own.
+        document.querySelector("dialog:modal, [data-view-popover-surface]")
       ) {
         return;
       }
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        ((target instanceof HTMLElement && target.isContentEditable) ||
-          target.closest(TEXT_ENTRY_SELECTOR))
-      ) {
-        return;
-      }
-      // Read the stack as it is now, so a second press before the next render
-      // reaches the answer before the one just undone.
-      const entry = offeredUndoEntry(undoStackRef.current);
-      if (!entry || !undoAvailable(entry, lockedIdsRef.current)) {
-        return;
-      }
-      event.preventDefault();
-      startUndoRef.current(entry.id);
+      if (requestUndoRef.current()) event.preventDefault();
     }
 
     window.addEventListener("keydown", undoByKeyboard);
@@ -901,7 +912,7 @@ export function ReviewWorkspace({
                 key={offeredUndo.id}
                 undo={offeredUndo}
                 disabled={!undoAvailable(offeredUndo, lockedIds)}
-                onUndo={() => startUndo(offeredUndo.id)}
+                onUndo={requestUndo}
               />
             ) : null}
           </div>
@@ -1227,24 +1238,6 @@ function humanReviewViewAnnouncement(view: HumanReviewView) {
 
 // A redirecting (JavaScript-disabled) answer reports its undo target in the
 // notice; it seeds the stack when the workspace then hydrates.
-// Fields whose own undo Ctrl+Z or Cmd+Z belongs to. Checkboxes and radio
-// buttons have none.
-const TEXT_ENTRY_SELECTOR =
-  'textarea, select, input:not([type="checkbox"], [type="radio"])';
-
-/**
- * Ctrl+Z or Cmd+Z, with no other modifier. The key is matched by the letter
- * it types; a layout without Latin letters is matched by the key's position.
- */
-function isUndoShortcut(event: KeyboardEvent) {
-  const z = /^[a-z]$/i.test(event.key)
-    ? event.key.toLowerCase() === "z"
-    : event.code === "KeyZ";
-  return (
-    z && event.ctrlKey !== event.metaKey && !event.shiftKey && !event.altKey
-  );
-}
-
 function undoStackFromNotice(notice: HumanReviewNotice | null): UndoEntry[] {
   if (!notice?.undo) return [];
   return [
