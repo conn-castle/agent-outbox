@@ -274,6 +274,7 @@ test(
                 ...identity,
                 ...context,
                 humanUserId: userId,
+                inputItemId: row.input_item_id,
                 outputResultId: answer.outputResultId
               })
             ).ok,

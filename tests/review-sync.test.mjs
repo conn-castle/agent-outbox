@@ -189,6 +189,23 @@ test("a rejected answer applies the state the server reported instead", () => {
   ]);
 });
 
+test("a newer row is placed again only when it sorts differently", () => {
+  // Replaced by its caller before the answer arrived: the rejection carries
+  // the new pending row, which now outranks the row above it.
+  const page = { rows: [row("C"), row("A"), row("B")], asOf: "100" };
+  const raised = statesFrom(["150", [row("B", { priority: "urgent" })]]);
+  assert.deepEqual(ids(projectReview(page, raised, [], pendingView)), [
+    "item-B",
+    "item-A",
+    "item-C"
+  ]);
+  // A new revision that sorts the same leaves the server's order alone.
+  const revised = statesFrom(["150", [row("B", { currentRevision: 2 })]]);
+  const projection = projectReview(page, revised, [], pendingView);
+  assert.deepEqual(ids(projection), ["item-C", "item-A", "item-B"]);
+  assert.equal(projection.rows[2].currentRevision, 2);
+});
+
 test("an item the server reports gone is removed", () => {
   const page = { rows: [row("A"), row("B")], asOf: "100" };
   const states = statesFrom(["150", ["item-B"]]);

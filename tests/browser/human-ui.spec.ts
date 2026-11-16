@@ -2193,8 +2193,16 @@ test("an answer that cannot reach the server is retried, then rolled back", asyn
   page
 }) => {
   let attempts = 0;
-  await page.route("**/human/mutations", (route) => {
+  let retryStarted = () => {};
+  let finishRetry = () => {};
+  const retry = new Promise<void>((resolve) => (retryStarted = resolve));
+  const retryFinished = new Promise<void>((resolve) => (finishRetry = resolve));
+  await page.route("**/human/mutations", async (route) => {
     attempts += 1;
+    if (attempts === 2) {
+      retryStarted();
+      await retryFinished;
+    }
     return route.abort();
   });
   await page.goto("/human");
@@ -2204,17 +2212,16 @@ test("an answer that cannot reach the server is retried, then rolled back", asyn
     page,
     "Reply to Meridian about the renewal delay"
   );
-  const firstFailure = page.waitForEvent("requestfailed", (request) =>
-    request.url().includes("/human/mutations")
-  );
   await row.getByRole("button", { name: "Approve to send" }).click();
-  await firstFailure;
-  // One failed attempt is not an outcome: the answer stays applied, unreported.
+  // One failed attempt is not an outcome: while its retry is under way the
+  // answer stays applied and undoable, and nothing is reported.
+  await retry;
   await expect(row).toBeHidden();
   await expect(lastActionError(page)).toHaveCount(0);
-  await expect(lastUndoButton(page)).toHaveCount(0);
+  await expect(lastUndoButton(page, "Approve to send")).toBeVisible();
 
   // No attempt reported an outcome, so the message does not claim a failure.
+  finishRetry();
   await expect(lastActionError(page)).toContainText(
     "may not have been saved: Agent Outbox could not be reached"
   );

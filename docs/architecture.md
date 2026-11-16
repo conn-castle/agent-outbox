@@ -255,7 +255,9 @@ states:
 
 For each item the newer of the page and its item state wins; a page whose `asOf`
 is not older than an item state already reflects it. The browser never guesses a
-revision and never infers an outcome from a row being absent from a page.
+revision and never infers an outcome from a row being absent from a page. Rows
+keep the page's order unless a newer state adds a row or changes where one
+sorts; the rows are then ordered by the view's sort.
 `src/components/human/review-sync.ts` holds this derivation as pure functions.
 
 Each mutation carries a client-generated `mutationId`, and a mutation settles
@@ -272,14 +274,18 @@ so its repeat reports the items that committed and tries the rest:
   it named, while the item is still pending. Once the item has been answered
   again, an undo of the earlier output is reported as not found.
 
+An undo names both the item and the output that answered it; an output that
+answered a different item is reported as not found.
+
 If no attempt establishes the outcome, or a retry is refused, the mutation
 settles as unconfirmed: its optimistic projection is removed, the application
 bar says it may not have been saved rather than that it failed, and the page is
 refreshed so the next page shows what the server holds. A bulk answer that
 stopped at a temporary failure names the answers it had committed in that
-failure; whatever any attempt reported as committed stays on the undo stack,
-however the mutation settles. A failed write removes only its own projection.
-The row leaving the pending queue is the success signal.
+failure; whatever any attempt reported as committed stays on the undo stack, and
+the newest item state any attempt reported is applied, however the mutation
+settles. A failed write removes only its own projection. The row leaving the
+pending queue is the success signal.
 
 When a page transaction overlaps a mutation response, the response's item state
 wins even if the page read the item later; the refresh that follows every

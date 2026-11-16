@@ -665,15 +665,15 @@ export function ReviewWorkspace({
       onError: (error) => {
         const failure =
           error instanceof HumanMutationError ? error.result : null;
-        if (failure?.state) applyServerState(failure.state);
+        const state = error instanceof HumanMutationError ? error.state : null;
+        if (state) applyServerState(state);
         // A bulk answer stopped part-way keeps Undo for what it committed.
         const committed =
           error instanceof HumanMutationError ? error.committed : [];
         if (answerEntryId) {
           answersCommitted(committed);
-        } else if (undoEntryId && failure?.state) {
+        } else if (undoEntryId && state) {
           // The reported rows say which answers can still be undone.
-          const { state } = failure;
           updateUndoStack((stack) =>
             settleUndoEntry(stack, undoEntryId, state)
           );

@@ -18,6 +18,7 @@ import {
   runHumanReviewQueryCanary
 } from "../src/server/human-review.ts";
 import {
+  browserFixtureReviewDetail,
   browserFixtureReviewPage,
   browserFixtureStoryboardDetails,
   browserFixtureStoryboardScenarios,
@@ -322,6 +323,50 @@ test("fixture resolved items leave pending and appear as answered history", () =
   assert.ok(historyRow);
   assert.equal(historyRow.status, "answered");
   assert.equal(historyRow.output?.actionDisplay, "Approve");
+});
+
+test("an undone answer of an originally answered fixture item can be answered again", (t) => {
+  // Only the coverage dataset starts with answered items.
+  const dataset = process.env.AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE;
+  process.env.AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE = "1";
+  t.after(() => {
+    if (dataset === undefined) {
+      delete process.env.AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE;
+    } else {
+      process.env.AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE = dataset;
+    }
+  });
+  /** @type {import("../src/shared/human-review-view.ts").HumanReviewView} */
+  const historyView = { ...defaultHumanReviewView, status: "answered" };
+  const target = browserFixtureReviewPage(historyView).rows[0];
+  assert.ok(target);
+  const answered = browserFixtureReviewDetail(target.inputItemId);
+  assert.ok(answered && answered.actions.length > 0);
+  assert.equal(
+    answered.actions.some((action) => action.answerable),
+    false
+  );
+
+  const restored = browserFixtureReviewDetail(target.inputItemId, {
+    resolvedItems: {
+      [target.inputItemId]: {
+        actionDisplay: "Approve",
+        callerId: target.caller.callerId,
+        answeredAt: "2026-08-19T01:00:00.000Z",
+        currentRevision: target.currentRevision + 1,
+        undone: true
+      }
+    }
+  });
+  assert.ok(restored);
+  assert.deepEqual(
+    [restored.status, restored.output, restored.currentRevision],
+    ["pending", null, target.currentRevision + 1]
+  );
+  assert.equal(
+    restored.actions.every((action) => action.answerable),
+    true
+  );
 });
 
 test("fixture resolved marker leaves pending and appears as answered history", () => {

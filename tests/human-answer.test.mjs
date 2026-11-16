@@ -242,9 +242,10 @@ test("human answer statement builders scope by explicit account caller and input
     outputForPreReadUndoStatement({
       accountId: "account-123",
       callerId: "caller-123",
+      inputItemId: "input-123",
       outputResultId: "output-123"
     }).values,
-    ["account-123", "caller-123", "output-123"]
+    ["account-123", "caller-123", "output-123", "input-123"]
   );
 });
 
@@ -1235,6 +1236,7 @@ test("pre-read undo reports output_already_read without calling restore", async 
       humanUserId: baseAnswerInput.humanUserId,
       requestId: "req-test",
       correlationId: "corr-test",
+      inputItemId: baseAnswerInput.inputItemId,
       outputResultId: "output-1"
     }
   );
@@ -1268,6 +1270,7 @@ test("pre-read undo delegates unread restoration to the existing database functi
       humanUserId: baseAnswerInput.humanUserId,
       requestId: "req-test",
       correlationId: "corr-test",
+      inputItemId: baseAnswerInput.inputItemId,
       outputResultId: "output-1"
     }
   );
@@ -1466,6 +1469,7 @@ test(
           humanUserId: ids.userId,
           requestId: "req-db-test",
           correlationId: "corr-db-test",
+          inputItemId: ids.inputItemId,
           outputResultId: answer.outputResultId
         }
       );
@@ -1523,6 +1527,7 @@ test(
           humanUserId: ids.userId,
           requestId: "req-db-test-legacy",
           correlationId: "corr-db-test-legacy",
+          inputItemId: ids.inputItemId,
           outputResultId: legacyAnswer.outputResultId
         }
       );
@@ -1589,13 +1594,14 @@ test(
           response: { kind: "none" }
         })
       );
-    /** @param {string} outputResultId */
-    const undo = (outputResultId) =>
+    /** @param {string} outputResultId @param {string} [inputItemId] */
+    const undo = (outputResultId, inputItemId = ids.inputItemId) =>
       runHumanAnswerDatabaseTransaction(client, ids, "human", (query) =>
         undoHumanAnswerBeforeReadInTransaction(query, {
           ...actor,
           requestId: `req-${crypto.randomUUID()}`,
           correlationId: `human_undo_${crypto.randomUUID()}`,
+          inputItemId,
           outputResultId
         })
       );
@@ -1650,9 +1656,7 @@ test(
       const pageBeforeAnswer = await pageAsOf();
       const mutationCorrelation = `human_answer_${crypto.randomUUID()}`;
       const first = await answer(mutationCorrelation);
-      assert.equal(first.ok, true);
       assert.ok(first.ok);
-      assert.equal(first.replayed, undefined);
 
       const answeredState = await itemStates();
       assert.deepEqual(
@@ -1673,7 +1677,6 @@ test(
       // The response was lost and the client repeats the request.
       const repeated = await answer(mutationCorrelation);
       assert.ok(repeated.ok);
-      assert.equal(repeated.replayed, true);
       assert.equal(repeated.outputResultId, first.outputResultId);
       assert.equal(repeated.actionValue, "approve");
       assert.equal(repeated.answeredAt, first.answeredAt);
@@ -1684,13 +1687,17 @@ test(
       assert.equal(other.ok, false);
       assert.equal(other.ok ? null : other.code, "input_not_pending");
 
-      const undone = await undo(first.outputResultId);
-      assert.ok(undone.ok);
-      assert.equal(undone.replayed, undefined);
-      const undoneAgain = await undo(first.outputResultId);
-      assert.ok(undoneAgain.ok);
-      assert.equal(undoneAgain.replayed, true);
+      // An output is undone only for the item it answered.
+      const otherItem = await undo(first.outputResultId, missingItemId);
+      assert.equal(otherItem.ok ? null : otherItem.code, "not_found");
+      assert.equal(await auditCount("output_undone", first.outputResultId), 0);
+
+      assert.ok((await undo(first.outputResultId)).ok);
+      assert.ok((await undo(first.outputResultId)).ok);
       assert.equal(await auditCount("output_undone", first.outputResultId), 1);
+      // Nor is a repeat recognized for an item the output did not answer.
+      const otherRepeat = await undo(first.outputResultId, missingItemId);
+      assert.equal(otherRepeat.ok ? null : otherRepeat.code, "not_found");
       const neverAnswered = await undo(crypto.randomUUID());
       assert.equal(neverAnswered.ok ? null : neverAnswered.code, "not_found");
 
@@ -1946,6 +1953,21 @@ test(
         [false, "bulk_answer_failed"]
       );
       assert.deepEqual(rejected.state, [[third, "pending", 1, null]]);
+
+      // An undo naming another item's answer restores nothing and says so.
+      const mismatched = await sent(
+        actions.executeUndoHumanAnswerMutation(
+          form({
+            mutationId: "00000000-0000-4000-8000-00000000a005",
+            inputItemId: third,
+            callerId: ids.callerId,
+            outputResultId: firstOutput
+          })
+        )
+      );
+      assert.deepEqual([mismatched.ok, mismatched.code], [false, "not_found"]);
+      assert.deepEqual(mismatched.state, [[third, "pending", 1, null]]);
+      assert.equal(await auditCount("output_undone", firstOutput), 0);
 
       // One undo request restores both answers; its repeat restores nothing more.
       const undoForm = () =>

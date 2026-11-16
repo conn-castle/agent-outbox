@@ -28,6 +28,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+
+- Issue 2026-11-16 review-fixture-state-cookie-trimmed: Browser fixture drops answered items past its cookie limit
+    Priority: Low. Area: browser test fixture
+    Description: `fixtureResolvedItemsCookieValue` keeps only the newest records that fit 3,500 bytes (at most 50) and drops the rest without reporting it. Called directly with 20 answered items it kept 14. A dropped item has no record, which the fixture reads as never answered.
+    Open question: What should the fixture do when its answered-item state no longer fits one cookie?
+
 - Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is defined in several places
     Priority: Low. Area: Human review / Maintainability
     Description: The default ordering, priority ascending, is defined separately in `src/shared/human-review-view.ts` by the parse fallback in `parseSortRules` (`parseSort(readOne("sort"), "priority")` with `defaultHumanReviewSortDirection`), by the empty-list fallback in `canonicalSortRules` and by `isDefaultHumanReviewOrdering`, and in `src/components/human/ReviewViewControls.tsx` by the Sort panel's Reset button. If they stop agreeing, the parsed default, Reset and the default check can disagree.

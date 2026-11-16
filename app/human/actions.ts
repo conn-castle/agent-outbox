@@ -469,10 +469,11 @@ function databaseMutationBackend(requestId: string): MutationBackend {
   ): Promise<TSuccess | BackendFailure> {
     if (sessionFailure) return sessionFailure;
     if (session) {
-      return standalone(
-        process.env.DATABASE_APP_ROLE_URL ?? "",
-        buildInput(session)
-      );
+      const connectionString = process.env.DATABASE_APP_ROLE_URL;
+      if (!connectionString) {
+        throw new Error("Human account database configuration is unavailable.");
+      }
+      return standalone(connectionString, buildInput(session));
     }
     const clerkSession = await auth.protect({
       unauthenticatedUrl: "/sign-in"
@@ -536,6 +537,7 @@ function databaseMutationBackend(requestId: string): MutationBackend {
           humanUserId: accountSession.userId,
           requestId,
           correlationId,
+          inputItemId: target.inputItemId,
           outputResultId: target.outputResultId
         }),
         undoHumanAnswerBeforeReadInTransaction,

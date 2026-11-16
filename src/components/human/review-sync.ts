@@ -83,9 +83,10 @@ export function projectReview(
   view: HumanReviewView
 ): ReviewProjection {
   const rows = new Map(page.rows.map((row) => [row.inputItemId, row]));
-  let inserted = false;
+  let moved = false;
   const show = (row: HumanReviewListRow) => {
-    inserted ||= !rows.has(row.inputItemId);
+    const shown = rows.get(row.inputItemId);
+    moved ||= !shown || compareHumanReviewRows(shown, row, view) !== 0;
     rows.set(row.inputItemId, row);
   };
 
@@ -121,10 +122,10 @@ export function projectReview(
   }
 
   const projected = [...rows.values()];
-  // The page arrives in server order; only a row it did not contain needs
-  // placing.
+  // The page arrives in server order; only a row it did not contain, or one
+  // whose newer version sorts differently, needs placing.
   return {
-    rows: inserted
+    rows: moved
       ? projected.sort((left, right) =>
           compareHumanReviewRows(left, right, view)
         )

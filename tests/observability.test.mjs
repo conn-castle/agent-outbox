@@ -1227,6 +1227,7 @@ test("human answer undo transaction failures share error id across structured lo
             humanUserId: "00000000-0000-4000-8000-000000000423",
             requestId: "req-human-undo-transaction",
             correlationId: "corr-human-undo-transaction",
+            inputItemId: "00000000-0000-4000-8000-000000000425",
             outputResultId: "00000000-0000-4000-8000-000000000424"
           }
         );
@@ -1326,7 +1327,17 @@ function itemStateFor(inputItemIds) {
   };
 }
 
-test("human mutation results carry item state read after the mutations, keyed for retry", async () => {
+test("human mutation results carry item state read after the mutations, keyed for retry", async (t) => {
+  // Mutations after a request's first open their own (stubbed) connection.
+  const previousAppRoleUrl = process.env.DATABASE_APP_ROLE_URL;
+  process.env.DATABASE_APP_ROLE_URL = "postgresql://stubbed-app-role";
+  t.after(() => {
+    if (previousAppRoleUrl === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previousAppRoleUrl;
+    }
+  });
   const session = {
     accountId: "00000000-0000-4000-8000-000000000701",
     userId: "00000000-0000-4000-8000-000000000702"

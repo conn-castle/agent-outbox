@@ -310,7 +310,7 @@ test("a session refusal on a retry leaves the first attempt's outcome unconfirme
   assert.equal(attempts, 2);
 });
 
-test("a refusal on a retry settles nothing about earlier attempts, and keeps what they committed", async (t) => {
+test("a refusal on a retry settles nothing about earlier attempts, and keeps what they committed and reported", async (t) => {
   const committed = {
     inputItemId: itemId,
     callerId: "00000000-0000-4000-8000-000000000503",
@@ -331,7 +331,8 @@ test("a refusal on a retry settles nothing about earlier attempts, and keeps wha
             ...failure,
             code: "temporary_unavailable",
             message: "Temporarily unavailable.",
-            undo: [committed]
+            undo: [committed],
+            state: stateFor(failure.inputItemIds)
           },
           { status: 503 }
         )
@@ -352,6 +353,8 @@ test("a refusal on a retry settles nothing about earlier attempts, and keeps wha
       assert.equal(error.result?.code, "account_membership_required");
       assert.equal(error.unconfirmed, true);
       assert.deepEqual(error.committed, [committed]);
+      // So do the rows it reported, which the refusal does not repeat.
+      assert.deepEqual(error.state, stateFor(failure.inputItemIds));
       return true;
     }
   );
