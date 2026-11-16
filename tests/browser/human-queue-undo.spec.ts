@@ -64,33 +64,91 @@ test("repeated undo without waiting for the server reverses every answer", async
   await expectHistory(page, [], [permit, followUp, email]);
 });
 
-test("Ctrl+Z and Cmd+Z press Undo, and a text field keeps its own undo", async ({
-  page
-}) => {
+test("Ctrl+Z and Cmd+Z press Undo, one answer per press", async ({ page }) => {
   const initial = await openQueue(page);
-  for (const [, action] of actions.slice(0, 2)) await answer(page, action);
-  await expectQueue(page, without(initial, permit, followUp));
+  for (const [, action] of actions) await answer(page, action);
+  await expectQueue(page, without(initial, permit, followUp, email));
 
-  // In a text field the shortcut belongs to the field: no answer is reversed.
-  await row(page, email).getByRole("button", { name: "Add feedback" }).click();
-  const popup = page.getByRole("dialog", { name: "Feedback", exact: true });
-  await popup.getByRole("textbox", { name: "Feedback" }).fill("Draft");
-  await page.keyboard.press("Control+z");
-  await popup.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expectUndoOffered(page, "Approve follow-up");
-  await expectQueue(page, without(initial, permit, followUp));
-
-  // Two presses without waiting for the server reverse both answers in turn.
+  // Two presses without waiting for the server reverse two answers in turn.
   const restored = waitForMutations(page, 2);
   await page.keyboard.press("Control+z");
   await page.keyboard.press("Meta+z");
   await restored;
+  await expectQueue(page, without(initial, permit));
+
+  // On a layout without Latin letters the same key types another character.
+  const last = waitForMutations(page, 1);
+  await page.evaluate(() => {
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "я",
+        code: "KeyZ",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    );
+  });
+  await last;
   await expectQueue(page, initial);
   await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
 
   await page.reload();
   await expectHydrated(page);
   await expectQueue(page, initial);
+});
+
+test("the undo shortcut leaves text fields, open panels and other key combinations alone", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  for (const [, action] of actions.slice(0, 2)) await answer(page, action);
+  const answered = without(initial, permit, followUp);
+  const expectNothingUndone = async () => {
+    await expectUndoOffered(page, "Approve follow-up");
+    await expectQueue(page, answered);
+  };
+
+  // Redo and a press with both modifiers are not the shortcut.
+  await page.keyboard.press("Control+Shift+z");
+  await page.keyboard.press("Control+Meta+z");
+  await expectNothingUndone();
+
+  // A text field keeps the shortcut for its own undo.
+  await showTools(page);
+  await page.getByRole("textbox", { name: "Search" }).focus();
+  await page.keyboard.press("Control+z");
+  await expectNothingUndone();
+
+  // So does a text field in a modal, and the modal itself once focus has
+  // left the field.
+  await row(page, email).getByRole("button", { name: "Add feedback" }).click();
+  const popup = page.getByRole("dialog", { name: "Feedback", exact: true });
+  await popup.getByRole("textbox", { name: "Feedback" }).fill("Draft");
+  await page.keyboard.press("Control+z");
+  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+  await page.keyboard.press("Control+z");
+  await popup.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expectNothingUndone();
+
+  // An open filter panel keeps the keyboard, even on one of its buttons.
+  await page.getByLabel("Filter", { exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Filter reviews" });
+  await panel.getByRole("button", { name: "Close filter menu" }).focus();
+  await page.keyboard.press("Control+z");
+  await panel.getByRole("button", { name: "Close filter menu" }).click();
+  await expect(panel).toHaveCount(0);
+  await expectNothingUndone();
+
+  // A focused checkbox has no undo of its own, so the shortcut still works.
+  await page.getByRole("button", { name: "Select items", exact: true }).click();
+  const restored = waitForMutations(page, 1);
+  await row(page, email)
+    .getByRole("checkbox", { name: "Select review" })
+    .focus();
+  await page.keyboard.press("Control+z");
+  await restored;
+  await expectUndoOffered(page, "Approve permit brief");
 });
 
 test("undo targets the newest answer while it is still saving", async ({
