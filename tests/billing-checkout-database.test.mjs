@@ -10,6 +10,7 @@ import {
 } from "../src/server/billing.ts";
 import { scheduledCleanupStatementsForAccount } from "../src/server/scheduled.ts";
 import { runProductTransaction } from "../src/server/database.ts";
+import { SYSTEM_CONTRACT } from "../src/shared/system-contract.ts";
 import { bootstrapClerkHumanInTransaction } from "../src/server/human-session.ts";
 import {
   DATABASE_POLICY_VERIFICATION_SKIP,
@@ -26,6 +27,9 @@ const config = {
   publicAppBaseUrl: "https://billing.example.test"
 };
 const gated = { skip: databaseUrl ? false : DATABASE_POLICY_VERIFICATION_SKIP };
+// Grace cleanup runs at this fixed time, after every test event's deadline.
+const CLEANUP_TIME = new Date("2026-11-22T00:00:00Z");
+const GRACE_MS = SYSTEM_CONTRACT.billingDowngradeGraceDays * 86_400_000;
 
 function deferred() {
   let resolve = /** @type {(value?: any) => void} */ (() => {});
@@ -187,6 +191,15 @@ async function fixture(body) {
       id = `evt_fake_${crypto.randomUUID()}`
     ) => {
       eventIds.push(id);
+      // Production measures grace from when a webhook arrives. This fixture
+      // delivers each event at its creation time, so deadlines stay on the
+      // fixed timeline that ends at CLEANUP_TIME instead of moving with the
+      // calendar.
+      const deliveredAt = new Date(created * 1000);
+      assert.ok(
+        deliveredAt.getTime() + GRACE_MS < CLEANUP_TIME.getTime(),
+        "Test events must be created more than the grace period before CLEANUP_TIME."
+      );
       return handleStripeWebhookRequest(
         new Request("https://billing.example.test/api/billing/webhook", {
           method: "POST",
@@ -198,10 +211,7 @@ async function fixture(body) {
           connectionString: databaseUrl,
           config,
           stripe: /** @type {any} */ (stripe),
-          // Events are processed when they were created, so grace deadlines
-          // sit on the same fixed timeline as the cleanup time below instead
-          // of moving with the calendar.
-          now: new Date(created * 1000),
+          now: deliveredAt,
           runTransaction: /** @type {any} */ (
             (
               /** @type {any} */ _url,
@@ -222,7 +232,7 @@ async function fixture(body) {
         async (/** @type {any} */ query) => {
           for (const statement of scheduledCleanupStatementsForAccount({
             tier: "hosted_paid",
-            now: new Date("2026-11-22T00:00:00Z"),
+            now: CLEANUP_TIME,
             requestId: "billing-grace-cleanup"
           }))
             await query(statement);
