@@ -198,6 +198,10 @@ async function fixture(body) {
           connectionString: databaseUrl,
           config,
           stripe: /** @type {any} */ (stripe),
+          // Events are processed when they were created, so grace deadlines
+          // sit on the same fixed timeline as the cleanup time below instead
+          // of moving with the calendar.
+          now: new Date(created * 1000),
           runTransaction: /** @type {any} */ (
             (
               /** @type {any} */ _url,
