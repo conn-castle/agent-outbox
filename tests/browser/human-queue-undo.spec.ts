@@ -1,3 +1,7 @@
+import {
+  continueWithStaleBulkItems,
+  mutationForm
+} from "./human-mutation-routes";
 import { openPrimaryNavigation } from "./navigation";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
@@ -10,29 +14,134 @@ const actions = [
   [email, "Approve to send"]
 ] as const;
 
-test("undo restores only the last answer, in its original queue position, across history and reload", async ({
+test("undo walks back through answers, most recent first, across history and reload", async ({
   page
 }) => {
   const initial = await openQueue(page);
   for (const [, action] of actions) await answer(page, action);
-  await expectQueue(
-    page,
-    initial.filter((title) => !actions.some(([item]) => item === title))
-  );
+  await expectQueue(page, without(initial, permit, followUp, email));
+
   await undo(page);
-  const pending = initial.filter(
-    (title) => title !== permit && title !== followUp
-  );
-  await expectQueue(page, pending);
+  await expectQueue(page, without(initial, permit, followUp));
+  await expectUndoOffered(page, "Approve follow-up");
+  await expectHistory(page, [permit, followUp], [email]);
+  await openReviewQueue(page);
+
+  await undo(page);
+  await expectQueue(page, without(initial, permit));
+  await expectUndoOffered(page, "Approve permit brief");
+
+  await undo(page);
+  await expectQueue(page, initial);
+  await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+
   await page.reload();
   await expectHydrated(page);
-  await expectQueue(page, pending);
-  await expectHistory(page, [permit, followUp], [email]);
+  await expectQueue(page, initial);
+  await expectHistory(page, [], [permit, followUp, email]);
+});
 
-  // An older answer is independently undoable from its History details.
+test("repeated undo without waiting for the server reverses every answer", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  for (const [, action] of actions) await answer(page, action);
+
+  const restored = waitForMutations(page, actions.length);
+  for (const [, action] of [...actions].reverse()) {
+    await page
+      .getByRole("button", { name: `Undo “${action}”`, exact: true })
+      .click();
+  }
+  await restored;
+  await expectQueue(page, initial);
+  await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+
+  await page.reload();
+  await expectHydrated(page);
+  await expectQueue(page, initial);
+  await expectHistory(page, [], [permit, followUp, email]);
+});
+
+test("undo targets the newest answer while it is still saving", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  await answer(page, "Approve permit brief");
+
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requests = 0;
+  await page.route("**/human/mutations", async (route) => {
+    requests += 1;
+    if (requests === 1) await held;
+    await route.continue();
+  });
+  await page
+    .getByRole("button", { name: "Approve follow-up", exact: true })
+    .click();
+  await expect.poll(() => requests).toBe(1);
+  // The earlier, already-saved answer must not be what Undo acts on.
+  await expectUndoOffered(page, "Approve follow-up");
+  await page.getByTestId("last-answer-undo").click();
+  await expect(page.getByTestId("last-answer-undo")).toBeDisabled();
+  expect(requests, "Undo waits for the answer it reverses.").toBe(1);
+
+  const settled = waitForMutations(page, 2);
+  release();
+  await settled;
+  await page.unroute("**/human/mutations");
+  await expectQueue(page, without(initial, permit));
+  await expectUndoOffered(page, "Approve permit brief");
+
+  await page.reload();
+  await expectHydrated(page);
+  await expectQueue(page, without(initial, permit));
+  await expectHistory(page, [permit], [followUp]);
+});
+
+test("undo reverses a whole bulk answer as one step", async ({ page }) => {
+  const initial = await openQueue(page);
+  await answer(page, "Approve to send");
+  await selectRows(page, [permit, followUp]);
+  const bulk = mutationResponse(page);
+  await applyBulk(page);
+  expect((await bulk).ok()).toBe(true);
+  await expectQueue(page, without(initial, permit, followUp, email));
+  await expect(
+    page.getByRole("button", {
+      name: "Undo “Approve permit brief” for 2 reviews",
+      exact: true
+    })
+  ).toBeVisible();
+
+  await undo(page);
+  await expectQueue(page, without(initial, email));
+  await expectUndoOffered(page, "Approve to send");
+  await expectHistory(page, [email], [permit, followUp]);
+  await openReviewQueue(page);
+
+  await undo(page);
+  await expectQueue(page, initial);
+  await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+
+  await page.reload();
+  await expectHydrated(page);
+  await expectQueue(page, initial);
+  await expectHistory(page, [], [permit, followUp, email]);
+});
+
+test("an answer undone from History leaves the remaining undo order intact", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  for (const [, action] of actions) await answer(page, action);
+  await expectHistory(page, [permit, followUp, email], []);
   await page
     .getByRole("link", {
-      name: `Open review details for ${permit}`,
+      name: `Open review details for ${followUp}`,
       exact: true
     })
     .first()
@@ -40,22 +149,22 @@ test("undo restores only the last answer, in its original queue position, across
   const restored = mutationResponse(page);
   await page.getByRole("button", { name: "Undo answer", exact: true }).click();
   await restored;
-  await openPrimaryNavigation(page);
-  await page
-    .getByRole("navigation", { name: "Primary" })
-    .getByRole("link", { name: "Review queue", exact: true })
-    .click();
-  await expectQueue(
-    page,
-    initial.filter((title) => title !== followUp)
-  );
+  await openReviewQueue(page);
+  await expectQueue(page, without(initial, permit, email));
+
+  await expectUndoOffered(page, "Approve to send");
+  await undo(page);
+  await expectQueue(page, without(initial, permit));
+  // The answer already undone from History is not offered again.
+  await expectUndoOffered(page, "Approve permit brief");
+  await undo(page);
+  await expectQueue(page, initial);
+  await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+
   await page.reload();
   await expectHydrated(page);
-  await expectQueue(
-    page,
-    initial.filter((title) => title !== followUp)
-  );
-  await expectHistory(page, [followUp], [permit, email]);
+  await expectQueue(page, initial);
+  await expectHistory(page, [], [permit, followUp, email]);
 });
 
 for (const outcome of ["all", "partial", "none"] as const) {
@@ -79,8 +188,8 @@ for (const outcome of ["all", "partial", "none"] as const) {
           .getByRole("checkbox", { name: "Select review" })
           .check();
 
-      // Inject only the failure outcome. Successful items are sent to the real
-      // fixture endpoint, so History and reload independently see those writes.
+      // The request is sent on with the failing items made stale, so the
+      // endpoint itself rejects them and History and reload see its writes.
       if (outcome !== "all")
         await page.route("**/human/mutations", (route) =>
           bulkFailure(route, outcome)
@@ -206,54 +315,10 @@ for (const outcome of ["partial", "none"] as const) {
   });
 }
 
-test("a timed-out bulk answer that committed leaves the selection", async ({
+test("a bulk answer whose response is lost is retried without answering twice", async ({
   page
 }) => {
-  await page.addInitScript(() => {
-    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
-    AbortSignal.timeout = (ms: number) =>
-      originalTimeout(ms === 20_000 ? 50 : ms);
-  });
-  const initial = await openQueue(page);
-  await selectRows(page, [permit]);
-  await expect(page.locator(".bulk-actions")).toContainText(
-    "1 selected pending row"
-  );
-  let markCommitted!: () => void;
-  const committed = new Promise<void>((resolve) => {
-    markCommitted = resolve;
-  });
-  await page.route("**/human**", async (route) => {
-    const request = route.request();
-    if (
-      request.method() === "POST" &&
-      request.url().endsWith("/human/mutations")
-    ) {
-      // The write commits, but its response never reaches the timed-out client.
-      await route.fetch();
-      markCommitted();
-      return;
-    }
-    if (request.method() === "GET" && request.headers()["rsc"] === "1")
-      await committed;
-    await route.continue();
-  });
-  const aborted = page.waitForEvent("requestfailed", (request) =>
-    request.url().endsWith("/human/mutations")
-  );
-  await applyBulk(page);
-  await aborted;
-  await committed;
-  await expectQueueMembership(
-    page,
-    initial.filter((title) => title !== permit)
-  );
-  await expect(page.locator(".bulk-actions")).toHaveCount(0);
-});
-
-test("a timed-out bulk answer that did not commit keeps visible selections for retry", async ({
-  page
-}) => {
+  // Only the first attempt times out; the retry uses the normal timeout.
   await page.addInitScript(() => {
     const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
     let intercepted = false;
@@ -263,16 +328,54 @@ test("a timed-out bulk answer that did not commit keeps visible selections for r
       return originalTimeout(50);
     };
   });
+  const initial = await openQueue(page);
+  await selectRows(page, [permit]);
+  const mutationIds: string[] = [];
+  await page.route("**/human/mutations", async (route) => {
+    mutationIds.push(
+      String((await mutationForm(route.request())).get("mutationId"))
+    );
+    if (mutationIds.length > 1) return route.continue();
+    // The write commits, but its response never reaches the timed-out client.
+    await route.fetch();
+  });
+  const retried = mutationResponse(page);
+  await applyBulk(page);
+  expect((await retried).ok()).toBe(true);
+  await page.unroute("**/human/mutations");
+  expect(mutationIds).toHaveLength(2);
+  expect(mutationIds[1]).toBe(mutationIds[0]);
+
+  const pending = without(initial, permit);
+  await expectQueueMembership(page, pending);
+  await expect(page.locator(".bulk-actions")).toHaveCount(0);
+  await expect(page.locator(".last-action-error")).toHaveCount(0);
+  // The retry reported the one committed answer, so Undo reverses it.
+  await expectUndoOffered(page, "Approve permit brief");
+  await undo(page);
+  await expectQueueMembership(page, initial);
+  await page.reload();
+  await expectHydrated(page);
+  await expectQueueMembership(page, initial);
+});
+
+test("a bulk answer that never reaches the server keeps visible selections for retry", async ({
+  page
+}) => {
   const initial = await openQueue(page, "/human?fixture_dataset=pagination");
   await selectRows(page, [permit, followUp]);
-  // The request never reaches the server, so the refreshed page contains both
-  // pending rows. This also covers returning before an off-page refresh renders.
-  await page.route("**/human/mutations", () => {});
-  const aborted = page.waitForEvent("requestfailed", (request) =>
-    request.url().endsWith("/human/mutations")
-  );
+  let attempts = 0;
+  await page.route("**/human/mutations", (route) => {
+    attempts += 1;
+    return route.abort();
+  });
   await applyBulk(page);
-  await aborted;
+  // The rows stay hidden while the client retries, then return with an error.
+  await expect(row(page, permit)).toHaveCount(0);
+  await expect(page.locator(".last-action-error")).toContainText(
+    "could not be reached"
+  );
+  expect(attempts).toBe(3);
   await expect(page.locator(".row-title")).toHaveText(initial);
   for (const title of [permit, followUp])
     await expect(
@@ -296,26 +399,9 @@ test("a timed-out bulk answer that did not commit keeps visible selections for r
 });
 
 for (const offView of ["filter", "page"] as const) {
-  test(`a timed-out bulk answer that did not commit keeps selections off-${offView} for retry`, async ({
+  test(`a bulk answer that never reaches the server keeps selections off-${offView} for retry`, async ({
     page
   }) => {
-    // Settle the first write only after the changed view reaches the browser.
-    // Later writes use the normal timeout so the retry exercises the endpoint.
-    await page.addInitScript(() => {
-      const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
-      let intercepted = false;
-      AbortSignal.timeout = (ms: number) => {
-        if (ms !== 20_000 || intercepted) return originalTimeout(ms);
-        intercepted = true;
-        const controller = new AbortController();
-        window.addEventListener(
-          "test-mutation-timeout",
-          () => controller.abort(new DOMException("Timed out", "TimeoutError")),
-          { once: true }
-        );
-        return controller.signal;
-      };
-    });
     const initial = await openQueue(
       page,
       offView === "page" ? "/human?fixture_dataset=pagination" : "/human"
@@ -324,8 +410,15 @@ for (const offView of ["filter", "page"] as const) {
     const started = page.waitForRequest((request) =>
       request.url().endsWith("/human/mutations")
     );
-    // Leave the request unsent: the fixture's pending rows do not change.
-    await page.route("**/human/mutations", () => {});
+    // The first attempt fails only after the changed view reaches the browser.
+    let failFirstAttempt!: () => void;
+    const viewChanged = new Promise<void>((resolve) => {
+      failFirstAttempt = resolve;
+    });
+    await page.route("**/human/mutations", async (route) => {
+      await viewChanged;
+      await route.abort();
+    });
     await applyBulk(page);
     await started;
     if (offView === "filter") {
@@ -342,19 +435,10 @@ for (const offView of ["filter", "page"] as const) {
       await expect(row(page, followUp)).toHaveCount(0);
     }
 
-    const aborted = page.waitForEvent("requestfailed", (request) =>
-      request.url().endsWith("/human/mutations")
+    failFirstAttempt();
+    await expect(page.locator(".last-action-error")).toContainText(
+      "could not be reached"
     );
-    const refreshed = page.waitForResponse(
-      (response) =>
-        response.request().method() === "GET" &&
-        response.request().headers()["rsc"] === "1"
-    );
-    await page.evaluate(() =>
-      window.dispatchEvent(new Event("test-mutation-timeout"))
-    );
-    await aborted;
-    await refreshed;
     await expect(page.locator(".bulk-actions")).toContainText(
       "2 selected on other pages"
     );
@@ -466,7 +550,7 @@ for (const [code, message] of [
   ["output_already_read", "Output result has already been read by the caller."],
   ["not_found", "Output result was not found."]
 ] as const) {
-  test(`${code} undo rejection keeps answered items in History and withdraws Undo`, async ({
+  test(`${code} undo rejection keeps answered items in History and withdraws that Undo`, async ({
     page
   }) => {
     const initial = await openQueue(page);
@@ -474,7 +558,7 @@ for (const [code, message] of [
     try {
       for (const [, action] of actions) await answer(page, action);
       await page.route("**/human/mutations", async (route) => {
-        const form = await requestForm(route);
+        const form = await mutationForm(route.request());
         await route.fulfill({
           status: 409,
           json: {
@@ -488,8 +572,9 @@ for (const [code, message] of [
       });
       await undo(page);
       await expect(page.locator(".last-action-error")).toContainText(message);
-      // The rejection is permanent, so Undo is no longer offered.
-      await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+      // The rejection is permanent, so that answer is no longer offered; the
+      // answer before it is.
+      await expectUndoOffered(page, "Approve follow-up");
       await page.unroute("**/human/mutations");
       const pending = initial.filter(
         (title) => !actions.some(([item]) => item === title)
@@ -577,6 +662,37 @@ async function undo(page: Page) {
   const response = mutationResponse(page);
   await page.getByTestId("last-answer-undo").click();
   await response;
+}
+
+function without(titles: string[], ...removed: string[]) {
+  return titles.filter((title) => !removed.includes(title));
+}
+
+// The single Undo control names the action it will reverse.
+async function expectUndoOffered(page: Page, action: string) {
+  await expect(page.getByTestId("last-answer-undo")).toHaveAccessibleName(
+    `Undo “${action}”`
+  );
+}
+
+async function waitForMutations(page: Page, count: number) {
+  let seen = 0;
+  await page.waitForResponse((response) => {
+    if (
+      response.url().endsWith("/human/mutations") &&
+      response.request().method() === "POST"
+    )
+      seen += 1;
+    return seen >= count;
+  });
+}
+
+async function openReviewQueue(page: Page) {
+  await openPrimaryNavigation(page);
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "Review queue", exact: true })
+    .click();
 }
 
 async function expectQueue(page: Page, titles: string[]) {
@@ -684,55 +800,10 @@ async function holdRefreshes(page: Page) {
   };
 }
 
-async function requestForm(route: Route) {
-  return new Request(route.request().url(), {
-    method: "POST",
-    headers: route.request().headers(),
-    body: new Uint8Array(route.request().postDataBuffer()!)
-  }).formData();
-}
-
+/** Has the endpoint reject the last ("partial") or every ("none") item. */
 async function bulkFailure(route: Route, outcome: "partial" | "none") {
-  const form = await requestForm(route);
-  const items = form
-    .getAll("bulkItem")
-    .map((value) => JSON.parse(String(value)) as { inputItemId: string });
-  if (outcome === "none") {
-    await route.fulfill({
-      status: 409,
-      json: {
-        ok: false,
-        operation: "bulk-answer",
-        inputItemIds: items.map((item) => item.inputItemId),
-        code: "bulk_answer_failed",
-        message: "Bulk action failed: 2 not answered."
-      }
-    });
-    return;
-  }
-  const first = form.getAll("bulkItem")[0];
-  form.delete("bulkItem");
-  form.append("bulkItem", first);
-  const request = new Request(route.request().url(), {
-    method: "POST",
-    body: form
-  });
-  const response = await route.fetch({
-    headers: {
-      ...route.request().headers(),
-      "content-type": request.headers.get("content-type")!
-    },
-    postData: Buffer.from(await request.arrayBuffer())
-  });
-  const result = await response.json();
-  expect(result.ok).toBe(true);
-  await route.fulfill({
-    response,
-    json: {
-      ...result,
-      inputItemIds: items.map((item) => item.inputItemId),
-      failed: 1,
-      message: "Bulk action complete: 1 answered, 1 failed."
-    }
-  });
+  await continueWithStaleBulkItems(
+    route,
+    (index) => outcome === "none" || index > 0
+  );
 }

@@ -108,15 +108,12 @@ export function browserFixtureReviewPage(
   };
   const resolvedItems = options.resolvedItems ?? {};
   const resolvedIds = fixtureResolvedIds(options);
-  const filtered = browserFixtureReviewRows(effectiveOptions).filter((row) => {
-    const resolved = resolvedIds.has(row.inputItemId);
-    const effectiveStatus = resolved ? "answered" : row.status;
-    return (
-      effectiveStatus === view.status &&
+  const filtered = browserFixtureReviewRows(effectiveOptions).filter(
+    (row) =>
+      fixtureEffectiveStatus(row, options, resolvedIds) === view.status &&
       humanReviewMatchesFacets(row, view) &&
       humanReviewMatchesSearch(row, view.search)
-    );
-  });
+  );
   if (!browserFixtureUsesDesignData() || !isDefaultHumanReviewOrdering(view)) {
     filtered.sort((left, right) => compareHumanReviewRows(left, right, view));
   }
@@ -144,12 +141,10 @@ export function browserFixtureReviewTypeOptions(
   return [
     ...new Set(
       browserFixtureReviewRows(options)
-        .filter((row) => {
-          const status = resolvedIds.has(row.inputItemId)
-            ? "answered"
-            : row.status;
-          return status === view.status;
-        })
+        .filter(
+          (row) =>
+            fixtureEffectiveStatus(row, options, resolvedIds) === view.status
+        )
         .map((row) => row.rowType.display)
     )
   ].sort(compareHumanReviewTypeNames);
@@ -163,6 +158,30 @@ function fixtureResolvedIds(options: BrowserFixtureReviewOptions) {
       ...Object.keys(resolvedItems).filter((id) => !resolvedItems[id].undone)
     ].filter((id): id is string => Boolean(id))
   );
+}
+
+// An undone answer is pending again, including an answer the fixture data
+// itself starts out with.
+function fixtureEffectiveStatus(
+  row: HumanReviewListRow,
+  options: BrowserFixtureReviewOptions,
+  resolvedIds: Set<string>
+): HumanReviewListRow["status"] {
+  if (resolvedIds.has(row.inputItemId)) return "answered";
+  return options.resolvedItems?.[row.inputItemId]?.undone
+    ? "pending"
+    : row.status;
+}
+
+/** The list row of one fixture item in its current state, in any status. */
+export function browserFixtureReviewRow(
+  inputItemId: string,
+  options: BrowserFixtureReviewOptions = {}
+): HumanReviewListRow | null {
+  const detail = browserFixtureReviewDetail(inputItemId, options);
+  if (!detail || detail.inputItemId !== inputItemId) return null;
+  const { detailsHtml: _details, actions: _actions, ...row } = detail;
+  return row;
 }
 
 export function browserFixtureReviewDetail(
@@ -228,6 +247,19 @@ export function browserFixtureReviewCard(
   throw new Error("Linked fixture review is missing from its queue.");
 }
 
+/**
+ * The output id a fixture answer reports and its answered review then shows.
+ * Like a real output, each answer of an item (one per revision) has its own.
+ */
+export function fixtureResolvedOutputResultId(
+  inputItemId: string,
+  answeredRevision: number
+) {
+  return fixtureUuid(
+    `fixture-resolved-output:${inputItemId}:${answeredRevision}`
+  );
+}
+
 function applyFixtureResolvedState<T extends HumanReviewListRow>(
   row: T,
   resolved: BrowserFixtureResolvedItem | undefined,
@@ -237,7 +269,9 @@ function applyFixtureResolvedState<T extends HumanReviewListRow>(
     row = { ...row, currentRevision: resolved.currentRevision };
   }
   if (!isResolved) {
-    return row;
+    return resolved?.undone && row.status === "answered"
+      ? { ...row, status: "pending", answeredAt: null, output: null }
+      : row;
   }
   return {
     ...row,
@@ -246,8 +280,9 @@ function applyFixtureResolvedState<T extends HumanReviewListRow>(
       ? {
           answeredAt: resolved.answeredAt,
           output: {
-            outputResultId: fixtureUuid(
-              `fixture-resolved-output:${row.inputItemId}`
+            outputResultId: fixtureResolvedOutputResultId(
+              row.inputItemId,
+              resolved.currentRevision ?? row.currentRevision
             ),
             actionValue: "fixture_resolved",
             actionDisplay: resolved.actionDisplay,

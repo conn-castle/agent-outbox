@@ -233,35 +233,69 @@ to fixture or server state. A submission whose items all have writes still
 queued or syncing is ignored as a repeat; once those writes settle, the items
 can be submitted again.
 
-The queue projects the latest journal action for each item. Confirmed writes
-supersede earlier actions only for the items they changed; earlier state remains
-available until then so a rejected action can roll back correctly. Canonical
-refreshes retire settled projections. See
-[queue reconciliation debugging](ops/debugging.md#human-save-reports-a-missing-input)
-for bulk-result handling. A failed write removes only its own optimistic
-projection, with the failure shown in the application bar. The row leaving the
-pending queue is the success signal. After an answer is accepted, a single
-last-action Undo control appears in that same bar and is replaced by the next
-successful answer. Older eligible reversals stay in History. A client fetch
-timeout is indeterminate: the journal keeps the projection and refreshes
-canonical state instead of rolling back a write that may still commit. Timed-out
-answers clear selected IDs only when canonical rows are non-pending or a
-complete pending view excludes a submitted row that matches its filters; absence
-from a filtered-out view or an incomplete page preserves selection. A bulk
-result with zero successes is a failure from the mutation endpoint, not a
-successful projection. Undo becomes available only after the original answer is
-accepted; its cached restored row remains non-interactive until the undo commit
-is accepted, then reconciles with the canonical revision of the current view.
-JavaScript-disabled review forms retain redirecting server actions as a
-fallback. Navigational and security-sensitive workflows use their existing
-redirecting actions with explicit form-local pending labels applied on the
-native click, so the visible pending state does not wait for a React commit.
-Labeled clicks are stopped in window capture so descendant React click handlers
-cannot delay that paint; other window listeners still run. Submits restart with
-requestSubmit, and non-submit actions replay their click, on the following
-macrotask after MutationObserver callbacks have run. Browser coverage holds
-responses open so network or navigation completion cannot satisfy the latency
-gate.
+The visible queue is derived from three sources, each trusted only for what it
+states:
+
+- **The page.** The rows of the current view, with an `asOf` token read from
+  the database clock at the start of the page's transaction.
+- **Item states.** Every mutation response carries the authoritative row of
+  each item it named (or its absence), read in a transaction that starts after
+  the mutations committed, with an `asOf` token read after those rows. A
+  rejection carries them too whenever the server can still read the items.
+- **Unsettled mutations.** What the person asked for and the server has not yet
+  answered: an answer hides its rows, and an undo shows its rows locked.
+
+For each item the newer of the page and its item state wins; a page whose
+`asOf` is not older than an item state already reflects it. The browser never
+guesses a revision and never infers an outcome from a row being absent from a
+page. `src/components/human/review-sync.ts` holds this derivation as pure
+functions.
+
+Each mutation carries a client-generated `mutationId`, and a mutation settles
+exactly once. An attempt that cannot establish the outcome (timeout, network
+failure, or a 5xx response) is repeated under the same id, at most twice, and
+the server reports the mutation an earlier attempt committed instead of applying
+it again:
+
+- A repeated answer is recognized by the `input_answered` audit event of the
+  item's current output, whose correlation id is derived from the `mutationId`.
+- A repeated undo is recognized by the `output_undone` audit event of the
+  output it named, while the item is still pending. Once the item has been
+  answered again, an undo of the earlier output is reported as not found.
+
+If no attempt establishes the outcome, the mutation settles as unconfirmed: its
+optimistic projection is removed, the application bar says it may not have been
+saved rather than that it failed, and the page is refreshed so the next page
+shows what the server holds. A failed write removes only its own projection. The
+row leaving the pending queue is the success signal.
+
+When a page transaction overlaps a mutation response, the response's item state
+wins even if the page read the item later; the refresh that follows every
+settled mutation corrects it.
+
+Each answer action, single or bulk, joins a per-page undo stack the moment the
+person acts. One Undo control in the application bar names the most recent
+action not yet undone; pressing it reverses that action and then offers the one
+before it, so repeated presses walk back through the session's answers in
+reverse order. A bulk answer is one step and restores every item it answered.
+Pressing Undo while the answer is still saving starts the undo as soon as the
+answer is accepted. An action leaves the stack when it is undone (from the bar
+or from History), when its answer fails, or when the server permanently rejects
+the undo because the caller already read the output; a temporarily failed undo
+is offered again. The stack lives in the mounted page and is empty after a
+reload; eligible answers remain reversible from History. A bulk result with zero
+successes is a failure from the mutation endpoint, not a successful projection.
+
+JavaScript-disabled
+review forms retain redirecting server actions as a fallback. Navigational and
+security-sensitive workflows use their existing redirecting actions with
+explicit form-local pending labels applied on the native click, so the visible
+pending state does not wait for a React commit. Labeled clicks are stopped in
+window capture so descendant React click handlers cannot delay that paint; other
+window listeners still run. Submits restart with requestSubmit, and non-submit
+actions replay their click, on the following macrotask after MutationObserver
+callbacks have run. Browser coverage holds responses open so network or
+navigation completion cannot satisfy the latency gate.
 
 ## File Handling
 
@@ -366,8 +400,10 @@ Rules:
   script, arbitrary SVG/media, or form attempts remain data instead of UI code.
 - Human answers, pre-read undo, and narrow compatible bulk actions use
   server-only writes. Bulk answer forms are capped at 100 unique input items,
-  matching the maximum review list page size. Undo is unavailable after a caller
-  read marks the output.
+  matching the maximum review list page size. An undo request names one output
+  result per answered item, under the same cap. Each answer and each undo
+  commits in its own transaction, so one rejected item does not block the rest.
+  Undo is unavailable after a caller read marks the output.
 - Business rules, authorization, quota checks, queue writes, output delivery,
   and file handling belong in server-only code and the database.
 

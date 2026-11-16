@@ -68,23 +68,22 @@ cleanup. Acknowledgement removes the live input/output pair; it does not leave
 an answered input available for another response.
 
 Check whether the item reappeared after answer → undo → answer, and correlate
-the input id and UTC timing with caller acknowledgement or deletion. Queue
-reconciliation must retire an older undo snapshot when a later answer is
-confirmed, including when no intermediate pending refresh reached the browser. A
-bulk mutation initially includes all attempted IDs, including failures. Once the
-response arrives, its `answeredInputItemIds` identifies exactly which items can
-remain hidden and supersede older undo snapshots. Failed items must remain
-pending. An omitted row in a filtered page alone cannot establish bulk success.
-Projection uses the latest action per item, not independent sets of hidden and
-restored rows. Starting undo must retain earlier answer state for rollback; only
-confirmed success can supersede it. When a bulk record overlaps a later action,
-trim only the affected IDs rather than discarding the entire batch. An undo
-snapshot with a newer revision also replaces an older visible row until the
-refreshed server row catches up. Timeouts remain explicitly indeterminate, not
-confirmed success. Missing-input, already-answered, and stale-revision save
-failures refresh the queue and clear the obsolete local undo snapshot while
-preserving the error message. Answering preserves the input revision; undo
+the input id and UTC timing with caller acknowledgement or deletion.
+
+The rejection carries the item's current row, so the browser shows what the
+server holds without waiting for a page refresh. When a queue row looks wrong,
+compare three things: the page's `asOf`, the `state.asOf` of the last mutation
+response naming that item, and any request still in flight. The newer of the
+page and the item state is what the queue shows; see
+[interaction performance](../architecture.md#interaction-performance). A bulk
+response reports every attempted item's row, so answered items leave the queue
+and rejected ones stay pending. Answering preserves the input revision; undo
 increments it once.
+
+A retried request reuses its `mutationId`. To confirm that a retry was
+recognized rather than applied twice, look for a single `input_answered` (or
+`output_undone`) audit event for the output, with the correlation id
+`human_answer_<mutationId>` or `human_bulk_answer_<mutationId>`.
 
 ## File Upload Or Download Failure
 

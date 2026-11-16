@@ -16,7 +16,10 @@ import {
   browserFixtureReviewTypeOptions,
   humanBrowserFixtureEnabled
 } from "../../src/server/human-review-fixture";
-import { readFixtureResolvedItems } from "../../src/server/human-review-fixture-state";
+import {
+  readFixtureAsOf,
+  readFixtureResolvedItems
+} from "../../src/server/human-review-fixture-state";
 import { loadHumanReviewPage } from "../../src/server/human-review-page";
 import { requiredHumanSessionConfiguration } from "../../src/server/human-session";
 import { MissingConfigurationPanel } from "../../src/server/ui";
@@ -104,6 +107,7 @@ export default async function HumanReviewPage({
         view={view}
         hasNext={fixturePage.hasNext}
         totalCount={fixturePage.totalCount}
+        asOf={await readFixtureAsOf()}
         detailOpen={cardLink !== null || selectedItem !== undefined}
         composeAction={composeAction}
         renderedAt={renderedAt}
@@ -194,6 +198,7 @@ export default async function HumanReviewPage({
       view={pageData.view}
       hasNext={pageData.hasNext}
       totalCount={pageData.totalCount}
+      asOf={pageData.asOf}
       detailOpen={cardLink !== null || selectedItem !== undefined}
       composeAction={composeAction}
       renderedAt={renderedAt}

@@ -76,6 +76,7 @@ const context = {
 const inputItemId = "00000000-0000-4000-8000-000000000003";
 const callerId = "00000000-0000-4000-8000-000000000005";
 const outputResultId = "00000000-0000-4000-8000-000000000004";
+const mutationId = "00000000-0000-4000-8000-000000000006";
 const defaultHumanReviewView = humanReviewViewFromRecord(undefined);
 
 function javascriptWhitespaceClass() {
@@ -1716,6 +1717,7 @@ test("human action form parser rejects malformed hidden fields before database w
   const validAnswer = answerForm();
   assert.deepEqual(parseHumanAnswerForm(validAnswer), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1727,6 +1729,7 @@ test("human action form parser rejects malformed hidden fields before database w
   emptyTextAnswer.set("response.text", "");
   assert.deepEqual(parseHumanAnswerForm(emptyTextAnswer), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1752,6 +1755,7 @@ test("human action form parser rejects malformed hidden fields before database w
   validFileUpload.set("response.file", uploadedFile);
   assert.deepEqual(parseHumanAnswerForm(validFileUpload), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1766,6 +1770,7 @@ test("human action form parser rejects malformed hidden fields before database w
   civilDate.set("response.value_date", "2026-07-15");
   assert.deepEqual(parseHumanAnswerForm(civilDate), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1786,6 +1791,7 @@ test("human action form parser rejects malformed hidden fields before database w
   configuredCivilDate.set("response.value_date", "2026-07-15");
   assert.deepEqual(parseHumanAnswerForm(configuredCivilDate), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1820,6 +1826,7 @@ test("human action form parser rejects malformed hidden fields before database w
   localDateTime.set("response.value_local", "2026-07-16T09:30");
   assert.deepEqual(parseHumanAnswerForm(localDateTime), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1840,6 +1847,7 @@ test("human action form parser rejects malformed hidden fields before database w
   localDateTimeWithSeconds.set("response.value_local", "2026-07-16T09:30:15");
   assert.deepEqual(parseHumanAnswerForm(localDateTimeWithSeconds), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1860,6 +1868,7 @@ test("human action form parser rejects malformed hidden fields before database w
   newYorkDateTime.set("response.value_local", "2026-01-15T09:30");
   assert.deepEqual(parseHumanAnswerForm(newYorkDateTime), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1893,18 +1902,9 @@ test("human action form parser rejects malformed hidden fields before database w
   dstGap.set("response.value_local", "2026-03-08T02:30");
   assert.deepEqual(parseHumanAnswerForm(dstGap), { ok: false });
 
-  const validBulk = new FormData();
-  validBulk.set("bulkActionValue", "approve");
-  validBulk.append(
-    "bulkItem",
-    JSON.stringify({
-      inputItemId,
-      callerId,
-      expectedRevision: 2
-    })
-  );
-  assert.deepEqual(parseBulkHumanAnswersForm(validBulk), {
+  assert.deepEqual(parseBulkHumanAnswersForm(bulkForm()), {
     ok: true,
+    mutationId,
     actionValue: "approve",
     items: [{ inputItemId, callerId, expectedRevision: 2 }]
   });
@@ -1925,6 +1925,7 @@ test("human action form parser rejects malformed hidden fields before database w
   assert.deepEqual(parseBulkHumanAnswersForm(duplicateBulk), { ok: false });
 
   const oversizedBulk = new FormData();
+  oversizedBulk.set("mutationId", mutationId);
   oversizedBulk.set("bulkActionValue", "approve");
   for (let index = 0; index <= MAX_BULK_HUMAN_ANSWER_ITEMS; index += 1) {
     oversizedBulk.append(
@@ -1938,25 +1939,97 @@ test("human action form parser rejects malformed hidden fields before database w
   }
   assert.deepEqual(parseBulkHumanAnswersForm(oversizedBulk), { ok: false });
 
-  const validUndo = new FormData();
-  validUndo.set("inputItemId", inputItemId);
-  validUndo.set("callerId", callerId);
-  validUndo.set("outputResultId", outputResultId);
-  assert.deepEqual(parseUndoHumanAnswerForm(validUndo), {
+  assert.deepEqual(parseUndoHumanAnswerForm(undoForm()), {
     ok: true,
-    inputItemId,
-    callerId,
-    outputResultId
+    mutationId,
+    targets: [{ inputItemId, callerId, outputResultId }]
+  });
+
+  // Undoing a bulk answer repeats the three fields once per answered item.
+  const secondInputItemId = "00000000-0000-4000-8000-0000000000a2";
+  const secondOutputResultId = "00000000-0000-4000-8000-0000000000b2";
+  const bulkUndo = undoForm();
+  bulkUndo.append("inputItemId", secondInputItemId);
+  bulkUndo.append("callerId", callerId);
+  bulkUndo.append("outputResultId", secondOutputResultId);
+  assert.deepEqual(parseUndoHumanAnswerForm(bulkUndo), {
+    ok: true,
+    mutationId,
+    targets: [
+      { inputItemId, callerId, outputResultId },
+      {
+        inputItemId: secondInputItemId,
+        callerId,
+        outputResultId: secondOutputResultId
+      }
+    ]
   });
 
   const invalidUndo = undoForm();
   invalidUndo.set("outputResultId", "not-a-uuid");
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
+
+  const unpairedUndo = undoForm();
+  unpairedUndo.append("inputItemId", secondInputItemId);
+  assert.deepEqual(parseUndoHumanAnswerForm(unpairedUndo), { ok: false });
+
+  const duplicateUndo = undoForm();
+  duplicateUndo.append("inputItemId", inputItemId);
+  duplicateUndo.append("callerId", callerId);
+  duplicateUndo.append("outputResultId", secondOutputResultId);
+  assert.deepEqual(parseUndoHumanAnswerForm(duplicateUndo), { ok: false });
+
+  const oversizedUndo = new FormData();
+  oversizedUndo.set("mutationId", mutationId);
+  for (let index = 0; index <= MAX_BULK_HUMAN_ANSWER_ITEMS; index += 1) {
+    oversizedUndo.append(
+      "inputItemId",
+      `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`
+    );
+    oversizedUndo.append("callerId", callerId);
+    oversizedUndo.append("outputResultId", outputResultId);
+  }
+  assert.deepEqual(parseUndoHumanAnswerForm(oversizedUndo), { ok: false });
+});
+
+test("a mutation id is taken from the form, minted when absent, and rejected when malformed", () => {
+  const parsers = /** @type {const} */ ([
+    [parseHumanAnswerForm, answerForm],
+    [parseBulkHumanAnswersForm, bulkForm],
+    [parseUndoHumanAnswerForm, undoForm]
+  ]);
+  for (const [parse, form] of parsers) {
+    const supplied = parse(form());
+    assert.equal(supplied.ok && supplied.mutationId, mutationId, parse.name);
+
+    // A form posted without script has no id and cannot retry.
+    const withoutId = form();
+    withoutId.delete("mutationId");
+    const first = parse(withoutId);
+    const second = parse(withoutId);
+    assert.equal(first.ok && second.ok, true, parse.name);
+    assert.match(
+      first.ok ? first.mutationId : "",
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+    assert.notEqual(
+      first.ok && first.mutationId,
+      second.ok && second.mutationId,
+      parse.name
+    );
+
+    for (const malformed of ["", "retry-1", `${mutationId}x`]) {
+      const invalid = form();
+      invalid.set("mutationId", malformed);
+      assert.deepEqual(parse(invalid), { ok: false }, parse.name);
+    }
+  }
 });
 
 test("human answer forms accept unstorable strings in non-persisted view fields", () => {
   const expectedAnswer = {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1965,6 +2038,7 @@ test("human answer forms accept unstorable strings in non-persisted view fields"
   };
   const expectedBulk = {
     ok: true,
+    mutationId,
     actionValue: "approve",
     items: [{ inputItemId, callerId, expectedRevision: 2 }]
   };
@@ -2464,6 +2538,7 @@ function shiftLocalMinute(value, minutes) {
 
 function answerForm() {
   const formData = new FormData();
+  formData.set("mutationId", mutationId);
   formData.set("inputItemId", inputItemId);
   formData.set("callerId", callerId);
   formData.set("expectedRevision", "2");
@@ -2475,6 +2550,7 @@ function answerForm() {
 
 function bulkForm() {
   const formData = new FormData();
+  formData.set("mutationId", mutationId);
   formData.set("bulkActionValue", "approve");
   formData.append(
     "bulkItem",
@@ -2489,6 +2565,7 @@ function bulkForm() {
 
 function undoForm() {
   const formData = new FormData();
+  formData.set("mutationId", mutationId);
   formData.set("inputItemId", inputItemId);
   formData.set("callerId", callerId);
   formData.set("outputResultId", outputResultId);

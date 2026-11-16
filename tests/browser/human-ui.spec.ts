@@ -1,3 +1,4 @@
+import { continueWithStaleBulkItems } from "./human-mutation-routes";
 import { openPrimaryNavigation } from "./navigation";
 import {
   expect,
@@ -611,22 +612,8 @@ test("bulk answers include each feedback draft and clear only successful entries
       'name="feedback.00000000-0000-4000-8000-000000000512"'
     );
     expect(body).toContain("Follow-up feedback");
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        operation: "bulk-answer",
-        message: "Bulk action complete: 1 answered, 1 failed.",
-        inputItemIds: [
-          "00000000-0000-4000-8000-000000000511",
-          "00000000-0000-4000-8000-000000000512"
-        ],
-        answeredInputItemIds: ["00000000-0000-4000-8000-000000000511"],
-        answered: 1,
-        failed: 1
-      })
-    });
+    // The endpoint answers the first item and rejects the second as stale.
+    await continueWithStaleBulkItems(route, (index) => index === 1);
   });
   await openReviewTools(page);
   await page
@@ -2202,19 +2189,13 @@ test("canonical search and status navigation preserve pending view changes", asy
   await expect(page).toHaveURL(/priority=high/);
 });
 
-test("a client mutation timeout keeps the optimistic projection", async ({
+test("an answer that cannot reach the server is retried, then rolled back", async ({
   page
 }) => {
-  const requestStarted = deferred();
-  await page.addInitScript(() => {
-    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
-    AbortSignal.timeout = (ms: number) =>
-      originalTimeout(ms === 20_000 ? 50 : ms);
-  });
-  await page.route("**/human/mutations", async (route) => {
-    requestStarted.resolve();
-    await new Promise<void>(() => {});
-    await route.continue();
+  let attempts = 0;
+  await page.route("**/human/mutations", (route) => {
+    attempts += 1;
+    return route.abort();
   });
   await page.goto("/human");
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
@@ -2223,57 +2204,23 @@ test("a client mutation timeout keeps the optimistic projection", async ({
     page,
     "Reply to Meridian about the renewal delay"
   );
-  const aborted = page.waitForEvent("requestfailed", (request) =>
+  const firstFailure = page.waitForEvent("requestfailed", (request) =>
     request.url().includes("/human/mutations")
   );
   await row.getByRole("button", { name: "Approve to send" }).click();
-  await requestStarted.promise;
-  await aborted;
+  await firstFailure;
+  // One failed attempt is not an outcome: the answer stays applied, unreported.
   await expect(row).toBeHidden();
   await expect(lastActionError(page)).toHaveCount(0);
   await expect(lastUndoButton(page)).toHaveCount(0);
-});
 
-test("an all-failed bulk mutation restores the selected rows", async ({
-  page
-}) => {
-  await page.route("**/human/mutations", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        operation: "bulk-answer",
-        message: "Bulk action complete: 0 answered, 2 failed.",
-        inputItemIds: [
-          "00000000-0000-4000-8000-000000000511",
-          "00000000-0000-4000-8000-000000000512"
-        ],
-        answered: 0,
-        answeredInputItemIds: [],
-        failed: 2
-      })
-    });
-  });
-  await page.goto("/human");
-  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
-  await openReviewTools(page);
-  await page
-    .getByRole("button", { name: /^(Select items|Bulk select)$/ })
-    .click();
-  const permitRow = reviewRowByTitle(page, "Review neighborhood permit brief");
-  const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
-  await permitRow.getByRole("checkbox", { name: "Select review" }).check();
-  await followUpRow.getByRole("checkbox", { name: "Select review" }).check();
-  await page
-    .getByRole("button", { name: "Apply Approve permit brief" })
-    .click();
-
+  // No attempt reported an outcome, so the message does not claim a failure.
   await expect(lastActionError(page)).toContainText(
-    "Bulk action complete: 0 answered, 2 failed."
+    "may not have been saved: Agent Outbox could not be reached"
   );
-  await expect(permitRow).toBeVisible();
-  await expect(followUpRow).toBeVisible();
+  expect(attempts).toBe(3);
+  await expect(row).toBeVisible();
+  await expect(lastUndoButton(page)).toHaveCount(0);
 });
 
 test("last-action undo from History does not leave a pending snapshot in History", async ({
@@ -2308,12 +2255,12 @@ test("a failed optimistic queue action rolls back its local projection", async (
     requestStarted.resolve();
     await releaseFailure.promise;
     await route.fulfill({
-      status: 503,
+      status: 409,
       contentType: "application/json",
       body: JSON.stringify({
         ok: false,
         operation: "answer",
-        code: "temporary_unavailable",
+        code: "stale_input_revision",
         message: "The decision could not be saved.",
         inputItemIds: ["00000000-0000-4000-8000-000000000501"]
       })

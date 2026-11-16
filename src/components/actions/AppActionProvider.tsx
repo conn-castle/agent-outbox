@@ -16,29 +16,26 @@ import { installImmediateActionFeedback } from "./immediate-action-feedback";
 
 installImmediateActionFeedback();
 
-export type AppMutationStatus =
-  "queued" | "syncing" | "succeeded" | "indeterminate";
+export type AppMutationStatus = "queued" | "syncing";
 
+// A mutation the server has not settled yet. It leaves the list when it does.
 export type AppMutationRecord = {
   id: string;
   scope: string;
   status: AppMutationStatus;
   optimistic: unknown;
-  result?: unknown;
 };
 
 type EnqueueMutation<TResult> = {
   scope: string;
   optimistic: unknown;
+  // Resolves or rejects with a definite outcome; retrying is its concern.
   execute: () => Promise<TResult>;
-  refreshOnSuccess?: boolean;
-  reconcileEarlier?: (
-    earlier: AppMutationRecord,
-    result: TResult
-  ) => unknown | null;
-  onSuccess?: (result: TResult, mutationId: string) => void;
-  onIndeterminate?: (error: unknown, mutationId: string) => void;
-  onError?: (error: unknown, mutationId: string) => void;
+  refreshOnSettle?: boolean;
+  // Each runs in the same update as the record's removal, so what it stores
+  // replaces the optimistic state without an intermediate render.
+  onSuccess?: (result: TResult) => void;
+  onError?: (error: unknown) => void;
 };
 
 type AppActionContextValue = {
@@ -46,7 +43,6 @@ type AppActionContextValue = {
   // Includes records enqueued since the last render commit.
   currentMutations: () => AppMutationRecord[];
   enqueue: <TResult>(mutation: EnqueueMutation<TResult>) => string;
-  dismiss: (mutationId: string) => void;
 };
 
 const AppActionContext = createContext<AppActionContextValue | null>(null);
@@ -84,32 +80,6 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
     setMutations(next);
   }, []);
 
-  const markSettled = useCallback(
-    (
-      mutationId: string,
-      status: "succeeded" | "indeterminate",
-      result?: unknown,
-      reconcileEarlier?: (earlier: AppMutationRecord) => unknown | null
-    ) => {
-      const targetIndex = mutationsRef.current.findIndex(
-        (record) => record.id === mutationId
-      );
-      const succeeded = mutationsRef.current.flatMap(
-        (record, index): AppMutationRecord[] => {
-          if (record.id === mutationId) return [{ ...record, status, result }];
-          if (index < targetIndex && reconcileEarlier) {
-            const optimistic = reconcileEarlier(record);
-            return optimistic === null ? [] : [{ ...record, optimistic }];
-          }
-          return [record];
-        }
-      );
-      mutationsRef.current = succeeded;
-      setMutations(succeeded);
-    },
-    []
-  );
-
   const enqueue = useCallback(
     <TResult,>(mutation: EnqueueMutation<TResult>) => {
       const mutationId = `mutation-${Date.now()}-${++nextId.current}`;
@@ -134,42 +104,26 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
         setMutations(syncing);
         try {
           const result = await mutation.execute();
-          markSettled(
-            mutationId,
-            "succeeded",
-            result,
-            mutation.reconcileEarlier
-              ? (earlier) =>
-                  earlier.scope === mutation.scope
-                    ? mutation.reconcileEarlier!(earlier, result)
-                    : earlier.optimistic
-              : undefined
-          );
-          mutation.onSuccess?.(result, mutationId);
-          if (mutation.refreshOnSuccess) {
-            startTransition(() => router.refresh());
-          }
-        } catch (error) {
-          if (isIndeterminateClientTimeout(error)) {
-            markSettled(mutationId, "indeterminate");
-            mutation.onIndeterminate?.(error, mutationId);
-            startTransition(() => router.refresh());
-            return;
-          }
           dismiss(mutationId);
-          mutation.onError?.(error, mutationId);
+          mutation.onSuccess?.(result);
+        } catch (error) {
+          dismiss(mutationId);
+          mutation.onError?.(error);
+        }
+        if (mutation.refreshOnSettle) {
+          startTransition(() => router.refresh());
         }
       };
 
       syncTail.current = syncTail.current.then(synchronize, synchronize);
       return mutationId;
     },
-    [dismiss, markSettled, router]
+    [dismiss, router]
   );
 
   const value = useMemo(
-    () => ({ mutations, currentMutations, enqueue, dismiss }),
-    [currentMutations, dismiss, enqueue, mutations]
+    () => ({ mutations, currentMutations, enqueue }),
+    [currentMutations, enqueue, mutations]
   );
 
   return (
@@ -185,14 +139,4 @@ export function useAppActions() {
     throw new Error("useAppActions must be used within AppActionProvider.");
   }
   return context;
-}
-
-function isIndeterminateClientTimeout(error: unknown) {
-  if (typeof DOMException !== "undefined" && error instanceof DOMException) {
-    return error.name === "TimeoutError" || error.name === "AbortError";
-  }
-  return (
-    error instanceof Error &&
-    (error.name === "TimeoutError" || error.name === "AbortError")
-  );
 }
