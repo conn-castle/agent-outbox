@@ -28,6 +28,14 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is written out in three places
+    Priority: Low. Area: Human review / Maintainability
+    Description: The default ordering, priority ascending, is a separate literal in `isDefaultHumanReviewOrdering` and in `canonicalSortRules` in `src/shared/human-review-view.ts`, and in the Sort panel's Reset button in `src/components/human/ReviewViewControls.tsx`. If one changes without the others, Reset can write an ordering that is not reported as the default.
+
+- Issue 2026-11-16 review-sort-direction-label-fallback: Sort direction labels fall back to time wording for any unnamed key
+    Priority: Low. Area: Human review / Maintainability
+    Description: `sortDirectionLabel` in `src/components/human/ReviewViewControls.tsx` returns "Newest first" or "Oldest first" for every `HumanReviewSort` key it does not name. Today those are `card_time`, `created_at` and `updated_at`, which are all times; a new key that is not a time would get those labels with no compile error.
+
 - Issue 2026-11-16 review-filter-focus-lost-on-close: Closing a review Filter or Sort panel does not always return focus to its trigger
     Priority: Low. Area: Human review / Accessibility
     Description: Observed in Chromium for `src/components/human/ReviewViewControls.tsx`. Focus returns to the panel's trigger after Escape (both panels), the Sort panel's Done button, and keyboard activation of the Sort scrim. Focus lands on the page body after the Filter panel's Done, close and scrim buttons (keyboard or pointer), after a pointer press on the Sort scrim, and after a press on non-focusable content outside either panel.
