@@ -30,7 +30,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 <!-- ENTRIES START -->
 - Issue 2026-11-16 billing-grace-from-webhook-arrival: Grace deadlines run from webhook arrival, not event creation
     Priority: Low. Area: billing
-    Description: `processStripeEventInTransaction` computes `graceEndsAt(now)` from the time a webhook is processed. Stripe retries deliveries for days, so a late `customer.subscription.deleted` or `invoice.payment_failed` event extends paid access past the 7-day grace measured from the event. Raised in review of PR #297.
+    Description: `processStripeEventInTransaction` computes `graceEndsAt(now)` from the time a webhook is processed. Stripe retries deliveries for days, so a late `customer.subscription.deleted` or `invoice.payment_failed` event extends paid access past the configured downgrade grace period measured from the event. Raised in review of PR #297.
     Open question: Should grace be measured from the Stripe event's creation time or from when Agent Outbox learns of it?
 
 - Issue 2026-10-20 supabase-api-grants-unverified: Migration API-role revocations are inconsistent
