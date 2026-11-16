@@ -428,6 +428,9 @@ test("a bulk answer stopped part-way keeps Undo for the answers it committed", a
   let attempts = 0;
   await page.route("**/human/mutations", async (route) => {
     attempts += 1;
+    // The repeats never reach the server, so only the first attempt says
+    // what was committed.
+    if (attempts > 1) return route.abort();
     // Only the first item reaches the server, which answers it. The client
     // gets what the server sends when the next item then fails temporarily.
     const inputItemIds: string[] = [];
@@ -450,7 +453,7 @@ test("a bulk answer stopped part-way keeps Undo for the answers it committed", a
         ok: false,
         operation: "bulk-answer",
         code: "temporary_unavailable",
-        message: "Bulk action interrupted: 1 answered, 1 not confirmed.",
+        message: "Temporarily unavailable.",
         inputItemIds,
         undo
       }

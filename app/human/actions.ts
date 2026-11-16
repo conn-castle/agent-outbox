@@ -264,9 +264,7 @@ async function bulkAnswerOutcome(
         "bulk-answer",
         inputItemIds,
         result.code,
-        undo.length > 0
-          ? `Bulk action interrupted: ${undo.length} answered, ${inputItemIds.length - undo.length} not confirmed.`
-          : result.message,
+        result.message,
         requestId
       );
       if (undo.length === 0) return failure;

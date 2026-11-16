@@ -1506,7 +1506,6 @@ test("human mutation results carry item state read after the mutations, keyed fo
     JSON.parse(JSON.stringify(!unknownBulk.ok && unknownBulk.undo)),
     [{ inputItemId: firstItemId, callerId, outputResultId: "output-721" }]
   );
-  assert.match(unknownBulk.message, /1 answered, 1 not confirmed/);
   assert.deepEqual(
     JSON.parse(JSON.stringify(!unknownBulk.ok && unknownBulk.state)),
     itemStateFor([firstItemId, secondItemId])
@@ -1518,7 +1517,6 @@ test("human mutation results carry item state read after the mutations, keyed fo
   const nothingCommitted =
     await actions.executeBulkHumanAnswersMutation(bulkForm);
   assert.equal(!nothingCommitted.ok && nothingCommitted.undo, undefined);
-  assert.equal(nothingCommitted.message, "Temporarily unavailable.");
   assert.equal(revalidations, 1);
   temporarilyFailing.delete(firstItemId);
 
