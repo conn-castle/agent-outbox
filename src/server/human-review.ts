@@ -265,13 +265,19 @@ export async function humanReviewPageAsOfInTransaction(
 /**
  * Reads the current list row of each item, in any status, for a mutation
  * response. Run it in a transaction that starts after the mutation committed:
- * the token is read after the rows, so it never precedes their snapshot.
+ * the token is then later than that commit, and it is read before the rows, so
+ * like a page's token it never claims more than its rows saw.
  */
 export async function humanReviewItemStatesInTransaction(
   query: ProductTransactionQuery,
   context: AuthorizedHumanAccountContext,
   inputItemIds: string[]
 ): Promise<HumanMutationState> {
+  const asOf = asOfFromRow(
+    await query<{ as_of: string }>({
+      sql: `select ${asOfSql("clock_timestamp()")} as as_of`
+    })
+  );
   const placeholders = inputItemIds.map((_, index) => `$${index + 2}::uuid`);
   // An empty `in ()` is not valid SQL, and there is nothing to read.
   const result =
@@ -285,11 +291,6 @@ export async function humanReviewItemStatesInTransaction(
           `,
           values: [context.accountId, ...inputItemIds]
         });
-  const asOf = asOfFromRow(
-    await query<{ as_of: string }>({
-      sql: `select ${asOfSql("clock_timestamp()")} as as_of`
-    })
-  );
   const rows = new Map(
     result.rows.map((row) => [
       row.input_item_id,

@@ -1969,6 +1969,27 @@ test("human action form parser rejects malformed hidden fields before database w
   invalidUndo.set("outputResultId", "not-a-uuid");
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
 
+  // Ids are accepted only in the lowercase form the server issues, so a
+  // request's ids always equal the ids of the rows reported back for it.
+  const uppercaseAnswer = answerForm();
+  uppercaseAnswer.set("inputItemId", secondInputItemId.toUpperCase());
+  assert.deepEqual(parseHumanAnswerForm(uppercaseAnswer), { ok: false });
+  const uppercaseBulk = new FormData();
+  uppercaseBulk.set("mutationId", mutationId);
+  uppercaseBulk.set("bulkActionValue", "approve");
+  uppercaseBulk.append(
+    "bulkItem",
+    JSON.stringify({
+      inputItemId: secondInputItemId.toUpperCase(),
+      callerId,
+      expectedRevision: 2
+    })
+  );
+  assert.deepEqual(parseBulkHumanAnswersForm(uppercaseBulk), { ok: false });
+  const uppercaseUndo = undoForm();
+  uppercaseUndo.set("inputItemId", secondInputItemId.toUpperCase());
+  assert.deepEqual(parseUndoHumanAnswerForm(uppercaseUndo), { ok: false });
+
   const unpairedUndo = undoForm();
   unpairedUndo.append("inputItemId", secondInputItemId);
   assert.deepEqual(parseUndoHumanAnswerForm(unpairedUndo), { ok: false });
