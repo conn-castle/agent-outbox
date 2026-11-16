@@ -114,6 +114,10 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
           // Outside the request's try: a handler that throws must not turn a
           // committed mutation into a reported failure.
           settle();
+        } catch (error) {
+          // A defect in the handler. Report it as an uncaught error whether
+          // or not another mutation is queued behind this one.
+          reportError(error);
         } finally {
           if (mutation.refreshOnSettle) {
             startTransition(() => router.refresh());
