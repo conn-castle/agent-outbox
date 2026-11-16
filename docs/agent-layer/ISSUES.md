@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-16 review-filter-focus-lost-on-close: Closing the review Filter panel by button drops keyboard focus
+    Priority: Low. Area: Human review / Accessibility
+    Description: The Filter panel's Done, close and scrim buttons in `src/components/human/ReviewViewControls.tsx` close it without returning focus to the Filter button, so focus is left on a removed element. Escape, and the Sort panel's Done and scrim buttons, return focus to the trigger.
+    Open question: Whether pointer dismissal through the scrim should also move focus to the trigger.
+
 - Issue 2026-10-20 supabase-api-grants-unverified: Migration API-role revocations are inconsistent
     Priority: Medium. Area: operations / database access
     Description: The initial schema conditionally revokes named API roles; later migrations revoke only PUBLIC for the webhook ledger table, checkout attempts, receipt sequence, and the Stripe ordering and review text trigger functions. Current live ACLs and Data API exposure are unknown.
