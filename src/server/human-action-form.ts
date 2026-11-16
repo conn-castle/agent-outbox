@@ -272,13 +272,19 @@ function normalizeLineBreaks(value: string) {
   return value.replace(/\r\n?/g, "\n");
 }
 
-function isUuid(value: FormDataEntryValue | undefined): value is string {
-  return typeof value === "string" && VERSIONED_UUID_PATTERN.test(value);
+// Ids are accepted only as the server issues them, in lowercase, so an id
+// from a form always equals the id of the row it names.
+function isUuid(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    VERSIONED_UUID_PATTERN.test(value) &&
+    value === value.toLowerCase()
+  );
 }
 
 function uuidField(formData: FormData, key: string) {
   const value = stringField(formData, key);
-  return isUuid(value ?? undefined) ? value : null;
+  return isUuid(value) ? value : null;
 }
 
 /**
@@ -316,10 +322,8 @@ function parseBulkItem(value: FormDataEntryValue): BulkAnswerItem | null {
     }
     const item = parsed as Record<string, unknown>;
     if (
-      typeof item.inputItemId !== "string" ||
-      !VERSIONED_UUID_PATTERN.test(item.inputItemId) ||
-      typeof item.callerId !== "string" ||
-      !VERSIONED_UUID_PATTERN.test(item.callerId) ||
+      !isUuid(item.inputItemId) ||
+      !isUuid(item.callerId) ||
       typeof item.expectedRevision !== "number" ||
       !Number.isSafeInteger(item.expectedRevision)
     ) {

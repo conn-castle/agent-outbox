@@ -247,8 +247,9 @@ states:
   database clock at the start of the page's transaction.
 - **Item states.** Every mutation response carries the authoritative row of each
   item it named (or its absence), read in a transaction that starts after the
-  mutations committed, with an `asOf` token read after those rows. A rejection
-  carries them too whenever the server can still read the items.
+  mutations committed, with an `asOf` token read from the database clock before
+  those rows. A rejection carries them too whenever the server can still read
+  the items.
 - **Unsettled mutations.** What the person asked for and the server has not yet
   answered: an answer hides its rows, and an undo shows its rows locked.
 

@@ -81,9 +81,11 @@ and rejected ones stay pending. Answering preserves the input revision; undo
 increments it once.
 
 A retried request reuses its `mutationId`. To confirm that a retry was
-recognized rather than applied twice, look for a single `input_answered` (or
-`output_undone`) audit event for the output, with the correlation id
-`human_answer_<mutationId>` or `human_bulk_answer_<mutationId>`.
+recognized rather than applied twice, look for a single `input_answered` audit
+event for the output, with the correlation id `human_answer_<mutationId>` or
+`human_bulk_answer_<mutationId>`. For an undo, look for a single `output_undone`
+audit event whose `output_result_id` is the output; that event stores the
+request id, not a correlation id.
 
 ## File Upload Or Download Failure
 
