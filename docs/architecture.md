@@ -243,20 +243,19 @@ can be submitted again.
 The visible queue is derived from three sources, each trusted only for what it
 states:
 
-- **The page.** The rows of the current view, with an `asOf` token read from
-  the database clock at the start of the page's transaction.
-- **Item states.** Every mutation response carries the authoritative row of
-  each item it named (or its absence), read in a transaction that starts after
-  the mutations committed, with an `asOf` token read after those rows. A
-  rejection carries them too whenever the server can still read the items.
+- **The page.** The rows of the current view, with an `asOf` token read from the
+  database clock at the start of the page's transaction.
+- **Item states.** Every mutation response carries the authoritative row of each
+  item it named (or its absence), read in a transaction that starts after the
+  mutations committed, with an `asOf` token read after those rows. A rejection
+  carries them too whenever the server can still read the items.
 - **Unsettled mutations.** What the person asked for and the server has not yet
   answered: an answer hides its rows, and an undo shows its rows locked.
 
-For each item the newer of the page and its item state wins; a page whose
-`asOf` is not older than an item state already reflects it. The browser never
-guesses a revision and never infers an outcome from a row being absent from a
-page. `src/components/human/review-sync.ts` holds this derivation as pure
-functions.
+For each item the newer of the page and its item state wins; a page whose `asOf`
+is not older than an item state already reflects it. The browser never guesses a
+revision and never infers an outcome from a row being absent from a page.
+`src/components/human/review-sync.ts` holds this derivation as pure functions.
 
 Each mutation carries a client-generated `mutationId`, and a mutation settles
 exactly once. An attempt that cannot establish the outcome (timeout, network
@@ -266,9 +265,9 @@ it again:
 
 - A repeated answer is recognized by the `input_answered` audit event of the
   item's current output, whose correlation id is derived from the `mutationId`.
-- A repeated undo is recognized by the `output_undone` audit event of the
-  output it named, while the item is still pending. Once the item has been
-  answered again, an undo of the earlier output is reported as not found.
+- A repeated undo is recognized by the `output_undone` audit event of the output
+  it named, while the item is still pending. Once the item has been answered
+  again, an undo of the earlier output is reported as not found.
 
 If no attempt establishes the outcome, the mutation settles as unconfirmed: its
 optimistic projection is removed, the application bar says it may not have been
@@ -293,16 +292,16 @@ is offered again. The stack lives in the mounted page and is empty after a
 reload; eligible answers remain reversible from History. A bulk result with zero
 successes is a failure from the mutation endpoint, not a successful projection.
 
-JavaScript-disabled
-review forms retain redirecting server actions as a fallback. Navigational and
-security-sensitive workflows use their existing redirecting actions with
-explicit form-local pending labels applied on the native click, so the visible
-pending state does not wait for a React commit. Labeled clicks are stopped in
-window capture so descendant React click handlers cannot delay that paint; other
-window listeners still run. Submits restart with requestSubmit, and non-submit
-actions replay their click, on the following macrotask after MutationObserver
-callbacks have run. Browser coverage holds responses open so network or
-navigation completion cannot satisfy the latency gate.
+JavaScript-disabled review forms retain redirecting server actions as a
+fallback. Navigational and security-sensitive workflows use their existing
+redirecting actions with explicit form-local pending labels applied on the
+native click, so the visible pending state does not wait for a React commit.
+Labeled clicks are stopped in window capture so descendant React click handlers
+cannot delay that paint; other window listeners still run. Submits restart with
+requestSubmit, and non-submit actions replay their click, on the following
+macrotask after MutationObserver callbacks have run. Browser coverage holds
+responses open so network or navigation completion cannot satisfy the latency
+gate.
 
 ## File Handling
 
