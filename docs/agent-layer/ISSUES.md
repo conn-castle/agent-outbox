@@ -31,10 +31,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 - Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is defined in several places
     Priority: Low. Area: Human review / Maintainability
     Description: The default ordering, priority ascending, is defined separately in `src/shared/human-review-view.ts` by the parse fallback in `parseSortRules` (`parseSort(readOne("sort"), "priority")` with `defaultHumanReviewSortDirection`), by the empty-list fallback in `canonicalSortRules` and by `isDefaultHumanReviewOrdering`, and in `src/components/human/ReviewViewControls.tsx` by the Sort panel's Reset button. If they stop agreeing, the parsed default, Reset and the default check can disagree.
+    Open question: Which module should own the default ordering.
 
 - Issue 2026-11-16 review-sort-direction-label-fallback: Sort direction labels fall back to time wording for any unnamed key
     Priority: Low. Area: Human review / Maintainability
     Description: `sortDirectionLabel` in `src/components/human/ReviewViewControls.tsx` returns "Newest first" or "Oldest first" for every `HumanReviewSort` key it does not name. Today those are `card_time`, `created_at` and `updated_at`, which are all times; a new key that is not a time would get those labels with no compile error.
+    Open question: How a sort key that is not a time should get its direction labels.
 
 - Issue 2026-11-16 review-filter-focus-lost-on-close: Closing a review Filter or Sort panel does not always return focus to its trigger
     Priority: Low. Area: Human review / Accessibility
