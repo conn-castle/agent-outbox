@@ -133,7 +133,14 @@ export function isHumanMutationResult(
     return (
       typeof result.code === "string" &&
       (result.state === undefined ||
-        isHumanMutationState(result.state, inputItemIds))
+        isHumanMutationState(result.state, inputItemIds)) &&
+      (result.undo === undefined ||
+        (Array.isArray(result.undo) &&
+          result.undo.every(
+            (target) =>
+              isHumanUndoTarget(target) &&
+              inputItemIds.includes(target.inputItemId)
+          )))
     );
   }
   if (!isHumanMutationState(result.state, inputItemIds)) return false;

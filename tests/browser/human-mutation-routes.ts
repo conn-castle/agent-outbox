@@ -9,11 +9,8 @@ export async function mutationForm(request: BrowserRequest) {
   }).formData();
 }
 
-/**
- * Sends a mutation on to the server with its form changed in transit, so the
- * server itself produces the result and item state a real conflict would.
- */
-export async function continueWithChangedForm(
+/** The request's headers and body with its form changed. */
+export async function changedForm(
   route: Route,
   change: (form: FormData) => void
 ) {
@@ -25,13 +22,24 @@ export async function continueWithChangedForm(
   });
   const headers = { ...route.request().headers() };
   delete headers["content-length"];
-  await route.continue({
+  return {
     headers: {
       ...headers,
       "content-type": encoded.headers.get("content-type")!
     },
     postData: Buffer.from(await encoded.arrayBuffer())
-  });
+  };
+}
+
+/**
+ * Sends a mutation on to the server with its form changed in transit, so the
+ * server itself produces the result and item state a real conflict would.
+ */
+export async function continueWithChangedForm(
+  route: Route,
+  change: (form: FormData) => void
+) {
+  await route.continue(await changedForm(route, change));
 }
 
 /** Makes the chosen bulk items' revisions stale, so the server rejects them. */

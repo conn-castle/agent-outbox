@@ -107,17 +107,21 @@ export async function executeBulkHumanAnswersMutation(
   const backend = await mutationBackend(
     createCorrelationId("human_bulk_answer_req")
   );
-  return withItemStates(await bulkAnswerOutcome(formData, backend), backend);
+  return withItemStates(
+    await bulkAnswerOutcome(formData, backend, true),
+    backend
+  );
 }
 
 export async function executeUndoHumanAnswerMutation(
   formData: FormData
 ): Promise<HumanMutationResult> {
   const backend = await mutationBackend(createCorrelationId("human_undo_req"));
-  return withItemStates(await undoOutcome(formData, backend), backend);
+  return withItemStates(await undoOutcome(formData, backend, true), backend);
 }
 
-// The redirecting form actions report through the URL, not item state.
+// The redirecting form actions report through the URL, not item state, and
+// a submitted form is not repeated under its mutation id.
 export async function submitHumanAnswer(formData: FormData) {
   redirectHumanMutationOutcome(
     formData,
@@ -133,7 +137,8 @@ export async function submitBulkHumanAnswers(formData: FormData) {
     formData,
     await bulkAnswerOutcome(
       formData,
-      await mutationBackend(createCorrelationId("human_bulk_answer_req"))
+      await mutationBackend(createCorrelationId("human_bulk_answer_req")),
+      false
     )
   );
 }
@@ -143,7 +148,8 @@ export async function undoHumanAnswer(formData: FormData) {
     formData,
     await undoOutcome(
       formData,
-      await mutationBackend(createCorrelationId("human_undo_req"))
+      await mutationBackend(createCorrelationId("human_undo_req")),
+      false
     )
   );
 }
@@ -202,9 +208,17 @@ async function answerOutcome(
   };
 }
 
+/**
+ * Answers each item in turn. `retryable` says the caller can repeat the
+ * request under the same mutation id: a temporary failure, which leaves that
+ * item's outcome unknown, then stops the request so that its repeat replays
+ * what committed and tries the rest. A caller that cannot repeat it gets the
+ * remaining items tried and the failure counted.
+ */
 async function bulkAnswerOutcome(
   formData: FormData,
-  backend: MutationBackend & { requestId: string }
+  backend: MutationBackend & { requestId: string },
+  retryable: boolean
 ): Promise<MutationOutcome> {
   const { requestId } = backend;
   const parsed = parseBulkHumanAnswersForm(formData);
@@ -240,17 +254,24 @@ async function bulkAnswerOutcome(
         callerId: item.callerId,
         outputResultId: result.outputResultId
       });
-    } else if (result.sessionFailed || result.code === TEMPORARY_UNAVAILABLE) {
-      // Without a session nothing can succeed. A temporary failure leaves
-      // this item's outcome unknown, so the whole request is reported as
-      // retryable: its repeat replays what committed and tries the rest.
-      return humanMutationFailure(
+    } else if (
+      result.sessionFailed ||
+      (retryable && result.code === TEMPORARY_UNAVAILABLE)
+    ) {
+      // Without a session nothing more can succeed. The answers committed so
+      // far are reported with the failure, in case no repeat gets further.
+      const failure = humanMutationFailure(
         "bulk-answer",
         inputItemIds,
         result.code,
-        result.message,
+        undo.length > 0
+          ? `Bulk action interrupted: ${undo.length} answered, ${inputItemIds.length - undo.length} not confirmed.`
+          : result.message,
         requestId
       );
+      if (undo.length === 0) return failure;
+      revalidatePath(humanPath);
+      return { ...failure, undo };
     }
   }
 
@@ -281,9 +302,11 @@ async function bulkAnswerOutcome(
   };
 }
 
+/** Undoes each target in turn; `retryable` is as for a bulk answer. */
 async function undoOutcome(
   formData: FormData,
-  backend: MutationBackend & { requestId: string }
+  backend: MutationBackend & { requestId: string },
+  retryable: boolean
 ): Promise<MutationOutcome> {
   const { requestId } = backend;
   const parsed = parseUndoHumanAnswerForm(formData);
@@ -307,8 +330,12 @@ async function undoOutcome(
     );
     if (result.ok) {
       restoredInputItemIds.push(target.inputItemId);
-    } else if (result.sessionFailed || result.code === TEMPORARY_UNAVAILABLE) {
-      // As for a bulk answer: retryable as a whole, replayed on the repeat.
+    } else if (
+      result.sessionFailed ||
+      (retryable && result.code === TEMPORARY_UNAVAILABLE)
+    ) {
+      // The failure's item state tells the client which answers were restored.
+      if (restoredInputItemIds.length > 0) revalidatePath(humanPath);
       return humanMutationFailure(
         "undo",
         inputItemIds,

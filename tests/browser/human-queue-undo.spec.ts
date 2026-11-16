@@ -1,4 +1,5 @@
 import {
+  changedForm,
   continueWithChangedForm,
   continueWithStaleBulkItems,
   mutationForm
@@ -211,6 +212,30 @@ test("a repeated undo is recognized only for the answer it undid", async ({
       ])
     )
   ).toMatchObject({ status: 409, result: { ok: false, code: "not_found" } });
+
+  // An answer that was in History from the start is recognized the same way.
+  const digest = "GitHub security digest for archived repositories";
+  await expectHistory(page, [digest], []);
+  await page.route("**/human/mutations", async (route) => {
+    const form = await mutationForm(route.request());
+    sent = [...form.entries()].map(([key, value]) => [key, String(value)]);
+    await route.continue();
+  });
+  await page
+    .getByRole("link", {
+      name: `Open review details for ${digest}`,
+      exact: true
+    })
+    .first()
+    .click();
+  const restored = mutationResponse(page);
+  await page.getByRole("button", { name: "Undo answer", exact: true }).click();
+  await restored;
+  await page.unroute("**/human/mutations");
+  expect(await repeat(sent)).toMatchObject({
+    status: 200,
+    result: { ok: true, operation: "undo" }
+  });
 });
 
 test("an answer undone from History leaves the remaining undo order intact", async ({
@@ -394,6 +419,60 @@ for (const outcome of ["partial", "none"] as const) {
     await expectQueueMembership(page, pending);
   });
 }
+
+test("a bulk answer stopped part-way keeps Undo for the answers it committed", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  await selectRows(page, [permit, followUp]);
+  let attempts = 0;
+  await page.route("**/human/mutations", async (route) => {
+    attempts += 1;
+    // Only the first item reaches the server, which answers it. The client
+    // gets what the server sends when the next item then fails temporarily.
+    const inputItemIds: string[] = [];
+    const response = await route.fetch(
+      await changedForm(route, (form) => {
+        const items = form.getAll("bulkItem").map(String);
+        for (const item of items) {
+          inputItemIds.push(
+            (JSON.parse(item) as { inputItemId: string }).inputItemId
+          );
+        }
+        form.delete("bulkItem");
+        form.append("bulkItem", items[0]!);
+      })
+    );
+    const { undo } = (await response.json()) as { undo: unknown };
+    await route.fulfill({
+      status: 503,
+      json: {
+        ok: false,
+        operation: "bulk-answer",
+        code: "temporary_unavailable",
+        message: "Bulk action interrupted: 1 answered, 1 not confirmed.",
+        inputItemIds,
+        undo
+      }
+    });
+  });
+  await applyBulk(page);
+  await expect(page.locator(".last-action-error")).toContainText(
+    "1 answered, 1 not confirmed",
+    { timeout: 15_000 }
+  );
+  await page.unroute("**/human/mutations");
+  // The request was repeated as far as it may be, and every repeat failed.
+  expect(attempts).toBe(3);
+  await expectQueueMembership(page, without(initial, permit));
+
+  await expectUndoOffered(page, "Approve permit brief");
+  await undo(page);
+  await expectQueueMembership(page, initial);
+  await page.reload();
+  await expectHydrated(page);
+  await expectQueueMembership(page, initial);
+});
 
 test("a bulk answer whose response is lost is retried without answering twice", async ({
   page

@@ -602,6 +602,21 @@ export function ReviewWorkspace({
         startUndoRef.current(answerEntryId);
       }
     }
+    // Answers the server reports as committed: their sent feedback is done
+    // with, and the stack entry narrows to them (or goes, when there are none).
+    function answersCommitted(answered: HumanUndoTarget[]) {
+      for (const { inputItemId } of answered) {
+        const sent = submission.formData.get(
+          submission.operation === "answer"
+            ? "feedback"
+            : `feedback.${inputItemId}`
+        );
+        if (typeof sent === "string") {
+          feedback.clearSubmitted(inputItemId, sent);
+        }
+      }
+      confirmAnswerEntry(answered);
+    }
     // The submitted answers can no longer be undone from here: drop the stack
     // entry, or for an undo from History, the matching answers in any entry.
     function forgetUndoneAnswers() {
@@ -638,19 +653,9 @@ export function ReviewWorkspace({
           setLastError(result.failed > 0 ? result.message : null);
           return;
         }
-        const answered =
-          result.operation === "answer" ? [result.undo] : result.undo;
-        for (const { inputItemId } of answered) {
-          const sent = submission.formData.get(
-            result.operation === "answer"
-              ? "feedback"
-              : `feedback.${inputItemId}`
-          );
-          if (typeof sent === "string") {
-            feedback.clearSubmitted(inputItemId, sent);
-          }
-        }
-        confirmAnswerEntry(answered);
+        answersCommitted(
+          result.operation === "answer" ? [result.undo] : result.undo
+        );
         setLastError(
           result.operation === "bulk-answer" && result.failed > 0
             ? result.message
@@ -662,7 +667,8 @@ export function ReviewWorkspace({
           error instanceof HumanMutationError ? error.result : null;
         if (failure?.state) applyServerState(failure.state);
         if (answerEntryId) {
-          updateUndoStack((stack) => removeUndoEntry(stack, answerEntryId));
+          // A bulk answer stopped part-way keeps Undo for what it committed.
+          answersCommitted(failure?.undo ?? []);
         } else if (undoEntryId && failure?.state) {
           // The reported rows say which answers can still be undone.
           const { state } = failure;
