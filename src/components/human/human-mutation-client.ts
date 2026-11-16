@@ -20,16 +20,20 @@ export class HumanMutationError extends Error {
   readonly result: HumanMutationFailure | null;
   // No attempt established whether the mutation committed.
   readonly unconfirmed: boolean;
+  // Answers of a bulk request that some attempt reported as committed.
+  readonly committed: HumanUndoTarget[];
 
   constructor(
     message: string,
     result: HumanMutationFailure | null = null,
-    unconfirmed = false
+    unconfirmed = false,
+    committed: HumanUndoTarget[] = result?.undo ?? []
   ) {
     super(message);
     this.name = "HumanMutationError";
     this.result = result;
     this.unconfirmed = unconfirmed;
+    this.committed = committed;
   }
 }
 
@@ -45,21 +49,30 @@ export async function synchronizeHumanMutation(
 ) {
   formData.set("_operation", operation);
   formData.set("mutationId", crypto.randomUUID());
+  // What any attempt reported as committed stays committed, whatever a
+  // later attempt goes on to report.
+  const committed = new Map<string, HumanUndoTarget>();
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await sendHumanMutation(formData);
     } catch (error) {
       const delay = HUMAN_MUTATION_RETRY_DELAYS_MS[attempt];
       if (!(error instanceof HumanMutationError)) throw error;
-      if (!error.unconfirmed) {
-        // A refusal that reports no result (an expired session, say) settles
-        // nothing about an earlier attempt that may have committed.
-        throw attempt > 0 && !error.result
-          ? new HumanMutationError(error.message, null, true)
-          : error;
+      for (const target of error.committed) {
+        committed.set(target.inputItemId, target);
       }
-      if (delay === undefined) throw error;
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      if (error.unconfirmed && delay !== undefined) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      // A refusal on a repeat says what that attempt did, and settles nothing
+      // about an earlier attempt that may have committed.
+      throw new HumanMutationError(
+        error.message,
+        error.result,
+        error.unconfirmed || attempt > 0,
+        [...committed.values()]
+      );
     }
   }
 }

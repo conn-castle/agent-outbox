@@ -1989,6 +1989,48 @@ test("human action form parser rejects malformed hidden fields before database w
   const uppercaseUndo = undoForm();
   uppercaseUndo.set("inputItemId", secondInputItemId.toUpperCase());
   assert.deepEqual(parseUndoHumanAnswerForm(uppercaseUndo), { ok: false });
+  // Every other id field holds to the same rule: an id parses in lowercase
+  // and is refused in uppercase.
+  const lettered = "00000000-0000-4000-8000-00000000abcd";
+  for (const field of ["mutationId", "callerId"]) {
+    const lowercase = answerForm();
+    lowercase.set(field, lettered);
+    assert.equal(parseHumanAnswerForm(lowercase).ok, true, field);
+    const uppercase = answerForm();
+    uppercase.set(field, lettered.toUpperCase());
+    assert.deepEqual(parseHumanAnswerForm(uppercase), { ok: false }, field);
+  }
+  for (const field of ["mutationId", "callerId", "outputResultId"]) {
+    const lowercase = undoForm();
+    lowercase.set(field, lettered);
+    assert.equal(parseUndoHumanAnswerForm(lowercase).ok, true, field);
+    const uppercase = undoForm();
+    uppercase.set(field, lettered.toUpperCase());
+    assert.deepEqual(parseUndoHumanAnswerForm(uppercase), { ok: false }, field);
+  }
+  for (const field of ["mutationId", "callerId"]) {
+    /** @param {string} id */
+    const bulkWith = (id) => {
+      const form = new FormData();
+      form.set("mutationId", field === "mutationId" ? id : mutationId);
+      form.set("bulkActionValue", "approve");
+      form.append(
+        "bulkItem",
+        JSON.stringify({
+          inputItemId: secondInputItemId,
+          callerId: field === "callerId" ? id : callerId,
+          expectedRevision: 2
+        })
+      );
+      return form;
+    };
+    assert.equal(parseBulkHumanAnswersForm(bulkWith(lettered)).ok, true, field);
+    assert.deepEqual(
+      parseBulkHumanAnswersForm(bulkWith(lettered.toUpperCase())),
+      { ok: false },
+      field
+    );
+  }
 
   const unpairedUndo = undoForm();
   unpairedUndo.append("inputItemId", secondInputItemId);

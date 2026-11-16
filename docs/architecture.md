@@ -272,14 +272,14 @@ so its repeat reports the items that committed and tries the rest:
   it named, while the item is still pending. Once the item has been answered
   again, an undo of the earlier output is reported as not found.
 
-If no attempt establishes the outcome, or a retry is refused without a result
-(an expired session), the mutation settles as unconfirmed: its optimistic
-projection is removed, the application bar says it may not have been saved
-rather than that it failed, and the page is refreshed so the next page shows
-what the server holds. A bulk answer that stopped at a temporary failure names
-the answers it had committed in that failure, so they stay on the undo stack
-even when no repeat gets further. A failed write removes only its own
-projection. The row leaving the pending queue is the success signal.
+If no attempt establishes the outcome, or a retry is refused, the mutation
+settles as unconfirmed: its optimistic projection is removed, the application
+bar says it may not have been saved rather than that it failed, and the page is
+refreshed so the next page shows what the server holds. A bulk answer that
+stopped at a temporary failure names the answers it had committed in that
+failure; whatever any attempt reported as committed stays on the undo stack,
+however the mutation settles. A failed write removes only its own projection.
+The row leaving the pending queue is the success signal.
 
 When a page transaction overlaps a mutation response, the response's item state
 wins even if the page read the item later; the refresh that follows every

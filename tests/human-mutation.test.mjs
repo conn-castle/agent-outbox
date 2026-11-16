@@ -310,6 +310,54 @@ test("a session refusal on a retry leaves the first attempt's outcome unconfirme
   assert.equal(attempts, 2);
 });
 
+test("a refusal on a retry settles nothing about earlier attempts, and keeps what they committed", async (t) => {
+  const committed = {
+    inputItemId: itemId,
+    callerId: "00000000-0000-4000-8000-000000000503",
+    outputResultId: "00000000-0000-4000-8000-000000009999"
+  };
+  const failure = {
+    ok: false,
+    operation: "bulk-answer",
+    inputItemIds: [itemId, "00000000-0000-4000-8000-000000000502"]
+  };
+  let attempts = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    attempts += 1;
+    // The first attempt answered one item and stopped at the next.
+    return attempts === 1
+      ? Response.json(
+          {
+            ...failure,
+            code: "temporary_unavailable",
+            message: "Temporarily unavailable.",
+            undo: [committed]
+          },
+          { status: 503 }
+        )
+      : Response.json(
+          {
+            ...failure,
+            code: "account_membership_required",
+            message: "Account access is required."
+          },
+          { status: 409 }
+        );
+  });
+  await assert.rejects(
+    synchronizeHumanMutation("bulk-answer", new FormData()),
+    (error) => {
+      assert.ok(error instanceof HumanMutationError);
+      // The refusal carries a result, yet the first attempt's answer stands.
+      assert.equal(error.result?.code, "account_membership_required");
+      assert.equal(error.unconfirmed, true);
+      assert.deepEqual(error.committed, [committed]);
+      return true;
+    }
+  );
+  assert.equal(attempts, 2);
+});
+
 test("a request the server refused is reported at once, not retried", async (t) => {
   const fetched = t.mock.method(
     globalThis,

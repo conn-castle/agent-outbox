@@ -1,5 +1,8 @@
 import { utcFromLocalDateTime } from "../shared/local-datetime.ts";
-import { VERSIONED_UUID_PATTERN } from "./api-errors.ts";
+import {
+  CANONICAL_UUID_PATTERN,
+  VERSIONED_UUID_PATTERN
+} from "./api-errors.ts";
 import type { HumanActionResponse } from "./human-answer.ts";
 import type { HumanUndoTarget } from "../shared/human-mutation.ts";
 import { isStorableString } from "./input-schema.ts";
@@ -278,7 +281,7 @@ function isUuid(value: unknown): value is string {
   return (
     typeof value === "string" &&
     VERSIONED_UUID_PATTERN.test(value) &&
-    value === value.toLowerCase()
+    CANONICAL_UUID_PATTERN.test(value)
   );
 }
 

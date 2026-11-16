@@ -672,9 +672,11 @@ export function ReviewWorkspace({
         const failure =
           error instanceof HumanMutationError ? error.result : null;
         if (failure?.state) applyServerState(failure.state);
+        // A bulk answer stopped part-way keeps Undo for what it committed.
+        const committed =
+          error instanceof HumanMutationError ? error.committed : [];
         if (answerEntryId) {
-          // A bulk answer stopped part-way keeps Undo for what it committed.
-          answersCommitted(failure?.undo ?? []);
+          answersCommitted(committed);
         } else if (undoEntryId && failure?.state) {
           // The reported rows say which answers can still be undone.
           const { state } = failure;
@@ -694,14 +696,16 @@ export function ReviewWorkspace({
           );
         }
         setLastError(
-          mutationFailureMessage(
-            submission,
-            rowSnapshots,
-            error instanceof HumanMutationError
-              ? error.message
-              : "Action is temporarily unavailable.",
-            error instanceof HumanMutationError && error.unconfirmed
-          )
+          committed.length > 0
+            ? `Bulk action interrupted: ${committed.length} answered, ${submission.inputItemIds.length - committed.length} not confirmed.`
+            : mutationFailureMessage(
+                submission,
+                rowSnapshots,
+                error instanceof HumanMutationError
+                  ? error.message
+                  : "Action is temporarily unavailable.",
+                error instanceof HumanMutationError && error.unconfirmed
+              )
         );
       }
     });
