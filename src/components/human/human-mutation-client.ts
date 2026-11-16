@@ -50,13 +50,15 @@ export async function synchronizeHumanMutation(
       return await sendHumanMutation(formData);
     } catch (error) {
       const delay = HUMAN_MUTATION_RETRY_DELAYS_MS[attempt];
-      if (
-        !(error instanceof HumanMutationError) ||
-        !error.unconfirmed ||
-        delay === undefined
-      ) {
-        throw error;
+      if (!(error instanceof HumanMutationError)) throw error;
+      if (!error.unconfirmed) {
+        // A refusal that reports no result (an expired session, say) settles
+        // nothing about an earlier attempt that may have committed.
+        throw attempt > 0 && !error.result
+          ? new HumanMutationError(error.message, null, true)
+          : error;
       }
+      if (delay === undefined) throw error;
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
@@ -97,10 +99,12 @@ async function sendHumanMutation(formData: FormData) {
     );
   }
   if (!isHumanMutationResult(result)) {
+    // A successful status without a usable result says nothing about the
+    // outcome either.
     throw new HumanMutationError(
       "Action is temporarily unavailable.",
       null,
-      serverError
+      response.ok || serverError
     );
   }
   if (!result.ok) {

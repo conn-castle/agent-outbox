@@ -244,6 +244,47 @@ test("a response cut off before its result is retried under the same mutation id
   assert.match(String(mutationIds[0]), /^[0-9a-f-]{36}$/);
 });
 
+test("a successful response without a usable result is retried, not reported as a failure", async (t) => {
+  const undone = {
+    ok: true,
+    operation: "undo",
+    message: "Undone.",
+    inputItemIds: [itemId],
+    restoredInputItemIds: [itemId],
+    failed: 0,
+    state: stateFor([itemId])
+  };
+  let attempts = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    attempts += 1;
+    // A 200 whose body is not a result: the undo may have been applied.
+    return Response.json(attempts === 1 ? { ok: true } : undone);
+  });
+  assert.deepEqual(
+    await synchronizeHumanMutation("undo", new FormData()),
+    undone
+  );
+  assert.equal(attempts, 2);
+});
+
+test("a session refusal on a retry leaves the first attempt's outcome unconfirmed", async (t) => {
+  let attempts = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    attempts += 1;
+    // The first attempt may have committed before its response was lost.
+    if (attempts === 1) throw new TypeError("network down");
+    return Response.json({}, { status: 401 });
+  });
+  await assert.rejects(
+    synchronizeHumanMutation("answer", new FormData()),
+    (error) =>
+      error instanceof HumanMutationError &&
+      error.unconfirmed &&
+      /session expired/i.test(error.message)
+  );
+  assert.equal(attempts, 2);
+});
+
 test("a request the server refused is reported at once, not retried", async (t) => {
   const fetched = t.mock.method(
     globalThis,

@@ -102,16 +102,22 @@ export function AppActionProvider({ children }: { children: ReactNode }) {
         );
         mutationsRef.current = syncing;
         setMutations(syncing);
+        let settle: () => void;
         try {
           const result = await mutation.execute();
-          dismiss(mutationId);
-          mutation.onSuccess?.(result);
+          settle = () => mutation.onSuccess?.(result);
         } catch (error) {
-          dismiss(mutationId);
-          mutation.onError?.(error);
+          settle = () => mutation.onError?.(error);
         }
-        if (mutation.refreshOnSettle) {
-          startTransition(() => router.refresh());
+        dismiss(mutationId);
+        try {
+          // Outside the request's try: a handler that throws must not turn a
+          // committed mutation into a reported failure.
+          settle();
+        } finally {
+          if (mutation.refreshOnSettle) {
+            startTransition(() => router.refresh());
+          }
         }
       };
 

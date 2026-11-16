@@ -259,9 +259,11 @@ revision and never infers an outcome from a row being absent from a page.
 
 Each mutation carries a client-generated `mutationId`, and a mutation settles
 exactly once. An attempt that cannot establish the outcome (timeout, network
-failure, or a 5xx response) is repeated under the same id, at most twice, and
-the server reports the mutation an earlier attempt committed instead of applying
-it again:
+failure, a 5xx response, or a successful response without a usable result) is
+repeated under the same id, at most twice, and the server reports the mutation
+an earlier attempt committed instead of applying it again. A bulk answer or
+multi-answer undo in which any item fails temporarily is such a 5xx as a whole,
+so its repeat reports the items that committed and tries the rest:
 
 - A repeated answer is recognized by the `input_answered` audit event of the
   item's current output, whose correlation id is derived from the `mutationId`.
@@ -269,11 +271,12 @@ it again:
   it named, while the item is still pending. Once the item has been answered
   again, an undo of the earlier output is reported as not found.
 
-If no attempt establishes the outcome, the mutation settles as unconfirmed: its
-optimistic projection is removed, the application bar says it may not have been
-saved rather than that it failed, and the page is refreshed so the next page
-shows what the server holds. A failed write removes only its own projection. The
-row leaving the pending queue is the success signal.
+If no attempt establishes the outcome, or a retry is refused without a result
+(an expired session), the mutation settles as unconfirmed: its optimistic
+projection is removed, the application bar says it may not have been saved
+rather than that it failed, and the page is refreshed so the next page shows
+what the server holds. A failed write removes only its own projection. The row
+leaving the pending queue is the success signal.
 
 When a page transaction overlaps a mutation response, the response's item state
 wins even if the page read the item later; the refresh that follows every
@@ -288,8 +291,10 @@ Pressing Undo while the answer is still saving starts the undo as soon as the
 answer is accepted. An action leaves the stack when it is undone (from the bar
 or from History), when its answer fails, or when the server permanently rejects
 the undo because the caller already read the output; a temporarily failed undo
-is offered again. The stack lives in the mounted page and is empty after a
-reload; eligible answers remain reversible from History. A bulk result with zero
+is offered again. After an undo that restored only some of a bulk answer, the
+action stays on the stack for the answers the server still reports as
+reversible. The stack lives in the mounted page and is empty after a reload;
+eligible answers remain reversible from History. A bulk result with zero
 successes is a failure from the mutation endpoint, not a successful projection.
 
 JavaScript-disabled review forms retain redirecting server actions as a
