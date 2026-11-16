@@ -276,8 +276,10 @@ If no attempt establishes the outcome, or a retry is refused without a result
 (an expired session), the mutation settles as unconfirmed: its optimistic
 projection is removed, the application bar says it may not have been saved
 rather than that it failed, and the page is refreshed so the next page shows
-what the server holds. A failed write removes only its own projection. The row
-leaving the pending queue is the success signal.
+what the server holds. A bulk answer that stopped at a temporary failure names
+the answers it had committed in that failure, so they stay on the undo stack
+even when no repeat gets further. A failed write removes only its own
+projection. The row leaving the pending queue is the success signal.
 
 When a page transaction overlaps a mutation response, the response's item state
 wins even if the page read the item later; the refresh that follows every
@@ -302,15 +304,16 @@ reversible from History. A bulk result with zero successes is a failure from the
 mutation endpoint, not a successful projection.
 
 JavaScript-disabled review forms retain redirecting server actions as a
-fallback. Navigational and security-sensitive workflows use their existing
-redirecting actions with explicit form-local pending labels applied on the
-native click, so the visible pending state does not wait for a React commit.
-Labeled clicks are stopped in window capture so descendant React click handlers
-cannot delay that paint; other window listeners still run. Submits restart with
-requestSubmit, and non-submit actions replay their click, on the following
-macrotask after MutationObserver callbacks have run. Browser coverage holds
-responses open so network or navigation completion cannot satisfy the latency
-gate.
+fallback. A submitted form is not repeated, so there a temporary failure counts
+as one failed item and the remaining items are still tried. Navigational and
+security-sensitive workflows use their existing redirecting actions with
+explicit form-local pending labels applied on the native click, so the visible
+pending state does not wait for a React commit. Labeled clicks are stopped in
+window capture so descendant React click handlers cannot delay that paint; other
+window listeners still run. Submits restart with requestSubmit, and non-submit
+actions replay their click, on the following macrotask after MutationObserver
+callbacks have run. Browser coverage holds responses open so network or
+navigation completion cannot satisfy the latency gate.
 
 ## File Handling
 

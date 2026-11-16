@@ -1,8 +1,7 @@
 import { VERSIONED_UUID_PATTERN } from "./api-errors.ts";
 import {
   browserFixtureReviewDetail,
-  browserFixtureReviewRow,
-  fixtureResolvedOutputResultId
+  browserFixtureReviewRow
 } from "./human-review-fixture.ts";
 import type { HumanMutationState } from "../shared/human-mutation.ts";
 
@@ -23,6 +22,8 @@ export type FixtureResolvedItem = {
   answeredAt: string;
   currentRevision?: number;
   undone?: boolean;
+  // The output the undo removed, so a repeat of that undo is recognized.
+  undoneOutputResultId?: string;
   // The request that answered the item, so its retry is recognized.
   mutationId?: string;
 };
@@ -110,14 +111,9 @@ export async function undoFixtureAnswer(target: {
   const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
   const previous = current[inputItemId];
   if (previous?.undone) {
-    // A repeat is recognized only for the output this undo removed, which was
-    // answered one revision before the restored item's current one.
+    // A repeat is recognized only for the output this undo removed.
     return previous.callerId === target.callerId &&
-      previous.currentRevision !== undefined &&
-      fixtureResolvedOutputResultId(
-        inputItemId,
-        previous.currentRevision - 1
-      ) === target.outputResultId
+      previous.undoneOutputResultId === target.outputResultId
       ? { ok: true }
       : fixtureFailure("not_found", "Output result was not found.");
   }
@@ -145,7 +141,8 @@ export async function undoFixtureAnswer(target: {
     callerId: canonical.caller.callerId,
     answeredAt: canonical.output.answeredAt,
     currentRevision: canonical.currentRevision + 1,
-    undone: true
+    undone: true,
+    undoneOutputResultId: target.outputResultId
   };
   writeFixtureState(store, current);
   return { ok: true };
@@ -223,6 +220,9 @@ function isResolvedItem(value: unknown): value is FixtureResolvedItem {
       (Number.isSafeInteger(item.currentRevision) &&
         Number(item.currentRevision) > 0)) &&
     (item.undone === undefined || typeof item.undone === "boolean") &&
+    (item.undoneOutputResultId === undefined ||
+      (typeof item.undoneOutputResultId === "string" &&
+        VERSIONED_UUID_PATTERN.test(item.undoneOutputResultId))) &&
     (item.mutationId === undefined ||
       (typeof item.mutationId === "string" &&
         VERSIONED_UUID_PATTERN.test(item.mutationId)))

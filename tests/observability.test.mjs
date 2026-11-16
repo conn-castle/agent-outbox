@@ -1341,6 +1341,9 @@ test("human mutation results carry item state read after the mutations, keyed fo
   const answerInputs = [];
   let stateReadFails = false;
   let sessionTransactions = 0;
+  let revalidations = 0;
+  /** @type {string[]} */
+  const redirects = [];
   // Input item or output ids whose mutation fails without a known outcome.
   /** @type {Set<unknown>} */
   const temporarilyFailing = new Set();
@@ -1370,8 +1373,18 @@ test("human mutation results carry item state read after the mutations, keyed fo
       "@clerk/nextjs/server": {
         auth: { protect: async () => ({ userId: "clerk-user-state" }) }
       },
-      "next/navigation": {},
-      "next/cache": { revalidatePath() {} },
+      "next/navigation": {
+        /** @param {string} url */
+        redirect(url) {
+          redirects.push(url);
+          throw new Error("redirect");
+        }
+      },
+      "next/cache": {
+        revalidatePath() {
+          revalidations += 1;
+        }
+      },
       "../../src/server/correlation": {
         /** @param {string} prefix */
         createCorrelationId: (prefix) => `${prefix}_test`
@@ -1481,10 +1494,43 @@ test("human mutation results carry item state read after the mutations, keyed fo
   // then reported as retryable as a whole, never as a partial result that
   // leaves out an answer or undo which may have committed.
   temporarilyFailing.add(secondItemId);
+  revalidations = 0;
   const unknownBulk = await actions.executeBulkHumanAnswersMutation(bulkForm);
   assert.deepEqual(
     [unknownBulk.ok, !unknownBulk.ok && unknownBulk.code],
     [false, "temporary_unavailable"]
+  );
+  // It still names the answers it committed, so that Undo can be offered for
+  // them if no repeat gets further, and the cached page is refreshed.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(!unknownBulk.ok && unknownBulk.undo)),
+    [{ inputItemId: firstItemId, callerId, outputResultId: "output-721" }]
+  );
+  assert.match(unknownBulk.message, /1 answered, 1 not confirmed/);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(!unknownBulk.ok && unknownBulk.state)),
+    itemStateFor([firstItemId, secondItemId])
+  );
+  assert.equal(revalidations, 1);
+
+  // A request that fails before anything commits reports nothing to undo.
+  temporarilyFailing.add(firstItemId);
+  const nothingCommitted =
+    await actions.executeBulkHumanAnswersMutation(bulkForm);
+  assert.equal(!nothingCommitted.ok && nothingCommitted.undo, undefined);
+  assert.equal(nothingCommitted.message, "Temporarily unavailable.");
+  assert.equal(revalidations, 1);
+  temporarilyFailing.delete(firstItemId);
+
+  // The redirecting form cannot be repeated under its id, so it tries every
+  // item and reports the count.
+  await assert.rejects(
+    () => actions.submitBulkHumanAnswers(bulkForm),
+    /redirect/
+  );
+  assert.match(
+    redirects.at(-1) ?? "",
+    /notice=bulk_answered&answered=1&failed=1/
   );
 
   const firstOutputId = "00000000-0000-4000-8000-000000000731";
@@ -1500,10 +1546,18 @@ test("human mutation results carry item state read after the mutations, keyed fo
     undoForm.append("outputResultId", outputResultId);
   }
   temporarilyFailing.add(secondOutputId);
+  revalidations = 0;
   const unknownUndo = await actions.executeUndoHumanAnswerMutation(undoForm);
   assert.deepEqual(
     [unknownUndo.ok, !unknownUndo.ok && unknownUndo.code],
     [false, "temporary_unavailable"]
+  );
+  // The first answer was restored: the cached page is refreshed, and the
+  // failure's item state tells the client which answers remain.
+  assert.equal(revalidations, 1);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(!unknownUndo.ok && unknownUndo.state)),
+    itemStateFor([firstItemId, secondItemId])
   );
   temporarilyFailing.clear();
   const undone = await actions.executeUndoHumanAnswerMutation(undoForm);

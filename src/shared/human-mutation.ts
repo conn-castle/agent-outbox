@@ -47,6 +47,8 @@ export type HumanMutationFailure = {
   failedActionKind?: "file_upload";
   // Present whenever the server could still read the items it rejected.
   state?: HumanMutationState;
+  // Answers a bulk request committed before the failure that stopped it.
+  undo?: HumanUndoTarget[];
 };
 
 // Identifies one answered item whose unread output can still be undone.

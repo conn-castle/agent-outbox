@@ -38,6 +38,31 @@ test("isHumanMutationResult requires operation-specific success and failure fiel
     }),
     false
   );
+  // A bulk answer stopped part-way names the answers it committed, which
+  // must be undo targets for items of this request.
+  const interrupted = {
+    ok: false,
+    operation: "bulk-answer",
+    message: "Bulk action interrupted: 1 answered, 1 not confirmed.",
+    inputItemIds: [itemId, "00000000-0000-4000-8000-000000000502"],
+    code: "temporary_unavailable"
+  };
+  const committed = {
+    inputItemId: itemId,
+    callerId: "00000000-0000-4000-8000-000000000503",
+    outputResultId: "00000000-0000-4000-8000-000000009999"
+  };
+  assert.equal(
+    isHumanMutationResult({ ...interrupted, undo: [committed] }),
+    true
+  );
+  for (const undo of [
+    committed,
+    [{ ...committed, outputResultId: undefined }],
+    [{ ...committed, inputItemId: "00000000-0000-4000-8000-000000000599" }]
+  ]) {
+    assert.equal(isHumanMutationResult({ ...interrupted, undo }), false);
+  }
   assert.equal(
     isHumanMutationResult({
       ok: true,
