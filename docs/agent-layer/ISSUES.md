@@ -28,9 +28,9 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is written out in three places
+- Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is defined in several places
     Priority: Low. Area: Human review / Maintainability
-    Description: The default ordering, priority ascending, is a separate literal in `isDefaultHumanReviewOrdering` and in `canonicalSortRules` in `src/shared/human-review-view.ts`, and in the Sort panel's Reset button in `src/components/human/ReviewViewControls.tsx`. If one changes without the others, Reset can write an ordering that is not reported as the default.
+    Description: The default ordering, priority ascending, is defined separately in `src/shared/human-review-view.ts` by the parse fallback in `parseSortRules` (`parseSort(readOne("sort"), "priority")` with `defaultHumanReviewSortDirection`), by the empty-list fallback in `canonicalSortRules` and by `isDefaultHumanReviewOrdering`, and in `src/components/human/ReviewViewControls.tsx` by the Sort panel's Reset button. If they stop agreeing, the parsed default, Reset and the default check can disagree.
 
 - Issue 2026-11-16 review-sort-direction-label-fallback: Sort direction labels fall back to time wording for any unnamed key
     Priority: Low. Area: Human review / Maintainability
