@@ -28,6 +28,21 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is defined in several places
+    Priority: Low. Area: Human review / Maintainability
+    Description: The default ordering, priority ascending, is defined separately in `src/shared/human-review-view.ts` by the parse fallback in `parseSortRules` (`parseSort(readOne("sort"), "priority")` with `defaultHumanReviewSortDirection`), by the empty-list fallback in `canonicalSortRules` and by `isDefaultHumanReviewOrdering`, and in `src/components/human/ReviewViewControls.tsx` by the Sort panel's Reset button. If they stop agreeing, the parsed default, Reset and the default check can disagree.
+    Open question: Which module should own the default ordering.
+
+- Issue 2026-11-16 review-sort-direction-label-fallback: Sort direction labels fall back to time wording for any unnamed key
+    Priority: Low. Area: Human review / Maintainability
+    Description: `sortDirectionLabel` in `src/components/human/ReviewViewControls.tsx` returns "Newest first" or "Oldest first" for every `HumanReviewSort` key it does not name. Today those are `card_time`, `created_at` and `updated_at`, which are all times; a new key that is not a time would get those labels with no compile error.
+    Open question: How a sort key that is not a time should get its direction labels.
+
+- Issue 2026-11-16 review-filter-focus-lost-on-close: Closing a review Filter or Sort panel does not always return focus to its trigger
+    Priority: Low. Area: Human review / Accessibility
+    Description: Observed in Chromium for `src/components/human/ReviewViewControls.tsx`. Focus returns to the panel's trigger after Escape (both panels), the Sort panel's Done button, and keyboard activation of the Sort scrim. Focus lands on the page body after the Filter panel's Done, close and scrim buttons (keyboard or pointer), after a pointer press on the Sort scrim, and after a press on non-focusable content outside either panel.
+    Open question: Whether pointer dismissal should move focus to the trigger.
+
 - Issue 2026-11-16 billing-grace-from-webhook-arrival: Grace deadlines run from webhook arrival, not event creation
     Priority: Low. Area: billing
     Description: Every `graceEndsAt(now)` in `src/server/billing.ts` measures from the time a webhook is processed: the failed-invoice update and each `billingTransitionForSubscription` outcome other than active or scheduled to cancel at period end. Stripe retries deliveries for days, so a late failed invoice, or a late subscription event whose status is canceled, expired, past due, unpaid, incomplete or unrecognized, extends paid access past the configured downgrade grace period measured from the event. Raised in review of PR #297.
