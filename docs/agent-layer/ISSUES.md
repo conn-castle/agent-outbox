@@ -43,6 +43,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Observed in Chromium for `src/components/human/ReviewViewControls.tsx`. Focus returns to the panel's trigger after Escape (both panels), the Sort panel's Done button, and keyboard activation of the Sort scrim. Focus lands on the page body after the Filter panel's Done, close and scrim buttons (keyboard or pointer), after a pointer press on the Sort scrim, and after a press on non-focusable content outside either panel.
     Open question: Whether pointer dismissal should move focus to the trigger.
 
+- Issue 2026-11-16 billing-grace-from-webhook-arrival: Grace deadlines run from webhook arrival, not event creation
+    Priority: Low. Area: billing
+    Description: Every `graceEndsAt(now)` in `src/server/billing.ts` measures from the time a webhook is processed: the failed-invoice update and each `billingTransitionForSubscription` outcome other than active or scheduled to cancel at period end. Stripe retries deliveries for days, so a late failed invoice, or a late subscription event whose status is canceled, expired, past due, unpaid, incomplete or unrecognized, extends paid access past the configured downgrade grace period measured from the event. Raised in review of PR #297.
+    Open question: Should grace be measured from the Stripe event's creation time or from when Agent Outbox learns of it?
+
 - Issue 2026-10-20 supabase-api-grants-unverified: Migration API-role revocations are inconsistent
     Priority: Medium. Area: operations / database access
     Description: The initial schema conditionally revokes named API roles; later migrations revoke only PUBLIC for the webhook ledger table, checkout attempts, receipt sequence, and the Stripe ordering and review text trigger functions. Current live ACLs and Data API exposure are unknown.
