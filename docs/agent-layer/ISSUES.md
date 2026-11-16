@@ -28,10 +28,9 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-
 - Issue 2026-11-16 review-fixture-state-cookie-trimmed: Browser fixture drops answered items past its cookie limit
     Priority: Low. Area: browser test fixture
-    Description: `fixtureResolvedItemsCookieValue` keeps only the newest records that fit 3,500 bytes (at most 50) and drops the rest without reporting it. Called directly with 20 answered items it kept 14. A dropped item has no record, which the fixture reads as never answered.
+    Description: `fixtureResolvedItemsCookieValue` keeps only the newest records that fit 3,500 bytes (at most 50) and drops the rest without reporting it. Called directly with 20 answered items it kept 14. A dropped item falls back to its seeded state.
     Open question: What should the fixture do when its answered-item state no longer fits one cookie?
 
 - Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is defined in several places
