@@ -28,10 +28,10 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-11-16 review-filter-focus-lost-on-close: Closing the review Filter panel by button drops keyboard focus
+- Issue 2026-11-16 review-filter-focus-lost-on-close: Closing a review Filter or Sort panel can drop keyboard focus
     Priority: Low. Area: Human review / Accessibility
-    Description: The Filter panel's Done, close and scrim buttons in `src/components/human/ReviewViewControls.tsx` close it without returning focus to the Filter button, so focus is left on a removed element. Escape, and the Sort panel's Done and scrim buttons, return focus to the trigger.
-    Open question: Whether pointer dismissal through the scrim should also move focus to the trigger.
+    Description: In `src/components/human/ReviewViewControls.tsx` the Filter panel's Done, close and scrim buttons close it without returning focus to the Filter button, so a keyboard user's focus is left on a removed element; Escape and the Sort panel's Done button return focus to the trigger. A pointer press outside either panel, including on its scrim, closes it through the document `pointerdown` handler, which does not move focus, before the scrim's click handler runs; that click handler runs only for keyboard activation.
+    Open question: Whether pointer dismissal should move focus to the trigger.
 
 - Issue 2026-10-20 supabase-api-grants-unverified: Migration API-role revocations are inconsistent
     Priority: Medium. Area: operations / database access
