@@ -82,6 +82,13 @@ export type HumanBulkMutationSuccess = {
   state: HumanMutationState;
 };
 
+export function bulkAnswerMessage(
+  answered: number | string,
+  failed: number | string
+) {
+  return `Bulk action complete: ${answered} answered, ${failed} failed.`;
+}
+
 export type HumanUndoMutationSuccess = {
   ok: true;
   operation: "undo";

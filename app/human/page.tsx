@@ -27,6 +27,7 @@ import {
   firstSearchParam,
   humanReviewViewFromRecord
 } from "../../src/shared/human-review-view";
+import { bulkAnswerMessage } from "../../src/shared/human-mutation";
 import {
   humanAccountIdentityOrFallback,
   type HumanAccountIdentityDisplay
@@ -318,7 +319,7 @@ function humanReviewNotice(
     const failed = firstSearchParam(params?.failed) ?? "0";
     return {
       kind: "notice",
-      message: `Bulk action complete: ${answered} answered, ${failed} failed.`
+      message: bulkAnswerMessage(answered, failed)
     };
   }
 

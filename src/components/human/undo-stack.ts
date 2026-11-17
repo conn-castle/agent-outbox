@@ -60,6 +60,18 @@ export function confirmUndoEntry(
   );
 }
 
+/** The targets whose answers the reported rows still hold. */
+export function heldUndoTargets(
+  targets: HumanUndoTarget[],
+  state: HumanMutationState
+) {
+  return targets.filter(
+    (target) =>
+      state.items.find((item) => item.inputItemId === target.inputItemId)?.row
+        ?.output?.outputResultId === target.outputResultId
+  );
+}
+
 /**
  * Settles an entry's undo from the rows the server reported. Answers it
  * restored, or can no longer reverse, leave the stack; answers it still holds

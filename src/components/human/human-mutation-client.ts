@@ -1,8 +1,10 @@
 "use client";
 
 import {
+  bulkAnswerMessage,
   isAsOf,
   isHumanMutationOperation,
+  type HumanBulkMutationSuccess,
   type HumanMutationFailure,
   type HumanMutationOperation,
   type HumanMutationResult,
@@ -61,7 +63,10 @@ export async function synchronizeHumanMutation(
   let state: HumanMutationState | null = null;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await sendHumanMutation(formData);
+      const result = await sendHumanMutation(formData);
+      return result.operation === "bulk-answer"
+        ? withEarlierAnswers(result, committed)
+        : result;
     } catch (error) {
       const delay = HUMAN_MUTATION_RETRY_DELAYS_MS[attempt];
       if (!(error instanceof HumanMutationError)) throw error;
@@ -84,6 +89,30 @@ export async function synchronizeHumanMutation(
       );
     }
   }
+}
+
+// A repeat cannot always report again what an earlier attempt answered: by
+// then the answer may be gone, acknowledged by its caller. It still counts.
+function withEarlierAnswers(
+  result: HumanBulkMutationSuccess,
+  committed: ReadonlyMap<string, HumanUndoTarget>
+): HumanBulkMutationSuccess {
+  const undo = result.inputItemIds.flatMap(
+    (inputItemId) =>
+      result.undo.find((target) => target.inputItemId === inputItemId) ??
+      committed.get(inputItemId) ??
+      []
+  );
+  if (undo.length === result.undo.length) return result;
+  const failed = result.inputItemIds.length - undo.length;
+  return {
+    ...result,
+    message: bulkAnswerMessage(undo.length, failed),
+    answered: undo.length,
+    answeredInputItemIds: undo.map((target) => target.inputItemId),
+    failed,
+    undo
+  };
 }
 
 async function sendHumanMutation(formData: FormData) {

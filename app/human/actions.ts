@@ -46,6 +46,7 @@ import type {
   HumanMutationResult,
   HumanMutationState
 } from "../../src/shared/human-mutation";
+import { bulkAnswerMessage } from "../../src/shared/human-mutation";
 
 const humanPath = "/human";
 // A failure whose mutation may have committed; the route answers it with 503.
@@ -294,7 +295,7 @@ async function bulkAnswerOutcome(
   return {
     ok: true,
     operation: "bulk-answer",
-    message: `Bulk action complete: ${answered} answered, ${failed} failed.`,
+    message: bulkAnswerMessage(answered, failed),
     inputItemIds,
     answered,
     answeredInputItemIds: undo.map((target) => target.inputItemId),

@@ -1,4 +1,5 @@
 import * as reviewSearchText from "../src/server/review-search-text.ts";
+import * as sharedHumanMutation from "../src/shared/human-mutation.ts";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
@@ -1471,6 +1472,7 @@ test("human mutation results carry item state read after the mutations, keyed fo
       "../../src/server/human-review-fixture": {
         humanBrowserFixtureEnabled: () => false
       },
+      "../../src/shared/human-mutation": sharedHumanMutation,
       "../../src/server/human-action-form": {
         parseBulkHumanAnswersForm,
         parseHumanAnswerForm,
@@ -1837,6 +1839,7 @@ test("human review server actions emit failure telemetry only on failure paths",
         "../../src/server/human-review-fixture": {
           humanBrowserFixtureEnabled: () => false
         },
+        "../../src/shared/human-mutation": sharedHumanMutation,
         "../../src/server/human-action-form": {
           parseBulkHumanAnswersForm,
           parseHumanAnswerForm,
@@ -2102,6 +2105,7 @@ test("human review server actions report transaction throws and propagate pre-in
               "../../src/server/human-review-fixture": {
                 humanBrowserFixtureEnabled: () => false
               },
+              "../../src/shared/human-mutation": sharedHumanMutation,
               "../../src/server/human-action-form": {
                 parseBulkHumanAnswersForm,
                 parseHumanAnswerForm,
@@ -2268,6 +2272,7 @@ test("human action failure logs include the elapsed account transaction", async 
               createHumanAnswerInTransaction: failMutation,
               undoHumanAnswerBeforeReadInTransaction: failMutation
             },
+            "../../src/shared/human-mutation": sharedHumanMutation,
             "../../src/server/human-action-form": {
               parseBulkHumanAnswersForm,
               parseHumanAnswerForm,

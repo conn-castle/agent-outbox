@@ -604,6 +604,40 @@ test("a bulk answer whose response is lost is retried without answering twice", 
   await expectQueueMembership(page, initial);
 });
 
+test("a bulk answer that commits unconfirmed leaves no selection behind", async ({
+  page
+}) => {
+  // Every attempt times out before its response arrives.
+  await page.addInitScript(() => {
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    AbortSignal.timeout = (ms: number) =>
+      originalTimeout(ms === 20_000 ? 300 : ms);
+  });
+  const initial = await openQueue(page);
+  await selectRows(page, [permit, followUp]);
+  let attempts = 0;
+  await page.route("**/human/mutations", async (route) => {
+    attempts += 1;
+    // The write commits, but its response never reaches the client.
+    await route.fetch().catch(() => {});
+  });
+  await applyBulk(page);
+  await expect(page.locator(".last-action-error")).toContainText(
+    "Bulk action not confirmed",
+    { timeout: 15_000 }
+  );
+  await page.unroute("**/human/mutations");
+  expect(attempts).toBe(3);
+
+  // The refreshed queue no longer shows the answered rows, so they are not
+  // left selected where the bulk bar cannot reach them.
+  await expectQueueMembership(page, without(initial, permit, followUp));
+  await expect(page.locator(".bulk-actions")).toHaveCount(0);
+  await page.reload();
+  await expectHydrated(page);
+  await expect(page.locator(".bulk-actions")).toHaveCount(0);
+});
+
 test("a bulk answer that never reaches the server keeps visible selections for retry", async ({
   page
 }) => {

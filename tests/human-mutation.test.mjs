@@ -362,6 +362,60 @@ test("a refusal on a retry settles nothing about earlier attempts, and keeps wha
   assert.equal(attempts, 2);
 });
 
+test("a successful repeat keeps the answers an earlier attempt reported", async (t) => {
+  const callerId = "00000000-0000-4000-8000-000000000503";
+  const ids = [itemId, otherItemId, "00000000-0000-4000-8000-000000000504"];
+  const [first, second] = ids.map((inputItemId, index) => ({
+    inputItemId,
+    callerId,
+    outputResultId: `00000000-0000-4000-8000-00000000999${index}`
+  }));
+  let attempts = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    attempts += 1;
+    return attempts === 1
+      ? // The first attempt answered the first item and stopped at the next.
+        Response.json(
+          {
+            ok: false,
+            operation: "bulk-answer",
+            code: "temporary_unavailable",
+            message: "Temporarily unavailable.",
+            inputItemIds: ids,
+            undo: [first],
+            state: stateFor(ids)
+          },
+          { status: 503 }
+        )
+      : // Its caller then acknowledged that answer, so the repeat finds no
+        // such item. It answers the second and cannot answer the third.
+        Response.json({
+          ok: true,
+          operation: "bulk-answer",
+          message: "Bulk action complete: 1 answered, 2 failed.",
+          inputItemIds: ids,
+          answered: 1,
+          answeredInputItemIds: [second.inputItemId],
+          failed: 2,
+          undo: [second],
+          state: stateFor(ids)
+        });
+  });
+  const result = await synchronizeHumanMutation("bulk-answer", new FormData());
+  assert.equal(attempts, 2);
+  assert.deepEqual(result, {
+    ok: true,
+    operation: "bulk-answer",
+    message: "Bulk action complete: 2 answered, 1 failed.",
+    inputItemIds: ids,
+    answered: 2,
+    answeredInputItemIds: [first.inputItemId, second.inputItemId],
+    failed: 1,
+    undo: [first, second],
+    state: stateFor(ids)
+  });
+});
+
 test("a request the server refused is reported at once, not retried", async (t) => {
   const fetched = t.mock.method(
     globalThis,

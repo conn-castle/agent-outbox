@@ -62,6 +62,7 @@ import {
 } from "./review-sync";
 import {
   confirmUndoEntry,
+  heldUndoTargets,
   offeredUndoEntry,
   patchUndoEntry,
   removeUndoEntry,
@@ -69,9 +70,10 @@ import {
   settleUndoEntry,
   type UndoEntry
 } from "./undo-stack";
-import type {
-  HumanMutationState,
-  HumanUndoTarget
+import {
+  compareAsOf,
+  type HumanMutationState,
+  type HumanUndoTarget
 } from "../../shared/human-mutation";
 
 // Query parameters the server action redirect writes to report a mutation.
@@ -185,6 +187,11 @@ export function ReviewWorkspace({
   );
   const asOfRef = useRef(asOf);
   asOfRef.current = asOf;
+  // Answers no attempt confirmed, with the view they were sent from and the
+  // page shown when they settled.
+  const unconfirmedAnswers = useRef<
+    { inputItemIds: string[]; viewHref: string; asOf: string }[]
+  >([]);
   const consumedNoticeEpoch = useRef<string | null>(null);
   const viewConfigurationKey = [
     view.status,
@@ -194,6 +201,27 @@ export function ReviewWorkspace({
     view.page
   ].join("\0");
   const canonicalViewHref = humanReviewHref(view);
+  // An unconfirmed answer may have committed. Once a newer page of its view
+  // arrives, a row that page no longer shows was answered or has moved, and
+  // its selection is released; a row still shown stays selected for a retry.
+  useEffect(() => {
+    if (unconfirmedAnswers.current.length === 0) return;
+    const shown = new Set(rows.map((row) => row.inputItemId));
+    const released = new Set<string>();
+    unconfirmedAnswers.current = unconfirmedAnswers.current.filter((sent) => {
+      if (
+        sent.viewHref !== canonicalViewHref ||
+        compareAsOf(asOf, sent.asOf) <= 0
+      ) {
+        return true;
+      }
+      for (const id of sent.inputItemIds) {
+        if (!shown.has(id)) released.add(id);
+      }
+      return false;
+    });
+    if (released.size > 0) deselect(released);
+  }, [asOf, canonicalViewHref, deselect, rows]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -603,8 +631,12 @@ export function ReviewWorkspace({
       }
     }
     // Answers the server reports as committed: their sent feedback is done
-    // with, and the stack entry narrows to them (or goes, when there are none).
-    function answersCommitted(answered: HumanUndoTarget[]) {
+    // with, and the stack entry narrows to those the reported rows still hold
+    // (or goes, when there are none).
+    function answersCommitted(
+      answered: HumanUndoTarget[],
+      state: HumanMutationState | null
+    ) {
       for (const { inputItemId } of answered) {
         const sent = submission.formData.get(
           submission.operation === "answer"
@@ -615,7 +647,7 @@ export function ReviewWorkspace({
           feedback.clearSubmitted(inputItemId, sent);
         }
       }
-      confirmAnswerEntry(answered);
+      confirmAnswerEntry(state ? heldUndoTargets(answered, state) : answered);
     }
     // The submitted answers can no longer be undone from here: drop the stack
     // entry, or for an undo from History, the matching answers in any entry.
@@ -654,7 +686,8 @@ export function ReviewWorkspace({
           return;
         }
         answersCommitted(
-          result.operation === "answer" ? [result.undo] : result.undo
+          result.operation === "answer" ? [result.undo] : result.undo,
+          result.state
         );
         setLastError(
           result.operation === "bulk-answer" && result.failed > 0
@@ -671,7 +704,14 @@ export function ReviewWorkspace({
         const committed =
           error instanceof HumanMutationError ? error.committed : [];
         if (answerEntryId) {
-          answersCommitted(committed);
+          answersCommitted(committed, state);
+          if (error instanceof HumanMutationError && error.unconfirmed) {
+            unconfirmedAnswers.current.push({
+              inputItemIds: submission.inputItemIds,
+              viewHref: canonicalViewHref,
+              asOf: asOfRef.current
+            });
+          }
         } else if (
           failure?.code === "output_already_read" ||
           failure?.code === "not_found"
