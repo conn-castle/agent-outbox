@@ -672,17 +672,18 @@ export function ReviewWorkspace({
           error instanceof HumanMutationError ? error.committed : [];
         if (answerEntryId) {
           answersCommitted(committed);
+        } else if (
+          failure?.code === "output_already_read" ||
+          failure?.code === "not_found"
+        ) {
+          // These undo rejections are permanent; retrying cannot succeed. They
+          // outrank the reported rows, which an earlier attempt may have read.
+          forgetUndoneAnswers();
         } else if (undoEntryId && state) {
           // The reported rows say which answers can still be undone.
           updateUndoStack((stack) =>
             settleUndoEntry(stack, undoEntryId, state)
           );
-        } else if (
-          failure?.code === "output_already_read" ||
-          failure?.code === "not_found"
-        ) {
-          // These undo rejections are permanent; retrying cannot succeed.
-          forgetUndoneAnswers();
         } else if (undoEntryId) {
           // Offer the same action again for a retry.
           updateUndoStack((stack) =>
@@ -1224,7 +1225,7 @@ function mutationFailureMessage(
   unconfirmed: boolean
 ) {
   if (submission.operation === "bulk-answer") {
-    return message;
+    return unconfirmed ? `Bulk action not confirmed: ${message}` : message;
   }
   const subject =
     normalizedFormText(submission.formData, "noticeSubject") ??
@@ -1237,12 +1238,13 @@ function mutationFailureMessage(
       submission.inputItemIds.length > 1
         ? `${submission.inputItemIds.length} reviews`
         : quotedSubject;
+    // The outcome comes first: the bar shows one line and cuts off the rest.
     return unconfirmed
-      ? `${restored} may not have been restored: ${message}`
+      ? `Undo not confirmed for ${restored}: ${message}`
       : `Could not restore ${restored}: ${message}`;
   }
   return unconfirmed
-    ? `${quotedSubject} may not have been saved: ${message}`
+    ? `Save not confirmed for ${quotedSubject}: ${message}`
     : `Could not save ${quotedSubject}: ${message}`;
 }
 

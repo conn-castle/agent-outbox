@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-16 review-selection-kept-after-unconfirmed-bulk: Answered rows stay selected when a bulk answer's responses are all lost
+    Priority: Low. Area: human review queue
+    Description: A bulk answer of two rows committed while all three attempts' responses were dropped in a browser test. The rows left the queue, but the bulk bar showed "2 selected on other pages are not included", and still did after a reload. Leaving selection mode clears it.
+    Open question: How should the selection be reconciled when no attempt reports which rows were answered?
+
 - Issue 2026-11-16 review-fixture-state-cookie-trimmed: Browser fixture drops answered items past its cookie limit
     Priority: Low. Area: browser test fixture
     Description: `fixtureResolvedItemsCookieValue` keeps only the newest records that fit 3,500 bytes (at most 50) and drops the rest without reporting it. Called directly with 20 answered items it kept 14. A dropped item falls back to its seeded state, and its record's `mutationId`, which is what recognizes a repeated answer, is lost with it.

@@ -282,9 +282,9 @@ which ones, and how many were not.
 
 If no attempt establishes the outcome, or a retry is refused, the mutation
 settles as unconfirmed: its optimistic projection is removed, the application
-bar says it may not have been saved rather than that it failed, and the page is
-refreshed so the next page shows what the server holds. A bulk answer that
-stopped at a temporary failure names the answers it had committed in that
+bar says the save or undo was not confirmed rather than that it failed, and the
+page is refreshed so the next page shows what the server holds. A bulk answer
+that stopped at a temporary failure names the answers it had committed in that
 failure; whatever any attempt reported as committed stays on the undo stack, and
 the newest item state any attempt reported is applied, however the mutation
 settles. A failed write removes only its own projection. The row leaving the

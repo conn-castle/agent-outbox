@@ -451,6 +451,58 @@ test("answer and undo responses report the item's resulting row", async ({
   });
 });
 
+test("an undo the server permanently refuses is not offered again", async ({
+  page
+}) => {
+  await openQueue(page);
+  const answered = mutationResponse(page);
+  await page
+    .getByRole("button", { name: "Approve to send", exact: true })
+    .click();
+  const answer = await (await answered).json();
+  const inputItemIds = [answer.undo.inputItemId];
+
+  // The first attempt fails temporarily and reports the answer as still
+  // unread. The caller then reads it, and the repeat is refused for good,
+  // without rows.
+  let attempts = 0;
+  await page.route("**/human/mutations", (route) => {
+    attempts += 1;
+    return attempts === 1
+      ? route.fulfill({
+          status: 503,
+          json: {
+            ok: false,
+            operation: "undo",
+            code: "temporary_unavailable",
+            message: "Temporarily unavailable.",
+            inputItemIds,
+            state: {
+              asOf: String(BigInt(answer.state.asOf) + 1n),
+              items: answer.state.items
+            }
+          }
+        })
+      : route.fulfill({
+          status: 409,
+          json: {
+            ok: false,
+            operation: "undo",
+            code: "output_already_read",
+            message: "Output result has already been read by the caller.",
+            inputItemIds
+          }
+        });
+  });
+  await page.getByTestId("last-answer-undo").click();
+  await expect(page.locator(".last-action-error")).toContainText(
+    "already been read",
+    { timeout: 15_000 }
+  );
+  expect(attempts).toBe(2);
+  await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+});
+
 test("a bulk answer stopped part-way keeps Undo for the answers it committed", async ({
   page
 }) => {

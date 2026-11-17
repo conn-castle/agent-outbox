@@ -2222,8 +2222,8 @@ test("an answer that cannot reach the server is retried, then rolled back", asyn
 
   // No attempt reported an outcome, so the message does not claim a failure.
   finishRetry();
-  await expect(lastActionError(page)).toContainText(
-    "may not have been saved: Agent Outbox could not be reached"
+  await expect(lastActionError(page)).toHaveText(
+    /^Save not confirmed for “.+”: Agent Outbox could not be reached/
   );
   expect(attempts).toBe(3);
   await expect(row).toBeVisible();
