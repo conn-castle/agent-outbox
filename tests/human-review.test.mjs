@@ -2026,6 +2026,9 @@ test("human action form parser rejects malformed hidden fields before database w
     const uppercase = answerForm();
     uppercase.set(field, lettered.toUpperCase());
     assert.deepEqual(parseHumanAnswerForm(uppercase), { ok: false }, field);
+    const mixedCase = answerForm();
+    mixedCase.set(field, lettered.replace("abcd", "aBcd"));
+    assert.deepEqual(parseHumanAnswerForm(mixedCase), { ok: false }, field);
   }
   for (const field of ["mutationId", "callerId", "outputResultId"]) {
     const lowercase = undoForm();

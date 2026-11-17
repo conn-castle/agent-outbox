@@ -723,27 +723,18 @@ async function requestForm(route: Route) {
   }).formData();
 }
 
+// Sends the bulk request on with a stale revision for the items that must be
+// rejected, so the outcome and the reported rows are the server's own.
 async function bulkFailure(route: Route, outcome: "partial" | "none") {
   const form = await requestForm(route);
   const items = form
     .getAll("bulkItem")
-    .map((value) => JSON.parse(String(value)) as { inputItemId: string });
-  if (outcome === "none") {
-    await route.fulfill({
-      status: 409,
-      json: {
-        ok: false,
-        operation: "bulk-answer",
-        inputItemIds: items.map((item) => item.inputItemId),
-        code: "bulk_answer_failed",
-        message: "Bulk action failed: 2 not answered."
-      }
-    });
-    return;
-  }
-  const first = form.getAll("bulkItem")[0];
+    .map((value) => JSON.parse(String(value)) as { expectedRevision: number });
   form.delete("bulkItem");
-  form.append("bulkItem", first);
+  items.forEach((item, index) => {
+    if (outcome === "none" || index > 0) item.expectedRevision += 1;
+    form.append("bulkItem", JSON.stringify(item));
+  });
   const request = new Request(route.request().url(), {
     method: "POST",
     body: form
@@ -756,14 +747,15 @@ async function bulkFailure(route: Route, outcome: "partial" | "none") {
     postData: Buffer.from(await request.arrayBuffer())
   });
   const result = await response.json();
-  expect(result.ok).toBe(true);
-  await route.fulfill({
-    response,
-    json: {
-      ...result,
-      inputItemIds: items.map((item) => item.inputItemId),
-      failed: 1,
-      message: "Bulk action complete: 1 answered, 1 failed."
-    }
-  });
+  expect(result.ok ? result.failed : result.code).toBe(
+    outcome === "partial" ? 1 : "bulk_answer_failed"
+  );
+  expect(
+    result.state.items.map(
+      (item: { row: { status: string } }) => item.row.status
+    )
+  ).toEqual(
+    outcome === "partial" ? ["answered", "pending"] : ["pending", "pending"]
+  );
+  await route.fulfill({ response });
 }

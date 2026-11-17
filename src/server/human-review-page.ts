@@ -26,6 +26,9 @@ import {
   type HumanReviewView
 } from "../shared/human-review-view.ts";
 import type { HumanMutationState } from "../shared/human-mutation.ts";
+import { createCorrelationId } from "./correlation.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 export type HumanReviewPageLoad = {
   view: HumanReviewView;
@@ -124,20 +127,39 @@ export async function loadHumanReviewItemStates(
   requestId: string,
   inputItemIds: string[]
 ): Promise<HumanMutationState> {
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    throw new Error("Human account database configuration is unavailable.");
+  const startedAtMs = Date.now();
+  try {
+    const connectionString = process.env.DATABASE_APP_ROLE_URL;
+    if (!connectionString) {
+      throw new Error("Human account database configuration is unavailable.");
+    }
+    return await runProductTransaction(
+      connectionString,
+      {
+        requestId,
+        authSurface: "human",
+        accountId: session.accountId,
+        userId: session.userId
+      },
+      (query) =>
+        humanReviewItemStatesInTransaction(query, session, inputItemIds)
+    );
+  } catch (error) {
+    // A caller may still report the mutation's outcome without these rows,
+    // so the failure is reported here.
+    reportRuntimeFailure(error, {
+      errorId: createCorrelationId("human_item_state"),
+      request_id: requestId,
+      surface: "app",
+      route: "/human",
+      method: "POST",
+      duration_ms: durationSinceMs(startedAtMs),
+      operation: "human_review_item_state",
+      account_id: session.accountId,
+      message: "Human review item state read failed unexpectedly."
+    });
+    throw error;
   }
-  return runProductTransaction(
-    connectionString,
-    {
-      requestId,
-      authSurface: "human",
-      accountId: session.accountId,
-      userId: session.userId
-    },
-    (query) => humanReviewItemStatesInTransaction(query, session, inputItemIds)
-  );
 }
 
 async function loadHumanReviewPageDataInTransaction(
