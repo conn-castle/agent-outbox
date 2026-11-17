@@ -97,7 +97,12 @@ function routeHarness() {
         inputItemIds: ids,
         answered: ids.length,
         answeredInputItemIds: ids,
-        failed: 0
+        failed: 0,
+        undo: parsed.items.map((item) => ({
+          inputItemId: item.inputItemId,
+          callerId: item.callerId,
+          outputResultId
+        }))
       };
     },
     /** @param {FormData} form */
@@ -109,7 +114,11 @@ function routeHarness() {
         ok: true,
         operation: "undo",
         message: "Undone",
-        inputItemIds: [parsed.inputItemId]
+        inputItemIds: parsed.targets.map((target) => target.inputItemId),
+        restoredInputItemIds: parsed.targets.map(
+          (target) => target.inputItemId
+        ),
+        failed: 0
       };
     }
   };

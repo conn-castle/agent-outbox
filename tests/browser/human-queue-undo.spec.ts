@@ -237,6 +237,58 @@ test("answer and undo responses report the item's resulting row", async ({
   });
 });
 
+test("one undo request restores every answer of a bulk action", async ({
+  page
+}) => {
+  await openQueue(page);
+  await selectRows(page, [permit, followUp]);
+  const answered = mutationResponse(page);
+  await applyBulk(page);
+  const bulk = await (await answered).json();
+  expect(bulk.undo).toHaveLength(2);
+  expect(
+    bulk.undo.map((target: { inputItemId: string }) => target.inputItemId)
+  ).toEqual(bulk.answeredInputItemIds);
+
+  // The review page does not send this request yet, so post it directly.
+  const undone = await page.evaluate(
+    async (targets: Record<string, string>[]) => {
+      const form = new FormData();
+      form.set("_operation", "undo");
+      for (const target of targets) {
+        form.append("inputItemId", target.inputItemId);
+        form.append("callerId", target.callerId);
+        form.append("outputResultId", target.outputResultId);
+      }
+      const response = await fetch("/human/mutations", {
+        method: "POST",
+        body: form,
+        credentials: "same-origin"
+      });
+      return response.json();
+    },
+    bulk.undo
+  );
+  expect(undone).toMatchObject({
+    ok: true,
+    operation: "undo",
+    inputItemIds: bulk.answeredInputItemIds,
+    restoredInputItemIds: bulk.answeredInputItemIds,
+    failed: 0
+  });
+  expect(
+    undone.state.items.map(
+      (item: { row: { status: string; output: unknown } }) => [
+        item.row.status,
+        item.row.output
+      ]
+    )
+  ).toEqual([
+    ["pending", null],
+    ["pending", null]
+  ]);
+});
+
 test("a timed-out bulk answer that committed leaves the selection", async ({
   page
 }) => {

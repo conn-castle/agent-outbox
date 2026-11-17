@@ -1406,6 +1406,17 @@ test("human mutation results carry item state read after the mutations, keyed fo
   // Input items whose answer the database rejects.
   /** @type {Set<unknown>} */
   const rejected = new Set();
+  // Output ids whose undo the database rejects, with the code it reports.
+  /** @type {Map<unknown, string>} */
+  const rejectedUndos = new Map();
+  /** @param {string} transaction @param {Record<string, unknown>} input */
+  function undoAnswer(transaction, input) {
+    undoInputs.push({ ...input, transaction });
+    const code = rejectedUndos.get(input.outputResultId);
+    return code
+      ? { ok: false, code, message: `Undo rejected: ${code}.` }
+      : { ok: true };
+  }
   /** @param {Record<string, unknown>} input */
   function answer(input) {
     answerInputs.push(input);
@@ -1447,11 +1458,12 @@ test("human mutation results carry item state read after the mutations, keyed fo
         createHumanAnswer: async (_connectionString, input) => answer(input),
         /** @param {unknown} _query @param {Record<string, unknown>} input */
         createHumanAnswerInTransaction: async (_query, input) => answer(input),
+        /** @param {string} _connectionString @param {Record<string, unknown>} input */
+        undoHumanAnswerBeforeRead: async (_connectionString, input) =>
+          undoAnswer("own", input),
         /** @param {unknown} _query @param {Record<string, unknown>} input */
-        undoHumanAnswerBeforeReadInTransaction: async (_query, input) => {
-          undoInputs.push(input);
-          return { ok: true };
-        }
+        undoHumanAnswerBeforeReadInTransaction: async (_query, input) =>
+          undoAnswer("session", input)
       },
       "../../src/server/human-review-page": {
         /** @param {unknown} stateSession @param {string} _requestId @param {string[]} inputItemIds */
@@ -1497,6 +1509,19 @@ test("human mutation results carry item state read after the mutations, keyed fo
   assert.deepEqual(
     result.ok && result.state,
     itemStateFor([firstItemId, secondItemId])
+  );
+  // Each answered item is named with its output, so one undo can take all of
+  // them back.
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        result.ok && result.operation === "bulk-answer" && result.undo
+      )
+    ),
+    [
+      { inputItemId: firstItemId, callerId, outputResultId: "output-721" },
+      { inputItemId: secondItemId, callerId, outputResultId: "output-722" }
+    ]
   );
   // The state is read only once every answer has committed, so its as-of
   // token cannot precede them.
@@ -1566,20 +1591,86 @@ test("human mutation results carry item state read after the mutations, keyed fo
   );
   rejected.clear();
 
+  // One undo request names every answer it takes back. The first shares the
+  // session's transaction and the rest run in their own.
+  const firstOutputId = "00000000-0000-4000-8000-000000000731";
+  const secondOutputId = "00000000-0000-4000-8000-000000000732";
   const undoForm = new FormData();
   undoForm.set("mutationId", mutationId);
-  undoForm.set("inputItemId", firstItemId);
-  undoForm.set("callerId", callerId);
-  undoForm.set("outputResultId", "00000000-0000-4000-8000-000000000731");
-  const undone = await actions.executeUndoHumanAnswerMutation(undoForm);
+  for (const [inputItemId, outputResultId] of [
+    [firstItemId, firstOutputId],
+    [secondItemId, secondOutputId]
+  ]) {
+    undoForm.append("inputItemId", inputItemId);
+    undoForm.append("callerId", callerId);
+    undoForm.append("outputResultId", outputResultId);
+  }
+  /** @param {FormData} form */
+  const undoResult = async (form) =>
+    JSON.parse(
+      JSON.stringify(await actions.executeUndoHumanAnswerMutation(form))
+    );
+  const undone = await undoResult(undoForm);
   assert.deepEqual(
-    undoInputs.map((input) => [input.correlationId, input.inputItemId]),
-    [[`human_undo_${mutationId}`, firstItemId]]
+    undoInputs.map((input) => [
+      input.transaction,
+      input.correlationId,
+      input.inputItemId,
+      input.outputResultId
+    ]),
+    [
+      ["session", `human_undo_${mutationId}`, firstItemId, firstOutputId],
+      ["own", `human_undo_${mutationId}`, secondItemId, secondOutputId]
+    ]
   );
   assert.deepEqual(
-    JSON.parse(JSON.stringify(undone.ok && undone.state)),
-    itemStateFor([firstItemId])
+    [undone.ok, undone.message, undone.restoredInputItemIds, undone.failed],
+    [true, "Undone.", [firstItemId, secondItemId], 0]
   );
+  assert.deepEqual(undone.state, itemStateFor([firstItemId, secondItemId]));
+
+  // A rejected target does not stop the others, and is counted.
+  rejectedUndos.set(secondOutputId, "output_already_read");
+  const partlyUndone = await undoResult(undoForm);
+  assert.deepEqual(
+    [
+      partlyUndone.ok,
+      partlyUndone.message,
+      partlyUndone.inputItemIds,
+      partlyUndone.restoredInputItemIds,
+      partlyUndone.failed
+    ],
+    [
+      true,
+      "Undo complete: 1 restored, 1 failed.",
+      [firstItemId, secondItemId],
+      [firstItemId],
+      1
+    ]
+  );
+  // Nothing restored is a failure: under the targets' shared code, or a
+  // general one when they were rejected for different reasons.
+  rejectedUndos.set(firstOutputId, "output_already_read");
+  const noneUndone = await undoResult(undoForm);
+  assert.deepEqual(
+    [noneUndone.ok, noneUndone.code, noneUndone.message],
+    [false, "output_already_read", "Undo failed: 2 not restored."]
+  );
+  assert.deepEqual(noneUndone.state, itemStateFor([firstItemId, secondItemId]));
+  rejectedUndos.set(firstOutputId, "not_found");
+  assert.equal((await undoResult(undoForm)).code, "undo_failed");
+  // A single target's rejection is reported as it is.
+  const singleUndoForm = new FormData();
+  singleUndoForm.set("mutationId", mutationId);
+  singleUndoForm.set("inputItemId", firstItemId);
+  singleUndoForm.set("callerId", callerId);
+  singleUndoForm.set("outputResultId", firstOutputId);
+  const singleRejected = await undoResult(singleUndoForm);
+  assert.deepEqual(
+    [singleRejected.ok, singleRejected.code, singleRejected.message],
+    [false, "not_found", "Undo rejected: not_found."]
+  );
+  rejectedUndos.clear();
 
   // Failing to read the rows does not change what the mutation did, and the
   // failed read is reported.

@@ -1932,13 +1932,11 @@ test(
         [partial.answered, partial.failed, partial.answeredInputItemIds],
         [1, 1, [second]]
       );
-      assert.deepEqual(
-        partial.state.map((/** @type {unknown[]} */ item) => item.slice(0, 3)),
-        [
-          [second, "answered", 1],
-          [third, "pending", 1]
-        ]
-      );
+      const secondOutput = partial.undo[0].outputResultId;
+      assert.deepEqual(partial.state, [
+        [second, "answered", 1, secondOutput],
+        [third, "pending", 1, null]
+      ]);
 
       // A rejected request still reports what the server holds.
       const rejected = await sent(
@@ -1971,22 +1969,31 @@ test(
       assert.deepEqual(mismatched.state, [[third, "pending", 1, null]]);
       assert.equal(await auditCount("output_undone", firstOutput), 0);
 
-      // An undo restores the answer; its repeat restores nothing more.
+      // One undo request restores both answers; its repeat restores nothing more.
       const undoForm = () =>
         form({
           mutationId: "00000000-0000-4000-8000-00000000a004",
-          inputItemId: first,
-          callerId: ids.callerId,
-          outputResultId: firstOutput
+          inputItemId: [first, second],
+          callerId: [ids.callerId, ids.callerId],
+          outputResultId: [firstOutput, secondOutput]
         });
       for (const attempt of ["first", "repeated"]) {
         const undone = await sent(
           actions.executeUndoHumanAnswerMutation(undoForm())
         );
         assert.equal(undone.ok, true, `${attempt}: ${JSON.stringify(undone)}`);
-        assert.deepEqual(undone.state, [[first, "pending", 2, null]], attempt);
+        assert.deepEqual(undone.restoredInputItemIds, [first, second], attempt);
+        assert.deepEqual(
+          undone.state,
+          [
+            [first, "pending", 2, null],
+            [second, "pending", 2, null]
+          ],
+          attempt
+        );
       }
       assert.equal(await auditCount("output_undone", firstOutput), 1);
+      assert.equal(await auditCount("output_undone", secondOutput), 1);
 
       // The undone answer's late repeat is refused and shows the pending row.
       const late = await sent(actions.executeHumanAnswerMutation(answerForm()));

@@ -4,6 +4,7 @@ import {
   VERSIONED_UUID_PATTERN
 } from "./api-errors.ts";
 import type { HumanActionResponse } from "./human-answer.ts";
+import type { HumanUndoTarget } from "../shared/human-mutation.ts";
 import { isStorableString } from "./input-schema.ts";
 import {
   isOneOf,
@@ -36,14 +37,7 @@ export type ParsedBulkHumanAnswersForm =
   | { ok: false };
 
 export type ParsedUndoHumanAnswerForm =
-  | {
-      ok: true;
-      mutationId: string;
-      inputItemId: string;
-      callerId: string;
-      outputResultId: string;
-    }
-  | { ok: false };
+  { ok: true; mutationId: string; targets: HumanUndoTarget[] } | { ok: false };
 
 export type BulkAnswerItem = {
   inputItemId: string;
@@ -127,14 +121,38 @@ export function parseBulkHumanAnswersForm(
 export function parseUndoHumanAnswerForm(
   formData: FormData
 ): ParsedUndoHumanAnswerForm {
-  const inputItemId = uuidField(formData, "inputItemId");
-  const callerId = uuidField(formData, "callerId");
-  const outputResultId = uuidField(formData, "outputResultId");
+  // Each target repeats the three fields in order; undoing a bulk answer sends
+  // one triple per answered item.
+  const inputItemIds = formData.getAll("inputItemId");
+  const callerIds = formData.getAll("callerId");
+  const outputResultIds = formData.getAll("outputResultId");
   const mutationId = mutationIdField(formData);
-  if (!mutationId || !inputItemId || !callerId || !outputResultId) {
+  if (
+    !mutationId ||
+    inputItemIds.length === 0 ||
+    inputItemIds.length > MAX_BULK_HUMAN_ANSWER_ITEMS ||
+    callerIds.length !== inputItemIds.length ||
+    outputResultIds.length !== inputItemIds.length
+  ) {
     return { ok: false };
   }
-  return { ok: true, mutationId, inputItemId, callerId, outputResultId };
+  const targets: HumanUndoTarget[] = [];
+  const seen = new Set<string>();
+  for (const [index, inputItemId] of inputItemIds.entries()) {
+    const callerId = callerIds[index];
+    const outputResultId = outputResultIds[index];
+    if (
+      !isUuid(inputItemId) ||
+      !isUuid(callerId) ||
+      !isUuid(outputResultId) ||
+      seen.has(inputItemId)
+    ) {
+      return { ok: false };
+    }
+    seen.add(inputItemId);
+    targets.push({ inputItemId, callerId, outputResultId });
+  }
+  return { ok: true, mutationId, targets };
 }
 
 function responseFromForm(

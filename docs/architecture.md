@@ -262,7 +262,10 @@ reports the mutation an earlier attempt committed instead of applying it again:
   again, an undo of the earlier output is reported as not found.
 
 An undo names both the item and the output that answered it; an output that
-answered a different item is reported as not found.
+answered a different item is reported as not found. A bulk answer's response
+names that pair for every item it answered, and one undo request can carry
+several pairs. It succeeds when at least one answer was restored and reports
+which ones, and how many were not.
 
 The queue projects the latest journal action for each item. Confirmed writes
 supersede earlier actions only for the items they changed; earlier state remains
@@ -397,8 +400,10 @@ Rules:
   script, arbitrary SVG/media, or form attempts remain data instead of UI code.
 - Human answers, pre-read undo, and narrow compatible bulk actions use
   server-only writes. Bulk answer forms are capped at 100 unique input items,
-  matching the maximum review list page size. Undo is unavailable after a caller
-  read marks the output.
+  matching the maximum review list page size. An undo request names one output
+  result per answered item, under the same cap. Each answer and each undo
+  commits in its own transaction, so one rejected item does not block the rest.
+  Undo is unavailable after a caller read marks the output.
 - Business rules, authorization, quota checks, queue writes, output delivery,
   and file handling belong in server-only code and the database.
 

@@ -10,6 +10,7 @@ import {
   createHumanAnswerInTransaction,
   humanAnswerTransactionFailure,
   humanAnswerUndoTransactionFailure,
+  undoHumanAnswerBeforeRead,
   undoHumanAnswerBeforeReadInTransaction,
   type CreateHumanAnswerInput,
   type HumanActionResponse,
@@ -212,7 +213,7 @@ async function bulkAnswerOutcome(
   const actionDisplay =
     noticeText(formData, "noticeAction") ?? parsed.actionValue;
 
-  const answeredInputItemIds: string[] = [];
+  const undo: HumanUndoTarget[] = [];
   for (const item of parsed.items) {
     const result = await backend.answer({
       inputItemId: item.inputItemId,
@@ -226,7 +227,11 @@ async function bulkAnswerOutcome(
       correlationId: `human_bulk_answer_${parsed.mutationId}`
     });
     if (result.ok) {
-      answeredInputItemIds.push(item.inputItemId);
+      undo.push({
+        inputItemId: item.inputItemId,
+        callerId: item.callerId,
+        outputResultId: result.outputResultId
+      });
     } else if (result.sessionFailed) {
       // Without a session no item of the request can succeed.
       return humanMutationFailure(
@@ -239,7 +244,7 @@ async function bulkAnswerOutcome(
     }
   }
 
-  const answered = answeredInputItemIds.length;
+  const answered = undo.length;
   const failed = inputItemIds.length - answered;
   if (answered === 0) {
     return humanMutationFailure(
@@ -260,11 +265,13 @@ async function bulkAnswerOutcome(
     message: `Bulk action complete: ${answered} answered, ${failed} failed.`,
     inputItemIds,
     answered,
-    answeredInputItemIds,
-    failed
+    answeredInputItemIds: undo.map((target) => target.inputItemId),
+    failed,
+    undo
   };
 }
 
+/** Undoes each target in turn; one rejected target does not stop the rest. */
 async function undoOutcome(
   formData: FormData,
   backend: MutationBackend & { requestId: string }
@@ -280,29 +287,63 @@ async function undoOutcome(
       requestId
     );
   }
-  const result = await backend.undo(
-    {
-      inputItemId: parsed.inputItemId,
-      callerId: parsed.callerId,
-      outputResultId: parsed.outputResultId
-    },
-    `human_undo_${parsed.mutationId}`
-  );
-  if (!result.ok) {
+  const inputItemIds = parsed.targets.map((target) => target.inputItemId);
+
+  const restoredInputItemIds: string[] = [];
+  const failures: BackendFailure[] = [];
+  for (const target of parsed.targets) {
+    const result = await backend.undo(
+      target,
+      `human_undo_${parsed.mutationId}`
+    );
+    if (result.ok) {
+      restoredInputItemIds.push(target.inputItemId);
+    } else if (result.sessionFailed) {
+      // Without a session no target of the request can succeed.
+      return humanMutationFailure(
+        "undo",
+        inputItemIds,
+        result.code,
+        result.message,
+        requestId
+      );
+    } else {
+      failures.push(result);
+    }
+  }
+
+  const failed = inputItemIds.length - restoredInputItemIds.length;
+  if (restoredInputItemIds.length === 0) {
+    // One shared code is reported as it is; mixed causes get a general one.
+    const [first] = failures;
+    const sharedCode =
+      first && failures.every((failure) => failure.code === first.code)
+        ? first.code
+        : "undo_failed";
     return humanMutationFailure(
       "undo",
-      [parsed.inputItemId],
-      result.code,
-      result.message,
+      inputItemIds,
+      sharedCode,
+      first && inputItemIds.length === 1
+        ? first.message
+        : `Undo failed: ${failed} not restored.`,
       requestId
     );
+  }
+  if (failed > 0) {
+    emitHumanActionFailure(requestId);
   }
   revalidatePath(humanPath);
   return {
     ok: true,
     operation: "undo",
-    message: "Undone.",
-    inputItemIds: [parsed.inputItemId]
+    message:
+      failed > 0
+        ? `Undo complete: ${restoredInputItemIds.length} restored, ${failed} failed.`
+        : "Undone.",
+    inputItemIds,
+    restoredInputItemIds,
+    failed
   };
 }
 
@@ -368,11 +409,16 @@ function databaseMutationBackend(requestId: string): MutationBackend {
   let session: HumanAccountSession | null = null;
   let sessionFailure: BackendFailure | null = null;
 
-  // Runs a mutation in the transaction that resolves the request's session.
-  async function withSession<TInput, TSuccess extends { ok: true }>(
+  // The request's first mutation shares the transaction that resolves the
+  // session; later ones reuse that session in transactions of their own.
+  async function mutate<TInput, TSuccess extends { ok: true }>(
     buildInput: (session: HumanAccountSession) => TInput,
     inTransaction: (
       query: ProductTransactionQuery,
+      input: TInput
+    ) => Promise<TSuccess | HumanAnswerFailure>,
+    standalone: (
+      connectionString: string,
       input: TInput
     ) => Promise<TSuccess | HumanAnswerFailure>,
     reportFailure: (
@@ -381,6 +427,14 @@ function databaseMutationBackend(requestId: string): MutationBackend {
       startedAtMs: number
     ) => HumanAnswerFailure
   ): Promise<TSuccess | BackendFailure> {
+    if (sessionFailure) return sessionFailure;
+    if (session) {
+      const connectionString = process.env.DATABASE_APP_ROLE_URL;
+      if (!connectionString) {
+        throw new Error("Human account database configuration is unavailable.");
+      }
+      return standalone(connectionString, buildInput(session));
+    }
     const clerkSession = await auth.protect({
       unauthenticatedUrl: "/sign-in"
     });
@@ -417,40 +471,26 @@ function databaseMutationBackend(requestId: string): MutationBackend {
   }
 
   return {
-    // The request's first answer shares the transaction that resolves the
-    // session; later ones reuse that session in transactions of their own.
-    async answer(item) {
-      const buildInput = (
-        accountSession: HumanAccountSession
-      ): CreateHumanAnswerInput => ({
-        accountId: accountSession.accountId,
-        callerId: item.callerId,
-        humanUserId: accountSession.userId,
-        requestId,
-        correlationId: item.correlationId,
-        inputItemId: item.inputItemId,
-        expectedRevision: item.expectedRevision,
-        actionValue: item.actionValue,
-        response: item.response,
-        feedback: item.feedback
-      });
-      if (sessionFailure) return sessionFailure;
-      if (!session) {
-        return withSession(
-          buildInput,
-          createHumanAnswerInTransaction,
-          humanAnswerTransactionFailure
-        );
-      }
-      const connectionString = process.env.DATABASE_APP_ROLE_URL;
-      if (!connectionString) {
-        throw new Error("Human account database configuration is unavailable.");
-      }
-      return createHumanAnswer(connectionString, buildInput(session));
-    },
-    // An undo request names one answer, so it always opens the session.
+    answer: (item) =>
+      mutate(
+        (accountSession): CreateHumanAnswerInput => ({
+          accountId: accountSession.accountId,
+          callerId: item.callerId,
+          humanUserId: accountSession.userId,
+          requestId,
+          correlationId: item.correlationId,
+          inputItemId: item.inputItemId,
+          expectedRevision: item.expectedRevision,
+          actionValue: item.actionValue,
+          response: item.response,
+          feedback: item.feedback
+        }),
+        createHumanAnswerInTransaction,
+        createHumanAnswer,
+        humanAnswerTransactionFailure
+      ),
     undo: (target, correlationId) =>
-      withSession(
+      mutate(
         (accountSession): PreReadUndoInput => ({
           accountId: accountSession.accountId,
           callerId: target.callerId,
@@ -461,6 +501,7 @@ function databaseMutationBackend(requestId: string): MutationBackend {
           outputResultId: target.outputResultId
         }),
         undoHumanAnswerBeforeReadInTransaction,
+        undoHumanAnswerBeforeRead,
         humanAnswerUndoTransactionFailure
       ),
     itemStates: async (inputItemIds) =>

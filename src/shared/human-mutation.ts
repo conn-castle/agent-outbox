@@ -76,6 +76,8 @@ export type HumanBulkMutationSuccess = {
   answered: number;
   answeredInputItemIds: string[];
   failed: number;
+  // One target per answered item, so the whole bulk action is one undo step.
+  undo: HumanUndoTarget[];
   // Absent only when the rows could not be read after the mutation.
   state?: HumanMutationState;
 };
@@ -84,7 +86,10 @@ export type HumanUndoMutationSuccess = {
   ok: true;
   operation: "undo";
   message: string;
-  inputItemIds: [string];
+  // Every requested item; restoredInputItemIds is the non-empty subset undone.
+  inputItemIds: string[];
+  restoredInputItemIds: string[];
+  failed: number;
   // Absent only when the rows could not be read after the mutation.
   state?: HumanMutationState;
 };
