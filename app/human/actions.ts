@@ -27,7 +27,10 @@ import {
 } from "../../src/server/human-review-fixture";
 import type { ProductTransactionQuery } from "../../src/server/database";
 import { emitClientEventLog } from "../../src/server/client-events";
-import { loadHumanReviewItemStates } from "../../src/server/human-review-page";
+import {
+  loadHumanReviewItemStates,
+  reportHumanReviewItemStateFailure
+} from "../../src/server/human-review-page";
 import {
   runHumanAccountTransaction,
   type HumanAccountSession
@@ -309,14 +312,17 @@ async function undoOutcome(
  */
 async function withItemStates(
   outcome: HumanMutationResult,
-  backend: MutationBackend
+  backend: MutationBackend & { requestId: string }
 ): Promise<HumanMutationResult> {
   if (outcome.inputItemIds.length === 0) return outcome;
+  const startedAtMs = Date.now();
   try {
     const state = await backend.itemStates(outcome.inputItemIds);
     return state ? { ...outcome, state } : outcome;
-  } catch {
-    // The outcome itself is the answer; its item state is a refinement.
+  } catch (error) {
+    // The outcome itself is the answer and its item state a refinement, so
+    // the failed read is reported here, where it is dropped.
+    reportHumanReviewItemStateFailure(error, backend.requestId, startedAtMs);
     return outcome;
   }
 }

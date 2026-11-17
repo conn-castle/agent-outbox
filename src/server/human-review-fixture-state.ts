@@ -38,7 +38,11 @@ export async function readFixtureResolvedItems(): Promise<
   return parseResolvedItems(store.get(COOKIE_NAME)?.value);
 }
 
-/** Mirrors the production answer: one pending item at its current revision. */
+/**
+ * Answers one fixture item, rejecting what the production answer rejects for
+ * the item itself: an unknown item or caller, an item that is not pending, and
+ * a stale revision. A repeated request reports the answer it already made.
+ */
 export async function answerFixtureItem(item: {
   inputItemId: string;
   callerId: string;
@@ -51,7 +55,11 @@ export async function answerFixtureItem(item: {
   const canonical = browserFixtureReviewDetail(item.inputItemId, {
     resolvedItems: current
   });
-  if (!canonical || canonical.inputItemId !== item.inputItemId) {
+  if (
+    !canonical ||
+    canonical.inputItemId !== item.inputItemId ||
+    canonical.caller.callerId !== item.callerId
+  ) {
     return fixtureFailure("not_found", "Input item was not found.");
   }
   if (canonical.status !== "pending") {
@@ -71,12 +79,6 @@ export async function answerFixtureItem(item: {
       "stale_input_revision",
       "Input item revision changed before the answer was submitted."
     );
-  }
-  if (
-    !VERSIONED_UUID_PATTERN.test(item.inputItemId) ||
-    !VERSIONED_UUID_PATTERN.test(item.callerId)
-  ) {
-    return fixtureFailure("invalid_request", "Action failed: invalid request.");
   }
   // Re-insert so the newest answer is the last one trimmed from the cookie.
   delete current[item.inputItemId];

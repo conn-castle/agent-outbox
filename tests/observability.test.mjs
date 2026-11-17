@@ -1327,30 +1327,12 @@ function itemStateFor(inputItemIds) {
   };
 }
 
-test("a failed item state read is reported and still rejects", async (t) => {
-  const previousAppRoleUrl = process.env.DATABASE_APP_ROLE_URL;
-  process.env.DATABASE_APP_ROLE_URL = "postgresql://stubbed-app-role";
-  t.after(() => {
-    if (previousAppRoleUrl === undefined) {
-      delete process.env.DATABASE_APP_ROLE_URL;
-    } else {
-      process.env.DATABASE_APP_ROLE_URL = previousAppRoleUrl;
-    }
-  });
-  const session = {
-    accountId: "00000000-0000-4000-8000-000000000741",
-    userId: "00000000-0000-4000-8000-000000000742"
-  };
+test("a failed item state read is reported with its request", () => {
   /** @type {Record<string, unknown>[]} */
   const reports = [];
-  const { loadHumanReviewItemStates } =
+  const { reportHumanReviewItemStateFailure } =
     /** @type {typeof import("../src/server/human-review-page.ts")} */ (
       loadCommonJsModuleForTest("src/server/human-review-page.ts", {
-        "./database.ts": {
-          async runProductTransaction() {
-            throw new Error("item state read failed");
-          }
-        },
         "./correlation.ts": {
           /** @param {string} prefix */
           createCorrelationId: (prefix) => `${prefix}_test`
@@ -1362,36 +1344,31 @@ test("a failed item state read is reported and still rejects", async (t) => {
             reports.push(input);
           }
         },
-        // Not reached: the transaction fails before any query runs.
+        // Not used by the report.
+        "./database.ts": {},
         "./human-review.ts": {},
         "./human-session.ts": {},
         "../shared/human-review-view.ts": {}
       })
     );
-  await assert.rejects(
-    () =>
-      loadHumanReviewItemStates(
-        /** @type {import("../src/server/human-session.ts").HumanAccountSession} */ (
-          session
-        ),
-        "req-item-state",
-        ["00000000-0000-4000-8000-000000000743"]
-      ),
-    /item state read failed/
+  reportHumanReviewItemStateFailure(
+    new Error("item state read failed"),
+    "req-item-state",
+    Date.now()
   );
   assert.deepEqual(
     reports.map((report) => [
       report.operation,
       report.errorId,
       report.request_id,
-      report.account_id
+      report.route
     ]),
     [
       [
         "human_review_item_state",
         "human_item_state_test",
         "req-item-state",
-        session.accountId
+        "/human"
       ]
     ]
   );
@@ -1423,6 +1400,8 @@ test("human mutation results carry item state read after the mutations, keyed fo
   /** @type {Record<string, unknown>[]} */
   const answerInputs = [];
   let stateReadFails = false;
+  /** @type {unknown[][]} */
+  const stateFailures = [];
   let sessionTransactions = 0;
   // Input items whose answer the database rejects.
   /** @type {Set<unknown>} */
@@ -1485,6 +1464,10 @@ test("human mutation results carry item state read after the mutations, keyed fo
           events.push("state");
           if (stateReadFails) throw new Error("state read failed");
           return itemStateFor(inputItemIds);
+        },
+        /** @param {Error} error @param {string} requestId */
+        reportHumanReviewItemStateFailure(error, requestId) {
+          stateFailures.push([error.message, requestId]);
         }
       },
       "../../src/server/human-session": {
@@ -1598,11 +1581,16 @@ test("human mutation results carry item state read after the mutations, keyed fo
     itemStateFor([firstItemId])
   );
 
-  // Failing to read the rows does not change what the mutation did.
+  // Failing to read the rows does not change what the mutation did, and the
+  // failed read is reported.
   stateReadFails = true;
+  assert.deepEqual(stateFailures, []);
   const unread = await actions.executeHumanAnswerMutation(answerForm);
   assert.equal(unread.ok, true);
   assert.equal("state" in unread, false);
+  assert.deepEqual(stateFailures, [
+    ["state read failed", "human_answer_req_test"]
+  ]);
 });
 
 test("human review server actions emit failure telemetry only on failure paths", async () => {
@@ -2055,6 +2043,7 @@ test("human action failure logs include the elapsed account transaction", async 
       t.mock.method(Date, "now", () => now);
       /** @type {Record<string, unknown>[]} */
       const failures = [];
+      let stateFailures = 0;
       const reporters = loadHumanAnswerModuleForTest((_error, context) => {
         failures.push(context);
         return {
@@ -2102,6 +2091,9 @@ test("human action failure logs include the elapsed account transaction", async 
             "../../src/server/human-review-page": {
               async loadHumanReviewItemStates() {
                 throw new Error("database unavailable");
+              },
+              reportHumanReviewItemStateFailure() {
+                stateFailures += 1;
               }
             },
             "../../src/server/human-session": {
@@ -2135,6 +2127,7 @@ test("human action failure logs include the elapsed account transaction", async 
       // The item state could not be read either; the failure stands alone.
       assert.equal("state" in result, false);
       assert.equal(failures.length, 1);
+      assert.equal(stateFailures, 1);
       assert.equal(
         failures[0].operation,
         operation === "undo"
