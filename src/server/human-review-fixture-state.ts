@@ -67,7 +67,8 @@ export async function answerFixtureItem(item: {
     // A retry of an answer that already committed reports that answer.
     return previous &&
       !previous.undone &&
-      previous.mutationId === item.mutationId
+      previous.mutationId === item.mutationId &&
+      previous.currentRevision === item.expectedRevision
       ? { ok: true }
       : fixtureFailure(
           "input_not_pending",
@@ -128,7 +129,9 @@ export async function undoFixtureAnswer(target: {
       "Output result has already been read by the caller."
     );
   }
-  // Keep the production undo revision across subsequent server renders.
+  // Keep the production undo revision across subsequent server renders, and
+  // re-insert so the newest undo is the last one trimmed from the cookie.
+  delete current[inputItemId];
   current[inputItemId] = {
     actionDisplay: canonical.output.actionDisplay,
     callerId: canonical.caller.callerId,

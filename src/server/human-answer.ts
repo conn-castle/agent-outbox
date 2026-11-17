@@ -131,6 +131,11 @@ export type HumanAnswerSuccess = {
 
 export type HumanAnswerResult = HumanAnswerSuccess | HumanAnswerFailure;
 
+/**
+ * `correlationId` is shared by every attempt of one answer. A retry whose
+ * earlier attempt committed is recognized by that id on the `input_answered`
+ * audit event.
+ */
 export type CreateHumanAnswerInput = HumanAnswerActorContext & {
   inputItemId: string;
   expectedRevision: number;
@@ -145,15 +150,13 @@ export type HumanAnswerActorContext = {
   callerId: string;
   humanUserId: string;
   requestId: string;
-  /**
-   * Shared by every attempt of one answer. A retry whose earlier attempt
-   * committed is recognized by this id on the `input_answered` audit event.
-   */
   correlationId: string;
 };
 
 export type PreReadUndoInput = HumanAnswerActorContext & {
   // The answered item and its output. An output of another item is not found.
+  // A repeated undo is recognized by the output's `output_undone` audit event,
+  // not by `correlationId`.
   inputItemId: string;
   outputResultId: string;
 };
@@ -526,6 +529,9 @@ export async function undoHumanAnswerBeforeReadInTransaction(
     return contextFailure;
   }
 
+  if (!input.inputItemId) {
+    return failure("invalid_request", "inputItemId is required.");
+  }
   if (!input.outputResultId) {
     return failure("invalid_request", "outputResultId is required.");
   }
