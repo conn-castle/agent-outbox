@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-16 review-fixture-undo-ignores-output: Browser fixture undo does not check the named output
+    Priority: Low. Area: browser test fixture
+    Description: `restoreFixtureResolvedItem` restores an item by its input id alone. The undo target's `callerId` and `outputResultId` are not compared with the answer being undone, while the database undo reports a mismatched output as not found.
+    Next step: Make the fixture undo reject a target whose caller or output does not match the item's current answer.
+
 - Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is defined in several places
     Priority: Low. Area: Human review / Maintainability
     Description: The default ordering, priority ascending, is defined separately in `src/shared/human-review-view.ts` by the parse fallback in `parseSortRules` (`parseSort(readOne("sort"), "priority")` with `defaultHumanReviewSortDirection`), by the empty-list fallback in `canonicalSortRules` and by `isDefaultHumanReviewOrdering`, and in `src/components/human/ReviewViewControls.tsx` by the Sort panel's Reset button. If they stop agreeing, the parsed default, Reset and the default check can disagree.

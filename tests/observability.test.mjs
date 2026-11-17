@@ -1326,6 +1326,76 @@ function itemStateFor(inputItemIds) {
   };
 }
 
+test("a failed item state read is reported and still rejects", async (t) => {
+  const previousAppRoleUrl = process.env.DATABASE_APP_ROLE_URL;
+  process.env.DATABASE_APP_ROLE_URL = "postgresql://stubbed-app-role";
+  t.after(() => {
+    if (previousAppRoleUrl === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previousAppRoleUrl;
+    }
+  });
+  const session = {
+    accountId: "00000000-0000-4000-8000-000000000741",
+    userId: "00000000-0000-4000-8000-000000000742"
+  };
+  /** @type {Record<string, unknown>[]} */
+  const reports = [];
+  const { loadHumanReviewItemStates } =
+    /** @type {typeof import("../src/server/human-review-page.ts")} */ (
+      loadCommonJsModuleForTest("src/server/human-review-page.ts", {
+        "./database.ts": {
+          async runProductTransaction() {
+            throw new Error("item state read failed");
+          }
+        },
+        "./correlation.ts": {
+          /** @param {string} prefix */
+          createCorrelationId: (prefix) => `${prefix}_test`
+        },
+        "./logging.ts": { durationSinceMs },
+        "./sentry.ts": {
+          /** @param {unknown} _error @param {Record<string, unknown>} input */
+          reportRuntimeFailure(_error, input) {
+            reports.push(input);
+          }
+        },
+        // Not reached: the transaction fails before any query runs.
+        "./human-review.ts": {},
+        "./human-session.ts": {},
+        "../shared/human-review-view.ts": {}
+      })
+    );
+  await assert.rejects(
+    () =>
+      loadHumanReviewItemStates(
+        /** @type {import("../src/server/human-session.ts").HumanAccountSession} */ (
+          session
+        ),
+        "req-item-state",
+        ["00000000-0000-4000-8000-000000000743"]
+      ),
+    /item state read failed/
+  );
+  assert.deepEqual(
+    reports.map((report) => [
+      report.operation,
+      report.errorId,
+      report.request_id,
+      report.account_id
+    ]),
+    [
+      [
+        "human_review_item_state",
+        "human_item_state_test",
+        "req-item-state",
+        session.accountId
+      ]
+    ]
+  );
+});
+
 test("human mutation results carry item state read after the mutations", async (t) => {
   // Answers after a request's first open their own (stubbed) connection.
   const previousAppRoleUrl = process.env.DATABASE_APP_ROLE_URL;

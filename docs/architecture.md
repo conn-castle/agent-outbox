@@ -244,10 +244,12 @@ Every answer, bulk answer and undo response from the mutation endpoint, whether
 it succeeded or was rejected, carries the authoritative row of each item it
 named (or its absence). The rows are read in a transaction that starts after the
 mutations committed, with an `asOf` token read from the database clock before
-those rows. They are supplementary: when they cannot be read, the response
-reports the mutation's outcome without them. A review page load carries its own
-`asOf` token, read from the database clock at the start of the page's
-transaction.
+those rows. The token is a lower bound: a page whose token is not older reflects
+the mutation, and may not yet reflect a change another session committed while
+the rows were being read. The rows are supplementary: when they cannot be read,
+the response reports the mutation's outcome without them. A review page load
+carries its own `asOf` token, read from the database clock at the start of the
+page's transaction.
 
 The queue projects the latest journal action for each item. Confirmed writes
 supersede earlier actions only for the items they changed; earlier state remains

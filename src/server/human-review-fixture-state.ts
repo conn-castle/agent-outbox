@@ -24,6 +24,9 @@ export type FixtureResolvedItem = {
   undone?: boolean;
 };
 
+export type FixtureMutationResult =
+  { ok: true } | { ok: false; code: string; message: string };
+
 export async function readFixtureResolvedItems(): Promise<
   Record<string, FixtureResolvedItem>
 > {
@@ -31,47 +34,47 @@ export async function readFixtureResolvedItems(): Promise<
   return parseResolvedItems(store.get(COOKIE_NAME)?.value);
 }
 
-export async function recordFixtureResolvedItems(
-  items: Array<{
-    inputItemId: string;
-    callerId: string;
-    actionDisplay: string;
-    currentRevision: number;
-  }>
-) {
-  if (items.length === 0) {
-    return;
-  }
+/** Mirrors the production answer: one pending item at its current revision. */
+export async function answerFixtureItem(item: {
+  inputItemId: string;
+  callerId: string;
+  actionDisplay: string;
+  expectedRevision: number;
+}): Promise<FixtureMutationResult> {
   const store = await cookieStore();
   const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
-  const answeredAt = new Date().toISOString();
-  for (const item of items) {
-    const canonical = browserFixtureReviewDetail(item.inputItemId, {
-      resolvedItems: current
-    });
-    if (
-      !canonical ||
-      canonical.status !== "pending" ||
-      canonical.currentRevision !== item.currentRevision
-    ) {
-      throw new Error(
-        "Browser fixture answer requires a pending item at its current revision."
-      );
-    }
-    if (
-      !VERSIONED_UUID_PATTERN.test(item.inputItemId) ||
-      !VERSIONED_UUID_PATTERN.test(item.callerId)
-    ) {
-      continue;
-    }
-    current[item.inputItemId] = {
-      actionDisplay: item.actionDisplay.slice(0, 160) || "Answered",
-      callerId: item.callerId,
-      answeredAt,
-      currentRevision: item.currentRevision
-    };
+  const canonical = browserFixtureReviewDetail(item.inputItemId, {
+    resolvedItems: current
+  });
+  if (!canonical || canonical.inputItemId !== item.inputItemId) {
+    return fixtureFailure("not_found", "Input item was not found.");
   }
+  if (canonical.status !== "pending") {
+    return fixtureFailure(
+      "input_not_pending",
+      "Human answer creation requires a pending input item."
+    );
+  }
+  if (canonical.currentRevision !== item.expectedRevision) {
+    return fixtureFailure(
+      "stale_input_revision",
+      "Input item revision changed before the answer was submitted."
+    );
+  }
+  if (
+    !VERSIONED_UUID_PATTERN.test(item.inputItemId) ||
+    !VERSIONED_UUID_PATTERN.test(item.callerId)
+  ) {
+    return fixtureFailure("invalid_request", "Action failed: invalid request.");
+  }
+  current[item.inputItemId] = {
+    actionDisplay: item.actionDisplay.slice(0, 160) || "Answered",
+    callerId: item.callerId,
+    answeredAt: new Date().toISOString(),
+    currentRevision: item.expectedRevision
+  };
   writeResolvedItems(store, current);
+  return { ok: true };
 }
 
 export async function restoreFixtureResolvedItem(inputItemId: string) {
@@ -113,6 +116,10 @@ export async function readFixtureItemStates(
       row: browserFixtureReviewRow(inputItemId, { resolvedItems })
     }))
   };
+}
+
+function fixtureFailure(code: string, message: string) {
+  return { ok: false as const, code, message };
 }
 
 function parseVersion(cookie: { value: string } | undefined) {

@@ -333,21 +333,21 @@ async function fixtureMutationBackend(): Promise<MutationBackend> {
   const fixture = await import("../../src/server/human-review-fixture-state");
   return {
     async answer(item) {
-      await fixture.recordFixtureResolvedItems([
-        {
-          inputItemId: item.inputItemId,
-          callerId: item.callerId,
-          actionDisplay: item.actionDisplay,
-          currentRevision: item.expectedRevision
-        }
-      ]);
-      return {
-        ok: true,
-        outputResultId: fixtureResolvedOutputResultId(
-          item.inputItemId,
-          item.expectedRevision
-        )
-      };
+      const result = await fixture.answerFixtureItem({
+        inputItemId: item.inputItemId,
+        callerId: item.callerId,
+        actionDisplay: item.actionDisplay,
+        expectedRevision: item.expectedRevision
+      });
+      return result.ok
+        ? {
+            ok: true,
+            outputResultId: fixtureResolvedOutputResultId(
+              item.inputItemId,
+              item.expectedRevision
+            )
+          }
+        : result;
     },
     async undo(target) {
       await fixture.restoreFixtureResolvedItem(target.inputItemId);
