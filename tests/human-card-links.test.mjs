@@ -317,6 +317,9 @@ test("linked card reads run after session bootstrap in one repeatable-read trans
       if (/count\(\*\)/.test(statement.sql)) {
         return queryResult([{ total_count: "150" }]);
       }
+      if (/transaction_timestamp\(\)/.test(statement.sql)) {
+        return queryResult([{ as_of: "1794830400000000" }]);
+      }
       return queryResult([]);
     };
     return callback(
@@ -361,6 +364,12 @@ test("linked card reads run after session bootstrap in one repeatable-read trans
     const detailAt = calls[1].statements.findIndex((statement) =>
       /details_html/.test(statement.sql)
     );
+    // The page's as-of token must not follow the snapshot of any row it
+    // orders, so it is read from the transaction's start, before the rows.
+    const asOfAt = calls[1].statements.findIndex((statement) =>
+      /transaction_timestamp\(\)/.test(statement.sql)
+    );
+    assert.ok(asOfAt >= 0 && lookupAt > asOfAt);
     assert.ok(lookupAt >= 0 && pageAt > lookupAt && detailAt > pageAt);
     assert.ok(calls[1].statements[pageAt]?.values?.includes("pending"));
     assert.ok(calls[1].statements[detailAt]?.values?.includes(inputItemId));
@@ -369,6 +378,7 @@ test("linked card reads run after session bootstrap in one repeatable-read trans
       assert.equal(linked.data.view.status, "pending");
       assert.equal(linked.data.view.page, 2);
       assert.equal(linked.data.detail, null);
+      assert.equal(linked.data.asOf, "1794830400000000");
     }
 
     calls.length = 0;
@@ -394,8 +404,18 @@ test("linked card reads run after session bootstrap in one repeatable-read trans
       ),
       true
     );
+    const ordinaryAsOfAt = calls[0].statements.findIndex((statement) =>
+      /transaction_timestamp\(\)/.test(statement.sql)
+    );
+    assert.ok(
+      ordinaryAsOfAt >= 0 &&
+        calls[0].statements.findIndex((statement) =>
+          /limit \$/.test(statement.sql)
+        ) > ordinaryAsOfAt
+    );
     assert.equal(ordinary.ok, true);
     if (ordinary.ok) {
+      assert.equal(ordinary.data.asOf, "1794830400000000");
       assert.equal(ordinary.data.view.status, "answered");
       assert.equal(ordinary.data.view.page, 9);
     }

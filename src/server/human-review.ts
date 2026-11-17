@@ -38,6 +38,7 @@ import {
   type LimitStatusMetadata,
   type LimitWindowKind
 } from "./limits.ts";
+import { isAsOf, type HumanMutationState } from "../shared/human-mutation.ts";
 import {
   humanReviewViewFromRecord,
   type HumanReviewSort,
@@ -244,6 +245,77 @@ export async function humanReviewPageInTransaction(
     rows: result.rows.slice(0, REVIEW_PAGE_SIZE).map(reviewListRowFromDatabase),
     hasNext: result.rows.length > REVIEW_PAGE_SIZE
   };
+}
+
+/**
+ * The page's position on the database clock. Transaction start never follows
+ * the snapshot of any statement in the transaction, so a page is at least as
+ * new as this token says. Compare with `compareAsOf`.
+ */
+export async function humanReviewPageAsOfInTransaction(
+  query: ProductTransactionQuery
+) {
+  return asOfFromRow(
+    await query<{ as_of: string }>({
+      sql: `select ${asOfSql("transaction_timestamp()")} as as_of`
+    })
+  );
+}
+
+/**
+ * Reads the current list row of each item, in any status, for a mutation
+ * response. Run it in a transaction that starts after the mutation committed:
+ * the token is then later than that commit, and it is read before the rows, so
+ * like a page's token it never claims more than its rows saw.
+ */
+export async function humanReviewItemStatesInTransaction(
+  query: ProductTransactionQuery,
+  context: AuthorizedHumanAccountContext,
+  inputItemIds: string[]
+): Promise<HumanMutationState> {
+  const asOf = asOfFromRow(
+    await query<{ as_of: string }>({
+      sql: `select ${asOfSql("clock_timestamp()")} as as_of`
+    })
+  );
+  const placeholders = inputItemIds.map((_, index) => `$${index + 2}::uuid`);
+  // An empty `in ()` is not valid SQL, and there is nothing to read.
+  const result =
+    inputItemIds.length === 0
+      ? { rows: [] }
+      : await query<HumanReviewRow>({
+          sql: `
+            ${reviewRowSelect()}
+            where i.account_id = $1
+              and i.input_item_id in (${placeholders.join(", ")})
+          `,
+          values: [context.accountId, ...inputItemIds]
+        });
+  const rows = new Map(
+    result.rows.map((row) => [
+      row.input_item_id,
+      reviewListRowFromDatabase(row)
+    ])
+  );
+  return {
+    asOf,
+    items: inputItemIds.map((inputItemId) => ({
+      inputItemId,
+      row: rows.get(inputItemId) ?? null
+    }))
+  };
+}
+
+function asOfSql(clock: "transaction_timestamp()" | "clock_timestamp()") {
+  return `(extract(epoch from ${clock}) * 1000000)::bigint::text`;
+}
+
+function asOfFromRow(result: { rows: { as_of: string }[] }) {
+  const asOf = result.rows[0]?.as_of;
+  if (!isAsOf(asOf)) {
+    throw new Error("Human review database clock is unavailable or invalid.");
+  }
+  return asOf;
 }
 
 export async function humanReviewTypeOptionsInTransaction(

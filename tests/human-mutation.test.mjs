@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { isHumanMutationResult } from "../src/components/human/human-mutation-client.ts";
+import { compareAsOf, isAsOf } from "../src/shared/human-mutation.ts";
 
 const itemId = "00000000-0000-4000-8000-000000000501";
 
@@ -87,4 +88,15 @@ test("isHumanMutationResult requires operation-specific success and failure fiel
     }),
     false
   );
+});
+
+test("as-of tokens order numerically, including beyond double precision", () => {
+  assert.equal(compareAsOf("9", "10"), -1);
+  assert.equal(compareAsOf("10", "9"), 1);
+  assert.equal(compareAsOf("1794830400000000", "1794830400000000"), 0);
+  assert.equal(compareAsOf("9007199254740993", "9007199254740992"), 1);
+  assert.equal(isAsOf("1794830400000000"), true);
+  for (const invalid of ["", "-1", "1.5", "1e3", " 1", 1, null, undefined]) {
+    assert.equal(isAsOf(invalid), false, String(invalid));
+  }
 });

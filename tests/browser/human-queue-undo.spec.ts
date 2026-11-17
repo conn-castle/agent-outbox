@@ -206,6 +206,37 @@ for (const outcome of ["partial", "none"] as const) {
   });
 }
 
+test("answer and undo responses report the item's resulting row", async ({
+  page
+}) => {
+  await openQueue(page);
+  const answered = mutationResponse(page);
+  await page
+    .getByRole("button", { name: "Approve to send", exact: true })
+    .click();
+  const answer = await (await answered).json();
+  const [item] = answer.state.items;
+  expect(answer.state.asOf).toMatch(/^\d+$/);
+  expect(item.inputItemId).toBe(answer.undo.inputItemId);
+  expect(item.row).toMatchObject({
+    status: "answered",
+    output: { outputResultId: answer.undo.outputResultId }
+  });
+
+  const restored = mutationResponse(page);
+  await page.getByTestId("last-answer-undo").click();
+  const undone = await (await restored).json();
+  // Each response is later on the server's clock than the one before it.
+  expect(BigInt(undone.state.asOf) > BigInt(answer.state.asOf)).toBe(true);
+  expect(undone.state.items).toHaveLength(1);
+  expect(undone.state.items[0].row).toMatchObject({
+    inputItemId: item.inputItemId,
+    status: "pending",
+    output: null,
+    currentRevision: item.row.currentRevision + 1
+  });
+});
+
 test("a timed-out bulk answer that committed leaves the selection", async ({
   page
 }) => {

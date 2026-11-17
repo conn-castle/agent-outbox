@@ -1,9 +1,20 @@
 import { VERSIONED_UUID_PATTERN } from "./api-errors.ts";
-import { browserFixtureReviewDetail } from "./human-review-fixture.ts";
+import {
+  browserFixtureReviewDetail,
+  browserFixtureReviewRow
+} from "./human-review-fixture.ts";
+import type { HumanMutationState } from "../shared/human-mutation.ts";
 
 const COOKIE_NAME = "agent_outbox_fixture_resolved";
+const VERSION_COOKIE_NAME = "agent_outbox_fixture_version";
 const MAX_RESOLVED_ITEMS = 50;
 const MAX_COOKIE_BYTES = 3500;
+const FIXTURE_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: "lax",
+  path: "/",
+  maxAge: 60 * 60 * 24
+} as const;
 
 export type FixtureResolvedItem = {
   actionDisplay: string;
@@ -83,6 +94,32 @@ export async function restoreFixtureResolvedItem(inputItemId: string) {
   writeResolvedItems(store, current);
 }
 
+/**
+ * The items' rows for a mutation response. The fixture's clock is the number
+ * of writes and responses made in this browser's fixture state; like the
+ * database clock, it moves on for every response.
+ */
+export async function readFixtureItemStates(
+  inputItemIds: string[]
+): Promise<HumanMutationState> {
+  const store = await cookieStore();
+  const resolvedItems = parseResolvedItems(store.get(COOKIE_NAME)?.value);
+  const asOf = parseVersion(store.get(VERSION_COOKIE_NAME)) + 1;
+  store.set(VERSION_COOKIE_NAME, String(asOf), FIXTURE_COOKIE_OPTIONS);
+  return {
+    asOf: String(asOf),
+    items: inputItemIds.map((inputItemId) => ({
+      inputItemId,
+      row: browserFixtureReviewRow(inputItemId, { resolvedItems })
+    }))
+  };
+}
+
+function parseVersion(cookie: { value: string } | undefined) {
+  const version = Number(cookie?.value);
+  return Number.isSafeInteger(version) && version > 0 ? version : 0;
+}
+
 function parseResolvedItems(
   raw: string | undefined
 ): Record<string, FixtureResolvedItem> {
@@ -160,15 +197,15 @@ function writeResolvedItems(
   store: Awaited<ReturnType<typeof cookieStore>>,
   items: Record<string, FixtureResolvedItem>
 ) {
+  store.set(
+    VERSION_COOKIE_NAME,
+    String(parseVersion(store.get(VERSION_COOKIE_NAME)) + 1),
+    FIXTURE_COOKIE_OPTIONS
+  );
   const serialized = fixtureResolvedItemsCookieValue(items);
   if (serialized == null) {
     store.delete(COOKIE_NAME);
     return;
   }
-  store.set(COOKIE_NAME, serialized, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24
-  });
+  store.set(COOKIE_NAME, serialized, FIXTURE_COOKIE_OPTIONS);
 }
