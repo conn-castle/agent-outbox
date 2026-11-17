@@ -24,13 +24,10 @@ import type { StatusResult } from "../../server/status.ts";
 import type { HumanAccountIdentityDisplay } from "../../shared/account-display.ts";
 import {
   humanReviewHref,
-  humanReviewMatchesFacets,
-  humanReviewMatchesSearch,
   humanReviewViewFromSearchParams,
   writeHumanReviewView,
   type HumanReviewView
 } from "../../shared/human-review-view";
-import { compareHumanReviewRows } from "../../shared/human-review-sort";
 import { htmlToPlainText } from "../../shared/html-text";
 import { AccountBanner } from "./AccountBanner";
 import { ThemeToggle } from "./ThemeToggle";
@@ -53,11 +50,29 @@ import { useFeedbackDrafts } from "./Feedback";
 import {
   HUMAN_MUTATION_SCOPE,
   HumanMutationError,
-  isHumanOptimisticMutation,
-  isHumanMutationResult,
-  synchronizeHumanMutation,
-  type HumanOptimisticMutation
+  synchronizeHumanMutation
 } from "./human-mutation-client";
+import {
+  itemIdsNotPending,
+  projectReview,
+  recordItemStates,
+  reviewDetailSuperseded,
+  type ReviewItemStates,
+  type UnsettledReviewMutation
+} from "./review-sync";
+import {
+  confirmUndoEntry,
+  offeredUndoEntry,
+  patchUndoEntry,
+  removeUndoEntry,
+  removeUndoTargets,
+  settleUndoEntry,
+  type UndoEntry
+} from "./undo-stack";
+import type {
+  HumanMutationState,
+  HumanUndoTarget
+} from "../../shared/human-mutation";
 
 // Query parameters the server action redirect writes to report a mutation.
 const REDIRECT_NOTICE_PARAMS = [
@@ -91,14 +106,6 @@ export type HumanReviewNotice = {
   };
 };
 
-type LastAnswerUndo = {
-  inputItemId: string;
-  callerId: string;
-  outputResultId: string;
-  actionLabel: string | null;
-  rowSnapshots: HumanReviewListRow[];
-};
-
 export function ReviewWorkspace({
   session,
   identity,
@@ -110,6 +117,7 @@ export function ReviewWorkspace({
   view,
   hasNext,
   totalCount,
+  asOf,
   detailOpen,
   composeAction,
   renderedAt
@@ -124,13 +132,15 @@ export function ReviewWorkspace({
   view: HumanReviewView;
   hasNext: boolean;
   totalCount: number;
+  // Orders these rows against mutation responses; see review-sync.
+  asOf: string;
   detailOpen: boolean;
   composeAction?: string | null;
   renderedAt: string;
 }) {
   const router = useRouter();
   const feedback = useFeedbackDrafts(session.accountId, session.userId);
-  const { mutations, currentMutations, enqueue, dismiss } = useAppActions();
+  const { mutations, currentMutations, enqueue } = useAppActions();
   const {
     selectedIds,
     skippedIds,
@@ -143,9 +153,14 @@ export function ReviewWorkspace({
   } = useReviewSelection(session.accountId, rows);
   const [search, setSearch] = useState(view.search);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
-  const [lastUndo, setLastUndo] = useState<LastAnswerUndo | null>(() =>
-    lastAnswerUndoFromNotice(notice)
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>(() =>
+    undoStackFromNotice(notice)
   );
+  // Settlement callbacks outlive the render that enqueued them, so they read
+  // and write the stack through this ref instead of a captured state value.
+  const undoStackRef = useRef(undoStack);
+  const nextUndoEntryId = useRef(0);
+  const startUndoRef = useRef<(entryId: string) => void>(() => {});
   const [lastError, setLastError] = useState<string | null>(() =>
     notice?.kind === "error" ? notice.message : null
   );
@@ -165,10 +180,11 @@ export function ReviewWorkspace({
   const previousDetailId = useRef<string | null>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
-  const previousCanonicalRows = useRef(rows);
-  const canonicalGeneration = useRef(0);
-  const successGenerations = useRef(new Map<string, number>());
-  const retriedCanonicalRefreshes = useRef(new Set<string>());
+  const [itemStates, setItemStates] = useState<ReviewItemStates>(
+    () => new Map()
+  );
+  const asOfRef = useRef(asOf);
+  asOfRef.current = asOf;
   const consumedNoticeEpoch = useRef<string | null>(null);
   const viewConfigurationKey = [
     view.status,
@@ -406,213 +422,26 @@ export function ReviewWorkspace({
     };
   }
 
-  const humanMutations = useMemo(
+  const unsettled = useMemo(
     () =>
-      mutations.flatMap((record) => {
-        const optimistic = record.optimistic;
-        if (
-          record.scope !== HUMAN_MUTATION_SCOPE ||
-          !isHumanOptimisticMutation(optimistic)
-        )
-          return [];
-        const result = record.result;
-        const mutation =
-          isHumanMutationResult(result) &&
-          result.ok &&
-          result.operation === "bulk-answer"
-            ? {
-                ...optimistic,
-                inputItemIds: result.answeredInputItemIds.filter((id) =>
-                  optimistic.inputItemIds.includes(id)
-                )
-              }
-            : optimistic;
-        return [{ record, mutation }];
-      }),
+      mutations.flatMap((record) =>
+        record.scope === HUMAN_MUTATION_SCOPE
+          ? [record.optimistic as UnsettledReviewMutation]
+          : []
+      ),
     [mutations]
   );
-  // Project the latest intent per item. Older entries stay available for rollback
-  // until a confirmed result supersedes precisely the affected items.
-  const itemMutations = useMemo(() => {
-    const latest = new Map<string, (typeof humanMutations)[number]>();
-    for (const entry of humanMutations) {
-      for (const id of entry.mutation.inputItemIds) latest.set(id, entry);
-    }
-    return latest;
-  }, [humanMutations]);
-  const hiddenIds = useMemo(
-    () =>
-      new Set(
-        [...itemMutations]
-          .filter(([, { mutation }]) => mutation.operation !== "undo")
-          .map(([id]) => id)
-      ),
-    [itemMutations]
+  const { rows: projectedRows, lockedIds } = useMemo(
+    () => projectReview({ rows, asOf }, itemStates, unsettled, view),
+    [asOf, itemStates, rows, unsettled, view]
   );
-  const lockedIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const [id, { record, mutation }] of itemMutations) {
-      if (mutation.operation === "undo" && record.status !== "succeeded") {
-        ids.add(id);
-      }
-    }
-    return ids;
-  }, [itemMutations]);
-
-  const projectedRows = useMemo(() => {
-    const projected = new Map(rows.map((row) => [row.inputItemId, row]));
-    let restored = false;
-    for (const [id, { mutation }] of itemMutations) {
-      if (mutation.operation !== "undo") {
-        projected.delete(id);
-        continue;
-      }
-      if (view.status !== "pending") continue;
-      const snapshot = mutation.rowSnapshots.find(
-        (row) => row.inputItemId === id
-      );
-      if (!snapshot || !humanReviewRowMatchesView(snapshot, view)) continue;
-      const canonical = projected.get(id);
-      if (!canonical || canonical.currentRevision < snapshot.currentRevision) {
-        projected.set(id, snapshot);
-        restored = true;
-      }
-    }
-    const projectedRows = [...projected.values()];
-    return restored
-      ? projectedRows.sort((left, right) =>
-          compareHumanReviewRows(left, right, view)
-        )
-      : projectedRows;
-  }, [itemMutations, rows, view]);
-  const synchronizingMutationCount = humanMutations.filter(
-    ({ record }) => record.status !== "succeeded"
-  ).length;
   const actionStatus =
-    synchronizingMutationCount > 0
-      ? `${synchronizingMutationCount} review ${synchronizingMutationCount === 1 ? "update" : "updates"} waiting to synchronize.`
+    unsettled.length > 0
+      ? `${unsettled.length} review ${unsettled.length === 1 ? "update" : "updates"} waiting to synchronize.`
       : "";
+  const offeredUndo = offeredUndoEntry(undoStack);
   const viewStatus = humanReviewViewAnnouncement(view);
   const otherStatus = view.status === "pending" ? "answered" : "pending";
-
-  function forgetMutation(mutationId: string) {
-    successGenerations.current.delete(mutationId);
-    retriedCanonicalRefreshes.current.delete(mutationId);
-  }
-
-  function retireMutation(mutationId: string) {
-    forgetMutation(mutationId);
-    dismiss(mutationId);
-  }
-
-  useEffect(() => {
-    if (previousCanonicalRows.current === rows) return;
-    previousCanonicalRows.current = rows;
-    canonicalGeneration.current += 1;
-  }, [rows]);
-
-  useEffect(() => {
-    for (const { record, mutation } of humanMutations) {
-      if (record.status !== "succeeded" && record.status !== "indeterminate")
-        continue;
-      const successGeneration = successGenerations.current.get(record.id);
-      if (successGeneration === undefined) {
-        continue;
-      }
-      const minimumGeneration = successGeneration + 1;
-      if (canonicalGeneration.current < minimumGeneration) {
-        continue;
-      }
-      const canonicalRows = mutation.inputItemIds.map((id) =>
-        rows.find((row) => row.inputItemId === id)
-      );
-      // After a timeout, a fresh bulk view must also release the projection
-      // when every submitted row is still pending, so those rows can be retried.
-      // Selection removal below independently requires evidence of an answer.
-      const reflected =
-        (mutation.operation === "bulk-answer" &&
-          record.status === "indeterminate") ||
-        (mutation.operation === "undo"
-          ? mutation.requiresCanonicalPendingRow
-            ? canonicalRows.every((row, index) => {
-                const snapshot = mutation.rowSnapshots.find(
-                  (candidate) =>
-                    candidate.inputItemId === mutation.inputItemIds[index]
-                );
-                return (
-                  snapshot !== undefined &&
-                  (!humanReviewRowMatchesView(snapshot, view) ||
-                    (row?.status === "pending" &&
-                      row.currentRevision >= snapshot.currentRevision))
-                );
-              })
-            : canonicalRows.every(
-                (row) => row === undefined || row.status === "pending"
-              )
-          : canonicalRows.every(
-              (row) => row === undefined || row.status !== "pending"
-            ));
-      if (reflected) {
-        // A later answer can reach the server before the undo's pending row
-        // ever reaches this view. Retire that older restoration along with
-        // the answer, or it will resurrect the answered (possibly acked) item.
-        if (
-          mutation.operation === "answer" &&
-          record.status === "indeterminate"
-        ) {
-          for (const earlier of humanMutations) {
-            if (earlier.record.id === record.id) break;
-            if (
-              earlier.mutation.operation === "undo" &&
-              earlier.mutation.inputItemIds.every((id) =>
-                mutation.inputItemIds.includes(id)
-              )
-            ) {
-              retireMutation(earlier.record.id);
-            }
-          }
-        }
-        if (
-          mutation.operation !== "undo" &&
-          record.status === "indeterminate"
-        ) {
-          const answeredIds = new Set(
-            mutation.inputItemIds.filter((id, index) => {
-              const row = canonicalRows[index];
-              if (row) return row.status !== "pending";
-              // Absence proves an answer only when this is the entire
-              // pending view and the submitted row belongs in that view.
-              // A filter or page can otherwise hide a still-pending item.
-              const snapshot = mutation.rowSnapshots.find(
-                (candidate) => candidate.inputItemId === id
-              );
-              return (
-                view.page === 1 &&
-                !hasNext &&
-                rows.length === totalCount &&
-                snapshot !== undefined &&
-                humanReviewRowMatchesView(snapshot, view)
-              );
-            })
-          );
-          deselect(answeredIds);
-        }
-        retireMutation(record.id);
-      } else if (!retriedCanonicalRefreshes.current.has(record.id)) {
-        retriedCanonicalRefreshes.current.add(record.id);
-        router.refresh();
-      }
-    }
-  }, [
-    deselect,
-    dismiss,
-    hasNext,
-    humanMutations,
-    router,
-    rows,
-    totalCount,
-    view
-  ]);
 
   const visibleRows = useMemo(() => {
     return [...projectedRows].sort((left, right) => {
@@ -675,7 +504,10 @@ export function ReviewWorkspace({
     if (detail && submission.inputItemIds.includes(detail.inputItemId)) {
       setDetailDismissed(true);
       setPendingDetail(null);
-      router.replace(humanReviewHref(view), { scroll: false });
+      // The latest requested view, so a filter change still loading is kept.
+      router.replace(humanReviewHref(controlViewRef.current), {
+        scroll: false
+      });
     }
   };
 
@@ -694,203 +526,233 @@ export function ReviewWorkspace({
     }
   }
 
+  // Stores what the server reported about the items of one mutation.
+  function applyServerState(state: HumanMutationState) {
+    setItemStates((current) =>
+      recordItemStates(current, state, asOfRef.current)
+    );
+    deselect(new Set(itemIdsNotPending(state)));
+  }
+
   function enqueueHumanMutation(
     submission: HumanMutationSubmission,
     rowSnapshots: HumanReviewListRow[],
-    requiresCanonicalPendingRow = submission.operation === "undo" &&
-      rowSnapshots.some((row) => row.status === "pending")
+    // The stack entry this undo reverses; absent for an undo from History.
+    undoEntryId: string | null = null
   ) {
     // Repeated activation before the optimistic projection renders would send
     // the same items again; once settled, they are submittable again.
     const unsettledIds = new Set(
       currentMutations().flatMap((record) =>
-        record.scope === HUMAN_MUTATION_SCOPE &&
-        (record.status === "queued" || record.status === "syncing") &&
-        isHumanOptimisticMutation(record.optimistic)
-          ? record.optimistic.inputItemIds
+        record.scope === HUMAN_MUTATION_SCOPE
+          ? (record.optimistic as UnsettledReviewMutation).inputItemIds
           : []
       )
     );
     if (submission.inputItemIds.every((id) => unsettledIds.has(id))) {
-      return;
+      return false;
     }
-    if (
-      submission.operation === "answer" ||
-      submission.operation === "bulk-answer"
-    ) {
+    const answering = submission.operation !== "undo";
+    if (answering) {
       for (const id of submission.inputItemIds) {
         submission.formData.set(
           submission.operation === "answer" ? "feedback" : `feedback.${id}`,
           feedback.drafts[id] ?? ""
         );
       }
+      setLastError(null);
     }
     if (notice) {
       consumedNoticeEpoch.current = noticeEpoch;
     }
     clearRedirectNoticeFromUrl();
-    const optimistic: HumanOptimisticMutation = {
+    const optimistic: UnsettledReviewMutation = {
       operation: submission.operation,
       inputItemIds: submission.inputItemIds,
-      rowSnapshots: requiresCanonicalPendingRow
-        ? rowSnapshots.map((row) => ({
-            ...row,
-            // Answer preserves the revision; undo increments it once.
-            currentRevision: row.currentRevision + 1
-          }))
-        : rowSnapshots,
-      requiresCanonicalPendingRow
+      rowSnapshots: answering ? [] : rowSnapshots
     };
-    if (
-      submission.operation === "answer" ||
-      submission.operation === "bulk-answer"
-    ) {
-      setLastError(null);
-    }
-    function clearLastUndoFor(inputItemIds: string[]) {
-      const outputResultId = normalizedFormText(
-        submission.formData,
-        "outputResultId"
-      );
-      setLastUndo((current) => {
-        if (!current) {
-          return null;
+    // Every answer joins the stack when the person acts, not when the server
+    // replies, so Undo always targets their most recent action.
+    const answerEntryId = answering
+      ? `undo-entry-${++nextUndoEntryId.current}`
+      : null;
+    if (answerEntryId) {
+      updateUndoStack((stack) => [
+        ...stack,
+        {
+          id: answerEntryId,
+          actionLabel: normalizedFormText(submission.formData, "noticeAction"),
+          inputItemIds: submission.inputItemIds,
+          targets: null,
+          rowSnapshots,
+          undoRequested: false,
+          undoing: false
         }
-        const matchesAnswer =
-          inputItemIds.includes(current.inputItemId) &&
-          (!outputResultId || current.outputResultId === outputResultId);
-        return matchesAnswer ? null : current;
-      });
+      ]);
+    }
+    function confirmAnswerEntry(targets: HumanUndoTarget[]) {
+      if (!answerEntryId) return;
+      updateUndoStack((stack) =>
+        confirmUndoEntry(stack, answerEntryId, targets)
+      );
+      if (
+        undoStackRef.current.find((entry) => entry.id === answerEntryId)
+          ?.undoRequested
+      ) {
+        startUndoRef.current(answerEntryId);
+      }
+    }
+    // Answers the server reports as committed: their sent feedback is done
+    // with, and the stack entry narrows to them (or goes, when there are none).
+    function answersCommitted(answered: HumanUndoTarget[]) {
+      for (const { inputItemId } of answered) {
+        const sent = submission.formData.get(
+          submission.operation === "answer"
+            ? "feedback"
+            : `feedback.${inputItemId}`
+        );
+        if (typeof sent === "string") {
+          feedback.clearSubmitted(inputItemId, sent);
+        }
+      }
+      confirmAnswerEntry(answered);
+    }
+    // The submitted answers can no longer be undone from here: drop the stack
+    // entry, or for an undo from History, the matching answers in any entry.
+    function forgetUndoneAnswers() {
+      if (undoEntryId) {
+        updateUndoStack((stack) => removeUndoEntry(stack, undoEntryId));
+        return;
+      }
+      updateUndoStack((stack) =>
+        removeUndoTargets(
+          stack,
+          submission.inputItemIds,
+          normalizedFormText(submission.formData, "outputResultId")
+        )
+      );
     }
     enqueue({
       scope: HUMAN_MUTATION_SCOPE,
       optimistic,
       execute: () =>
         synchronizeHumanMutation(submission.operation, submission.formData),
-      refreshOnSuccess: true,
-      reconcileEarlier: (earlier, result) => {
-        if (!isHumanOptimisticMutation(earlier.optimistic))
-          return earlier.optimistic;
-        const completedIds =
-          result.operation === "bulk-answer"
-            ? result.answeredInputItemIds
-            : result.inputItemIds;
-        const remainingIds = earlier.optimistic.inputItemIds.filter(
-          (id) => !completedIds.includes(id)
-        );
-        if (remainingIds.length === earlier.optimistic.inputItemIds.length)
-          return earlier.optimistic;
-        if (remainingIds.length === 0) {
-          forgetMutation(earlier.id);
-          return null;
-        }
-        return {
-          ...earlier.optimistic,
-          inputItemIds: remainingIds,
-          rowSnapshots: earlier.optimistic.rowSnapshots.filter((row) =>
-            remainingIds.includes(row.inputItemId)
-          )
-        };
-      },
-      onSuccess: (result, mutationId) => {
-        const answeredIds =
-          result.operation === "answer"
-            ? result.inputItemIds
-            : result.operation === "bulk-answer"
-              ? result.answeredInputItemIds
-              : [];
-        for (const id of answeredIds) {
-          const sent = submission.formData.get(
-            result.operation === "answer" ? "feedback" : `feedback.${id}`
-          );
-          if (typeof sent === "string") feedback.clearSubmitted(id, sent);
-        }
-        if (answeredIds.length > 0) {
-          deselect(new Set(answeredIds));
-        }
-        if (result.operation === "bulk-answer" && result.answered === 0) {
-          retireMutation(mutationId);
-          setLastUndo(null);
-          setLastError(result.message);
-          return;
-        }
-        successGenerations.current.set(mutationId, canonicalGeneration.current);
-        if (result.operation === "answer") {
-          setLastUndo({
-            inputItemId: result.undo.inputItemId,
-            callerId: result.undo.callerId,
-            outputResultId: result.undo.outputResultId,
-            actionLabel: normalizedFormText(
-              submission.formData,
-              "noticeAction"
-            ),
-            rowSnapshots
-          });
-          setLastError(null);
-          return;
-        }
+      refreshOnSettle: true,
+      onSuccess: (result) => {
+        applyServerState(result.state);
         if (result.operation === "undo") {
-          clearLastUndoFor(result.inputItemIds);
-          setLastError(null);
+          if (undoEntryId) {
+            // Answers a partial undo could not restore stay on the stack
+            // while the server still holds them unread.
+            updateUndoStack((stack) =>
+              settleUndoEntry(stack, undoEntryId, result.state)
+            );
+          } else {
+            forgetUndoneAnswers();
+          }
+          setLastError(result.failed > 0 ? result.message : null);
           return;
         }
-        if (result.operation === "bulk-answer") {
-          setLastUndo(null);
-          if (result.failed > 0) {
-            setLastError(result.message);
-          }
-        }
+        answersCommitted(
+          result.operation === "answer" ? [result.undo] : result.undo
+        );
+        setLastError(
+          result.operation === "bulk-answer" && result.failed > 0
+            ? result.message
+            : null
+        );
       },
-      onIndeterminate: (_error, mutationId) => {
-        successGenerations.current.set(mutationId, canonicalGeneration.current);
-      },
-      onError: (error, mutationId) => {
-        forgetMutation(mutationId);
-        if (
-          error instanceof HumanMutationError &&
-          (error.result?.code === "not_found" ||
-            error.result?.code === "input_not_pending" ||
-            error.result?.code === "stale_input_revision")
-        ) {
-          // The server has invalidated this snapshot. Drop older undo copies
-          // and fetch the current row before another answer is attempted.
-          for (const { record, mutation } of humanMutations) {
-            if (
-              mutation.operation === "undo" &&
-              mutation.inputItemIds.some((id) =>
-                submission.inputItemIds.includes(id)
-              )
-            ) {
-              retireMutation(record.id);
-            }
-          }
-          router.refresh();
-        }
-        if (
-          submission.operation === "undo" &&
-          error instanceof HumanMutationError &&
-          (error.result?.code === "output_already_read" ||
-            error.result?.code === "not_found")
+      onError: (error) => {
+        const failure =
+          error instanceof HumanMutationError ? error.result : null;
+        const state = error instanceof HumanMutationError ? error.state : null;
+        if (state) applyServerState(state);
+        // A bulk answer stopped part-way keeps Undo for what it committed.
+        const committed =
+          error instanceof HumanMutationError ? error.committed : [];
+        if (answerEntryId) {
+          answersCommitted(committed);
+        } else if (undoEntryId && state) {
+          // The reported rows say which answers can still be undone.
+          updateUndoStack((stack) =>
+            settleUndoEntry(stack, undoEntryId, state)
+          );
+        } else if (
+          failure?.code === "output_already_read" ||
+          failure?.code === "not_found"
         ) {
           // These undo rejections are permanent; retrying cannot succeed.
-          clearLastUndoFor(submission.inputItemIds);
+          forgetUndoneAnswers();
+        } else if (undoEntryId) {
+          // Offer the same action again for a retry.
+          updateUndoStack((stack) =>
+            patchUndoEntry(stack, undoEntryId, { undoing: false })
+          );
         }
-        const message =
-          error instanceof HumanMutationError
-            ? error.message
-            : "Action is temporarily unavailable.";
-        setLastError(mutationFailureMessage(submission, rowSnapshots, message));
+        setLastError(
+          committed.length > 0
+            ? `Bulk action interrupted: ${committed.length} answered, ${submission.inputItemIds.length - committed.length} not confirmed.`
+            : mutationFailureMessage(
+                submission,
+                rowSnapshots,
+                error instanceof HumanMutationError
+                  ? error.message
+                  : "Action is temporarily unavailable.",
+                error instanceof HumanMutationError && error.unconfirmed
+              )
+        );
       }
     });
+    return true;
   }
+
+  function updateUndoStack(update: (stack: UndoEntry[]) => UndoEntry[]) {
+    const next = update(undoStackRef.current);
+    undoStackRef.current = next;
+    setUndoStack(next);
+  }
+
+  function startUndo(entryId: string) {
+    const entry = undoStackRef.current.find(
+      (candidate) => candidate.id === entryId
+    );
+    if (!entry || entry.undoing) return;
+    const { targets } = entry;
+    if (!targets) {
+      // The answer is still saving. Undo starts as soon as it is accepted.
+      updateUndoStack((stack) =>
+        patchUndoEntry(stack, entryId, { undoRequested: true })
+      );
+      return;
+    }
+    const formData = new FormData();
+    for (const target of targets) {
+      formData.append("inputItemId", target.inputItemId);
+      formData.append("callerId", target.callerId);
+      formData.append("outputResultId", target.outputResultId);
+    }
+    const undoing = enqueueHumanMutation(
+      {
+        operation: "undo",
+        inputItemIds: targets.map((target) => target.inputItemId),
+        formData
+      },
+      entry.rowSnapshots,
+      entryId
+    );
+    updateUndoStack((stack) =>
+      patchUndoEntry(stack, entryId, { undoRequested: false, undoing })
+    );
+  }
+  startUndoRef.current = startUndo;
 
   useEffect(() => {
     if (!notice) return;
     if (consumedNoticeEpoch.current === noticeEpoch) return;
     consumedNoticeEpoch.current = noticeEpoch;
-    const undo = lastAnswerUndoFromNotice(notice);
-    if (undo) {
-      setLastUndo((current) => current ?? undo);
+    const noticeUndo = undoStackFromNotice(notice);
+    if (noticeUndo.length > 0) {
+      updateUndoStack((stack) => (stack.length > 0 ? stack : noticeUndo));
       setLastError(null);
     } else if (notice.kind === "error") {
       setLastError(notice.message);
@@ -971,7 +833,7 @@ export function ReviewWorkspace({
     <main
       ref={workspaceRef}
       className="human-workspace ph-no-capture"
-      data-review-mutation-count={humanMutations.length}
+      data-review-mutation-count={unsettled.length}
       data-workspace-hydrated={hydrated ? "true" : "false"}
     >
       <header className="app-bar">
@@ -1005,17 +867,15 @@ export function ReviewWorkspace({
                 </button>
               </p>
             ) : null}
-            {lastUndo ? (
+            {offeredUndo ? (
               <LastAnswerUndoForm
-                undo={lastUndo}
-                disabled={lockedIds.has(lastUndo.inputItemId)}
-                onMutation={(submission) => {
-                  enqueueHumanMutation(
-                    submission,
-                    lastUndo.rowSnapshots,
-                    viewRef.current.status === "pending"
-                  );
-                }}
+                key={offeredUndo.id}
+                undo={offeredUndo}
+                disabled={
+                  offeredUndo.undoRequested ||
+                  offeredUndo.inputItemIds.some((id) => lockedIds.has(id))
+                }
+                onUndo={() => startUndo(offeredUndo.id)}
               />
             ) : null}
           </div>
@@ -1282,8 +1142,7 @@ export function ReviewWorkspace({
       detailOpen &&
       (!pendingDetail || detail?.inputItemId === pendingDetail.inputItemId) &&
       (!detail ||
-        (!hiddenIds.has(detail.inputItemId) &&
-          !lockedIds.has(detail.inputItemId))) ? (
+        !reviewDetailSuperseded(detail, asOf, itemStates, unsettled)) ? (
         <ReviewDetail
           feedback={detail ? (feedback.drafts[detail.inputItemId] ?? "") : ""}
           onFeedbackChange={(text) =>
@@ -1340,34 +1199,29 @@ function humanReviewViewAnnouncement(view: HumanReviewView) {
   return `View updated. Sorted by ${sort}.${filters.length ? ` Filtered by ${filters.join(", ")}.` : ""}`;
 }
 
-function humanReviewRowMatchesView(
-  row: HumanReviewListRow,
-  view: HumanReviewView
-) {
-  return (
-    view.status === "pending" &&
-    humanReviewMatchesFacets(row, view) &&
-    humanReviewMatchesSearch(row, view.search.trim())
-  );
-}
-
-function lastAnswerUndoFromNotice(
-  notice: HumanReviewNotice | null
-): LastAnswerUndo | null {
-  if (!notice?.undo) return null;
-  return {
-    inputItemId: notice.undo.inputItemId,
-    callerId: notice.undo.callerId,
-    outputResultId: notice.undo.outputResultId,
-    actionLabel: notice.actionLabel ?? null,
-    rowSnapshots: []
-  };
+// A redirecting (JavaScript-disabled) answer reports its undo target in the
+// notice; it seeds the stack when the workspace then hydrates.
+function undoStackFromNotice(notice: HumanReviewNotice | null): UndoEntry[] {
+  if (!notice?.undo) return [];
+  return [
+    {
+      id: `undo-notice-${notice.undo.outputResultId}`,
+      actionLabel: notice.actionLabel ?? null,
+      inputItemIds: [notice.undo.inputItemId],
+      targets: [notice.undo],
+      rowSnapshots: [],
+      undoRequested: false,
+      undoing: false
+    }
+  ];
 }
 
 function mutationFailureMessage(
   submission: HumanMutationSubmission,
   rowSnapshots: HumanReviewListRow[],
-  message: string
+  message: string,
+  // No attempt reported an outcome, so the mutation may have committed.
+  unconfirmed: boolean
 ) {
   if (submission.operation === "bulk-answer") {
     return message;
@@ -1379,9 +1233,17 @@ function mutationFailureMessage(
       : null);
   const quotedSubject = subject ? `“${subject}”` : "this review";
   if (submission.operation === "undo") {
-    return `Could not restore ${quotedSubject}: ${message}`;
+    const restored =
+      submission.inputItemIds.length > 1
+        ? `${submission.inputItemIds.length} reviews`
+        : quotedSubject;
+    return unconfirmed
+      ? `${restored} may not have been restored: ${message}`
+      : `Could not restore ${restored}: ${message}`;
   }
-  return `Could not save ${quotedSubject}: ${message}`;
+  return unconfirmed
+    ? `${quotedSubject} may not have been saved: ${message}`
+    : `Could not save ${quotedSubject}: ${message}`;
 }
 
 function normalizedFormText(formData: FormData, key: string) {

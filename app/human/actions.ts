@@ -38,6 +38,9 @@ import {
 } from "../../src/server/human-session";
 import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../src/shared/human-review-view";
 import type {
+  HumanAnswerMutationSuccess,
+  HumanBulkMutationSuccess,
+  HumanUndoMutationSuccess,
   HumanUndoTarget,
   HumanMutationFailure,
   HumanMutationResult,
@@ -45,6 +48,15 @@ import type {
 } from "../../src/shared/human-mutation";
 
 const humanPath = "/human";
+// A failure whose mutation may have committed; the route answers it with 503.
+const TEMPORARY_UNAVAILABLE = "temporary_unavailable";
+
+// A mutation outcome before the items' authoritative state is attached.
+type MutationOutcome =
+  | HumanMutationFailure
+  | Omit<HumanAnswerMutationSuccess, "state">
+  | Omit<HumanBulkMutationSuccess, "state">
+  | Omit<HumanUndoMutationSuccess, "state">;
 
 type BackendFailure = {
   ok: false;
@@ -98,19 +110,23 @@ export async function executeBulkHumanAnswersMutation(
   const backend = await mutationBackend(
     createCorrelationId("human_bulk_answer_req")
   );
-  return withItemStates(await bulkAnswerOutcome(formData, backend), backend);
+  return withItemStates(
+    await bulkAnswerOutcome(formData, backend, true),
+    backend
+  );
 }
 
 export async function executeUndoHumanAnswerMutation(
   formData: FormData
 ): Promise<HumanMutationResult> {
   const backend = await mutationBackend(createCorrelationId("human_undo_req"));
-  return withItemStates(await undoOutcome(formData, backend), backend);
+  return withItemStates(await undoOutcome(formData, backend, true), backend);
 }
 
-// The redirecting form actions report through the URL, not item state.
+// The redirecting form actions report through the URL, not item state, and
+// a submitted form is not repeated under its mutation id.
 export async function submitHumanAnswer(formData: FormData) {
-  redirectHumanMutationResult(
+  redirectHumanMutationOutcome(
     formData,
     await answerOutcome(
       formData,
@@ -120,21 +136,23 @@ export async function submitHumanAnswer(formData: FormData) {
 }
 
 export async function submitBulkHumanAnswers(formData: FormData) {
-  redirectHumanMutationResult(
+  redirectHumanMutationOutcome(
     formData,
     await bulkAnswerOutcome(
       formData,
-      await mutationBackend(createCorrelationId("human_bulk_answer_req"))
+      await mutationBackend(createCorrelationId("human_bulk_answer_req")),
+      false
     )
   );
 }
 
 export async function undoHumanAnswer(formData: FormData) {
-  redirectHumanMutationResult(
+  redirectHumanMutationOutcome(
     formData,
     await undoOutcome(
       formData,
-      await mutationBackend(createCorrelationId("human_undo_req"))
+      await mutationBackend(createCorrelationId("human_undo_req")),
+      false
     )
   );
 }
@@ -142,7 +160,7 @@ export async function undoHumanAnswer(formData: FormData) {
 async function answerOutcome(
   formData: FormData,
   backend: MutationBackend & { requestId: string }
-): Promise<HumanMutationResult> {
+): Promise<MutationOutcome> {
   const { requestId } = backend;
   const failedActionKind =
     formData.get("popupKind") === "file_upload" ? "file_upload" : undefined;
@@ -193,11 +211,18 @@ async function answerOutcome(
   };
 }
 
-/** Answers each item in turn; one rejected item does not stop the rest. */
+/**
+ * Answers each item in turn. `retryable` says the caller can repeat the
+ * request under the same mutation id: a temporary failure, which leaves that
+ * item's outcome unknown, then stops the request so that its repeat replays
+ * what committed and tries the rest. A caller that cannot repeat it gets the
+ * remaining items tried and the failure counted.
+ */
 async function bulkAnswerOutcome(
   formData: FormData,
-  backend: MutationBackend & { requestId: string }
-): Promise<HumanMutationResult> {
+  backend: MutationBackend & { requestId: string },
+  retryable: boolean
+): Promise<MutationOutcome> {
   const { requestId } = backend;
   const parsed = parseBulkHumanAnswersForm(formData);
   if (!parsed.ok) {
@@ -232,15 +257,22 @@ async function bulkAnswerOutcome(
         callerId: item.callerId,
         outputResultId: result.outputResultId
       });
-    } else if (result.sessionFailed) {
-      // Without a session no item of the request can succeed.
-      return humanMutationFailure(
+    } else if (
+      result.sessionFailed ||
+      (retryable && result.code === TEMPORARY_UNAVAILABLE)
+    ) {
+      // Without a session nothing more can succeed. The answers committed so
+      // far are reported with the failure, in case no repeat gets further.
+      const failure = humanMutationFailure(
         "bulk-answer",
         inputItemIds,
         result.code,
         result.message,
         requestId
       );
+      if (undo.length === 0) return failure;
+      revalidatePath(humanPath);
+      return { ...failure, undo };
     }
   }
 
@@ -271,11 +303,12 @@ async function bulkAnswerOutcome(
   };
 }
 
-/** Undoes each target in turn; one rejected target does not stop the rest. */
+/** Undoes each target in turn; `retryable` is as for a bulk answer. */
 async function undoOutcome(
   formData: FormData,
-  backend: MutationBackend & { requestId: string }
-): Promise<HumanMutationResult> {
+  backend: MutationBackend & { requestId: string },
+  retryable: boolean
+): Promise<MutationOutcome> {
   const { requestId } = backend;
   const parsed = parseUndoHumanAnswerForm(formData);
   if (!parsed.ok) {
@@ -298,8 +331,12 @@ async function undoOutcome(
     );
     if (result.ok) {
       restoredInputItemIds.push(target.inputItemId);
-    } else if (result.sessionFailed) {
-      // Without a session no target of the request can succeed.
+    } else if (
+      result.sessionFailed ||
+      (retryable && result.code === TEMPORARY_UNAVAILABLE)
+    ) {
+      // The failure's item state tells the client which answers were restored.
+      if (restoredInputItemIds.length > 0) revalidatePath(humanPath);
       return humanMutationFailure(
         "undo",
         inputItemIds,
@@ -314,7 +351,8 @@ async function undoOutcome(
 
   const failed = inputItemIds.length - restoredInputItemIds.length;
   if (restoredInputItemIds.length === 0) {
-    // One shared code is reported as it is; mixed causes get a general one.
+    // A shared code lets the client tell a permanent rejection from a
+    // retryable one; mixed causes are reported as retryable.
     const [first] = failures;
     const sharedCode =
       first && failures.every((failure) => failure.code === first.code)
@@ -348,20 +386,28 @@ async function undoOutcome(
 }
 
 /**
- * Attaches the items' authoritative rows when they can be read. The outcome
- * of the mutation stands either way.
+ * Attaches the items' authoritative rows. A success without them cannot be
+ * applied by the client, so that read failing fails the request; the client
+ * repeats it, and the repeat reports the mutation that already committed.
  */
 async function withItemStates(
-  outcome: HumanMutationResult,
+  outcome: MutationOutcome,
   backend: MutationBackend & { requestId: string }
 ): Promise<HumanMutationResult> {
+  if (outcome.ok) {
+    const state = await backend.itemStates(outcome.inputItemIds);
+    if (!state) {
+      throw new Error("Human mutation succeeded without a session.");
+    }
+    return { ...outcome, state };
+  }
   if (outcome.inputItemIds.length === 0) return outcome;
   const startedAtMs = Date.now();
   try {
     const state = await backend.itemStates(outcome.inputItemIds);
     return state ? { ...outcome, state } : outcome;
   } catch (error) {
-    // The outcome itself is the answer and its item state a refinement, so
+    // The failure itself is the answer and its item state a refinement, so
     // the failed read is reported here, where it is dropped.
     reportHumanReviewItemStateFailure(error, backend.requestId, startedAtMs);
     return outcome;
@@ -567,9 +613,9 @@ function humanMutationFailure(
   };
 }
 
-function redirectHumanMutationResult(
+function redirectHumanMutationOutcome(
   formData: FormData,
-  result: HumanMutationResult
+  result: MutationOutcome
 ): never {
   const subject = noticeText(formData, "noticeSubject");
   const action = noticeText(formData, "noticeAction");
