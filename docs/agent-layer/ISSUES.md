@@ -28,6 +28,16 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-16 review-retry-drops-earlier-committed: A successful bulk retry leaves out answers an earlier attempt reported
+    Priority: Low. Area: human review queue
+    Description: `synchronizeHumanMutation` returns a successful repeat's result without the answers an earlier attempt reported as committed, and the workspace clears submitted feedback and words its message from that result alone. A repeat counts an item as failed when its output was acknowledged after the earlier attempt answered it.
+    Open question: How should a successful repeat report an answer that an earlier attempt committed and that no longer exists?
+
+- Issue 2026-11-16 review-error-one-line-on-touch: Review action errors show one cut-off line with the rest only in a tooltip
+    Priority: Low. Area: human review queue
+    Description: `.last-action-error` shows one ellipsized line (`max-width: 8.5rem` on phones) and carries the full message only in its `title`. In the mobile browser project a 139-character message showed its first 16 characters.
+    Open question: Where should the full message be readable on a touch device?
+
 - Issue 2026-11-16 review-selection-kept-after-unconfirmed-bulk: Answered rows stay selected when a bulk answer's responses are all lost
     Priority: Low. Area: human review queue
     Description: A bulk answer of two rows committed while all three attempts' responses were dropped in a browser test. The rows left the queue, but the bulk bar showed "2 selected on other pages are not included", and still did after a reload. Leaving selection mode clears it.
