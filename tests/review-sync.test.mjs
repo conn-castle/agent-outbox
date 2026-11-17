@@ -288,6 +288,33 @@ test("an open detail is superseded by a mutation in flight or a newer state", ()
     reviewDetailSuperseded(detail, "100", statesFrom(["150", ["item-B"]]), []),
     true
   );
+
+  // A caller read leaves the status and revision alone but ends Undo.
+  const answeredDetail = answered(row("B"));
+  const read = answered(row("B"));
+  Object.assign(read.output ?? {}, {
+    firstReadAt: "2026-11-16T11:05:00.000Z",
+    readCount: 1,
+    undoEligible: false
+  });
+  assert.equal(
+    reviewDetailSuperseded(
+      answeredDetail,
+      "100",
+      statesFrom(["150", [answered(row("B"))]]),
+      []
+    ),
+    false
+  );
+  assert.equal(
+    reviewDetailSuperseded(
+      answeredDetail,
+      "100",
+      statesFrom(["150", [read]]),
+      []
+    ),
+    true
+  );
 });
 
 test("only answered or missing items leave the selection", () => {

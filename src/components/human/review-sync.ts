@@ -141,7 +141,7 @@ export function projectReview(
 export function reviewDetailSuperseded(
   detail: Pick<
     HumanReviewListRow,
-    "inputItemId" | "status" | "currentRevision"
+    "inputItemId" | "status" | "currentRevision" | "output"
   >,
   pageAsOf: string,
   states: ReviewItemStates,
@@ -159,7 +159,11 @@ export function reviewDetailSuperseded(
   return (
     state.row === null ||
     state.row.status !== detail.status ||
-    state.row.currentRevision !== detail.currentRevision
+    state.row.currentRevision !== detail.currentRevision ||
+    // A caller read changes the output, and whether it can still be undone,
+    // without changing the item's revision.
+    state.row.output?.firstReadAt !== detail.output?.firstReadAt ||
+    state.row.output?.readCount !== detail.output?.readCount
   );
 }
 
