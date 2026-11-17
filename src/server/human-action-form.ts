@@ -1,5 +1,8 @@
 import { utcFromLocalDateTime } from "../shared/local-datetime.ts";
-import { VERSIONED_UUID_PATTERN } from "./api-errors.ts";
+import {
+  CANONICAL_UUID_PATTERN,
+  VERSIONED_UUID_PATTERN
+} from "./api-errors.ts";
 import type { HumanActionResponse } from "./human-answer.ts";
 import { isStorableString } from "./input-schema.ts";
 import {
@@ -244,9 +247,19 @@ function normalizeLineBreaks(value: string) {
   return value.replace(/\r\n?/g, "\n");
 }
 
+// Ids are accepted only as the server issues them, in lowercase, so an id
+// from a form always equals the id of the row it names.
+function isUuid(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    VERSIONED_UUID_PATTERN.test(value) &&
+    CANONICAL_UUID_PATTERN.test(value)
+  );
+}
+
 function uuidField(formData: FormData, key: string) {
   const value = stringField(formData, key);
-  return value && VERSIONED_UUID_PATTERN.test(value) ? value : null;
+  return isUuid(value) ? value : null;
 }
 
 function integerField(formData: FormData, key: string) {
@@ -274,10 +287,8 @@ function parseBulkItem(value: FormDataEntryValue): BulkAnswerItem | null {
     }
     const item = parsed as Record<string, unknown>;
     if (
-      typeof item.inputItemId !== "string" ||
-      !VERSIONED_UUID_PATTERN.test(item.inputItemId) ||
-      typeof item.callerId !== "string" ||
-      !VERSIONED_UUID_PATTERN.test(item.callerId) ||
+      !isUuid(item.inputItemId) ||
+      !isUuid(item.callerId) ||
       typeof item.expectedRevision !== "number" ||
       !Number.isSafeInteger(item.expectedRevision)
     ) {
