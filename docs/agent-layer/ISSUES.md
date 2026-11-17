@@ -30,8 +30,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 <!-- ENTRIES START -->
 - Issue 2026-11-16 review-fixture-undo-ignores-output: Browser fixture undo does not check the named output
     Priority: Low. Area: browser test fixture
-    Description: `restoreFixtureResolvedItem` restores an item by its input id alone. The undo target's `callerId` and `outputResultId` are not compared with the answer being undone, while the database undo reports a mismatched output as not found.
-    Next step: Make the fixture undo reject a target whose caller or output does not match the item's current answer.
+    Description: `restoreFixtureResolvedItem` restores an item by its input id alone and returns nothing, so the fixture undo reports success even when it restored nothing. The undo target's `callerId` and `outputResultId` are not compared with the answer being undone, while the database undo reports a mismatched output as not found.
+    Open question: Which of the database undo's rejections should the fixture undo reproduce?
 
 - Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is defined in several places
     Priority: Low. Area: Human review / Maintainability

@@ -751,8 +751,8 @@ async function bulkFailure(route: Route, outcome: "partial" | "none") {
     outcome === "partial" ? 1 : "bulk_answer_failed"
   );
   expect(
-    result.state.items.map(
-      (item: { row: { status: string } }) => item.row.status
+    result.state?.items.map(
+      (item: { row: { status: string } | null }) => item.row?.status
     )
   ).toEqual(
     outcome === "partial" ? ["answered", "pending"] : ["pending", "pending"]

@@ -127,39 +127,41 @@ export async function loadHumanReviewItemStates(
   requestId: string,
   inputItemIds: string[]
 ): Promise<HumanMutationState> {
-  const startedAtMs = Date.now();
-  try {
-    const connectionString = process.env.DATABASE_APP_ROLE_URL;
-    if (!connectionString) {
-      throw new Error("Human account database configuration is unavailable.");
-    }
-    return await runProductTransaction(
-      connectionString,
-      {
-        requestId,
-        authSurface: "human",
-        accountId: session.accountId,
-        userId: session.userId
-      },
-      (query) =>
-        humanReviewItemStatesInTransaction(query, session, inputItemIds)
-    );
-  } catch (error) {
-    // A caller may still report the mutation's outcome without these rows,
-    // so the failure is reported here.
-    reportRuntimeFailure(error, {
-      errorId: createCorrelationId("human_item_state"),
-      request_id: requestId,
-      surface: "app",
-      route: "/human",
-      method: "POST",
-      duration_ms: durationSinceMs(startedAtMs),
-      operation: "human_review_item_state",
-      account_id: session.accountId,
-      message: "Human review item state read failed unexpectedly."
-    });
-    throw error;
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    throw new Error("Human account database configuration is unavailable.");
   }
+  return runProductTransaction(
+    connectionString,
+    {
+      requestId,
+      authSurface: "human",
+      accountId: session.accountId,
+      userId: session.userId
+    },
+    (query) => humanReviewItemStatesInTransaction(query, session, inputItemIds)
+  );
+}
+
+/**
+ * Reports an item state read that failed. Called by the one place that goes on
+ * to answer the mutation without those rows.
+ */
+export function reportHumanReviewItemStateFailure(
+  error: unknown,
+  requestId: string,
+  startedAtMs: number
+) {
+  reportRuntimeFailure(error, {
+    errorId: createCorrelationId("human_item_state"),
+    request_id: requestId,
+    surface: "app",
+    route: "/human",
+    method: "POST",
+    duration_ms: durationSinceMs(startedAtMs),
+    operation: "human_review_item_state",
+    message: "Human review item state read failed unexpectedly."
+  });
 }
 
 async function loadHumanReviewPageDataInTransaction(
