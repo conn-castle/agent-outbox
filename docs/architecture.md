@@ -249,6 +249,19 @@ reports the mutation's outcome without them. A review page load carries its own
 `asOf` token, read from the database clock at the start of the page's
 transaction.
 
+A mutation request can carry a `mutationId`, a UUID that names the mutation; a
+request without one is given a fresh id. A request repeated under the same id
+reports the mutation an earlier attempt committed instead of applying it again:
+
+- A repeated answer is recognized by the `input_answered` audit event of the
+  item's current output, whose correlation id is derived from the `mutationId`.
+- A repeated undo is recognized by the `output_undone` audit event of the output
+  it named, while the item is still pending. Once the item has been answered
+  again, an undo of the earlier output is reported as not found.
+
+An undo names both the item and the output that answered it; an output that
+answered a different item is reported as not found.
+
 The queue projects the latest journal action for each item. Confirmed writes
 supersede earlier actions only for the items they changed; earlier state remains
 available until then so a rejected action can roll back correctly. Canonical

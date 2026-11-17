@@ -145,10 +145,16 @@ export type HumanAnswerActorContext = {
   callerId: string;
   humanUserId: string;
   requestId: string;
+  /**
+   * Shared by every attempt of one answer. A retry whose earlier attempt
+   * committed is recognized by this id on the `input_answered` audit event.
+   */
   correlationId: string;
 };
 
 export type PreReadUndoInput = HumanAnswerActorContext & {
+  // The answered item and its output. An output of another item is not found.
+  inputItemId: string;
   outputResultId: string;
 };
 
@@ -189,6 +195,16 @@ type OutputInsertRow = {
 
 type OutputFileInsertRow = {
   output_file_id: string;
+};
+
+type ReplayedAnswerRow = {
+  output_result_id: string;
+  action_value: string;
+  response_kind: OutputResponseKind;
+  response_payload: JsonValue;
+  response_payload_bytes: string | number;
+  answered_at: Date | string;
+  expires_at: Date | string;
 };
 
 type PreReadUndoCandidateRow = {
@@ -262,6 +278,25 @@ export async function createHumanAnswerInTransaction(
   }
 
   if (targetInput.status !== "pending") {
+    // A retry of an answer that already committed reports that answer.
+    const replayed = await query<ReplayedAnswerRow>(
+      answeredByCorrelationStatement(input, targetInput.caller_audit_id)
+    );
+    const original = replayed.rows[0];
+    if (original) {
+      return {
+        ok: true,
+        outputResultId: original.output_result_id,
+        inputItemId: targetInput.input_item_id,
+        callerItemId: targetInput.caller_item_id,
+        actionValue: original.action_value,
+        responseKind: original.response_kind,
+        responsePayload: original.response_payload,
+        responsePayloadBytes: byteCount(original.response_payload_bytes),
+        answeredAt: timestampValue(new Date(original.answered_at)),
+        expiresAt: timestampValue(new Date(original.expires_at))
+      };
+    }
     return failure(
       "input_not_pending",
       "Human answer creation requires a pending input item."
@@ -501,6 +536,21 @@ export async function undoHumanAnswerBeforeReadInTransaction(
   const candidate = candidateResult.rows[0];
 
   if (!candidate) {
+    // A retry of an undo that already committed finds the output gone. It is
+    // reported as done only while the item is still restored: once the item
+    // has been answered again, telling the person "undone" would be false.
+    const undone = await query<{ already_undone: boolean }>(
+      undoneOutputLookupStatement(input)
+    );
+    if (undone.rows[0]?.already_undone) {
+      return {
+        ok: true,
+        outputResultId: input.outputResultId,
+        outputDeleted: true,
+        inputRestored: true,
+        filesDeleted: 0
+      };
+    }
     return failure("not_found", "Output result was not found.");
   }
 
@@ -590,8 +640,81 @@ export function inputActionOptionsStatement(
   };
 }
 
+export function answeredByCorrelationStatement(
+  input: Pick<
+    CreateHumanAnswerInput,
+    "accountId" | "callerId" | "inputItemId" | "correlationId"
+  >,
+  callerAuditId: string
+): TransactionContextStatement {
+  return {
+    sql: `
+      select
+        o.output_result_id,
+        o.action_value,
+        o.response_kind,
+        o.response_payload,
+        o.response_payload_bytes,
+        o.answered_at,
+        o.expires_at
+      from public.agent_outbox_output_results o
+      join public.agent_outbox_audit_events event
+        on event.caller_audit_id = $4::uuid
+       and event.output_result_id = o.output_result_id
+       and event.event_type = 'input_answered'
+       and event.correlation_id = $5
+      where o.account_id = $1
+        and o.caller_id = $2
+        and o.input_item_id = $3
+    `,
+    values: [
+      input.accountId,
+      input.callerId,
+      input.inputItemId,
+      callerAuditId,
+      input.correlationId
+    ]
+  };
+}
+
+export function undoneOutputLookupStatement(
+  input: Pick<
+    PreReadUndoInput,
+    "accountId" | "callerId" | "inputItemId" | "outputResultId"
+  >
+): TransactionContextStatement {
+  return {
+    sql: `
+      select exists (
+        select 1
+        from public.agent_outbox_audit_events event
+        join public.agent_outbox_callers caller
+          on caller.caller_audit_id = event.caller_audit_id
+        join public.agent_outbox_input_items item
+          on item.input_item_id = event.input_item_id
+         and item.account_id = caller.account_id
+        where event.output_result_id = $3::uuid
+          and event.input_item_id = $4::uuid
+          and event.event_type = 'output_undone'
+          and caller.account_id = $1::uuid
+          and caller.caller_id = $2::uuid
+          and item.status = 'pending'
+      ) as already_undone
+    `,
+    values: [
+      input.accountId,
+      input.callerId,
+      input.outputResultId,
+      input.inputItemId
+    ]
+  };
+}
+
 export function outputForPreReadUndoStatement(
-  input: Pick<PreReadUndoInput, "accountId" | "callerId" | "outputResultId">
+  input: Pick<
+    PreReadUndoInput,
+    "accountId" | "callerId" | "inputItemId" | "outputResultId"
+  >
 ): TransactionContextStatement {
   return {
     sql: `
@@ -600,9 +723,15 @@ export function outputForPreReadUndoStatement(
       where account_id = $1
         and caller_id = $2
         and output_result_id = $3
+        and input_item_id = $4
       for update
     `,
-    values: [input.accountId, input.callerId, input.outputResultId]
+    values: [
+      input.accountId,
+      input.callerId,
+      input.outputResultId,
+      input.inputItemId
+    ]
   };
 }
 

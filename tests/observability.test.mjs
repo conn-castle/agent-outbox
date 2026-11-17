@@ -1227,6 +1227,7 @@ test("human answer undo transaction failures share error id across structured lo
             humanUserId: "00000000-0000-4000-8000-000000000423",
             requestId: "req-human-undo-transaction",
             correlationId: "corr-human-undo-transaction",
+            inputItemId: "00000000-0000-4000-8000-000000000425",
             outputResultId: "00000000-0000-4000-8000-000000000424"
           }
         );
@@ -1326,7 +1327,7 @@ function itemStateFor(inputItemIds) {
   };
 }
 
-test("human mutation results carry item state read after the mutations", async (t) => {
+test("human mutation results carry item state read after the mutations, keyed for retry", async (t) => {
   // Answers after a request's first open their own (stubbed) connection.
   const previousAppRoleUrl = process.env.DATABASE_APP_ROLE_URL;
   process.env.DATABASE_APP_ROLE_URL = "postgresql://stubbed-app-role";
@@ -1344,8 +1345,11 @@ test("human mutation results carry item state read after the mutations", async (
   const callerId = "00000000-0000-4000-8000-000000000712";
   const firstItemId = "00000000-0000-4000-8000-000000000721";
   const secondItemId = "00000000-0000-4000-8000-000000000722";
+  const mutationId = "00000000-0000-4000-8000-0000000007aa";
   /** @type {string[]} */
   const events = [];
+  /** @type {Record<string, unknown>[]} */
+  const undoInputs = [];
   /** @type {Record<string, unknown>[]} */
   const answerInputs = [];
   let stateReadFails = false;
@@ -1394,7 +1398,11 @@ test("human mutation results carry item state read after the mutations", async (
         createHumanAnswer: async (_connectionString, input) => answer(input),
         /** @param {unknown} _query @param {Record<string, unknown>} input */
         createHumanAnswerInTransaction: async (_query, input) => answer(input),
-        undoHumanAnswerBeforeReadInTransaction: async () => ({ ok: true })
+        /** @param {unknown} _query @param {Record<string, unknown>} input */
+        undoHumanAnswerBeforeReadInTransaction: async (_query, input) => {
+          undoInputs.push(input);
+          return { ok: true };
+        }
       },
       "../../src/server/human-review-page": {
         /** @param {unknown} stateSession @param {string} _requestId @param {string[]} inputItemIds */
@@ -1423,6 +1431,7 @@ test("human mutation results carry item state read after the mutations", async (
   );
 
   const bulkForm = new FormData();
+  bulkForm.set("mutationId", mutationId);
   bulkForm.set("bulkActionValue", "approve");
   for (const inputItemId of [firstItemId, secondItemId]) {
     bulkForm.append(
@@ -1445,6 +1454,12 @@ test("human mutation results carry item state read after the mutations", async (
     "state"
   ]);
   assert.equal(sessionTransactions, 1);
+  // Every attempt of this request presents the same id, which is how a retry
+  // finds the answer an earlier attempt committed.
+  assert.deepEqual(
+    answerInputs.map((input) => input.correlationId),
+    [`human_bulk_answer_${mutationId}`, `human_bulk_answer_${mutationId}`]
+  );
   assert.deepEqual(
     answerInputs.map((input) => [input.accountId, input.humanUserId]),
     [
@@ -1454,6 +1469,7 @@ test("human mutation results carry item state read after the mutations", async (
   );
 
   const answerForm = new FormData();
+  answerForm.set("mutationId", mutationId);
   answerForm.set("inputItemId", firstItemId);
   answerForm.set("callerId", callerId);
   answerForm.set("expectedRevision", "1");
@@ -1466,6 +1482,7 @@ test("human mutation results carry item state read after the mutations", async (
     JSON.parse(JSON.stringify(single.ok && single.state)),
     itemStateFor([firstItemId])
   );
+  assert.equal(answerInputs[0]?.correlationId, `human_answer_${mutationId}`);
 
   // A rejected item is reported with what it is now, alongside the answered
   // ones; so is a request that answered nothing.
@@ -1497,10 +1514,15 @@ test("human mutation results carry item state read after the mutations", async (
   rejected.clear();
 
   const undoForm = new FormData();
+  undoForm.set("mutationId", mutationId);
   undoForm.set("inputItemId", firstItemId);
   undoForm.set("callerId", callerId);
   undoForm.set("outputResultId", "00000000-0000-4000-8000-000000000731");
   const undone = await actions.executeUndoHumanAnswerMutation(undoForm);
+  assert.deepEqual(
+    undoInputs.map((input) => [input.correlationId, input.inputItemId]),
+    [[`human_undo_${mutationId}`, firstItemId]]
+  );
   assert.deepEqual(
     JSON.parse(JSON.stringify(undone.ok && undone.state)),
     itemStateFor([firstItemId])
