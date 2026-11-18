@@ -160,17 +160,17 @@ function fixtureResolvedIds(options: BrowserFixtureReviewOptions) {
   );
 }
 
-// An undone answer is pending again, including an answer the fixture data
-// itself starts out with.
+// The status the list filters on is the one the row is then shown with.
 function fixtureEffectiveStatus(
   row: HumanReviewListRow,
   options: BrowserFixtureReviewOptions,
   resolvedIds: Set<string>
 ): HumanReviewListRow["status"] {
-  if (resolvedIds.has(row.inputItemId)) return "answered";
-  return options.resolvedItems?.[row.inputItemId]?.undone
-    ? "pending"
-    : row.status;
+  return applyFixtureResolvedState(
+    row,
+    options.resolvedItems?.[row.inputItemId],
+    resolvedIds.has(row.inputItemId)
+  ).status;
 }
 
 /** The list row of one fixture item in its current state, in any status. */

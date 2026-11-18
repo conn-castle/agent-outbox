@@ -1746,6 +1746,98 @@ test(
 );
 
 test(
+  "a repeated file-upload answer reports the uploaded file again",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+
+    const client = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const correlationId = `human_answer_${crypto.randomUUID()}`;
+    const answer = () =>
+      runHumanAnswerDatabaseTransaction(client, ids, "human", (query) =>
+        createHumanAnswerInTransaction(query, {
+          accountId: ids.accountId,
+          callerId: ids.callerId,
+          humanUserId: ids.userId,
+          requestId: `req-${crypto.randomUUID()}`,
+          correlationId,
+          inputItemId: ids.inputItemId,
+          expectedRevision: 1,
+          actionValue: "approve",
+          response: {
+            kind: "file_upload",
+            file: new File(["uploaded bytes"], "notes.txt", {
+              type: "text/plain"
+            })
+          }
+        })
+      );
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await assertMigrationOwnerCanSetAppRole(client);
+      await client.query("set role agent_outbox_app");
+      await client.query("begin");
+      for (const [key, value] of [
+        ["auth_surface", "cleanup"],
+        ["account_id", ids.accountId],
+        ["user_id", ids.userId]
+      ]) {
+        await client.query("select set_config($1, $2, true)", [
+          `agent_outbox.${key}`,
+          value
+        ]);
+      }
+      await seedDatabaseRows(client, ids);
+      // File uploads need a paid account and an action that asks for a file.
+      await client.query(
+        "update public.agent_outbox_accounts set tier = 'hosted_paid' where account_id = $1",
+        [ids.accountId]
+      );
+      await client.query(
+        `update public.agent_outbox_input_actions
+         set popup_kind = 'file_upload', popup_payload = $2::jsonb
+         where input_action_id = $1`,
+        [ids.actionId, JSON.stringify(fileUploadPayload)]
+      );
+      await client.query("commit");
+
+      const first = await answer();
+      assert.ok(first.ok, JSON.stringify(first));
+      assert.equal(first.responseKind, "file_upload");
+      const { file } = /** @type {{ file: Record<string, unknown> }} */ (
+        first.responsePayload
+      );
+      assert.equal(file.filename, "notes.txt");
+      assert.equal(file.size_bytes, 14);
+
+      // The response was lost and the client repeats the request.
+      const repeated = await answer();
+      assert.ok(repeated.ok, JSON.stringify(repeated));
+      assert.equal(repeated.outputResultId, first.outputResultId);
+      assert.equal(repeated.responseKind, "file_upload");
+      assert.deepEqual(repeated.responsePayload, first.responsePayload);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        () => cleanupHumanAnswerDatabaseTest(client, ids),
+        "Human answer file repeat database test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
   "review mutation requests answer, repeat, partly apply and undo against the database",
   { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
   async () => {
