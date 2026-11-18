@@ -179,10 +179,22 @@ async function sendHumanMutation(formData: FormData) {
     );
   }
   if (!result.ok) {
-    throw new HumanMutationError(result.message, result, serverError);
+    // Only this code says the mutation may have committed. Any other failure
+    // the server words itself is a refusal, whatever its status.
+    throw new HumanMutationError(
+      result.message,
+      result,
+      result.code === "temporary_unavailable"
+    );
   }
   if (!response.ok) {
-    throw new HumanMutationError("Action is temporarily unavailable.");
+    // The status and the result contradict each other, which this server
+    // never sends, so the outcome is not known.
+    throw new HumanMutationError(
+      "Action is temporarily unavailable.",
+      null,
+      true
+    );
   }
   return result;
 }
@@ -216,7 +228,11 @@ export function isHumanMutationResult(
   }
   if (!isHumanMutationState(result.state, inputItemIds)) return false;
   if (result.operation === "answer") {
-    return inputItemIds.length === 1 && isHumanUndoTarget(result.undo);
+    return (
+      inputItemIds.length === 1 &&
+      isHumanUndoTarget(result.undo) &&
+      result.undo.inputItemId === inputItemIds[0]
+    );
   }
   if (result.operation === "bulk-answer") {
     const answeredInputItemIds = result.answeredInputItemIds;

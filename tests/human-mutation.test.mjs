@@ -94,6 +94,18 @@ test("isHumanMutationResult requires operation-specific success and failure fiel
     callerId: "00000000-0000-4000-8000-000000000503",
     outputResultId: "00000000-0000-4000-8000-000000009999"
   };
+  // An answer's undo target is for the item that was answered.
+  assert.equal(
+    isHumanMutationResult({
+      ok: true,
+      operation: "answer",
+      message: "Done.",
+      inputItemIds: [itemId],
+      undo: { ...undoTarget, inputItemId: otherItemId },
+      state: stateFor([itemId])
+    }),
+    false
+  );
   const bulkAnswer = {
     ok: true,
     operation: "bulk-answer",
@@ -293,6 +305,29 @@ test("a successful response without a usable result is retried, not reported as 
   assert.equal(attempts, 2);
 });
 
+test("a result that reports success under a failure status is retried, not reported as a failure", async (t) => {
+  const undone = {
+    ok: true,
+    operation: "undo",
+    message: "Undone.",
+    inputItemIds: [itemId],
+    restoredInputItemIds: [itemId],
+    failed: 0,
+    state: stateFor([itemId])
+  };
+  let attempts = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    attempts += 1;
+    // The body says the undo was applied and the status says it was not.
+    return Response.json(undone, { status: attempts === 1 ? 409 : 200 });
+  });
+  assert.deepEqual(
+    await synchronizeHumanMutation("undo", new FormData()),
+    undone
+  );
+  assert.equal(attempts, 2);
+});
+
 test("a session refusal on a retry leaves the first attempt's outcome unconfirmed", async (t) => {
   let attempts = 0;
   t.mock.method(globalThis, "fetch", async () => {
@@ -454,6 +489,34 @@ test("a mutation id is a canonical UUID without crypto.randomUUID", async (t) =>
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
     );
   }
+});
+
+test("a refusal the server words is reported at once, whatever its status", async (t) => {
+  let attempts = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    attempts += 1;
+    // The route answers a configuration failure with 503; nothing committed.
+    return Response.json(
+      {
+        ok: false,
+        operation: "answer",
+        code: "database_configuration_missing",
+        message: "Human account database configuration is unavailable.",
+        inputItemIds: [itemId]
+      },
+      { status: 503 }
+    );
+  });
+  await assert.rejects(
+    synchronizeHumanMutation("answer", new FormData()),
+    (error) => {
+      assert.ok(error instanceof HumanMutationError);
+      assert.equal(error.unconfirmed, false);
+      assert.equal(error.result?.code, "database_configuration_missing");
+      return true;
+    }
+  );
+  assert.equal(attempts, 1);
 });
 
 test("a request the server refused is reported at once, not retried", async (t) => {
