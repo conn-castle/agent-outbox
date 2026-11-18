@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { certifiedReleaseAssets } from "../scripts/release/assets.mjs";
@@ -1477,4 +1478,83 @@ test("same-run rerun fails loudly when captured prior diverges from the marker",
     /differs from marker-recorded prior/
   );
   assert.equal(github.calls.updateRelease, 0);
+});
+
+const PRODUCTION_RELEASE_SCRIPT = fileURLToPath(
+  new URL("../scripts/production-release.mjs", import.meta.url)
+);
+const PRODUCTION_RELEASE_USAGE =
+  "Usage: node scripts/production-release.mjs <prepare|prepare-draft|upload-assets|capture-rollback|compare-triggers|upload-worker|deploy-staged|promote|publish|reconcile|detect-abandoned|verify-rollback-version>";
+
+/**
+ * @param {string[]} args
+ * @param {Record<string, string>} [env]
+ */
+function runProductionReleaseCli(args, env = {}) {
+  const result = spawnSync(
+    process.execPath,
+    [PRODUCTION_RELEASE_SCRIPT, ...args],
+    {
+      encoding: "utf8",
+      env: {
+        NODE_ENV: "test",
+        PATH: process.env.PATH ?? "",
+        HOME: process.env.HOME ?? "",
+        ...env
+      }
+    }
+  );
+  return {
+    status: result.status,
+    message: /^Error: (.*)$/m.exec(result.stderr)?.[1]
+  };
+}
+
+test("production release CLI rejects missing, unknown, and inherited command names with the usage line", () => {
+  for (const args of [
+    [],
+    ["bogus"],
+    ["__proto__"],
+    ["toString"],
+    ["constructor"]
+  ]) {
+    assert.deepEqual(
+      runProductionReleaseCli(args),
+      { status: 1, message: PRODUCTION_RELEASE_USAGE },
+      args.join(" ")
+    );
+  }
+});
+
+test("production release CLI sends each command through its workflow guard", () => {
+  const actions = {
+    GITHUB_ACTIONS: "true",
+    GITHUB_REF: "refs/heads/main",
+    GITHUB_WORKFLOW_REF: "o/r/.github/workflows/other.yml@refs/heads/main"
+  };
+  const expected = {
+    prepare: "deploy-production.yml",
+    "prepare-draft": "deploy-production.yml",
+    "upload-assets": "deploy-production.yml",
+    "compare-triggers": "deploy-production.yml",
+    "upload-worker": "deploy-production.yml",
+    "deploy-staged": "deploy-production.yml",
+    promote: "deploy-production.yml",
+    publish: "deploy-production.yml",
+    reconcile: "deploy-production.yml",
+    "detect-abandoned": "detect-abandoned-production-release.yml",
+    "verify-rollback-version": "rollback-production.yml"
+  };
+  for (const [command, workflow] of Object.entries(expected)) {
+    assert.deepEqual(
+      runProductionReleaseCli([command], actions),
+      { status: 1, message: `Production mutation must run from ${workflow}.` },
+      command
+    );
+  }
+  assert.deepEqual(runProductionReleaseCli(["capture-rollback"], actions), {
+    status: 1,
+    message:
+      "APP_BASE_URL and SMOKE_OR_CLEANUP_TOKEN are required to capture rollback state"
+  });
 });

@@ -44,7 +44,6 @@ const ACTIVE_ACTIONS_RUN_STATUSES = new Set([
 /**
  * @typedef {import("./model.mjs").GithubRelease} GithubRelease
  * @typedef {import("./marker.mjs").OwnershipMarker} OwnershipMarker
- * @typedef {import("./decide.mjs").SameTagClassification} SameTagClassification
  * @typedef {import("./gateway-github.mjs").GithubGateway} GithubGateway
  * @typedef {import("./gateway-cloudflare.mjs").CloudflareGateway} CloudflareGateway
  * @typedef {import("./gateway-cloudflare.mjs").WorkerDeploymentStatus} WorkerDeploymentStatus
@@ -52,9 +51,7 @@ const ACTIVE_ACTIONS_RUN_STATUSES = new Set([
  * @typedef {object} ReleaseOrchestrator
  * @property {GithubGateway} github
  * @property {CloudflareGateway} [cloudflare]
- * @property {(url: string, init?: RequestInit) => Promise<Response>} [fetchImpl]
  * @property {() => unknown | Promise<unknown>} [runtimeCanary]
- * @property {(relativePath: string, sha: string) => string} [readGitFile]
  * @property {(ms: number) => void | Promise<void>} sleep
  */
 
@@ -296,12 +293,7 @@ export async function deriveReleaseIdentities(orchestrator, input) {
 export async function persistOwnedDraftIdentities(orchestrator, input) {
   const { release, marker } = await requireOwnedPreparedDraft(
     orchestrator,
-    {
-      repository: input.repository,
-      runId: input.runId,
-      candidateSha: input.candidateSha,
-      releaseTag: input.releaseTag
-    },
+    input,
     input.releaseId,
     "identity persistence"
   );
@@ -377,14 +369,9 @@ async function provePriorRuntimeRestored(orchestrator, priorSha) {
  * }} identities
  */
 async function proveOwnedPreparedDraftForCleanup(orchestrator, identities) {
-  const { release } = await requireOwnedPreparedDraft(
+  await requireOwnedPreparedDraft(
     orchestrator,
-    {
-      repository: identities.repository,
-      runId: identities.runId,
-      candidateSha: identities.candidateSha,
-      releaseTag: identities.releaseTag
-    },
+    identities,
     identities.releaseId,
     "draft deletion"
   );
@@ -397,7 +384,6 @@ async function proveOwnedPreparedDraftForCleanup(orchestrator, identities) {
       "remote tag is present; refusing automatic draft deletion"
     );
   }
-  return release;
 }
 
 /**
@@ -645,14 +631,10 @@ export async function runAssetReconciliation(orchestrator, input) {
       asset.name,
       asset.path
     );
-    if (uploaded.error) {
-      throw uploaded.error;
-    }
-    if (uploaded.status !== 0) {
-      throw new Error(
-        commandFailureMessage(`asset upload failed for ${asset.name}`, uploaded)
-      );
-    }
+    assertGithubMutationResult(
+      uploaded,
+      `asset upload failed for ${asset.name}`
+    );
   }
 
   return proveCertifiedAssets(orchestrator, {
@@ -812,14 +794,12 @@ export async function runReleasePublication(orchestrator, input) {
           input.releaseId,
           { body }
         );
+        if (markerResult.error) {
+          throw markerResult.error;
+        }
       } catch (error) {
         throw new PublicationStateUnknownError(input.releaseTag, {
           cause: error
-        });
-      }
-      if (markerResult.error) {
-        throw new PublicationStateUnknownError(input.releaseTag, {
-          cause: markerResult.error
         });
       }
       if (markerResult.status !== 0) {
@@ -876,14 +856,12 @@ export async function runReleasePublication(orchestrator, input) {
           make_latest: "true"
         }
       );
+      if (result.error) {
+        throw result.error;
+      }
     } catch (error) {
       throw new PublicationStateUnknownError(input.releaseTag, {
         cause: error
-      });
-    }
-    if (result.error) {
-      throw new PublicationStateUnknownError(input.releaseTag, {
-        cause: result.error
       });
     }
     const stderr = result.stderr ?? "";
@@ -929,58 +907,39 @@ function requireCertifiedPublicationAssets(assets) {
  *   priorSha?: string | null,
  *   candidateVersionId?: string | null,
  *   liveSha?: string | null,
- *   deployment?: WorkerDeploymentStatus,
- *   githubReadable?: boolean,
- *   cloudflareReadable?: boolean,
  *   requireExactRun?: boolean,
  *   releaseId?: number,
  *   assets?: { name: string, path: string, bytes: Buffer }[]
  * }} input
  */
 export async function runReconciliation(orchestrator, input) {
-  let githubReadable = input.githubReadable;
-  /** @type {Awaited<ReturnType<typeof deriveReleaseIdentities>> | null} */
-  let derived = null;
-  try {
-    derived = await deriveReleaseIdentities(orchestrator, {
-      repository: input.repository,
-      releaseTag: input.releaseTag,
-      requireExactRun: input.requireExactRun,
-      runId: input.runId,
-      claimed: {
-        candidateSha: input.expectedSha,
-        runId: input.requireExactRun === false ? undefined : input.runId,
-        releaseId: input.releaseId,
-        priorSha: input.priorSha ?? undefined,
-        priorVersionId: input.priorVersionId ?? undefined,
-        candidateVersionId: input.candidateVersionId ?? undefined
-      }
-    });
-    githubReadable = true;
-  } catch (error) {
-    if (githubReadable === false) {
-      throw new PublicationStateUnknownError(input.releaseTag, {
-        cause: error
-      });
+  const derived = await deriveReleaseIdentities(orchestrator, {
+    repository: input.repository,
+    releaseTag: input.releaseTag,
+    requireExactRun: input.requireExactRun,
+    runId: input.runId,
+    claimed: {
+      candidateSha: input.expectedSha,
+      runId: input.requireExactRun === false ? undefined : input.runId,
+      releaseId: input.releaseId,
+      priorSha: input.priorSha ?? undefined,
+      priorVersionId: input.priorVersionId ?? undefined,
+      candidateVersionId: input.candidateVersionId ?? undefined
     }
-    throw error;
-  }
+  });
 
   const expectedSha = derived.candidateSha || input.expectedSha || "";
   const runId = derived.runId || input.runId || "";
-  /** @type {SameTagClassification} */
-  const classification =
-    derived.classification ??
-    /** @type {SameTagClassification} */ ({ kind: "absent" });
+  const classification = derived.classification;
 
   let traffic;
-  let cloudflareReadable = input.cloudflareReadable;
+  /** @type {boolean | undefined} */
+  let cloudflareReadable;
   /** @type {WorkerDeploymentStatus | undefined} */
-  let deployment = input.deployment;
-  if (orchestrator.cloudflare && cloudflareReadable !== false) {
+  let deployment;
+  if (orchestrator.cloudflare) {
     try {
-      deployment =
-        deployment ?? (await orchestrator.cloudflare.deploymentStatus());
+      deployment = await orchestrator.cloudflare.deploymentStatus();
       cloudflareReadable = true;
     } catch (error) {
       cloudflareReadable = false;
@@ -1049,7 +1008,6 @@ export async function runReconciliation(orchestrator, input) {
   }
 
   const decision = decideReconciliation({
-    githubReadable,
     cloudflareReadable,
     classification,
     traffic,

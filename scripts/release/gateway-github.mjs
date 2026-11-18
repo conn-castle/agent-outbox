@@ -87,27 +87,18 @@ export function assertSpawnStdoutBudget(error, maxBuffer) {
  *
  * @param {string} command
  * @param {string[]} args
- * @param {{
- *   cwd?: string,
- *   env?: NodeJS.ProcessEnv,
- *   input?: string,
- *   spawnSyncImpl?: typeof spawnSync
- * }} [options]
  * @returns {Buffer}
  */
-export function collectCommandStdoutBytes(command, args, options = {}) {
-  const spawnSyncImpl = options.spawnSyncImpl ?? spawnSync;
+export function collectCommandStdoutBytes(command, args) {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "agent-outbox-stdout-"));
   const filePath = path.join(tempDir, "stdout.bin");
   const fd = openSync(filePath, "w");
   let closed = false;
   try {
-    const result = spawnSyncImpl(command, args, {
-      cwd: options.cwd ?? ROOT,
-      env: options.env ?? process.env,
+    const result = spawnSync(command, args, {
+      cwd: ROOT,
       stdio: ["ignore", fd, "pipe"],
-      encoding: "utf8",
-      input: options.input
+      encoding: "utf8"
     });
     closeSync(fd);
     closed = true;
@@ -130,16 +121,32 @@ export function collectCommandStdoutBytes(command, args, options = {}) {
 
 /**
  * @param {string[]} args
- * @param {{ input?: string, encoding?: BufferEncoding | null, env?: NodeJS.ProcessEnv }} [options]
+ * @param {string} [input]
  */
-function runGh(args, options = {}) {
-  const spawnOptions = githubCommandSpawnOptions(options);
-  const result = spawnSync("gh", args, spawnOptions);
-  assertSpawnStdoutBudget(
-    result.error,
-    spawnOptions.maxBuffer ?? GH_SPAWN_MAX_BUFFER_BYTES
-  );
+function runGh(args, input) {
+  const result = spawnSync("gh", args, githubCommandSpawnOptions({ input }));
+  assertSpawnStdoutBudget(result.error, GH_SPAWN_MAX_BUFFER_BYTES);
   return result;
+}
+
+/**
+ * @param {"POST" | "PATCH" | "DELETE"} method
+ * @param {string} apiPath
+ * @param {string} [input]
+ */
+function ghApiMutation(method, apiPath, input) {
+  return runGh(
+    [
+      "api",
+      "--method",
+      method,
+      "-H",
+      "Accept: application/vnd.github+json",
+      apiPath,
+      ...(input === undefined ? [] : ["--input", "-"])
+    ],
+    input
+  );
 }
 
 /**
@@ -229,61 +236,6 @@ function getGithubRelease(repository, releaseId) {
 }
 
 /**
- * @param {{
- *   repository: string,
- *   tag: string,
- *   sha: string,
- *   body: string,
- *   name?: string
- * }} input
- */
-function createGithubDraft(input) {
-  return runGh(
-    [
-      "api",
-      "--method",
-      "POST",
-      "-H",
-      "Accept: application/vnd.github+json",
-      `repos/${input.repository}/releases`,
-      "--input",
-      "-"
-    ],
-    {
-      input: JSON.stringify({
-        tag_name: input.tag,
-        target_commitish: input.sha,
-        name: input.name ?? input.tag,
-        body: input.body,
-        draft: true,
-        generate_release_notes: true
-      })
-    }
-  );
-}
-
-/**
- * @param {string} repository
- * @param {number} releaseId
- * @param {Record<string, unknown>} patch
- */
-function updateGithubRelease(repository, releaseId, patch) {
-  return runGh(
-    [
-      "api",
-      "--method",
-      "PATCH",
-      "-H",
-      "Accept: application/vnd.github+json",
-      `repos/${repository}/releases/${releaseId}`,
-      "--input",
-      "-"
-    ],
-    { input: JSON.stringify(patch) }
-  );
-}
-
-/**
  * @param {string} repository
  * @param {number} releaseId
  * @param {string} name
@@ -327,18 +279,6 @@ function downloadGithubAsset(repository, assetId) {
   }
 }
 
-/** @param {string} repository @param {number} releaseId */
-function deleteGithubRelease(repository, releaseId) {
-  return runGh([
-    "api",
-    "--method",
-    "DELETE",
-    "-H",
-    "Accept: application/vnd.github+json",
-    `repos/${repository}/releases/${releaseId}`
-  ]);
-}
-
 /**
  * @param {import("node:child_process").SpawnSyncReturns<string | Buffer>} result
  * @returns {GhMutationResult}
@@ -362,6 +302,15 @@ function parseGhReleaseResult(result) {
   } catch {
     return normalized;
   }
+}
+
+/** @param {import("node:child_process").SpawnSyncReturns<string | Buffer>} result */
+function statusResult(result) {
+  return {
+    status: result.status,
+    stderr: String(result.stderr ?? ""),
+    error: result.error
+  };
 }
 
 /**
@@ -394,26 +343,36 @@ export const defaultGithubGateway = {
   listReleases: listGithubReleases,
   getRelease: getGithubRelease,
   remoteTagCommit,
-  createDraft: async (input) => parseGhReleaseResult(createGithubDraft(input)),
+  createDraft: async (input) =>
+    parseGhReleaseResult(
+      ghApiMutation(
+        "POST",
+        `repos/${input.repository}/releases`,
+        JSON.stringify({
+          tag_name: input.tag,
+          target_commitish: input.sha,
+          name: input.name ?? input.tag,
+          body: input.body,
+          draft: true,
+          generate_release_notes: true
+        })
+      )
+    ),
   updateRelease: async (repository, releaseId, patch) =>
-    parseGhReleaseResult(updateGithubRelease(repository, releaseId, patch)),
-  uploadAsset: async (repository, releaseId, name, filePath) => {
-    const result = uploadGithubAsset(repository, releaseId, name, filePath);
-    return {
-      status: result.status,
-      stderr: String(result.stderr ?? ""),
-      error: result.error
-    };
-  },
+    parseGhReleaseResult(
+      ghApiMutation(
+        "PATCH",
+        `repos/${repository}/releases/${releaseId}`,
+        JSON.stringify(patch)
+      )
+    ),
+  uploadAsset: async (repository, releaseId, name, filePath) =>
+    statusResult(uploadGithubAsset(repository, releaseId, name, filePath)),
   downloadAsset: downloadGithubAsset,
-  deleteRelease: async (repository, releaseId) => {
-    const result = deleteGithubRelease(repository, releaseId);
-    return {
-      status: result.status,
-      stderr: String(result.stderr ?? ""),
-      error: result.error
-    };
-  },
+  deleteRelease: async (repository, releaseId) =>
+    statusResult(
+      ghApiMutation("DELETE", `repos/${repository}/releases/${releaseId}`)
+    ),
   getActionsRun: (repository, runId) => {
     const payload = ghApiJsonOrNull(
       `repos/${repository}/actions/runs/${runId}`

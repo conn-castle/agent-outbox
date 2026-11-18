@@ -200,21 +200,32 @@ async function defaultRuntimeCanary() {
   return response.json();
 }
 
+/** Build the release gateways and runtime proof reader from the process environment. */
 function defaultOrchestrator() {
   return {
     github: defaultGithubGateway,
     cloudflare: createCloudflareGateway(process.env),
     runtimeCanary: defaultRuntimeCanary,
-    readGitFile,
     sleep: delay
   };
 }
 
-function mutationInputFromEnv(env = process.env) {
-  const context = resolveReleaseContext(env, {
+/**
+ * Resolve the exact owning deploy run, requiring an existing release ID when requested.
+ *
+ * @param {boolean} [requireReleaseId]
+ */
+function deployReleaseContext(requireReleaseId = false) {
+  return resolveReleaseContext(process.env, {
     workflow: "deploy-production.yml",
-    requireExactRun: true
+    requireExactRun: true,
+    requireReleaseId
   });
+}
+
+/** Derive draft mutation identity from the validated owning deploy run. */
+function mutationInputFromEnv() {
+  const context = deployReleaseContext();
   return {
     repository: context.repository,
     releaseTag: context.releaseTag,
@@ -223,13 +234,14 @@ function mutationInputFromEnv(env = process.env) {
   };
 }
 
-/** @param {() => unknown | Promise<unknown>} work */
+/**
+ * Reconcile on interruption while work runs, then remove the signal handlers.
+ *
+ * @param {() => unknown | Promise<unknown>} work
+ */
 async function withDeployCompensation(work) {
   const stop = installCompensationHandlers(async () => {
-    const context = resolveReleaseContext(process.env, {
-      workflow: "deploy-production.yml",
-      requireExactRun: true
-    });
+    const context = deployReleaseContext();
     await runReconciliation(defaultOrchestrator(), {
       repository: context.repository,
       releaseTag: context.releaseTag,
@@ -282,13 +294,10 @@ async function prepareReleaseDraft() {
   });
 }
 
+/** Reconcile certified asset bytes against this deploy run's owned draft by release ID. */
 async function uploadReleaseAssets() {
   await withDeployCompensation(async () => {
-    const context = resolveReleaseContext(process.env, {
-      workflow: "deploy-production.yml",
-      requireExactRun: true,
-      requireReleaseId: true
-    });
+    const context = deployReleaseContext(true);
     await runAssetReconciliation(defaultOrchestrator(), {
       repository: context.repository,
       releaseId: /** @type {number} */ (context.releaseId),
@@ -299,6 +308,7 @@ async function uploadReleaseAssets() {
   });
 }
 
+/** Prove the live rollback target, persist it in the owned draft, and emit workflow outputs. */
 async function captureRollbackTarget() {
   await withDeployCompensation(async () => {
     const baseUrl = process.env.APP_BASE_URL;
@@ -308,11 +318,7 @@ async function captureRollbackTarget() {
         "APP_BASE_URL and SMOKE_OR_CLEANUP_TOKEN are required to capture rollback state"
       );
     }
-    const context = resolveReleaseContext(process.env, {
-      workflow: "deploy-production.yml",
-      requireExactRun: true,
-      requireReleaseId: true
-    });
+    const context = deployReleaseContext(true);
     const orchestrator = defaultOrchestrator();
     const status = await orchestrator.cloudflare.deploymentStatus();
     const target = selectRollbackTarget(
@@ -359,13 +365,10 @@ function compareWorkerTriggers() {
   assertWorkerTriggersUnchanged(liveConfig, candidateConfig);
 }
 
+/** Upload an inactive Worker version and persist its ID in the owned draft and outputs. */
 async function uploadWorkerVersion() {
   await withDeployCompensation(async () => {
-    const context = resolveReleaseContext(process.env, {
-      workflow: "deploy-production.yml",
-      requireExactRun: true,
-      requireReleaseId: true
-    });
+    const context = deployReleaseContext(true);
     const result = runWorkerVersionUpload({ env: process.env });
     await persistOwnedDraftIdentities(defaultOrchestrator(), {
       repository: context.repository,
@@ -450,13 +453,10 @@ function verifyLiveCandidateForPublication() {
   }
 }
 
+/** Publish the owned release with certified assets and report publication or failure state. */
 async function publishRelease() {
   await withDeployCompensation(async () => {
-    const context = resolveReleaseContext(process.env, {
-      workflow: "deploy-production.yml",
-      requireExactRun: true,
-      requireReleaseId: true
-    });
+    const context = deployReleaseContext(true);
     try {
       await runDeployPublication(
         defaultOrchestrator(),
@@ -567,49 +567,30 @@ function verifyRollbackVersion() {
   );
 }
 
+const COMMANDS = {
+  prepare: prepareRelease,
+  "prepare-draft": prepareReleaseDraft,
+  "upload-assets": uploadReleaseAssets,
+  "capture-rollback": captureRollbackTarget,
+  "compare-triggers": compareWorkerTriggers,
+  "upload-worker": uploadWorkerVersion,
+  "deploy-staged": deployStagedWorker,
+  promote: promoteWorker,
+  publish: publishRelease,
+  reconcile: reconcileRelease,
+  "detect-abandoned": detectAbandoned,
+  "verify-rollback-version": verifyRollbackVersion
+};
+
+/** Dispatch an own command-table entry or fail with the supported command usage. */
 async function main() {
-  switch (process.argv[2]) {
-    case "prepare":
-      prepareRelease();
-      break;
-    case "prepare-draft":
-      await prepareReleaseDraft();
-      break;
-    case "upload-assets":
-      await uploadReleaseAssets();
-      break;
-    case "capture-rollback":
-      await captureRollbackTarget();
-      break;
-    case "compare-triggers":
-      compareWorkerTriggers();
-      break;
-    case "upload-worker":
-      await uploadWorkerVersion();
-      break;
-    case "deploy-staged":
-      await deployStagedWorker();
-      break;
-    case "promote":
-      await promoteWorker();
-      break;
-    case "publish":
-      await publishRelease();
-      break;
-    case "reconcile":
-      await reconcileRelease();
-      break;
-    case "detect-abandoned":
-      await detectAbandoned();
-      break;
-    case "verify-rollback-version":
-      verifyRollbackVersion();
-      break;
-    default:
-      throw new Error(
-        "Usage: node scripts/production-release.mjs <prepare|prepare-draft|upload-assets|capture-rollback|compare-triggers|upload-worker|deploy-staged|promote|publish|reconcile|detect-abandoned|verify-rollback-version>"
-      );
+  const command = process.argv[2] ?? "";
+  if (!Object.hasOwn(COMMANDS, command)) {
+    throw new Error(
+      `Usage: node scripts/production-release.mjs <${Object.keys(COMMANDS).join("|")}>`
+    );
   }
+  await COMMANDS[/** @type {keyof typeof COMMANDS} */ (command)]();
 }
 
 if (
