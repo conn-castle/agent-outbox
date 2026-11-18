@@ -204,8 +204,10 @@ export function reviewDetailSuperseded(
     state.row === null ||
     state.row.status !== detail.status ||
     state.row.currentRevision !== detail.currentRevision ||
-    // A caller read changes the output, and whether it can still be undone,
-    // without changing the item's revision.
+    // Neither answering nor undoing changes the item's revision, so an answer
+    // undone and given again is told apart by its output. A caller read
+    // changes that output, and whether it can still be undone.
+    state.row.output?.outputResultId !== detail.output?.outputResultId ||
     state.row.output?.firstReadAt !== detail.output?.firstReadAt ||
     state.row.output?.readCount !== detail.output?.readCount
   );
@@ -222,6 +224,6 @@ function reviewRowMatchesView(row: HumanReviewListRow, view: HumanReviewView) {
   return (
     row.status === view.status &&
     humanReviewMatchesFacets(row, view) &&
-    humanReviewMatchesSearch(row, view.search.trim())
+    humanReviewMatchesSearch(row, view.search)
   );
 }
