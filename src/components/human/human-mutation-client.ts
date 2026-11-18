@@ -179,12 +179,12 @@ async function sendHumanMutation(formData: FormData) {
     );
   }
   if (!result.ok) {
-    // Only this code says the mutation may have committed. Any other failure
-    // the server words itself is a refusal, whatever its status.
+    // Only a server error with this code says the mutation may have
+    // committed. Any other failure the server words itself is a refusal.
     throw new HumanMutationError(
       result.message,
       result,
-      result.code === "temporary_unavailable"
+      serverError && result.code === "temporary_unavailable"
     );
   }
   if (!response.ok) {

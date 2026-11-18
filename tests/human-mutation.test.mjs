@@ -491,7 +491,7 @@ test("a mutation id is a canonical UUID without crypto.randomUUID", async (t) =>
   }
 });
 
-test("a refusal the server words is reported at once, whatever its status", async (t) => {
+test("a server error the server words as a refusal is reported at once", async (t) => {
   let attempts = 0;
   t.mock.method(globalThis, "fetch", async () => {
     attempts += 1;
