@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   offeredUndoEntry,
+  removeUndoEntry,
+  removeUndoTargets,
   settleUndoEntry
 } from "../src/components/human/undo-stack.ts";
 
@@ -103,6 +105,40 @@ test("a partial undo keeps offering the answers the server still holds unread", 
   );
   // Offered again, so one more press finishes the undo.
   assert.equal(offeredUndoEntry(settled)?.id, "bulk");
+});
+
+test("an answer undone from History leaves the stack, and only that answer", () => {
+  const stack = [
+    { ...undoingEntry("single", "A"), undoing: false },
+    { ...undoingEntry("bulk", "B", "C"), undoing: false }
+  ];
+  // History names the item and the output it undoes.
+  const narrowed = removeUndoTargets(stack, ["item-B"], "output-B");
+  assert.deepEqual(
+    narrowed.map((entry) => [entry.id, entry.inputItemIds]),
+    [
+      ["single", ["item-A"]],
+      ["bulk", ["item-C"]]
+    ]
+  );
+  assert.deepEqual(narrowed[1].targets, [target("C")]);
+  assert.deepEqual(
+    narrowed[1].rowSnapshots.map((row) => row.inputItemId),
+    ["item-C"]
+  );
+  // An output that is not the one on the stack is a later answer of the item:
+  // the stack's own answer was not the one undone.
+  assert.deepEqual(removeUndoTargets(stack, ["item-B"], "output-later"), stack);
+  // Without an output id, every answer of the item goes, and an entry left
+  // empty goes with it.
+  assert.deepEqual(
+    removeUndoTargets(stack, ["item-A"], null).map((entry) => entry.id),
+    ["bulk"]
+  );
+  assert.deepEqual(
+    removeUndoEntry(stack, "single").map((entry) => entry.id),
+    ["bulk"]
+  );
 });
 
 test("answers that can no longer be undone leave the stack", () => {

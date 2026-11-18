@@ -317,6 +317,28 @@ test("an open detail is superseded by a mutation in flight or a newer state", ()
   );
 });
 
+test("states the page already reflects are trimmed beyond the retained limit, newer ones never", () => {
+  /** @param {number} from @param {number} to @param {string} asOf */
+  const reported = (from, to, asOf) => ({
+    asOf,
+    items: Array.from({ length: to - from }, (_, index) => ({
+      inputItemId: `item-${from + index}`,
+      row: null
+    }))
+  });
+  // 600 states newer than the page are all still needed to correct it.
+  const newer = recordItemStates(new Map(), reported(0, 600, "150"), "100");
+  assert.equal(newer.size, 600);
+  // Once a page reflects them, the next response trims the ones reported
+  // longest ago down to the limit and keeps its own.
+  const trimmed = recordItemStates(newer, reported(600, 601, "250"), "200");
+  assert.equal(trimmed.size, 500);
+  assert.equal(trimmed.has("item-0"), false);
+  assert.equal(trimmed.has("item-100"), false);
+  assert.equal(trimmed.has("item-101"), true);
+  assert.deepEqual(trimmed.get("item-600"), { row: null, asOf: "250" });
+});
+
 test("only answered or missing items leave the selection", () => {
   assert.deepEqual(
     itemIdsNotPending({
