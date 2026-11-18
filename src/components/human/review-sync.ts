@@ -204,10 +204,9 @@ export function reviewDetailSuperseded(
     state.row === null ||
     state.row.status !== detail.status ||
     state.row.currentRevision !== detail.currentRevision ||
-    // Neither answering nor undoing changes the item's revision, so an answer
-    // undone and given again is told apart by its output. A caller read
-    // changes that output, and whether it can still be undone.
-    state.row.output?.outputResultId !== detail.output?.outputResultId ||
+    // A caller read changes the output, and whether it can still be undone,
+    // without changing the item's revision. An undo raises the revision, so
+    // an answer undone and given again is already told apart.
     state.row.output?.firstReadAt !== detail.output?.firstReadAt ||
     state.row.output?.readCount !== detail.output?.readCount
   );
