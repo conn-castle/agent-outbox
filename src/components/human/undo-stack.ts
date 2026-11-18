@@ -2,7 +2,7 @@ import type {
   HumanMutationState,
   HumanUndoTarget
 } from "../../shared/human-mutation.ts";
-import type { HumanReviewListRow } from "../../server/human-review";
+import type { HumanReviewListRow } from "../../server/human-review.ts";
 
 // One answer action (single or bulk) that the Undo control can reverse. The
 // stack is ordered by when the person acted, oldest first.

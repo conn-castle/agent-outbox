@@ -208,6 +208,11 @@ type ReplayedAnswerRow = {
   response_payload_bytes: string | number;
   answered_at: Date | string;
   expires_at: Date | string;
+  output_file_id: string | null;
+  filename: string | null;
+  mime_type: string | null;
+  size_bytes: string | number | null;
+  sha256: string | null;
 };
 
 type PreReadUndoCandidateRow = {
@@ -294,7 +299,20 @@ export async function createHumanAnswerInTransaction(
         callerItemId: targetInput.caller_item_id,
         actionValue: original.action_value,
         responseKind: original.response_kind,
-        responsePayload: original.response_payload,
+        // An uploaded file is stored in its own row, not in the payload.
+        responsePayload:
+          original.output_file_id === null
+            ? original.response_payload
+            : {
+                kind: "file_upload",
+                file: {
+                  file_id: original.output_file_id,
+                  filename: original.filename,
+                  mime_type: original.mime_type,
+                  size_bytes: byteCount(original.size_bytes ?? 0),
+                  sha256: original.sha256
+                }
+              },
         responsePayloadBytes: byteCount(original.response_payload_bytes),
         answeredAt: timestampValue(new Date(original.answered_at)),
         expiresAt: timestampValue(new Date(original.expires_at))
@@ -684,13 +702,20 @@ export function answeredByCorrelationStatement(
         o.response_payload,
         o.response_payload_bytes,
         o.answered_at,
-        o.expires_at
+        o.expires_at,
+        file.output_file_id::text as output_file_id,
+        file.filename,
+        file.mime_type,
+        file.size_bytes,
+        file.sha256
       from public.agent_outbox_output_results o
       join public.agent_outbox_audit_events event
         on event.caller_audit_id = $4::uuid
        and event.output_result_id = o.output_result_id
        and event.event_type = 'input_answered'
        and event.correlation_id = $5
+      left join public.agent_outbox_output_files file
+        on file.output_result_id = o.output_result_id
       where o.account_id = $1
         and o.caller_id = $2
         and o.input_item_id = $3

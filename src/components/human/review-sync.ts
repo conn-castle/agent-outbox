@@ -65,7 +65,8 @@ export function recordItemStates(
   for (const { inputItemId, row } of state.items) {
     const known = next.get(inputItemId);
     if (known && compareAsOf(known.asOf, state.asOf) > 0) continue;
-    // Re-insert so the map stays ordered from oldest to newest.
+    // Re-insert so the map runs from the least to the most recently reported
+    // item, and the states trimmed first are the ones reported longest ago.
     next.delete(inputItemId);
     next.set(inputItemId, { row, asOf: state.asOf });
   }
