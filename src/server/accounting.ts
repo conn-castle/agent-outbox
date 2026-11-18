@@ -1,3 +1,4 @@
+import type { PopupKind } from "../shared/input-schema-rules.ts";
 import type { TransactionContextStatement } from "./database.ts";
 import {
   getLimitDefinition,
@@ -35,14 +36,7 @@ export type AuditSafeLifecycleInput = {
   outputResultId?: string | null;
   outputFileId?: string | null;
   itemStatus?: "pending" | "answered" | null;
-  responseKind?:
-    | "none"
-    | "free_text"
-    | "single_select"
-    | "multi_select"
-    | "date_picker"
-    | "file_upload"
-    | null;
+  responseKind?: PopupKind | null;
   nonFileBytes?: number | null;
   fileBytes?: number | null;
   quotaMetric?: string | null;
@@ -52,26 +46,6 @@ export type AuditSafeLifecycleInput = {
   correlationId?: string | null;
   callerItemIdHash?: string | null;
   metadata?: Record<string, string | number | boolean | null>;
-};
-
-export type AuditSafeLifecycleEvent = {
-  event_type: AuditEventType;
-  account_audit_id: string;
-  caller_audit_id?: string;
-  input_item_id?: string;
-  output_result_id?: string;
-  output_file_id?: string;
-  item_status?: "pending" | "answered";
-  response_kind?: NonNullable<AuditSafeLifecycleInput["responseKind"]>;
-  non_file_bytes?: number;
-  file_bytes?: number;
-  quota_metric?: string;
-  limit_name?: LimitName;
-  deletion_reason?: string;
-  request_id?: string;
-  correlation_id?: string;
-  caller_item_id_hash?: string;
-  metadata: Record<string, string | number | boolean | null>;
 };
 
 export type ActiveLimitBlockInput = {
@@ -115,72 +89,26 @@ function validByteCount(value: number, name: string) {
   return value;
 }
 
-export function auditSafeLifecycleEvent(
-  input: AuditSafeLifecycleInput
-): AuditSafeLifecycleEvent {
-  const event: AuditSafeLifecycleEvent = {
-    event_type: input.eventType,
-    account_audit_id: input.accountAuditId,
-    metadata: auditSafeMetadata(input.metadata)
-  };
-
-  if (input.callerAuditId != null) {
-    event.caller_audit_id = input.callerAuditId;
-  }
-  if (input.inputItemId != null) {
-    event.input_item_id = input.inputItemId;
-  }
-  if (input.outputResultId != null) {
-    event.output_result_id = input.outputResultId;
-  }
-  if (input.outputFileId != null) {
-    event.output_file_id = input.outputFileId;
-  }
-  if (input.itemStatus != null) {
-    event.item_status = input.itemStatus;
-  }
-  if (input.responseKind != null) {
-    event.response_kind = input.responseKind;
-  }
-  if (input.nonFileBytes != null) {
-    event.non_file_bytes = validByteCount(input.nonFileBytes, "nonFileBytes");
-  }
-  if (input.fileBytes != null) {
-    event.file_bytes = validByteCount(input.fileBytes, "fileBytes");
-  }
-  if (input.quotaMetric != null) {
-    event.quota_metric = input.quotaMetric;
-  }
-  if (input.limitName != null) {
-    event.limit_name = input.limitName;
-  }
-  if (input.deletionReason != null) {
-    event.deletion_reason = input.deletionReason;
-  }
-  if (input.requestId != null) {
-    event.request_id = input.requestId;
-  }
-  if (input.correlationId != null) {
-    event.correlation_id = input.correlationId;
-  }
-  if (input.callerItemIdHash != null) {
-    event.caller_item_id_hash = input.callerItemIdHash;
-  }
-
-  return event;
-}
-
 /**
  * Builds, but does not execute, a lifecycle audit INSERT.
- * Runs auditSafeLifecycleEvent first, so invalid byte counts throw before a
- * statement is returned and metadata is filtered to the audit allowlist.
- * Binds absent optional fields as SQL NULL and serializes filtered metadata
- * as JSON; callers control transaction execution and audit-statement ordering.
+ * Invalid byte counts throw before a statement is returned, and metadata is
+ * filtered to the audit allowlist. Only the listed audit columns are bound, so
+ * extra input properties never reach the row. Binds absent optional fields as
+ * SQL NULL and serializes filtered metadata as JSON; callers control
+ * transaction execution and audit-statement ordering.
  */
 export function auditEventInsertStatement(
   input: AuditSafeLifecycleInput
 ): TransactionContextStatement {
-  const event = auditSafeLifecycleEvent(input);
+  const metadata = auditSafeMetadata(input.metadata);
+  const nonFileBytes =
+    input.nonFileBytes == null
+      ? null
+      : validByteCount(input.nonFileBytes, "nonFileBytes");
+  const fileBytes =
+    input.fileBytes == null
+      ? null
+      : validByteCount(input.fileBytes, "fileBytes");
 
   return {
     sql: `
@@ -209,23 +137,23 @@ export function auditEventInsertStatement(
       )
     `,
     values: [
-      event.event_type,
-      event.account_audit_id,
-      event.caller_audit_id ?? null,
-      event.input_item_id ?? null,
-      event.output_result_id ?? null,
-      event.output_file_id ?? null,
-      event.item_status ?? null,
-      event.response_kind ?? null,
-      event.non_file_bytes ?? null,
-      event.file_bytes ?? null,
-      event.quota_metric ?? null,
-      event.limit_name ?? null,
-      event.deletion_reason ?? null,
-      event.request_id ?? null,
-      event.correlation_id ?? null,
-      event.caller_item_id_hash ?? null,
-      JSON.stringify(event.metadata)
+      input.eventType,
+      input.accountAuditId,
+      input.callerAuditId ?? null,
+      input.inputItemId ?? null,
+      input.outputResultId ?? null,
+      input.outputFileId ?? null,
+      input.itemStatus ?? null,
+      input.responseKind ?? null,
+      nonFileBytes,
+      fileBytes,
+      input.quotaMetric ?? null,
+      input.limitName ?? null,
+      input.deletionReason ?? null,
+      input.requestId ?? null,
+      input.correlationId ?? null,
+      input.callerItemIdHash ?? null,
+      JSON.stringify(metadata)
     ]
   };
 }
