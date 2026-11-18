@@ -428,45 +428,17 @@ export async function approveConnectBrowserSetupRequest(
     );
   }
 
-  const limit = await enforceAccountOperationLimits(
+  const setupCode = generateSetupCode();
+  const callerResult = await approveWithNewConnectCaller(
     query,
-    { accountId: input.accountId },
-    "caller_connect_approval",
-    "Caller connect approval is temporarily unavailable."
-  );
-  if (!limit.ok) {
-    return limit;
-  }
-
-  const availableCallerSlug = await ensureConnectCallerSlugAvailable(
-    query,
-    input.accountId,
-    target
-  );
-  if (!availableCallerSlug.ok) {
-    return availableCallerSlug;
-  }
-
-  const callerResult = await createConnectCaller(
-    query,
-    input.accountId,
-    target
+    input,
+    target,
+    setupCode
   );
   if (!callerResult.ok) {
     return callerResult;
   }
   const caller = callerResult.data;
-
-  const setupCode = generateSetupCode();
-  await query(
-    approveSetupRequestStatement({
-      setupRequestId: target.setup_request_id,
-      accountId: input.accountId,
-      callerId: caller.caller_id,
-      userId: input.userId,
-      setupCodeHash: setupCodeDigest(setupCode)
-    })
-  );
 
   return {
     ok: true,
@@ -531,44 +503,16 @@ export async function approveConnectDeviceSetupRequest(
     return available;
   }
 
-  const limit = await enforceAccountOperationLimits(
+  const callerResult = await approveWithNewConnectCaller(
     query,
-    { accountId: input.accountId },
-    "caller_connect_approval",
-    "Caller connect approval is temporarily unavailable."
-  );
-  if (!limit.ok) {
-    return limit;
-  }
-
-  const availableCallerSlug = await ensureConnectCallerSlugAvailable(
-    query,
-    input.accountId,
-    target
-  );
-  if (!availableCallerSlug.ok) {
-    return availableCallerSlug;
-  }
-
-  const callerResult = await createConnectCaller(
-    query,
-    input.accountId,
-    target
+    input,
+    target,
+    null
   );
   if (!callerResult.ok) {
     return callerResult;
   }
   const caller = callerResult.data;
-
-  await query(
-    approveSetupRequestStatement({
-      setupRequestId: target.setup_request_id,
-      accountId: input.accountId,
-      callerId: caller.caller_id,
-      userId: input.userId,
-      setupCodeHash: null
-    })
-  );
 
   return {
     ok: true,
@@ -700,9 +644,7 @@ export async function exchangeApprovedConnectSetupRequest(
   options: { requestId: string; now?: Date }
 ): Promise<ConnectResult<ConnectCredentialResponseData>> {
   const targetResult = await query<SetupExchangeTargetRow>(
-    input.flow === "browser"
-      ? browserExchangeTargetStatement(input.codeHash)
-      : deviceExchangeTargetStatement(input.codeHash)
+    exchangeTargetStatement(input.flow, input.codeHash)
   );
   const target = targetResult.rows[0];
   if (!target) {
@@ -865,46 +807,67 @@ async function abortConnectPendingCredential(
   };
 }
 
-async function ensureConnectCallerSlugAvailable(
+/**
+ * Applies the account's connect approval limit, rejects a caller name already
+ * used in the account, creates the caller, and approves the locked setup row
+ * for it, storing the digest of setupCode (null for device approval). The digest
+ * is computed last, so its hash-secret check cannot preempt an earlier failure.
+ */
+async function approveWithNewConnectCaller(
   query: ProductTransactionQuery,
-  accountId: string,
-  target: SetupApprovalTargetRow
-): Promise<ConnectResult<null>> {
-  const result = await query<ExistingCallerSlugRow>(
+  input: { accountId: string; userId: string },
+  target: SetupApprovalTargetRow,
+  setupCode: string | null
+): Promise<ConnectResult<CallerRow>> {
+  const limit = await enforceAccountOperationLimits(
+    query,
+    { accountId: input.accountId },
+    "caller_connect_approval",
+    "Caller connect approval is temporarily unavailable."
+  );
+  if (!limit.ok) {
+    return limit;
+  }
+
+  const existing = await query<ExistingCallerSlugRow>(
     existingConnectCallerSlugStatement({
-      accountId,
+      accountId: input.accountId,
       localCallerName: target.local_caller_name
     })
   );
-  if (result.rows[0]) {
+  if (existing.rows[0]) {
     return callerAlreadyExistsError();
   }
 
-  return { ok: true, data: null };
-}
-
-async function createConnectCaller(
-  query: ProductTransactionQuery,
-  accountId: string,
-  target: SetupApprovalTargetRow
-): Promise<ConnectResult<CallerRow>> {
+  let caller: CallerRow;
   try {
     const result = await withSavepoint(query, "caller_connect_caller", () =>
       query<CallerRow>(
         insertConnectCallerStatement({
-          accountId,
+          accountId: input.accountId,
           localCallerName: target.local_caller_name,
           displayName: target.display_name
         })
       )
     );
-    return { ok: true, data: result.rows[0] };
+    caller = result.rows[0];
   } catch (error) {
     if (isUniqueViolation(error)) {
       return callerAlreadyExistsError();
     }
     throw error;
   }
+
+  await query(
+    approveSetupRequestStatement({
+      setupRequestId: target.setup_request_id,
+      accountId: input.accountId,
+      callerId: caller.caller_id,
+      userId: input.userId,
+      setupCodeHash: setupCode === null ? null : setupCodeDigest(setupCode)
+    })
+  );
+  return { ok: true, data: caller };
 }
 
 function existingConnectCallerSlugStatement(input: {
@@ -983,20 +946,24 @@ function deviceApprovalTargetStatement(
 }
 
 /**
- * Selects one of two fixed SQL texts by flow: browser uses setup_code_hash
- * and the flow literal 'browser'; device uses device_code_hash and 'device'.
- * These identifiers and flow literals are source literals, not request text.
- * The only bound value is the code digest ($1). Both statements restrict
- * operation to 'connect' and flow to the selected fixed literal.
- * The statement does not lock (no FOR UPDATE).
+ * Code-digest column and flow literal for each connect flow. These are fixed
+ * source literals interpolated into SQL, never request text.
+ */
+const CONNECT_CODE_MATCH = {
+  browser: { codeColumn: "setup_code_hash", flowLiteral: "'browser'" },
+  device: { codeColumn: "device_code_hash", flowLiteral: "'device'" }
+} as const;
+
+/**
+ * Selects the connect setup row for a flow's code digest (CONNECT_CODE_MATCH).
+ * The only bound value is the code digest ($1). The statement does not lock
+ * (no FOR UPDATE).
  */
 function setupExchangeContextByCodeHashStatement(
   flow: "browser" | "device",
   codeHash: string
 ): TransactionContextStatement {
-  const codeColumn =
-    flow === "browser" ? "setup_code_hash" : "device_code_hash";
-  const flowLiteral = flow === "browser" ? "'browser'" : "'device'";
+  const { codeColumn, flowLiteral } = CONNECT_CODE_MATCH[flow];
   return {
     sql: `
       select
@@ -1016,9 +983,15 @@ function setupExchangeContextByCodeHashStatement(
   };
 }
 
-function browserExchangeTargetStatement(
-  setupCodeHash: string
+/**
+ * Locks the connect setup row for a flow's code digest (CONNECT_CODE_MATCH),
+ * joined to its caller and account. The digest ($1) is the only bound value.
+ */
+function exchangeTargetStatement(
+  flow: "browser" | "device",
+  codeHash: string
 ): TransactionContextStatement {
+  const { codeColumn, flowLiteral } = CONNECT_CODE_MATCH[flow];
   return {
     sql: `
       select
@@ -1037,42 +1010,12 @@ function browserExchangeTargetStatement(
        and caller.caller_id = setup.caller_id
       left join public.agent_outbox_accounts account
         on account.account_id = setup.account_id
-      where setup.setup_code_hash = $1
+      where setup.${codeColumn} = $1
         and setup.operation = 'connect'
-        and setup.flow = 'browser'
+        and setup.flow = ${flowLiteral}
       for update of setup
     `,
-    values: [setupCodeHash]
-  };
-}
-
-function deviceExchangeTargetStatement(
-  deviceCodeHash: string
-): TransactionContextStatement {
-  return {
-    sql: `
-      select
-        setup.setup_request_id::text as setup_request_id,
-        setup.status,
-        setup.account_id::text as account_id,
-        setup.caller_id::text as caller_id,
-        setup.expires_at,
-        caller.caller_slug,
-        caller.display_name as caller_display_name,
-        account.label as account_label,
-        account.tier as account_tier
-      from public.agent_outbox_caller_setup_requests setup
-      left join public.agent_outbox_callers caller
-        on caller.account_id = setup.account_id
-       and caller.caller_id = setup.caller_id
-      left join public.agent_outbox_accounts account
-        on account.account_id = setup.account_id
-      where setup.device_code_hash = $1
-        and setup.operation = 'connect'
-        and setup.flow = 'device'
-      for update of setup
-    `,
-    values: [deviceCodeHash]
+    values: [codeHash]
   };
 }
 

@@ -1439,7 +1439,10 @@ test("browser approval binds the setup request to the approving account and call
         CALLER_ID,
         USER_ID
       ]);
-      assert.match(String(query.calls[6].values?.[4]), /^[a-f0-9]{64}$/);
+      assert.equal(
+        query.calls[6].values?.[4],
+        setupCodeDigest(result.data.setup_code)
+      );
       assert.doesNotMatch(
         JSON.stringify(query.calls),
         new RegExp(result.data.setup_code)
@@ -1630,83 +1633,82 @@ test("repeated device approval cannot cross account boundaries", async () => {
 });
 
 test("browser approval rejects a duplicate caller name before caller creation", async () => {
-  await withProcessEnv(
-    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
-    async () => {
-      const setupRequestId = "10000000-0000-4000-8000-000000000011";
-      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
-        if (callNumber === 1) {
-          return [
-            {
-              setup_request_id: setupRequestId,
-              flow: "browser",
-              status: "pending",
-              local_caller_name: "steward-email",
-              display_name: "Steward Email",
-              callback_url: "http://127.0.0.1:49152/callback",
-              expires_at: "2026-07-02T00:10:00.000Z"
-            }
-          ];
-        }
-        if (callNumber === 2) {
-          return [{ tier: "hosted_free" }];
-        }
-        if (callNumber === 3) {
-          return [];
-        }
-        if (callNumber === 4) {
-          return [{ used_units: "1" }];
-        }
-        if (callNumber === 5) {
-          return [
-            {
-              caller_id: "00000000-0000-4000-8000-000000000099"
-            }
-          ];
-        }
-        return [];
-      });
-
-      const result = await approveConnectBrowserSetupRequest(query, {
-        setupRequestId,
-        accountId: ACCOUNT_ID,
-        userId: USER_ID,
-        now: new Date("2026-07-02T00:00:00.000Z")
-      });
-
-      assert.equal(result.ok, false);
-      if (result.ok) {
-        assert.fail("expected duplicate caller rejection");
+  // The setup-code digest needs the hash secret; leaving it unset proves the
+  // rejection happens before the setup code is hashed.
+  await withProcessEnv({ CALLER_KEY_HASH_SECRET: undefined }, async () => {
+    const setupRequestId = "10000000-0000-4000-8000-000000000011";
+    const query = fakeSavepointAwareQuery((_statement, callNumber) => {
+      if (callNumber === 1) {
+        return [
+          {
+            setup_request_id: setupRequestId,
+            flow: "browser",
+            status: "pending",
+            local_caller_name: "steward-email",
+            display_name: "Steward Email",
+            callback_url: "http://127.0.0.1:49152/callback",
+            expires_at: "2026-07-02T00:10:00.000Z"
+          }
+        ];
       }
-      assert.equal(result.error.status, 409);
-      assert.equal(result.error.code, "caller_already_exists");
-      assert.equal(
-        result.error.message,
-        "A caller with this name already exists for this account. Use caller rotate or choose a different name."
-      );
-      assert.deepEqual(result.error.fields, [
-        {
-          path: "local_caller_name",
-          code: "duplicate",
-          message: "A caller with this name already exists for this account."
-        }
-      ]);
-      assert.match(query.calls[4].sql, /from public\.agent_outbox_callers/);
-      assert.deepEqual(query.calls[4].values, [ACCOUNT_ID, "steward-email"]);
-      assert.equal(
-        query.calls.some((call) =>
-          /insert into public\.agent_outbox_callers/.test(call.sql)
-        ),
-        false
-      );
-      assert.equal(
-        query.calls.some((call) =>
-          /update public\.agent_outbox_caller_setup_requests/.test(call.sql)
-        ),
-        false
-      );
+      if (callNumber === 2) {
+        return [{ tier: "hosted_free" }];
+      }
+      if (callNumber === 3) {
+        return [];
+      }
+      if (callNumber === 4) {
+        return [{ used_units: "1" }];
+      }
+      if (callNumber === 5) {
+        return [
+          {
+            caller_id: "00000000-0000-4000-8000-000000000099"
+          }
+        ];
+      }
+      return [];
+    });
+
+    const result = await approveConnectBrowserSetupRequest(query, {
+      setupRequestId,
+      accountId: ACCOUNT_ID,
+      userId: USER_ID,
+      now: new Date("2026-07-02T00:00:00.000Z")
+    });
+
+    assert.equal(result.ok, false);
+    if (result.ok) {
+      assert.fail("expected duplicate caller rejection");
     }
-  );
+    assert.equal(result.error.status, 409);
+    assert.equal(result.error.code, "caller_already_exists");
+    assert.equal(
+      result.error.message,
+      "A caller with this name already exists for this account. Use caller rotate or choose a different name."
+    );
+    assert.deepEqual(result.error.fields, [
+      {
+        path: "local_caller_name",
+        code: "duplicate",
+        message: "A caller with this name already exists for this account."
+      }
+    ]);
+    assert.match(query.calls[4].sql, /from public\.agent_outbox_callers/);
+    assert.deepEqual(query.calls[4].values, [ACCOUNT_ID, "steward-email"]);
+    assert.equal(
+      query.calls.some((call) =>
+        /insert into public\.agent_outbox_callers/.test(call.sql)
+      ),
+      false
+    );
+    assert.equal(
+      query.calls.some((call) =>
+        /update public\.agent_outbox_caller_setup_requests/.test(call.sql)
+      ),
+      false
+    );
+  });
 });
 
 test("device approval rejects a duplicate caller name before caller creation", async () => {
@@ -1779,64 +1781,63 @@ test("device approval rejects a duplicate caller name before caller creation", a
 });
 
 test("account-scoped connect approval abuse control blocks before caller creation", async () => {
-  await withProcessEnv(
-    { CALLER_KEY_HASH_SECRET: HASH_SECRET_FIXTURE },
-    async () => {
-      const setupRequestId = "10000000-0000-4000-8000-000000000004";
-      const query = fakeSavepointAwareQuery((_statement, callNumber) => {
-        if (callNumber === 1) {
-          return [
-            {
-              setup_request_id: setupRequestId,
-              flow: "browser",
-              status: "pending",
-              local_caller_name: "steward-email",
-              display_name: "Steward Email",
-              callback_url: "http://127.0.0.1:49152/callback",
-              expires_at: "2026-07-02T00:10:00.000Z"
-            }
-          ];
-        }
-        if (callNumber === 2) {
-          return [{ tier: "hosted_free" }];
-        }
-        if (callNumber === 3) {
-          return [];
-        }
-        if (callNumber === 4) {
-          return [{ used_units: "31" }];
-        }
-        return [];
-      });
-
-      const result = await approveConnectBrowserSetupRequest(query, {
-        setupRequestId,
-        accountId: ACCOUNT_ID,
-        userId: USER_ID,
-        now: new Date("2026-07-02T00:00:00.000Z")
-      });
-
-      assert.equal(result.ok, false);
-      if (result.ok) {
-        assert.fail("expected account-scoped approval limit");
+  // The setup-code digest needs the hash secret; leaving it unset proves the
+  // rejection happens before the setup code is hashed.
+  await withProcessEnv({ CALLER_KEY_HASH_SECRET: undefined }, async () => {
+    const setupRequestId = "10000000-0000-4000-8000-000000000004";
+    const query = fakeSavepointAwareQuery((_statement, callNumber) => {
+      if (callNumber === 1) {
+        return [
+          {
+            setup_request_id: setupRequestId,
+            flow: "browser",
+            status: "pending",
+            local_caller_name: "steward-email",
+            display_name: "Steward Email",
+            callback_url: "http://127.0.0.1:49152/callback",
+            expires_at: "2026-07-02T00:10:00.000Z"
+          }
+        ];
       }
-      assert.equal(result.error.status, 429);
-      assert.equal(result.error.code, "rate_limit_exceeded");
-      assert.ok(result.error.limit && "limit_name" in result.error.limit);
-      assert.equal(
-        result.error.limit.limit_name,
-        "caller_connect_approvals_per_account_per_minute"
-      );
-      assert.match(query.calls[3].sql, /agent_outbox_account_quota_windows/);
-      assert.match(query.calls[4].sql, /agent_outbox_account_limit_blocks/);
-      assert.equal(
-        query.calls.some((call) =>
-          /insert into public\.agent_outbox_callers/.test(call.sql)
-        ),
-        false
-      );
+      if (callNumber === 2) {
+        return [{ tier: "hosted_free" }];
+      }
+      if (callNumber === 3) {
+        return [];
+      }
+      if (callNumber === 4) {
+        return [{ used_units: "31" }];
+      }
+      return [];
+    });
+
+    const result = await approveConnectBrowserSetupRequest(query, {
+      setupRequestId,
+      accountId: ACCOUNT_ID,
+      userId: USER_ID,
+      now: new Date("2026-07-02T00:00:00.000Z")
+    });
+
+    assert.equal(result.ok, false);
+    if (result.ok) {
+      assert.fail("expected account-scoped approval limit");
     }
-  );
+    assert.equal(result.error.status, 429);
+    assert.equal(result.error.code, "rate_limit_exceeded");
+    assert.ok(result.error.limit && "limit_name" in result.error.limit);
+    assert.equal(
+      result.error.limit.limit_name,
+      "caller_connect_approvals_per_account_per_minute"
+    );
+    assert.match(query.calls[3].sql, /agent_outbox_account_quota_windows/);
+    assert.match(query.calls[4].sql, /agent_outbox_account_limit_blocks/);
+    assert.equal(
+      query.calls.some((call) =>
+        /insert into public\.agent_outbox_callers/.test(call.sql)
+      ),
+      false
+    );
+  });
 });
 
 test("connect exchange mints only a pending credential without activating, revoking, or auditing", async () => {

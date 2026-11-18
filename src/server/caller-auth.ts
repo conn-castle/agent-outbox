@@ -62,19 +62,18 @@ export type CallerApiKeyParseResult =
       code: "invalid_caller_api_key";
     };
 
+type BearerHeaderFailure = {
+  ok: false;
+  status: 401;
+  code: "missing_authorization" | "invalid_authorization_scheme";
+};
+
 export type CallerBearerApiKeyParseResult =
-  | ({
-      ok: true;
-      apiKey: CallerApiKey;
-    } & CallerApiKeyParts &
-      CallerApiKeyDisplayMetadata)
+  | Extract<CallerApiKeyParseResult, { ok: true }>
   | {
       ok: false;
       status: 401;
-      code:
-        | "missing_authorization"
-        | "invalid_authorization_scheme"
-        | "invalid_caller_api_key";
+      code: BearerHeaderFailure["code"] | "invalid_caller_api_key";
     };
 
 export type StoredCallerCredentialStatus =
@@ -108,25 +107,13 @@ export function validateCallerBearer(
   authorizationHeader: string | null,
   expectedToken: string
 ): CallerAuthResult {
-  if (!authorizationHeader) {
-    return {
-      ok: false,
-      status: 401,
-      code: "missing_authorization"
-    };
-  }
-
-  const [scheme, token, extra] = authorizationHeader.trim().split(/\s+/);
-  if (scheme?.toLowerCase() !== "bearer" || !token || extra) {
-    return {
-      ok: false,
-      status: 401,
-      code: "invalid_authorization_scheme"
-    };
+  const bearer = bearerToken(authorizationHeader);
+  if (!bearer.ok) {
+    return bearer;
   }
 
   const tokenMatches = timingSafeEqual(
-    tokenDigest(token),
+    tokenDigest(bearer.token),
     tokenDigest(expectedToken)
   );
   if (!tokenMatches) {
@@ -188,40 +175,31 @@ export function parseCallerApiKey(apiKey: string): CallerApiKeyParseResult {
 export function parseCallerBearerApiKey(
   authorizationHeader: string | null
 ): CallerBearerApiKeyParseResult {
+  const bearer = bearerToken(authorizationHeader);
+  if (!bearer.ok) {
+    return bearer;
+  }
+
+  const parsed = parseCallerApiKey(bearer.token);
+  return parsed.ok ? parsed : { ok: false, status: 401, code: parsed.code };
+}
+
+/**
+ * Returns the single token of a case-insensitive `Bearer <token>` header, or
+ * the 401 failure for a missing header or any other shape.
+ */
+function bearerToken(
+  authorizationHeader: string | null
+): { ok: true; token: string } | BearerHeaderFailure {
   if (!authorizationHeader) {
-    return {
-      ok: false,
-      status: 401,
-      code: "missing_authorization"
-    };
+    return { ok: false, status: 401, code: "missing_authorization" };
   }
 
-  const [scheme, apiKey, extra] = authorizationHeader.trim().split(/\s+/);
-  if (scheme?.toLowerCase() !== "bearer" || !apiKey || extra) {
-    return {
-      ok: false,
-      status: 401,
-      code: "invalid_authorization_scheme"
-    };
+  const [scheme, token, extra] = authorizationHeader.trim().split(/\s+/);
+  if (scheme?.toLowerCase() !== "bearer" || !token || extra) {
+    return { ok: false, status: 401, code: "invalid_authorization_scheme" };
   }
-
-  const parsed = parseCallerApiKey(apiKey);
-  if (!parsed.ok) {
-    return {
-      ok: false,
-      status: 401,
-      code: parsed.code
-    };
-  }
-
-  return {
-    ok: true,
-    apiKey,
-    keyId: parsed.keyId,
-    secret: parsed.secret,
-    keyPrefix: parsed.keyPrefix,
-    keyLastCharacters: parsed.keyLastCharacters
-  };
+  return { ok: true, token };
 }
 
 export function callerApiKeySecretDigest(secret: CallerApiKeySecret) {
