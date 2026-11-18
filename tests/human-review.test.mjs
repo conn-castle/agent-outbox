@@ -2098,11 +2098,29 @@ test("human action form parser rejects malformed hidden fields before database w
   assert.deepEqual(parseUndoHumanAnswerForm(undoForm()), {
     ok: true,
     mutationId,
-    inputItemId,
-    callerId,
-    outputResultId
+    targets: [{ inputItemId, callerId, outputResultId }]
   });
+
+  // Undoing a bulk answer repeats the three fields once per answered item.
   const secondInputItemId = "00000000-0000-4000-8000-0000000000a2";
+  const secondOutputResultId = "00000000-0000-4000-8000-0000000000b2";
+  const bulkUndo = undoForm();
+  bulkUndo.append("inputItemId", secondInputItemId);
+  bulkUndo.append("callerId", callerId);
+  bulkUndo.append("outputResultId", secondOutputResultId);
+  assert.deepEqual(parseUndoHumanAnswerForm(bulkUndo), {
+    ok: true,
+    mutationId,
+    targets: [
+      { inputItemId, callerId, outputResultId },
+      {
+        inputItemId: secondInputItemId,
+        callerId,
+        outputResultId: secondOutputResultId
+      }
+    ]
+  });
+
   const invalidUndo = undoForm();
   invalidUndo.set("outputResultId", "not-a-uuid");
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
@@ -2172,6 +2190,28 @@ test("human action form parser rejects malformed hidden fields before database w
       field
     );
   }
+
+  const unpairedUndo = undoForm();
+  unpairedUndo.append("inputItemId", secondInputItemId);
+  assert.deepEqual(parseUndoHumanAnswerForm(unpairedUndo), { ok: false });
+
+  const duplicateUndo = undoForm();
+  duplicateUndo.append("inputItemId", inputItemId);
+  duplicateUndo.append("callerId", callerId);
+  duplicateUndo.append("outputResultId", secondOutputResultId);
+  assert.deepEqual(parseUndoHumanAnswerForm(duplicateUndo), { ok: false });
+
+  const oversizedUndo = new FormData();
+  oversizedUndo.set("mutationId", mutationId);
+  for (let index = 0; index <= MAX_BULK_HUMAN_ANSWER_ITEMS; index += 1) {
+    oversizedUndo.append(
+      "inputItemId",
+      `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`
+    );
+    oversizedUndo.append("callerId", callerId);
+    oversizedUndo.append("outputResultId", outputResultId);
+  }
+  assert.deepEqual(parseUndoHumanAnswerForm(oversizedUndo), { ok: false });
 });
 
 test("a mutation id is taken from the form, minted when absent, and rejected when malformed", () => {

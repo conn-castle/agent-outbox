@@ -538,6 +538,28 @@ export function humanAnswerUndoTransactionFailure(
   );
 }
 
+export async function undoHumanAnswerBeforeRead(
+  connectionString: string,
+  input: PreReadUndoInput
+): Promise<PreReadUndoResult> {
+  const startedAtMs = Date.now();
+  try {
+    return await runProductTransaction(
+      connectionString,
+      {
+        requestId: input.requestId,
+        authSurface: "human",
+        accountId: input.accountId,
+        callerId: input.callerId,
+        userId: input.humanUserId
+      },
+      (query) => undoHumanAnswerBeforeReadInTransaction(query, input)
+    );
+  } catch (error) {
+    return humanAnswerUndoTransactionFailure(error, input, startedAtMs);
+  }
+}
+
 export async function undoHumanAnswerBeforeReadInTransaction(
   query: ProductTransactionQuery,
   input: PreReadUndoInput
