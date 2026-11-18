@@ -19,13 +19,11 @@ into the tree.
 | `.agent-layer/skills-imported/request-html-comments/` | [nicholasjconn/skills](https://github.com/nicholasjconn/skills) (`skills/tools/request-html-comments`) | MIT        | Copyright (c) 2026 Nicholas J. Conn |
 | `.agent-layer/skills/playwright/`                     | Playwright project                                                                                     | Apache-2.0 | Copyright (c) Microsoft Corporation |
 
-The two imported skills are managed by Agent Layer; their pinned upstream
-commits are recorded in
-[`.agent-layer/skills.lock.json`](.agent-layer/skills.lock.json).
-
-The imported rules and memory instructions are managed by Agent Layer; their
-upstream commits and content hashes are recorded in
-[`.agent-layer/instructions.lock.json`](.agent-layer/instructions.lock.json).
+Imported skills and instructions are managed by Agent Layer; their upstream
+commits and content hashes are recorded in
+[`.agent-layer/skills.lock.json`](.agent-layer/skills.lock.json) and
+[`.agent-layer/instructions.lock.json`](.agent-layer/instructions.lock.json),
+respectively.
 
 `nicholasjconn/skills` is the personal repository of Nicholas J. Conn and is a
 separate copyright holder from Hardware Breakout LLC doing business as Conn
