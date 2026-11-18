@@ -60,16 +60,19 @@ export function confirmUndoEntry(
   );
 }
 
-/** The targets whose answers the reported rows still hold. */
+/** The targets whose answers the reported rows still hold unread. */
 export function heldUndoTargets(
   targets: HumanUndoTarget[],
   state: HumanMutationState
 ) {
-  return targets.filter(
-    (target) =>
-      state.items.find((item) => item.inputItemId === target.inputItemId)?.row
-        ?.output?.outputResultId === target.outputResultId
-  );
+  return targets.filter((target) => {
+    const output = state.items.find(
+      (item) => item.inputItemId === target.inputItemId
+    )?.row?.output;
+    return (
+      output?.outputResultId === target.outputResultId && output.undoEligible
+    );
+  });
 }
 
 /**
@@ -83,14 +86,7 @@ export function settleUndoEntry(
   state: HumanMutationState
 ) {
   const entry = stack.find((candidate) => candidate.id === entryId);
-  const remaining = (entry?.targets ?? []).filter((target) => {
-    const output = state.items.find(
-      (item) => item.inputItemId === target.inputItemId
-    )?.row?.output;
-    return (
-      output?.outputResultId === target.outputResultId && output.undoEligible
-    );
-  });
+  const remaining = heldUndoTargets(entry?.targets ?? [], state);
   return patchUndoEntry(confirmUndoEntry(stack, entryId, remaining), entryId, {
     undoing: false
   });

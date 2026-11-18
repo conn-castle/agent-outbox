@@ -560,6 +560,53 @@ test("a bulk answer stopped part-way keeps Undo for the answers it committed", a
   await expectQueueMembership(page, initial);
 });
 
+test("a bulk answer the server refuses part-way says the rest were not answered", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  await selectRows(page, [permit, followUp]);
+  let attempts = 0;
+  await page.route("**/human/mutations", async (route) => {
+    attempts += 1;
+    // Only the first item reaches the server, which answers it. The client
+    // gets what the server sends when the session then ends for good.
+    const inputItemIds: string[] = [];
+    const response = await route.fetch(
+      await changedForm(route, (form) => {
+        const items = form.getAll("bulkItem").map(String);
+        for (const item of items) {
+          inputItemIds.push(
+            (JSON.parse(item) as { inputItemId: string }).inputItemId
+          );
+        }
+        form.delete("bulkItem");
+        form.append("bulkItem", items[0]!);
+      })
+    );
+    const { undo } = (await response.json()) as { undo: unknown };
+    await route.fulfill({
+      status: 409,
+      json: {
+        ok: false,
+        operation: "bulk-answer",
+        code: "account_membership_required",
+        message: "Account access is required.",
+        inputItemIds,
+        undo
+      }
+    });
+  });
+  await applyBulk(page);
+  // A refusal is an outcome: nothing is repeated, and nothing is in doubt.
+  await expect(page.locator(".last-action-error")).toHaveText(
+    "Bulk action interrupted: 1 answered, 1 not answered."
+  );
+  await page.unroute("**/human/mutations");
+  expect(attempts).toBe(1);
+  await expectQueueMembership(page, without(initial, permit));
+  await expectUndoOffered(page, "Approve permit brief");
+});
+
 test("a bulk answer whose response is lost is retried without answering twice", async ({
   page
 }) => {

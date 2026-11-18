@@ -54,7 +54,7 @@ export async function synchronizeHumanMutation(
   formData: FormData
 ) {
   formData.set("_operation", operation);
-  formData.set("mutationId", crypto.randomUUID());
+  formData.set("mutationId", newMutationId());
   // What any attempt reported as committed stays committed, whatever a
   // later attempt goes on to report.
   const committed = new Map<string, HumanUndoTarget>();
@@ -89,6 +89,26 @@ export async function synchronizeHumanMutation(
       );
     }
   }
+}
+
+// `crypto.randomUUID` exists only in secure contexts. A page served over
+// plain HTTP from another host, as a self-hosted one can be, still has
+// `getRandomValues`.
+function newMutationId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20)
+  ].join("-");
 }
 
 // A repeat cannot always report again what an earlier attempt answered: by

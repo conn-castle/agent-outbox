@@ -416,6 +416,46 @@ test("a successful repeat keeps the answers an earlier attempt reported", async 
   });
 });
 
+test("a mutation id is a canonical UUID without crypto.randomUUID", async (t) => {
+  // Outside a secure context the browser has no crypto.randomUUID.
+  Object.defineProperty(globalThis.crypto, "randomUUID", {
+    value: undefined,
+    configurable: true
+  });
+  t.after(() => {
+    Reflect.deleteProperty(globalThis.crypto, "randomUUID");
+  });
+  /** @type {FormDataEntryValue[]} */
+  const mutationIds = [];
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (
+      /** @type {unknown} */ _url,
+      /** @type {{ body: FormData }} */ init
+    ) => {
+      mutationIds.push(init.body.get("mutationId") ?? "");
+      return Response.json({
+        ok: false,
+        operation: "answer",
+        code: "input_not_pending",
+        message: "Already answered.",
+        inputItemIds: [itemId]
+      });
+    }
+  );
+  for (let request = 0; request < 2; request += 1) {
+    await assert.rejects(synchronizeHumanMutation("answer", new FormData()));
+  }
+  assert.equal(new Set(mutationIds).size, 2);
+  for (const mutationId of mutationIds) {
+    assert.match(
+      String(mutationId),
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+  }
+});
+
 test("a request the server refused is reported at once, not retried", async (t) => {
   const fetched = t.mock.method(
     globalThis,

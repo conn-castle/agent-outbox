@@ -164,9 +164,9 @@ test("answers that can no longer be undone leave the stack", () => {
   );
 });
 
-test("a confirmed answer keeps Undo only for answers the reported rows still hold", () => {
-  // A's output was read, which Undo finds out when pressed; B was undone and
-  // answered again elsewhere; C was acknowledged and is gone.
+test("a confirmed answer keeps Undo only for answers the reported rows still hold unread", () => {
+  // A's output was read by its caller; B was undone and answered again
+  // elsewhere; C was acknowledged and is gone.
   assert.deepEqual(
     heldUndoTargets(
       [target("A"), target("B"), target("C"), target("D")],
@@ -177,6 +177,6 @@ test("a confirmed answer keeps Undo only for answers the reported rows still hol
         reported("D", "unread")
       )
     ),
-    [target("A"), target("D")]
+    [target("D")]
   );
 });

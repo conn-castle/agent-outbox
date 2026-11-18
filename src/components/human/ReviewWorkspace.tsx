@@ -56,8 +56,10 @@ import {
   itemIdsNotPending,
   projectReview,
   recordItemStates,
+  releaseUnconfirmedAnswers,
   reviewDetailSuperseded,
   type ReviewItemStates,
+  type UnconfirmedAnswer,
   type UnsettledReviewMutation
 } from "./review-sync";
 import {
@@ -70,10 +72,9 @@ import {
   settleUndoEntry,
   type UndoEntry
 } from "./undo-stack";
-import {
-  compareAsOf,
-  type HumanMutationState,
-  type HumanUndoTarget
+import type {
+  HumanMutationState,
+  HumanUndoTarget
 } from "../../shared/human-mutation";
 
 // Query parameters the server action redirect writes to report a mutation.
@@ -187,11 +188,7 @@ export function ReviewWorkspace({
   );
   const asOfRef = useRef(asOf);
   asOfRef.current = asOf;
-  // Answers no attempt confirmed, with the view they were sent from and the
-  // page shown when they settled.
-  const unconfirmedAnswers = useRef<
-    { inputItemIds: string[]; viewHref: string; asOf: string }[]
-  >([]);
+  const unconfirmedAnswers = useRef<UnconfirmedAnswer[]>([]);
   const consumedNoticeEpoch = useRef<string | null>(null);
   const viewConfigurationKey = [
     view.status,
@@ -201,27 +198,24 @@ export function ReviewWorkspace({
     view.page
   ].join("\0");
   const canonicalViewHref = humanReviewHref(view);
-  // An unconfirmed answer may have committed. Once a newer page of its view
-  // arrives, a row that page no longer shows was answered or has moved, and
-  // its selection is released; a row still shown stays selected for a retry.
-  useEffect(() => {
+  const pageRef = useRef({ rows, asOf, viewHref: canonicalViewHref });
+  pageRef.current = { rows, asOf, viewHref: canonicalViewHref };
+  // Rows of an unconfirmed answer that the page no longer shows leave the
+  // selection; rows still shown stay selected for a retry.
+  function releaseUnconfirmedSelections() {
     if (unconfirmedAnswers.current.length === 0) return;
-    const shown = new Set(rows.map((row) => row.inputItemId));
-    const released = new Set<string>();
-    unconfirmedAnswers.current = unconfirmedAnswers.current.filter((sent) => {
-      if (
-        sent.viewHref !== canonicalViewHref ||
-        compareAsOf(asOf, sent.asOf) <= 0
-      ) {
-        return true;
-      }
-      for (const id of sent.inputItemIds) {
-        if (!shown.has(id)) released.add(id);
-      }
-      return false;
-    });
-    if (released.size > 0) deselect(released);
-  }, [asOf, canonicalViewHref, deselect, rows]);
+    const { waiting, released } = releaseUnconfirmedAnswers(
+      unconfirmedAnswers.current,
+      pageRef.current
+    );
+    unconfirmedAnswers.current = waiting;
+    if (released.length > 0) deselect(new Set(released));
+  }
+  const releaseUnconfirmedRef = useRef(releaseUnconfirmedSelections);
+  releaseUnconfirmedRef.current = releaseUnconfirmedSelections;
+  useEffect(() => {
+    releaseUnconfirmedRef.current();
+  }, [asOf, canonicalViewHref, rows]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -528,7 +522,8 @@ export function ReviewWorkspace({
     const rowSnapshots = projectedRows.filter((row) =>
       submission.inputItemIds.includes(row.inputItemId)
     );
-    enqueueHumanMutation(submission, rowSnapshots);
+    // A repeated activation changes nothing, the open detail included.
+    if (!enqueueHumanMutation(submission, rowSnapshots)) return;
     if (detail && submission.inputItemIds.includes(detail.inputItemId)) {
       setDetailDismissed(true);
       setPendingDetail(null);
@@ -599,6 +594,7 @@ export function ReviewWorkspace({
       inputItemIds: submission.inputItemIds,
       rowSnapshots: answering ? [] : rowSnapshots
     };
+    const sentAsOf = asOfRef.current;
     // Every answer joins the stack when the person acts, not when the server
     // replies, so Undo always targets their most recent action.
     const answerEntryId = answering
@@ -709,8 +705,11 @@ export function ReviewWorkspace({
             unconfirmedAnswers.current.push({
               inputItemIds: submission.inputItemIds,
               viewHref: canonicalViewHref,
-              asOf: asOfRef.current
+              sentAsOf,
+              settledAsOf: asOfRef.current
             });
+            // The page shown now may already be newer than the one sent from.
+            releaseUnconfirmedRef.current();
           }
         } else if (
           failure?.code === "output_already_read" ||
@@ -732,7 +731,11 @@ export function ReviewWorkspace({
         }
         setLastError(
           committed.length > 0
-            ? `Bulk action interrupted: ${committed.length} answered, ${submission.inputItemIds.length - committed.length} not confirmed.`
+            ? `Bulk action interrupted: ${committed.length} answered, ${submission.inputItemIds.length - committed.length} ${
+                error instanceof HumanMutationError && error.unconfirmed
+                  ? "not confirmed"
+                  : "not answered"
+              }.`
             : mutationFailureMessage(
                 submission,
                 rowSnapshots,

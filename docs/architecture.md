@@ -289,9 +289,10 @@ failure; whatever any attempt reported as committed stays on the undo stack, and
 the newest item state any attempt reported is applied, however the mutation
 settles. A successful retry keeps the answers an earlier attempt reported, even
 when it could not report them again. Rows of an unconfirmed answer stay selected
-only while the next page of the same view still shows them. A failed write
-removes only its own projection. The row leaving the pending queue is the
-success signal.
+only while the next page of the same view still shows them. Mutations are sent
+one at a time, in the order the person acted, so while one is being retried (up
+to about a minute) the ones behind it wait. A failed write removes only its own
+projection. The row leaving the pending queue is the success signal.
 
 When a page transaction overlaps a mutation response, the response's item state
 wins even if the page read the item later; the refresh that follows every
