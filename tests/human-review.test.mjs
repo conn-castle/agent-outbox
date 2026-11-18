@@ -372,16 +372,24 @@ test("fixture answers and undos reject like the database and recognize a repeat"
     outcome(await answer({ expectedRevision: item.currentRevision + 1 })),
     "stale_input_revision"
   );
-  assert.equal(outcome(await answer()), "ok");
-  // The same request again reports its answer. Another request, or the same
-  // id at another revision, is told the item is no longer pending.
-  assert.equal(outcome(await answer()), "ok");
+  /** @param {Awaited<ReturnType<typeof answer>>} result */
+  const reported = (result) =>
+    result.ok ? result.outputResultId : result.code;
+  const answeredOutput = fixtureResolvedOutputResultId(
+    item.inputItemId,
+    item.currentRevision
+  );
+  assert.equal(reported(await answer()), answeredOutput);
+  // The same request again reports its answer, whatever revision it names:
+  // the output of the revision that was answered. Another request is told
+  // the item is no longer pending.
+  assert.equal(reported(await answer()), answeredOutput);
   assert.equal(
-    outcome(await answer({ mutationId: secondRequest })),
-    "input_not_pending"
+    reported(await answer({ expectedRevision: item.currentRevision + 1 })),
+    answeredOutput
   );
   assert.equal(
-    outcome(await answer({ expectedRevision: item.currentRevision + 1 })),
+    outcome(await answer({ mutationId: secondRequest })),
     "input_not_pending"
   );
   assert.equal(

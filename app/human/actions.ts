@@ -21,10 +21,7 @@ import {
   parseHumanAnswerForm,
   parseUndoHumanAnswerForm
 } from "../../src/server/human-action-form";
-import {
-  fixtureResolvedOutputResultId,
-  humanBrowserFixtureEnabled
-} from "../../src/server/human-review-fixture";
+import { humanBrowserFixtureEnabled } from "../../src/server/human-review-fixture";
 import type { ProductTransactionQuery } from "../../src/server/database";
 import { emitClientEventLog } from "../../src/server/client-events";
 import {
@@ -341,24 +338,14 @@ async function mutationBackend(
 async function fixtureMutationBackend(): Promise<MutationBackend> {
   const fixture = await import("../../src/server/human-review-fixture-state");
   return {
-    async answer(item) {
-      const result = await fixture.answerFixtureItem({
+    answer: (item) =>
+      fixture.answerFixtureItem({
         inputItemId: item.inputItemId,
         callerId: item.callerId,
         actionDisplay: item.actionDisplay,
         expectedRevision: item.expectedRevision,
         mutationId: item.mutationId
-      });
-      return result.ok
-        ? {
-            ok: true,
-            outputResultId: fixtureResolvedOutputResultId(
-              item.inputItemId,
-              item.expectedRevision
-            )
-          }
-        : result;
-    },
+      }),
     undo: (target) => fixture.undoFixtureAnswer(target),
     itemStates: fixture.readFixtureItemStates
   };
