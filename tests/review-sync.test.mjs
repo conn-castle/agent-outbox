@@ -316,16 +316,13 @@ test("an open detail is superseded by a mutation in flight or a newer state", ()
     true
   );
 
-  // An answer undone and given again elsewhere changes only the output.
-  const answeredAgain = answered(row("B"));
-  Object.assign(answeredAgain.output ?? {}, {
-    outputResultId: "output-item-B-again"
-  });
+  // An undo raises the revision, so an answer undone and given again
+  // elsewhere supersedes the detail like any other newer revision.
   assert.equal(
     reviewDetailSuperseded(
       answeredDetail,
       "100",
-      statesFrom(["150", [answeredAgain]]),
+      statesFrom(["150", [answered(row("B", { currentRevision: 2 }))]]),
       []
     ),
     true
