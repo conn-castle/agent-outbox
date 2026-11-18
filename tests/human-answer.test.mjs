@@ -1682,6 +1682,12 @@ test(
       assert.equal(repeated.actionValue, "approve");
       assert.equal(repeated.answeredAt, first.answeredAt);
       assert.equal(await auditCount("input_answered", first.outputResultId), 1);
+      // The mutation id alone identifies the repeat, whatever revision the
+      // request names.
+      const otherRevision = await answer(mutationCorrelation, 2);
+      assert.ok(otherRevision.ok);
+      assert.equal(otherRevision.outputResultId, first.outputResultId);
+      assert.equal(await auditCount("input_answered", first.outputResultId), 1);
 
       // A different request for the same item is still rejected.
       const other = await answer(`human_answer_${crypto.randomUUID()}`);
