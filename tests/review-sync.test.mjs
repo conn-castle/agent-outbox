@@ -315,6 +315,21 @@ test("an open detail is superseded by a mutation in flight or a newer state", ()
     ),
     true
   );
+
+  // An answer undone and given again elsewhere changes only the output.
+  const answeredAgain = answered(row("B"));
+  Object.assign(answeredAgain.output ?? {}, {
+    outputResultId: "output-item-B-again"
+  });
+  assert.equal(
+    reviewDetailSuperseded(
+      answeredDetail,
+      "100",
+      statesFrom(["150", [answeredAgain]]),
+      []
+    ),
+    true
+  );
 });
 
 test("states the page already reflects are trimmed beyond the retained limit, newer ones never", () => {
