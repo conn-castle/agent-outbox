@@ -1,7 +1,8 @@
 import { VERSIONED_UUID_PATTERN } from "./api-errors.ts";
 import {
   browserFixtureReviewDetail,
-  browserFixtureReviewRow
+  browserFixtureReviewRow,
+  fixtureResolvedOutputResultId
 } from "./human-review-fixture.ts";
 import type { HumanMutationState } from "../shared/human-mutation.ts";
 
@@ -22,6 +23,10 @@ export type FixtureResolvedItem = {
   answeredAt: string;
   currentRevision?: number;
   undone?: boolean;
+  // The output the undo removed, so a repeat of that undo is recognized.
+  undoneOutputResultId?: string;
+  // The request that answered the item, so its retry is recognized.
+  mutationId?: string;
 };
 
 export type FixtureMutationResult =
@@ -37,14 +42,19 @@ export async function readFixtureResolvedItems(): Promise<
 /**
  * Answers one fixture item, rejecting what the production answer rejects for
  * the item itself: an unknown item or caller, an item that is not pending, and
- * a stale revision.
+ * a stale revision. A repeated request reports the answer it already made,
+ * whatever revision it names, as the database does.
  */
 export async function answerFixtureItem(item: {
   inputItemId: string;
   callerId: string;
   actionDisplay: string;
   expectedRevision: number;
-}): Promise<FixtureMutationResult> {
+  mutationId: string;
+}): Promise<
+  | { ok: true; outputResultId: string }
+  | Extract<FixtureMutationResult, { ok: false }>
+> {
   const store = await cookieStore();
   const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
   const canonical = browserFixtureReviewDetail(item.inputItemId, {
@@ -58,10 +68,23 @@ export async function answerFixtureItem(item: {
     return fixtureFailure("not_found", "Input item was not found.");
   }
   if (canonical.status !== "pending") {
-    return fixtureFailure(
-      "input_not_pending",
-      "Human answer creation requires a pending input item."
-    );
+    const previous = current[item.inputItemId];
+    // A retry of an answer that already committed reports that answer: the
+    // output of the revision it answered, which is the one the row shows.
+    return previous &&
+      !previous.undone &&
+      previous.mutationId === item.mutationId
+      ? {
+          ok: true,
+          outputResultId: fixtureResolvedOutputResultId(
+            item.inputItemId,
+            previous.currentRevision ?? canonical.currentRevision
+          )
+        }
+      : fixtureFailure(
+          "input_not_pending",
+          "Human answer creation requires a pending input item."
+        );
   }
   if (canonical.currentRevision !== item.expectedRevision) {
     return fixtureFailure(
@@ -69,40 +92,79 @@ export async function answerFixtureItem(item: {
       "Input item revision changed before the answer was submitted."
     );
   }
+  // Re-insert so the newest answer is the last one trimmed from the cookie.
+  delete current[item.inputItemId];
   current[item.inputItemId] = {
     actionDisplay: item.actionDisplay.slice(0, 160) || "Answered",
     callerId: item.callerId,
     answeredAt: new Date().toISOString(),
-    currentRevision: item.expectedRevision
+    currentRevision: item.expectedRevision,
+    mutationId: item.mutationId
   };
-  writeResolvedItems(store, current);
+  writeFixtureState(store, current);
+  return {
+    ok: true,
+    outputResultId: fixtureResolvedOutputResultId(
+      item.inputItemId,
+      item.expectedRevision
+    )
+  };
+}
+
+/** Mirrors the production pre-read undo, including a repeated request. */
+export async function undoFixtureAnswer(target: {
+  inputItemId: string;
+  callerId: string;
+  outputResultId: string;
+}): Promise<FixtureMutationResult> {
+  const { inputItemId } = target;
+  const store = await cookieStore();
+  const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
+  const previous = current[inputItemId];
+  if (previous?.undone) {
+    // A repeat is recognized only for the output this undo removed.
+    return previous.callerId === target.callerId &&
+      previous.undoneOutputResultId === target.outputResultId
+      ? { ok: true }
+      : fixtureFailure("not_found", "Output result was not found.");
+  }
+  const canonical = browserFixtureReviewDetail(inputItemId, {
+    resolvedItems: current
+  });
+  if (
+    !canonical ||
+    canonical.inputItemId !== inputItemId ||
+    canonical.status !== "answered" ||
+    canonical.caller.callerId !== target.callerId ||
+    canonical.output?.outputResultId !== target.outputResultId
+  ) {
+    return fixtureFailure("not_found", "Output result was not found.");
+  }
+  if (!canonical.output.undoEligible) {
+    return fixtureFailure(
+      "output_already_read",
+      "Output result has already been read by the caller."
+    );
+  }
+  // Keep the production undo revision across subsequent server renders, and
+  // re-insert so the newest undo is the last one trimmed from the cookie.
+  delete current[inputItemId];
+  current[inputItemId] = {
+    actionDisplay: canonical.output.actionDisplay,
+    callerId: canonical.caller.callerId,
+    answeredAt: canonical.output.answeredAt,
+    currentRevision: canonical.currentRevision + 1,
+    undone: true,
+    undoneOutputResultId: target.outputResultId
+  };
+  writeFixtureState(store, current);
   return { ok: true };
 }
 
-export async function restoreFixtureResolvedItem(inputItemId: string) {
-  if (!VERSIONED_UUID_PATTERN.test(inputItemId)) {
-    return;
-  }
-  const store = await cookieStore();
-  const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
-  if (!(inputItemId in current)) {
-    return;
-  }
-  const previous = current[inputItemId];
-  if (previous.undone) return;
-  // Keep the production undo revision across subsequent server renders.
-  current[inputItemId] = {
-    ...previous,
-    currentRevision: (previous.currentRevision ?? 1) + 1,
-    undone: true
-  };
-  writeResolvedItems(store, current);
-}
-
 /**
- * The items' rows for a mutation response. The fixture's clock is the number
- * of writes and responses made in this browser's fixture state; like the
- * database clock, it moves on for every response.
+ * The items' rows for a mutation response. Like the database clock, the
+ * fixture clock moves on for every response, so even a rejection's state is
+ * newer than the page the person acted on.
  */
 export async function readFixtureItemStates(
   inputItemIds: string[]
@@ -170,7 +232,13 @@ function isResolvedItem(value: unknown): value is FixtureResolvedItem {
     (item.currentRevision === undefined ||
       (Number.isSafeInteger(item.currentRevision) &&
         Number(item.currentRevision) > 0)) &&
-    (item.undone === undefined || typeof item.undone === "boolean")
+    (item.undone === undefined || typeof item.undone === "boolean") &&
+    (item.undoneOutputResultId === undefined ||
+      (typeof item.undoneOutputResultId === "string" &&
+        VERSIONED_UUID_PATTERN.test(item.undoneOutputResultId))) &&
+    (item.mutationId === undefined ||
+      (typeof item.mutationId === "string" &&
+        VERSIONED_UUID_PATTERN.test(item.mutationId)))
   );
 }
 
@@ -202,7 +270,7 @@ async function cookieStore() {
   return cookies();
 }
 
-function writeResolvedItems(
+function writeFixtureState(
   store: Awaited<ReturnType<typeof cookieStore>>,
   items: Record<string, FixtureResolvedItem>
 ) {

@@ -28,10 +28,10 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
-- Issue 2026-11-16 review-fixture-undo-ignores-output: Browser fixture undo does not check the named output
+- Issue 2026-11-16 review-fixture-state-cookie-trimmed: Browser fixture drops answered items past its cookie limit
     Priority: Low. Area: browser test fixture
-    Description: `restoreFixtureResolvedItem` restores an item by its input id alone and returns nothing, so the fixture undo reports success even when it restored nothing. The undo target's `callerId` and `outputResultId` are not compared with the answer being undone, while the database undo reports a mismatched output as not found.
-    Open question: Which of the database undo's rejections should the fixture undo reproduce?
+    Description: `fixtureResolvedItemsCookieValue` keeps only the newest records that fit 3,500 bytes (at most 50) and drops the rest without reporting it. Called directly with 20 answered items it kept 14. A dropped item falls back to its seeded state, and its record's `mutationId`, which is what recognizes a repeated answer, is lost with it.
+    Open question: What should the fixture do when its answered-item state no longer fits one cookie?
 
 - Issue 2026-11-16 review-default-sort-ordering-duplicated: The default review ordering is defined in several places
     Priority: Low. Area: Human review / Maintainability

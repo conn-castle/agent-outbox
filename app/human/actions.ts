@@ -21,10 +21,7 @@ import {
   parseHumanAnswerForm,
   parseUndoHumanAnswerForm
 } from "../../src/server/human-action-form";
-import {
-  fixtureResolvedOutputResultId,
-  humanBrowserFixtureEnabled
-} from "../../src/server/human-review-fixture";
+import { humanBrowserFixtureEnabled } from "../../src/server/human-review-fixture";
 import type { ProductTransactionQuery } from "../../src/server/database";
 import { emitClientEventLog } from "../../src/server/client-events";
 import {
@@ -61,6 +58,7 @@ type AnswerItem = {
   actionDisplay: string;
   response: HumanActionResponse;
   feedback?: string;
+  mutationId: string;
   correlationId: string;
 };
 
@@ -164,7 +162,8 @@ async function answerOutcome(
     actionDisplay: noticeText(formData, "noticeAction") ?? parsed.actionValue,
     response: parsed.response,
     feedback: parsed.feedback,
-    correlationId: createCorrelationId("human_answer")
+    mutationId: parsed.mutationId,
+    correlationId: `human_answer_${parsed.mutationId}`
   });
   if (!result.ok) {
     return humanMutationFailure(
@@ -220,7 +219,8 @@ async function bulkAnswerOutcome(
       actionDisplay,
       response: { kind: "none" },
       feedback: item.feedback,
-      correlationId: createCorrelationId("human_bulk_answer")
+      mutationId: parsed.mutationId,
+      correlationId: `human_bulk_answer_${parsed.mutationId}`
     });
     if (result.ok) {
       answeredInputItemIds.push(item.inputItemId);
@@ -283,7 +283,7 @@ async function undoOutcome(
       callerId: parsed.callerId,
       outputResultId: parsed.outputResultId
     },
-    createCorrelationId("human_undo")
+    `human_undo_${parsed.mutationId}`
   );
   if (!result.ok) {
     return humanMutationFailure(
@@ -338,27 +338,15 @@ async function mutationBackend(
 async function fixtureMutationBackend(): Promise<MutationBackend> {
   const fixture = await import("../../src/server/human-review-fixture-state");
   return {
-    async answer(item) {
-      const result = await fixture.answerFixtureItem({
+    answer: (item) =>
+      fixture.answerFixtureItem({
         inputItemId: item.inputItemId,
         callerId: item.callerId,
         actionDisplay: item.actionDisplay,
-        expectedRevision: item.expectedRevision
-      });
-      return result.ok
-        ? {
-            ok: true,
-            outputResultId: fixtureResolvedOutputResultId(
-              item.inputItemId,
-              item.expectedRevision
-            )
-          }
-        : result;
-    },
-    async undo(target) {
-      await fixture.restoreFixtureResolvedItem(target.inputItemId);
-      return { ok: true };
-    },
+        expectedRevision: item.expectedRevision,
+        mutationId: item.mutationId
+      }),
+    undo: (target) => fixture.undoFixtureAnswer(target),
     itemStates: fixture.readFixtureItemStates
   };
 }
@@ -456,6 +444,7 @@ function databaseMutationBackend(requestId: string): MutationBackend {
           humanUserId: accountSession.userId,
           requestId,
           correlationId,
+          inputItemId: target.inputItemId,
           outputResultId: target.outputResultId
         }),
         undoHumanAnswerBeforeReadInTransaction,

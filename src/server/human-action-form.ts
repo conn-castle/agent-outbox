@@ -16,6 +16,7 @@ export const MAX_BULK_HUMAN_ANSWER_ITEMS = 100;
 export type ParsedHumanAnswerForm =
   | {
       ok: true;
+      mutationId: string;
       inputItemId: string;
       callerId: string;
       expectedRevision: number;
@@ -28,6 +29,7 @@ export type ParsedHumanAnswerForm =
 export type ParsedBulkHumanAnswersForm =
   | {
       ok: true;
+      mutationId: string;
       actionValue: string;
       items: BulkAnswerItem[];
     }
@@ -36,6 +38,7 @@ export type ParsedBulkHumanAnswersForm =
 export type ParsedUndoHumanAnswerForm =
   | {
       ok: true;
+      mutationId: string;
       inputItemId: string;
       callerId: string;
       outputResultId: string;
@@ -58,7 +61,9 @@ export function parseHumanAnswerForm(
   const actionValue = stringField(formData, "actionValue");
   const popupKind = popupKindField(formData);
   const feedback = feedbackField(formData, "feedback");
+  const mutationId = mutationIdField(formData);
   if (
+    !mutationId ||
     !inputItemId ||
     !callerId ||
     expectedRevision == null ||
@@ -76,6 +81,7 @@ export function parseHumanAnswerForm(
 
   return {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision,
@@ -89,7 +95,8 @@ export function parseBulkHumanAnswersForm(
   formData: FormData
 ): ParsedBulkHumanAnswersForm {
   const actionValue = stringField(formData, "bulkActionValue");
-  if (!actionValue) {
+  const mutationId = mutationIdField(formData);
+  if (!actionValue || !mutationId) {
     return { ok: false };
   }
 
@@ -112,7 +119,9 @@ export function parseBulkHumanAnswersForm(
     items.push(item);
   }
 
-  return items.length > 0 ? { ok: true, actionValue, items } : { ok: false };
+  return items.length > 0
+    ? { ok: true, mutationId, actionValue, items }
+    : { ok: false };
 }
 
 export function parseUndoHumanAnswerForm(
@@ -121,10 +130,11 @@ export function parseUndoHumanAnswerForm(
   const inputItemId = uuidField(formData, "inputItemId");
   const callerId = uuidField(formData, "callerId");
   const outputResultId = uuidField(formData, "outputResultId");
-  if (!inputItemId || !callerId || !outputResultId) {
+  const mutationId = mutationIdField(formData);
+  if (!mutationId || !inputItemId || !callerId || !outputResultId) {
     return { ok: false };
   }
-  return { ok: true, inputItemId, callerId, outputResultId };
+  return { ok: true, mutationId, inputItemId, callerId, outputResultId };
 }
 
 function responseFromForm(
@@ -260,6 +270,16 @@ function isUuid(value: unknown): value is string {
 function uuidField(formData: FormData, key: string) {
   const value = stringField(formData, key);
   return isUuid(value) ? value : null;
+}
+
+/**
+ * The client's id for this mutation, repeated on every retry of it. A form
+ * posted without script has none and cannot retry, so it gets a fresh id.
+ * Returns null when a supplied id is malformed.
+ */
+function mutationIdField(formData: FormData) {
+  if (!formData.has("mutationId")) return crypto.randomUUID();
+  return uuidField(formData, "mutationId");
 }
 
 function integerField(formData: FormData, key: string) {
