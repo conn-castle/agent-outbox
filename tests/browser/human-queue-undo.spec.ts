@@ -206,6 +206,37 @@ for (const outcome of ["partial", "none"] as const) {
   });
 }
 
+test("answer and undo responses report the item's resulting row", async ({
+  page
+}) => {
+  await openQueue(page);
+  const answered = mutationResponse(page);
+  await page
+    .getByRole("button", { name: "Approve to send", exact: true })
+    .click();
+  const answer = await (await answered).json();
+  const [item] = answer.state.items;
+  expect(answer.state.asOf).toMatch(/^\d+$/);
+  expect(item.inputItemId).toBe(answer.undo.inputItemId);
+  expect(item.row).toMatchObject({
+    status: "answered",
+    output: { outputResultId: answer.undo.outputResultId }
+  });
+
+  const restored = mutationResponse(page);
+  await page.getByTestId("last-answer-undo").click();
+  const undone = await (await restored).json();
+  // Each response is later on the server's clock than the one before it.
+  expect(BigInt(undone.state.asOf) > BigInt(answer.state.asOf)).toBe(true);
+  expect(undone.state.items).toHaveLength(1);
+  expect(undone.state.items[0].row).toMatchObject({
+    inputItemId: item.inputItemId,
+    status: "pending",
+    output: null,
+    currentRevision: item.row.currentRevision + 1
+  });
+});
+
 test("a timed-out bulk answer that committed leaves the selection", async ({
   page
 }) => {
@@ -692,27 +723,18 @@ async function requestForm(route: Route) {
   }).formData();
 }
 
+// Sends the bulk request on with a stale revision for the items that must be
+// rejected, so the outcome and the reported rows are the server's own.
 async function bulkFailure(route: Route, outcome: "partial" | "none") {
   const form = await requestForm(route);
   const items = form
     .getAll("bulkItem")
-    .map((value) => JSON.parse(String(value)) as { inputItemId: string });
-  if (outcome === "none") {
-    await route.fulfill({
-      status: 409,
-      json: {
-        ok: false,
-        operation: "bulk-answer",
-        inputItemIds: items.map((item) => item.inputItemId),
-        code: "bulk_answer_failed",
-        message: "Bulk action failed: 2 not answered."
-      }
-    });
-    return;
-  }
-  const first = form.getAll("bulkItem")[0];
+    .map((value) => JSON.parse(String(value)) as { expectedRevision: number });
   form.delete("bulkItem");
-  form.append("bulkItem", first);
+  items.forEach((item, index) => {
+    if (outcome === "none" || index > 0) item.expectedRevision += 1;
+    form.append("bulkItem", JSON.stringify(item));
+  });
   const request = new Request(route.request().url(), {
     method: "POST",
     body: form
@@ -725,14 +747,15 @@ async function bulkFailure(route: Route, outcome: "partial" | "none") {
     postData: Buffer.from(await request.arrayBuffer())
   });
   const result = await response.json();
-  expect(result.ok).toBe(true);
-  await route.fulfill({
-    response,
-    json: {
-      ...result,
-      inputItemIds: items.map((item) => item.inputItemId),
-      failed: 1,
-      message: "Bulk action complete: 1 answered, 1 failed."
-    }
-  });
+  expect(result.ok ? result.failed : result.code).toBe(
+    outcome === "partial" ? 1 : "bulk_answer_failed"
+  );
+  expect(
+    result.state?.items.map(
+      (item: { row: { status: string } | null }) => item.row?.status
+    )
+  ).toEqual(
+    outcome === "partial" ? ["answered", "pending"] : ["pending", "pending"]
+  );
+  await route.fulfill({ response });
 }

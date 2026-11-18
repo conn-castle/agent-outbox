@@ -12,6 +12,7 @@ import {
   humanAnswerUndoTransactionFailure,
   undoHumanAnswerBeforeReadInTransaction,
   type CreateHumanAnswerInput,
+  type HumanActionResponse,
   type HumanAnswerFailure,
   type PreReadUndoInput
 } from "../../src/server/human-answer";
@@ -20,29 +21,127 @@ import {
   parseHumanAnswerForm,
   parseUndoHumanAnswerForm
 } from "../../src/server/human-action-form";
-import { humanBrowserFixtureEnabled } from "../../src/server/human-review-fixture";
+import {
+  fixtureResolvedOutputResultId,
+  humanBrowserFixtureEnabled
+} from "../../src/server/human-review-fixture";
 import type { ProductTransactionQuery } from "../../src/server/database";
 import { emitClientEventLog } from "../../src/server/client-events";
 import {
-  resolveHumanAccountSession,
+  loadHumanReviewItemStates,
+  reportHumanReviewItemStateFailure
+} from "../../src/server/human-review-page";
+import {
   runHumanAccountTransaction,
   type HumanAccountSession
 } from "../../src/server/human-session";
 import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../src/shared/human-review-view";
 import type {
-  HumanAnswerMutationSuccess,
-  HumanBulkMutationSuccess,
-  HumanUndoMutationSuccess,
+  HumanUndoTarget,
   HumanMutationFailure,
-  HumanMutationResult
+  HumanMutationResult,
+  HumanMutationState
 } from "../../src/shared/human-mutation";
 
 const humanPath = "/human";
 
+type BackendFailure = {
+  ok: false;
+  code: string;
+  message: string;
+  // The request has no usable session, so no item of it can succeed.
+  sessionFailed?: true;
+};
+
+type AnswerItem = {
+  inputItemId: string;
+  callerId: string;
+  expectedRevision: number;
+  actionValue: string;
+  actionDisplay: string;
+  response: HumanActionResponse;
+  feedback?: string;
+  correlationId: string;
+};
+
+/**
+ * Where a request's mutations are applied: the database, or the browser
+ * fixture's cookie state. Each answer and undo commits on its own, so one
+ * rejected item cannot block the rest of a bulk request.
+ */
+type MutationBackend = {
+  answer(
+    item: AnswerItem
+  ): Promise<{ ok: true; outputResultId: string } | BackendFailure>;
+  undo(
+    target: HumanUndoTarget,
+    correlationId: string
+  ): Promise<{ ok: true } | BackendFailure>;
+  /** Current rows read after the mutations committed; null without a session. */
+  itemStates(inputItemIds: string[]): Promise<HumanMutationState | null>;
+};
+
 export async function executeHumanAnswerMutation(
   formData: FormData
 ): Promise<HumanMutationResult> {
-  const requestId = createCorrelationId("human_answer_req");
+  const backend = await mutationBackend(
+    createCorrelationId("human_answer_req")
+  );
+  return withItemStates(await answerOutcome(formData, backend), backend);
+}
+
+export async function executeBulkHumanAnswersMutation(
+  formData: FormData
+): Promise<HumanMutationResult> {
+  const backend = await mutationBackend(
+    createCorrelationId("human_bulk_answer_req")
+  );
+  return withItemStates(await bulkAnswerOutcome(formData, backend), backend);
+}
+
+export async function executeUndoHumanAnswerMutation(
+  formData: FormData
+): Promise<HumanMutationResult> {
+  const backend = await mutationBackend(createCorrelationId("human_undo_req"));
+  return withItemStates(await undoOutcome(formData, backend), backend);
+}
+
+// The redirecting form actions report through the URL, not item state.
+export async function submitHumanAnswer(formData: FormData) {
+  redirectHumanMutationResult(
+    formData,
+    await answerOutcome(
+      formData,
+      await mutationBackend(createCorrelationId("human_answer_req"))
+    )
+  );
+}
+
+export async function submitBulkHumanAnswers(formData: FormData) {
+  redirectHumanMutationResult(
+    formData,
+    await bulkAnswerOutcome(
+      formData,
+      await mutationBackend(createCorrelationId("human_bulk_answer_req"))
+    )
+  );
+}
+
+export async function undoHumanAnswer(formData: FormData) {
+  redirectHumanMutationResult(
+    formData,
+    await undoOutcome(
+      formData,
+      await mutationBackend(createCorrelationId("human_undo_req"))
+    )
+  );
+}
+
+async function answerOutcome(
+  formData: FormData,
+  backend: MutationBackend & { requestId: string }
+): Promise<HumanMutationResult> {
+  const { requestId } = backend;
   const failedActionKind =
     formData.get("popupKind") === "file_upload" ? "file_upload" : undefined;
   const parsed = parseHumanAnswerForm(formData);
@@ -57,67 +156,46 @@ export async function executeHumanAnswerMutation(
     );
   }
 
-  if (humanBrowserFixtureEnabled()) {
-    const actionDisplay =
-      noticeText(formData, "noticeAction") ?? parsed.actionValue;
-    const { recordFixtureResolvedItems } =
-      await import("../../src/server/human-review-fixture-state");
-    await recordFixtureResolvedItems([
-      {
-        inputItemId: parsed.inputItemId,
-        callerId: parsed.callerId,
-        actionDisplay,
-        currentRevision: parsed.expectedRevision
-      }
-    ]);
-    revalidatePath(humanPath);
-    return answerSuccess(
-      parsed.inputItemId,
-      parsed.callerId,
-      "00000000-0000-4000-8000-000000009999"
-    );
-  }
-
-  const result = await runHumanActionMutation({
-    requestId,
-    buildInput: (session): CreateHumanAnswerInput => ({
-      accountId: session.accountId,
-      callerId: parsed.callerId,
-      humanUserId: session.userId,
-      requestId,
-      correlationId: createCorrelationId("human_answer"),
-      inputItemId: parsed.inputItemId,
-      expectedRevision: parsed.expectedRevision,
-      actionValue: parsed.actionValue,
-      response: parsed.response,
-      feedback: parsed.feedback
-    }),
-    run: createHumanAnswerInTransaction,
-    reportFailure: humanAnswerTransactionFailure
+  const result = await backend.answer({
+    inputItemId: parsed.inputItemId,
+    callerId: parsed.callerId,
+    expectedRevision: parsed.expectedRevision,
+    actionValue: parsed.actionValue,
+    actionDisplay: noticeText(formData, "noticeAction") ?? parsed.actionValue,
+    response: parsed.response,
+    feedback: parsed.feedback,
+    correlationId: createCorrelationId("human_answer")
   });
-
-  if (result.ok) {
-    revalidatePath(humanPath);
-    return answerSuccess(
-      result.inputItemId,
-      parsed.callerId,
-      result.outputResultId
+  if (!result.ok) {
+    return humanMutationFailure(
+      "answer",
+      [parsed.inputItemId],
+      result.code,
+      result.message,
+      requestId,
+      failedActionKind
     );
   }
-  return humanMutationFailure(
-    "answer",
-    [parsed.inputItemId],
-    result.code,
-    result.message,
-    requestId,
-    failedActionKind
-  );
+  revalidatePath(humanPath);
+  return {
+    ok: true,
+    operation: "answer",
+    message: "Done.",
+    inputItemIds: [parsed.inputItemId],
+    undo: {
+      inputItemId: parsed.inputItemId,
+      callerId: parsed.callerId,
+      outputResultId: result.outputResultId
+    }
+  };
 }
 
-export async function executeBulkHumanAnswersMutation(
-  formData: FormData
+/** Answers each item in turn; one rejected item does not stop the rest. */
+async function bulkAnswerOutcome(
+  formData: FormData,
+  backend: MutationBackend & { requestId: string }
 ): Promise<HumanMutationResult> {
-  const requestId = createCorrelationId("human_bulk_answer_req");
+  const { requestId } = backend;
   const parsed = parseBulkHumanAnswersForm(formData);
   if (!parsed.ok) {
     return humanMutationFailure(
@@ -129,58 +207,38 @@ export async function executeBulkHumanAnswersMutation(
     );
   }
   const inputItemIds = parsed.items.map((item) => item.inputItemId);
-
-  if (humanBrowserFixtureEnabled()) {
-    const { recordFixtureResolvedItems } =
-      await import("../../src/server/human-review-fixture-state");
-    await recordFixtureResolvedItems(
-      parsed.items.map((item) => ({
-        inputItemId: item.inputItemId,
-        callerId: item.callerId,
-        currentRevision: item.expectedRevision,
-        actionDisplay:
-          noticeText(formData, "noticeAction") ?? parsed.actionValue
-      }))
-    );
-    revalidatePath(humanPath);
-    return bulkSuccess(inputItemIds, inputItemIds, 0);
-  }
-
-  const context = await humanActionContext();
-  if (!context.ok) {
-    return humanMutationFailure(
-      "bulk-answer",
-      inputItemIds,
-      context.code,
-      context.message,
-      requestId
-    );
-  }
+  const actionDisplay =
+    noticeText(formData, "noticeAction") ?? parsed.actionValue;
 
   const answeredInputItemIds: string[] = [];
-  let failed = 0;
   for (const item of parsed.items) {
-    const result = await createHumanAnswer(context.connectionString, {
-      accountId: context.accountId,
-      callerId: item.callerId,
-      humanUserId: context.userId,
-      requestId,
-      correlationId: createCorrelationId("human_bulk_answer"),
+    const result = await backend.answer({
       inputItemId: item.inputItemId,
+      callerId: item.callerId,
       expectedRevision: item.expectedRevision,
       actionValue: parsed.actionValue,
+      actionDisplay,
       response: { kind: "none" },
-      feedback: item.feedback
+      feedback: item.feedback,
+      correlationId: createCorrelationId("human_bulk_answer")
     });
     if (result.ok) {
       answeredInputItemIds.push(item.inputItemId);
-    } else {
-      failed += 1;
+    } else if (result.sessionFailed) {
+      // Without a session no item of the request can succeed.
+      return humanMutationFailure(
+        "bulk-answer",
+        inputItemIds,
+        result.code,
+        result.message,
+        requestId
+      );
     }
   }
 
   const answered = answeredInputItemIds.length;
-  if (answered === 0 && failed > 0) {
+  const failed = inputItemIds.length - answered;
+  if (answered === 0) {
     return humanMutationFailure(
       "bulk-answer",
       inputItemIds,
@@ -193,13 +251,22 @@ export async function executeBulkHumanAnswersMutation(
     emitHumanActionFailure(requestId);
   }
   revalidatePath(humanPath);
-  return bulkSuccess(inputItemIds, answeredInputItemIds, failed);
+  return {
+    ok: true,
+    operation: "bulk-answer",
+    message: `Bulk action complete: ${answered} answered, ${failed} failed.`,
+    inputItemIds,
+    answered,
+    answeredInputItemIds,
+    failed
+  };
 }
 
-export async function executeUndoHumanAnswerMutation(
-  formData: FormData
+async function undoOutcome(
+  formData: FormData,
+  backend: MutationBackend & { requestId: string }
 ): Promise<HumanMutationResult> {
-  const requestId = createCorrelationId("human_undo_req");
+  const { requestId } = backend;
   const parsed = parseUndoHumanAnswerForm(formData);
   if (!parsed.ok) {
     return humanMutationFailure(
@@ -210,178 +277,194 @@ export async function executeUndoHumanAnswerMutation(
       requestId
     );
   }
-
-  if (humanBrowserFixtureEnabled()) {
-    const { restoreFixtureResolvedItem } =
-      await import("../../src/server/human-review-fixture-state");
-    await restoreFixtureResolvedItem(parsed.inputItemId);
-    revalidatePath(humanPath);
-    return undoSuccess(parsed.inputItemId);
-  }
-
-  const result = await runHumanActionMutation({
-    requestId,
-    buildInput: (session): PreReadUndoInput => ({
-      accountId: session.accountId,
+  const result = await backend.undo(
+    {
+      inputItemId: parsed.inputItemId,
       callerId: parsed.callerId,
-      humanUserId: session.userId,
-      requestId,
-      correlationId: createCorrelationId("human_undo"),
       outputResultId: parsed.outputResultId
-    }),
-    run: undoHumanAnswerBeforeReadInTransaction,
-    reportFailure: humanAnswerUndoTransactionFailure
-  });
-
-  if (result.ok) {
-    revalidatePath(humanPath);
-    return undoSuccess(parsed.inputItemId);
-  }
-  return humanMutationFailure(
-    "undo",
-    [parsed.inputItemId],
-    result.code,
-    result.message,
-    requestId
+    },
+    createCorrelationId("human_undo")
   );
-}
-
-export async function submitHumanAnswer(formData: FormData) {
-  redirectHumanMutationResult(
-    formData,
-    await executeHumanAnswerMutation(formData)
-  );
-}
-
-export async function submitBulkHumanAnswers(formData: FormData) {
-  redirectHumanMutationResult(
-    formData,
-    await executeBulkHumanAnswersMutation(formData)
-  );
-}
-
-export async function undoHumanAnswer(formData: FormData) {
-  redirectHumanMutationResult(
-    formData,
-    await executeUndoHumanAnswerMutation(formData)
-  );
-}
-
-async function humanActionContext() {
-  const connectionString = process.env.DATABASE_APP_ROLE_URL;
-  if (!connectionString) {
-    return {
-      ok: false as const,
-      code: "missing_database_configuration",
-      message: "Human actions are not configured."
-    };
-  }
-
-  const session = await auth.protect({ unauthenticatedUrl: "/sign-in" });
-  const humanSession = await resolveHumanAccountSession({
-    clerkUserId: session.userId,
-    requestId: createCorrelationId("human_action_session_req"),
-    route: "/human",
-    method: "POST"
-  });
-  if (!humanSession.ok) {
-    return {
-      ok: false as const,
-      code: humanSession.code,
-      message: humanSession.message
-    };
-  }
-
-  return {
-    ok: true as const,
-    connectionString,
-    accountId: humanSession.accountId,
-    userId: humanSession.userId
-  };
-}
-
-async function runHumanActionMutation<TInput, TSuccess extends { ok: true }>({
-  requestId,
-  buildInput,
-  run,
-  reportFailure
-}: {
-  requestId: string;
-  buildInput: (session: HumanAccountSession) => TInput;
-  run: (
-    query: ProductTransactionQuery,
-    input: TInput
-  ) => Promise<TSuccess | HumanAnswerFailure>;
-  reportFailure: (
-    error: unknown,
-    input: TInput,
-    startedAtMs: number
-  ) => HumanAnswerFailure;
-}): Promise<TSuccess | Pick<HumanMutationFailure, "ok" | "code" | "message">> {
-  const clerkSession = await auth.protect({ unauthenticatedUrl: "/sign-in" });
-  const startedAtMs = Date.now();
-  let input: TInput | null = null;
-  try {
-    const transaction = await runHumanAccountTransaction(
-      {
-        clerkUserId: clerkSession.userId,
-        requestId,
-        route: "/human",
-        method: "POST"
-      },
-      (query, accountSession) => {
-        input = buildInput(accountSession);
-        return run(query, input);
-      }
+  if (!result.ok) {
+    return humanMutationFailure(
+      "undo",
+      [parsed.inputItemId],
+      result.code,
+      result.message,
+      requestId
     );
-    return transaction.ok
-      ? transaction.data
-      : { ok: false, code: transaction.code, message: transaction.message };
-  } catch (error) {
-    if (input === null) {
-      throw error;
-    }
-    return reportFailure(error, input, startedAtMs);
   }
-}
-
-function answerSuccess(
-  inputItemId: string,
-  callerId: string,
-  outputResultId: string
-): HumanAnswerMutationSuccess {
-  return {
-    ok: true,
-    operation: "answer",
-    message: "Done.",
-    inputItemIds: [inputItemId],
-    undo: { inputItemId, callerId, outputResultId }
-  };
-}
-
-function undoSuccess(inputItemId: string): HumanUndoMutationSuccess {
+  revalidatePath(humanPath);
   return {
     ok: true,
     operation: "undo",
     message: "Undone.",
-    inputItemIds: [inputItemId]
+    inputItemIds: [parsed.inputItemId]
   };
 }
 
-function bulkSuccess(
-  inputItemIds: string[],
-  answeredInputItemIds: string[],
-  failed: number
-): HumanBulkMutationSuccess {
-  const answered = answeredInputItemIds.length;
+/**
+ * Attaches the items' authoritative rows when they can be read. The outcome
+ * of the mutation stands either way.
+ */
+async function withItemStates(
+  outcome: HumanMutationResult,
+  backend: MutationBackend & { requestId: string }
+): Promise<HumanMutationResult> {
+  if (outcome.inputItemIds.length === 0) return outcome;
+  const startedAtMs = Date.now();
+  try {
+    const state = await backend.itemStates(outcome.inputItemIds);
+    return state ? { ...outcome, state } : outcome;
+  } catch (error) {
+    // The outcome itself is the answer and its item state a refinement, so
+    // the failed read is reported here, where it is dropped.
+    reportHumanReviewItemStateFailure(error, backend.requestId, startedAtMs);
+    return outcome;
+  }
+}
+
+async function mutationBackend(
+  requestId: string
+): Promise<MutationBackend & { requestId: string }> {
   return {
-    ok: true,
-    operation: "bulk-answer",
-    message: `Bulk action complete: ${answered} answered, ${failed} failed.`,
-    inputItemIds,
-    answered,
-    answeredInputItemIds,
-    failed
+    requestId,
+    ...(humanBrowserFixtureEnabled()
+      ? await fixtureMutationBackend()
+      : databaseMutationBackend(requestId))
+  };
+}
+
+async function fixtureMutationBackend(): Promise<MutationBackend> {
+  const fixture = await import("../../src/server/human-review-fixture-state");
+  return {
+    async answer(item) {
+      const result = await fixture.answerFixtureItem({
+        inputItemId: item.inputItemId,
+        callerId: item.callerId,
+        actionDisplay: item.actionDisplay,
+        expectedRevision: item.expectedRevision
+      });
+      return result.ok
+        ? {
+            ok: true,
+            outputResultId: fixtureResolvedOutputResultId(
+              item.inputItemId,
+              item.expectedRevision
+            )
+          }
+        : result;
+    },
+    async undo(target) {
+      await fixture.restoreFixtureResolvedItem(target.inputItemId);
+      return { ok: true };
+    },
+    itemStates: fixture.readFixtureItemStates
+  };
+}
+
+function databaseMutationBackend(requestId: string): MutationBackend {
+  let session: HumanAccountSession | null = null;
+  let sessionFailure: BackendFailure | null = null;
+
+  // Runs a mutation in the transaction that resolves the request's session.
+  async function withSession<TInput, TSuccess extends { ok: true }>(
+    buildInput: (session: HumanAccountSession) => TInput,
+    inTransaction: (
+      query: ProductTransactionQuery,
+      input: TInput
+    ) => Promise<TSuccess | HumanAnswerFailure>,
+    reportFailure: (
+      error: unknown,
+      input: TInput,
+      startedAtMs: number
+    ) => HumanAnswerFailure
+  ): Promise<TSuccess | BackendFailure> {
+    const clerkSession = await auth.protect({
+      unauthenticatedUrl: "/sign-in"
+    });
+    const startedAtMs = Date.now();
+    let input: TInput | null = null;
+    try {
+      const transaction = await runHumanAccountTransaction(
+        {
+          clerkUserId: clerkSession.userId,
+          requestId,
+          route: "/human",
+          method: "POST"
+        },
+        (query, accountSession) => {
+          session = accountSession;
+          input = buildInput(accountSession);
+          return inTransaction(query, input);
+        }
+      );
+      if (transaction.ok) return transaction.data;
+      sessionFailure = {
+        ok: false,
+        code: transaction.code,
+        message: transaction.message,
+        sessionFailed: true
+      };
+      return sessionFailure;
+    } catch (error) {
+      if (input === null) {
+        throw error;
+      }
+      return reportFailure(error, input, startedAtMs);
+    }
+  }
+
+  return {
+    // The request's first answer shares the transaction that resolves the
+    // session; later ones reuse that session in transactions of their own.
+    async answer(item) {
+      const buildInput = (
+        accountSession: HumanAccountSession
+      ): CreateHumanAnswerInput => ({
+        accountId: accountSession.accountId,
+        callerId: item.callerId,
+        humanUserId: accountSession.userId,
+        requestId,
+        correlationId: item.correlationId,
+        inputItemId: item.inputItemId,
+        expectedRevision: item.expectedRevision,
+        actionValue: item.actionValue,
+        response: item.response,
+        feedback: item.feedback
+      });
+      if (sessionFailure) return sessionFailure;
+      if (!session) {
+        return withSession(
+          buildInput,
+          createHumanAnswerInTransaction,
+          humanAnswerTransactionFailure
+        );
+      }
+      const connectionString = process.env.DATABASE_APP_ROLE_URL;
+      if (!connectionString) {
+        throw new Error("Human account database configuration is unavailable.");
+      }
+      return createHumanAnswer(connectionString, buildInput(session));
+    },
+    // An undo request names one answer, so it always opens the session.
+    undo: (target, correlationId) =>
+      withSession(
+        (accountSession): PreReadUndoInput => ({
+          accountId: accountSession.accountId,
+          callerId: target.callerId,
+          humanUserId: accountSession.userId,
+          requestId,
+          correlationId,
+          outputResultId: target.outputResultId
+        }),
+        undoHumanAnswerBeforeReadInTransaction,
+        humanAnswerUndoTransactionFailure
+      ),
+    itemStates: async (inputItemIds) =>
+      session
+        ? loadHumanReviewItemStates(session, requestId, inputItemIds)
+        : null
   };
 }
 

@@ -10,7 +10,20 @@ import {
   undoHumanAnswerBeforeReadInTransaction,
   validatedResponsePayload
 } from "../src/server/human-answer.ts";
-import { humanReviewPageInTransaction } from "../src/server/human-review.ts";
+import {
+  humanReviewItemStatesInTransaction,
+  humanReviewPageAsOfInTransaction,
+  humanReviewPageInTransaction
+} from "../src/server/human-review.ts";
+import { compareAsOf, isAsOf } from "../src/shared/human-mutation.ts";
+import * as correlation from "../src/server/correlation.ts";
+import * as clientEvents from "../src/server/client-events.ts";
+import * as humanActionForm from "../src/server/human-action-form.ts";
+import * as humanAnswer from "../src/server/human-answer.ts";
+import * as humanReviewPage from "../src/server/human-review-page.ts";
+import * as humanSession from "../src/server/human-session.ts";
+import * as humanReviewView from "../src/shared/human-review-view.ts";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
 import {
   handleOutputFileDownloadRequest,
@@ -1531,6 +1544,360 @@ test(
         bodyError,
         () => cleanupHumanAnswerDatabaseTest(client, ids),
         "Human answer database test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "item state reports each item's current row and orders against pages",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+
+    const client = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const missingItemId = crypto.randomUUID();
+    /** @type {import("../src/server/authorization.ts").AuthorizedHumanAccountContext} */
+    const reviewContext = {
+      surface: "human",
+      accountId: ids.accountId,
+      userId: ids.userId,
+      role: "owner"
+    };
+    const actor = {
+      accountId: ids.accountId,
+      callerId: ids.callerId,
+      humanUserId: ids.userId
+    };
+    /** @param {string} correlationId @param {number} [expectedRevision] */
+    const answer = (correlationId, expectedRevision = 1) =>
+      runHumanAnswerDatabaseTransaction(client, ids, "human", (query) =>
+        createHumanAnswerInTransaction(query, {
+          ...actor,
+          requestId: `req-${crypto.randomUUID()}`,
+          correlationId,
+          inputItemId: ids.inputItemId,
+          expectedRevision,
+          actionValue: "approve",
+          response: { kind: "none" }
+        })
+      );
+    /** @param {string} outputResultId */
+    const undo = (outputResultId) =>
+      runHumanAnswerDatabaseTransaction(client, ids, "human", (query) =>
+        undoHumanAnswerBeforeReadInTransaction(query, {
+          ...actor,
+          requestId: `req-${crypto.randomUUID()}`,
+          correlationId: `human_undo_${crypto.randomUUID()}`,
+          outputResultId
+        })
+      );
+    const pageAsOf = () =>
+      runHumanAnswerDatabaseTransaction(
+        client,
+        ids,
+        "human",
+        humanReviewPageAsOfInTransaction
+      );
+    const itemStates = () =>
+      runHumanAnswerDatabaseTransaction(client, ids, "human", (query) =>
+        humanReviewItemStatesInTransaction(query, reviewContext, [
+          ids.inputItemId,
+          missingItemId
+        ])
+      );
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await assertMigrationOwnerCanSetAppRole(client);
+      await client.query("set role agent_outbox_app");
+      await client.query("begin");
+      for (const [key, value] of [
+        ["auth_surface", "cleanup"],
+        ["account_id", ids.accountId],
+        ["user_id", ids.userId]
+      ]) {
+        await client.query("select set_config($1, $2, true)", [
+          `agent_outbox.${key}`,
+          value
+        ]);
+      }
+      await seedDatabaseRows(client, ids);
+      await client.query("commit");
+
+      const pageBeforeAnswer = await pageAsOf();
+      const first = await answer(`human_answer_${crypto.randomUUID()}`);
+      assert.ok(first.ok);
+
+      const answeredState = await itemStates();
+      assert.deepEqual(
+        answeredState.items.map(({ inputItemId, row }) => [
+          inputItemId,
+          row && [row.status, row.currentRevision, row.output?.outputResultId]
+        ]),
+        [
+          [ids.inputItemId, ["answered", 1, first.outputResultId]],
+          [missingItemId, null]
+        ]
+      );
+      // A page read before the answer is older than its state; one read
+      // afterwards is not, so it replaces that state.
+      assert.equal(compareAsOf(answeredState.asOf, pageBeforeAnswer), 1);
+      assert.notEqual(compareAsOf(await pageAsOf(), answeredState.asOf), -1);
+
+      assert.ok((await undo(first.outputResultId)).ok);
+      const restoredState = await itemStates();
+      assert.deepEqual(
+        restoredState.items.map(
+          ({ row }) => row && [row.status, row.currentRevision, row.output]
+        ),
+        [["pending", 2, null], null]
+      );
+      assert.equal(compareAsOf(restoredState.asOf, answeredState.asOf), 1);
+      // No items to report is an empty state, not a malformed query.
+      const emptyState = await runHumanAnswerDatabaseTransaction(
+        client,
+        ids,
+        "human",
+        (query) => humanReviewItemStatesInTransaction(query, reviewContext, [])
+      );
+      assert.deepEqual(emptyState.items, []);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        () => cleanupHumanAnswerDatabaseTest(client, ids),
+        "Human review item state database test and teardown both failed."
+      );
+    }
+  }
+);
+
+test(
+  "review mutation requests report item state from the database",
+  { skip: databaseTestsEnabled ? false : "database tests are opt-in" },
+  async () => {
+    assert.ok(databaseUrl);
+
+    const client = await connectedDatabaseClient(databaseUrl);
+    const ids = {
+      accountId: crypto.randomUUID(),
+      userId: crypto.randomUUID(),
+      callerId: crypto.randomUUID(),
+      inputItemId: crypto.randomUUID(),
+      actionId: crypto.randomUUID()
+    };
+    const [first, second, third] = [
+      ids.inputItemId,
+      crypto.randomUUID(),
+      crypto.randomUUID()
+    ];
+    // Everything below the signed-in user is real: form parsing, the session,
+    // the answer and undo transactions, and the item-state read.
+    const actions = /** @type {typeof import("../app/human/actions.ts")} */ (
+      loadModuleForTest("app/human/actions.ts", {
+        stubs: {
+          "@clerk/nextjs/server": {
+            auth: { protect: async () => ({ userId: `clerk-${ids.userId}` }) }
+          },
+          "next/navigation": {},
+          "next/cache": { revalidatePath() {} },
+          "../../src/server/human-review-fixture": {
+            humanBrowserFixtureEnabled: () => false
+          },
+          "../../src/server/correlation": correlation,
+          "../../src/server/client-events": clientEvents,
+          "../../src/server/human-action-form": humanActionForm,
+          "../../src/server/human-answer": humanAnswer,
+          "../../src/server/human-review-page": humanReviewPage,
+          "../../src/server/human-session": humanSession,
+          "../../src/shared/human-review-view": humanReviewView
+        },
+        globals: { AggregateError, Error, process }
+      })
+    );
+    /** @param {string} inputItemId @param {number} expectedRevision */
+    const bulkItem = (inputItemId, expectedRevision) =>
+      JSON.stringify({ inputItemId, callerId: ids.callerId, expectedRevision });
+    /** @param {Record<string, string | string[]>} fields */
+    const form = (fields) => {
+      const formData = new FormData();
+      for (const [name, value] of Object.entries(fields)) {
+        for (const entry of [value].flat()) formData.append(name, entry);
+      }
+      return formData;
+    };
+    /**
+     * A request's result as the browser receives it, with each item's row
+     * reduced to what the queue derives from it.
+     * @param {Promise<import("../src/shared/human-mutation.ts").HumanMutationResult>} request
+     */
+    const sent = async (request) => {
+      const result = JSON.parse(JSON.stringify(await request));
+      assert.equal(isAsOf(result.state?.asOf), true, JSON.stringify(result));
+      return {
+        ...result,
+        state: result.state.items.map(
+          (
+            /** @type {{ inputItemId: string, row: any }} */ {
+              inputItemId,
+              row
+            }
+          ) => [
+            inputItemId,
+            row && row.status,
+            row && row.currentRevision,
+            row?.output?.outputResultId ?? null
+          ]
+        ),
+        asOf: result.state.asOf
+      };
+    };
+    const previousDatabaseUrl = process.env.DATABASE_APP_ROLE_URL;
+    /** @type {unknown} */
+    let bodyError;
+
+    try {
+      await assertMigrationOwnerCanSetAppRole(client);
+      await client.query("set role agent_outbox_app");
+      await client.query("begin");
+      for (const [key, value] of [
+        ["auth_surface", "cleanup"],
+        ["account_id", ids.accountId],
+        ["user_id", ids.userId]
+      ]) {
+        await client.query("select set_config($1, $2, true)", [
+          `agent_outbox.${key}`,
+          value
+        ]);
+      }
+      await seedDatabaseRows(client, ids);
+      for (const inputItemId of [second, third]) {
+        await client.query(
+          `insert into public.agent_outbox_input_items(
+             input_item_id, account_id, caller_id, caller_item_id,
+             caller_item_id_hash, row_type_display, row_type_icon, title_html,
+             subtitle_html, summary_html, non_file_payload_bytes
+           )
+           values ($1, $2, $3, $4, $5, 'Review', 'inbox', 'Title', 'Subtitle', 'Summary', 25)`,
+          [
+            inputItemId,
+            ids.accountId,
+            ids.callerId,
+            `caller-item-${inputItemId}`,
+            `hash-${inputItemId}`
+          ]
+        );
+        await client.query(
+          `insert into public.agent_outbox_input_actions(
+             input_action_id, input_item_id, display_order, display, icon,
+             action_value, popup_kind
+           )
+           values ($1, $2, 0, 'Approve', 'check', 'approve', 'none')`,
+          [crypto.randomUUID(), inputItemId]
+        );
+      }
+      await client.query("commit");
+      await client.query("reset role");
+      process.env.DATABASE_APP_ROLE_URL = databaseUrl;
+
+      const answerForm = () =>
+        form({
+          inputItemId: first,
+          callerId: ids.callerId,
+          expectedRevision: "1",
+          actionValue: "approve",
+          popupKind: "none"
+        });
+      const answered = await sent(
+        actions.executeHumanAnswerMutation(answerForm())
+      );
+      assert.equal(answered.ok, true, JSON.stringify(answered));
+      const firstOutput = answered.undo.outputResultId;
+      assert.deepEqual(answered.undo, {
+        inputItemId: first,
+        callerId: ids.callerId,
+        outputResultId: firstOutput
+      });
+      assert.deepEqual(answered.state, [[first, "answered", 1, firstOutput]]);
+      // A bulk answer whose last item changed first: the rest still commit.
+      const partial = await sent(
+        actions.executeBulkHumanAnswersMutation(
+          form({
+            bulkActionValue: "approve",
+            bulkItem: [bulkItem(second, 1), bulkItem(third, 7)]
+          })
+        )
+      );
+      assert.equal(partial.ok, true, JSON.stringify(partial));
+      assert.deepEqual(
+        [partial.answered, partial.failed, partial.answeredInputItemIds],
+        [1, 1, [second]]
+      );
+      assert.deepEqual(
+        partial.state.map((/** @type {unknown[]} */ item) => item.slice(0, 3)),
+        [
+          [second, "answered", 1],
+          [third, "pending", 1]
+        ]
+      );
+
+      // A rejected request still reports what the server holds.
+      const rejected = await sent(
+        actions.executeBulkHumanAnswersMutation(
+          form({
+            bulkActionValue: "approve",
+            bulkItem: [bulkItem(third, 7)]
+          })
+        )
+      );
+      assert.deepEqual(
+        [rejected.ok, rejected.code],
+        [false, "bulk_answer_failed"]
+      );
+      assert.deepEqual(rejected.state, [[third, "pending", 1, null]]);
+
+      // An undo reports the restored row at its new revision.
+      const undone = await sent(
+        actions.executeUndoHumanAnswerMutation(
+          form({
+            inputItemId: first,
+            callerId: ids.callerId,
+            outputResultId: firstOutput
+          })
+        )
+      );
+      assert.equal(undone.ok, true, JSON.stringify(undone));
+      assert.deepEqual(undone.state, [[first, "pending", 2, null]]);
+    } catch (error) {
+      bodyError = error;
+    } finally {
+      if (previousDatabaseUrl === undefined) {
+        delete process.env.DATABASE_APP_ROLE_URL;
+      } else {
+        process.env.DATABASE_APP_ROLE_URL = previousDatabaseUrl;
+      }
+      await preserveBodyErrorDuringTeardown(
+        bodyError,
+        async () => {
+          await client.query("rollback");
+          await client.query("reset role");
+          // Audit rows are removed per item; the account's rows cascade.
+          for (const inputItemId of [second, third]) {
+            await cleanupDatabaseRows(client, { ...ids, inputItemId });
+          }
+          await cleanupHumanAnswerDatabaseTest(client, ids);
+        },
+        "Review mutation request database test and teardown both failed."
       );
     }
   }

@@ -1,9 +1,20 @@
 import { VERSIONED_UUID_PATTERN } from "./api-errors.ts";
-import { browserFixtureReviewDetail } from "./human-review-fixture.ts";
+import {
+  browserFixtureReviewDetail,
+  browserFixtureReviewRow
+} from "./human-review-fixture.ts";
+import type { HumanMutationState } from "../shared/human-mutation.ts";
 
 const COOKIE_NAME = "agent_outbox_fixture_resolved";
+const VERSION_COOKIE_NAME = "agent_outbox_fixture_version";
 const MAX_RESOLVED_ITEMS = 50;
 const MAX_COOKIE_BYTES = 3500;
+const FIXTURE_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: "lax",
+  path: "/",
+  maxAge: 60 * 60 * 24
+} as const;
 
 export type FixtureResolvedItem = {
   actionDisplay: string;
@@ -13,6 +24,9 @@ export type FixtureResolvedItem = {
   undone?: boolean;
 };
 
+export type FixtureMutationResult =
+  { ok: true } | { ok: false; code: string; message: string };
+
 export async function readFixtureResolvedItems(): Promise<
   Record<string, FixtureResolvedItem>
 > {
@@ -20,47 +34,49 @@ export async function readFixtureResolvedItems(): Promise<
   return parseResolvedItems(store.get(COOKIE_NAME)?.value);
 }
 
-export async function recordFixtureResolvedItems(
-  items: Array<{
-    inputItemId: string;
-    callerId: string;
-    actionDisplay: string;
-    currentRevision: number;
-  }>
-) {
-  if (items.length === 0) {
-    return;
-  }
+/**
+ * Answers one fixture item, rejecting what the production answer rejects for
+ * the item itself: an unknown item or caller, an item that is not pending, and
+ * a stale revision.
+ */
+export async function answerFixtureItem(item: {
+  inputItemId: string;
+  callerId: string;
+  actionDisplay: string;
+  expectedRevision: number;
+}): Promise<FixtureMutationResult> {
   const store = await cookieStore();
   const current = parseResolvedItems(store.get(COOKIE_NAME)?.value);
-  const answeredAt = new Date().toISOString();
-  for (const item of items) {
-    const canonical = browserFixtureReviewDetail(item.inputItemId, {
-      resolvedItems: current
-    });
-    if (
-      !canonical ||
-      canonical.status !== "pending" ||
-      canonical.currentRevision !== item.currentRevision
-    ) {
-      throw new Error(
-        "Browser fixture answer requires a pending item at its current revision."
-      );
-    }
-    if (
-      !VERSIONED_UUID_PATTERN.test(item.inputItemId) ||
-      !VERSIONED_UUID_PATTERN.test(item.callerId)
-    ) {
-      continue;
-    }
-    current[item.inputItemId] = {
-      actionDisplay: item.actionDisplay.slice(0, 160) || "Answered",
-      callerId: item.callerId,
-      answeredAt,
-      currentRevision: item.currentRevision
-    };
+  const canonical = browserFixtureReviewDetail(item.inputItemId, {
+    resolvedItems: current
+  });
+  if (
+    !canonical ||
+    canonical.inputItemId !== item.inputItemId ||
+    canonical.caller.callerId !== item.callerId
+  ) {
+    return fixtureFailure("not_found", "Input item was not found.");
   }
+  if (canonical.status !== "pending") {
+    return fixtureFailure(
+      "input_not_pending",
+      "Human answer creation requires a pending input item."
+    );
+  }
+  if (canonical.currentRevision !== item.expectedRevision) {
+    return fixtureFailure(
+      "stale_input_revision",
+      "Input item revision changed before the answer was submitted."
+    );
+  }
+  current[item.inputItemId] = {
+    actionDisplay: item.actionDisplay.slice(0, 160) || "Answered",
+    callerId: item.callerId,
+    answeredAt: new Date().toISOString(),
+    currentRevision: item.expectedRevision
+  };
   writeResolvedItems(store, current);
+  return { ok: true };
 }
 
 export async function restoreFixtureResolvedItem(inputItemId: string) {
@@ -81,6 +97,36 @@ export async function restoreFixtureResolvedItem(inputItemId: string) {
     undone: true
   };
   writeResolvedItems(store, current);
+}
+
+/**
+ * The items' rows for a mutation response. The fixture's clock is the number
+ * of writes and responses made in this browser's fixture state; like the
+ * database clock, it moves on for every response.
+ */
+export async function readFixtureItemStates(
+  inputItemIds: string[]
+): Promise<HumanMutationState> {
+  const store = await cookieStore();
+  const resolvedItems = parseResolvedItems(store.get(COOKIE_NAME)?.value);
+  const asOf = parseVersion(store.get(VERSION_COOKIE_NAME)) + 1;
+  store.set(VERSION_COOKIE_NAME, String(asOf), FIXTURE_COOKIE_OPTIONS);
+  return {
+    asOf: String(asOf),
+    items: inputItemIds.map((inputItemId) => ({
+      inputItemId,
+      row: browserFixtureReviewRow(inputItemId, { resolvedItems })
+    }))
+  };
+}
+
+function fixtureFailure(code: string, message: string) {
+  return { ok: false as const, code, message };
+}
+
+function parseVersion(cookie: { value: string } | undefined) {
+  const version = Number(cookie?.value);
+  return Number.isSafeInteger(version) && version > 0 ? version : 0;
 }
 
 function parseResolvedItems(
@@ -160,15 +206,15 @@ function writeResolvedItems(
   store: Awaited<ReturnType<typeof cookieStore>>,
   items: Record<string, FixtureResolvedItem>
 ) {
+  store.set(
+    VERSION_COOKIE_NAME,
+    String(parseVersion(store.get(VERSION_COOKIE_NAME)) + 1),
+    FIXTURE_COOKIE_OPTIONS
+  );
   const serialized = fixtureResolvedItemsCookieValue(items);
   if (serialized == null) {
     store.delete(COOKIE_NAME);
     return;
   }
-  store.set(COOKIE_NAME, serialized, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24
-  });
+  store.set(COOKIE_NAME, serialized, FIXTURE_COOKIE_OPTIONS);
 }

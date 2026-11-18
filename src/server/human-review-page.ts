@@ -7,6 +7,8 @@ import {
   humanReviewAccountBannerInTransaction,
   humanReviewCardInTransaction,
   humanReviewDetailInTransaction,
+  humanReviewItemStatesInTransaction,
+  humanReviewPageAsOfInTransaction,
   humanReviewPageInTransaction,
   humanReviewTypeOptionsInTransaction,
   REVIEW_PAGE_SIZE,
@@ -23,6 +25,10 @@ import {
   humanReviewViewFromRecord,
   type HumanReviewView
 } from "../shared/human-review-view.ts";
+import type { HumanMutationState } from "../shared/human-mutation.ts";
+import { createCorrelationId } from "./correlation.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 export type HumanReviewPageLoad = {
   view: HumanReviewView;
@@ -32,6 +38,8 @@ export type HumanReviewPageLoad = {
   typeOptions: string[];
   hasNext: boolean;
   totalCount: number;
+  // Orders this page against mutation responses; see HumanMutationState.
+  asOf: string;
 };
 
 export async function loadHumanReviewPage(
@@ -110,6 +118,52 @@ export async function loadHumanReviewPage(
   return { ok: true, session: sessionResult.session, data };
 }
 
+/**
+ * Reads the items' current rows for a mutation response, in a transaction of
+ * its own so it starts after the mutations it reports have committed.
+ */
+export async function loadHumanReviewItemStates(
+  session: HumanAccountSession,
+  requestId: string,
+  inputItemIds: string[]
+): Promise<HumanMutationState> {
+  const connectionString = process.env.DATABASE_APP_ROLE_URL;
+  if (!connectionString) {
+    throw new Error("Human account database configuration is unavailable.");
+  }
+  return runProductTransaction(
+    connectionString,
+    {
+      requestId,
+      authSurface: "human",
+      accountId: session.accountId,
+      userId: session.userId
+    },
+    (query) => humanReviewItemStatesInTransaction(query, session, inputItemIds)
+  );
+}
+
+/**
+ * Reports an item state read that failed. Called by the one place that goes on
+ * to answer the mutation without those rows.
+ */
+export function reportHumanReviewItemStateFailure(
+  error: unknown,
+  requestId: string,
+  startedAtMs: number
+) {
+  reportRuntimeFailure(error, {
+    errorId: createCorrelationId("human_item_state"),
+    request_id: requestId,
+    surface: "app",
+    route: "/human",
+    method: "POST",
+    duration_ms: durationSinceMs(startedAtMs),
+    operation: "human_review_item_state",
+    message: "Human review item state read failed unexpectedly."
+  });
+}
+
 async function loadHumanReviewPageDataInTransaction(
   query: ProductTransactionQuery,
   session: HumanAccountSession,
@@ -117,6 +171,7 @@ async function loadHumanReviewPageDataInTransaction(
   view: HumanReviewView,
   cardLink: { callerId: string; callerItemId: string } | null
 ): Promise<HumanReviewPageLoad> {
+  const asOf = await humanReviewPageAsOfInTransaction(query);
   if (cardLink) {
     const card = await humanReviewCardInTransaction(
       query,
@@ -155,6 +210,7 @@ async function loadHumanReviewPageDataInTransaction(
     banner,
     typeOptions,
     hasNext: page.hasNext,
-    totalCount: page.totalCount
+    totalCount: page.totalCount,
+    asOf
   };
 }

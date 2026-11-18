@@ -1952,6 +1952,52 @@ test("human action form parser rejects malformed hidden fields before database w
   const invalidUndo = undoForm();
   invalidUndo.set("outputResultId", "not-a-uuid");
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
+
+  // Ids are accepted only in the lowercase form the server issues, so a
+  // request's ids always equal the ids of the rows reported back for it.
+  const lettered = "00000000-0000-4000-8000-00000000abcd";
+  for (const field of ["inputItemId", "callerId"]) {
+    const lowercase = answerForm();
+    lowercase.set(field, lettered);
+    assert.equal(parseHumanAnswerForm(lowercase).ok, true, field);
+    const uppercase = answerForm();
+    uppercase.set(field, lettered.toUpperCase());
+    assert.deepEqual(parseHumanAnswerForm(uppercase), { ok: false }, field);
+    const mixedCase = answerForm();
+    mixedCase.set(field, lettered.replace("abcd", "aBcd"));
+    assert.deepEqual(parseHumanAnswerForm(mixedCase), { ok: false }, field);
+  }
+  for (const field of ["inputItemId", "callerId", "outputResultId"]) {
+    const lowercase = undoForm();
+    lowercase.set(field, lettered);
+    assert.equal(parseUndoHumanAnswerForm(lowercase).ok, true, field);
+    const uppercase = undoForm();
+    uppercase.set(field, lettered.toUpperCase());
+    assert.deepEqual(parseUndoHumanAnswerForm(uppercase), { ok: false }, field);
+  }
+  for (const field of ["inputItemId", "callerId"]) {
+    /** @param {string} id */
+    const bulkWith = (id) => {
+      const form = new FormData();
+      form.set("bulkActionValue", "approve");
+      form.append(
+        "bulkItem",
+        JSON.stringify({
+          inputItemId,
+          callerId,
+          expectedRevision: 2,
+          [field]: id
+        })
+      );
+      return form;
+    };
+    assert.equal(parseBulkHumanAnswersForm(bulkWith(lettered)).ok, true, field);
+    assert.deepEqual(
+      parseBulkHumanAnswersForm(bulkWith(lettered.toUpperCase())),
+      { ok: false },
+      field
+    );
+  }
 });
 
 test("human answer forms accept unstorable strings in non-persisted view fields", () => {

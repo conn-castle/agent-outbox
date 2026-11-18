@@ -160,3 +160,8 @@ Record otherwise-lost rationale that materially constrains future work. Current 
     Decision: The owner rejects maintaining dependency patches, loader or resolve hooks, overrides, forks, or bundler reimplementation to recover OpenNext's missing server map.
     Reason: Avoid ongoing upstream maintenance for source-map recovery.
     Tradeoffs: Next-routed frames stop at handler.mjs until a supported upstream option exists.
+
+- Decision 2026-11-16 review-sync-authoritative-state: Order review pages and mutation responses by one database clock
+    Decision: Mutation responses return each item's row with an `asOf` token; the review page carries its own. No schema change.
+    Reason: Tokens come from the database clock because app-server clocks differ across isolates, and a row's revision cannot order an item that is absent from a page. Page tokens use `transaction_timestamp()`, and response tokens use `clock_timestamp()` read before the rows in a transaction begun after the commit, so a token never claims more than its snapshot saw.
+    Tradeoffs: Each mutation request costs one extra read transaction. A backwards step of the database clock could order a page wrongly until the next page load. Both tokens are lower bounds: a change another session commits between a response's token and its rows is in those rows and may be missing from a page whose token is not older.
