@@ -350,7 +350,8 @@ async function undoOutcome(
   const failed = inputItemIds.length - restoredInputItemIds.length;
   if (restoredInputItemIds.length === 0) {
     // A shared code lets the client tell a permanent rejection from a
-    // retryable one; mixed causes are reported as retryable.
+    // retryable one. Mixed causes get a general code, which the client does
+    // not repeat; it keeps offering the answers the reported rows still hold.
     const [first] = failures;
     const sharedCode =
       first && failures.every((failure) => failure.code === first.code)
