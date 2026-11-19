@@ -376,8 +376,7 @@ choosing **Re-run failed jobs** on the original deploy run so it reuses the
 certified artifact. Ambiguous or unprovable ownership, candidate-live or
 unreadable provider state, or a prior identity that cannot be proven, stops
 loudly. A scheduled detector fails nonzero only for abandoned exact system-owned
-markers whose owning GitHub Actions run is missing or terminal, including the
-documented orphan when it still carries this system's marker. It reports
+markers whose owning GitHub Actions run is missing or terminal. It reports
 human-authored, unowned, or malformed drafts as warnings so unrelated drafts do
 not keep the schedule red. It excludes queued and in-progress runs so an active
 release is not treated as abandoned. It must not join `production-deploy`
@@ -388,6 +387,15 @@ read-only scope the detector sees no drafts and falsely passes. The workflow
 contract validates the detector's effective permissions, including job-level
 overrides, and limits `run` commands to `make setup` and
 `node scripts/production-release.mjs detect-abandoned`.
+
+Do not delete a release draft as part of ordinary implementation or tests, and
+never delete one by tag name. An owned draft's marker is the record that
+reconciliation and **Re-run failed jobs** recover from. A tag does not identify
+one release: GitHub permits several drafts with the same tag name and may list a
+draft whose tag does not exist yet under an `untagged-*` tag, so identify a
+draft by its release ID. An owned draft that remains after the deploy run's
+cleanup step and manual reconciliation is an unresolved release, not an accepted
+state: it stays in place until the repository owner decides what to do with it.
 
 The Worker upload and traffic commands fail outside the sanctioned GitHub
 Actions workflows. Do not load production credentials locally to bypass them and
@@ -420,25 +428,11 @@ run it as part of a numbered application release. After it succeeds, dispatch
 `deploy-production.yml` so the application release can pass the compare-triggers
 gate.
 
-### Existing orphan draft and immutable releases
+### Immutable releases
 
-GitHub currently has an extra draft for `v0.2.7` with release ID `378670392`
-created during the failed finalizer of run `33196586800`. Do not delete it as
-part of ordinary implementation or tests. If that draft still carries this
-system's exact ownership marker, the scheduled detector stays red until an
-operator deletes it; if it is unowned or malformed relative to the current
-marker, the detector reports it as a warning only. After verifying it is still a
-draft for `v0.2.7` with no assets and the intended candidate target, an operator
-may delete that exact ID:
-
-```bash
-gh api repos/conn-castle/agent-outbox/releases/378670392
-gh api --method DELETE repos/conn-castle/agent-outbox/releases/378670392
-```
-
-Do not delete by tag name. After the new flow is validated in production, an
-operator should enable GitHub immutable releases in repository settings. Do not
-change that setting from an agent session.
+After the new flow is validated in production, an operator should enable GitHub
+immutable releases in repository settings. Do not change that setting from an
+agent session.
 
 Production Flyway migration application follows the same boundary: it runs only
 inside `deploy-production.yml`, after the inactive Worker version is uploaded
