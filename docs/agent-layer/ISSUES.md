@@ -30,13 +30,13 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 <!-- ENTRIES START -->
 - Issue 2026-11-19 sentry-cli-two-majors: Release builds use two major versions of the Sentry CLI
     Priority: Low. Area: dependencies / Sentry
-    Description: `@sentry/bundler-plugins` 10.78.0 requires `@sentry/cli` `^2.58.6`, and the repository pins `@sentry/cli` 3.8.0 for `pnpm exec sentry-cli`. `next.config.ts` lets the build plugin create and finalize the Sentry release, and `scripts/worker-deploy.mjs` injects and uploads source maps with the pinned CLI.
+    Description: `pnpm-lock.yaml` resolves `@sentry/cli` 2.58.6 for `@sentry/bundler-plugins` 10.78.0, and `package.json` pins `@sentry/cli` 3.8.0 for `pnpm exec sentry-cli`. `next.config.ts` lets the build plugin create and finalize the Sentry release, and `scripts/worker-deploy.mjs` injects and uploads source maps with the pinned CLI.
     Open question: Should both steps use one CLI version?
 
 - Issue 2026-11-19 otel-sdk-trace-base-deprecated: Lockfile resolves a deprecated OpenTelemetry package version
     Priority: Low. Area: dependencies / Sentry
-    Description: `pnpm-lock.yaml` resolves `@opentelemetry/sdk-trace-base` 2.11.0 for `@sentry/node`, `@sentry/node-core` and `@sentry/opentelemetry`, and the registry marks 2.11.0 deprecated ("Use @opentelemetry/sdk-trace package"). 2.12.1 is not deprecated and is inside those packages' ranges at 10.78.0; it depends on `@opentelemetry/core`, `@opentelemetry/resources` and `@opentelemetry/sdk-trace` 2.12.1.
-    Next step: Re-lock `@opentelemetry/sdk-trace-base` to a version that is not deprecated and rerun `make check`.
+    Description: `pnpm-lock.yaml` resolves `@opentelemetry/sdk-trace-base` 2.11.0 for `@sentry/node`, `@sentry/node-core` and `@sentry/opentelemetry`, and records it as `deprecated: Use @opentelemetry/sdk-trace package`.
+    Open question: Should the deprecated version be replaced before a Sentry update replaces it?
 
 - Issue 2026-11-19 built-worker-not-run-before-release: No pull request check runs the built Worker
     Priority: Medium. Area: CI / Cloudflare Worker
