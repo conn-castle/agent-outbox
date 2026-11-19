@@ -474,6 +474,37 @@ screenshots directly in `public/`, and writes a before/after/overlay/difference
 report under `.agent-layer/tmp/marketing-capture/review/`. Review the unstaged
 working-tree changes before approval or commit.
 
+- Retire temporary marketing caches after work finishes
+
+```bash
+# Close out from the owning worktree before removing it.
+bash scripts/marketing-capture-container.sh retire-cache
+# Recover from a surviving Agent Outbox checkout after the owner path is gone.
+bash scripts/marketing-capture-container.sh retire-cache /exact/absolute/owner-worktree-path
+```
+
+Run from: the owning checkout for the first form, or any surviving Agent Outbox
+checkout for the second. Prerequisites: the target owner's work is finished,
+needed inputs/results/logs are preserved outside the caches, and new captures
+for that owner are prevented throughout retirement. Directory absence is not
+completion evidence. Use the exact absolute owner path from ordinary task notes
+or native cache labels; it need not exist. Paths are never resolved or
+normalized: relative/root paths, trailing/repeated slashes, dot components, and
+control characters are rejected. An explicit path matching no caches fails
+without cleanup; verify the spelling or prior retirement. The owning-checkout
+form remains an idempotent no-op when its caches are absent.
+
+Notes: Requires exact project/path/temporary-cache labels and no running or
+stopped container references before removing either cache. Removes only the
+present exact cache volumes without force. Old global caches, unclassified or
+durable data, and other worktrees stay outside eligibility. Prefer closeout
+before removal; this explicit recovery path also works afterwards. Reuse caches
+during active work; at completion retire them or record a continuing-owner
+handoff. A later capture recreates cold caches. Per-worktree marketing image
+tags are intentionally reusable toolchain inputs and remain warm; cache
+retirement does not remove images. Capture evidence stays under
+`.agent-layer/tmp/marketing-capture/docker-run.*/`.
+
 - Attest a human-approved screenshot set
 
 ```bash
