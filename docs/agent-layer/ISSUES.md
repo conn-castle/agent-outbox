@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-19 built-worker-not-run-before-release: No pull request check runs the built Worker
+    Priority: Medium. Area: CI / Cloudflare Worker
+    Description: With `next` 16.4.6 and `@opennextjs/cloudflare` 1.20.8, `make check`, `make browser`, `corepack pnpm run worker:dry-run` and every required check on PR #309 passed, but the built Worker under local `wrangler dev` answered Next-routed requests with 500 (`Unexpected loadManifest(/.next/server/preview-props.json) call!`). The browser suite serves the Node-hosted app (`scripts/node-server.mjs`); the first run of a built Worker is the release workflow's 0% smoke, after production migrations.
+    Open question: Where should a built Worker be run before a release?
+
 - Issue 2026-11-16 review-error-one-line-on-touch: Review action errors show one cut-off line with the rest only in a tooltip
     Priority: Low. Area: human review queue
     Description: `.last-action-error` shows one ellipsized line (`max-width: 8.5rem` on phones) and carries the full message only in its `title`. In the mobile browser project a 139-character message showed its first 16 characters.

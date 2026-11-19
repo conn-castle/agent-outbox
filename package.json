@@ -59,7 +59,7 @@
     "clean": "node scripts/foundation.mjs clean"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.20.8",
+    "@opennextjs/cloudflare": "1.20.17",
     "@playwright/test": "1.63.0",
     "@sentry/cli": "3.8.0",
     "@types/node": "24.19.0",
