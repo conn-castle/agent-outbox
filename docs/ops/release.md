@@ -390,10 +390,12 @@ overrides, and limits `run` commands to `make setup` and
 
 Do not delete a release draft as part of ordinary implementation or tests, and
 never delete one by tag name. An owned draft's marker is the record that
-reconciliation and **Re-run failed jobs** recover from, and GitHub permits
-several drafts with the same tag name, so a tag does not identify one release. A
-draft that neither procedure clears stays in place until the repository owner
-decides what to do with it.
+reconciliation and **Re-run failed jobs** recover from. A tag does not identify
+one release: GitHub permits several drafts with the same tag name and may list a
+draft whose tag does not exist yet under an `untagged-*` tag, so identify a
+draft by its release ID. An owned draft that remains after the deploy run's
+cleanup step and manual reconciliation is an unresolved release, not an accepted
+state: it stays in place until the repository owner decides what to do with it.
 
 The Worker upload and traffic commands fail outside the sanctioned GitHub
 Actions workflows. Do not load production credentials locally to bypass them and
