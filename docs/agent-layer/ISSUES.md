@@ -30,7 +30,7 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 <!-- ENTRIES START -->
 - Issue 2026-11-19 sentry-cli-two-majors: Release builds use two major versions of the Sentry CLI
     Priority: Low. Area: dependencies / Sentry
-    Description: `@sentry/bundler-plugins` 10.78.0 requires `@sentry/cli` `^2.58.6`, and the repository pins `@sentry/cli` 3.8.0 for `pnpm exec sentry-cli`. `next.config.ts` lets the build plugin create and finalize the Sentry release, and `scripts/worker-deploy.mjs` injects and uploads source maps with the pinned CLI. No difference in behavior between the two versions has been observed.
+    Description: `@sentry/bundler-plugins` 10.78.0 requires `@sentry/cli` `^2.58.6`, and the repository pins `@sentry/cli` 3.8.0 for `pnpm exec sentry-cli`. `next.config.ts` lets the build plugin create and finalize the Sentry release, and `scripts/worker-deploy.mjs` injects and uploads source maps with the pinned CLI.
     Open question: Should both steps use one CLI version?
 
 - Issue 2026-11-19 otel-sdk-trace-base-deprecated: Lockfile resolves a deprecated OpenTelemetry package version
