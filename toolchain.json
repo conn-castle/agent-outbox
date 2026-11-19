@@ -75,7 +75,7 @@
   },
   "runtimePins": {
     "next": {
-      "version": "16.3.8",
+      "version": "16.4.6",
       "package": "next",
       "source": "npm view next version engines peerDependencies --json"
     },
@@ -115,7 +115,7 @@
       "source": "corepack pnpm view @dnd-kit/utilities version"
     },
     "sentryNextjs": {
-      "version": "10.73.0",
+      "version": "10.78.0",
       "package": "@sentry/nextjs",
       "source": "npm view @sentry/nextjs version engines peerDependencies --json"
     },
@@ -187,7 +187,7 @@
       "source": "corepack pnpm view sharp version engines --json"
     },
     "cloudflareOpenNext": {
-      "version": "1.20.8",
+      "version": "1.20.17",
       "package": "@opennextjs/cloudflare",
       "source": "pnpm view @opennextjs/cloudflare version engines peerDependencies bin --json"
     },
