@@ -70,8 +70,14 @@ import {
   removeUndoEntry,
   removeUndoTargets,
   settleUndoEntry,
+  undoAvailable,
   type UndoEntry
 } from "./undo-stack";
+import {
+  isApplePlatform,
+  isUndoShortcut,
+  keepsUndoShortcut
+} from "./undo-shortcut";
 import type {
   HumanMutationState,
   HumanUndoTarget
@@ -789,6 +795,50 @@ export function ReviewWorkspace({
     );
   }
   startUndoRef.current = startUndo;
+  const lockedIdsRef = useRef(lockedIds);
+  lockedIdsRef.current = lockedIds;
+
+  // What the Undo control and its shortcut both do: undo the offered action
+  // unless that is unavailable. Locks are read as they are now, including
+  // undos started since the last render. Returns whether an undo started.
+  function requestUndo() {
+    const stack = undoStackRef.current;
+    const entry = offeredUndoEntry(stack);
+    const locked = new Set(lockedIdsRef.current);
+    for (const other of stack) {
+      if (other.undoing) other.inputItemIds.forEach((id) => locked.add(id));
+    }
+    if (!entry || !undoAvailable(entry, locked)) return false;
+    startUndo(entry.id);
+    return true;
+  }
+  const requestUndoRef = useRef(requestUndo);
+  requestUndoRef.current = requestUndo;
+
+  // The platform's undo shortcut presses the Undo control. A text field keeps
+  // its own undo, an open dialog or panel keeps the keyboard, and a held key
+  // undoes once.
+  useEffect(() => {
+    const applePlatform = isApplePlatform(navigator.userAgent);
+    function undoByKeyboard(event: KeyboardEvent) {
+      if (
+        !isUndoShortcut(event, applePlatform) ||
+        event.repeat ||
+        event.isComposing ||
+        event.defaultPrevented ||
+        keepsUndoShortcut(event.target) ||
+        // A modal makes the page behind it inert even when focus is on
+        // neither; the filter and sort panels are this workspace's own.
+        document.querySelector("dialog:modal, [data-view-popover-surface]")
+      ) {
+        return;
+      }
+      if (requestUndoRef.current()) event.preventDefault();
+    }
+
+    window.addEventListener("keydown", undoByKeyboard);
+    return () => window.removeEventListener("keydown", undoByKeyboard);
+  }, []);
 
   useEffect(() => {
     if (!notice) return;
@@ -915,11 +965,8 @@ export function ReviewWorkspace({
               <LastAnswerUndoForm
                 key={offeredUndo.id}
                 undo={offeredUndo}
-                disabled={
-                  offeredUndo.undoRequested ||
-                  offeredUndo.inputItemIds.some((id) => lockedIds.has(id))
-                }
-                onUndo={() => startUndo(offeredUndo.id)}
+                disabled={!undoAvailable(offeredUndo, lockedIds)}
+                onUndo={requestUndo}
               />
             ) : null}
           </div>

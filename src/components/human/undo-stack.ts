@@ -24,6 +24,20 @@ export function offeredUndoEntry(stack: UndoEntry[]) {
   return stack.findLast((entry) => !entry.undoing) ?? null;
 }
 
+/**
+ * Whether the offered entry can be undone now. It cannot while an undo of it
+ * is already waiting for its answer to save, or while one of its items is
+ * locked by another undo in flight.
+ */
+export function undoAvailable(
+  entry: UndoEntry,
+  lockedIds: ReadonlySet<string>
+) {
+  return (
+    !entry.undoRequested && !entry.inputItemIds.some((id) => lockedIds.has(id))
+  );
+}
+
 export function removeUndoEntry(stack: UndoEntry[], entryId: string) {
   return stack.filter((entry) => entry.id !== entryId);
 }
