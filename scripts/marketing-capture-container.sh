@@ -73,14 +73,15 @@ done
 # Owner invokes this only after completion, evidence preservation, and stopping
 # new captures for the target owner. Directory absence never proves completion.
 if [[ "$mode" == "retire-cache" ]]; then
-  for volume in "${owned_caches[@]}"; do
-    consumers="$(docker ps --all --quiet --filter "volume=$volume")"
-    if [[ -n "$consumers" ]]; then
-      echo "Cannot retire marketing cache $volume: containers still reference it: $consumers" >&2
-      exit 1
-    fi
-  done
-  if (( ${#owned_caches[@]} > 0 )); then
+  # Older Bash treats an empty array as unset under nounset.
+  if [[ -n "${owned_caches[*]:-}" ]]; then
+    for volume in "${owned_caches[@]}"; do
+      consumers="$(docker ps --all --quiet --filter "volume=$volume")"
+      if [[ -n "$consumers" ]]; then
+        echo "Cannot retire marketing cache $volume: containers still reference it: $consumers" >&2
+        exit 1
+      fi
+    done
     docker volume rm "${owned_caches[@]}"
   elif [[ $# -eq 2 ]]; then
     echo "No cache volumes found for exact owner path $owner_root; no cleanup performed. Verify the recorded path or prior retirement." >&2
