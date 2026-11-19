@@ -73,10 +73,10 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Every `graceEndsAt(now)` in `src/server/billing.ts` measures from the time a webhook is processed: the failed-invoice update and each `billingTransitionForSubscription` outcome other than active or scheduled to cancel at period end. Stripe retries deliveries for days, so a late failed invoice, or a late subscription event whose status is canceled, expired, past due, unpaid, incomplete or unrecognized, extends paid access past the configured downgrade grace period measured from the event. Raised in review of PR #297.
     Open question: Should grace be measured from the Stripe event's creation time or from when Agent Outbox learns of it?
 
-- Issue 2026-10-20 supabase-api-grants-unverified: Migration API-role revocations are inconsistent
+- Issue 2026-10-20 supabase-api-role-grants: Named API-role grants exceed the direct-SQL application boundary
     Priority: Medium. Area: operations / database access
-    Description: The initial schema conditionally revokes named API roles; later migrations revoke only PUBLIC for the webhook ledger table, checkout attempts, receipt sequence, and the Stripe ordering and review text trigger functions. Current live ACLs and Data API exposure are unknown.
-    Next step: Verify effective privileges, creator defaults, RLS, and Data API exposure before proposing privilege changes.
+    Description: A read-only production catalog audit on 2026-11-15 found that `anon`, `authenticated` and `service_role` hold privileges on `agent_outbox_billing_checkout_attempts`, `agent_outbox_stripe_webhook_events`, `flyway_schema_history` and the sequence `agent_outbox_stripe_webhook_receipt_order_seq`, and EXECUTE on the trigger functions `agent_outbox_clear_stale_review_text` and `agent_outbox_clear_stripe_event_order_on_legacy_update`. `service_role` has BYPASSRLS, and default privileges for objects that `postgres` or `supabase_admin` create in `public` name the three roles. All 19 application tables have forced RLS; `flyway_schema_history` has RLS disabled. On 2026-11-19 the project owner read the production project's Data API settings in the Supabase dashboard: the Data API is not enabled.
+    Open question: What privileges should `anon`, `authenticated` and `service_role` hold, given that the application reaches Postgres only through direct SQL?
 
 - Issue 2026-10-19 prod-audit-read-route: Historical audit access lacks a least-privilege procedure
     Priority: Medium. Area: operations / database access
