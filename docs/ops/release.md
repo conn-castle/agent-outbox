@@ -376,8 +376,7 @@ choosing **Re-run failed jobs** on the original deploy run so it reuses the
 certified artifact. Ambiguous or unprovable ownership, candidate-live or
 unreadable provider state, or a prior identity that cannot be proven, stops
 loudly. A scheduled detector fails nonzero only for abandoned exact system-owned
-markers whose owning GitHub Actions run is missing or terminal, including the
-documented orphan when it still carries this system's marker. It reports
+markers whose owning GitHub Actions run is missing or terminal. It reports
 human-authored, unowned, or malformed drafts as warnings so unrelated drafts do
 not keep the schedule red. It excludes queued and in-progress runs so an active
 release is not treated as abandoned. It must not join `production-deploy`
@@ -420,20 +419,17 @@ run it as part of a numbered application release. After it succeeds, dispatch
 `deploy-production.yml` so the application release can pass the compare-triggers
 gate.
 
-### Existing orphan draft and immutable releases
+### Stale drafts and immutable releases
 
-GitHub currently has an extra draft for `v0.2.7` with release ID `378670392`
-created during the failed finalizer of run `33196586800`. Do not delete it as
-part of ordinary implementation or tests. If that draft still carries this
-system's exact ownership marker, the scheduled detector stays red until an
-operator deletes it; if it is unowned or malformed relative to the current
-marker, the detector reports it as a warning only. After verifying it is still a
-draft for `v0.2.7` with no assets and the intended candidate target, an operator
-may delete that exact ID:
+A draft that reconciliation holds on stays until an operator deletes it, and an
+exact-owned one keeps the scheduled detector red until then. Do not delete a
+draft as part of ordinary implementation or tests. After reading it by release
+ID and verifying that it is still a draft, was never published, and does not
+belong to a queued or running release, an operator may delete that exact ID:
 
 ```bash
-gh api repos/conn-castle/agent-outbox/releases/378670392
-gh api --method DELETE repos/conn-castle/agent-outbox/releases/378670392
+gh api repos/conn-castle/agent-outbox/releases/<release-id>
+gh api --method DELETE repos/conn-castle/agent-outbox/releases/<release-id>
 ```
 
 Do not delete by tag name. After the new flow is validated in production, an
