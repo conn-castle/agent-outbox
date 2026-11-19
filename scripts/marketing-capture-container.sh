@@ -83,8 +83,8 @@ if [[ "$mode" == "retire-cache" ]]; then
       fi
     done
     for volume in "${owned_caches[@]}"; do
-      if ! docker volume rm "$volume"; then
-        echo "Failed to retire marketing cache $volume for owner $owner_root. Earlier successful removals are listed above; later caches were not removed. Stop new captures, check container references, and retry retirement with this exact owner path." >&2
+      if ! docker volume rm "$volume" > /dev/null; then
+        echo "Failed to retire marketing cache $volume for owner $owner_root. Stop new captures, check container references, and retry retirement with this exact owner path." >&2
         exit 1
       fi
       printf 'Retired marketing cache %s.\n' "$volume"
