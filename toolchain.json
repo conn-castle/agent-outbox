@@ -43,7 +43,7 @@
       "source": "npm view prettier version engines --json"
     },
     "markdownlint": {
-      "version": "0.23.3",
+      "version": "0.24.1",
       "package": "markdownlint-cli2",
       "source": "npm view markdownlint-cli2 version engines --json"
     },
@@ -204,7 +204,7 @@
   },
   "providerCli": {
     "cloudflareWrangler": {
-      "version": "4.151.1",
+      "version": "4.164.0",
       "package": "wrangler",
       "source": "pnpm view wrangler version engines --json",
       "authCheck": ["wrangler", "whoami", "--env-file", "/dev/null"]
