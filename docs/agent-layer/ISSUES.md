@@ -93,11 +93,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: OpenNext's server-bundle pass emits no source map, so final Worker frames for Next-routed code resolve to minified handler.mjs rather than application TypeScript.
     Next step: Recheck opennextjs-cloudflare #1352/#1124/#824 for a supported server-bundle source-map option.
 
-- Issue 2026-10-17 dev-tool-advisory-constraints: Advisories remain outside upstream dependency ranges
-    Priority: Low. Area: Development tooling / Dependencies
-    Description: `pnpm audit` reports `adm-zip` (through rclone.js), `katex` (through markdownlint-cli2), and `glob` and `minimatch` (through `@opennextjs/cloudflare` and `@sentry/bundler-plugins`). `pnpm audit --prod` reports `glob` and `minimatch`, because `@sentry/nextjs` is a runtime dependency. Current parent releases do not admit the fixed versions.
+- Issue 2026-10-17 dev-tool-advisory-constraints: Advisories remain outside the installed parents' dependency ranges
+    Priority: Low. Area: Build and development tooling / Dependencies
+    Description: `pnpm audit` reports `adm-zip` (through rclone.js), `katex` (through markdownlint-cli2), and `glob` and `minimatch` (through `@opennextjs/cloudflare` and `@sentry/bundler-plugins`). `pnpm audit --prod` reports `glob` and `minimatch`, because `@sentry/nextjs`, which brings in `@sentry/bundler-plugins`, is under `dependencies`; the Worker bundle written by `wrangler versions upload --dry-run --outdir` contains neither package. The installed parent versions do not admit the fixed versions.
     Next step: Recheck upstream releases for a supported dependency graph that clears these findings.
-    Notes: rclone.js 0.6.6 requires adm-zip ^0.5.9 (fix >=0.6.1); micromark-extension-math 3.1.0 requires katex ^0.16.0 (fix >=0.18.2); `@opennextjs/cloudflare` 1.20.17 and `@sentry/bundler-plugins` 10.78.0 require glob ^13.0.6 (fix >=14.0.2), and glob 13.0.6 requires minimatch ^10.2.2 (fix >=11.0.1).
+    Notes: rclone.js 0.6.6 requires adm-zip ^0.5.9 (fix >=0.6.1); micromark-extension-math 3.1.0 requires katex ^0.16.0 (fix >=0.18.2); `@opennextjs/cloudflare` 1.20.17 and `@sentry/bundler-plugins` 10.78.0 require glob ^13.0.6 (fix >=14.0.2), and glob 13.0.6 requires minimatch ^10.2.2 (fix >=11.0.1). `@sentry/bundler-plugins` 11.15.0 requires glob ^14.0.3, and glob 14.0.6 requires minimatch ^11.0.5.
 
 - Issue 2026-10-07 connect-ineffective-style-intents: Caller-connect styles show dropped spacing and heading intent
     Priority: Low. Area: Caller connect / Visual design
