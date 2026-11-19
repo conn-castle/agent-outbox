@@ -419,22 +419,11 @@ run it as part of a numbered application release. After it succeeds, dispatch
 `deploy-production.yml` so the application release can pass the compare-triggers
 gate.
 
-### Stale drafts and immutable releases
+### Immutable releases
 
-A draft that reconciliation holds on stays until an operator deletes it, and an
-exact-owned one keeps the scheduled detector red until then. Do not delete a
-draft as part of ordinary implementation or tests. After reading it by release
-ID and verifying that it is still a draft, was never published, and does not
-belong to a queued or running release, an operator may delete that exact ID:
-
-```bash
-gh api repos/conn-castle/agent-outbox/releases/<release-id>
-gh api --method DELETE repos/conn-castle/agent-outbox/releases/<release-id>
-```
-
-Do not delete by tag name. After the new flow is validated in production, an
-operator should enable GitHub immutable releases in repository settings. Do not
-change that setting from an agent session.
+After the new flow is validated in production, an operator should enable GitHub
+immutable releases in repository settings. Do not change that setting from an
+agent session.
 
 Production Flyway migration application follows the same boundary: it runs only
 inside `deploy-production.yml`, after the inactive Worker version is uploaded
