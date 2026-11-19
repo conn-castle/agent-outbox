@@ -502,8 +502,24 @@ before removal; this explicit recovery path also works afterwards. Reuse caches
 during active work; at completion retire them or record a continuing-owner
 handoff. A later capture recreates cold caches. Per-worktree marketing image
 tags are intentionally reusable toolchain inputs and remain warm; cache
-retirement does not remove images. Capture evidence stays under
-`.agent-layer/tmp/marketing-capture/docker-run.*/`.
+retirement does not remove images. Identical image layers are content-addressed
+and reused across tags; separate tags keep worktrees' mutable references
+independent. Preserve the legacy global resources
+(`agent-outbox-marketing-node-modules-amd64`,
+`agent-outbox-marketing-next-browser-amd64`, and image tag
+`agent-outbox-marketing-playwright:1.63.0`). Before any separate cleanup,
+establish ownership, verify that their work is complete, and check for
+continuing consumers.
+
+Retirement reports each successful removal and stops with an owner-specific
+error on failure. Earlier removals may already have succeeded; prevent new
+captures, check container references, and retry the same owner to finish.
+Capture evidence stays under `.agent-layer/tmp/marketing-capture/docker-run.*/`,
+including separate `build.log`, `image-id` (after a successful build), and
+`capture.log` (when the container runs). Failed builds retain their log and
+stop before container execution. The toolchain build reads only
+`Dockerfile.marketing` from standard input, with no filesystem context; logs
+and checkout files are excluded without pruning evidence.
 
 - Attest a human-approved screenshot set
 

@@ -82,7 +82,13 @@ if [[ "$mode" == "retire-cache" ]]; then
         exit 1
       fi
     done
-    docker volume rm "${owned_caches[@]}"
+    for volume in "${owned_caches[@]}"; do
+      if ! docker volume rm "$volume"; then
+        echo "Failed to retire marketing cache $volume for owner $owner_root. Earlier successful removals are listed above; later caches were not removed. Stop new captures, check container references, and retry retirement with this exact owner path." >&2
+        exit 1
+      fi
+      printf 'Retired marketing cache %s.\n' "$volume"
+    done
   elif [[ $# -eq 2 ]]; then
     echo "No cache volumes found for exact owner path $owner_root; no cleanup performed. Verify the recorded path or prior retirement." >&2
     exit 1
@@ -113,8 +119,10 @@ image="agent-outbox-marketing-playwright:1.63.0-${worktree_id}"
 mkdir -p -- "$repo_root/.agent-layer/tmp/marketing-capture"
 run_dir="$(mktemp -d "$repo_root/.agent-layer/tmp/marketing-capture/docker-run.XXXXXXXX")"
 task_id="${run_dir##*/}"
-docker build --platform linux/amd64 --file "$repo_root/Dockerfile.marketing" --tag "$image" \
-  --iidfile "$run_dir/image-id" "$repo_root"
+# The toolchain Dockerfile needs no checkout files; keep evidence out of context.
+docker build --platform linux/amd64 --tag "$image" \
+  --iidfile "$run_dir/image-id" - < "$repo_root/Dockerfile.marketing" \
+  2>&1 | tee "$run_dir/build.log"
 image_id="$(<"$run_dir/image-id")"
 # Mount test-results separately so Playwright clears its contents without
 # replacing the host-owned directory with a root-owned directory.
