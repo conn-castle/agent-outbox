@@ -73,10 +73,10 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
     Description: Every `graceEndsAt(now)` in `src/server/billing.ts` measures from the time a webhook is processed: the failed-invoice update and each `billingTransitionForSubscription` outcome other than active or scheduled to cancel at period end. Stripe retries deliveries for days, so a late failed invoice, or a late subscription event whose status is canceled, expired, past due, unpaid, incomplete or unrecognized, extends paid access past the configured downgrade grace period measured from the event. Raised in review of PR #297.
     Open question: Should grace be measured from the Stripe event's creation time or from when Agent Outbox learns of it?
 
-- Issue 2026-10-20 supabase-api-grants-unverified: Migration API-role revocations are inconsistent
+- Issue 2026-10-20 supabase-api-grants-unverified: Named API-role grants exceed the direct-SQL application boundary
     Priority: Medium. Area: operations / database access
-    Description: The initial schema conditionally revokes named API roles; later migrations revoke only PUBLIC for the webhook ledger table, checkout attempts, receipt sequence, and the Stripe ordering and review text trigger functions. Current live ACLs and Data API exposure are unknown.
-    Next step: Verify effective privileges, creator defaults, RLS, and Data API exposure before proposing privilege changes.
+    Description: A read-only production catalog audit on 2026-11-15 found that `anon`, `authenticated` and `service_role` hold privileges on the checkout-attempts and Stripe webhook-events tables, Flyway's history table, the webhook receipt sequence and two trigger functions. `service_role` has BYPASSRLS, and default privileges for new `public` objects name the three roles. All 19 application tables have forced RLS; Flyway's history table has RLS disabled. The project owner reported on 2026-11-19 that the Supabase dashboard shows the Data API is not enabled for the production project.
+    Open question: Should the named-role grants and default privileges be removed while the Data API is disabled?
 
 - Issue 2026-10-19 prod-audit-read-route: Historical audit access lacks a least-privilege procedure
     Priority: Medium. Area: operations / database access

@@ -57,9 +57,19 @@ RLS does not constrain roles with `BYPASSRLS`.
 
 Use [secrets](../secrets.md) and [migration rules](../migrations.md). Verify the
 canonical Outbox target against the Worker's Hyperdrive origin before
-connecting. Inspect schema, table, sequence, and function ACLs, effective
-privileges, creator-specific default privileges, RLS, function
-ownership/security mode, and Data API exposure settings.
+connecting. Inspect database, schema, table, column, sequence, and function
+ACLs, effective privileges, creator-specific default privileges, role
+memberships (including inheritance and SET ROLE), BYPASSRLS, ownership,
+RLS/policies, function security mode, and Data API exposure settings. Include
+Flyway's history table and privileges beyond CRUD; row-level security does not
+cover every table operation. Distinguish trigger functions from callable
+application RPCs.
+
+Use catalog-only queries in a read-only transaction and roll back. Catalog role
+settings alone do not establish the provider's API-enabled or exposed-schema
+configuration; obtain that readback separately through existing management
+access. Retain only allowlisted metadata, never connection URLs or secret
+configuration fields.
 
 ## Safe Checks
 
