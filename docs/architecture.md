@@ -275,17 +275,24 @@ so its repeat reports the items that committed and tries the rest:
   again, an undo of the earlier output is reported as not found.
 
 An undo names both the item and the output that answered it; an output that
-answered a different item is reported as not found.
+answered a different item is reported as not found. A bulk answer's response
+names that pair for every item it answered, and one undo request can carry
+several pairs. It succeeds when at least one answer was restored and reports
+which ones, and how many were not.
 
 If no attempt establishes the outcome, or a retry is refused, the mutation
 settles as unconfirmed: its optimistic projection is removed, the application
-bar says it may not have been saved rather than that it failed, and the page is
-refreshed so the next page shows what the server holds. A bulk answer that
-stopped at a temporary failure names the answers it had committed in that
+bar says the save or undo was not confirmed rather than that it failed, and the
+page is refreshed so the next page shows what the server holds. A bulk answer
+that stopped at a temporary failure names the answers it had committed in that
 failure; whatever any attempt reported as committed stays on the undo stack, and
 the newest item state any attempt reported is applied, however the mutation
-settles. A failed write removes only its own projection. The row leaving the
-pending queue is the success signal.
+settles. A successful retry keeps the answers an earlier attempt reported, even
+when it could not report them again. Rows of an unconfirmed answer stay selected
+only while the next page of the same view still shows them. Mutations are sent
+one at a time, in the order the person acted, so while one is being retried (up
+to about a minute) the ones behind it wait. A failed write removes only its own
+projection. The row leaving the pending queue is the success signal.
 
 When a page transaction overlaps a mutation response, the response's item state
 wins even if the page read the item later; the refresh that follows every

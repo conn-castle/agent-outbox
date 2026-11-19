@@ -34,6 +34,10 @@ import {
   visualUnitSuffix
 } from "../src/components/human/review-format.ts";
 import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
+import * as apiErrors from "../src/server/api-errors.ts";
+import * as humanReviewFixture from "../src/server/human-review-fixture.ts";
+import { fixtureResolvedOutputResultId } from "../src/server/human-review-fixture.ts";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 import {
   parseValidSubmission,
   richPublicInput,
@@ -323,6 +327,113 @@ test("fixture resolved items leave pending and appear as answered history", () =
   assert.ok(historyRow);
   assert.equal(historyRow.status, "answered");
   assert.equal(historyRow.output?.actionDisplay, "Approve");
+});
+
+test("fixture answers and undos reject like the database and recognize a repeat", async () => {
+  /** @type {Map<string, string>} */
+  const jar = new Map();
+  const cookies = {
+    /** @param {string} name */
+    get: (name) => (jar.has(name) ? { value: jar.get(name) } : undefined),
+    /** @param {string} name @param {string} value */
+    set: (name, value) => void jar.set(name, value),
+    /** @param {string} name */
+    delete: (name) => void jar.delete(name)
+  };
+  const fixtureState =
+    /** @type {typeof import("../src/server/human-review-fixture-state.ts")} */ (
+      loadModuleForTest("src/server/human-review-fixture-state.ts", {
+        globals: { Buffer },
+        stubs: {
+          "./api-errors.ts": apiErrors,
+          "./human-review-fixture.ts": humanReviewFixture,
+          "next/headers": { cookies: async () => cookies }
+        }
+      })
+    );
+  /** @param {{ ok: boolean, code?: string }} result */
+  const outcome = (result) => (result.ok ? "ok" : result.code);
+  const [item, other] = browserFixtureReviewPage(defaultHumanReviewView).rows;
+  const firstRequest = "00000000-0000-4000-8000-0000000000c1";
+  const secondRequest = "00000000-0000-4000-8000-0000000000c2";
+  /** @param {Partial<Parameters<typeof fixtureState.answerFixtureItem>[0]>} [changes] */
+  const answer = (changes) =>
+    fixtureState.answerFixtureItem({
+      inputItemId: item.inputItemId,
+      callerId: item.caller.callerId,
+      actionDisplay: "Approve",
+      expectedRevision: item.currentRevision,
+      mutationId: firstRequest,
+      ...changes
+    });
+
+  assert.equal(outcome(await answer({ callerId: secondRequest })), "not_found");
+  assert.equal(
+    outcome(await answer({ expectedRevision: item.currentRevision + 1 })),
+    "stale_input_revision"
+  );
+  /** @param {Awaited<ReturnType<typeof answer>>} result */
+  const reported = (result) =>
+    result.ok ? result.outputResultId : result.code;
+  const answeredOutput = fixtureResolvedOutputResultId(
+    item.inputItemId,
+    item.currentRevision
+  );
+  assert.equal(reported(await answer()), answeredOutput);
+  // The same request again reports its answer, whatever revision it names:
+  // the output of the revision that was answered. Another request is told
+  // the item is no longer pending.
+  assert.equal(reported(await answer()), answeredOutput);
+  assert.equal(
+    reported(await answer({ expectedRevision: item.currentRevision + 1 })),
+    answeredOutput
+  );
+  assert.equal(
+    outcome(await answer({ mutationId: secondRequest })),
+    "input_not_pending"
+  );
+  assert.equal(
+    outcome(
+      await answer({
+        inputItemId: other.inputItemId,
+        callerId: other.caller.callerId,
+        expectedRevision: other.currentRevision,
+        mutationId: secondRequest
+      })
+    ),
+    "ok"
+  );
+
+  /** @param {Partial<Parameters<typeof fixtureState.undoFixtureAnswer>[0]>} [changes] */
+  const undo = (changes) =>
+    fixtureState.undoFixtureAnswer({
+      inputItemId: item.inputItemId,
+      callerId: item.caller.callerId,
+      outputResultId: fixtureResolvedOutputResultId(
+        item.inputItemId,
+        item.currentRevision
+      ),
+      ...changes
+    });
+  assert.equal(
+    outcome(await undo({ outputResultId: secondRequest })),
+    "not_found"
+  );
+  assert.equal(outcome(await undo({ callerId: secondRequest })), "not_found");
+  assert.equal(outcome(await undo()), "ok");
+  // The undo again reports that it is done, but only for the output it removed.
+  assert.equal(outcome(await undo()), "ok");
+  assert.equal(
+    outcome(await undo({ outputResultId: secondRequest })),
+    "not_found"
+  );
+  // The newest change is the last record, which is the last one trimmed.
+  assert.deepEqual(
+    Object.keys(JSON.parse(jar.get("agent_outbox_fixture_resolved") ?? "{}")),
+    [other.inputItemId, item.inputItemId]
+  );
+  // A late repeat of the undone answer is refused: the undo moved the revision.
+  assert.equal(outcome(await answer()), "stale_input_revision");
 });
 
 test("an undone answer of an originally answered fixture item can be answered again", (t) => {
@@ -2044,6 +2155,9 @@ test("human action form parser rejects malformed hidden fields before database w
     const uppercase = answerForm();
     uppercase.set(field, lettered.toUpperCase());
     assert.deepEqual(parseHumanAnswerForm(uppercase), { ok: false }, field);
+    const mixedCase = answerForm();
+    mixedCase.set(field, lettered.replace("abcd", "aBcd"));
+    assert.deepEqual(parseHumanAnswerForm(mixedCase), { ok: false }, field);
   }
   for (const field of ["mutationId", "callerId", "outputResultId"]) {
     const lowercase = undoForm();

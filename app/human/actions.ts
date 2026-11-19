@@ -22,13 +22,13 @@ import {
   parseHumanAnswerForm,
   parseUndoHumanAnswerForm
 } from "../../src/server/human-action-form";
-import {
-  fixtureResolvedOutputResultId,
-  humanBrowserFixtureEnabled
-} from "../../src/server/human-review-fixture";
+import { humanBrowserFixtureEnabled } from "../../src/server/human-review-fixture";
 import type { ProductTransactionQuery } from "../../src/server/database";
 import { emitClientEventLog } from "../../src/server/client-events";
-import { loadHumanReviewItemStates } from "../../src/server/human-review-page";
+import {
+  loadHumanReviewItemStates,
+  reportHumanReviewItemStateFailure
+} from "../../src/server/human-review-page";
 import {
   runHumanAccountTransaction,
   type HumanAccountSession
@@ -43,6 +43,7 @@ import type {
   HumanMutationResult,
   HumanMutationState
 } from "../../src/shared/human-mutation";
+import { bulkAnswerMessage } from "../../src/shared/human-mutation";
 
 const humanPath = "/human";
 // A failure whose mutation may have committed; the route answers it with 503.
@@ -291,7 +292,7 @@ async function bulkAnswerOutcome(
   return {
     ok: true,
     operation: "bulk-answer",
-    message: `Bulk action complete: ${answered} answered, ${failed} failed.`,
+    message: bulkAnswerMessage(answered, failed),
     inputItemIds,
     answered,
     answeredInputItemIds: undo.map((target) => target.inputItemId),
@@ -349,7 +350,8 @@ async function undoOutcome(
   const failed = inputItemIds.length - restoredInputItemIds.length;
   if (restoredInputItemIds.length === 0) {
     // A shared code lets the client tell a permanent rejection from a
-    // retryable one; mixed causes are reported as retryable.
+    // retryable one. Mixed causes get a general code, which the client does
+    // not repeat; it keeps offering the answers the reported rows still hold.
     const [first] = failures;
     const sharedCode =
       first && failures.every((failure) => failure.code === first.code)
@@ -389,7 +391,7 @@ async function undoOutcome(
  */
 async function withItemStates(
   outcome: MutationOutcome,
-  backend: MutationBackend
+  backend: MutationBackend & { requestId: string }
 ): Promise<HumanMutationResult> {
   if (outcome.ok) {
     const state = await backend.itemStates(outcome.inputItemIds);
@@ -399,11 +401,14 @@ async function withItemStates(
     return { ...outcome, state };
   }
   if (outcome.inputItemIds.length === 0) return outcome;
+  const startedAtMs = Date.now();
   try {
     const state = await backend.itemStates(outcome.inputItemIds);
     return state ? { ...outcome, state } : outcome;
-  } catch {
-    // The failure itself is the answer; its item state is a refinement.
+  } catch (error) {
+    // The failure itself is the answer and its item state a refinement, so
+    // the failed read is reported here, where it is dropped.
+    reportHumanReviewItemStateFailure(error, backend.requestId, startedAtMs);
     return outcome;
   }
 }
@@ -422,24 +427,14 @@ async function mutationBackend(
 async function fixtureMutationBackend(): Promise<MutationBackend> {
   const fixture = await import("../../src/server/human-review-fixture-state");
   return {
-    async answer(item) {
-      const result = await fixture.answerFixtureItem({
+    answer: (item) =>
+      fixture.answerFixtureItem({
         inputItemId: item.inputItemId,
         callerId: item.callerId,
         actionDisplay: item.actionDisplay,
         expectedRevision: item.expectedRevision,
         mutationId: item.mutationId
-      });
-      return result.ok
-        ? {
-            ok: true,
-            outputResultId: fixtureResolvedOutputResultId(
-              item.inputItemId,
-              item.expectedRevision
-            )
-          }
-        : result;
-    },
+      }),
     undo: (target) => fixture.undoFixtureAnswer(target),
     itemStates: fixture.readFixtureItemStates
   };

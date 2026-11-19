@@ -553,6 +553,89 @@ for (const outcome of ["partial", "none"] as const) {
   });
 }
 
+test("answer and undo responses report the item's resulting row", async ({
+  page
+}) => {
+  await openQueue(page);
+  const answered = mutationResponse(page);
+  await page
+    .getByRole("button", { name: "Approve to send", exact: true })
+    .click();
+  const answer = await (await answered).json();
+  const [item] = answer.state.items;
+  expect(answer.state.asOf).toMatch(/^\d+$/);
+  expect(item.inputItemId).toBe(answer.undo.inputItemId);
+  expect(item.row).toMatchObject({
+    status: "answered",
+    output: { outputResultId: answer.undo.outputResultId }
+  });
+
+  const restored = mutationResponse(page);
+  await page.getByTestId("last-answer-undo").click();
+  const undone = await (await restored).json();
+  // Each response is later on the server's clock than the one before it.
+  expect(BigInt(undone.state.asOf) > BigInt(answer.state.asOf)).toBe(true);
+  expect(undone.state.items).toHaveLength(1);
+  expect(undone.state.items[0].row).toMatchObject({
+    inputItemId: item.inputItemId,
+    status: "pending",
+    output: null,
+    currentRevision: item.row.currentRevision + 1
+  });
+});
+
+test("an undo the server permanently refuses is not offered again", async ({
+  page
+}) => {
+  await openQueue(page);
+  const answered = mutationResponse(page);
+  await page
+    .getByRole("button", { name: "Approve to send", exact: true })
+    .click();
+  const answer = await (await answered).json();
+  const inputItemIds = [answer.undo.inputItemId];
+
+  // The first attempt fails temporarily and reports the answer as still
+  // unread. The caller then reads it, and the repeat is refused for good,
+  // without rows.
+  let attempts = 0;
+  await page.route("**/human/mutations", (route) => {
+    attempts += 1;
+    return attempts === 1
+      ? route.fulfill({
+          status: 503,
+          json: {
+            ok: false,
+            operation: "undo",
+            code: "temporary_unavailable",
+            message: "Temporarily unavailable.",
+            inputItemIds,
+            state: {
+              asOf: String(BigInt(answer.state.asOf) + 1n),
+              items: answer.state.items
+            }
+          }
+        })
+      : route.fulfill({
+          status: 409,
+          json: {
+            ok: false,
+            operation: "undo",
+            code: "output_already_read",
+            message: "Output result has already been read by the caller.",
+            inputItemIds
+          }
+        });
+  });
+  await page.getByTestId("last-answer-undo").click();
+  await expect(page.locator(".last-action-error")).toContainText(
+    "already been read",
+    { timeout: 15_000 }
+  );
+  expect(attempts).toBe(2);
+  await expect(page.getByTestId("last-answer-undo")).toHaveCount(0);
+});
+
 test("a bulk answer stopped part-way keeps Undo for the answers it committed", async ({
   page
 }) => {
@@ -610,6 +693,53 @@ test("a bulk answer stopped part-way keeps Undo for the answers it committed", a
   await expectQueueMembership(page, initial);
 });
 
+test("a bulk answer the server refuses part-way says the rest were not answered", async ({
+  page
+}) => {
+  const initial = await openQueue(page);
+  await selectRows(page, [permit, followUp]);
+  let attempts = 0;
+  await page.route("**/human/mutations", async (route) => {
+    attempts += 1;
+    // Only the first item reaches the server, which answers it. The client
+    // gets what the server sends when the session then ends for good.
+    const inputItemIds: string[] = [];
+    const response = await route.fetch(
+      await changedForm(route, (form) => {
+        const items = form.getAll("bulkItem").map(String);
+        for (const item of items) {
+          inputItemIds.push(
+            (JSON.parse(item) as { inputItemId: string }).inputItemId
+          );
+        }
+        form.delete("bulkItem");
+        form.append("bulkItem", items[0]!);
+      })
+    );
+    const { undo } = (await response.json()) as { undo: unknown };
+    await route.fulfill({
+      status: 409,
+      json: {
+        ok: false,
+        operation: "bulk-answer",
+        code: "account_membership_required",
+        message: "Account access is required.",
+        inputItemIds,
+        undo
+      }
+    });
+  });
+  await applyBulk(page);
+  // A refusal is an outcome: nothing is repeated, and nothing is in doubt.
+  await expect(page.locator(".last-action-error")).toHaveText(
+    "Bulk action interrupted: 1 answered, 1 not answered."
+  );
+  await page.unroute("**/human/mutations");
+  expect(attempts).toBe(1);
+  await expectQueueMembership(page, without(initial, permit));
+  await expectUndoOffered(page, "Approve permit brief");
+});
+
 test("a bulk answer whose response is lost is retried without answering twice", async ({
   page
 }) => {
@@ -652,6 +782,40 @@ test("a bulk answer whose response is lost is retried without answering twice", 
   await page.reload();
   await expectHydrated(page);
   await expectQueueMembership(page, initial);
+});
+
+test("a bulk answer that commits unconfirmed leaves no selection behind", async ({
+  page
+}) => {
+  // Every attempt times out before its response arrives.
+  await page.addInitScript(() => {
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    AbortSignal.timeout = (ms: number) =>
+      originalTimeout(ms === 20_000 ? 300 : ms);
+  });
+  const initial = await openQueue(page);
+  await selectRows(page, [permit, followUp]);
+  let attempts = 0;
+  await page.route("**/human/mutations", async (route) => {
+    attempts += 1;
+    // The write commits, but its response never reaches the client.
+    await route.fetch().catch(() => {});
+  });
+  await applyBulk(page);
+  await expect(page.locator(".last-action-error")).toContainText(
+    "Bulk action not confirmed",
+    { timeout: 15_000 }
+  );
+  await page.unroute("**/human/mutations");
+  expect(attempts).toBe(3);
+
+  // The refreshed queue no longer shows the answered rows, so they are not
+  // left selected where the bulk bar cannot reach them.
+  await expectQueueMembership(page, without(initial, permit, followUp));
+  await expect(page.locator(".bulk-actions")).toHaveCount(0);
+  await page.reload();
+  await expectHydrated(page);
+  await expect(page.locator(".bulk-actions")).toHaveCount(0);
 });
 
 test("a bulk answer that never reaches the server keeps visible selections for retry", async ({

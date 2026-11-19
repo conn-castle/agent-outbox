@@ -5,9 +5,9 @@ import {
   itemIdsNotPending,
   projectReview,
   recordItemStates,
+  releaseUnconfirmedAnswers,
   reviewDetailSuperseded
 } from "../src/components/human/review-sync.ts";
-import { compareAsOf, isAsOf } from "../src/shared/human-mutation.ts";
 import { humanReviewViewFromRecord } from "../src/shared/human-review-view.ts";
 
 /** @typedef {import("../src/server/human-review.ts").HumanReviewListRow} Row */
@@ -289,6 +289,109 @@ test("an open detail is superseded by a mutation in flight or a newer state", ()
     reviewDetailSuperseded(detail, "100", statesFrom(["150", ["item-B"]]), []),
     true
   );
+
+  // A caller read leaves the status and revision alone but ends Undo.
+  const answeredDetail = answered(row("B"));
+  const read = answered(row("B"));
+  Object.assign(read.output ?? {}, {
+    firstReadAt: "2026-11-16T11:05:00.000Z",
+    readCount: 1,
+    undoEligible: false
+  });
+  assert.equal(
+    reviewDetailSuperseded(
+      answeredDetail,
+      "100",
+      statesFrom(["150", [answered(row("B"))]]),
+      []
+    ),
+    false
+  );
+  assert.equal(
+    reviewDetailSuperseded(
+      answeredDetail,
+      "100",
+      statesFrom(["150", [read]]),
+      []
+    ),
+    true
+  );
+
+  // An undo raises the revision, so an answer undone and given again
+  // elsewhere supersedes the detail like any other newer revision.
+  assert.equal(
+    reviewDetailSuperseded(
+      answeredDetail,
+      "100",
+      statesFrom(["150", [answered(row("B", { currentRevision: 2 }))]]),
+      []
+    ),
+    true
+  );
+});
+
+test("states the page already reflects are trimmed beyond the retained limit, newer ones never", () => {
+  /** @param {number} from @param {number} to @param {string} asOf */
+  const reported = (from, to, asOf) => ({
+    asOf,
+    items: Array.from({ length: to - from }, (_, index) => ({
+      inputItemId: `item-${from + index}`,
+      row: null
+    }))
+  });
+  // 600 states newer than the page are all still needed to correct it.
+  const newer = recordItemStates(new Map(), reported(0, 600, "150"), "100");
+  assert.equal(newer.size, 600);
+  // Once a page reflects them, the next response trims the ones reported
+  // longest ago down to the limit and keeps its own.
+  const trimmed = recordItemStates(newer, reported(600, 601, "250"), "200");
+  assert.equal(trimmed.size, 500);
+  assert.equal(trimmed.has("item-0"), false);
+  assert.equal(trimmed.has("item-100"), false);
+  assert.equal(trimmed.has("item-101"), true);
+  assert.deepEqual(trimmed.get("item-600"), { row: null, asOf: "250" });
+});
+
+test("rows of an unconfirmed answer leave the selection once their view's page no longer shows them", () => {
+  const sent = {
+    inputItemIds: ["item-A", "item-B"],
+    viewHref: "/human",
+    sentAsOf: "100",
+    settledAsOf: "150"
+  };
+  /** @param {string} asOf @param {string[]} ids @param {string} [viewHref] */
+  const page = (asOf, ids, viewHref = "/human") => ({
+    asOf,
+    viewHref,
+    rows: ids.map((inputItemId) => ({ inputItemId }))
+  });
+
+  // The page they were sent from, and pages of other views, say nothing.
+  for (const unchanged of [
+    page("100", []),
+    page("200", [], "/human?status=answered")
+  ]) {
+    assert.deepEqual(releaseUnconfirmedAnswers([sent], unchanged), {
+      waiting: [sent],
+      released: []
+    });
+  }
+  // A newer page that no longer shows a row releases it, even a page that
+  // was already shown when the answer settled.
+  assert.deepEqual(releaseUnconfirmedAnswers([sent], page("150", ["item-B"])), {
+    waiting: [{ ...sent, inputItemIds: ["item-B"] }],
+    released: ["item-A"]
+  });
+  // Rows still shown wait for a page read after the answer settled.
+  assert.deepEqual(
+    releaseUnconfirmedAnswers([sent], page("120", ["item-A", "item-B"])),
+    { waiting: [sent], released: [] }
+  );
+  // That page has the last word: what it shows stays selected for a retry.
+  assert.deepEqual(releaseUnconfirmedAnswers([sent], page("200", ["item-B"])), {
+    waiting: [],
+    released: ["item-A"]
+  });
 });
 
 test("only answered or missing items leave the selection", () => {
@@ -303,15 +406,4 @@ test("only answered or missing items leave the selection", () => {
     }),
     ["item-A", "item-C"]
   );
-});
-
-test("as-of tokens order numerically, including beyond double precision", () => {
-  assert.equal(compareAsOf("9", "10"), -1);
-  assert.equal(compareAsOf("10", "9"), 1);
-  assert.equal(compareAsOf("1794830400000000", "1794830400000000"), 0);
-  assert.equal(compareAsOf("9007199254740993", "9007199254740992"), 1);
-  assert.equal(isAsOf("1794830400000000"), true);
-  for (const invalid of ["", "-1", "1.5", "1e3", " 1", 1, null, undefined]) {
-    assert.equal(isAsOf(invalid), false, String(invalid));
-  }
 });

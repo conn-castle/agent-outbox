@@ -11,6 +11,49 @@ import {
 } from "../../shared/human-review-view.ts";
 import type { HumanReviewListRow } from "../../server/human-review.ts";
 
+// An answer no attempt confirmed: the view and page it was sent from, and
+// the page shown when it settled.
+export type UnconfirmedAnswer = {
+  inputItemIds: string[];
+  viewHref: string;
+  sentAsOf: string;
+  settledAsOf: string;
+};
+
+/**
+ * Says which items of unconfirmed answers leave the selection now that `page`
+ * is shown, and which answers keep waiting. An unconfirmed answer may have
+ * committed: a page of its view, newer than the one it was sent from, that no
+ * longer shows an item means the item was answered or has moved. Items still
+ * shown wait for a page read after the answer settled, which settles them.
+ */
+export function releaseUnconfirmedAnswers(
+  unconfirmed: readonly UnconfirmedAnswer[],
+  page: {
+    rows: readonly { inputItemId: string }[];
+    asOf: string;
+    viewHref: string;
+  }
+) {
+  const shown = new Set(page.rows.map((row) => row.inputItemId));
+  const released: string[] = [];
+  const waiting = unconfirmed.flatMap((sent) => {
+    if (
+      sent.viewHref !== page.viewHref ||
+      compareAsOf(page.asOf, sent.sentAsOf) <= 0
+    ) {
+      return [sent];
+    }
+    const stillShown = sent.inputItemIds.filter((id) => shown.has(id));
+    released.push(...sent.inputItemIds.filter((id) => !shown.has(id)));
+    return stillShown.length === 0 ||
+      compareAsOf(page.asOf, sent.settledAsOf) > 0
+      ? []
+      : [{ ...sent, inputItemIds: stillShown }];
+  });
+  return { waiting, released };
+}
+
 /**
  * How the review queue shown in the browser is derived from what the server
  * has said. There are three sources, and each is trusted for exactly what it
@@ -65,7 +108,8 @@ export function recordItemStates(
   for (const { inputItemId, row } of state.items) {
     const known = next.get(inputItemId);
     if (known && compareAsOf(known.asOf, state.asOf) > 0) continue;
-    // Re-insert so the map stays ordered from oldest to newest.
+    // Re-insert so the map runs from the least to the most recently reported
+    // item, and the states trimmed first are the ones reported longest ago.
     next.delete(inputItemId);
     next.set(inputItemId, { row, asOf: state.asOf });
   }
@@ -141,7 +185,7 @@ export function projectReview(
 export function reviewDetailSuperseded(
   detail: Pick<
     HumanReviewListRow,
-    "inputItemId" | "status" | "currentRevision"
+    "inputItemId" | "status" | "currentRevision" | "output"
   >,
   pageAsOf: string,
   states: ReviewItemStates,
@@ -159,7 +203,12 @@ export function reviewDetailSuperseded(
   return (
     state.row === null ||
     state.row.status !== detail.status ||
-    state.row.currentRevision !== detail.currentRevision
+    state.row.currentRevision !== detail.currentRevision ||
+    // A caller read changes the output, and whether it can still be undone,
+    // without changing the item's revision. An undo raises the revision, so
+    // an answer undone and given again is already told apart.
+    state.row.output?.firstReadAt !== detail.output?.firstReadAt ||
+    state.row.output?.readCount !== detail.output?.readCount
   );
 }
 
@@ -174,6 +223,6 @@ function reviewRowMatchesView(row: HumanReviewListRow, view: HumanReviewView) {
   return (
     row.status === view.status &&
     humanReviewMatchesFacets(row, view) &&
-    humanReviewMatchesSearch(row, view.search.trim())
+    humanReviewMatchesSearch(row, view.search)
   );
 }

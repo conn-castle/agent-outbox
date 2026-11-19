@@ -1,8 +1,10 @@
 "use client";
 
 import {
+  bulkAnswerMessage,
   isAsOf,
   isHumanMutationOperation,
+  type HumanBulkMutationSuccess,
   type HumanMutationFailure,
   type HumanMutationOperation,
   type HumanMutationResult,
@@ -52,7 +54,7 @@ export async function synchronizeHumanMutation(
   formData: FormData
 ) {
   formData.set("_operation", operation);
-  formData.set("mutationId", crypto.randomUUID());
+  formData.set("mutationId", newMutationId());
   // What any attempt reported as committed stays committed, whatever a
   // later attempt goes on to report.
   const committed = new Map<string, HumanUndoTarget>();
@@ -61,7 +63,10 @@ export async function synchronizeHumanMutation(
   let state: HumanMutationState | null = null;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await sendHumanMutation(formData);
+      const result = await sendHumanMutation(formData);
+      return result.operation === "bulk-answer"
+        ? withEarlierAnswers(result, committed)
+        : result;
     } catch (error) {
       const delay = HUMAN_MUTATION_RETRY_DELAYS_MS[attempt];
       if (!(error instanceof HumanMutationError)) throw error;
@@ -84,6 +89,50 @@ export async function synchronizeHumanMutation(
       );
     }
   }
+}
+
+// `crypto.randomUUID` exists only in secure contexts. A page served over
+// plain HTTP from another host, as a self-hosted one can be, still has
+// `getRandomValues`.
+function newMutationId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20)
+  ].join("-");
+}
+
+// A repeat cannot always report again what an earlier attempt answered: by
+// then the answer may be gone, acknowledged by its caller. It still counts.
+function withEarlierAnswers(
+  result: HumanBulkMutationSuccess,
+  committed: ReadonlyMap<string, HumanUndoTarget>
+): HumanBulkMutationSuccess {
+  const undo = result.inputItemIds.flatMap(
+    (inputItemId) =>
+      result.undo.find((target) => target.inputItemId === inputItemId) ??
+      committed.get(inputItemId) ??
+      []
+  );
+  if (undo.length === result.undo.length) return result;
+  const failed = result.inputItemIds.length - undo.length;
+  return {
+    ...result,
+    message: bulkAnswerMessage(undo.length, failed),
+    answered: undo.length,
+    answeredInputItemIds: undo.map((target) => target.inputItemId),
+    failed,
+    undo
+  };
 }
 
 async function sendHumanMutation(formData: FormData) {
@@ -130,10 +179,22 @@ async function sendHumanMutation(formData: FormData) {
     );
   }
   if (!result.ok) {
-    throw new HumanMutationError(result.message, result, serverError);
+    // Only a server error with this code says the mutation may have
+    // committed. Any other failure the server words itself is a refusal.
+    throw new HumanMutationError(
+      result.message,
+      result,
+      serverError && result.code === "temporary_unavailable"
+    );
   }
   if (!response.ok) {
-    throw new HumanMutationError("Action is temporarily unavailable.");
+    // The status and the result contradict each other, which this server
+    // never sends, so the outcome is not known.
+    throw new HumanMutationError(
+      "Action is temporarily unavailable.",
+      null,
+      true
+    );
   }
   return result;
 }
@@ -167,7 +228,11 @@ export function isHumanMutationResult(
   }
   if (!isHumanMutationState(result.state, inputItemIds)) return false;
   if (result.operation === "answer") {
-    return inputItemIds.length === 1 && isHumanUndoTarget(result.undo);
+    return (
+      inputItemIds.length === 1 &&
+      isHumanUndoTarget(result.undo) &&
+      result.undo.inputItemId === inputItemIds[0]
+    );
   }
   if (result.operation === "bulk-answer") {
     const answeredInputItemIds = result.answeredInputItemIds;

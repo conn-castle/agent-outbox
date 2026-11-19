@@ -18,8 +18,10 @@ export type HumanMutationItemState = {
 
 /**
  * What the server knows about the mutated items, read after the mutation
- * committed. `asOf` orders this state against a review page's `asOf`: a page
- * whose `asOf` is not older already reflects it. See `compareAsOf`.
+ * committed. `asOf` is read from the database clock before the rows, so it is
+ * a lower bound: a review page whose `asOf` is not older already reflects the
+ * mutation, while a change another session committed between the token and
+ * the rows can be in these rows and not yet in such a page. See `compareAsOf`.
  */
 export type HumanMutationState = {
   asOf: string;
@@ -79,6 +81,13 @@ export type HumanBulkMutationSuccess = {
   undo: HumanUndoTarget[];
   state: HumanMutationState;
 };
+
+export function bulkAnswerMessage(
+  answered: number | string,
+  failed: number | string
+) {
+  return `Bulk action complete: ${answered} answered, ${failed} failed.`;
+}
 
 export type HumanUndoMutationSuccess = {
   ok: true;

@@ -56,12 +56,15 @@ import {
   itemIdsNotPending,
   projectReview,
   recordItemStates,
+  releaseUnconfirmedAnswers,
   reviewDetailSuperseded,
   type ReviewItemStates,
+  type UnconfirmedAnswer,
   type UnsettledReviewMutation
 } from "./review-sync";
 import {
   confirmUndoEntry,
+  heldUndoTargets,
   offeredUndoEntry,
   patchUndoEntry,
   removeUndoEntry,
@@ -191,6 +194,7 @@ export function ReviewWorkspace({
   );
   const asOfRef = useRef(asOf);
   asOfRef.current = asOf;
+  const unconfirmedAnswers = useRef<UnconfirmedAnswer[]>([]);
   const consumedNoticeEpoch = useRef<string | null>(null);
   const viewConfigurationKey = [
     view.status,
@@ -200,6 +204,24 @@ export function ReviewWorkspace({
     view.page
   ].join("\0");
   const canonicalViewHref = humanReviewHref(view);
+  const pageRef = useRef({ rows, asOf, viewHref: canonicalViewHref });
+  pageRef.current = { rows, asOf, viewHref: canonicalViewHref };
+  // Rows of an unconfirmed answer that the page no longer shows leave the
+  // selection; rows still shown stay selected for a retry.
+  function releaseUnconfirmedSelections() {
+    if (unconfirmedAnswers.current.length === 0) return;
+    const { waiting, released } = releaseUnconfirmedAnswers(
+      unconfirmedAnswers.current,
+      pageRef.current
+    );
+    unconfirmedAnswers.current = waiting;
+    if (released.length > 0) deselect(new Set(released));
+  }
+  const releaseUnconfirmedRef = useRef(releaseUnconfirmedSelections);
+  releaseUnconfirmedRef.current = releaseUnconfirmedSelections;
+  useEffect(() => {
+    releaseUnconfirmedRef.current();
+  }, [asOf, canonicalViewHref, rows]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -506,7 +528,8 @@ export function ReviewWorkspace({
     const rowSnapshots = projectedRows.filter((row) =>
       submission.inputItemIds.includes(row.inputItemId)
     );
-    enqueueHumanMutation(submission, rowSnapshots);
+    // A repeated activation changes nothing, the open detail included.
+    if (!enqueueHumanMutation(submission, rowSnapshots)) return;
     if (detail && submission.inputItemIds.includes(detail.inputItemId)) {
       setDetailDismissed(true);
       setPendingDetail(null);
@@ -577,6 +600,7 @@ export function ReviewWorkspace({
       inputItemIds: submission.inputItemIds,
       rowSnapshots: answering ? [] : rowSnapshots
     };
+    const sentAsOf = asOfRef.current;
     // Every answer joins the stack when the person acts, not when the server
     // replies, so Undo always targets their most recent action.
     const answerEntryId = answering
@@ -609,8 +633,12 @@ export function ReviewWorkspace({
       }
     }
     // Answers the server reports as committed: their sent feedback is done
-    // with, and the stack entry narrows to them (or goes, when there are none).
-    function answersCommitted(answered: HumanUndoTarget[]) {
+    // with, and the stack entry narrows to those the reported rows still hold
+    // (or goes, when there are none).
+    function answersCommitted(
+      answered: HumanUndoTarget[],
+      state: HumanMutationState | null
+    ) {
       for (const { inputItemId } of answered) {
         const sent = submission.formData.get(
           submission.operation === "answer"
@@ -621,7 +649,7 @@ export function ReviewWorkspace({
           feedback.clearSubmitted(inputItemId, sent);
         }
       }
-      confirmAnswerEntry(answered);
+      confirmAnswerEntry(state ? heldUndoTargets(answered, state) : answered);
     }
     // The submitted answers can no longer be undone from here: drop the stack
     // entry, or for an undo from History, the matching answers in any entry.
@@ -660,7 +688,8 @@ export function ReviewWorkspace({
           return;
         }
         answersCommitted(
-          result.operation === "answer" ? [result.undo] : result.undo
+          result.operation === "answer" ? [result.undo] : result.undo,
+          result.state
         );
         setLastError(
           result.operation === "bulk-answer" && result.failed > 0
@@ -677,18 +706,29 @@ export function ReviewWorkspace({
         const committed =
           error instanceof HumanMutationError ? error.committed : [];
         if (answerEntryId) {
-          answersCommitted(committed);
+          answersCommitted(committed, state);
+          if (error instanceof HumanMutationError && error.unconfirmed) {
+            unconfirmedAnswers.current.push({
+              inputItemIds: submission.inputItemIds,
+              viewHref: canonicalViewHref,
+              sentAsOf,
+              settledAsOf: asOfRef.current
+            });
+            // The page shown now may already be newer than the one sent from.
+            releaseUnconfirmedRef.current();
+          }
+        } else if (
+          failure?.code === "output_already_read" ||
+          failure?.code === "not_found"
+        ) {
+          // These undo rejections are permanent; retrying cannot succeed. They
+          // outrank the reported rows, which an earlier attempt may have read.
+          forgetUndoneAnswers();
         } else if (undoEntryId && state) {
           // The reported rows say which answers can still be undone.
           updateUndoStack((stack) =>
             settleUndoEntry(stack, undoEntryId, state)
           );
-        } else if (
-          failure?.code === "output_already_read" ||
-          failure?.code === "not_found"
-        ) {
-          // These undo rejections are permanent; retrying cannot succeed.
-          forgetUndoneAnswers();
         } else if (undoEntryId) {
           // Offer the same action again for a retry.
           updateUndoStack((stack) =>
@@ -697,7 +737,11 @@ export function ReviewWorkspace({
         }
         setLastError(
           committed.length > 0
-            ? `Bulk action interrupted: ${committed.length} answered, ${submission.inputItemIds.length - committed.length} not confirmed.`
+            ? `Bulk action interrupted: ${committed.length} answered, ${submission.inputItemIds.length - committed.length} ${
+                error instanceof HumanMutationError && error.unconfirmed
+                  ? "not confirmed"
+                  : "not answered"
+              }.`
             : mutationFailureMessage(
                 submission,
                 rowSnapshots,
@@ -1271,7 +1315,7 @@ function mutationFailureMessage(
   unconfirmed: boolean
 ) {
   if (submission.operation === "bulk-answer") {
-    return message;
+    return unconfirmed ? `Bulk action not confirmed: ${message}` : message;
   }
   const subject =
     normalizedFormText(submission.formData, "noticeSubject") ??
@@ -1284,12 +1328,13 @@ function mutationFailureMessage(
       submission.inputItemIds.length > 1
         ? `${submission.inputItemIds.length} reviews`
         : quotedSubject;
+    // The outcome comes first: the bar shows one line and cuts off the rest.
     return unconfirmed
-      ? `${restored} may not have been restored: ${message}`
+      ? `Undo not confirmed for ${restored}: ${message}`
       : `Could not restore ${restored}: ${message}`;
   }
   return unconfirmed
-    ? `${quotedSubject} may not have been saved: ${message}`
+    ? `Save not confirmed for ${quotedSubject}: ${message}`
     : `Could not save ${quotedSubject}: ${message}`;
 }
 

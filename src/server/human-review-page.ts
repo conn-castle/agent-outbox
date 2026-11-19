@@ -26,6 +26,9 @@ import {
   type HumanReviewView
 } from "../shared/human-review-view.ts";
 import type { HumanMutationState } from "../shared/human-mutation.ts";
+import { createCorrelationId } from "./correlation.ts";
+import { durationSinceMs } from "./logging.ts";
+import { reportRuntimeFailure } from "./sentry.ts";
 
 export type HumanReviewPageLoad = {
   view: HumanReviewView;
@@ -138,6 +141,27 @@ export async function loadHumanReviewItemStates(
     },
     (query) => humanReviewItemStatesInTransaction(query, session, inputItemIds)
   );
+}
+
+/**
+ * Reports an item state read that failed. Called by the one place that goes on
+ * to answer the mutation without those rows.
+ */
+export function reportHumanReviewItemStateFailure(
+  error: unknown,
+  requestId: string,
+  startedAtMs: number
+) {
+  reportRuntimeFailure(error, {
+    errorId: createCorrelationId("human_item_state"),
+    request_id: requestId,
+    surface: "app",
+    route: "/human",
+    method: "POST",
+    duration_ms: durationSinceMs(startedAtMs),
+    operation: "human_review_item_state",
+    message: "Human review item state read failed unexpectedly."
+  });
 }
 
 async function loadHumanReviewPageDataInTransaction(
