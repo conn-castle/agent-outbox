@@ -13,13 +13,17 @@ into the tree.
 
 | Path                                                  | Upstream                                                                                               | License    | Copyright                           |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------- | ----------------------------------- |
+| `.agent-layer/instructions-imported/rules.md`         | [nicholasjconn/skills](https://github.com/nicholasjconn/skills) (`instructions/rules.md`)              | MIT        | Copyright (c) 2026 Nicholas J. Conn |
+| `.agent-layer/instructions-imported/memory.md`        | [nicholasjconn/skills](https://github.com/nicholasjconn/skills) (`instructions/memory.md`)             | MIT        | Copyright (c) 2026 Nicholas J. Conn |
 | `.agent-layer/skills-imported/apple-design/`          | [emilkowalski/skills](https://github.com/emilkowalski/skills) (`skills/apple-design`)                  | MIT        | Copyright (c) 2026 Emil Kowalski    |
 | `.agent-layer/skills-imported/request-html-comments/` | [nicholasjconn/skills](https://github.com/nicholasjconn/skills) (`skills/tools/request-html-comments`) | MIT        | Copyright (c) 2026 Nicholas J. Conn |
 | `.agent-layer/skills/playwright/`                     | Playwright project                                                                                     | Apache-2.0 | Copyright (c) Microsoft Corporation |
 
-The two imported skills are managed by Agent Layer; their pinned upstream
-commits are recorded in
-[`.agent-layer/skills.lock.json`](.agent-layer/skills.lock.json).
+Imported skills and instructions are managed by Agent Layer; their upstream
+commits and content hashes are recorded in
+[`.agent-layer/skills.lock.json`](.agent-layer/skills.lock.json) and
+[`.agent-layer/instructions.lock.json`](.agent-layer/instructions.lock.json),
+respectively.
 
 `nicholasjconn/skills` is the personal repository of Nicholas J. Conn and is a
 separate copyright holder from Hardware Breakout LLC doing business as Conn
@@ -61,7 +65,9 @@ SOFTWARE.
 
 ## MIT License — Copyright (c) 2026 Nicholas J. Conn
 
-Applies to `.agent-layer/skills-imported/request-html-comments/`.
+Applies to `.agent-layer/skills-imported/request-html-comments/`,
+`.agent-layer/instructions-imported/rules.md`, and
+`.agent-layer/instructions-imported/memory.md`.
 
 ```text
 MIT License
