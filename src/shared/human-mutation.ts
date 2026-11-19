@@ -49,6 +49,8 @@ export type HumanMutationFailure = {
   failedActionKind?: "file_upload";
   // Present whenever the server could still read the items it rejected.
   state?: HumanMutationState;
+  // Answers a bulk request committed before the failure that stopped it.
+  undo?: HumanUndoTarget[];
 };
 
 // Identifies one answered item whose unread output can still be undone.
@@ -64,8 +66,7 @@ export type HumanAnswerMutationSuccess = {
   message: string;
   inputItemIds: [string];
   undo: HumanUndoTarget;
-  // Absent only when the rows could not be read after the mutation.
-  state?: HumanMutationState;
+  state: HumanMutationState;
 };
 
 export type HumanBulkMutationSuccess = {
@@ -78,9 +79,15 @@ export type HumanBulkMutationSuccess = {
   failed: number;
   // One target per answered item, so the whole bulk action is one undo step.
   undo: HumanUndoTarget[];
-  // Absent only when the rows could not be read after the mutation.
-  state?: HumanMutationState;
+  state: HumanMutationState;
 };
+
+export function bulkAnswerMessage(
+  answered: number | string,
+  failed: number | string
+) {
+  return `Bulk action complete: ${answered} answered, ${failed} failed.`;
+}
 
 export type HumanUndoMutationSuccess = {
   ok: true;
@@ -90,8 +97,7 @@ export type HumanUndoMutationSuccess = {
   inputItemIds: string[];
   restoredInputItemIds: string[];
   failed: number;
-  // Absent only when the rows could not be read after the mutation.
-  state?: HumanMutationState;
+  state: HumanMutationState;
 };
 
 export type HumanMutationResult =

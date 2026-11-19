@@ -40,6 +40,15 @@ export async function readFixtureResolvedItems(): Promise<
 }
 
 /**
+ * The fixture's position on its own clock: the number of writes made to this
+ * browser's fixture state. A page rendered from an older cookie reports an
+ * older value, exactly as a database page read before a commit would.
+ */
+export async function readFixtureAsOf() {
+  return String(parseVersion((await cookieStore()).get(VERSION_COOKIE_NAME)));
+}
+
+/**
  * Answers one fixture item, rejecting what the production answer rejects for
  * the item itself: an unknown item or caller, an item that is not pending, and
  * a stale revision. A repeated request reports the answer it already made,

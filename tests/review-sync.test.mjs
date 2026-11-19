@@ -5,6 +5,7 @@ import {
   itemIdsNotPending,
   projectReview,
   recordItemStates,
+  releaseUnconfirmedAnswers,
   reviewDetailSuperseded
 } from "../src/components/human/review-sync.ts";
 import { humanReviewViewFromRecord } from "../src/shared/human-review-view.ts";
@@ -349,6 +350,48 @@ test("states the page already reflects are trimmed beyond the retained limit, ne
   assert.equal(trimmed.has("item-100"), false);
   assert.equal(trimmed.has("item-101"), true);
   assert.deepEqual(trimmed.get("item-600"), { row: null, asOf: "250" });
+});
+
+test("rows of an unconfirmed answer leave the selection once their view's page no longer shows them", () => {
+  const sent = {
+    inputItemIds: ["item-A", "item-B"],
+    viewHref: "/human",
+    sentAsOf: "100",
+    settledAsOf: "150"
+  };
+  /** @param {string} asOf @param {string[]} ids @param {string} [viewHref] */
+  const page = (asOf, ids, viewHref = "/human") => ({
+    asOf,
+    viewHref,
+    rows: ids.map((inputItemId) => ({ inputItemId }))
+  });
+
+  // The page they were sent from, and pages of other views, say nothing.
+  for (const unchanged of [
+    page("100", []),
+    page("200", [], "/human?status=answered")
+  ]) {
+    assert.deepEqual(releaseUnconfirmedAnswers([sent], unchanged), {
+      waiting: [sent],
+      released: []
+    });
+  }
+  // A newer page that no longer shows a row releases it, even a page that
+  // was already shown when the answer settled.
+  assert.deepEqual(releaseUnconfirmedAnswers([sent], page("150", ["item-B"])), {
+    waiting: [{ ...sent, inputItemIds: ["item-B"] }],
+    released: ["item-A"]
+  });
+  // Rows still shown wait for a page read after the answer settled.
+  assert.deepEqual(
+    releaseUnconfirmedAnswers([sent], page("120", ["item-A", "item-B"])),
+    { waiting: [sent], released: [] }
+  );
+  // That page has the last word: what it shows stays selected for a retry.
+  assert.deepEqual(releaseUnconfirmedAnswers([sent], page("200", ["item-B"])), {
+    waiting: [],
+    released: ["item-A"]
+  });
 });
 
 test("only answered or missing items leave the selection", () => {

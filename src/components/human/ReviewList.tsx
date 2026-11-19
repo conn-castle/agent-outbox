@@ -62,7 +62,7 @@ export function ReviewList({
   view: HumanReviewView;
   renderedAt: string;
   onMutation: OnHumanMutation;
-  lockedIds: Set<string>;
+  lockedIds: ReadonlySet<string>;
   feedbackDrafts: Record<string, string>;
   onFeedbackChange: (inputItemId: string, text: string) => boolean;
   feedbackError: string | null;

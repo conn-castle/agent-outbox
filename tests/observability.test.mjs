@@ -1,4 +1,5 @@
 import * as reviewSearchText from "../src/server/review-search-text.ts";
+import * as sharedHumanMutation from "../src/shared/human-mutation.ts";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
@@ -1403,6 +1404,17 @@ test("human mutation results carry item state read after the mutations, keyed fo
   /** @type {unknown[][]} */
   const stateFailures = [];
   let sessionTransactions = 0;
+  let revalidations = 0;
+  /** @type {string[]} */
+  const redirects = [];
+  // Input item or output ids whose mutation fails without a known outcome.
+  /** @type {Set<unknown>} */
+  const temporarilyFailing = new Set();
+  const temporaryFailure = {
+    ok: false,
+    code: "temporary_unavailable",
+    message: "Temporarily unavailable."
+  };
   // Input items whose answer the database rejects.
   /** @type {Set<unknown>} */
   const rejected = new Set();
@@ -1412,6 +1424,7 @@ test("human mutation results carry item state read after the mutations, keyed fo
   /** @param {string} transaction @param {Record<string, unknown>} input */
   function undoAnswer(transaction, input) {
     undoInputs.push({ ...input, transaction });
+    if (temporarilyFailing.has(input.outputResultId)) return temporaryFailure;
     const code = rejectedUndos.get(input.outputResultId);
     return code
       ? { ok: false, code, message: `Undo rejected: ${code}.` }
@@ -1421,6 +1434,7 @@ test("human mutation results carry item state read after the mutations, keyed fo
   function answer(input) {
     answerInputs.push(input);
     events.push(`answer ${input.inputItemId}`);
+    if (temporarilyFailing.has(input.inputItemId)) return temporaryFailure;
     if (rejected.has(input.inputItemId)) {
       return {
         ok: false,
@@ -1438,8 +1452,18 @@ test("human mutation results carry item state read after the mutations, keyed fo
       "@clerk/nextjs/server": {
         auth: { protect: async () => ({ userId: "clerk-user-state" }) }
       },
-      "next/navigation": {},
-      "next/cache": { revalidatePath() {} },
+      "next/navigation": {
+        /** @param {string} url */
+        redirect(url) {
+          redirects.push(url);
+          throw new Error("redirect");
+        }
+      },
+      "next/cache": {
+        revalidatePath() {
+          revalidations += 1;
+        }
+      },
       "../../src/server/correlation": {
         /** @param {string} prefix */
         createCorrelationId: (prefix) => `${prefix}_test`
@@ -1448,6 +1472,7 @@ test("human mutation results carry item state read after the mutations, keyed fo
       "../../src/server/human-review-fixture": {
         humanBrowserFixtureEnabled: () => false
       },
+      "../../src/shared/human-mutation": sharedHumanMutation,
       "../../src/server/human-action-form": {
         parseBulkHumanAnswersForm,
         parseHumanAnswerForm,
@@ -1591,6 +1616,48 @@ test("human mutation results carry item state read after the mutations, keyed fo
   );
   rejected.clear();
 
+  // A temporary failure leaves that item's outcome unknown. The request is
+  // then reported as retryable as a whole, never as a partial result that
+  // leaves out an answer or undo which may have committed.
+  temporarilyFailing.add(secondItemId);
+  revalidations = 0;
+  const unknownBulk = await actions.executeBulkHumanAnswersMutation(bulkForm);
+  assert.deepEqual(
+    [unknownBulk.ok, !unknownBulk.ok && unknownBulk.code],
+    [false, "temporary_unavailable"]
+  );
+  // It still names the answers it committed, so that Undo can be offered for
+  // them if no repeat gets further, and the cached page is refreshed.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(!unknownBulk.ok && unknownBulk.undo)),
+    [{ inputItemId: firstItemId, callerId, outputResultId: "output-721" }]
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(!unknownBulk.ok && unknownBulk.state)),
+    itemStateFor([firstItemId, secondItemId])
+  );
+  assert.equal(revalidations, 1);
+
+  // A request that fails before anything commits reports nothing to undo.
+  temporarilyFailing.add(firstItemId);
+  const nothingCommitted =
+    await actions.executeBulkHumanAnswersMutation(bulkForm);
+  assert.equal(!nothingCommitted.ok && nothingCommitted.undo, undefined);
+  assert.equal(revalidations, 1);
+  temporarilyFailing.delete(firstItemId);
+
+  // The redirecting form cannot be repeated under its id, so it tries every
+  // item and reports the count.
+  await assert.rejects(
+    () => actions.submitBulkHumanAnswers(bulkForm),
+    /redirect/
+  );
+  assert.match(
+    redirects.at(-1) ?? "",
+    /notice=bulk_answered&answered=1&failed=1/
+  );
+  temporarilyFailing.clear();
+
   // One undo request names every answer it takes back. The first shares the
   // session's transaction and the rest run in their own.
   const firstOutputId = "00000000-0000-4000-8000-000000000731";
@@ -1672,16 +1739,49 @@ test("human mutation results carry item state read after the mutations, keyed fo
   );
   rejectedUndos.clear();
 
-  // Failing to read the rows does not change what the mutation did, and the
+  // An undo that fails temporarily stops the request the same way. The first
+  // answer was restored: the cached page is refreshed, and the failure's item
+  // state tells the client which answers remain.
+  temporarilyFailing.add(secondOutputId);
+  revalidations = 0;
+  const unknownUndo = await undoResult(undoForm);
+  assert.deepEqual(
+    [unknownUndo.ok, unknownUndo.code],
+    [false, "temporary_unavailable"]
+  );
+  assert.equal(revalidations, 1);
+  assert.deepEqual(
+    unknownUndo.state,
+    itemStateFor([firstItemId, secondItemId])
+  );
+  temporarilyFailing.clear();
+
+  // A rejection stands without its rows when they cannot be read, and the
   // failed read is reported.
   stateReadFails = true;
+  rejected.add(firstItemId);
   assert.deepEqual(stateFailures, []);
-  const unread = await actions.executeHumanAnswerMutation(answerForm);
-  assert.equal(unread.ok, true);
-  assert.equal("state" in unread, false);
+  const unreadRejection = await actions.executeHumanAnswerMutation(answerForm);
+  assert.deepEqual(
+    [
+      unreadRejection.ok,
+      !unreadRejection.ok && unreadRejection.code,
+      "state" in unreadRejection
+    ],
+    [false, "stale_input_revision", false]
+  );
   assert.deepEqual(stateFailures, [
     ["state read failed", "human_answer_req_test"]
   ]);
+  rejected.clear();
+
+  // A success the client cannot apply is not reported as one: the request
+  // fails, and its retry finds the committed answer.
+  await assert.rejects(
+    () => actions.executeHumanAnswerMutation(answerForm),
+    /state read failed/
+  );
+  assert.equal(stateFailures.length, 1);
 });
 
 test("human review server actions emit failure telemetry only on failure paths", async () => {
@@ -1739,6 +1839,7 @@ test("human review server actions emit failure telemetry only on failure paths",
         "../../src/server/human-review-fixture": {
           humanBrowserFixtureEnabled: () => false
         },
+        "../../src/shared/human-mutation": sharedHumanMutation,
         "../../src/server/human-action-form": {
           parseBulkHumanAnswersForm,
           parseHumanAnswerForm,
@@ -2004,6 +2105,7 @@ test("human review server actions report transaction throws and propagate pre-in
               "../../src/server/human-review-fixture": {
                 humanBrowserFixtureEnabled: () => false
               },
+              "../../src/shared/human-mutation": sharedHumanMutation,
               "../../src/server/human-action-form": {
                 parseBulkHumanAnswersForm,
                 parseHumanAnswerForm,
@@ -2170,6 +2272,7 @@ test("human action failure logs include the elapsed account transaction", async 
               createHumanAnswerInTransaction: failMutation,
               undoHumanAnswerBeforeReadInTransaction: failMutation
             },
+            "../../src/shared/human-mutation": sharedHumanMutation,
             "../../src/server/human-action-form": {
               parseBulkHumanAnswersForm,
               parseHumanAnswerForm,

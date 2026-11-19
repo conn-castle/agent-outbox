@@ -16,7 +16,10 @@ import {
   browserFixtureReviewTypeOptions,
   humanBrowserFixtureEnabled
 } from "../../src/server/human-review-fixture";
-import { readFixtureResolvedItems } from "../../src/server/human-review-fixture-state";
+import {
+  readFixtureAsOf,
+  readFixtureResolvedItems
+} from "../../src/server/human-review-fixture-state";
 import { loadHumanReviewPage } from "../../src/server/human-review-page";
 import { requiredHumanSessionConfiguration } from "../../src/server/human-session";
 import { MissingConfigurationPanel } from "../../src/server/ui";
@@ -24,6 +27,7 @@ import {
   firstSearchParam,
   humanReviewViewFromRecord
 } from "../../src/shared/human-review-view";
+import { bulkAnswerMessage } from "../../src/shared/human-mutation";
 import {
   humanAccountIdentityOrFallback,
   type HumanAccountIdentityDisplay
@@ -104,6 +108,7 @@ export default async function HumanReviewPage({
         view={view}
         hasNext={fixturePage.hasNext}
         totalCount={fixturePage.totalCount}
+        asOf={await readFixtureAsOf()}
         detailOpen={cardLink !== null || selectedItem !== undefined}
         composeAction={composeAction}
         renderedAt={renderedAt}
@@ -194,6 +199,7 @@ export default async function HumanReviewPage({
       view={pageData.view}
       hasNext={pageData.hasNext}
       totalCount={pageData.totalCount}
+      asOf={pageData.asOf}
       detailOpen={cardLink !== null || selectedItem !== undefined}
       composeAction={composeAction}
       renderedAt={renderedAt}
@@ -313,7 +319,7 @@ function humanReviewNotice(
     const failed = firstSearchParam(params?.failed) ?? "0";
     return {
       kind: "notice",
-      message: `Bulk action complete: ${answered} answered, ${failed} failed.`
+      message: bulkAnswerMessage(answered, failed)
     };
   }
 

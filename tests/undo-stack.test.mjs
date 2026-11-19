@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  heldUndoTargets,
   offeredUndoEntry,
   removeUndoEntry,
   removeUndoTargets,
@@ -160,5 +161,22 @@ test("answers that can no longer be undone leave the stack", () => {
       state(reported("A", "read"))
     ),
     []
+  );
+});
+
+test("a confirmed answer keeps Undo only for answers the reported rows still hold unread", () => {
+  // A's output was read by its caller; B was undone and answered again
+  // elsewhere; C was acknowledged and is gone.
+  assert.deepEqual(
+    heldUndoTargets(
+      [target("A"), target("B"), target("C"), target("D")],
+      state(
+        reported("A", "read"),
+        reported("B", "answered again"),
+        reported("C", "gone"),
+        reported("D", "unread")
+      )
+    ),
+    [target("D")]
   );
 });

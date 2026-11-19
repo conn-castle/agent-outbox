@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-16 review-error-one-line-on-touch: Review action errors show one cut-off line with the rest only in a tooltip
+    Priority: Low. Area: human review queue
+    Description: `.last-action-error` shows one ellipsized line (`max-width: 8.5rem` on phones) and carries the full message only in its `title`. In the mobile browser project a 139-character message showed its first 16 characters.
+    Open question: Where should the full message be readable on a touch device?
+
 - Issue 2026-11-16 review-fixture-state-cookie-trimmed: Browser fixture drops answered items past its cookie limit
     Priority: Low. Area: browser test fixture
     Description: `fixtureResolvedItemsCookieValue` keeps only the newest records that fit 3,500 bytes (at most 50) and drops the rest without reporting it. Called directly with 20 answered items it kept 14. A dropped item falls back to its seeded state, and its record's `mutationId`, which is what recognizes a repeated answer, is lost with it.

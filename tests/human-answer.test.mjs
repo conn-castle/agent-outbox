@@ -23,6 +23,7 @@ import * as humanAnswer from "../src/server/human-answer.ts";
 import * as humanReviewPage from "../src/server/human-review-page.ts";
 import * as humanSession from "../src/server/human-session.ts";
 import * as humanReviewView from "../src/shared/human-review-view.ts";
+import * as sharedHumanMutation from "../src/shared/human-mutation.ts";
 import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 import { handleInputQueueRequestInTransaction } from "../src/server/input-queue.ts";
 import {
@@ -1877,6 +1878,7 @@ test(
           },
           "../../src/server/correlation": correlation,
           "../../src/server/client-events": clientEvents,
+          "../../src/shared/human-mutation": sharedHumanMutation,
           "../../src/server/human-action-form": humanActionForm,
           "../../src/server/human-answer": humanAnswer,
           "../../src/server/human-review-page": humanReviewPage,
