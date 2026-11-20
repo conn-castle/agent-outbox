@@ -2106,25 +2106,29 @@ test("review filters are visible, composable, removable, and reset pagination", 
 });
 
 test("sort control supports every field and arbitrary priority changes", async ({
-  page,
-  isMobile
+  page
 }) => {
   await page.goto("/human");
   await openReviewTools(page);
   await page.getByLabel("Sort: Priority").click();
 
   const addSort = page.getByRole("button", { name: "Add sort field" });
-  if (isMobile) {
-    const sortField = await page.getByLabel("Sort 1 field").boundingBox();
-    const addButton = await addSort.boundingBox();
-    expect(sortField).not.toBeNull();
-    expect(addButton).not.toBeNull();
-    expect(addButton!.x).toBeCloseTo(sortField!.x, 0);
-  }
+  const firstField = await page.getByLabel("Sort 1 field").boundingBox();
+  const initialAddButton = await addSort.boundingBox();
+  expect(firstField).not.toBeNull();
+  expect(initialAddButton).not.toBeNull();
+  expect(initialAddButton!.x).toBeCloseTo(firstField!.x, 0);
 
   for (let rank = 2; rank <= 8; rank += 1) {
     await addSort.click();
     await expect(page.getByLabel(`Sort ${rank} field`)).toBeFocused();
+    if (rank === 2) {
+      const secondField = await page.getByLabel("Sort 2 field").boundingBox();
+      const multiAddButton = await addSort.boundingBox();
+      expect(secondField).not.toBeNull();
+      expect(multiAddButton).not.toBeNull();
+      expect(multiAddButton!.x).toBeCloseTo(secondField!.x, 0);
+    }
   }
   await expect(
     page.getByRole("button", { name: "Add sort field" })
