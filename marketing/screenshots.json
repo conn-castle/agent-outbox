@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "0.8.0",
+  "releaseVersion": "0.8.1",
   "assets": [
     {
       "id": "queueDesktop",
@@ -9,7 +9,7 @@
       "route": "/human?status=all",
       "width": 1440,
       "height": 960,
-      "sha256": "2ce56b6371a72bd43db184d6eef78b9732fea4ab70c3aecda3b055912b83f16f"
+      "sha256": "5bf6ceb01cd609971028962e3bfc0f345e6507ebe7cbf52137e3fde13684358f"
     },
     {
       "id": "detailTablet",

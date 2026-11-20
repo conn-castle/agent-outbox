@@ -205,13 +205,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 }
 
 .human-workspace button,
-.human-workspace input,
-.human-workspace select,
-.human-workspace textarea {
-  font: inherit;
-}
-
-.human-workspace button,
 .human-workspace summary,
 .human-workspace select {
   cursor: pointer;
@@ -1100,7 +1093,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   border-radius: 0 0.45rem 0.45rem 0;
   outline: 0;
   color: var(--review-text);
-  font-size: var(--queue-type-body);
 }
 
 .human-workspace .review-search input::placeholder {
@@ -1202,6 +1194,7 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 .human-workspace .bulk-actions {
   display: flex;
   grid-row: 2;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.65rem;
   min-height: 3rem;
@@ -1212,8 +1205,10 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
 .human-workspace .bulk-actions > div {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.55rem;
+  min-width: 0;
   margin-right: auto;
   font-size: 0.67rem;
 }
@@ -1222,12 +1217,17 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   color: var(--review-muted);
 }
 
+.human-workspace .bulk-actions > label {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .human-workspace .bulk-actions select {
   min-height: 2.1rem;
+  max-width: 100%;
   border: 1px solid var(--review-line-strong);
   border-radius: 0.4rem;
   background: var(--review-paper);
-  font-size: 0.68rem;
 }
 
 .human-workspace .queue-eyebrow {
@@ -1531,14 +1531,19 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   gap: 0;
   margin: 0;
   max-height: min(23rem, calc(100dvh - 13rem));
-  padding: 0.2rem 0.65rem;
+  padding: 0.2rem var(--sort-list-inset);
   overflow-y: auto;
   list-style: none;
   scrollbar-width: thin;
 }
 
 .human-workspace .sort-popover {
-  width: min(29rem, calc(100vw - 2rem));
+  --sort-list-inset: 0.65rem;
+  --sort-rank-width: 1.2rem;
+  --sort-drag-width: 1.85rem;
+  --sort-remove-width: 2.2rem;
+  --sort-row-gap: 0.28rem;
+  width: min(30rem, calc(100vw - 2rem));
   overflow: hidden;
   border-color: var(--review-panel-line, rgba(80, 70, 55, 0.2));
   border-radius: 0.85rem;
@@ -1612,7 +1617,7 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
 .human-workspace .sort-rank {
   display: inline-grid;
-  width: 1.2rem;
+  width: var(--sort-rank-width);
   place-items: center;
   color: var(--review-muted);
   font-size: 0.64rem;
@@ -1622,15 +1627,17 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
 .human-workspace .sort-rule-row {
   display: grid;
-  grid-template-columns: 1.2rem 1.85rem minmax(0, 1fr) 2.2rem;
+  grid-template-columns:
+    var(--sort-rank-width) var(--sort-drag-width) minmax(0, 1fr)
+    var(--sort-remove-width);
   align-items: center;
-  gap: 0.28rem;
+  gap: var(--sort-row-gap);
   min-width: 0;
 }
 
 .human-workspace .sort-rule-fields {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8.2rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.5rem), 1fr));
   gap: 0.3rem;
   min-width: 0;
 }
@@ -1651,8 +1658,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   outline: 0;
   background: var(--review-panel, rgba(255, 254, 251, 0.94));
   color: var(--review-text);
-  font: inherit;
-  font-size: 0.76rem;
   font-weight: 650;
   cursor: pointer;
   transition:
@@ -1685,7 +1690,7 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
 .human-workspace .sort-remove-button {
   display: inline-grid;
-  width: 2.2rem;
+  width: var(--sort-remove-width);
   min-height: 2.15rem;
   padding: 0;
   place-items: center;
@@ -1708,7 +1713,7 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
 .human-workspace .sort-drag-handle {
   display: inline-grid;
-  width: 1.85rem;
+  width: var(--sort-drag-width);
   min-height: 2.15rem;
   padding: 0;
   border: 0;
@@ -1736,19 +1741,23 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 }
 
 .human-workspace .sort-drag-placeholder {
-  width: 1.85rem;
+  width: var(--sort-drag-width);
   height: 1px;
 }
 
 .human-workspace .sort-remove-placeholder {
-  width: 2.2rem;
+  width: var(--sort-remove-width);
   height: 1px;
 }
 
 .human-workspace .add-sort-button {
+  --sort-field-indent: calc(
+    var(--sort-list-inset) + var(--sort-rank-width) + var(--sort-drag-width) +
+      (2 * var(--sort-row-gap))
+  );
   justify-self: start;
   min-height: 2.25rem;
-  margin: 0.3rem 0.85rem 0.55rem 3.25rem;
+  margin: 0.3rem 0.85rem 0.55rem var(--sort-field-indent);
   padding: 0 0.55rem;
   border: 0;
   border-radius: 0.45rem;
@@ -4152,7 +4161,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   border-radius: 0.42rem;
   background: var(--review-paper);
   color: var(--review-text);
-  font-size: 0.7rem;
   resize: vertical;
 }
 
@@ -4522,10 +4530,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
     margin-top: 1rem;
   }
 
-  .human-workspace .review-search input {
-    font-size: 1rem;
-  }
-
   .human-workspace .mobile-tools-button,
   .human-workspace .compact-selection-button {
     display: inline-flex;
@@ -4844,6 +4848,11 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 
   .human-workspace .sort-popover {
+    --sort-list-inset: 0.55rem;
+    --sort-rank-width: 1rem;
+    --sort-drag-width: 2.75rem;
+    --sort-remove-width: 2.75rem;
+    --sort-row-gap: 0.2rem;
     right: 0;
     bottom: 0;
     left: 0;
@@ -4862,22 +4871,18 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
   .human-workspace .sort-rule-list {
     max-height: calc(100dvh - 10.5rem);
-    padding-inline: 0.55rem;
-  }
-
-  .human-workspace .sort-rule-row {
-    grid-template-columns: 1rem 2.75rem minmax(0, 1fr) 2.75rem;
-    gap: 0.2rem;
   }
 
   .human-workspace .sort-rule-fields {
-    grid-template-columns: minmax(0, 1fr) minmax(6.6rem, 0.82fr);
     gap: 0.25rem;
+  }
+
+  .human-workspace .sort-rule:only-child .sort-rule-fields {
+    grid-column: 2 / -1;
   }
 
   .human-workspace .sort-drag-handle,
   .human-workspace .sort-remove-button {
-    width: 2.75rem;
     background: var(--review-panel-hover, rgba(80, 70, 55, 0.055));
   }
 
@@ -4886,8 +4891,10 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
     display: none;
   }
 
-  .human-workspace .add-sort-button {
-    margin-left: 4.5rem;
+  .human-workspace .sort-popover:has(.sort-rule:only-child) .add-sort-button {
+    --sort-field-indent: calc(
+      var(--sort-list-inset) + var(--sort-rank-width) + var(--sort-row-gap)
+    );
   }
 
   .human-workspace .queue-heading h2 {

@@ -401,6 +401,11 @@ test("card time sorting uses newest first by default and keeps missing values la
   await page.goto("/human");
   await openReviewTools(page);
   await page.getByLabel("Sort: Priority").click();
+  await expect(page.getByLabel("Sort 1 field")).toHaveCSS("font-size", "18px");
+  await expect(page.getByLabel("Sort 1 direction")).toHaveCSS(
+    "font-size",
+    "18px"
+  );
   await page.getByLabel("Sort 1 field").selectOption({ label: "Card time" });
   await expect(page.getByLabel("Sort 1 direction")).toHaveValue("desc");
   await expect(page).toHaveURL(/order=card_time%3Adesc/);
@@ -440,10 +445,10 @@ test("feedback stays local across reloads and failures, then accompanies one ans
   await expect(button).toHaveText("");
   await button.click();
   const popup = page.getByRole("dialog", { name: "Feedback", exact: true });
-  await expect(popup.getByRole("textbox", { name: "Feedback" })).toBeFocused();
-  await popup
-    .getByRole("textbox", { name: "Feedback" })
-    .fill("Please rename this before proceeding.");
+  const feedback = popup.getByRole("textbox", { name: "Feedback" });
+  await expect(feedback).toBeFocused();
+  await expect(feedback).toHaveCSS("font-size", "18px");
+  await feedback.fill("Please rename this before proceeding.");
   await popup.getByRole("button", { name: "Save", exact: true }).click();
   await expect(popup).toBeHidden();
   await expect(
@@ -2107,9 +2112,23 @@ test("sort control supports every field and arbitrary priority changes", async (
   await openReviewTools(page);
   await page.getByLabel("Sort: Priority").click();
 
+  const addSort = page.getByRole("button", { name: "Add sort field" });
+  const firstField = await page.getByLabel("Sort 1 field").boundingBox();
+  const initialAddButton = await addSort.boundingBox();
+  expect(firstField).not.toBeNull();
+  expect(initialAddButton).not.toBeNull();
+  expect(initialAddButton!.x).toBeCloseTo(firstField!.x, 0);
+
   for (let rank = 2; rank <= 8; rank += 1) {
-    await page.getByRole("button", { name: "Add sort field" }).click();
+    await addSort.click();
     await expect(page.getByLabel(`Sort ${rank} field`)).toBeFocused();
+    if (rank === 2) {
+      const secondField = await page.getByLabel("Sort 2 field").boundingBox();
+      const multiAddButton = await addSort.boundingBox();
+      expect(secondField).not.toBeNull();
+      expect(multiAddButton).not.toBeNull();
+      expect(multiAddButton!.x).toBeCloseTo(secondField!.x, 0);
+    }
   }
   await expect(
     page.getByRole("button", { name: "Add sort field" })
@@ -2845,6 +2864,10 @@ test("bulk actions only submit selected rows visible in the current filter", asy
   await expect(page.locator(".bulk-actions")).toContainText(
     "1 selected pending row"
   );
+  await expect(page.getByLabel("Compatible quick action")).toHaveCSS(
+    "font-size",
+    "18px"
+  );
   await page.getByRole("button", { name: "Apply Approve follow-up" }).click();
   await expect(reviewRowByTitle(page, "Choose follow-up window")).toHaveCount(
     0
@@ -3086,6 +3109,7 @@ test("free-text defaults outside the length bounds submit only after editing", a
     await page.getByRole("button", { name: action }).click();
     const field = page.getByLabel(label);
     await expect(field).toHaveValue(defaultValue);
+    await expect(field).toHaveCSS("font-size", "18px");
 
     await page.getByRole("button", { name: action }).click();
     await expect(field).toHaveJSProperty("validationMessage", message);
@@ -3112,6 +3136,7 @@ test("datetime bounds keep fold minutes native-valid and early years renderable"
   await openSecondaryActions(page);
   await page.getByRole("button", { name: "Pick fold time" }).click();
   const field = page.getByLabel("Fold instant");
+  await expect(field).toHaveCSS("font-size", "18px");
   await expect(field).toHaveAttribute("min", "2026-11-01T01:45");
   await expect(field).toHaveAttribute("max", "2026-11-01T01:59");
   for (const [value, valid] of [
@@ -3152,6 +3177,7 @@ test("row popup actions open a focused composer instead of the full detail", asy
   const detail = page.getByRole("region", { name: "Review detail" });
   const field = detail.getByLabel("Follow-up date");
   await expect(field).toBeVisible();
+  await expect(field).toHaveCSS("font-size", "18px");
   await expect(detail.getByText("Review summary")).toHaveCount(0);
   await expect(
     detail.getByRole("navigation", { name: "Review navigation" })
@@ -3483,6 +3509,7 @@ test("queue J does not steal typing from search or move past the last row", asyn
   await page.goto("/human");
   await openReviewTools(page);
   const search = page.getByRole("textbox", { name: "Search" });
+  await expect(search).toHaveCSS("font-size", "18px");
   await search.click();
   await page.keyboard.press("j");
   await expect(search).toHaveValue("j");

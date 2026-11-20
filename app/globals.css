@@ -56,6 +56,27 @@ textarea {
   font: inherit;
 }
 
+/* Keep text entry readable and above the iOS focus-zoom threshold. */
+input:where(
+  :not([type]),
+  [type="text"],
+  [type="search"],
+  [type="email"],
+  [type="url"],
+  [type="tel"],
+  [type="password"],
+  [type="number"],
+  [type="date"],
+  [type="datetime-local"],
+  [type="month"],
+  [type="time"],
+  [type="week"]
+),
+select,
+textarea {
+  font-size: max(16px, 1.125rem);
+}
+
 button,
 a {
   -webkit-tap-highlight-color: transparent;
@@ -744,7 +765,6 @@ code {
   border-radius: 0.55rem;
   background: #fffdf8;
   color: var(--text);
-  font-size: 0.94rem;
   font-weight: 450;
   outline: none;
   transition:
