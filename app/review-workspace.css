@@ -1205,8 +1205,10 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
 .human-workspace .bulk-actions > div {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 0.55rem;
+  min-width: 0;
   margin-right: auto;
   font-size: 0.67rem;
 }
@@ -1536,7 +1538,7 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 }
 
 .human-workspace .sort-popover {
-  width: min(29rem, calc(100vw - 2rem));
+  width: min(30rem, calc(100vw - 2rem));
   overflow: hidden;
   border-color: var(--review-panel-line, rgba(80, 70, 55, 0.2));
   border-radius: 0.85rem;
@@ -4881,7 +4883,11 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 
   .human-workspace .add-sort-button {
-    margin-left: 4.5rem;
+    margin-left: 4.7rem;
+  }
+
+  .human-workspace .sort-popover:has(.sort-rule:only-child) .add-sort-button {
+    margin-left: 1.75rem;
   }
 
   .human-workspace .queue-heading h2 {

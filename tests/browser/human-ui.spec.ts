@@ -2106,14 +2106,24 @@ test("review filters are visible, composable, removable, and reset pagination", 
 });
 
 test("sort control supports every field and arbitrary priority changes", async ({
-  page
+  page,
+  isMobile
 }) => {
   await page.goto("/human");
   await openReviewTools(page);
   await page.getByLabel("Sort: Priority").click();
 
+  const addSort = page.getByRole("button", { name: "Add sort field" });
+  if (isMobile) {
+    const sortField = await page.getByLabel("Sort 1 field").boundingBox();
+    const addButton = await addSort.boundingBox();
+    expect(sortField).not.toBeNull();
+    expect(addButton).not.toBeNull();
+    expect(addButton!.x).toBeCloseTo(sortField!.x, 0);
+  }
+
   for (let rank = 2; rank <= 8; rank += 1) {
-    await page.getByRole("button", { name: "Add sort field" }).click();
+    await addSort.click();
     await expect(page.getByLabel(`Sort ${rank} field`)).toBeFocused();
   }
   await expect(
