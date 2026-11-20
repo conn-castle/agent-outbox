@@ -205,13 +205,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 }
 
 .human-workspace button,
-.human-workspace input,
-.human-workspace select,
-.human-workspace textarea {
-  font: inherit;
-}
-
-.human-workspace button,
 .human-workspace summary,
 .human-workspace select {
   cursor: pointer;
@@ -1100,7 +1093,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   border-radius: 0 0.45rem 0.45rem 0;
   outline: 0;
   color: var(--review-text);
-  font-size: var(--queue-type-body);
 }
 
 .human-workspace .review-search input::placeholder {
@@ -1202,6 +1194,7 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 .human-workspace .bulk-actions {
   display: flex;
   grid-row: 2;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.65rem;
   min-height: 3rem;
@@ -1222,12 +1215,17 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   color: var(--review-muted);
 }
 
+.human-workspace .bulk-actions > label {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .human-workspace .bulk-actions select {
   min-height: 2.1rem;
+  max-width: 100%;
   border: 1px solid var(--review-line-strong);
   border-radius: 0.4rem;
   background: var(--review-paper);
-  font-size: 0.68rem;
 }
 
 .human-workspace .queue-eyebrow {
@@ -1630,7 +1628,7 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
 .human-workspace .sort-rule-fields {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 8.2rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.5rem), 1fr));
   gap: 0.3rem;
   min-width: 0;
 }
@@ -1651,8 +1649,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   outline: 0;
   background: var(--review-panel, rgba(255, 254, 251, 0.94));
   color: var(--review-text);
-  font: inherit;
-  font-size: 0.76rem;
   font-weight: 650;
   cursor: pointer;
   transition:
@@ -4152,7 +4148,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   border-radius: 0.42rem;
   background: var(--review-paper);
   color: var(--review-text);
-  font-size: 0.7rem;
   resize: vertical;
 }
 
@@ -4522,10 +4517,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
     margin-top: 1rem;
   }
 
-  .human-workspace .review-search input {
-    font-size: 1rem;
-  }
-
   .human-workspace .mobile-tools-button,
   .human-workspace .compact-selection-button {
     display: inline-flex;
@@ -4871,8 +4862,11 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 
   .human-workspace .sort-rule-fields {
-    grid-template-columns: minmax(0, 1fr) minmax(6.6rem, 0.82fr);
     gap: 0.25rem;
+  }
+
+  .human-workspace .sort-rule:only-child .sort-rule-fields {
+    grid-column: 2 / -1;
   }
 
   .human-workspace .sort-drag-handle,

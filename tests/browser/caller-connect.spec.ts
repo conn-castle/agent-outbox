@@ -298,6 +298,7 @@ test("manual device-code entry previews the caller before approval", async ({
     page.getByRole("heading", { name: "Enter the CLI code" })
   ).toBeVisible();
 
+  await expect(page.getByLabel("User code")).toHaveCSS("font-size", "18px");
   await page.getByLabel("User code").fill(startPayload.data.user_code);
   await page.getByRole("button", { name: "Continue" }).click();
 
