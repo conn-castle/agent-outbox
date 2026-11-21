@@ -122,10 +122,6 @@ html[data-review-theme="dark"] .human-workspace .row-context .pill-visual {
   flex: none;
 }
 
-.human-workspace .app-feedback {
-  display: contents;
-}
-
 .human-workspace .theme-toggle {
   display: grid;
   width: 2.75rem;
@@ -417,6 +413,10 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.human-workspace .last-undo-short-label {
+  display: none;
 }
 
 .human-workspace .last-undo-button:hover,
@@ -4695,11 +4695,17 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 }
 
 @media (max-width: 800px) {
+  html:has(.human-workspace) {
+    scroll-padding-top: 4rem;
+  }
+
   .human-workspace {
     grid-template-rows: auto minmax(0, 1fr);
   }
 
   .human-workspace .app-bar {
+    position: sticky;
+    top: 0;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 0 0.5rem;
   }
@@ -4718,43 +4724,63 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
     padding-block: 0.45rem;
   }
 
-  .human-workspace .app-feedback {
+  /* Keep row menus below the sticky app bar when scrolling. */
+  .human-workspace .row-overflow-menu {
+    z-index: 50;
+  }
+
+  .human-workspace .last-undo-button {
+    min-height: 2.75rem;
+    border-color: var(--review-accent);
+    background: var(--review-accent);
+    color: var(--review-ink);
+    font-size: var(--queue-type-meta);
+  }
+
+  .human-workspace .last-undo-button:hover,
+  .human-workspace .last-undo-button:focus-visible {
+    border-color: var(--review-accent-light);
+    background: var(--review-accent-light);
+  }
+
+  .human-workspace .last-action-error {
     position: fixed;
     right: 1rem;
     bottom: 1rem;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 0.4rem;
-    max-width: calc(100% - 2rem);
-  }
-
-  .human-workspace .app-feedback:empty {
-    display: none;
-  }
-
-  /* Here the feedback floats over the page, not the dark bar: give it the
-     bar's surface so it stays legible, and room to scroll content clear. */
-  .human-workspace .app-feedback .last-undo-button {
-    max-width: 100%;
-    background-color: var(--review-ink);
-    box-shadow: 0 0.8rem 2rem rgba(17, 22, 23, 0.22);
-  }
-
-  .human-workspace .app-feedback .last-action-error {
     background:
       linear-gradient(rgba(181, 43, 49, 0.18), rgba(181, 43, 49, 0.18)),
       var(--review-ink);
     box-shadow: 0 0.8rem 2rem rgba(17, 22, 23, 0.22);
   }
 
-  .human-workspace:has(.app-feedback:not(:empty)) {
+  .human-workspace:has(.last-action-error) {
     padding-bottom: 4.75rem;
   }
 }
 
+@media (min-width: 520.02px) and (max-width: 800px) {
+  .human-workspace .app-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .human-workspace .app-account {
+    max-width: 100%;
+  }
+
+  .human-workspace .last-undo-button {
+    max-width: min(100%, 18rem);
+  }
+}
+
 @media (max-width: 520px) {
+  .human-workspace .last-undo-full-label {
+    display: none;
+  }
+
+  .human-workspace .last-undo-short-label {
+    display: inline;
+  }
+
   .human-workspace .account-banner[open] {
     z-index: 110;
   }
@@ -4805,15 +4831,6 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
 
   .human-workspace .last-action-error {
     max-width: 8.5rem;
-  }
-
-  .human-workspace .last-undo-button {
-    max-width: 9rem;
-    min-height: 2.75rem;
-  }
-
-  .human-workspace .app-brand > span {
-    display: inline;
   }
 
   .human-workspace .app-location > span {
@@ -5024,6 +5041,12 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
     min-width: 0;
     min-height: 2.75rem;
     padding-inline: 0.65rem;
+  }
+}
+
+@media (max-width: 374px) {
+  .human-workspace .app-bar:has(.last-undo-form) .app-brand > span {
+    display: none;
   }
 }
 

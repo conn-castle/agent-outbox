@@ -399,7 +399,12 @@ export function LastAnswerUndoForm({
           onUndo();
         }}
       >
-        <span aria-hidden="true">{label}</span>
+        <span className="last-undo-full-label" aria-hidden="true">
+          {label}
+        </span>
+        <span className="last-undo-short-label" aria-hidden="true">
+          Undo
+        </span>
       </PendingSubmitButton>
     </form>
   );

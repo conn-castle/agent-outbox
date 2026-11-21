@@ -28,6 +28,12 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-21 review-error-dismiss-touch-target: Review action error dismiss control is small on phones
+    Priority: Low. Area: human review queue
+    Description: The dismiss button on the floating error alert measures about 27 by 27 CSS pixels at 360px. It sits over the queue, where taps outside the alert can reach the underlying content.
+    Open question: How should the alert fit a larger dismiss target alongside its message?
+    Notes: Reported in [PR #318](https://github.com/conn-castle/agent-outbox/pull/318#pullrequestreview-6006396425). The button was the same size before the mobile Undo header change.
+
 - Issue 2026-11-19 sentry-cli-two-majors: Release builds use two major versions of the Sentry CLI
     Priority: Low. Area: dependencies / Sentry
     Description: `pnpm-lock.yaml` resolves `@sentry/cli` 2.58.6 for `@sentry/bundler-plugins` 10.78.0, and `package.json` pins `@sentry/cli` 3.8.0 for `pnpm exec sentry-cli`. `next.config.ts` lets the build plugin create and finalize the Sentry release, and `scripts/worker-deploy.mjs` injects and uploads source maps with the pinned CLI.
@@ -65,8 +71,8 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 
 - Issue 2026-11-16 review-filter-focus-lost-on-close: Closing a review Filter or Sort panel does not always return focus to its trigger
     Priority: Low. Area: Human review / Accessibility
-    Description: Observed in Chromium for `src/components/human/ReviewViewControls.tsx`. Focus returns to the panel's trigger after Escape (both panels), the Sort panel's Done button, and keyboard activation of the Sort scrim. Focus lands on the page body after the Filter panel's Done, close and scrim buttons (keyboard or pointer), after a pointer press on the Sort scrim, and after a press on non-focusable content outside either panel.
-    Open question: Whether pointer dismissal should move focus to the trigger.
+    Description: Observed in Chromium for `src/components/human/ReviewViewControls.tsx`. Focus lands on the page body after the Filter panel's Done and close buttons, and after a press on non-focusable content outside either desktop popover.
+    Open question: Which of these dismissal paths should return focus to the trigger?
 
 - Issue 2026-11-16 billing-grace-from-webhook-arrival: Grace deadlines run from webhook arrival, not event creation
     Priority: Low. Area: billing

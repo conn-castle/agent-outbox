@@ -1130,6 +1130,37 @@ test("primary navigation and queue disclosures behave consistently", async ({
   await expect(accountSummary).toBeFocused();
 });
 
+test("a mobile row menu scrolls behind the sticky header", async ({ page }) => {
+  await page.setViewportSize({ width: 393, height: 740 });
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await page
+    .getByLabel(/^More actions for/)
+    .first()
+    .click();
+  const menu = page.locator(".row-overflow-menu:visible");
+  await expect(menu.getByRole("button", { name: "Copy link" })).toBeVisible();
+  await menu.evaluate((element) => {
+    window.scrollBy({
+      top: element.getBoundingClientRect().top - 18,
+      behavior: "instant"
+    });
+  });
+  const overlappingPoint = await menu.evaluate((element) => {
+    const { x, y, width } = element.getBoundingClientRect();
+    return { x: x + width / 2, y: y + 15 };
+  });
+  const header = page.locator(".app-bar");
+  expect(overlappingPoint.y).toBeGreaterThan(0);
+  expect(overlappingPoint.y).toBeLessThan((await header.boundingBox())!.height);
+  expect(
+    await header.evaluate(
+      (element, { x, y }) => element.contains(document.elementFromPoint(x, y)),
+      overlappingPoint
+    )
+  ).toBe(true);
+});
+
 test("review queue and history remain disjoint", async ({ page }) => {
   await page.goto("/human?status=all");
 
