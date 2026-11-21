@@ -102,14 +102,21 @@ test("theme header controls stay visible with Undo at phone and tablet widths", 
   await page
     .getByRole("button", { name: "Approve permit brief", exact: true })
     .click();
-  await expect(page.getByTestId("last-answer-undo")).toBeVisible();
+  const undo = page.getByRole("button", {
+    name: "Undo “Approve permit brief”",
+    exact: true
+  });
+  const appBar = page.locator(".app-bar");
+  await expect(undo).toBeVisible();
 
   for (const dark of [false, true]) {
     if (dark)
       await page
         .getByRole("button", { name: "Dark mode", exact: true })
         .click();
-    for (const width of [320, 520, 521, 600, 768, 800, 801, 1024]) {
+    for (const width of [
+      320, 360, 375, 393, 520, 521, 600, 768, 800, 801, 1024
+    ]) {
       await page.setViewportSize({ width, height: 900 });
       const controls = await page
         .locator(
@@ -153,9 +160,15 @@ test("theme header controls stay visible with Undo at phone and tablet widths", 
         }
       }
       if (width <= 800) {
-        expect(
-          (await page.locator(".app-bar").boundingBox())!.height
-        ).toBeLessThanOrEqual(64);
+        const header = (await appBar.boundingBox())!;
+        const undoButton = (await undo.boundingBox())!;
+        expect(header.height).toBeLessThanOrEqual(64);
+        expect(undoButton.height).toBeGreaterThanOrEqual(44);
+        expect(undoButton.y).toBeGreaterThanOrEqual(header.y);
+        expect(undoButton.y + undoButton.height).toBeLessThanOrEqual(
+          header.y + header.height
+        );
+        await expect(undo.getByText("Undo", { exact: true })).toBeVisible();
         const centers = await page
           .locator(".account-banner > summary")
           .evaluate((trigger) => {
@@ -173,6 +186,19 @@ test("theme header controls stay visible with Undo at phone and tablet widths", 
       }
     }
   }
+
+  await page.setViewportSize({ width: 320, height: 480 });
+  await page.evaluate(() => {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "instant" });
+  });
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY))
+    .toBeGreaterThan(0);
+  await expect(undo).toBeInViewport({ ratio: 1 });
+  await undo.click();
+  await expect(
+    page.getByRole("button", { name: "Approve permit brief", exact: true })
+  ).toBeVisible();
 });
 
 test("compact navigation opens, dismisses and switches views without a second header row", async ({

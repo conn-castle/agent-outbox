@@ -948,28 +948,26 @@ export function ReviewWorkspace({
           {statusLinks}
         </nav>
         <div className="app-account">
-          <div className="app-feedback">
-            {lastError ? (
-              <p className="last-action-error" role="alert" title={lastError}>
-                <span>{lastError}</span>
-                <button
-                  type="button"
-                  aria-label="Dismiss error"
-                  onClick={() => setLastError(null)}
-                >
-                  <X aria-hidden="true" />
-                </button>
-              </p>
-            ) : null}
-            {offeredUndo ? (
-              <LastAnswerUndoForm
-                key={offeredUndo.id}
-                undo={offeredUndo}
-                disabled={!undoAvailable(offeredUndo, lockedIds)}
-                onUndo={requestUndo}
-              />
-            ) : null}
-          </div>
+          {lastError ? (
+            <p className="last-action-error" role="alert" title={lastError}>
+              <span>{lastError}</span>
+              <button
+                type="button"
+                aria-label="Dismiss error"
+                onClick={() => setLastError(null)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </p>
+          ) : null}
+          {offeredUndo ? (
+            <LastAnswerUndoForm
+              key={offeredUndo.id}
+              undo={offeredUndo}
+              disabled={!undoAvailable(offeredUndo, lockedIds)}
+              onUndo={requestUndo}
+            />
+          ) : null}
           <ThemeToggle />
           <AccountBanner banner={banner} identity={identity} />
           <details className="navigation-overflow" data-dismissible-disclosure>
