@@ -4724,20 +4724,17 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
     padding-block: 0.45rem;
   }
 
+  /* Keep row menus below the sticky app bar when scrolling. */
+  .human-workspace .row-overflow-menu {
+    z-index: 50;
+  }
+
   .human-workspace .last-undo-button {
     min-height: 2.75rem;
     border-color: var(--review-accent);
     background: var(--review-accent);
     color: var(--review-ink);
     font-size: var(--queue-type-meta);
-  }
-
-  .human-workspace .last-undo-full-label {
-    display: none;
-  }
-
-  .human-workspace .last-undo-short-label {
-    display: inline;
   }
 
   .human-workspace .last-undo-button:hover,
@@ -4761,7 +4758,29 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 }
 
+@media (520px < width <= 800px) {
+  .human-workspace .app-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .human-workspace .app-account {
+    max-width: 100%;
+  }
+
+  .human-workspace .last-undo-button {
+    max-width: min(100%, 18rem);
+  }
+}
+
 @media (max-width: 520px) {
+  .human-workspace .last-undo-full-label {
+    display: none;
+  }
+
+  .human-workspace .last-undo-short-label {
+    display: inline;
+  }
+
   .human-workspace .account-banner[open] {
     z-index: 110;
   }

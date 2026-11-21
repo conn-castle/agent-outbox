@@ -245,12 +245,23 @@ test("undo reverses a whole bulk answer as one step", async ({ page }) => {
   await applyBulk(page);
   expect((await bulk).ok()).toBe(true);
   await expectQueue(page, without(initial, permit, followUp, email));
-  await expect(
-    page.getByRole("button", {
-      name: "Undo “Approve permit brief” for 2 reviews",
+  const bulkUndo = page.getByRole("button", {
+    name: "Undo “Approve permit brief” for 2 reviews",
+    exact: true
+  });
+  const originalViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 768, height: originalViewport.height });
+  const bulkLabel = bulkUndo.getByText(
+    "Undo “Approve permit brief” for 2 reviews",
+    {
       exact: true
-    })
-  ).toBeVisible();
+    }
+  );
+  await expect(bulkLabel).toBeVisible();
+  expect(
+    await bulkLabel.evaluate((label) => label.scrollWidth <= label.clientWidth)
+  ).toBe(true);
+  await page.setViewportSize(originalViewport);
 
   await undo(page);
   await expectQueue(page, without(initial, email));
@@ -1075,6 +1086,68 @@ test("temporarily failed undo keeps Undo available for retry", async ({
   await expect(
     page.getByRole("button", { name: `Undo “${action}”`, exact: true })
   ).toBeVisible();
+});
+
+test("mobile view sheets shield the sticky header and failed Undo alert", async ({
+  page,
+  isMobile
+}) => {
+  test.skip(!isMobile, "This interaction uses touch input");
+  await page.setViewportSize({ width: 393, height: 740 });
+  await openQueue(page);
+  await answer(page, "Approve permit brief");
+  await page.route("**/human/mutations", (route) =>
+    route.fulfill({ status: 503, body: "Service Unavailable" })
+  );
+  await undo(page);
+  const alert = page
+    .getByRole("alert")
+    .filter({ hasText: "temporarily unavailable" });
+  await expect(alert).toBeVisible();
+  await showTools(page);
+
+  const theme = page.getByRole("button", { name: "Dark mode", exact: true });
+  for (const width of [393, 600]) {
+    await page.setViewportSize({ width, height: 740 });
+    for (const [triggerName, dialogName] of [
+      ["Filter", "Filter reviews"],
+      ["Sort: Priority", "Sort reviews"]
+    ]) {
+      const trigger = page.getByLabel(triggerName, { exact: true });
+      await trigger.evaluate((element) => {
+        window.scrollBy({
+          top: element.getBoundingClientRect().top - 100,
+          behavior: "instant"
+        });
+      });
+      expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+      await expect(theme).toBeInViewport({ ratio: 1 });
+      await trigger.tap();
+
+      const sheet = page.getByRole("dialog", { name: dialogName, exact: true });
+      await expect(sheet).toBeVisible();
+      const hitDialog = await alert
+        .getByRole("button", { name: "Dismiss error" })
+        .evaluate((button) => {
+          const { x, y, width, height } = button.getBoundingClientRect();
+          return document
+            .elementFromPoint(x + width / 2, y + height / 2)
+            ?.closest('[role="dialog"]')
+            ?.getAttribute("aria-label");
+        });
+      expect(hitDialog).toBe(dialogName);
+
+      const { x, y, width: themeWidth, height } = (await theme.boundingBox())!;
+      await page.touchscreen.tap(x + themeWidth / 2, y + height / 2);
+      await expect(sheet).toHaveCount(0);
+      await expect(theme).toHaveAttribute("aria-pressed", "false");
+
+      await trigger.tap();
+      await sheet.getByRole("button", { name: "Done", exact: true }).tap();
+      await expect(sheet).toHaveCount(0);
+      await expect(alert).toBeVisible();
+    }
+  }
 });
 
 async function openQueue(page: Page, href = "/human") {

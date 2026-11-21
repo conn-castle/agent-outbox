@@ -107,6 +107,9 @@ test("theme header controls stay visible with Undo at phone and tablet widths", 
     exact: true
   });
   const appBar = page.locator(".app-bar");
+  const wordmark = page
+    .getByRole("link", { name: "Agent Outbox home" })
+    .getByText("Agent Outbox");
   await expect(undo).toBeVisible();
 
   for (const dark of [false, true]) {
@@ -168,7 +171,19 @@ test("theme header controls stay visible with Undo at phone and tablet widths", 
         expect(undoButton.y + undoButton.height).toBeLessThanOrEqual(
           header.y + header.height
         );
-        await expect(undo.getByText("Undo", { exact: true })).toBeVisible();
+        await expect(
+          undo.getByText(
+            width <= 520 ? "Undo" : "Undo “Approve permit brief”",
+            {
+              exact: true
+            }
+          )
+        ).toBeVisible();
+        if (width < 375) {
+          await expect(wordmark).toBeHidden();
+        } else {
+          await expect(wordmark).toBeVisible();
+        }
         const centers = await page
           .locator(".account-banner > summary")
           .evaluate((trigger) => {

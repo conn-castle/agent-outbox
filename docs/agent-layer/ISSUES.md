@@ -28,6 +28,11 @@ Deferred defects, maintainability refactors, technical debt, risks, and engineer
 ## Open issues
 
 <!-- ENTRIES START -->
+- Issue 2026-11-21 review-error-dismiss-touch-target: Review action error dismiss control is small on phones
+    Priority: Low. Area: human review queue
+    Description: The dismiss button on the floating error alert measures about 27 by 27 CSS pixels at 360px. It sits over the queue, where taps outside the alert can reach the underlying content.
+    Notes: Reported in [PR #318](https://github.com/conn-castle/agent-outbox/pull/318#pullrequestreview-6006396425). The button was the same size before the mobile Undo header change.
+
 - Issue 2026-11-19 sentry-cli-two-majors: Release builds use two major versions of the Sentry CLI
     Priority: Low. Area: dependencies / Sentry
     Description: `pnpm-lock.yaml` resolves `@sentry/cli` 2.58.6 for `@sentry/bundler-plugins` 10.78.0, and `package.json` pins `@sentry/cli` 3.8.0 for `pnpm exec sentry-cli`. `next.config.ts` lets the build plugin create and finalize the Sentry release, and `scripts/worker-deploy.mjs` injects and uploads source maps with the pinned CLI.

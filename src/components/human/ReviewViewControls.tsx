@@ -99,10 +99,11 @@ export function ReviewViewControls({
     };
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
+      // Keep the scrim mounted until its click consumes the tap.
       if (
         target instanceof Element &&
         target.closest(
-          "[data-view-popover-control], [data-view-popover-surface]"
+          "[data-view-popover-control], [data-view-popover-surface], .view-popover-scrim"
         )
       ) {
         return;
