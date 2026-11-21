@@ -4758,7 +4758,7 @@ html[data-review-theme="dark"] .human-workspace .theme-sun {
   }
 }
 
-@media (520px < width <= 800px) {
+@media (min-width: 520.02px) and (max-width: 800px) {
   .human-workspace .app-bar {
     grid-template-columns: auto minmax(0, 1fr);
   }

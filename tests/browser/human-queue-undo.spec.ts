@@ -237,7 +237,10 @@ test("undo targets the newest answer while it is still saving", async ({
   await expectHistory(page, [permit], [followUp]);
 });
 
-test("undo reverses a whole bulk answer as one step", async ({ page }) => {
+test("undo reverses a whole bulk answer as one step", async ({
+  page,
+  isMobile
+}) => {
   const initial = await openQueue(page);
   await answer(page, "Approve to send");
   await selectRows(page, [permit, followUp]);
@@ -245,23 +248,27 @@ test("undo reverses a whole bulk answer as one step", async ({ page }) => {
   await applyBulk(page);
   expect((await bulk).ok()).toBe(true);
   await expectQueue(page, without(initial, permit, followUp, email));
-  const bulkUndo = page.getByRole("button", {
-    name: "Undo “Approve permit brief” for 2 reviews",
-    exact: true
-  });
-  const originalViewport = page.viewportSize()!;
-  await page.setViewportSize({ width: 768, height: originalViewport.height });
-  const bulkLabel = bulkUndo.getByText(
-    "Undo “Approve permit brief” for 2 reviews",
-    {
-      exact: true
+  const label = "Undo “Approve permit brief” for 2 reviews";
+  const bulkUndo = page.getByRole("button", { name: label, exact: true });
+  await expect(bulkUndo).toBeVisible();
+  if (!isMobile) {
+    const originalViewport = page.viewportSize()!;
+    try {
+      await page.setViewportSize({
+        width: 768,
+        height: originalViewport.height
+      });
+      const bulkLabel = bulkUndo.getByText(label, { exact: true });
+      await expect(bulkLabel).toBeVisible();
+      expect(
+        await bulkLabel.evaluate(
+          (label) => label.scrollWidth <= label.clientWidth
+        )
+      ).toBe(true);
+    } finally {
+      await page.setViewportSize(originalViewport);
     }
-  );
-  await expect(bulkLabel).toBeVisible();
-  expect(
-    await bulkLabel.evaluate((label) => label.scrollWidth <= label.clientWidth)
-  ).toBe(true);
-  await page.setViewportSize(originalViewport);
+  }
 
   await undo(page);
   await expectQueue(page, without(initial, email));
@@ -1126,6 +1133,14 @@ test("mobile view sheets shield the sticky header and failed Undo alert", async 
 
       const sheet = page.getByRole("dialog", { name: dialogName, exact: true });
       await expect(sheet).toBeVisible();
+      await trigger.evaluate((element) => {
+        window.scrollBy({
+          top: element.getBoundingClientRect().bottom + 20,
+          behavior: "instant"
+        });
+      });
+      await expect(trigger).not.toBeInViewport();
+      const scrollY = await page.evaluate(() => window.scrollY);
       const hitDialog = await alert
         .getByRole("button", { name: "Dismiss error" })
         .evaluate((button) => {
@@ -1141,6 +1156,8 @@ test("mobile view sheets shield the sticky header and failed Undo alert", async 
       await page.touchscreen.tap(x + themeWidth / 2, y + height / 2);
       await expect(sheet).toHaveCount(0);
       await expect(theme).toHaveAttribute("aria-pressed", "false");
+      await expect(trigger).toBeFocused();
+      expect(await page.evaluate(() => window.scrollY)).toBe(scrollY);
 
       await trigger.tap();
       await sheet.getByRole("button", { name: "Done", exact: true }).tap();
