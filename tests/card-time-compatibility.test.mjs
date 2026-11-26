@@ -177,6 +177,7 @@ test(
           ...identity,
           ...context,
           humanUserId: userId,
+          inputItemId: inputId,
           outputResultId: answer.outputResultId
         });
         assert.equal(undone.ok, true);

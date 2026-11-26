@@ -1,6 +1,6 @@
 {
   "name": "agent-outbox",
-  "version": "0.7.3",
+  "version": "0.8.2",
   "private": true,
   "type": "module",
   "description": "Hosted human-review queue and CLI for agent-prepared work.",
@@ -59,7 +59,7 @@
     "clean": "node scripts/foundation.mjs clean"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.20.8",
+    "@opennextjs/cloudflare": "1.20.17",
     "@playwright/test": "1.63.0",
     "@sentry/cli": "3.8.0",
     "@types/node": "24.19.0",
@@ -68,14 +68,14 @@
     "@types/react-dom": "19.3.0",
     "clerk": "3.2.0",
     "ignore": "7.0.10",
-    "markdownlint-cli2": "0.23.3",
+    "markdownlint-cli2": "0.24.1",
     "prettier": "3.9.9",
     "rclone.js": "0.6.6",
     "sharp": "0.35.5",
     "supabase": "2.118.0",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "wrangler": "4.151.1"
+    "wrangler": "4.164.0"
   },
   "dependencies": {
     "@clerk/nextjs": "7.9.10",
@@ -83,11 +83,11 @@
     "@dnd-kit/modifiers": "9.0.0",
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
-    "@sentry/nextjs": "10.73.0",
+    "@sentry/nextjs": "10.78.0",
     "entities": "8.1.0",
     "lucide-react": "1.48.0",
     "marked": "18.0.14",
-    "next": "16.3.8",
+    "next": "16.4.6",
     "pg": "8.23.0",
     "pg-cloudflare": "1.4.0",
     "posthog-js": "1.435.1",

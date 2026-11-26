@@ -43,7 +43,7 @@
       "source": "npm view prettier version engines --json"
     },
     "markdownlint": {
-      "version": "0.23.3",
+      "version": "0.24.1",
       "package": "markdownlint-cli2",
       "source": "npm view markdownlint-cli2 version engines --json"
     },
@@ -75,7 +75,7 @@
   },
   "runtimePins": {
     "next": {
-      "version": "16.3.8",
+      "version": "16.4.6",
       "package": "next",
       "source": "npm view next version engines peerDependencies --json"
     },
@@ -115,7 +115,7 @@
       "source": "corepack pnpm view @dnd-kit/utilities version"
     },
     "sentryNextjs": {
-      "version": "10.73.0",
+      "version": "10.78.0",
       "package": "@sentry/nextjs",
       "source": "npm view @sentry/nextjs version engines peerDependencies --json"
     },
@@ -187,7 +187,7 @@
       "source": "corepack pnpm view sharp version engines --json"
     },
     "cloudflareOpenNext": {
-      "version": "1.20.8",
+      "version": "1.20.17",
       "package": "@opennextjs/cloudflare",
       "source": "pnpm view @opennextjs/cloudflare version engines peerDependencies bin --json"
     },
@@ -204,7 +204,7 @@
   },
   "providerCli": {
     "cloudflareWrangler": {
-      "version": "4.151.1",
+      "version": "4.164.0",
       "package": "wrangler",
       "source": "pnpm view wrangler version engines --json",
       "authCheck": ["wrangler", "whoami", "--env-file", "/dev/null"]

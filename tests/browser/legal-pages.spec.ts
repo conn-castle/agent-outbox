@@ -112,6 +112,9 @@ test("public legal and contact routes are reachable from the global footer", asy
       body: JSON.stringify({ ok: true })
     });
   });
+  for (const label of ["Name", "Email", "What can we help with?", "Message"]) {
+    await expect(page.getByLabel(label)).toHaveCSS("font-size", "18px");
+  }
   await page.getByLabel("Name").fill("Ada Lovelace");
   await page.getByLabel("Email").fill("ada@example.com");
   await page

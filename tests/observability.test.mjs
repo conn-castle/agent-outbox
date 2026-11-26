@@ -1,4 +1,5 @@
 import * as reviewSearchText from "../src/server/review-search-text.ts";
+import * as sharedHumanMutation from "../src/shared/human-mutation.ts";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
@@ -1227,6 +1228,7 @@ test("human answer undo transaction failures share error id across structured lo
             humanUserId: "00000000-0000-4000-8000-000000000423",
             requestId: "req-human-undo-transaction",
             correlationId: "corr-human-undo-transaction",
+            inputItemId: "00000000-0000-4000-8000-000000000425",
             outputResultId: "00000000-0000-4000-8000-000000000424"
           }
         );
@@ -1318,6 +1320,470 @@ test("caller connect rotate and revoke route failures log route templates", asyn
   }
 });
 
+/** @param {string[]} inputItemIds */
+function itemStateFor(inputItemIds) {
+  return {
+    asOf: "1794830400000000",
+    items: inputItemIds.map((inputItemId) => ({ inputItemId, row: null }))
+  };
+}
+
+test("a failed item state read is reported with its request", () => {
+  /** @type {Record<string, unknown>[]} */
+  const reports = [];
+  const { reportHumanReviewItemStateFailure } =
+    /** @type {typeof import("../src/server/human-review-page.ts")} */ (
+      loadCommonJsModuleForTest("src/server/human-review-page.ts", {
+        "./correlation.ts": {
+          /** @param {string} prefix */
+          createCorrelationId: (prefix) => `${prefix}_test`
+        },
+        "./logging.ts": { durationSinceMs },
+        "./sentry.ts": {
+          /** @param {unknown} _error @param {Record<string, unknown>} input */
+          reportRuntimeFailure(_error, input) {
+            reports.push(input);
+          }
+        },
+        // Not used by the report.
+        "./database.ts": {},
+        "./human-review.ts": {},
+        "./human-session.ts": {},
+        "../shared/human-review-view.ts": {}
+      })
+    );
+  reportHumanReviewItemStateFailure(
+    new Error("item state read failed"),
+    "req-item-state",
+    Date.now()
+  );
+  assert.deepEqual(
+    reports.map((report) => [
+      report.operation,
+      report.errorId,
+      report.request_id,
+      report.route
+    ]),
+    [
+      [
+        "human_review_item_state",
+        "human_item_state_test",
+        "req-item-state",
+        "/human"
+      ]
+    ]
+  );
+});
+
+test("human mutation results carry item state read after the mutations, keyed for retry", async (t) => {
+  // Answers after a request's first open their own (stubbed) connection.
+  const previousAppRoleUrl = process.env.DATABASE_APP_ROLE_URL;
+  process.env.DATABASE_APP_ROLE_URL = "postgresql://stubbed-app-role";
+  t.after(() => {
+    if (previousAppRoleUrl === undefined) {
+      delete process.env.DATABASE_APP_ROLE_URL;
+    } else {
+      process.env.DATABASE_APP_ROLE_URL = previousAppRoleUrl;
+    }
+  });
+  const session = {
+    accountId: "00000000-0000-4000-8000-000000000701",
+    userId: "00000000-0000-4000-8000-000000000702"
+  };
+  const callerId = "00000000-0000-4000-8000-000000000712";
+  const firstItemId = "00000000-0000-4000-8000-000000000721";
+  const secondItemId = "00000000-0000-4000-8000-000000000722";
+  const mutationId = "00000000-0000-4000-8000-0000000007aa";
+  /** @type {string[]} */
+  const events = [];
+  /** @type {Record<string, unknown>[]} */
+  const undoInputs = [];
+  /** @type {Record<string, unknown>[]} */
+  const answerInputs = [];
+  let stateReadFails = false;
+  /** @type {unknown[][]} */
+  const stateFailures = [];
+  let sessionTransactions = 0;
+  let revalidations = 0;
+  /** @type {string[]} */
+  const redirects = [];
+  // Input item or output ids whose mutation fails without a known outcome.
+  /** @type {Set<unknown>} */
+  const temporarilyFailing = new Set();
+  const temporaryFailure = {
+    ok: false,
+    code: "temporary_unavailable",
+    message: "Temporarily unavailable."
+  };
+  // Input items whose answer the database rejects.
+  /** @type {Set<unknown>} */
+  const rejected = new Set();
+  // Output ids whose undo the database rejects, with the code it reports.
+  /** @type {Map<unknown, string>} */
+  const rejectedUndos = new Map();
+  /** @param {string} transaction @param {Record<string, unknown>} input */
+  function undoAnswer(transaction, input) {
+    undoInputs.push({ ...input, transaction });
+    if (temporarilyFailing.has(input.outputResultId)) return temporaryFailure;
+    const code = rejectedUndos.get(input.outputResultId);
+    return code
+      ? { ok: false, code, message: `Undo rejected: ${code}.` }
+      : { ok: true };
+  }
+  /** @param {Record<string, unknown>} input */
+  function answer(input) {
+    answerInputs.push(input);
+    events.push(`answer ${input.inputItemId}`);
+    if (temporarilyFailing.has(input.inputItemId)) return temporaryFailure;
+    if (rejected.has(input.inputItemId)) {
+      return {
+        ok: false,
+        code: "stale_input_revision",
+        message: "Input item revision changed before the answer was submitted."
+      };
+    }
+    return {
+      ok: true,
+      outputResultId: `output-${String(input.inputItemId).slice(-3)}`
+    };
+  }
+  const actions = /** @type {typeof import("../app/human/actions.ts")} */ (
+    loadCommonJsModuleForTest("app/human/actions.ts", {
+      "@clerk/nextjs/server": {
+        auth: { protect: async () => ({ userId: "clerk-user-state" }) }
+      },
+      "next/navigation": {
+        /** @param {string} url */
+        redirect(url) {
+          redirects.push(url);
+          throw new Error("redirect");
+        }
+      },
+      "next/cache": {
+        revalidatePath() {
+          revalidations += 1;
+        }
+      },
+      "../../src/server/correlation": {
+        /** @param {string} prefix */
+        createCorrelationId: (prefix) => `${prefix}_test`
+      },
+      "../../src/server/client-events": { emitClientEventLog() {} },
+      "../../src/server/human-review-fixture": {
+        humanBrowserFixtureEnabled: () => false
+      },
+      "../../src/shared/human-mutation": sharedHumanMutation,
+      "../../src/server/human-action-form": {
+        parseBulkHumanAnswersForm,
+        parseHumanAnswerForm,
+        parseUndoHumanAnswerForm
+      },
+      "../../src/server/human-answer": {
+        /** @param {string} _connectionString @param {Record<string, unknown>} input */
+        createHumanAnswer: async (_connectionString, input) => answer(input),
+        /** @param {unknown} _query @param {Record<string, unknown>} input */
+        createHumanAnswerInTransaction: async (_query, input) => answer(input),
+        /** @param {string} _connectionString @param {Record<string, unknown>} input */
+        undoHumanAnswerBeforeRead: async (_connectionString, input) =>
+          undoAnswer("own", input),
+        /** @param {unknown} _query @param {Record<string, unknown>} input */
+        undoHumanAnswerBeforeReadInTransaction: async (_query, input) =>
+          undoAnswer("session", input)
+      },
+      "../../src/server/human-review-page": {
+        /** @param {unknown} stateSession @param {string} _requestId @param {string[]} inputItemIds */
+        async loadHumanReviewItemStates(
+          stateSession,
+          _requestId,
+          inputItemIds
+        ) {
+          assert.equal(stateSession, session);
+          events.push("state");
+          if (stateReadFails) throw new Error("state read failed");
+          return itemStateFor(inputItemIds);
+        },
+        /** @param {Error} error @param {string} requestId */
+        reportHumanReviewItemStateFailure(error, requestId) {
+          stateFailures.push([error.message, requestId]);
+        }
+      },
+      "../../src/server/human-session": {
+        /** @param {unknown} _input @param {(query: unknown, session: unknown) => Promise<unknown>} callback */
+        async runHumanAccountTransaction(_input, callback) {
+          sessionTransactions += 1;
+          const data = await callback(async () => queryResult([]), session);
+          events.push("session transaction committed");
+          return { ok: true, session, data };
+        }
+      },
+      "../../src/shared/human-review-view": { HUMAN_REVIEW_VIEW_PARAM_KEYS }
+    })
+  );
+
+  const bulkForm = new FormData();
+  bulkForm.set("mutationId", mutationId);
+  bulkForm.set("bulkActionValue", "approve");
+  for (const inputItemId of [firstItemId, secondItemId]) {
+    bulkForm.append(
+      "bulkItem",
+      JSON.stringify({ inputItemId, callerId, expectedRevision: 1 })
+    );
+  }
+  const result = await actions.executeBulkHumanAnswersMutation(bulkForm);
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.ok && result.state,
+    itemStateFor([firstItemId, secondItemId])
+  );
+  // Each answered item is named with its output, so one undo can take all of
+  // them back.
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        result.ok && result.operation === "bulk-answer" && result.undo
+      )
+    ),
+    [
+      { inputItemId: firstItemId, callerId, outputResultId: "output-721" },
+      { inputItemId: secondItemId, callerId, outputResultId: "output-722" }
+    ]
+  );
+  // The state is read only once every answer has committed, so its as-of
+  // token cannot precede them.
+  assert.deepEqual(events, [
+    `answer ${firstItemId}`,
+    "session transaction committed",
+    `answer ${secondItemId}`,
+    "state"
+  ]);
+  assert.equal(sessionTransactions, 1);
+  // Every attempt of this request presents the same id, which is how a retry
+  // finds the answer an earlier attempt committed.
+  assert.deepEqual(
+    answerInputs.map((input) => input.correlationId),
+    [`human_bulk_answer_${mutationId}`, `human_bulk_answer_${mutationId}`]
+  );
+  assert.deepEqual(
+    answerInputs.map((input) => [input.accountId, input.humanUserId]),
+    [
+      [session.accountId, session.userId],
+      [session.accountId, session.userId]
+    ]
+  );
+
+  const answerForm = new FormData();
+  answerForm.set("mutationId", mutationId);
+  answerForm.set("inputItemId", firstItemId);
+  answerForm.set("callerId", callerId);
+  answerForm.set("expectedRevision", "1");
+  answerForm.set("actionValue", "approve");
+  answerForm.set("popupKind", "none");
+  answerInputs.length = 0;
+  const single = await actions.executeHumanAnswerMutation(answerForm);
+  // The module under test runs in its own realm, so compare by value.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(single.ok && single.state)),
+    itemStateFor([firstItemId])
+  );
+  assert.equal(answerInputs[0]?.correlationId, `human_answer_${mutationId}`);
+
+  // A rejected item is reported with what it is now, alongside the answered
+  // ones; so is a request that answered nothing.
+  rejected.add(secondItemId);
+  const partial = await actions.executeBulkHumanAnswersMutation(bulkForm);
+  assert.deepEqual(
+    partial.ok &&
+      partial.operation === "bulk-answer" && [
+        [...partial.answeredInputItemIds],
+        partial.failed
+      ],
+    [[firstItemId], 1]
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(partial.ok && partial.state)),
+    itemStateFor([firstItemId, secondItemId])
+  );
+  rejected.add(firstItemId);
+  const nothingAnswered =
+    await actions.executeBulkHumanAnswersMutation(bulkForm);
+  assert.deepEqual(
+    [nothingAnswered.ok, !nothingAnswered.ok && nothingAnswered.code],
+    [false, "bulk_answer_failed"]
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(!nothingAnswered.ok && nothingAnswered.state)),
+    itemStateFor([firstItemId, secondItemId])
+  );
+  rejected.clear();
+
+  // A temporary failure leaves that item's outcome unknown. The request is
+  // then reported as retryable as a whole, never as a partial result that
+  // leaves out an answer or undo which may have committed.
+  temporarilyFailing.add(secondItemId);
+  revalidations = 0;
+  const unknownBulk = await actions.executeBulkHumanAnswersMutation(bulkForm);
+  assert.deepEqual(
+    [unknownBulk.ok, !unknownBulk.ok && unknownBulk.code],
+    [false, "temporary_unavailable"]
+  );
+  // It still names the answers it committed, so that Undo can be offered for
+  // them if no repeat gets further, and the cached page is refreshed.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(!unknownBulk.ok && unknownBulk.undo)),
+    [{ inputItemId: firstItemId, callerId, outputResultId: "output-721" }]
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(!unknownBulk.ok && unknownBulk.state)),
+    itemStateFor([firstItemId, secondItemId])
+  );
+  assert.equal(revalidations, 1);
+
+  // A request that fails before anything commits reports nothing to undo.
+  temporarilyFailing.add(firstItemId);
+  const nothingCommitted =
+    await actions.executeBulkHumanAnswersMutation(bulkForm);
+  assert.equal(!nothingCommitted.ok && nothingCommitted.undo, undefined);
+  assert.equal(revalidations, 1);
+  temporarilyFailing.delete(firstItemId);
+
+  // The redirecting form cannot be repeated under its id, so it tries every
+  // item and reports the count.
+  await assert.rejects(
+    () => actions.submitBulkHumanAnswers(bulkForm),
+    /redirect/
+  );
+  assert.match(
+    redirects.at(-1) ?? "",
+    /notice=bulk_answered&answered=1&failed=1/
+  );
+  temporarilyFailing.clear();
+
+  // One undo request names every answer it takes back. The first shares the
+  // session's transaction and the rest run in their own.
+  const firstOutputId = "00000000-0000-4000-8000-000000000731";
+  const secondOutputId = "00000000-0000-4000-8000-000000000732";
+  const undoForm = new FormData();
+  undoForm.set("mutationId", mutationId);
+  for (const [inputItemId, outputResultId] of [
+    [firstItemId, firstOutputId],
+    [secondItemId, secondOutputId]
+  ]) {
+    undoForm.append("inputItemId", inputItemId);
+    undoForm.append("callerId", callerId);
+    undoForm.append("outputResultId", outputResultId);
+  }
+  /** @param {FormData} form */
+  const undoResult = async (form) =>
+    JSON.parse(
+      JSON.stringify(await actions.executeUndoHumanAnswerMutation(form))
+    );
+  const undone = await undoResult(undoForm);
+  assert.deepEqual(
+    undoInputs.map((input) => [
+      input.transaction,
+      input.correlationId,
+      input.inputItemId,
+      input.outputResultId
+    ]),
+    [
+      ["session", `human_undo_${mutationId}`, firstItemId, firstOutputId],
+      ["own", `human_undo_${mutationId}`, secondItemId, secondOutputId]
+    ]
+  );
+  assert.deepEqual(
+    [undone.ok, undone.message, undone.restoredInputItemIds, undone.failed],
+    [true, "Undone.", [firstItemId, secondItemId], 0]
+  );
+  assert.deepEqual(undone.state, itemStateFor([firstItemId, secondItemId]));
+
+  // A rejected target does not stop the others, and is counted.
+  rejectedUndos.set(secondOutputId, "output_already_read");
+  const partlyUndone = await undoResult(undoForm);
+  assert.deepEqual(
+    [
+      partlyUndone.ok,
+      partlyUndone.message,
+      partlyUndone.inputItemIds,
+      partlyUndone.restoredInputItemIds,
+      partlyUndone.failed
+    ],
+    [
+      true,
+      "Undo complete: 1 restored, 1 failed.",
+      [firstItemId, secondItemId],
+      [firstItemId],
+      1
+    ]
+  );
+  // Nothing restored is a failure: under the targets' shared code, or a
+  // general one when they were rejected for different reasons.
+  rejectedUndos.set(firstOutputId, "output_already_read");
+  const noneUndone = await undoResult(undoForm);
+  assert.deepEqual(
+    [noneUndone.ok, noneUndone.code, noneUndone.message],
+    [false, "output_already_read", "Undo failed: 2 not restored."]
+  );
+  assert.deepEqual(noneUndone.state, itemStateFor([firstItemId, secondItemId]));
+  rejectedUndos.set(firstOutputId, "not_found");
+  assert.equal((await undoResult(undoForm)).code, "undo_failed");
+  // A single target's rejection is reported as it is.
+  const singleUndoForm = new FormData();
+  singleUndoForm.set("mutationId", mutationId);
+  singleUndoForm.set("inputItemId", firstItemId);
+  singleUndoForm.set("callerId", callerId);
+  singleUndoForm.set("outputResultId", firstOutputId);
+  const singleRejected = await undoResult(singleUndoForm);
+  assert.deepEqual(
+    [singleRejected.ok, singleRejected.code, singleRejected.message],
+    [false, "not_found", "Undo rejected: not_found."]
+  );
+  rejectedUndos.clear();
+
+  // An undo that fails temporarily stops the request the same way. The first
+  // answer was restored: the cached page is refreshed, and the failure's item
+  // state tells the client which answers remain.
+  temporarilyFailing.add(secondOutputId);
+  revalidations = 0;
+  const unknownUndo = await undoResult(undoForm);
+  assert.deepEqual(
+    [unknownUndo.ok, unknownUndo.code],
+    [false, "temporary_unavailable"]
+  );
+  assert.equal(revalidations, 1);
+  assert.deepEqual(
+    unknownUndo.state,
+    itemStateFor([firstItemId, secondItemId])
+  );
+  temporarilyFailing.clear();
+
+  // A rejection stands without its rows when they cannot be read, and the
+  // failed read is reported.
+  stateReadFails = true;
+  rejected.add(firstItemId);
+  assert.deepEqual(stateFailures, []);
+  const unreadRejection = await actions.executeHumanAnswerMutation(answerForm);
+  assert.deepEqual(
+    [
+      unreadRejection.ok,
+      !unreadRejection.ok && unreadRejection.code,
+      "state" in unreadRejection
+    ],
+    [false, "stale_input_revision", false]
+  );
+  assert.deepEqual(stateFailures, [
+    ["state read failed", "human_answer_req_test"]
+  ]);
+  rejected.clear();
+
+  // A success the client cannot apply is not reported as one: the request
+  // fails, and its retry finds the committed answer.
+  await assert.rejects(
+    () => actions.executeHumanAnswerMutation(answerForm),
+    /state read failed/
+  );
+  assert.equal(stateFailures.length, 1);
+});
+
 test("human review server actions emit failure telemetry only on failure paths", async () => {
   /** @type {Array<{ name: string, producer?: string }>} */
   const emitted = [];
@@ -1373,6 +1839,7 @@ test("human review server actions emit failure telemetry only on failure paths",
         "../../src/server/human-review-fixture": {
           humanBrowserFixtureEnabled: () => false
         },
+        "../../src/shared/human-mutation": sharedHumanMutation,
         "../../src/server/human-action-form": {
           parseBulkHumanAnswersForm,
           parseHumanAnswerForm,
@@ -1383,7 +1850,7 @@ test("human review server actions emit failure telemetry only on failure paths",
             return behavior.createHumanAnswerResult;
           },
           async createHumanAnswerInTransaction() {
-            throw new Error("unused: transaction runner is stubbed");
+            return behavior.createHumanAnswerResult;
           },
           async undoHumanAnswerBeforeReadInTransaction() {
             throw new Error("unused: transaction runner is stubbed");
@@ -1395,16 +1862,24 @@ test("human review server actions emit failure telemetry only on failure paths",
             throw new Error("unused: transaction runner is stubbed");
           }
         },
+        "../../src/server/human-review-page": {
+          async loadHumanReviewItemStates() {
+            throw new Error("unused: redirects do not report item state");
+          }
+        },
         "../../src/server/human-session": {
-          async resolveHumanAccountSession() {
-            return {
-              ok: true,
+          /** @param {unknown} _input @param {(query: unknown, session: unknown) => Promise<unknown>} callback */
+          async runHumanAccountTransaction(_input, callback) {
+            if (behavior.transactionResult) return behavior.transactionResult;
+            const session = {
               accountId: "00000000-0000-4000-8000-000000000701",
               userId: "00000000-0000-4000-8000-000000000702"
             };
-          },
-          async runHumanAccountTransaction() {
-            return behavior.transactionResult;
+            return {
+              ok: true,
+              session,
+              data: await callback(async () => queryResult([]), session)
+            };
           }
         },
         "../../src/shared/human-review-view": {
@@ -1630,6 +2105,7 @@ test("human review server actions report transaction throws and propagate pre-in
               "../../src/server/human-review-fixture": {
                 humanBrowserFixtureEnabled: () => false
               },
+              "../../src/shared/human-mutation": sharedHumanMutation,
               "../../src/server/human-action-form": {
                 parseBulkHumanAnswersForm,
                 parseHumanAnswerForm,
@@ -1648,6 +2124,17 @@ test("human review server actions report transaction throws and propagate pre-in
                 /** @param {unknown} error @param {Record<string, unknown>} input */
                 humanAnswerUndoTransactionFailure: (error, input) =>
                   reportFailure("undo", error, input)
+              },
+              "../../src/server/human-review-page": {
+                /** @param {unknown} stateSession @param {string} _requestId @param {string[]} inputItemIds */
+                async loadHumanReviewItemStates(
+                  stateSession,
+                  _requestId,
+                  inputItemIds
+                ) {
+                  assert.equal(stateSession, session);
+                  return itemStateFor(inputItemIds);
+                }
               },
               "../../src/server/human-session": {
                 /** @param {unknown} _input @param {(query: unknown, session: unknown) => Promise<unknown>} callback */
@@ -1733,7 +2220,9 @@ test("human review server actions report transaction throws and propagate pre-in
           inputItemIds: [inputItemId],
           ...(operation === "file_upload"
             ? { failedActionKind: "file_upload" }
-            : {})
+            : {}),
+          // A failed mutation still reports what the item is now.
+          state: itemStateFor([inputItemId])
         });
       });
     }
@@ -1747,6 +2236,7 @@ test("human action failure logs include the elapsed account transaction", async 
       t.mock.method(Date, "now", () => now);
       /** @type {Record<string, unknown>[]} */
       const failures = [];
+      let stateFailures = 0;
       const reporters = loadHumanAnswerModuleForTest((_error, context) => {
         failures.push(context);
         return {
@@ -1782,6 +2272,7 @@ test("human action failure logs include the elapsed account transaction", async 
               createHumanAnswerInTransaction: failMutation,
               undoHumanAnswerBeforeReadInTransaction: failMutation
             },
+            "../../src/shared/human-mutation": sharedHumanMutation,
             "../../src/server/human-action-form": {
               parseBulkHumanAnswersForm,
               parseHumanAnswerForm,
@@ -1791,6 +2282,14 @@ test("human action failure logs include the elapsed account transaction", async 
               humanBrowserFixtureEnabled: () => false
             },
             "../../src/server/client-events": { emitClientEventLog() {} },
+            "../../src/server/human-review-page": {
+              async loadHumanReviewItemStates() {
+                throw new Error("database unavailable");
+              },
+              reportHumanReviewItemStateFailure() {
+                stateFailures += 1;
+              }
+            },
             "../../src/server/human-session": {
               /** @param {unknown} _input @param {(query: unknown, session: unknown) => Promise<unknown>} callback */
               async runHumanAccountTransaction(_input, callback) {
@@ -1819,7 +2318,10 @@ test("human action failure logs include the elapsed account transaction", async 
         : actions.executeHumanAnswerMutation(form));
       assert.equal(result.ok, false);
       assert.equal(result.ok ? null : result.code, "temporary_unavailable");
+      // The item state could not be read either; the failure stands alone.
+      assert.equal("state" in result, false);
       assert.equal(failures.length, 1);
+      assert.equal(stateFailures, 1);
       assert.equal(
         failures[0].operation,
         operation === "undo"

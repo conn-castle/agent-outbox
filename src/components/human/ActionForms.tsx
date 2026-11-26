@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useEffect,
   useId,
   useRef,
@@ -23,10 +24,14 @@ import type {
 } from "../../server/human-review.ts";
 import { htmlToPlainText } from "../../shared/html-text";
 import { HUMAN_REVIEW_VIEW_PARAM_KEYS } from "../../shared/human-review-view";
-import type { HumanMutationOperation } from "../../shared/human-mutation";
+import type {
+  HumanMutationOperation,
+  HumanUndoTarget
+} from "../../shared/human-mutation";
 import { HumanIcon } from "./TypedContent";
 import { actionAppearanceClass } from "./action-appearance";
 import { localDateTimeBound } from "./review-format";
+import { isApplePlatform, undoShortcutKeys } from "./undo-shortcut";
 
 export type HumanMutationSubmission = {
   operation: HumanMutationOperation;
@@ -339,26 +344,45 @@ export function UndoAnswerForm({
 export function LastAnswerUndoForm({
   undo,
   disabled = false,
-  onMutation
+  onUndo
 }: {
   undo: {
-    inputItemId: string;
-    callerId: string;
-    outputResultId: string;
     actionLabel: string | null;
+    inputItemIds: string[];
+    targets: HumanUndoTarget[] | null;
   };
   disabled?: boolean;
-  onMutation: OnHumanMutation;
+  onUndo: () => void;
 }) {
   const formAction = useProgressiveFormAction(undoHumanAnswer);
+  // The platform is known only in the browser, and this control is only ever
+  // rendered there after an answer, so the shortcut is named once mounted.
+  const [shortcutKeys, setShortcutKeys] = useState<string>();
+  useEffect(() => {
+    setShortcutKeys(undoShortcutKeys(isApplePlatform(navigator.userAgent)));
+  }, []);
   const { actionLabel } = undo;
-  const label = actionLabel ? `Undo “${actionLabel}”` : "Undo last answer";
+  const count = undo.inputItemIds.length;
+  const label = actionLabel
+    ? `Undo “${actionLabel}”${count > 1 ? ` for ${count} reviews` : ""}`
+    : count > 1
+      ? `Undo last ${count} answers`
+      : "Undo last answer";
   return (
     <form className="last-undo-form" action={formAction} noValidate>
       <ViewStateFields />
-      <input type="hidden" name="inputItemId" value={undo.inputItemId} />
-      <input type="hidden" name="callerId" value={undo.callerId} />
-      <input type="hidden" name="outputResultId" value={undo.outputResultId} />
+      {/* Fields serve the redirecting fallback; the client sends its own. */}
+      {undo.targets?.map((target) => (
+        <Fragment key={target.inputItemId}>
+          <input type="hidden" name="inputItemId" value={target.inputItemId} />
+          <input type="hidden" name="callerId" value={target.callerId} />
+          <input
+            type="hidden"
+            name="outputResultId"
+            value={target.outputResultId}
+          />
+        </Fragment>
+      ))}
       {actionLabel ? (
         <input type="hidden" name="noticeAction" value={actionLabel} />
       ) : null}
@@ -366,21 +390,21 @@ export function LastAnswerUndoForm({
         className="last-undo-button"
         title={label}
         aria-label={label}
+        aria-keyshortcuts={shortcutKeys}
         data-testid="last-answer-undo"
         disabled={disabled}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          const form = event.currentTarget.form;
-          if (!form) return;
-          onMutation({
-            operation: "undo",
-            inputItemIds: [undo.inputItemId],
-            formData: new FormData(form)
-          });
+          onUndo();
         }}
       >
-        <span aria-hidden="true">{label}</span>
+        <span className="last-undo-full-label" aria-hidden="true">
+          {label}
+        </span>
+        <span className="last-undo-short-label" aria-hidden="true">
+          Undo
+        </span>
       </PendingSubmitButton>
     </form>
   );

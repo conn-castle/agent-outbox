@@ -18,6 +18,7 @@ import {
   runHumanReviewQueryCanary
 } from "../src/server/human-review.ts";
 import {
+  browserFixtureReviewDetail,
   browserFixtureReviewPage,
   browserFixtureStoryboardDetails,
   browserFixtureStoryboardScenarios,
@@ -33,6 +34,10 @@ import {
   visualUnitSuffix
 } from "../src/components/human/review-format.ts";
 import { fixtureResolvedItemsCookieValue } from "../src/server/human-review-fixture-state.ts";
+import * as apiErrors from "../src/server/api-errors.ts";
+import * as humanReviewFixture from "../src/server/human-review-fixture.ts";
+import { fixtureResolvedOutputResultId } from "../src/server/human-review-fixture.ts";
+import { loadModuleForTest } from "./helpers/transpiled-module.mjs";
 import {
   parseValidSubmission,
   richPublicInput,
@@ -76,6 +81,7 @@ const context = {
 const inputItemId = "00000000-0000-4000-8000-000000000003";
 const callerId = "00000000-0000-4000-8000-000000000005";
 const outputResultId = "00000000-0000-4000-8000-000000000004";
+const mutationId = "00000000-0000-4000-8000-000000000006";
 const defaultHumanReviewView = humanReviewViewFromRecord(undefined);
 
 function javascriptWhitespaceClass() {
@@ -321,6 +327,157 @@ test("fixture resolved items leave pending and appear as answered history", () =
   assert.ok(historyRow);
   assert.equal(historyRow.status, "answered");
   assert.equal(historyRow.output?.actionDisplay, "Approve");
+});
+
+test("fixture answers and undos reject like the database and recognize a repeat", async () => {
+  /** @type {Map<string, string>} */
+  const jar = new Map();
+  const cookies = {
+    /** @param {string} name */
+    get: (name) => (jar.has(name) ? { value: jar.get(name) } : undefined),
+    /** @param {string} name @param {string} value */
+    set: (name, value) => void jar.set(name, value),
+    /** @param {string} name */
+    delete: (name) => void jar.delete(name)
+  };
+  const fixtureState =
+    /** @type {typeof import("../src/server/human-review-fixture-state.ts")} */ (
+      loadModuleForTest("src/server/human-review-fixture-state.ts", {
+        globals: { Buffer },
+        stubs: {
+          "./api-errors.ts": apiErrors,
+          "./human-review-fixture.ts": humanReviewFixture,
+          "next/headers": { cookies: async () => cookies }
+        }
+      })
+    );
+  /** @param {{ ok: boolean, code?: string }} result */
+  const outcome = (result) => (result.ok ? "ok" : result.code);
+  const [item, other] = browserFixtureReviewPage(defaultHumanReviewView).rows;
+  const firstRequest = "00000000-0000-4000-8000-0000000000c1";
+  const secondRequest = "00000000-0000-4000-8000-0000000000c2";
+  /** @param {Partial<Parameters<typeof fixtureState.answerFixtureItem>[0]>} [changes] */
+  const answer = (changes) =>
+    fixtureState.answerFixtureItem({
+      inputItemId: item.inputItemId,
+      callerId: item.caller.callerId,
+      actionDisplay: "Approve",
+      expectedRevision: item.currentRevision,
+      mutationId: firstRequest,
+      ...changes
+    });
+
+  assert.equal(outcome(await answer({ callerId: secondRequest })), "not_found");
+  assert.equal(
+    outcome(await answer({ expectedRevision: item.currentRevision + 1 })),
+    "stale_input_revision"
+  );
+  /** @param {Awaited<ReturnType<typeof answer>>} result */
+  const reported = (result) =>
+    result.ok ? result.outputResultId : result.code;
+  const answeredOutput = fixtureResolvedOutputResultId(
+    item.inputItemId,
+    item.currentRevision
+  );
+  assert.equal(reported(await answer()), answeredOutput);
+  // The same request again reports its answer, whatever revision it names:
+  // the output of the revision that was answered. Another request is told
+  // the item is no longer pending.
+  assert.equal(reported(await answer()), answeredOutput);
+  assert.equal(
+    reported(await answer({ expectedRevision: item.currentRevision + 1 })),
+    answeredOutput
+  );
+  assert.equal(
+    outcome(await answer({ mutationId: secondRequest })),
+    "input_not_pending"
+  );
+  assert.equal(
+    outcome(
+      await answer({
+        inputItemId: other.inputItemId,
+        callerId: other.caller.callerId,
+        expectedRevision: other.currentRevision,
+        mutationId: secondRequest
+      })
+    ),
+    "ok"
+  );
+
+  /** @param {Partial<Parameters<typeof fixtureState.undoFixtureAnswer>[0]>} [changes] */
+  const undo = (changes) =>
+    fixtureState.undoFixtureAnswer({
+      inputItemId: item.inputItemId,
+      callerId: item.caller.callerId,
+      outputResultId: fixtureResolvedOutputResultId(
+        item.inputItemId,
+        item.currentRevision
+      ),
+      ...changes
+    });
+  assert.equal(
+    outcome(await undo({ outputResultId: secondRequest })),
+    "not_found"
+  );
+  assert.equal(outcome(await undo({ callerId: secondRequest })), "not_found");
+  assert.equal(outcome(await undo()), "ok");
+  // The undo again reports that it is done, but only for the output it removed.
+  assert.equal(outcome(await undo()), "ok");
+  assert.equal(
+    outcome(await undo({ outputResultId: secondRequest })),
+    "not_found"
+  );
+  // The newest change is the last record, which is the last one trimmed.
+  assert.deepEqual(
+    Object.keys(JSON.parse(jar.get("agent_outbox_fixture_resolved") ?? "{}")),
+    [other.inputItemId, item.inputItemId]
+  );
+  // A late repeat of the undone answer is refused: the undo moved the revision.
+  assert.equal(outcome(await answer()), "stale_input_revision");
+});
+
+test("an undone answer of an originally answered fixture item can be answered again", (t) => {
+  // Only the coverage dataset starts with answered items.
+  const dataset = process.env.AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE;
+  process.env.AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE = "1";
+  t.after(() => {
+    if (dataset === undefined) {
+      delete process.env.AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE;
+    } else {
+      process.env.AGENT_OUTBOX_BROWSER_COVERAGE_FIXTURE = dataset;
+    }
+  });
+  /** @type {import("../src/shared/human-review-view.ts").HumanReviewView} */
+  const historyView = { ...defaultHumanReviewView, status: "answered" };
+  const target = browserFixtureReviewPage(historyView).rows[0];
+  assert.ok(target);
+  const answered = browserFixtureReviewDetail(target.inputItemId);
+  assert.ok(answered && answered.actions.length > 0);
+  assert.equal(
+    answered.actions.some((action) => action.answerable),
+    false
+  );
+
+  const restored = browserFixtureReviewDetail(target.inputItemId, {
+    resolvedItems: {
+      [target.inputItemId]: {
+        actionDisplay: "Approve",
+        callerId: target.caller.callerId,
+        answeredAt: "2026-08-19T01:00:00.000Z",
+        currentRevision: target.currentRevision + 1,
+        undone: true
+      }
+    }
+  });
+  assert.ok(restored);
+  assert.deepEqual(
+    [restored.status, restored.output, restored.currentRevision],
+    ["pending", null, target.currentRevision + 1]
+  );
+  assert.equal(
+    restored.actions.every((action) => action.answerable),
+    true
+  );
 });
 
 test("fixture resolved marker leaves pending and appears as answered history", () => {
@@ -1716,6 +1873,7 @@ test("human action form parser rejects malformed hidden fields before database w
   const validAnswer = answerForm();
   assert.deepEqual(parseHumanAnswerForm(validAnswer), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1727,6 +1885,7 @@ test("human action form parser rejects malformed hidden fields before database w
   emptyTextAnswer.set("response.text", "");
   assert.deepEqual(parseHumanAnswerForm(emptyTextAnswer), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1752,6 +1911,7 @@ test("human action form parser rejects malformed hidden fields before database w
   validFileUpload.set("response.file", uploadedFile);
   assert.deepEqual(parseHumanAnswerForm(validFileUpload), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1766,6 +1926,7 @@ test("human action form parser rejects malformed hidden fields before database w
   civilDate.set("response.value_date", "2026-07-15");
   assert.deepEqual(parseHumanAnswerForm(civilDate), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1786,6 +1947,7 @@ test("human action form parser rejects malformed hidden fields before database w
   configuredCivilDate.set("response.value_date", "2026-07-15");
   assert.deepEqual(parseHumanAnswerForm(configuredCivilDate), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1820,6 +1982,7 @@ test("human action form parser rejects malformed hidden fields before database w
   localDateTime.set("response.value_local", "2026-07-16T09:30");
   assert.deepEqual(parseHumanAnswerForm(localDateTime), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1840,6 +2003,7 @@ test("human action form parser rejects malformed hidden fields before database w
   localDateTimeWithSeconds.set("response.value_local", "2026-07-16T09:30:15");
   assert.deepEqual(parseHumanAnswerForm(localDateTimeWithSeconds), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1860,6 +2024,7 @@ test("human action form parser rejects malformed hidden fields before database w
   newYorkDateTime.set("response.value_local", "2026-01-15T09:30");
   assert.deepEqual(parseHumanAnswerForm(newYorkDateTime), {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1893,18 +2058,9 @@ test("human action form parser rejects malformed hidden fields before database w
   dstGap.set("response.value_local", "2026-03-08T02:30");
   assert.deepEqual(parseHumanAnswerForm(dstGap), { ok: false });
 
-  const validBulk = new FormData();
-  validBulk.set("bulkActionValue", "approve");
-  validBulk.append(
-    "bulkItem",
-    JSON.stringify({
-      inputItemId,
-      callerId,
-      expectedRevision: 2
-    })
-  );
-  assert.deepEqual(parseBulkHumanAnswersForm(validBulk), {
+  assert.deepEqual(parseBulkHumanAnswersForm(bulkForm()), {
     ok: true,
+    mutationId,
     actionValue: "approve",
     items: [{ inputItemId, callerId, expectedRevision: 2 }]
   });
@@ -1925,6 +2081,7 @@ test("human action form parser rejects malformed hidden fields before database w
   assert.deepEqual(parseBulkHumanAnswersForm(duplicateBulk), { ok: false });
 
   const oversizedBulk = new FormData();
+  oversizedBulk.set("mutationId", mutationId);
   oversizedBulk.set("bulkActionValue", "approve");
   for (let index = 0; index <= MAX_BULK_HUMAN_ANSWER_ITEMS; index += 1) {
     oversizedBulk.append(
@@ -1938,25 +2095,163 @@ test("human action form parser rejects malformed hidden fields before database w
   }
   assert.deepEqual(parseBulkHumanAnswersForm(oversizedBulk), { ok: false });
 
-  const validUndo = new FormData();
-  validUndo.set("inputItemId", inputItemId);
-  validUndo.set("callerId", callerId);
-  validUndo.set("outputResultId", outputResultId);
-  assert.deepEqual(parseUndoHumanAnswerForm(validUndo), {
+  assert.deepEqual(parseUndoHumanAnswerForm(undoForm()), {
     ok: true,
-    inputItemId,
-    callerId,
-    outputResultId
+    mutationId,
+    targets: [{ inputItemId, callerId, outputResultId }]
+  });
+
+  // Undoing a bulk answer repeats the three fields once per answered item.
+  const secondInputItemId = "00000000-0000-4000-8000-0000000000a2";
+  const secondOutputResultId = "00000000-0000-4000-8000-0000000000b2";
+  const bulkUndo = undoForm();
+  bulkUndo.append("inputItemId", secondInputItemId);
+  bulkUndo.append("callerId", callerId);
+  bulkUndo.append("outputResultId", secondOutputResultId);
+  assert.deepEqual(parseUndoHumanAnswerForm(bulkUndo), {
+    ok: true,
+    mutationId,
+    targets: [
+      { inputItemId, callerId, outputResultId },
+      {
+        inputItemId: secondInputItemId,
+        callerId,
+        outputResultId: secondOutputResultId
+      }
+    ]
   });
 
   const invalidUndo = undoForm();
   invalidUndo.set("outputResultId", "not-a-uuid");
   assert.deepEqual(parseUndoHumanAnswerForm(invalidUndo), { ok: false });
+
+  // Ids are accepted only in the lowercase form the server issues, so a
+  // request's ids always equal the ids of the rows reported back for it.
+  const uppercaseAnswer = answerForm();
+  uppercaseAnswer.set("inputItemId", secondInputItemId.toUpperCase());
+  assert.deepEqual(parseHumanAnswerForm(uppercaseAnswer), { ok: false });
+  const uppercaseBulk = new FormData();
+  uppercaseBulk.set("mutationId", mutationId);
+  uppercaseBulk.set("bulkActionValue", "approve");
+  uppercaseBulk.append(
+    "bulkItem",
+    JSON.stringify({
+      inputItemId: secondInputItemId.toUpperCase(),
+      callerId,
+      expectedRevision: 2
+    })
+  );
+  assert.deepEqual(parseBulkHumanAnswersForm(uppercaseBulk), { ok: false });
+  const uppercaseUndo = undoForm();
+  uppercaseUndo.set("inputItemId", secondInputItemId.toUpperCase());
+  assert.deepEqual(parseUndoHumanAnswerForm(uppercaseUndo), { ok: false });
+  // Every other id field holds to the same rule: an id parses in lowercase
+  // and is refused in uppercase.
+  const lettered = "00000000-0000-4000-8000-00000000abcd";
+  for (const field of ["mutationId", "callerId"]) {
+    const lowercase = answerForm();
+    lowercase.set(field, lettered);
+    assert.equal(parseHumanAnswerForm(lowercase).ok, true, field);
+    const uppercase = answerForm();
+    uppercase.set(field, lettered.toUpperCase());
+    assert.deepEqual(parseHumanAnswerForm(uppercase), { ok: false }, field);
+    const mixedCase = answerForm();
+    mixedCase.set(field, lettered.replace("abcd", "aBcd"));
+    assert.deepEqual(parseHumanAnswerForm(mixedCase), { ok: false }, field);
+  }
+  for (const field of ["mutationId", "callerId", "outputResultId"]) {
+    const lowercase = undoForm();
+    lowercase.set(field, lettered);
+    assert.equal(parseUndoHumanAnswerForm(lowercase).ok, true, field);
+    const uppercase = undoForm();
+    uppercase.set(field, lettered.toUpperCase());
+    assert.deepEqual(parseUndoHumanAnswerForm(uppercase), { ok: false }, field);
+  }
+  for (const field of ["mutationId", "callerId"]) {
+    /** @param {string} id */
+    const bulkWith = (id) => {
+      const form = new FormData();
+      form.set("mutationId", field === "mutationId" ? id : mutationId);
+      form.set("bulkActionValue", "approve");
+      form.append(
+        "bulkItem",
+        JSON.stringify({
+          inputItemId: secondInputItemId,
+          callerId: field === "callerId" ? id : callerId,
+          expectedRevision: 2
+        })
+      );
+      return form;
+    };
+    assert.equal(parseBulkHumanAnswersForm(bulkWith(lettered)).ok, true, field);
+    assert.deepEqual(
+      parseBulkHumanAnswersForm(bulkWith(lettered.toUpperCase())),
+      { ok: false },
+      field
+    );
+  }
+
+  const unpairedUndo = undoForm();
+  unpairedUndo.append("inputItemId", secondInputItemId);
+  assert.deepEqual(parseUndoHumanAnswerForm(unpairedUndo), { ok: false });
+
+  const duplicateUndo = undoForm();
+  duplicateUndo.append("inputItemId", inputItemId);
+  duplicateUndo.append("callerId", callerId);
+  duplicateUndo.append("outputResultId", secondOutputResultId);
+  assert.deepEqual(parseUndoHumanAnswerForm(duplicateUndo), { ok: false });
+
+  const oversizedUndo = new FormData();
+  oversizedUndo.set("mutationId", mutationId);
+  for (let index = 0; index <= MAX_BULK_HUMAN_ANSWER_ITEMS; index += 1) {
+    oversizedUndo.append(
+      "inputItemId",
+      `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`
+    );
+    oversizedUndo.append("callerId", callerId);
+    oversizedUndo.append("outputResultId", outputResultId);
+  }
+  assert.deepEqual(parseUndoHumanAnswerForm(oversizedUndo), { ok: false });
+});
+
+test("a mutation id is taken from the form, minted when absent, and rejected when malformed", () => {
+  const parsers = /** @type {const} */ ([
+    [parseHumanAnswerForm, answerForm],
+    [parseBulkHumanAnswersForm, bulkForm],
+    [parseUndoHumanAnswerForm, undoForm]
+  ]);
+  for (const [parse, form] of parsers) {
+    const supplied = parse(form());
+    assert.equal(supplied.ok && supplied.mutationId, mutationId, parse.name);
+
+    // A form posted without script has no id and cannot retry.
+    const withoutId = form();
+    withoutId.delete("mutationId");
+    const first = parse(withoutId);
+    const second = parse(withoutId);
+    assert.equal(first.ok && second.ok, true, parse.name);
+    assert.match(
+      first.ok ? first.mutationId : "",
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+    assert.notEqual(
+      first.ok && first.mutationId,
+      second.ok && second.mutationId,
+      parse.name
+    );
+
+    for (const malformed of ["", "retry-1", `${mutationId}x`]) {
+      const invalid = form();
+      invalid.set("mutationId", malformed);
+      assert.deepEqual(parse(invalid), { ok: false }, parse.name);
+    }
+  }
 });
 
 test("human answer forms accept unstorable strings in non-persisted view fields", () => {
   const expectedAnswer = {
     ok: true,
+    mutationId,
     inputItemId,
     callerId,
     expectedRevision: 2,
@@ -1965,6 +2260,7 @@ test("human answer forms accept unstorable strings in non-persisted view fields"
   };
   const expectedBulk = {
     ok: true,
+    mutationId,
     actionValue: "approve",
     items: [{ inputItemId, callerId, expectedRevision: 2 }]
   };
@@ -2464,6 +2760,7 @@ function shiftLocalMinute(value, minutes) {
 
 function answerForm() {
   const formData = new FormData();
+  formData.set("mutationId", mutationId);
   formData.set("inputItemId", inputItemId);
   formData.set("callerId", callerId);
   formData.set("expectedRevision", "2");
@@ -2475,6 +2772,7 @@ function answerForm() {
 
 function bulkForm() {
   const formData = new FormData();
+  formData.set("mutationId", mutationId);
   formData.set("bulkActionValue", "approve");
   formData.append(
     "bulkItem",
@@ -2489,6 +2787,7 @@ function bulkForm() {
 
 function undoForm() {
   const formData = new FormData();
+  formData.set("mutationId", mutationId);
   formData.set("inputItemId", inputItemId);
   formData.set("callerId", callerId);
   formData.set("outputResultId", outputResultId);

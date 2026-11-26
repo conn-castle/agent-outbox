@@ -99,10 +99,11 @@ export function ReviewViewControls({
     };
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
+      // Keep the scrim mounted until its click consumes the tap.
       if (
         target instanceof Element &&
         target.closest(
-          "[data-view-popover-control], [data-view-popover-surface]"
+          "[data-view-popover-control], [data-view-popover-surface], .view-popover-scrim"
         )
       ) {
         return;
@@ -194,6 +195,7 @@ function ReviewFilterControl({
   onChange: (changes: Partial<HumanReviewView>) => void;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const count = view.priorities.length + view.types.length;
   const availableTypes = [...new Set([...typeOptions, ...view.types])].sort(
     compareHumanReviewTypeNames
@@ -207,6 +209,7 @@ function ReviewFilterControl({
       data-view-popover-control
     >
       <button
+        ref={triggerRef}
         type="button"
         className="view-control-trigger"
         aria-label={`Filter${count ? `, ${count} applied` : ""}`}
@@ -226,7 +229,10 @@ function ReviewFilterControl({
         sheet={sheet}
         portalTarget={portalTarget}
         closeLabel="Dismiss filter panel"
-        onClose={() => onOpenChange(false)}
+        onClose={() => {
+          onOpenChange(false);
+          triggerRef.current?.focus({ preventScroll: true });
+        }}
       >
         <div
           ref={popoverRef}
@@ -376,7 +382,7 @@ function ReviewSortControl({
 
   function closeAndRestoreFocus() {
     onOpenChange(false);
-    triggerRef.current?.focus();
+    triggerRef.current?.focus({ preventScroll: true });
   }
 
   useEffect(() => {

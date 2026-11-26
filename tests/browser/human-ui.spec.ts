@@ -1,3 +1,4 @@
+import { continueWithStaleBulkItems } from "./human-mutation-routes";
 import { openPrimaryNavigation } from "./navigation";
 import {
   expect,
@@ -400,6 +401,11 @@ test("card time sorting uses newest first by default and keeps missing values la
   await page.goto("/human");
   await openReviewTools(page);
   await page.getByLabel("Sort: Priority").click();
+  await expect(page.getByLabel("Sort 1 field")).toHaveCSS("font-size", "18px");
+  await expect(page.getByLabel("Sort 1 direction")).toHaveCSS(
+    "font-size",
+    "18px"
+  );
   await page.getByLabel("Sort 1 field").selectOption({ label: "Card time" });
   await expect(page.getByLabel("Sort 1 direction")).toHaveValue("desc");
   await expect(page).toHaveURL(/order=card_time%3Adesc/);
@@ -439,10 +445,10 @@ test("feedback stays local across reloads and failures, then accompanies one ans
   await expect(button).toHaveText("");
   await button.click();
   const popup = page.getByRole("dialog", { name: "Feedback", exact: true });
-  await expect(popup.getByRole("textbox", { name: "Feedback" })).toBeFocused();
-  await popup
-    .getByRole("textbox", { name: "Feedback" })
-    .fill("Please rename this before proceeding.");
+  const feedback = popup.getByRole("textbox", { name: "Feedback" });
+  await expect(feedback).toBeFocused();
+  await expect(feedback).toHaveCSS("font-size", "18px");
+  await feedback.fill("Please rename this before proceeding.");
   await popup.getByRole("button", { name: "Save", exact: true }).click();
   await expect(popup).toBeHidden();
   await expect(
@@ -611,22 +617,8 @@ test("bulk answers include each feedback draft and clear only successful entries
       'name="feedback.00000000-0000-4000-8000-000000000512"'
     );
     expect(body).toContain("Follow-up feedback");
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        operation: "bulk-answer",
-        message: "Bulk action complete: 1 answered, 1 failed.",
-        inputItemIds: [
-          "00000000-0000-4000-8000-000000000511",
-          "00000000-0000-4000-8000-000000000512"
-        ],
-        answeredInputItemIds: ["00000000-0000-4000-8000-000000000511"],
-        answered: 1,
-        failed: 1
-      })
-    });
+    // The endpoint answers the first item and rejects the second as stale.
+    await continueWithStaleBulkItems(route, (index) => index === 1);
   });
   await openReviewTools(page);
   await page
@@ -1136,6 +1128,37 @@ test("primary navigation and queue disclosures behave consistently", async ({
   await page.keyboard.press("Escape");
   await expect(account).not.toHaveAttribute("open", "");
   await expect(accountSummary).toBeFocused();
+});
+
+test("a mobile row menu scrolls behind the sticky header", async ({ page }) => {
+  await page.setViewportSize({ width: 393, height: 740 });
+  await page.goto("/human");
+  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
+  await page
+    .getByLabel(/^More actions for/)
+    .first()
+    .click();
+  const menu = page.locator(".row-overflow-menu:visible");
+  await expect(menu.getByRole("button", { name: "Copy link" })).toBeVisible();
+  await menu.evaluate((element) => {
+    window.scrollBy({
+      top: element.getBoundingClientRect().top - 18,
+      behavior: "instant"
+    });
+  });
+  const overlappingPoint = await menu.evaluate((element) => {
+    const { x, y, width } = element.getBoundingClientRect();
+    return { x: x + width / 2, y: y + 15 };
+  });
+  const header = page.locator(".app-bar");
+  expect(overlappingPoint.y).toBeGreaterThan(0);
+  expect(overlappingPoint.y).toBeLessThan((await header.boundingBox())!.height);
+  expect(
+    await header.evaluate(
+      (element, { x, y }) => element.contains(document.elementFromPoint(x, y)),
+      overlappingPoint
+    )
+  ).toBe(true);
 });
 
 test("review queue and history remain disjoint", async ({ page }) => {
@@ -2120,9 +2143,23 @@ test("sort control supports every field and arbitrary priority changes", async (
   await openReviewTools(page);
   await page.getByLabel("Sort: Priority").click();
 
+  const addSort = page.getByRole("button", { name: "Add sort field" });
+  const firstField = await page.getByLabel("Sort 1 field").boundingBox();
+  const initialAddButton = await addSort.boundingBox();
+  expect(firstField).not.toBeNull();
+  expect(initialAddButton).not.toBeNull();
+  expect(initialAddButton!.x).toBeCloseTo(firstField!.x, 0);
+
   for (let rank = 2; rank <= 8; rank += 1) {
-    await page.getByRole("button", { name: "Add sort field" }).click();
+    await addSort.click();
     await expect(page.getByLabel(`Sort ${rank} field`)).toBeFocused();
+    if (rank === 2) {
+      const secondField = await page.getByLabel("Sort 2 field").boundingBox();
+      const multiAddButton = await addSort.boundingBox();
+      expect(secondField).not.toBeNull();
+      expect(multiAddButton).not.toBeNull();
+      expect(multiAddButton!.x).toBeCloseTo(secondField!.x, 0);
+    }
   }
   await expect(
     page.getByRole("button", { name: "Add sort field" })
@@ -2202,19 +2239,21 @@ test("canonical search and status navigation preserve pending view changes", asy
   await expect(page).toHaveURL(/priority=high/);
 });
 
-test("a client mutation timeout keeps the optimistic projection", async ({
+test("an answer that cannot reach the server is retried, then rolled back", async ({
   page
 }) => {
-  const requestStarted = deferred();
-  await page.addInitScript(() => {
-    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
-    AbortSignal.timeout = (ms: number) =>
-      originalTimeout(ms === 20_000 ? 50 : ms);
-  });
+  let attempts = 0;
+  let retryStarted = () => {};
+  let finishRetry = () => {};
+  const retry = new Promise<void>((resolve) => (retryStarted = resolve));
+  const retryFinished = new Promise<void>((resolve) => (finishRetry = resolve));
   await page.route("**/human/mutations", async (route) => {
-    requestStarted.resolve();
-    await new Promise<void>(() => {});
-    await route.continue();
+    attempts += 1;
+    if (attempts === 2) {
+      retryStarted();
+      await retryFinished;
+    }
+    return route.abort();
   });
   await page.goto("/human");
   await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
@@ -2223,57 +2262,22 @@ test("a client mutation timeout keeps the optimistic projection", async ({
     page,
     "Reply to Meridian about the renewal delay"
   );
-  const aborted = page.waitForEvent("requestfailed", (request) =>
-    request.url().includes("/human/mutations")
-  );
   await row.getByRole("button", { name: "Approve to send" }).click();
-  await requestStarted.promise;
-  await aborted;
+  // One failed attempt is not an outcome: while its retry is under way the
+  // answer stays applied and undoable, and nothing is reported.
+  await retry;
   await expect(row).toBeHidden();
   await expect(lastActionError(page)).toHaveCount(0);
-  await expect(lastUndoButton(page)).toHaveCount(0);
-});
+  await expect(lastUndoButton(page, "Approve to send")).toBeVisible();
 
-test("an all-failed bulk mutation restores the selected rows", async ({
-  page
-}) => {
-  await page.route("**/human/mutations", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        operation: "bulk-answer",
-        message: "Bulk action complete: 0 answered, 2 failed.",
-        inputItemIds: [
-          "00000000-0000-4000-8000-000000000511",
-          "00000000-0000-4000-8000-000000000512"
-        ],
-        answered: 0,
-        answeredInputItemIds: [],
-        failed: 2
-      })
-    });
-  });
-  await page.goto("/human");
-  await expect(page.getByTestId("workspace-hydrated")).toHaveText("hydrated");
-  await openReviewTools(page);
-  await page
-    .getByRole("button", { name: /^(Select items|Bulk select)$/ })
-    .click();
-  const permitRow = reviewRowByTitle(page, "Review neighborhood permit brief");
-  const followUpRow = reviewRowByTitle(page, "Choose follow-up window");
-  await permitRow.getByRole("checkbox", { name: "Select review" }).check();
-  await followUpRow.getByRole("checkbox", { name: "Select review" }).check();
-  await page
-    .getByRole("button", { name: "Apply Approve permit brief" })
-    .click();
-
-  await expect(lastActionError(page)).toContainText(
-    "Bulk action complete: 0 answered, 2 failed."
+  // No attempt reported an outcome, so the message does not claim a failure.
+  finishRetry();
+  await expect(lastActionError(page)).toHaveText(
+    /^Save not confirmed for “.+”: Agent Outbox could not be reached/
   );
-  await expect(permitRow).toBeVisible();
-  await expect(followUpRow).toBeVisible();
+  expect(attempts).toBe(3);
+  await expect(row).toBeVisible();
+  await expect(lastUndoButton(page)).toHaveCount(0);
 });
 
 test("last-action undo from History does not leave a pending snapshot in History", async ({
@@ -2308,12 +2312,12 @@ test("a failed optimistic queue action rolls back its local projection", async (
     requestStarted.resolve();
     await releaseFailure.promise;
     await route.fulfill({
-      status: 503,
+      status: 409,
       contentType: "application/json",
       body: JSON.stringify({
         ok: false,
         operation: "answer",
-        code: "temporary_unavailable",
+        code: "stale_input_revision",
         message: "The decision could not be saved.",
         inputItemIds: ["00000000-0000-4000-8000-000000000501"]
       })
@@ -2891,6 +2895,10 @@ test("bulk actions only submit selected rows visible in the current filter", asy
   await expect(page.locator(".bulk-actions")).toContainText(
     "1 selected pending row"
   );
+  await expect(page.getByLabel("Compatible quick action")).toHaveCSS(
+    "font-size",
+    "18px"
+  );
   await page.getByRole("button", { name: "Apply Approve follow-up" }).click();
   await expect(reviewRowByTitle(page, "Choose follow-up window")).toHaveCount(
     0
@@ -3132,6 +3140,7 @@ test("free-text defaults outside the length bounds submit only after editing", a
     await page.getByRole("button", { name: action }).click();
     const field = page.getByLabel(label);
     await expect(field).toHaveValue(defaultValue);
+    await expect(field).toHaveCSS("font-size", "18px");
 
     await page.getByRole("button", { name: action }).click();
     await expect(field).toHaveJSProperty("validationMessage", message);
@@ -3158,6 +3167,7 @@ test("datetime bounds keep fold minutes native-valid and early years renderable"
   await openSecondaryActions(page);
   await page.getByRole("button", { name: "Pick fold time" }).click();
   const field = page.getByLabel("Fold instant");
+  await expect(field).toHaveCSS("font-size", "18px");
   await expect(field).toHaveAttribute("min", "2026-11-01T01:45");
   await expect(field).toHaveAttribute("max", "2026-11-01T01:59");
   for (const [value, valid] of [
@@ -3198,6 +3208,7 @@ test("row popup actions open a focused composer instead of the full detail", asy
   const detail = page.getByRole("region", { name: "Review detail" });
   const field = detail.getByLabel("Follow-up date");
   await expect(field).toBeVisible();
+  await expect(field).toHaveCSS("font-size", "18px");
   await expect(detail.getByText("Review summary")).toHaveCount(0);
   await expect(
     detail.getByRole("navigation", { name: "Review navigation" })
@@ -3529,6 +3540,7 @@ test("queue J does not steal typing from search or move past the last row", asyn
   await page.goto("/human");
   await openReviewTools(page);
   const search = page.getByRole("textbox", { name: "Search" });
+  await expect(search).toHaveCSS("font-size", "18px");
   await search.click();
   await page.keyboard.press("j");
   await expect(search).toHaveValue("j");
