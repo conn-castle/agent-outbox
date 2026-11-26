@@ -10,20 +10,20 @@
       "resolved_ref": "main",
       "ref_kind": "branch",
       "tracking": "tracked",
-      "commit": "2d228630ba1446365f614a108cb8252f1feda202",
-      "tree_hash": "sha256:c4c39e27719da56d6c17e6ebcaf6509cbb1a230eea7ad255af11a081a8a4c8bd"
+      "commit": "64eb3deb9a5fbfa041faf783e0bc3fd635872e9c",
+      "tree_hash": "sha256:bf6e6803bada7a7f789cfe01a5c1a6c2fce3760b69a9981ca78e5d86983c475a"
     },
     {
-      "name": "request-html-comments",
+      "name": "request-human-html-review",
       "repository": "https://github.com/nicholasjconn/skills",
-      "selector": "skills/tools/request-html-comments",
-      "selected_path": "skills/tools/request-html-comments",
+      "selector": "skills/tools/request-human-html-review",
+      "selected_path": "skills/tools/request-human-html-review",
       "configured_ref": "",
       "resolved_ref": "main",
       "ref_kind": "branch",
       "tracking": "tracked",
-      "commit": "d793d377425fb4d4803d6635b6013305a6afd7ca",
-      "tree_hash": "sha256:c21641727069c68a3cdcaeb0f52d8368b9b6722463d243e7a313ce087f0ca46d"
+      "commit": "99172b7e5fb29d6fe77183e1c26493da408845c1",
+      "tree_hash": "sha256:265d2edd6e5bfe3a324c9b9203abdfcd350b4ae76e247698c0461850603d2031"
     }
   ]
 }

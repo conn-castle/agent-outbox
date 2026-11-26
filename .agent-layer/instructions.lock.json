@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "instructions": [
+    {
+      "name": "memory.md",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "instructions/memory.md",
+      "selected_path": "instructions/memory.md",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "99172b7e5fb29d6fe77183e1c26493da408845c1",
+      "tree_hash": "sha256:d675d25fb2dcd94a1021a6d783b913f1da7dade3d6ddd9dc449cbdc31b7bc787"
+    },
+    {
+      "name": "rules.md",
+      "repository": "https://github.com/nicholasjconn/skills.git",
+      "selector": "instructions/rules.md",
+      "selected_path": "instructions/rules.md",
+      "configured_ref": "",
+      "resolved_ref": "main",
+      "ref_kind": "branch",
+      "tracking": "tracked",
+      "commit": "99172b7e5fb29d6fe77183e1c26493da408845c1",
+      "tree_hash": "sha256:1ccc3d24371407c3cc77ae364f7f23cda03fa215f6fe70bd362f88f596abc927"
+    }
+  ]
+}

@@ -28,7 +28,7 @@ tmp/
 /grove/pin_gc_orphans.json
 
 # >>> agent-layer
-# Template hash: 822f17ad8d3c5c75464d7c8b10f908d5295504b2cf9c22d9fae3e9416bc01c94
+# Template hash: da23abb33a9153dcd5b73f5758249e2c97e3c28a69519060d8d1cacd730f1847
 # Managed by Agent Layer. To customize, edit .agent-layer/gitignore.block
 # and re-run `al sync` to apply changes.
 
@@ -68,4 +68,7 @@ tmp/
 /.vscode/mcp.json
 # Optional: keep uncommented to ignore VS Code settings.
 /.vscode/settings.json
+
+# Grove local state
+/grove/
 # <<< agent-layer
