@@ -8,13 +8,13 @@ mode = "yolo"
 
 [agents.antigravity]
 enabled = true
-model = "gemini-4-argon-medium"
+model = "Gemini 4 Neon (High)"
 
 [agents.claude]
 disable_question_tool = true
 enabled = true
 local_config_dir = true
-model = "claude-opus-5-5"
+model = "opus"
 reasoning_effort = "high" # low | medium | high | xhigh | max (custom values pass through with a warning)
 statusline = true
 
@@ -24,11 +24,12 @@ enabled = false
 [agents.codex]
 enabled = true
 local_config_dir = true
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 reasoning_effort = "high" # codex only
 statusline = true
 
 [agents.codex.agent_specific]
+model_fallback = false
 
 [agents.codex.agent_specific.features]
 apps = false
@@ -36,8 +37,11 @@ browser_use = false
 computer_use = false
 in_app_browser = false
 plugins = false
+prevent_idle_sleep = true
 
 [agents.codex.agent_specific.tui]
+whimsy = false
+
 [agents.codex.agent_specific.tui.effects]
 starfield = false
 
@@ -82,10 +86,25 @@ chime = true
 
 [agents.claude.agent_specific]
 autoMemoryEnabled = false
+cleanupPeriodDays = 3650
+outputStyle = "Concise"
 
 [agents.claude.agent_specific.env]
 CLAUDE_CODE_AUTO_CONNECT_IDE = "false"
 ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+
+[agents.claude.agent_specific.enabledPlugins]
+"cowork-plugin-management@synced" = false
+"design@synced" = false
+"engineering@synced" = false
+"enterprise-search@synced" = false
+"finance@synced" = false
+"legal@synced" = false
+"marketing@synced" = false
+"operations@synced" = false
+"product-management@synced" = false
+"productivity@synced" = false
+"sales@synced" = false
 
 [[skills.imports]]
 repository = 'https://github.com/emilkowalski/skills'
@@ -93,7 +112,7 @@ selectors = ['skills/apple-design']
 
 [[skills.imports]]
 repository = 'https://github.com/nicholasjconn/skills'
-selectors = ['skills/tools/request-html-comments']
+selectors = ['skills/tools/request-human-html-review']
 
 [[instructions.local]]
 selectors = ['04_conventions.md']
